@@ -75,13 +75,55 @@ export function isAllowedResponse(input: {
   )
 }
 
-/** Only the chooser changes shell authority; app documents receive the closed page capability. */
+/** The path the server names as its device-approval page (`verificationUri` in its auth provider). */
+const APPROVAL_PATH = '/device'
+/** What an approval address may carry: the code, and the mark that starts Google sign-in there. */
+const APPROVAL_MARKS = new Set(['user_code', 'signin'])
+
+/**
+ * Whether an address is the selected server's approval page for one sign-in code, and nothing
+ * else. This is the only same-origin address the shell hands to the system browser: the desktop
+ * window signs in with Google by having the Person approve a code there (the phone's answer,
+ * `googlePlace` in `@vivid/state`), and every other app address belongs inside the window.
+ *
+ * It is exact on purpose. The origin is the saved server's and uses a page scheme, never a
+ * WebSocket's. The path is the approval page alone. There is one non-empty `user_code`; the only
+ * other thing allowed beside it is `signin=google`. Credentials and a fragment are refused, so
+ * nothing a document adds can ride along to the browser.
+ */
+export function isApprovalAddress(address: string, server: ServerSettings): boolean {
+  if (!/^https?:/.test(address) || !isAppRequest(address, server)) return false
+  return Option.exists(decodeUrl(address), (parsed) => {
+    const marks = [...parsed.searchParams.keys()]
+    const codes = parsed.searchParams.getAll('user_code')
+    const signin = parsed.searchParams.getAll('signin')
+    return (
+      parsed.pathname === APPROVAL_PATH &&
+      parsed.hash === '' &&
+      marks.every((mark) => APPROVAL_MARKS.has(mark)) &&
+      codes.length === 1 &&
+      codes[0] !== '' &&
+      signin.every((value) => value === 'google') &&
+      signin.length <= 1
+    )
+  })
+}
+
+/**
+ * Only the chooser changes shell authority; app documents receive the closed page capability.
+ *
+ * Opening the approval page is decided first and by its address, whoever asks: it is granted to
+ * the selected server's own document for that server's approval page, and to nothing else, the
+ * chooser included (which has no server to approve a sign-in on).
+ */
 export function isAllowedBridgeRequest(
   url: string,
   server: ServerSettings,
   chooser: string,
   request: BridgeRequest,
 ): boolean {
+  if (BridgeRequest.guards.OpenApproval(request))
+    return isTrustedDocument(url, server, chooser) && isApprovalAddress(request.address, server)
   if (isTrustedDocument(url, ServerSettings.cases.NoServer.make({}), chooser)) return true
   return (
     BridgeRequest.isAnyOf(['GetAppVersion', 'Pages', 'GetDeviceLink', 'RefreshDeviceLink'])(

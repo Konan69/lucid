@@ -68,6 +68,12 @@ export const BridgeRequest = Schema.TaggedUnion({
   ChooseServer: { origin: ServerAddress },
   ForgetServer: {},
   OpenExternal: { url: ExternalUrl },
+  /**
+   * Open, in the Person's system browser, the page where they approve this app's sign-in. It is
+   * the one address an app document may send out of the window, and main admits it only when it
+   * is the selected server's approval page (`isApprovalAddress` in `main/security.ts`).
+   */
+  OpenApproval: { address: ExternalUrl },
   Pages: { request: PagesRequest },
   /** What this computer is to Vivid, as the app last heard it. */
   GetDeviceLink: {},
@@ -155,6 +161,12 @@ export interface VividDesktopBridge {
   }
   readonly getAppVersion: () => Promise<string>
   readonly openExternal: (url: string) => Promise<void>
+  /**
+   * Opens the selected server's approval page for a sign-in code in the system browser. An app
+   * document signs in with Google this way: a same-origin address would otherwise stay inside
+   * the window, where Google refuses to sign anyone in.
+   */
+  readonly openApproval: (address: string) => Promise<void>
 }
 
 export { ServerSettings, ServerChoice } from './settings.ts'
@@ -184,4 +196,7 @@ export {
 } from './pages.ts'
 
 /** Selected app documents get page authority; chooser-only server settings remain separate. */
-export type VividAppBridge = Pick<VividDesktopBridge, 'getAppVersion' | 'pages' | 'device'>
+export type VividAppBridge = Pick<
+  VividDesktopBridge,
+  'getAppVersion' | 'pages' | 'device' | 'openApproval'
+>

@@ -38,6 +38,9 @@ describe('desktop bridge ingress', () => {
         ['OpenExternal', 'url', 'javascript:alert(1)'],
         ['OpenExternal', 'url', 'https://person:secret@example.test'],
         ['OpenExternal', 'url', null],
+        ['OpenApproval', 'address', 'file:///secret'],
+        ['OpenApproval', 'address', 'https://person:secret@vivid.example/device?user_code=A'],
+        ['OpenApproval', 'address', null],
       ] as const
       for (const [tag, field, value] of payloads) {
         const payload = Object.fromEntries([

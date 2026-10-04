@@ -149,6 +149,57 @@ describe('desktop server selection', () => {
     }),
   )
 
+  it.effect(
+    'hands a selected-server document’s own approval page, and nothing else, to the browser',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* directory
+        yield* Effect.gen(function* () {
+          const settings = yield* DesktopSettings
+          const opened: string[] = []
+          const handlers: BridgeHandlers = {
+            pages: () => Effect.fail(new PageUnavailable({})),
+            settings,
+            getAppVersion: () => '1.0.0',
+            device: unlinked,
+            openExternal: (url) => Effect.sync(() => opened.push(url)),
+            onServerChanged: () => undefined,
+          }
+          const server = ServerSettings.cases.Server.make({
+            origin: ServerAddress.make('https://vivid.example'),
+          })
+          const authorize = (request: BridgeRequest) =>
+            isAllowedBridgeRequest(
+              'https://vivid.example/',
+              server,
+              'file:///application/chooser.html',
+              request,
+            )
+          const approval = 'https://vivid.example/device?user_code=ABCD2345&signin=google'
+          expect(
+            yield* handleBridgeRequest(
+              BridgeRequest.cases.OpenApproval.make({ address: approval }),
+              handlers,
+              authorize,
+            ),
+          ).toEqual(BridgeResponse.cases.ExternalOpened.make({}))
+          for (const address of [
+            'https://other.example/device?user_code=ABCD2345',
+            'https://vivid.example/settings?user_code=ABCD2345',
+            'https://vivid.example/device',
+          ])
+            expect(
+              yield* handleBridgeRequest(
+                BridgeRequest.cases.OpenApproval.make({ address }),
+                handlers,
+                authorize,
+              ).pipe(Effect.flip),
+            ).toBeInstanceOf(InvalidBridgeMessage)
+          expect(opened).toEqual([approval])
+        }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
+      }),
+  )
+
   it.live('verifies /health before saving and bridge forget returns to the chooser', () =>
     Effect.gen(function* () {
       const server = yield* fixture((request, response) => {
