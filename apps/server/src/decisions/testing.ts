@@ -1,15 +1,19 @@
 import * as NodeProcess from 'node:process'
 import { NodeHttpClient } from '@effect/platform-node'
-import { decisionModelLayer } from './model.ts'
-import { Layer, Schema } from 'effect'
+import { DECISION_MODEL, gatewayDecisionLayer } from './model.ts'
+import { Config, Effect, Layer, Schema } from 'effect'
 
-/** Live judgments require explicit consent and provider authority; normal suites never spend
- * credentials. The same server composition selects the provider and redacts its key. */
+/** Live judgments require explicit consent and the gateway key; normal suites never spend
+ * credentials. They ask the real provider whatever `VIVID_DECISIONS` says, because the claim
+ * under test is the model's behaviour, not the switch. The key is decoded redacted. */
 export const liveDecisionEnabled =
   NodeProcess.env['VIVID_LIVE_DECISIONS'] === '1' &&
-  (NodeProcess.env['TYPESAFE_API_KEY'] !== undefined ||
-    NodeProcess.env['OPENROUTER_API_KEY'] !== undefined)
-export const liveDecisionLayer = decisionModelLayer.pipe(Layer.provide(NodeHttpClient.layerUndici))
+  NodeProcess.env['EXPLABS_API_KEY'] !== undefined
+export const liveDecisionLayer = Layer.unwrap(
+  Effect.map(Config.schema(Schema.Redacted(Schema.NonEmptyString), 'EXPLABS_API_KEY'), (key) =>
+    gatewayDecisionLayer({ key, model: DECISION_MODEL }),
+  ),
+).pipe(Layer.provide(NodeHttpClient.layerUndici))
 
 /** Provider descriptions are fixture inputs only; they never enter production classifiers. */
 export const liveTools = [

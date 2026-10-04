@@ -5,7 +5,7 @@ import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import { Decision, DecisionModel } from 'effect/unstable/ai'
 import { ActionTarget, BrowseTarget, Rule, RuleScope, type ProposedAction } from '@vivid/contracts'
-import { decide } from '../decisions/model.ts'
+import { decide, decisionConfigured } from '../decisions/model.ts'
 
 /** A failed judge cannot authorize an action; provider detail and private payloads stay behind this seam. */
 export class RulesNotJudged extends Schema.TaggedError<RulesNotJudged>()(
@@ -81,6 +81,7 @@ export const ruleJudgeLayer = Layer.effect(
   RuleJudge,
   Effect.gen(function* () {
     const model = yield* DecisionModel.DecisionModel
+    const configured = yield* decisionConfigured
     return RuleJudge.of({
       /** Applicability alone belongs here; independent scope judgments and precedence
        * remain in judgeBinding and the gate. Failure never silently erases a rule. */
@@ -112,8 +113,11 @@ export const ruleJudgeLayer = Layer.effect(
         },
         (effect) =>
           effect.pipe(
-            // The tag tells an unconfigured provider from a timeout; nothing else is logged.
-            Effect.tapError((error) => Effect.logWarning('Rules not judged', { tag: error._tag })),
+            // A provider that failed is worth a line; decisions switched off are the normal
+            // state and are announced once at start (`decisions/model.ts`), not per action.
+            Effect.tapError((error) =>
+              configured ? Effect.logWarning('Rules not judged', { tag: error._tag }) : Effect.void,
+            ),
             Effect.mapError(() => new RulesNotJudged({})),
           ),
       ),

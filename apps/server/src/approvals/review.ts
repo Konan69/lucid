@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Option, Schema } from 'effect'
 import { Decision, DecisionModel } from 'effect/unstable/ai'
 import { ActionTarget, BrowseTarget, type ProposedAction } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
-import { decide } from '../decisions/model.ts'
+import { decide, decisionConfigured } from '../decisions/model.ts'
 import { Runtime } from '../runtime/client.ts'
 import { Database } from '../database/client.ts'
 import { Review } from './policy.ts'
@@ -124,11 +124,15 @@ export const reviewerLayer = Layer.effect(
   Reviewer,
   Effect.gen(function* () {
     const model = yield* DecisionModel.DecisionModel
+    const configured = yield* decisionConfigured
     const runtime = yield* Runtime
     const database = yield* Database
     return Reviewer.of({
       review: Effect.fn('Reviewer.review')(
         function* (actor, action) {
+          // Switched off or unconfigured is the normal state, not an event: no history read,
+          // no provider call and no log line.
+          if (!configured) return Review.cases.Unreviewed.make({})
           // Arguments too long to show whole are not judged on a part of them.
           if (shown(action).input.length > INPUT_CHARACTERS) return Review.cases.Unreviewed.make({})
           const said = yield* personRequest(runtime, actor).pipe(

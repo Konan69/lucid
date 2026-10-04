@@ -1,12 +1,7 @@
 import { Cache, Context, Data, Effect, Exit, Layer, Request, RequestResolver, Schema } from 'effect'
 import { Decision, DecisionModel } from 'effect/unstable/ai'
 import { type ServiceId } from '@vivid/contracts'
-import {
-  decide,
-  decideWithin,
-  decisionConfigured,
-  DecisionUnavailable,
-} from '../decisions/model.ts'
+import { decideWithin, decisionConfigured, DecisionUnavailable } from '../decisions/model.ts'
 import { ExecutorTool } from './executor.ts'
 
 /** Removing an Approval requires near-certainty, rather than merely the top label.
@@ -108,13 +103,21 @@ const effectOf = (
   return answer.label === 'destructive' ? 'destructive' : 'write'
 }
 
-/** Direct use keeps the original single-tool prompt and ten-second trust-loop budget. */
+/**
+ * How long running one tool may wait for its effect. The tool cannot start until this answers,
+ * so the trust loop's ten seconds is far too long here: a stalled provider would hold every
+ * uncached tool call for ten seconds. Two seconds is the discovery budget, several times the
+ * 310 to 800 ms measured for one question; past it the tool keeps Executor's `write`.
+ */
+const DIRECT_EFFECT_BUDGET = '2 seconds'
+
+/** Direct use keeps the original, calibrated single-tool prompt. */
 const judgeEffect = Effect.fn('Connections.judgeEffect')(function* (key: CacheKey) {
-  const { answers } = yield* decide(toolEffectDecision, {
-    service: key.service,
-    tool: key.tool,
-    description: key.description,
-  })
+  const { answers } = yield* decideWithin(
+    toolEffectDecision,
+    { service: key.service, tool: key.tool, description: key.description },
+    DIRECT_EFFECT_BUDGET,
+  )
   return effectOf(answers.effect)
 })
 

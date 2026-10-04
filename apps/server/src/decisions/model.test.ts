@@ -3,7 +3,14 @@ import { expect, it } from '@effect/vitest'
 import { ConfigProvider, Effect, Fiber, Layer, Logger, Predicate, Schema } from 'effect'
 import { AiError, Decision, DecisionModel } from 'effect/unstable/ai'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
-import { decide, decideWithin, DecisionUnavailable, decisionModelLayer } from './model.ts'
+import {
+  decide,
+  decideWithin,
+  decisionConfigured,
+  DecisionUnavailable,
+  decisionModelLayer,
+  GATEWAY_URL,
+} from './model.ts'
 
 const definition = Decision.make({
   input: Schema.String,
@@ -15,44 +22,35 @@ const definition = Decision.make({
   },
 })
 
-/** Exercise provider selection through the real library adapter, including credential
- * precedence and provider-specific defaults. The transport records no secret values. */
+/** The switch and the provider are chosen through the real library adapter and real Config.
+ * The transport records no secret values. */
 it.effect.each([
+  { config: { VIVID_DECISIONS: 'on', EXPLABS_API_KEY: 'test' }, model: 'jev-latest' },
   {
-    config: { TYPESAFE_API_KEY: 'test', OPENROUTER_API_KEY: 'other' },
-    provider: 'typesafe',
-    model: 'jev-1.13.0',
-  },
-  { config: { OPENROUTER_API_KEY: 'test' }, provider: 'openrouter', model: 'typesafe/jev-1.13' },
-  {
-    config: { TYPESAFE_API_KEY: 'test', VIVID_DECISION_MODEL: 'custom' },
-    provider: 'typesafe',
+    config: { VIVID_DECISIONS: 'on', EXPLABS_API_KEY: 'test', VIVID_DECISION_MODEL: 'custom' },
     model: 'custom',
   },
-])('selects $provider with model $model', ({ config, provider, model }) => {
+])('switched on, asks the gateway for model $model', ({ config, model }) => {
   const transport = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
-      expect(request.url).toContain(provider)
+      expect(request.url).toBe(`${GATEWAY_URL}/systemone`)
       const body = request.body
       if (Predicate.isTagged(body, 'Uint8Array'))
         expect(new TextDecoder().decode(body.body)).toContain(model)
-      const payload =
-        provider === 'typesafe'
-          ? { model, answers: { applies: { type: 'noul', noul: 0.7 } } }
-          : {
-              id: 'reply',
-              model,
-              answers: { applies: { type: 'noul', noul: 0.7 } },
-              usage: { input_tokens: 1, output_tokens: 1 },
-            }
       return Effect.succeed(
-        HttpClientResponse.fromWeb(request, new Response(JSON.stringify(payload))),
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            JSON.stringify({ model, answers: { applies: { type: 'noul', noul: 0.7 } } }),
+          ),
+        ),
       )
     }),
   )
   return Effect.gen(function* () {
     expect((yield* decide(definition, 'question')).answers.applies.probability).toBe(0.7)
+    expect(yield* decisionConfigured).toBe(true)
   }).pipe(
     Effect.provide(
       decisionModelLayer.pipe(
@@ -63,24 +61,30 @@ it.effect.each([
   )
 })
 
-/** Startup warns once, names configuration only, and leaves an unavailable typed model. */
-it.effect('unconfigured startup warns once and every decision fails', () => {
-  let warnings = 0
+/** Off is the default and wins over a present key; on without a key is a different fact. Neither
+ * makes a request, and neither writes a line per decision. */
+it.effect.each([
+  { name: 'by default', config: { EXPLABS_API_KEY: 'test' }, reason: 'Disabled' },
+  {
+    name: 'when switched off',
+    config: { VIVID_DECISIONS: 'off', EXPLABS_API_KEY: 'test' },
+    reason: 'Disabled',
+  },
+  { name: 'when on with no key', config: { VIVID_DECISIONS: 'on' }, reason: 'Unconfigured' },
+] as const)('$name every decision fails at once as $reason, silently', ({ config, reason }) => {
+  const lines: Array<unknown> = []
   const logger = Logger.make(({ message }) => {
-    if (
-      Array.isArray(message) &&
-      message[0] === 'Decisions unconfigured: TYPESAFE_API_KEY or OPENROUTER_API_KEY'
-    )
-      warnings += 1
+    lines.push(message)
   })
   return Effect.gen(function* () {
     const first = yield* Effect.flip(decide(definition, 'one'))
-    const second = yield* Effect.flip(decide(definition, 'two'))
+    const second = yield* Effect.flip(decideWithin(definition, 'two', '1 second'))
     expect(first).toBeInstanceOf(DecisionUnavailable)
-    expect(second).toBeInstanceOf(DecisionUnavailable)
-    expect(first.reason).toBe('Unconfigured')
-    expect(second.reason).toBe('Unconfigured')
-    expect(warnings).toBe(1)
+    expect(first.reason).toBe(reason)
+    expect(second.reason).toBe(reason)
+    expect(yield* decisionConfigured).toBe(false)
+    // One line at start says the state; a decision that was never asked is not an event.
+    expect(lines).toHaveLength(1)
   }).pipe(
     Effect.provide(
       decisionModelLayer.pipe(
@@ -90,12 +94,28 @@ it.effect('unconfigured startup warns once and every decision fails', () => {
             HttpClient.make(() => Effect.die('Unexpected HTTP')),
           ),
         ),
-        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
+        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(config))),
       ),
     ),
     Effect.provide(Logger.layer([logger])),
   )
 })
+
+/** A fault inside the provider call is an unavailable decision, never a dead caller. */
+it.effect('a defect in the provider call is a typed Provider failure', () =>
+  Effect.gen(function* () {
+    const error = yield* Effect.flip(decide(definition, 'question'))
+    expect(error).toBeInstanceOf(DecisionUnavailable)
+    expect(error.reason).toBe('Provider')
+  }).pipe(
+    Effect.provide(
+      Layer.effect(
+        DecisionModel.DecisionModel,
+        DecisionModel.make({ decide: () => Effect.die('library fault') }),
+      ),
+    ),
+  ),
+)
 
 /** Provider payloads stop at the decision boundary, including validation failures. */
 it.effect('provider failure exposes only a typed unavailable reason', () =>
