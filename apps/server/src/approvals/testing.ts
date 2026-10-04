@@ -204,7 +204,10 @@ const ports = Layer.effectContext(
 
 const foundation = auditLayer.pipe(Layer.provideMerge(testDatabaseLayer), Layer.provideMerge(ports))
 const policy = ruleStoreLayer.pipe(Layer.provideMerge(foundation))
-const stores = Layer.merge(approvalStoreLayer, inputStoreLayer).pipe(Layer.provideMerge(policy))
+/** Production stores over the test ports, for a test that composes the gate with other production Layers. */
+export const stores = Layer.merge(approvalStoreLayer, inputStoreLayer).pipe(
+  Layer.provideMerge(policy),
+)
 export const trustTestLayer = gateLayer.pipe(Layer.provideMerge(stores))
 
 /** Teardown uses the same live adapter while its Layer is still scoped, and cleanup faults fail tests. */

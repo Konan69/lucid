@@ -145,6 +145,52 @@ export function namedAccounts(records: readonly ConnectionRecord[]) {
   })
 }
 
+/** Catalog reads only enrich Integration offers and do not depend on semantic ranking.
+ * Keeping this branch separate lets both optional reads overlap while retaining the existing
+ * ServiceUnavailable baseline and ready-Integration exclusion. */
+const offeredServices = Effect.fn('Connections.offeredServices')(function* (
+  store: typeof ConnectionStore.Service,
+  records: readonly ConnectionRecord[],
+  query: string,
+) {
+  const services = yield* store
+    .catalog()
+    .pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
+  const unconnected = services.filter(
+    (service) => !records.some((row) => row.service === service.id && row.status === 'ready'),
+  )
+  return yield* Effect.forEach(
+    rank(unconnected, query, 3, (service) => ({
+      own: `${service.name} ${service.description}`,
+      identity: '',
+    })),
+    (service) => store.service(service.id),
+    { concurrency: 3 },
+  ).pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
+})
+
+/**
+ * The lexical candidates in the order discovery returns them. Zero or one candidate has nothing
+ * to order, and switched-off decisions return at once; neither is a degraded answer worth a
+ * warning. It never fails: when relevance cannot be judged the lexical order stands.
+ */
+const orderTools = Effect.fn('Connections.orderTools')(function* <
+  A extends Parameters<typeof relevantTools>[1][number],
+>(query: string, lexical: ReadonlyArray<A>) {
+  if (lexical.length < 2 || !(yield* decisionConfigured)) return lexical
+  return yield* relevantTools(query, lexical).pipe(
+    Effect.map((result) => result.ordered),
+    Effect.catch((error) =>
+      error.reason === 'Backoff'
+        ? Effect.succeed(lexical)
+        : Effect.logWarning('Tool relevance unavailable', {
+            tag: error._tag,
+            reason: error.reason,
+          }).pipe(Effect.as(lexical)),
+    ),
+  )
+})
+
 /** Discovery removes shared writes before any tool enters model context. */
 export const findTools = Effect.fn('Connections.findTools')(function* (
   actor: Actor,
@@ -157,20 +203,6 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     ({ row, account }) => projectTools(store, actor, row, account),
     { concurrency: 4 },
   )
-  const services = yield* store
-    .catalog()
-    .pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
-  const unconnected = services.filter(
-    (service) => !records.some((row) => row.service === service.id && row.status === 'ready'),
-  )
-  const offered = yield* Effect.forEach(
-    rank(unconnected, request.query, 3, (service) => ({
-      own: `${service.name} ${service.description}`,
-      identity: '',
-    })),
-    (service) => store.service(service.id),
-    { concurrency: 3 },
-  ).pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
   const limit = request.limit === undefined ? 8 : request.limit
   if (!Number.isFinite(limit) || limit < 1)
     return yield* Effect.fail(
@@ -181,23 +213,20 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
     own: `${tool.name} ${tool.description}`,
     identity: `${tool.serviceName} ${tool.account}`,
   }))
-  // No lexical candidate, or decisions switched off, means no semantic request and no delay:
-  // the lexical order is the answer, not a degraded one worth a warning.
-  const ordered =
-    lexical.length === 0 || !(yield* decisionConfigured)
-      ? lexical
-      : yield* relevantTools(request.query, lexical).pipe(
-          Effect.map((ranking) => ranking.ordered),
-          Effect.catch((error) =>
-            Effect.logWarning('Tool relevance unavailable', {
-              tag: error._tag,
-              reason: error.reason,
-            }).pipe(Effect.as(lexical)),
-          ),
-        )
+  const [ordered, offered] = yield* Effect.all(
+    [orderTools(request.query, lexical), offeredServices(store, records, request.query)],
+    { concurrency: 2 },
+  )
+  const limited = ordered.slice(0, Math.min(25, Math.floor(limit)))
+  // Promotion cannot evict the first lexical result when the caller's limit is full.
+  // Reserve its place only when needed, keeping the remaining semantic order intact.
+  const selected = Option.match(Arr.head(lexical), {
+    onNone: () => limited,
+    onSome: (first) => (limited.includes(first) ? limited : [first, ...limited.slice(0, -1)]),
+  })
   return {
     tools: yield* Effect.forEach(
-      ordered.slice(0, Math.min(25, Math.floor(limit))),
+      selected,
       Effect.fn('Connections.discoveredTool')(function* (tool) {
         return DiscoveredTool.make({
           connectionId: tool.connectionId,

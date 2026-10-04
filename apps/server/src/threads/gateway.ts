@@ -30,6 +30,7 @@ import { Runtime } from '../runtime/client.ts'
 import { Database } from '../database/client.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { sessionRanOut, watch } from '../live/query.ts'
+import { observeFailures } from '../observability/failure.ts'
 import { requireThread, type StoredThread } from './access.ts'
 import { Conversation, DeliverySpeaker, DeliveryMessage, StoredRunOrigin } from './conversation.ts'
 import { IncomingMessage, messageFingerprint, messagePictures } from './pictures.ts'
@@ -115,7 +116,12 @@ const answerFailure = (error: { readonly _tag: string }) => {
  */
 const answered = <R>(
   effect: Effect.Effect<HttpServerResponse.HttpServerResponse, { readonly _tag: string }, R>,
-) => effect.pipe(Effect.catch((error) => Effect.succeed(answerFailure(error))))
+) =>
+  effect.pipe(
+    // Recorded here because the next step turns every failure into a response.
+    observeFailures('http'),
+    Effect.catch((error) => Effect.succeed(answerFailure(error))),
+  )
 
 /**
  * The address this client used to reach the server, so the stream address handed back points to

@@ -72,8 +72,10 @@ export type ReviewOutcome = typeof ReviewOutcome.Type
  *   action can be undone (a tool whose source declares nothing defaults to `write`, and
  *   `connections/effects.ts` files a send under `write`), so with no review an unasked send on a
  *   Person's own Integration runs. Do not change this back to "always ask" without his say-so.
- *   Never rules still refuse, Ask rules still ask, and a personal Integration used in a shared
- *   Thread still asks; those are decided in `gate.ts` before any review.
+ *   Rules and a personal Integration used in a shared Thread are decided in `gate.ts` before
+ *   any review. With decisions switched off no rule can be judged, so a Person who has a Never
+ *   or Ask rule is asked about every action that is not a read, and a Never rule asks where it
+ *   would have refused; a Person with no rule, or only Allow rules, is not asked.
  */
 export const reviewOutcome = (effect: ActionEffect, review: Review): ReviewOutcome =>
   Review.match(review, {

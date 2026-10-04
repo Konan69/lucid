@@ -3,6 +3,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstab
 import { ConnectionState } from '@vivid/contracts'
 import { authenticate } from '../auth/session.ts'
 import { ServerConfig } from '../config.ts'
+import { observeFailures } from '../observability/failure.ts'
 import { ConnectionStore } from './store.ts'
 
 /** Executor has one deployment-wide redirect URI. The opaque state, signed-in Person, and
@@ -28,11 +29,11 @@ const callback = Effect.fn('Http.Connections.return')(function* () {
     target.searchParams.set(ConnectionState.guards.Ready(result) ? 'connected' : 'failed', id)
     return target
   }).pipe(
-    Effect.catch((error) =>
-      Effect.logWarning({ tag: error._tag }).pipe(
-        Effect.as(new URL('/settings/connections', config.PUBLIC_URL)),
-      ),
-    ),
+    // The recorder writes the one log line a failure gets here: its tag, never the callback
+    // address. The recovery below then answers every failure with the same redirect, so the
+    // response says nothing about which state was unknown, foreign, reused or malformed.
+    observeFailures('http'),
+    Effect.catch(() => Effect.succeed(new URL('/settings/connections', config.PUBLIC_URL))),
   )
   return HttpServerResponse.redirect(destination.href, { status: 303 })
 })

@@ -139,6 +139,22 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     onSome: (value) => ({ VIVID_DECISIONS: value }),
   })
 
+  /**
+   * Telemetry export is one atomic pair, absent until a backend exists. With it go the two names
+   * the exported resource carries. Railway resolves both references at deploy time; it sets
+   * `RAILWAY_GIT_COMMIT_SHA` only for a deployment built from a commit, and the server reads an
+   * empty value as absent.
+   */
+  const observabilityAccess = Option.match(environment.observability, {
+    onNone: () => ({}),
+    onSome: ({ url, headers }) => ({
+      VIVID_OTLP_URL: url,
+      VIVID_OTLP_HEADERS: headers,
+      VIVID_ENVIRONMENT: '${{RAILWAY_ENVIRONMENT_NAME}}',
+      VIVID_COMMIT: '${{RAILWAY_GIT_COMMIT_SHA}}',
+    }),
+  })
+
   /** Flue keeps its durable state in PostgreSQL, so the runtime needs no volume of its own. */
   yield* Railway.Service('Runtime', {
     project,
@@ -201,6 +217,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       VIVID_HELIX_URL: privateUrl(serviceNames.helix, ports.helix),
       ...executorAccess,
       ...decisionAccess,
+      ...observabilityAccess,
       /** Where `apps/server/Dockerfile` leaves the built web app; the server serves it itself. */
       VIVID_WEB_DIST: '/app/apps/web/dist',
       /** Where the same image leaves the mobile app's over-the-air update (`/api/updates`). */

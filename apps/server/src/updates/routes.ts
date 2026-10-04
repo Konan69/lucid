@@ -4,6 +4,7 @@ import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
 import { answerUpdate, findAsset, type UpdatePart } from './manifest.ts'
+import { observeFailures } from '../observability/failure.ts'
 import { loadCatalog, Platform, type Catalog } from './release.ts'
 
 /**
@@ -161,6 +162,8 @@ export function updateRoutes(directory: Option.Option<string>, publicUrl: URL) {
         'GET',
         '/api/updates/manifest',
         manifest(catalog, publicUrl).pipe(
+          // Recorded before the mapping below turns the failure into a status code.
+          observeFailures('http'),
           Effect.catchTags({
             ...unreadable,
             ProtocolVersionUnsupported: () =>
@@ -180,6 +183,7 @@ export function updateRoutes(directory: Option.Option<string>, publicUrl: URL) {
         'GET',
         '/api/updates/assets',
         asset(catalog).pipe(
+          observeFailures('http'),
           Effect.catchTags({ ...unreadable, AssetNotFound: () => refuse(404, 'Asset not found.') }),
         ),
       )

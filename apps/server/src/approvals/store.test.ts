@@ -25,6 +25,7 @@ import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { loadAudit } from '../audit/store.ts'
 import { RuleStore } from '../rules/store.ts'
+import { membershipTable } from '../companies/tables.ts'
 import { threads } from '../threads/tables.ts'
 import { ActionOutcome } from './gate.ts'
 import { ApprovalStore } from './store.ts'
@@ -33,6 +34,110 @@ import { commandAction, connectionAction, fixture, Observation, trustTestLayer }
 
 const once = ApprovalDecision.cases.AllowOnce.make({})
 const always = ApprovalDecision.cases.AlwaysAllow.make({})
+
+/** A1-A3 use addressed owner-role cards and real rows; reach loss must never settle pending work. */
+describe.skipIf(!testDatabaseConfigured)('Approval inbox Thread privacy', () => {
+  it.effect(
+    'A1 making a Company Thread private hides its addressed Approval even from an owner',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const elsewhere = yield* fixture()
+        const database = yield* Database
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'company' })
+            .where(eq(threads.id, test.companyId)),
+        )
+        const store = yield* ApprovalStore
+        const approval = yield* store.raise(
+          { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+          connectionAction,
+        )
+        expect(yield* store.inbox(test.owner)).toEqual([approval])
+        expect(yield* store.inbox(test.other)).toEqual([])
+        expect(yield* store.inbox(test.member)).toEqual([])
+        expect(yield* store.inbox({ ...test.owner, workspace: elsewhere.owner.workspace })).toEqual(
+          [],
+        )
+        const before = yield* database.run(
+          database.select().from(approvals).where(eq(approvals.id, approval.id)),
+        )
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'private' })
+            .where(eq(threads.id, test.companyId)),
+        )
+        expect(yield* store.inbox(test.owner)).toEqual([])
+        expect(
+          yield* database.run(
+            database.select().from(approvals).where(eq(approvals.id, approval.id)),
+          ),
+        ).toEqual(before)
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  it.effect(
+    'A2 re-sharing restores the same pending Approval with its content and timestamps',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const database = yield* Database
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'company' })
+            .where(eq(threads.id, test.companyId)),
+        )
+        const store = yield* ApprovalStore
+        const approval = yield* store.raise(
+          { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+          connectionAction,
+        )
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'private' })
+            .where(eq(threads.id, test.companyId)),
+        )
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'company' })
+            .where(eq(threads.id, test.companyId)),
+        )
+        expect(yield* store.inbox(test.owner)).toEqual([approval])
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  it.effect('A3 Membership removal hides an Approval from the same stale Company Actor', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const database = yield* Database
+      yield* database.run(
+        database.update(threads).set({ audience: 'company' }).where(eq(threads.id, test.companyId)),
+      )
+      const store = yield* ApprovalStore
+      const approval = yield* store.raise(
+        { ...test.owner, by: 'vivid', threadId: Option.some(test.companyId) },
+        connectionAction,
+      )
+      expect(yield* store.inbox(test.owner)).toEqual([approval])
+      const before = yield* database.run(
+        database.select().from(approvals).where(eq(approvals.id, approval.id)),
+      )
+      yield* database.run(
+        database.delete(membershipTable).where(eq(membershipTable.userId, test.owner.person.id)),
+      )
+      expect(yield* store.inbox(test.owner)).toEqual([])
+      expect(
+        yield* database.run(database.select().from(approvals).where(eq(approvals.id, approval.id))),
+      ).toEqual(before)
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+})
 
 /** All writes use production stores against the isolated database; disabled without its explicit URL. */
 describe.skipIf(!testDatabaseConfigured)('Approval claims and outcomes', () => {

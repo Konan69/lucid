@@ -11,7 +11,7 @@ import { personRequest, type PersonRequest } from './request.ts'
 /**
  * The most text of an action's arguments the reviewer is given. Arguments are never cut: a cut
  * could hide a recipient that follows a long body while the action still runs with it. Longer
- * arguments are not reviewed at all, and the gate asks. VCOS bounds a whole Jev request at 48,000
+ * arguments are not reviewed at all; `policy.ts` decides what an unreviewed action does. VCOS bounds a whole Jev request at 48,000
  * bytes (`apps/web/src/agent/execute/routing/jev.ts` `MAX_REQUEST_BYTES`); 12,000 characters
  * leaves room for the request and both questions under that bound.
  */

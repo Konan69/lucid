@@ -31,7 +31,7 @@ import {
 } from '../database/client.ts'
 import { changed, Changes, Topic } from '../live/changes.ts'
 import { Notifier } from '../notifications/notifier.ts'
-import { requireThread } from '../threads/access.ts'
+import { readableBy, requireThread } from '../threads/access.ts'
 import { threads } from '../threads/tables.ts'
 import { Conversation, DeliveryMessage } from '../threads/conversation.ts'
 import { Signal, encodeSignal } from '../approvals/signal.ts'
@@ -265,7 +265,10 @@ export const inputStoreLayer = Layer.effect(
         )
         return yield* run(view(rows))
       }),
-      /** Workspace scope comes from the joined Thread; being an admin does not broaden the addressee. */
+      /**
+       * Workspace scope comes from the joined Thread; roles never broaden the addressee.
+       * Filter current reach before projection, including corrupt audiences; keep waiting rows.
+       */
       inbox: Effect.fn('InputStore.inbox')(function* (actor) {
         const rows = yield* database.run(
           database
@@ -277,6 +280,7 @@ export const inputStoreLayer = Layer.effect(
                 eq(inputRequests.personId, actor.person.id),
                 eq(inputRequests.status, 'waiting'),
                 inWorkspace(threads, actor),
+                readableBy(actor.person.id),
               ),
             )
             .orderBy(asc(inputRequests.createdAt), asc(inputRequests.id)),

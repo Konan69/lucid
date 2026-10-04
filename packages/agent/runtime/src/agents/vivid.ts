@@ -23,6 +23,7 @@ import { memoryTools } from '../tools/memory.ts'
 import { notifyTools } from '../tools/notify.ts'
 import { openTools } from '../tools/open.ts'
 import { routineTools } from '../tools/routines.ts'
+import { projectTools } from '../tools/projects.ts'
 import { skillTools } from '../tools/skills.ts'
 import { showTools } from '../tools/show.ts'
 import { scopeLayer, toolRunner } from '../tools/scope.ts'
@@ -79,6 +80,7 @@ const ABILITIES = [
   'You can do something later and keep doing it: once at a date and time (this is how you remind someone), on a repeating schedule, when an outside service calls in, or when something happens in a connected service such as new mail.',
   'You can notify the person through the app when they are away and something truly needs their attention; use notify_person for due reminders, awaited answers and urgent findings, never chatter. Do what the person asked without asking again, including sending, spending and deleting when that is what they asked for. The server decides whether an action needs their approval and tells you when it does; do not ask for approval yourself for something they already asked for.',
   'You can ask the person a question as a card when you truly need an answer to continue, and when the server says an action needs their approval it shows them a card and you wait for their answer.',
+  'You can create a Project when work clearly forms an ongoing logical group; choose a short specific name and an exact existing parent when needed.',
   'You can keep and reuse verified ways of working so familiar work gets done consistently without the person managing your procedures.',
   'You cannot use the person’s own computer or phone, make or take calls, or act in a service they have not connected. Say so plainly when asked, and offer the nearest thing you can do.',
 ]
@@ -147,6 +149,7 @@ export function Vivid({ id }: { id: string }) {
     openTools(runTool),
     skillTools(runTool),
     routineTools(runTool),
+    projectTools(runTool),
     computerTools(runTool),
     codeTools(runTool),
     documentTools(runTool),

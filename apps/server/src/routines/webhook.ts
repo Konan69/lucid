@@ -7,6 +7,7 @@ import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
 import { RoutineDeliveryKey, RoutineInvocation, THREAD_OPENING_FAILURE } from './attempts.ts'
+import { observeFailures } from '../observability/failure.ts'
 import { RoutineId } from '@vivid/contracts'
 import { RoutineScheduler } from './scheduler.ts'
 import { RoutineStore } from './store.ts'
@@ -96,6 +97,8 @@ export const routineWebhookRoutes = HttpRouter.add(
   'POST',
   '/api/hooks/routines/:id',
   accept().pipe(
+    // Recorded before the mapping below: once a failure is a status code it is no longer one.
+    observeFailures('http'),
     Effect.catchTag('RoutineThreadUnavailable', () =>
       Effect.succeed(
         HttpServerResponse.jsonUnsafe({ error: THREAD_OPENING_FAILURE }, { status: 409 }),

@@ -126,8 +126,10 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
       Effect.gen(function* () {
         const config = yield* ServerConfig
         const handle = yield* HttpRouter.toHttpEffect(connectionReturnRoutes)
-        const messages: string[] = []
-        const logger = Logger.make((options) => messages.push(JSON.stringify(options.message)))
+        // Every field of every line: the message, its annotations and its cause. A private value
+        // in any of them is a leak, so the whole structured line is what gets searched.
+        const lines: Array<ReturnType<typeof Logger.formatStructured.log>> = []
+        const logger = Logger.make((options) => lines.push(Logger.formatStructured.log(options)))
         const response = yield* handle.pipe(
           Effect.provideService(
             HttpServerRequest.HttpServerRequest,
@@ -146,7 +148,15 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
         expect(response.headers.location).toBe(
           new URL('/settings/connections', config.PUBLIC_URL).href,
         )
-        expect(messages).toEqual([JSON.stringify([{ tag: 'Unauthenticated' }])])
+        // One line for the one failure, naming it by tag.
+        expect(lines).toHaveLength(1)
+        expect(lines[0]).toMatchObject({
+          message: 'Failure reached a boundary',
+          annotations: { 'error.type': 'Unauthenticated', 'vivid.boundary': 'http' },
+        })
+        const written = JSON.stringify(lines)
+        expect(written).not.toContain('private-code')
+        expect(written).not.toContain('private-state')
       }),
     )
   })

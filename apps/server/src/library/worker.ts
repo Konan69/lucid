@@ -3,6 +3,7 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Schedule from 'effect/Schedule'
 import { Database } from '../database/client.ts'
+import { observeFailures } from '../observability/failure.ts'
 import type { extractPdf } from './extraction.ts'
 import { ingestOwed } from './ingest.ts'
 import { ingestionOperations, LibraryIngestion, libraryIngestion } from './ingestion.ts'
@@ -18,6 +19,8 @@ export const takeIngestion = (
 ) =>
   queue.take((job, metadata) =>
     ingest(job.itemId, metadata.attempts).pipe(
+      // Records the failure's tag; the line below still names the item and the attempt.
+      observeFailures('schedule'),
       Effect.tapCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.void

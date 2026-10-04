@@ -14,6 +14,7 @@ import {
 } from '@vivid/contracts'
 import { Database, decodeStored, returned } from '../database/client.ts'
 import { notifications } from '../notifications/tables.ts'
+import { observeFailures } from '../observability/failure.ts'
 import { canSee, findThread } from '../threads/access.ts'
 import { Presence } from '../threads/presence.ts'
 import { PushAdapter } from './adapter.ts'
@@ -307,6 +308,8 @@ export const pushReceiptsLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const push = yield* Push
     yield* push.reconcile().pipe(
+      // Recorded before `ignore` discards the failure; the next minute's check is unchanged.
+      observeFailures('schedule'),
       Effect.tapError((error) =>
         Effect.logWarning('Push receipts could not be checked', error._tag),
       ),

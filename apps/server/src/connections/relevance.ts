@@ -1,21 +1,21 @@
 import { Effect, Schema } from 'effect'
-import { Decision } from 'effect/unstable/ai'
+import { Decision, DecisionModel } from 'effect/unstable/ai'
 import { decideWithin, DecisionUnavailable } from '../decisions/model.ts'
+import { TOOL_DESCRIPTION_LIMIT } from './effects.ts'
 
 /** A 0.3 score promotes plausible necessary steps; lower scores retain lexical order
  * and remain discoverable. This is an ordering threshold, never an exclusion rule. */
 export const TOOL_RELEVANCE_THRESHOLD = 0.3
-/** Only the top twenty lexical candidates need optional semantic enrichment; the
- * remaining candidates retain their existing order without extra provider calls.
- * Calibration used 2066 input tokens for twenty questions versus 739 for five. */
+/** Only the top twenty lexical candidates need optional semantic enrichment; lower candidates
+ * keep their order. Gateway calibration on 4 Oct 2026 used 3844 input tokens at the 500-character
+ * cap, versus 7704 at 1500 characters, bounding catalog-driven payload growth. */
 export const RELEVANCE_BATCH_SIZE = 20
-/** Live calibration (2026-10-04, one process): cold 20 questions 791ms/2066
- * input tokens; warm 20 341ms/2066; warm five 331ms/739; repeated warm 20
- * 347ms/2066. Repeat validation (cold20/warm20/warm5/warm20): 618/337/310/326ms,
- * then 584/323/330/533ms, with the same token counts. A 1.2-second budget
- * leaves warm-call headroom while bounding
- * optional enrichment; outage or slow cold transport retains lexical order. */
-export const RELEVANCE_BUDGET = '1200 millis'
+/** Experiential Labs gateway, 4 Oct 2026: twenty 100/500/1500-character descriptions used
+ * 2292/3844/7704 tokens; first calls took 831/2045/681ms and warm calls 493/667/682ms.
+ * Repeat first calls: 841/619/677ms; warm: 527/611/715ms, with identical token counts.
+ * At the selected 500-character cap, 1.5 seconds leaves 833ms warm headroom. A slow cold
+ * connection may exceed it; optional ordering then keeps the lexical baseline. */
+export const RELEVANCE_BUDGET = '1500 millis'
 
 interface Candidate {
   readonly serviceName: string
@@ -26,27 +26,38 @@ interface Candidate {
 
 const Input = Schema.Struct({ request: Schema.String })
 
-/** rc.116 OpenRouterDecisionModel.make collects all questions into one request.
- * Each question owns its tool facts, so input contains only the Person's request.
- * Dynamic-key coverage is checked before any partial answer can influence ordering. */
+/** One authoritative question shape serves production and gateway payload calibration.
+ * Facts stay beside each question because positional relevance previously confused Jev. */
+export const toolRelevanceDecision = (tools: readonly Candidate[]) =>
+  Decision.make({
+    input: Input,
+    decisions: Object.fromEntries(
+      tools.map((tool, index) => [
+        `tool_${index}`,
+        Decision.probability({
+          instructions: `This tool can do what the request asks, or is a necessary step for it. Judge only this tool: ${JSON.stringify({ service: tool.serviceName, account: tool.account, tool: tool.name, description: tool.description })}`,
+          criteria: {
+            false: 'Unrelated or the wrong service',
+            true: 'Directly does it or is a necessary step',
+          },
+        }),
+      ]),
+    ),
+  })
+
+/** TypeSafe sends all questions in one gateway request; missing coverage fails the
+ * whole ordering so a partial provider response cannot influence discovery. */
 const scoreBatch = Effect.fn('Connections.scoreTools')(function* <A extends Candidate>(
   request: string,
   tools: readonly A[],
 ) {
-  const decisions = Object.fromEntries(
-    tools.map((tool, index) => [
-      `tool_${index}`,
-      Decision.probability({
-        instructions: `This tool can do what the request asks, or is a necessary step for it. Judge only this tool: ${JSON.stringify({ service: tool.serviceName, account: tool.account, tool: tool.name, description: tool.description })}`,
-        criteria: {
-          false: 'Unrelated or the wrong service',
-          true: 'Directly does it or is a necessary step',
-        },
-      }),
-    ]),
-  )
   const { answers, usage } = yield* decideWithin(
-    Decision.make({ input: Input, decisions }),
+    toolRelevanceDecision(
+      tools.map((tool) => ({
+        ...tool,
+        description: tool.description.slice(0, TOOL_DESCRIPTION_LIMIT),
+      })),
+    ),
     { request },
     RELEVANCE_BUDGET,
   )
@@ -58,13 +69,19 @@ const scoreBatch = Effect.fn('Connections.scoreTools')(function* <A extends Cand
   return { scores, usage }
 })
 
-/** Jev can promote candidates, never remove them. Stable score ties retain lexical
- * order; unpromoted and unscored candidates follow in their original lexical order.
+/** Empty and single-candidate lists have nothing to order and never reach Decision.make.
+ * Before caller truncation, Jev promotes candidates without removing them. Stable score ties
+ * retain lexical order; unpromoted and unscored candidates keep their original lexical order.
  * Provider usage accompanies the result so live evaluations measure the actual request. */
 export const relevantTools = Effect.fn('Connections.relevantTools')(function* <A extends Candidate>(
   request: string,
   tools: readonly A[],
 ) {
+  if (tools.length < 2)
+    return {
+      ordered: tools,
+      usage: new DecisionModel.DecisionUsage({ inputTokens: undefined, outputTokens: undefined }),
+    }
   const { scores, usage } = yield* scoreBatch(request, tools.slice(0, RELEVANCE_BATCH_SIZE))
   const promoted = scores
     .filter(({ probability }) => probability >= TOOL_RELEVANCE_THRESHOLD)
