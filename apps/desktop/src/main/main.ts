@@ -2,27 +2,18 @@ import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as NodeProcess from 'node:process'
 import * as NodeOS from 'node:os'
-import * as NodeDns from 'node:dns'
 import { DeviceName } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import {
-  WebSocket,
-  app,
-  protocol,
-  screen,
-  session,
-  type BrowserWindow,
-  type Session,
-} from 'electron'
+import { app, net, protocol, screen, session, type BrowserWindow, type Session } from 'electron'
 import { registerBridge } from './bridge.ts'
 import { Browser } from './browser.ts'
 import { executor } from './control.ts'
 import { connectDevice, deviceLink, sessionChanges } from './device.ts'
 import { controlledBrowser } from './driver.ts'
 import { installationIdentity } from './installation.ts'
-import { Unresolved, mayOpen } from './reach.ts'
+import { vividMayOpen } from './reach.ts'
 import {
   parseVividUrl,
   VIVID_PROTOCOL,
@@ -183,16 +174,6 @@ function createBrowser(
   })
 }
 
-/** What the system resolver says a name leads to; failure is its own answer, not an empty list. */
-const resolveHost = (host: string) =>
-  Effect.tryPromise({
-    try: () => NodeDns.promises.lookup(host, { all: true }),
-    catch: () => new Unresolved({}),
-  }).pipe(Effect.map((found) => found.map((entry) => entry.address)))
-
-/** Whether Vivid may open an address from this computer: the public internet only. */
-const vividMayOpen = (address: string) => mayOpen(address, resolveHost)
-
 /**
  * Vivid using this computer. The executor acts in whichever Browser the open window has; the
  * link enrols this installation, listens while the Person allows it, and hands each action to
@@ -227,9 +208,15 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
           server: input.server,
           // Electron's own WebSocket, in the app's session and with its cookies on the upgrade
           // (electron.d.ts, `WebSocketOptions.session` and `useSessionCookies`). Never the pages
-          // partition. The main process does not read the cookie.
+          // partition. The main process does not read the cookie. The class lives on `net` at
+          // run time: Electron 44.4.3 does not export `WebSocket` from `electron` itself, though
+          // its declarations say so (`scripts/control.ts` proves both).
           socket: (address, origin) =>
-            new WebSocket(address, { session: input.session, useSessionCookies: true, origin }),
+            new net.WebSocket(address, {
+              session: input.session,
+              useSessionCookies: true,
+              origin,
+            }),
           identity: known,
         }),
     }),

@@ -4,6 +4,7 @@ import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import {
   WebContentsView,
+  webContents,
   type BrowserWindow,
   type Session,
   type Event,
@@ -46,6 +47,9 @@ import {
   reducePresentation,
   sameShowing,
 } from './presentation.ts'
+
+/** The size of a page that has not been placed on the window yet: an ordinary laptop viewport. */
+const UNDRAWN = { x: 0, y: 0, width: 1280, height: 800 }
 
 /** Rejected loadURL promises follow did-fail-load; the event carries Chromium's real description. */
 class PageLoadRejected extends Schema.TaggedError<PageLoadRejected>()(
@@ -90,6 +94,8 @@ export class Browser {
   private presentation: PagePresentation = PagePresentation.cases.Hidden.make({ generation: 0 })
   private attached = Option.none<WebContentsView>()
   private forgetting = false
+  /** Callers waiting for a page to be drawn on the window. */
+  private readonly awaitingDraw = new Set<{ readonly tab: Tab; readonly listener: () => void }>()
   /** Pages loading an address Vivid asked for; every hop of that load is checked. */
   private readonly guarded = new Set<Tab>()
   /** Pages where a hop of Vivid's navigation was refused, until the executor asks. */
@@ -128,11 +134,17 @@ export class Browser {
     // Navigation includes subframes and server redirects; programmatic loads use this guard too.
     pagesSession.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
       const navigation = details.resourceType === 'mainFrame' || details.resourceType === 'subFrame'
-      if (navigation && !isPageAddress(details.url)) return callback({ cancel: true })
       const tab =
         details.resourceType === 'mainFrame'
           ? this.vividNavigating(Option.fromUndefinedOr(details.webContentsId))
           : Option.none()
+      if (navigation && !isPageAddress(details.url)) {
+        // The rule every page obeys (no loopback, no credentials, web addresses only). When it
+        // stops Vivid's navigation, Vivid is told so; found by running a real redirect to this
+        // computer, which was stopped here and then answered as if the old page were the result.
+        Option.map(tab, (refused) => this.refusals.add(refused))
+        return callback({ cancel: true })
+      }
       if (Option.isNone(tab)) return callback({ cancel: false })
       // Vivid's navigation: the first address and every redirect arrive here as a request for
       // the main frame, and each is refused unless it leads to the public internet.
@@ -293,6 +305,12 @@ export class Browser {
       this.attached = Option.some(view)
     }
     view.setBounds({ x, y, width, height })
+    // Deleting the entry being visited is safe in a Set.
+    for (const waiting of this.awaitingDraw) {
+      if (waiting.tab !== lease.owner) continue
+      this.awaitingDraw.delete(waiting)
+      waiting.listener()
+    }
   }
 
   /** Retained background guests have no keyboard or pointer authority while detached. */
@@ -320,6 +338,41 @@ export class Browser {
   /** The live contents of one page, for attaching the debugger. Never crosses the bridge. */
   contents(tab: Tab): Effect.Effect<WebContents, PageMissing> {
     return Effect.map(this.getView(tab), (view) => view.webContents)
+  }
+
+  /**
+   * Tells the listener once this page is drawn on the window: at once if it already is, otherwise
+   * when the renderer places it. Answers with how to stop waiting.
+   */
+  whenDrawn(tab: Tab, listener: () => void): () => void {
+    const view = this.views.get(tab)
+    if (view !== undefined && this.isAttached(view)) {
+      listener()
+      return () => undefined
+    }
+    const waiting = { tab, listener }
+    this.awaitingDraw.add(waiting)
+    return () => {
+      this.awaitingDraw.delete(waiting)
+    }
+  }
+
+  /**
+   * Gives a drawn page the keyboard, and answers with how to give it back.
+   *
+   * Ported from the reference's `performAutomationPress` (`preview/Manager.ts`): remember which
+   * contents had focus, focus the guest itself (not its window), and afterwards refocus what had
+   * it if it still exists.
+   */
+  keyboard(tab: Tab): Effect.Effect<Effect.Effect<void>, PageMissing> {
+    return Effect.map(this.getView(tab), (view) => {
+      const previous = webContents.getFocusedWebContents()
+      view.webContents.focus()
+      return Effect.sync(() => {
+        if (previous !== null && previous.id !== view.webContents.id && !previous.isDestroyed())
+          previous.focus()
+      })
+    })
   }
 
   /** Vivid starts or stops acting on a page; the renderer says so on that page. */
@@ -375,11 +428,19 @@ export class Browser {
   private observe(tab: Tab, view: WebContentsView): void {
     const contents = view.webContents
     const sync = (): void => this.sync(tab, view)
+    // A main-frame hop stopped here while Vivid is navigating the page is a refusal Vivid hears.
+    const stopped = (main: boolean): void => {
+      if (main && (this.guarded.has(tab) || this.usedByVivid(tab))) this.refusals.add(tab)
+    }
     contents.on('will-frame-navigate', (event) => {
-      if (!isPageAddress(event.url)) event.preventDefault()
+      if (isPageAddress(event.url)) return
+      event.preventDefault()
+      stopped(event.isMainFrame)
     })
-    contents.on('will-redirect', (event, url) => {
-      if (!isPageAddress(url)) event.preventDefault()
+    contents.on('will-redirect', (event, url, _inPlace, main) => {
+      if (isPageAddress(url)) return
+      event.preventDefault()
+      stopped(main)
     })
     contents.on('will-attach-webview', (event) => event.preventDefault())
     contents.on('before-input-event', (event) => {
@@ -493,6 +554,15 @@ export class Browser {
         }),
       catch: () => new PageUnavailable({}),
     })
+    // A page has a size before it is ever drawn. A view that has never been placed is 0 by 0, so
+    // its document has no viewport: nothing in it has a position, and Vivid could not click or
+    // capture a page the Person has not yet looked at. Placement replaces this with the panel's.
+    view.setBounds(UNDRAWN)
+    // It is also on the window from the start, hidden. Found by running against real pages:
+    // Chromium delivers no pointer input to a page whose view is not in a window, so Vivid could
+    // not click in a page the Person had not yet looked at. Hidden first, so it never flashes.
+    view.setVisible(false)
+    this.dependencies.window.contentView.addChildView(view)
     this.views.set(tab, view)
     if (guard) this.guarded.add(tab)
     this.observe(tab, view)

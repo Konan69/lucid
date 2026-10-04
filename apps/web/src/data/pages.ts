@@ -56,7 +56,15 @@ const bring = (next: Front) => {
 
 if (Option.isSome(bridge)) {
   bridge.value.watch((next) => {
+    // Vivid has started using a page: bring that page and the panel forward, so the Person sees
+    // what Vivid is doing and has the Stop button in front of them. Only on the change, so a
+    // Person who then looks elsewhere is not pulled back for the rest of the action.
+    const started = UsedTab.guards.None(state.using) && UsedTab.guards.Some(next.using)
     state = next
+    if (started) {
+      front = 'page'
+      panel.show()
+    }
     // The last page closing leaves nothing to show, so the panel goes back to the computer.
     if (next.tabs.length === 0 && front === 'page') front = 'computer'
     tell()

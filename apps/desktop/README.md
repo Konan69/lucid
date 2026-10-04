@@ -182,11 +182,13 @@ choosing another server ends the link.
   Electron's user data directory, made once. It never leaves the main process; the renderer is
   told only the `DeviceId` it enrolled as (`window.vivid.device.get()`).
 - **The link** (`main/device.ts`): the main process opens its own socket to `/api/live` with
-  Electron's `WebSocket` in the app session (`persist:vivid`), which sends that session's cookies
-  on the upgrade; the main process never reads the cookie, and never uses `persist:vivid-pages`.
-  While waiting to be allowed, or when the server cannot be reached, it tries again after 1 s,
-  doubling to at most 30 s. Signed out or revoked, it rests until the session changes, the server
-  changes, or the renderer calls `window.vivid.device.refresh()`. Nothing is replayed.
+  Electron's `net.WebSocket` in the app session (`persist:vivid`), which sends that session's
+  cookies on the upgrade; the main process never reads the cookie, and never uses
+  `persist:vivid-pages`. (Electron 44.4.3 does not export `WebSocket` from `electron` itself,
+  whatever its type declarations say.) While waiting to be allowed, or when the server cannot be
+  reached, it tries again after 1 s, doubling to at most 30 s. Signed out or revoked, it rests
+  until the session changes, the server changes, or the renderer calls
+  `window.vivid.device.refresh()`. Nothing is replayed.
 - **Consent ends action.** An action runs inside the listening: when the server ends the link
   (revoke, sign-out, a newer link), when the connection fails, or when the session token cookie
   changes, the action in progress is interrupted at once, held keys and the mouse button are
@@ -224,15 +226,50 @@ choosing another server ends the link.
 | Its deadline passed before or during the action, or the link ended                                                           | no answer; the server has already closed it                  |
 
 `Screenshot` answers with the picture (`BrowseResult.picture`, a base64 PNG at most 1280 pixels
-wide); no other action carries one. Closing the last
-page answers `Done` with an empty address and title and no tabs, because the contract has no
-"no page" form.
+wide); no other action carries one. Closing the last page answers `Done` with an empty address
+and title and no tabs, because the contract has no "no page" form.
 
-Not proved yet, because nothing here has been run inside Electron: Electron's `WebSocket` with
-`session` and `useSessionCookies` against a real server; every debugger command against a real
-page, including input to a page that is not in front; that each redirect reaches the session's
-`onBeforeRequest` as a main-frame request; and the cookie `changed` causes the session rule
-relies on.
+What running it against real pages changed (each is stated beside its code):
+
+- A page has a size (1280 by 800) and is on the window, hidden, from the moment it opens.
+  Without a size nothing in it can be clicked or captured; without the window Chromium delivers
+  no pointer input.
+- A click turns focus emulation on, waits for the page to confirm it, and checks that the page
+  saw the button go down. A page that is not drawn takes clicks this way.
+- A key is pressed only on a page drawn on the window. Keys to an undrawn page arrived, were
+  dropped, or arrived after the answer; none of that can be reported honestly. The renderer
+  brings the page Vivid is using forward, the executor waits up to 3 s for it, and otherwise
+  the step fails with nothing sent. No `Page.bringToFront`: the key after it was dropped.
+- A press the page never saw is `Failed`, after half a second's grace, never a second press.
+- After any action the executor waits for a navigation the page asked for
+  (`Page.frameRequestedNavigation`) until the page is neither leaving nor loading.
+- A hop stopped by the rule every page obeys (no loopback) is reported to Vivid as
+  `NotAllowed`, not answered as the old page.
+
+### The proof
+
+`scripts/control.ts` runs the real executor inside real Electron against real pages, under
+`xvfb-run`, in a disposable profile; `src/main/driver.test.ts` runs it:
+
+```sh
+pnpm --filter @vivid/desktop exec vitest run src/main/driver.test.ts
+```
+
+It needs the public internet (`https://example.com`, and `https://httpbin.org/redirect-to` for a
+public address that redirects to this computer). It proves: Open, Read, Click by name with a
+real navigation, Back, Type with read-back, Press, a hidden password value, Screenshot of a
+page that is not drawn and of one that is, Stop (including in the middle of a click, with
+nothing left held), the refusals (loopback, private, and public redirects to each), and that
+`net.WebSocket` in a session sends that session's cookie.
+
+Not proved:
+
+- The link against a real server. It needs a signed-in session; only its transport is proved.
+- The refusal of a page with developer tools open. The pages session admits only web addresses,
+  so developer tools never open on a page and the case cannot be reached.
+- That the renderer brings the page forward when Vivid starts using it, and the Stop button:
+  the proof has no renderer.
+- DNS rebinding is not closed (see "Where Vivid may go").
 
 ## Security
 

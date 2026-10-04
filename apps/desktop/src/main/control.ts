@@ -1,4 +1,10 @@
-import { BrowseResult, BrowserAction, DeviceAnswer, type DeviceRequest } from '@vivid/contracts'
+import {
+  BrowseResult,
+  BrowserAction,
+  DeviceAnswer,
+  type BrowserPicture,
+  type DeviceRequest,
+} from '@vivid/contracts'
 import * as Clock from 'effect/Clock'
 import * as Deferred from 'effect/Deferred'
 import * as Duration from 'effect/Duration'
@@ -64,9 +70,9 @@ export interface CommandParameters {
   readonly [name: string]: CommandValue
 }
 
-/** A picture of a page: a PNG in base64, and its size in pixels. */
+/** A picture of a page: a PNG in base64 as the contract carries it, and its size in pixels. */
 export interface PagePicture {
-  readonly png: string
+  readonly png: BrowserPicture
   readonly width: number
   readonly height: number
 }
@@ -83,8 +89,11 @@ export interface ControlledPage {
     method: string,
     parameters: CommandParameters,
   ) => Effect.Effect<unknown, PageGone | StepFailed>
-  /** Gives the page the keyboard. The effect it returns gives the keyboard back. */
-  readonly focus: Effect.Effect<Effect.Effect<void>, PageGone>
+  /**
+   * Gives the page the keyboard, which needs the page drawn on the window; a page that is not
+   * drawn in time is a failed step. The effect it returns gives the keyboard back.
+   */
+  readonly focus: Effect.Effect<Effect.Effect<void>, PageGone | StepFailed>
   /** Takes a picture of the page as it is drawn now. */
   readonly capture: Effect.Effect<PagePicture, PageGone | StepFailed>
   /** Waits for a page that is loading to stop, for a bounded time; returns at once otherwise. */
@@ -167,6 +176,9 @@ const decodeTyped = Schema.decodeUnknownEffect(
   evaluated(Schema.Literals(['ok', 'notEditable', 'different'] as const)),
 )
 const decodeScrolled = Schema.decodeUnknownEffect(evaluated(Schema.Literal('ok')))
+const decodeWitness = Schema.decodeUnknownEffect(
+  evaluated(Schema.Literals(['seen', 'unseen'] as const)),
+)
 const decodeDocument = Schema.decodeUnknownEffect(
   Schema.Struct({ root: Schema.Struct({ nodeId: Schema.Int }) }),
 )
@@ -280,6 +292,76 @@ const locate = Effect.fn('DesktopControl.locate')(function* (
   return found.value
 })
 
+/**
+ * Resolves in the page once its document has focus, or after two seconds without it. Turning
+ * focus emulation on is answered before the page has it; a key sent in between is dropped.
+ * Found by running against real pages, where the first key after a page loaded never arrived.
+ */
+const HAS_FOCUS = `new Promise((resolve) => {
+  if (document.hasFocus()) return resolve("focused")
+  window.addEventListener("focus", () => resolve("focused"), { once: true })
+  setTimeout(() => resolve("late"), 2000)
+})`
+
+/** How long a press that has not been seen is waited for before it is called undelivered. */
+const LATE_MILLIS = 500
+
+/** Where the page keeps its note of having seen Vivid's press; a symbol, so no page script meets it. */
+const noteOf = (event: 'keydown' | 'mousedown') => `window[Symbol.for("vivid.saw.${event}")]`
+
+/**
+ * Asks the page to note the next key or button it sees go down. Sent before the press, and the
+ * answer awaited: that round trip is also what lets the focus given to the page arrive before
+ * the key does. Found by running against real pages: without it the key-down was dropped and
+ * only the key-up arrived.
+ */
+const arm = Effect.fn('DesktopControl.arm')(function* (
+  page: ControlledPage,
+  event: 'keydown' | 'mousedown',
+) {
+  const answer = yield* page.send('Runtime.evaluate', {
+    expression: `(() => { ${noteOf(event)} = false; window.addEventListener("${event}", () => { ${noteOf(event)} = true }, { capture: true, once: true }); return "ok" })()`,
+    returnByValue: true,
+  })
+  yield* decodeScrolled(answer).pipe(failing('arm'))
+})
+
+/**
+ * Whether the press reached the page. Chromium accepts input for a page and can still drop it
+ * (a page that is not drawn takes no keys, for one), and the command succeeds either way; found
+ * by running against real pages, where a press was answered as done and the page had seen
+ * nothing. So the page is asked. It saw the press, or its note is gone because the press took it
+ * to another document: both mean delivered. The note still there and unset means the press never
+ * arrived, and that is a failed step, said as one, never a second press.
+ *
+ * A press can reach the page after the command that sent it has been answered; found the same
+ * way, when a key was called undelivered and the page had it a moment later. Saying "failed" for
+ * a press that arrived invites a second one, so an unseen press is given `LATE_MILLIS` to turn
+ * up before it is called undelivered. A press seen at once costs no wait.
+ */
+const witnessed = Effect.fn('DesktopControl.witnessed')(function* (
+  page: ControlledPage,
+  event: 'keydown' | 'mousedown',
+) {
+  const answer = yield* page
+    .send('Runtime.evaluate', {
+      expression: `new Promise((resolve) => {
+        if (${noteOf(event)} !== false) return resolve("seen")
+        window.addEventListener("${event}", () => resolve("seen"), { capture: true, once: true })
+        setTimeout(() => resolve(${noteOf(event)} === false ? "unseen" : "seen"), ${LATE_MILLIS})
+      })`,
+      awaitPromise: true,
+      returnByValue: true,
+    })
+    .pipe(
+      Effect.flatMap((given) => decodeWitness(given).pipe(failing('witness'))),
+      // A page that is already leaving refuses the question; it left because of the press.
+      Effect.catchTag('StepFailed', () => Effect.succeed({ result: { value: 'seen' as const } })),
+    )
+  if (answer.result.value === 'unseen') return yield* new StepFailed({ step: 'undelivered' })
+  return undefined
+})
+
 /** The middle of where an element is drawn, refused when it lies outside what the page shows. */
 const pointOf = Effect.fn('DesktopControl.pointOf')(function* (page: ControlledPage, node: number) {
   yield* page.send('DOM.scrollIntoViewIfNeeded', { backendNodeId: node })
@@ -313,22 +395,36 @@ const pointOf = Effect.fn('DesktopControl.pointOf')(function* (page: ControlledP
  *   command between the two leaves the button held; here the release runs however the click ends.
  * - The reference's two pauses that animate its own drawn cursor are left out: the desktop app
  *   draws no cursor.
+ * - Focus emulation around the press, confirmed by the page before the button goes down and
+ *   turned off again by the same finalizer. The reference's guest is always laid out in its
+ *   window; Vivid's page may not be drawn at all.
  */
 const click = Effect.fn('DesktopControl.click')(function* (page: ControlledPage, target: string) {
   const control = yield* locate(page, target, 'click')
   yield* page.send('Input.setIgnoreInputEvents', { ignore: false })
-  const point = yield* pointOf(page, control.node)
-  const button = { ...point, button: 'left', clickCount: 1 }
   let went = false
+  let button = { x: 0, y: 0, button: 'left', clickCount: 1 }
   const release = Effect.fn('DesktopControl.buttonUp')(function* () {
     if (went)
       yield* page
         .send('Input.dispatchMouseEvent', { ...button, type: 'mouseReleased' })
         .pipe(Effect.ignore)
+    yield* page.send('Emulation.setFocusEmulationEnabled', { enabled: false }).pipe(Effect.ignore)
   })
   const down = Effect.fn('DesktopControl.buttonDown')(function* () {
+    // Found by running against real pages: Chromium drops pointer input to a page that is not
+    // being drawn (the panel closed, or showing Vivid's computer), and the click was answered as
+    // done while nothing happened. A page takes the press when its view is on the window (the
+    // Browser puts every page there, hidden) and focus emulation is on and has reached the
+    // page. Nothing is shown and the keyboard is not taken: a click must not move the Person's
+    // typing away from where they are.
+    yield* page.send('Emulation.setFocusEmulationEnabled', { enabled: true })
+    yield* page.send('Runtime.evaluate', { expression: HAS_FOCUS, awaitPromise: true })
+    button = { ...button, ...(yield* pointOf(page, control.node)) }
+    yield* arm(page, 'mousedown')
     went = true
     yield* page.send('Input.dispatchMouseEvent', { ...button, type: 'mousePressed' })
+    yield* witnessed(page, 'mousedown')
   })
   yield* down().pipe(Effect.ensuring(release()))
   return undefined
@@ -360,10 +456,19 @@ const type = Effect.fn('DesktopControl.type')(function* (
  * Presses one key on the page.
  *
  * Ported from the reference's `performAutomationPress`: give the page itself the keyboard (not
- * its window), bring it to the front for the debugger, turn on focus emulation, send the key
- * down; then, whatever happened, send the key up if the key went down, turn focus emulation off
- * and give the keyboard back to whatever had it. The release runs even when the action is stopped
- * midway, or a key would stay held and the next page would act as focused.
+ * its window), turn on focus emulation, send the key down; then, whatever happened, send the key
+ * up if the key went down, turn focus emulation off and give the keyboard back to whatever had
+ * it. The release runs even when the action is stopped midway, or a key would stay held and the
+ * next page would act as focused.
+ *
+ * What Vivid changes, each found by running against real pages:
+ * - A key is pressed only on a page that is drawn on the window (`focus` waits for that, and
+ *   fails the step with nothing sent otherwise). Keys to a page that is not drawn were delivered
+ *   unreliably, and sometimes after the action had been answered.
+ * - No `Page.bringToFront`. With it, the key that followed was dropped.
+ * - The page confirms it has focus after emulation is turned on, before the key is sent.
+ * - The page is asked whether it saw the key (`witnessed`); a key that never arrived is a failed
+ *   step, where the reference reports success.
  */
 const press = Effect.fn('DesktopControl.press')(function* (
   page: ControlledPage,
@@ -383,10 +488,12 @@ const press = Effect.fn('DesktopControl.press')(function* (
   })
   const down = Effect.fn('DesktopControl.keyDown')(function* () {
     giveBack = yield* page.focus
-    yield* page.send('Page.bringToFront', {})
     yield* page.send('Emulation.setFocusEmulationEnabled', { enabled: true })
+    yield* page.send('Runtime.evaluate', { expression: HAS_FOCUS, awaitPromise: true })
+    yield* arm(page, 'keydown')
     went = true
     yield* page.send('Input.dispatchKeyEvent', keyDown)
+    yield* witnessed(page, 'keydown')
   })
   yield* down().pipe(Effect.ensuring(release()))
   return undefined
@@ -649,7 +756,12 @@ const act = Effect.fn('DesktopControl.act')(function* (acting: Acting, action: B
         Effect.succeed(DeviceAnswer.cases.Refused.make({ reason: 'NotAllowed' })),
       StepUnsupported: () =>
         Effect.succeed(DeviceAnswer.cases.Refused.make({ reason: 'Unsupported' })),
-      StepFailed: () => Effect.succeed(DeviceAnswer.cases.Failed.make({})),
+      // The contract's `Failed` says nothing more, on purpose; which step failed is kept in
+      // this computer's own log, where the Person or a developer can read it.
+      StepFailed: ({ step }) =>
+        Effect.logWarning(`desktop: Vivid's ${action._tag} failed at ${step}`).pipe(
+          Effect.as(DeviceAnswer.cases.Failed.make({})),
+        ),
     }),
   )
 })

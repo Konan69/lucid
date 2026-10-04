@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import {
   BrowserAction,
+  BrowserPicture,
   DeviceAnswer,
   DeviceRequest,
   DeviceRequestId,
@@ -11,6 +12,7 @@ import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Option from 'effect/Option'
+import * as Schema from 'effect/Schema'
 import * as TestClock from 'effect/testing/TestClock'
 import {
   BrowserState,
@@ -33,6 +35,8 @@ import {
   type ControlledBrowser,
 } from './control.ts'
 
+/** The smallest text the contract accepts as a picture: the PNG signature. */
+const picture = BrowserPicture.make('iVBORw0KGgo=')
 const first = Tab.make('7b0c7f0a-6c0e-4f61-9a55-0d8f6f1f2a10')
 const second = Tab.make('1d1b7c1e-9a55-4c0e-8f61-2a100d8f6f1f')
 
@@ -72,10 +76,12 @@ const answers = new Map<string, unknown>([
   ['DOM.describeNode', { node: { backendNodeId: 30 } }],
   ['Accessibility.getFullAXTree', tree],
   ['DOM.getContentQuads', { quads: [[100, 40, 140, 40, 140, 60, 100, 60]] }],
-  ['Runtime.evaluate', { result: { value: { width: 800, height: 600 } } }],
   ['DOM.resolveNode', { object: { objectId: 'object-30' } }],
   ['Runtime.callFunctionOn', { result: { value: 'ok' } }],
 ])
+
+/** The script of a `Runtime.evaluate`, which is always text. */
+const expressionOf = Schema.decodeUnknownSync(Schema.String)
 
 interface Sent {
   readonly method: string
@@ -91,6 +97,8 @@ function fixture(options: {
   readonly during?: (sent: Sent, stop: (tab: Tab) => void) => Effect.Effect<void, StepFailed>
   readonly mayOpen?: (address: string) => boolean
   readonly answers?: ReadonlyMap<string, unknown>
+  /** The page never sees Vivid's press, though the debugger accepted it. */
+  readonly unseen?: boolean
 }) {
   const sent: Array<Sent> = []
   const asked: Array<PagesRequest> = []
@@ -111,10 +119,18 @@ function fixture(options: {
   const show = (tab: Tab) => {
     state = BrowserState.make({ ...state, showing: ShowingTab.cases.Some.make({ value: tab }) })
   }
-  const answer = (method: string) =>
-    options.answers !== undefined && options.answers.has(method)
-      ? options.answers.get(method)
-      : answers.get(method)
+  const answer = (method: string, parameters: CommandParameters) => {
+    if (options.answers !== undefined && options.answers.has(method))
+      return options.answers.get(method)
+    if (method !== 'Runtime.evaluate') return answers.get(method)
+    // What a page answers to each thing the executor asks it.
+    const question = expressionOf(parameters['expression'])
+    if (question.includes('innerWidth')) return { result: { value: { width: 800, height: 600 } } }
+    if (question.includes('document.hasFocus')) return { result: { value: 'focused' } }
+    if (question.includes('resolve("seen")'))
+      return { result: { value: options.unseen === true ? 'unseen' : 'seen' } }
+    return { result: { value: 'ok' } }
+  }
   const browser: ControlledBrowser = {
     state: () => state,
     page: (tab) =>
@@ -126,7 +142,7 @@ function fixture(options: {
                 sent.push({ method, parameters })
                 if (options.during !== undefined)
                   yield* options.during({ method, parameters }, stop)
-                return answer(method)
+                return answer(method, parameters)
               }),
             focus: Effect.sync(() => {
               focus = 'page'
@@ -134,7 +150,7 @@ function fixture(options: {
                 focus = 'app'
               })
             }),
-            capture: Effect.succeed({ png: 'cG5n', width: 800, height: 600 }),
+            capture: Effect.succeed({ png: picture, width: 800, height: 600 }),
             settle: Effect.void,
           })
         : Effect.fail(new PageGone({})),
@@ -248,7 +264,7 @@ describe('carrying out one action on this computer', () => {
             : Option.none(),
         )
       const shot = yield* control.execute(request(BrowserAction.cases.Screenshot.make({})))
-      expect(pictureOf(shot)).toEqual(Option.some(Option.some('cG5n')))
+      expect(pictureOf(shot)).toEqual(Option.some(Option.some(picture)))
       const read = yield* control.execute(request(BrowserAction.cases.Read.make({})))
       expect(pictureOf(read)).toEqual(Option.some(Option.none()))
     }),
@@ -323,6 +339,21 @@ describe('carrying out one action on this computer', () => {
       const control = yield* page.control
       expect(yield* control.execute(click)).toEqual(failed)
       expect(page.input()).toEqual(['mousePressed', 'mouseReleased'])
+    }),
+  )
+
+  it.effect('a press the page never saw is a failed step, released, and not sent again', () =>
+    Effect.gen(function* () {
+      const page = fixture({ tabs: [pageOf(first, 'Inbox')], unseen: true })
+      const control = yield* page.control
+      expect(yield* control.execute(click)).toEqual(failed)
+      expect(page.input()).toEqual(['mousePressed', 'mouseReleased'])
+      const pressed = yield* control.execute(
+        request(BrowserAction.cases.Press.make({ key: 'Enter' })),
+      )
+      expect(pressed).toEqual(failed)
+      expect(page.input().slice(2)).toEqual(['keyDown', 'keyUp'])
+      expect(page.focus()).toBe('app')
     }),
   )
 

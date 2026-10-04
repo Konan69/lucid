@@ -1,3 +1,4 @@
+import * as NodeDns from 'node:dns'
 import * as NodeNet from 'node:net'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
@@ -76,3 +77,13 @@ export const mayOpen = Effect.fn('DesktopReach.mayOpen')(function* (
   )
   return addresses.length > 0 && addresses.every(isPublicAddress)
 })
+
+/** What the system resolver says a name leads to; failure is its own answer, not an empty list. */
+export const resolveHost = (host: string) =>
+  Effect.tryPromise({
+    try: () => NodeDns.promises.lookup(host, { all: true }),
+    catch: () => new Unresolved({}),
+  }).pipe(Effect.map((found) => found.map((entry) => entry.address)))
+
+/** Whether Vivid may open an address from this computer: the public internet only. */
+export const vividMayOpen = (address: string) => mayOpen(address, resolveHost)
