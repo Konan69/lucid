@@ -62,7 +62,7 @@ function Pairing({
   return (
     <Section
       title="Sign in another device"
-      detail="Open Vivid on your phone or the desktop app and choose “Sign in with a code”."
+      detail="Open Vivid on your phone or the desktop app and choose “Sign in with a code”. Only sign in a code you can see on your own device: whoever holds that device gets your account."
     >
       <Row label="Code from the other device" detail="It looks like ABCD-EFGH.">
         <form
