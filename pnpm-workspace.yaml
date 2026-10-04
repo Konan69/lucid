@@ -34,6 +34,8 @@ catalog:
   '@alchemy.run/better-auth': 2.0.0-beta.79
   '@alchemy.run/frontend-frameworks': 2.0.0-beta.79
   '@earendil-works/pi-ai': 0.87.1
+  '@effect/ai-openrouter': 4.0.0-rc.116
+  '@effect/ai-typesafe': 4.0.0-rc.116
   '@effect/atom-react': 4.0.0-rc.116
   '@effect/platform-node': 4.0.0-rc.116
   '@effect/sql-pg': 4.0.0-rc.116

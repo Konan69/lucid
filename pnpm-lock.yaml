@@ -173,6 +173,12 @@ catalogs:
     '@earendil-works/pi-ai':
       specifier: 0.87.1
       version: 0.87.1
+    '@effect/ai-openrouter':
+      specifier: 4.0.0-rc.116
+      version: 4.0.0-rc.116
+    '@effect/ai-typesafe':
+      specifier: 4.0.0-rc.116
+      version: 4.0.0-rc.116
     '@effect/atom-react':
       specifier: 4.0.0-rc.116
       version: 4.0.0-rc.116
@@ -599,6 +605,12 @@ importers:
       '@earendil-works/pi-codemode':
         specifier: 1.0.0
         version: 1.0.0
+      '@effect/ai-openrouter':
+        specifier: 'catalog:'
+        version: 4.0.0-rc.116(effect@4.0.0-rc.116)
+      '@effect/ai-typesafe':
+        specifier: 'catalog:'
+        version: 4.0.0-rc.116(effect@4.0.0-rc.116)
       '@effect/platform-node':
         specifier: 4.0.0-rc.116
         version: 4.0.0-rc.116(effect@4.0.0-rc.116)(redis@6.2.1(@opentelemetry/api@1.9.0))
@@ -1940,6 +1952,16 @@ packages:
   '@earendil-works/pi-telemetry@0.87.1':
     resolution: {integrity: sha512-MC6TRQH5lgMXpcN+Vku2WMI2T8BsiUPzMQHGo81uqFZD3/9O79WWJAysEDGuzduP6R4tvtgwMLwmqIxynM10JQ==}
     engines: {node: '>=22.19.0'}
+
+  '@effect/ai-openrouter@4.0.0-rc.116':
+    resolution: {integrity: sha512-V99cwtWwBpDncdQNG1TXgsqYb6314MlgZ4gtt4Qt9apRqZK5Bjf7bgvzFYwT5Snku8NXYXwelGiF6hzvHrdVlg==}
+    peerDependencies:
+      effect: 4.0.0-rc.116
+
+  '@effect/ai-typesafe@4.0.0-rc.116':
+    resolution: {integrity: sha512-yk3PFGCwAHajpTVs7VkCbywgCxbVWDFm90mxjRkTktQZcET8qkenZbNf576V3aWHuKKfp1kDfsWNLdxd/345UA==}
+    peerDependencies:
+      effect: 4.0.0-rc.116
 
   '@effect/atom-react@4.0.0-rc.116':
     resolution: {integrity: sha512-Kk5tEw0U5PoAcUaELWwQ34wuCVyLFZsjyyRePSIh3hL6rjORLamPfigJ8xDqYZS3CJg8HMtbND1eVethv404Jw==}
@@ -10160,6 +10182,14 @@ snapshots:
       quickjs-wasi: 3.6.2
 
   '@earendil-works/pi-telemetry@0.87.1': {}
+
+  '@effect/ai-openrouter@4.0.0-rc.116(effect@4.0.0-rc.116)':
+    dependencies:
+      effect: 4.0.0-rc.116
+
+  '@effect/ai-typesafe@4.0.0-rc.116(effect@4.0.0-rc.116)':
+    dependencies:
+      effect: 4.0.0-rc.116
 
   '@effect/atom-react@4.0.0-rc.116(effect@4.0.0-rc.116)(react@19.2.3)(scheduler@0.27.0)':
     dependencies:
