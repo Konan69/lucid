@@ -30,11 +30,12 @@
     "croner": "^10.0.1",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
-    "mime": "4.1.0",
     "html-to-text": "9.0.5",
     "ipaddr.js": "2.2.0",
     "kysely": "catalog:",
+    "mime": "4.1.0",
     "pg": "catalog:",
+    "spectrum-ts": "12.10.1",
     "tldts": "7.4.13",
     "unpdf": "^1.8.1",
     "web-push": "^3.6.7"

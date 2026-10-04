@@ -1,19 +1,30 @@
 import { useAtom, useAtomRefresh, useAtomValue } from '@effect/atom-react'
 import {
+  ChannelStanding,
   ConnectionOwnership,
   ConnectionState,
   ServiceAuthorization,
   ServiceCatalog,
   Workspace,
+  type ChannelLink,
   type Connection,
   type MeResponse,
   type Service,
 } from '@vivid/contracts'
-import { liveStateOf } from '@vivid/state'
+import { channelWords, liveStateOf } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { Building2, Search, Unplug } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { change, live, LiveState, services, serviceSearch, useLive } from '../../data/live'
+import {
+  change,
+  live,
+  LiveState,
+  services,
+  serviceSearch,
+  useLive,
+  useLiveValue,
+} from '../../data/live'
+import { router } from '../../data/route'
 import { orSay } from '../../data/said'
 import { Button, IconButton } from '../../ui/button'
 import { cn } from '../../ui/cn'
@@ -161,6 +172,7 @@ export function Connections({ me }: { me: MeResponse }) {
         onResume={(connection) => void resume(connection)}
         onDisconnect={disconnect}
       />
+      <TextVivid query={query} />
       <Catalog
         connected={connections
           .filter((item) => ConnectionState.guards.Ready(item.state))
@@ -426,6 +438,69 @@ const GRID = 'grid grid-cols-2 gap-2.5 sm:grid-cols-3'
 /** The shape every catalog tile has, pressable or not, so the grid never changes its rhythm. */
 const TILE =
   'flex h-16 w-full min-w-0 items-center gap-3 rounded-card bg-surface-3 px-3 text-left edge'
+
+/**
+ * The messaging apps a Person can text Vivid from, each as a tile that says where it stands.
+ *
+ * They are listed here because this is where a Person looks for "connect iMessage", but they are
+ * not Integrations in the catalog's sense: nothing is signed in to, and Vivid is not given an
+ * account to act through. So a tile does not connect anything itself; it opens "Text Vivid" in
+ * Settings, the one place the number and its code are handled. The search above filters them by
+ * name like everything else on the screen.
+ */
+function TextVivid({ query }: { query: string }) {
+  const channels = useLiveValue(live.channels)
+  if (Option.isNone(channels)) return null
+  const links = channels.value.channels.filter((link) => named(link.channel, query))
+  if (links.length === 0) return null
+  return (
+    <section>
+      <Heading title="Text Vivid" />
+      <ul className={GRID}>
+        {links.map((link) => (
+          <li key={link.channel}>
+            <ChannelTile link={link} />
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+/**
+ * One messaging app: its mark, its name and its standing in a word. A channel this Vivid is not
+ * set up for is shown and is not a button, the way a service nobody can connect here is.
+ */
+function ChannelTile({ link }: { link: ChannelLink }) {
+  const body = (
+    <>
+      <Mark service={{ name: link.channel }} size={40} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-title text-ink">{link.channel}</span>
+        <span className="block truncate text-meta font-meta text-ink-3">
+          {channelWords(link.standing)}
+        </span>
+      </span>
+    </>
+  )
+  if (ChannelStanding.guards.Unavailable(link.standing)) {
+    return <div className={cn(TILE, 'cursor-default opacity-60')}>{body}</div>
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => router.openSettings(Option.some('texting'))}
+      className={cn(
+        TILE,
+        'cursor-pointer outline-none hover:bg-surface-2 focus-visible:edge-primary',
+        PRESS,
+      )}
+    >
+      {body}
+      {ChannelStanding.guards.Connected(link.standing) && <Done drawn={false} />}
+    </button>
+  )
+}
 
 /**
  * The services Vivid can be connected to. Before anything is typed it shows the ones most people

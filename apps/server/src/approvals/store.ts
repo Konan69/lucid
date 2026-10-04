@@ -43,7 +43,13 @@ import { RuleStore } from '../rules/store.ts'
 import { readableBy, requireThread } from '../threads/access.ts'
 import { threads } from '../threads/tables.ts'
 import { Conversation, DeliveryMessage } from '../threads/conversation.ts'
-import { ActionOutcome, ActionRunner } from './gate.ts'
+import {
+  usesPersonalBrowser,
+  ActionOrigin,
+  actionOrigin,
+  ActionOutcome,
+  ActionRunner,
+} from './gate.ts'
 import { actionDigest, auditAction } from './action.ts'
 import { approvals } from './tables.ts'
 import { Signal, encodeSignal } from './signal.ts'
@@ -214,7 +220,42 @@ export class ApprovalStore extends Context.Service<ApprovalStore, ApprovalStoreS
   'vivid/ApprovalStore',
 ) {}
 
-/** A claim lives in the requester's workspace and only its addressed Person can touch it. */
+/**
+ * Who may decide, and what may become standing permission.
+ *
+ * Seeing a Thread never grants authority over someone's computer: only the Person whose computer
+ * it is may approve an action on it. "Always allow" is refused for a destructive action, and for
+ * anything of the Person's own (their Integration or their browser) in a Thread others can see.
+ * In a Thread only they can see, the Person's own browser takes "Always allow" exactly as their
+ * own Integration does: the owner decided on 4 October 2026 that a write there follows the
+ * Integration table (`policy.ts#reviewOutcome`), and it was the last place still treating the
+ * browser as always asked.
+ */
+const requireDecisionAuthority = Effect.fn('Approvals.requireDecisionAuthority')(function* (
+  actor: Actor,
+  row: typeof Row.Type,
+  request: DecideApprovalRequest,
+  audience: string,
+) {
+  const personalBrowser = usesPersonalBrowser(row.action)
+  if (
+    !ApprovalDecision.guards.Deny(request.decision) &&
+    personalBrowser &&
+    row.personId !== actor.person.id
+  )
+    return yield* new InvalidRequest({
+      message: 'Only the Person whose computer was requested can approve this action',
+    })
+  if (
+    ApprovalDecision.guards.AlwaysAllow(request.decision) &&
+    (row.action.effect === 'destructive' ||
+      ((personalBrowser || ActionTarget.guards.Connection(row.action.target)) &&
+        audience !== 'private'))
+  )
+    return yield* new InvalidRequest({ message: 'This kind of action is always asked about' })
+})
+
+/** Thread access permits decisions; Person-browser permission additionally belongs to its owner. */
 const claim = Effect.fn('Approvals.claim')(function* (
   actor: Actor,
   request: DecideApprovalRequest,
@@ -232,17 +273,7 @@ const claim = Effect.fn('Approvals.claim')(function* (
   const now = yield* Clock.currentTimeMillis
   if (Row.guards.expired(row) || (Row.guards.pending(row) && row.expiresAt <= now))
     return yield* Effect.fail(new Conflict({ message: 'This request ran out' }))
-  // Shared accounts only read, and ordinary reads never raise Approvals. A Connection Approval in
-  // a shared Thread therefore uses personal authority. Re-check current reach if sharing changed.
-  if (
-    ApprovalDecision.guards.AlwaysAllow(request.decision) &&
-    (row.action.effect === 'destructive' ||
-      (ActionTarget.guards.Connection(row.action.target) && thread.audience !== 'private'))
-  ) {
-    return yield* Effect.fail(
-      new InvalidRequest({ message: 'This kind of action is always asked about' }),
-    )
-  }
+  yield* requireDecisionAuthority(actor, row, request, thread.audience)
   const rows = yield* database.run(
     database
       .update(approvals)
@@ -390,6 +421,10 @@ const decide = Effect.fn('Approvals.decide')(function* (
     person: actor.person,
     workspace: actor.workspace,
     action: row.action,
+    origin:
+      row.runId === null
+        ? ActionOrigin.cases.RuntimeThread.make({ threadId: row.threadId })
+        : ActionOrigin.cases.Run.make({ threadId: row.threadId, runId: row.runId }),
   })
   const settled = yield* finish(actor, row, outcome)
   yield* changed(actor, Topic.thread(row.threadId))
@@ -410,7 +445,9 @@ const decide = Effect.fn('Approvals.decide')(function* (
 const raise = Effect.fn('Approvals.raise')(function* (actor: Actor, action: ProposedAction) {
   if (actor.by !== 'vivid' || Option.isNone(actor.threadId))
     return yield* Effect.fail(new NotFound({ message: 'Approval needs a Vivid Thread' }))
+  const origin = yield* actionOrigin(actor)
   const threadId = actor.threadId.value
+  const runId = ActionOrigin.guards.Run(origin) ? origin.runId : null
   const thread = yield* requireThread(threadId, actor.person.id)
   if (thread.companyId !== companyColumnOf(actor.workspace))
     return yield* Effect.fail(new NotFound({ message: 'Thread not found in workspace' }))
@@ -442,7 +479,7 @@ const raise = Effect.fn('Approvals.raise')(function* (actor: Actor, action: Prop
         .values({
           id: NodeCrypto.randomUUID(),
           threadId,
-          runId: null,
+          runId,
           personId: actor.person.id,
           companyId: companyColumnOf(actor.workspace),
           action: encoded,

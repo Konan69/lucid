@@ -1,6 +1,12 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
-import { ProposedAction, RuleScope } from '@vivid/contracts'
+import {
+  ActionTarget,
+  BrowserAction,
+  BrowseTarget,
+  ProposedAction,
+  RuleScope,
+} from '@vivid/contracts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { disabledDecisionLayer } from '../decisions/model.ts'
 import { ruleJudgeLayer } from '../rules/judge.ts'
@@ -25,6 +31,33 @@ const offLayer = gateLayer.pipe(
 )
 
 describe.skipIf(!testDatabaseConfigured)('The gate with decisions switched off', () => {
+  it.effect('a write on the Person’s own browser runs and a destructive one asks', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const gate = yield* Gate
+      // Konan, 4 Oct 2026: "I don't need approval for writing my browser". The Person's own
+      // signed-in browser follows the Integration table (`policy.ts#reviewOutcome`).
+      const action = ProposedAction.make({
+        summary: 'Click Send',
+        rationale: '',
+        effect: 'write',
+        target: ActionTarget.cases.Browser.make({
+          target: BrowseTarget.cases.Person.make({}),
+          action: BrowserAction.cases.Click.make({ target: 'Send' }),
+        }),
+      })
+      expect(yield* gate.check(test.vivid, action, 'Ordinary')).toEqual(
+        GateDecision.cases.Allowed.make({}),
+      )
+      const destructive = ProposedAction.make({ ...action, effect: 'destructive' })
+      expect(
+        GateDecision.guards.ApprovalRequired(
+          yield* gate.check(test.vivid, destructive, 'Ordinary'),
+        ),
+      ).toBe(true)
+    }).pipe(Effect.scoped, Effect.provide(offLayer)),
+  )
+
   it.effect('a write on the Person’s own Integration runs and a destructive action asks', () =>
     Effect.gen(function* () {
       const test = yield* fixture()

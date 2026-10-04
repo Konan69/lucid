@@ -21,6 +21,8 @@
     "./bridge": "./src/shared/bridge.ts"
   },
   "dependencies": {
+    "@vivid/client-runtime": "workspace:*",
+    "@vivid/contracts": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

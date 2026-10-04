@@ -8,11 +8,19 @@ export const ProviderId = Schema.String.check(
 export type ProviderId = typeof ProviderId.Type
 export const Size = Schema.Literals(['small', 'default', 'large'])
 export const Lifetime = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 2592000 }))
+/** Operator-published frozen Computer release; names are versioned and never point at a Person's machine. */
+export const TemplateName = Schema.String.check(
+  Schema.isPattern(/^vivid-computer-[a-z0-9-]{1,48}$/),
+)
 export const CreateRequest = Schema.Struct({
   type: Size,
   ttlSeconds: Schema.NullOr(Lifetime),
   noEnv: Schema.Literal(true),
   snapshots: Schema.Literal(true),
+  /** Optional only for historic persisted stock-image intents and the one-time preparation machine.
+   * Production configuration always supplies a verified frozen release. Boat's v1 `from` field
+   * restores that named snapshot without modifying its source machine. */
+  from: Schema.optionalKey(TemplateName),
   /** The organization whose wallet pays. Absent, Boat bills the account the API key belongs to:
    * an account that is in no organization has nothing to name here. */
   org: Schema.optionalKey(Schema.String.check(Schema.isNonEmpty())),

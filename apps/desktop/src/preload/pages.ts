@@ -120,6 +120,7 @@ export function createPagesBridge<E>(
     forward: (tab) => run(done(PagesRequest.cases.Forward.make({ tab }))),
     reload: (tab) => run(done(PagesRequest.cases.Reload.make({ tab }))),
     stop: (tab) => run(done(PagesRequest.cases.Stop.make({ tab }))),
+    stopVivid: (tab) => run(done(PagesRequest.cases.StopVivid.make({ tab }))),
     place: (placement) => run(done(PagesRequest.cases.Place.make({ placement }))),
     reset: () => run(done(PagesRequest.cases.Reset.make({}))),
     forget: () => run(done(PagesRequest.cases.Forget.make({}))),

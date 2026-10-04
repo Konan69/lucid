@@ -1,6 +1,7 @@
 import {
   PageFavicon,
   ShowingTab,
+  UsedTab,
   type BrowserState,
   type Page,
   type PagePlacement,
@@ -32,7 +33,12 @@ const bridge = 'vivid' in globalThis ? Option.some(globalThis.vivid.pages) : Opt
 /** What the panel has in front: Vivid's computer, an open page, or a page not opened yet. */
 export type Front = 'computer' | 'page' | 'new'
 
-const NO_PAGES: BrowserState = { revision: 0, tabs: [], showing: ShowingTab.cases.None.make({}) }
+const NO_PAGES: BrowserState = {
+  revision: 0,
+  tabs: [],
+  showing: ShowingTab.cases.None.make({}),
+  using: UsedTab.cases.None.make({}),
+}
 
 const listeners = new Set<() => void>()
 let state = NO_PAGES
@@ -50,7 +56,15 @@ const bring = (next: Front) => {
 
 if (Option.isSome(bridge)) {
   bridge.value.watch((next) => {
+    // Vivid has started using a page: bring that page and the panel forward, so the Person sees
+    // what Vivid is doing and has the Stop button in front of them. Only on the change, so a
+    // Person who then looks elsewhere is not pulled back for the rest of the action.
+    const started = UsedTab.guards.None(state.using) && UsedTab.guards.Some(next.using)
     state = next
+    if (started) {
+      front = 'page'
+      panel.show()
+    }
     // The last page closing leaves nothing to show, so the panel goes back to the computer.
     if (next.tabs.length === 0 && front === 'page') front = 'computer'
     tell()
@@ -92,6 +106,9 @@ export const pages = {
   current: () => state,
   front: () => front,
   showing,
+  /** Whether Vivid is acting on this page right now. The page says so while it is. */
+  usedByVivid: (browser: BrowserState, page: Page) =>
+    UsedTab.guards.Some(browser.using) && browser.using.value === page.tab,
   /** The page's own icon, when the document has declared one; otherwise the tab draws a globe. */
   favicon: (page: Page) =>
     PageFavicon.match(page.favicon, {
@@ -137,6 +154,9 @@ export const pages = {
   reload: (tab: Tab) =>
     ask((browser) => browser.reload(tab), 'That page could not be loaded again.'),
   stop: (tab: Tab) => ask((browser) => browser.stop(tab), 'That page could not be stopped.'),
+  /** Stops what Vivid is doing on this page, at once. Vivid is told the Person stopped it. */
+  stopVivid: (tab: Tab) =>
+    ask((browser) => browser.stopVivid(tab), 'Vivid could not be stopped. Try again.'),
   /** Where on the window the showing page is drawn, or that it is not drawn at all. */
   place: (placement: PagePlacement) => ask((browser) => browser.place(placement), ''),
   /** Closes every page, as part of signing out. What the pages remembered is kept. */

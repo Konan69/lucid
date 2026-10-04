@@ -17,6 +17,11 @@ export type PageOption<A> = ReturnType<typeof pageOption<Schema.declare<A>>>['Ty
 
 /** No selection and a selected opaque handle are exhaustive bridge states. */
 export const ShowingTab = pageOption(Tab)
+/**
+ * The page Vivid is acting on right now, when it is acting on one. It is set for the length of one
+ * action and cleared when the action ends, so the renderer can say so on that page.
+ */
+export const UsedTab = pageOption(Tab)
 /** Navigation failure is absent until Chromium reports its description. */
 export const PageLoadFailure = pageOption(Schema.String)
 /** The document may not supply an icon; its address stays clone-safe across preload. */
@@ -62,6 +67,7 @@ export const BrowserState = Schema.Struct({
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   tabs: Schema.Array(Page),
   showing: ShowingTab,
+  using: UsedTab,
 })
 export type BrowserState = typeof BrowserState.Type
 
@@ -89,6 +95,8 @@ export const PagesRequest = Schema.TaggedUnion({
   Forward: { tab: Tab },
   Reload: { tab: Tab },
   Stop: { tab: Tab },
+  /** The Person stops the action Vivid is running on this page. Not the same as `Stop`. */
+  StopVivid: { tab: Tab },
   Place: { placement: PagePlacement },
   Reframe: {},
   Get: {},
@@ -190,6 +198,11 @@ export interface VividPagesBridge {
   readonly forward: (tab: Tab) => Promise<void>
   readonly reload: (tab: Tab) => Promise<void>
   readonly stop: (tab: Tab) => Promise<void>
+  /**
+   * Stops the action Vivid is running on this page, at once. Only the app's own document can call
+   * it: pages have no bridge, so a website cannot stop Vivid or pretend the Person did.
+   */
+  readonly stopVivid: (tab: Tab) => Promise<void>
   readonly place: (placement: PagePlacement) => Promise<void>
   readonly watch: (listener: (state: BrowserState) => void) => () => void
   readonly watchDownloads: (listener: (event: PageDownloadRefused) => void) => () => void

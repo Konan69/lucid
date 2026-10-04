@@ -12,6 +12,8 @@ import {
   ApprovalState,
   AuditEvent,
   ActionTarget,
+  BrowseTarget,
+  BrowserAction,
   DesktopAction,
   Conflict,
   DatabaseFailure,
@@ -33,6 +35,17 @@ import { approvals } from './tables.ts'
 import { commandAction, connectionAction, fixture, Observation, trustTestLayer } from './testing.ts'
 
 const once = ApprovalDecision.cases.AllowOnce.make({})
+/** A click on the Person's own signed-in page. */
+const browserWrite = ProposedAction.make({
+  summary: 'Click Send',
+  rationale: '',
+  effect: 'write',
+  target: ActionTarget.cases.Browser.make({
+    target: BrowseTarget.cases.Person.make({}),
+    action: BrowserAction.cases.Click.make({ target: 'Send' }),
+  }),
+})
+
 const always = ApprovalDecision.cases.AlwaysAllow.make({})
 
 /** A1-A3 use addressed owner-role cards and real rows; reach loss must never settle pending work. */
@@ -546,4 +559,113 @@ describe.skipIf(!testDatabaseConfigured)('Approval recovery and permanent permis
         expect((yield* loadAudit(test.owner)).entries).toEqual([])
       }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
+
+  // Owner decision, 4 October 2026: a write on the Person's own browser follows the same table
+  // as a write through their own Integration, and that includes "Always allow".
+  it.effect(
+    'AlwaysAllow on the Person’s own browser writes the rule in a private Thread and runs the action',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const store = yield* ApprovalStore
+        const approval = yield* store.raise(test.vivid, browserWrite)
+        const settled = yield* store.decide(test.personal, {
+          id: approval.id,
+          digest: approval.digest,
+          decision: always,
+        })
+        expect(ApprovalState.guards.Succeeded(settled.state)).toBe(true)
+        expect(
+          (yield* (yield* RuleStore).list(test.personal)).map((rule) => rule.decision),
+        ).toEqual(['Allow'])
+        expect(yield* Ref.get((yield* Observation).actions)).toEqual([browserWrite])
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+
+  it.effect(
+    'AlwaysAllow on the Person’s own browser is refused in a Thread others can see, before claiming',
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const database = yield* Database
+        yield* database.run(
+          database
+            .update(threads)
+            .set({ audience: 'company' })
+            .where(eq(threads.id, test.companyId)),
+        )
+        const store = yield* ApprovalStore
+        const approval = yield* store.raise(test.companyVivid, browserWrite)
+        const result = yield* Effect.result(
+          store.decide(test.member, { id: approval.id, digest: approval.digest, decision: always }),
+        )
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) {
+          expect(result.failure).toBeInstanceOf(InvalidRequest)
+          expect(result.failure.message).toBe('This kind of action is always asked about')
+        }
+        expect((yield* store.inThread(test.companyId)).map((row) => row.state._tag)).toEqual([
+          'Pending',
+        ])
+        expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
 })
+
+/** Separate turns proposing the same capability share the first pending card and execute once. */
+describe.skipIf(!testDatabaseConfigured)('Approval identity across Runs', () => {
+  it.effect('keeps the first origin and returns one pending Approval to both Runs', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const database = yield* Database
+      const store = yield* ApprovalStore
+      const first = RunId.make(NodeCrypto.randomUUID())
+      const second = RunId.make(NodeCrypto.randomUUID())
+      const origin = encodeCrossRunOrigin(StoredRunOrigin.cases.Message.make({}))
+      yield* database.run(
+        database.insert(runs).values({
+          id: first,
+          threadId: test.personalId,
+          personId: test.personal.person.id,
+          turn: 1,
+          state: 'working',
+          origin,
+          startedAt: 0,
+          admittedAt: 0,
+        }),
+      )
+      const initial = yield* store.raise(test.vivid, commandAction)
+      yield* database.run(
+        database.update(runs).set({ state: 'completed', finishedAt: 1 }).where(eq(runs.id, first)),
+      )
+      yield* database.run(
+        database.insert(runs).values({
+          id: second,
+          threadId: test.personalId,
+          personId: test.personal.person.id,
+          turn: 2,
+          state: 'working',
+          origin,
+          startedAt: 1,
+          admittedAt: 1,
+        }),
+      )
+      const repeated = yield* store.raise(test.vivid, commandAction)
+      expect(repeated.id).toBe(initial.id)
+      expect(repeated.runId).toBe(first)
+      expect(yield* store.inThread(test.personalId)).toHaveLength(1)
+      const request = { id: initial.id, digest: initial.digest, decision: once }
+      expect((yield* store.decide(test.personal, request)).state._tag).toBe('Succeeded')
+      expect((yield* store.decide(test.personal, request).pipe(Effect.flip))._tag).toBe('Conflict')
+      expect(yield* Ref.get((yield* Observation).actions)).toEqual([commandAction])
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  )
+})
+
+import * as NodeCrypto from 'node:crypto'
+import * as Schema from 'effect/Schema'
+import { RunId } from '@vivid/contracts'
+import { runs } from '../threads/tables.ts'
+import { StoredRunOrigin } from '../threads/conversation.ts'
+
+const encodeCrossRunOrigin = Schema.encodeSync(StoredRunOrigin)

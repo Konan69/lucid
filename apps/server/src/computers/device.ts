@@ -6,6 +6,7 @@ import {
   Deferred,
   Effect,
   Layer,
+  Match,
   Option,
   Queue,
   Schema,
@@ -15,6 +16,7 @@ import {
 } from 'effect'
 import {
   BrowseOutcome,
+  RunState,
   DatabaseFailure,
   Device,
   DeviceAccess,
@@ -34,9 +36,10 @@ import {
   type PersonId,
   type SessionId,
   type ThreadId,
+  type RunId,
 } from '@vivid/contracts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
-import { actingRun, type NoActingRun } from '../threads/runs.ts'
+import { NoActingRun, admittedRunState } from '../threads/runs.ts'
 import { DeviceReceipt, DeviceSubscriptionId, receiptOf } from './receipt.ts'
 import { deviceRequests, devices } from './tables.ts'
 
@@ -77,6 +80,13 @@ interface Pending {
   readonly answer: Deferred.Deferred<DeviceAnswer>
 }
 
+/**
+ * On whose word an action is sent to the Person's computer: the Run acting now, or the Person
+ * who approved what a Run proposed. See `dispatchRun` for what each one requires of the Run.
+ */
+export const BrowseAuthority = Schema.TaggedUnion({ Acting: {}, Approved: {} })
+export type BrowseAuthority = typeof BrowseAuthority.Type
+
 export interface DeviceService {
   /** Records this installation as one of the Person's computers. Repeating it returns the same one. */
   readonly enrol: (
@@ -112,11 +122,13 @@ export interface DeviceService {
     NotFound | Forbidden | DatabaseInfrastructureError,
     Scope.Scope
   >
-  /** Sends one action to the Person's computer for the Run working in this Thread. */
+  /** Sends one action to the Person's computer for the Run that proposed it in this Thread. */
   readonly browse: (input: {
     readonly personId: PersonId
     readonly threadId: ThreadId
+    readonly runId: RunId
     readonly action: BrowserAction
+    readonly authority: BrowseAuthority
   }) => Effect.Effect<
     BrowseOutcome,
     NoDeviceConnected | NoActingRun | DeviceBusy | DatabaseInfrastructureError
@@ -168,10 +180,16 @@ const accessColumns = (access: DeviceAccess) => ({
 const outcomeOf = (answer: DeviceAnswer): BrowseOutcome =>
   DeviceAnswer.match<BrowseOutcome>(answer, {
     Done: ({ result }) => BrowseOutcome.cases.Completed.make({ result }),
+    // The Device’s legacy NotAllowed literal means an address/page refusal, not access permission.
+    // Keep the wire vocabulary compatible with desktop while making the product outcome precise.
     Refused: ({ reason }) =>
-      BrowseOutcome.cases.Unavailable.make({
-        reason: `The Person’s computer refused this action: ${reason}.`,
-      }),
+      Match.value(reason).pipe(
+        Match.when('NotAllowed', () => BrowseOutcome.cases.AddressRefused.make({})),
+        Match.when('Stopped', () => BrowseOutcome.cases.Stopped.make({})),
+        Match.when('PageGone', () => BrowseOutcome.cases.PageGone.make({})),
+        Match.when('Unsupported', () => BrowseOutcome.cases.Unsupported.make({})),
+        Match.exhaustive,
+      ),
     Failed: () =>
       BrowseOutcome.cases.Unavailable.make({
         reason: 'The Person’s computer could not complete this action.',
@@ -577,6 +595,9 @@ const makeSend = (
     )
     pending.set(request.id, ticket)
     return yield* awaitAnswer(request, ticket).pipe(
+      // Dispatch has a durable row and may already have reached the page. A failed settlement
+      // write cannot turn uncertainty into a retryable refusal; reconcile will close the row.
+      Effect.catch(() => Effect.succeed(BrowseOutcome.cases.OutcomeUnknown.make({}))),
       // A Run that is stopped mid-request has nobody left to tell. The row is still closed here;
       // if that write fails it stays `Dispatched` until its deadline, and `reconcile` closes it.
       Effect.onInterrupt(() =>
@@ -600,6 +621,31 @@ interface Dispatcher {
 }
 
 /**
+ * Whether the Run named by a request may have its action sent, which depends on who is asking.
+ *
+ * `Acting`: the Run is sending its own action now, so it must still be working. `Approved`: the
+ * Person answered an Approval the Run raised. Raising an Approval ends the Run's turn and the Run
+ * settles as completed, so by the time anyone can press Allow the Run is never working. Requiring
+ * a working Run there (as this did for a few hours on 4 October 2026) meant an approved action
+ * was never sent: the card settled as failed, Vivid proposed again, and the Person was asked
+ * again, for ever. An approved action is therefore sent for a Run that is working or completed.
+ * A Run the Person stopped, or one that failed or whose outcome is unknown, authorizes nothing
+ * either way: stopping is the Person saying "no more from this".
+ */
+const dispatchRun = Effect.fn('Device.dispatchRun')(function* (
+  input: Parameters<DeviceService['browse']>[0],
+) {
+  const state = yield* admittedRunState(input)
+  return RunState.match(state, {
+    Working: () => true,
+    Completed: () => BrowseAuthority.guards.Approved(input.authority),
+    Failed: () => false,
+    Stopped: () => false,
+    Unknown: () => false,
+  })
+})
+
+/**
  * The whole path of one action: which Run is asking, which computer it may use, its turn, the
  * request itself.
  *
@@ -618,11 +664,8 @@ const makeBrowse = ({ database, registry, links, send }: Dispatcher): DeviceServ
   }
 
   return Effect.fn('Device.browse')(function* (input) {
-    // The shared-Thread rule. `personId` is whose computer would be used; the Run working in the
-    // Thread must be acting for that same Person, by the Run's own record.
-    const runId = yield* actingRun(input.threadId, input.personId).pipe(
-      Effect.provideService(Database, database),
-    )
+    if (!(yield* dispatchRun(input).pipe(Effect.provideService(Database, database))))
+      return BrowseOutcome.cases.RunRequired.make({})
     const device = yield* registry.allowed(input.personId)
     if (Option.isNone(device)) return yield* new NoDeviceConnected({})
     const id = device.value.id
@@ -631,13 +674,16 @@ const makeBrowse = ({ database, registry, links, send }: Dispatcher): DeviceServ
       turnOf(id),
       id,
       Effect.gen(function* () {
+        // Stop can arrive while queued; recheck the same Run immediately before dispatch.
+        if (!(yield* dispatchRun(input).pipe(Effect.provideService(Database, database))))
+          return BrowseOutcome.cases.RunRequired.make({})
         // Read after the turn is taken: the link that was there when the wait began may be gone.
         const subscription = links.get(id)
         if (subscription === undefined) return yield* new NoDeviceConnected({})
         const request = DeviceRequest.make({
           id: DeviceRequestId.make(NodeCrypto.randomUUID()),
           threadId: input.threadId,
-          runId,
+          runId: input.runId,
           action: input.action,
           expiresAt,
         })

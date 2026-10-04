@@ -48,6 +48,8 @@ export const live = {
     (client, shelf) => client.WatchLibrary({ shelf }),
   ),
   connections: one((client) => client.WatchConnections()),
+  /** The messaging apps a Person can text Vivid from, and where each stands for them. */
+  channels: one((client) => client.WatchChannels()),
   rules: one((client) => client.WatchRules()),
   audit: one((client) => client.WatchAudit()),
   memory: one((client) => client.WatchMemory()),

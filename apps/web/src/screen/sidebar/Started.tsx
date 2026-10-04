@@ -20,6 +20,7 @@ import { Customise } from '../vivid/Customise'
 const TITLE = {
   connect: () => 'Connect what you use most',
   name: (vivid) => `Name ${vivid}`,
+  text: (vivid) => `Text ${vivid} from your phone`,
 } satisfies Record<StepKind, (vivid: string) => string>
 
 /**
@@ -50,6 +51,7 @@ export function Started({ me }: { me: MeResponse }) {
   const take = {
     connect: () => router.openSettings(Option.some('connections')),
     name: () => setCustomising(true),
+    text: () => router.openSettings(Option.some('texting')),
   } satisfies Record<StepKind, () => void>
 
   return (

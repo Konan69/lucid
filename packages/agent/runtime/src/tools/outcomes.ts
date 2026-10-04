@@ -96,7 +96,58 @@ export function commandOutcome(outcome: CommandOutcome): ToolResult {
 
 /** Browser results keep the page outline and authorization decisions supplied by the server. */
 export function browseOutcome(outcome: BrowseOutcome): ToolResult {
-  return BrowseOutcome.match(outcome, {
+  return BrowseOutcome.match<ToolResult>(outcome, {
+    NotConnected: () => ({
+      output: {
+        ok: false,
+        message: 'The Person’s desktop app is not connected. Ask them to connect it.',
+      },
+    }),
+    AddressRefused: () => ({
+      output: {
+        ok: false,
+        message:
+          'That page or address cannot be opened on the Person’s computer. Use a public web address.',
+      },
+    }),
+    NotAllowed: () => ({
+      output: {
+        ok: false,
+        message:
+          'The Person has not allowed access to their computer. Ask them to allow it in the desktop app.',
+      },
+    }),
+    Busy: () => ({
+      output: {
+        ok: false,
+        message: 'The Person’s computer is busy with an earlier action. Wait for it to finish.',
+      },
+    }),
+    Stopped: () => ({
+      output: {
+        ok: false,
+        message: 'The Person took control of the page. Stop and do not retry by yourself.',
+      },
+      terminate: true,
+    }),
+    PageGone: () => ({
+      output: { ok: false, message: 'The page is gone. Ask the Person to open it again.' },
+    }),
+    Unsupported: () => ({
+      output: {
+        ok: false,
+        message:
+          'The Person’s computer does not support this browser action. Ask the Person to do it.',
+      },
+    }),
+    RunRequired: () => ({
+      output: {
+        ok: false,
+        message:
+          'Nothing was sent, because the work that asked for it has ended. Ask the Person before trying again.',
+      },
+      terminate: true,
+    }),
     Completed: ({ result }) => ({
       output: { ok: true, result: views.browse(result), message: 'The browser action completed.' },
     }),

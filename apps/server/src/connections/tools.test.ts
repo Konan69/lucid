@@ -1,9 +1,9 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { Deferred, Effect, Fiber, Layer, Predicate, Ref, Schema } from 'effect'
+import { Clock, Deferred, Effect, Fiber, Layer, Logger, Predicate, Ref, Schema } from 'effect'
 import { ScriptedAnswer } from '../decisions/testing.ts'
-import { AiError, DecisionModel } from 'effect/unstable/ai'
+import { DecisionModel } from 'effect/unstable/ai'
 import { RELEVANCE_BUDGET } from './relevance.ts'
-import { toolEffectsLayer } from './effects.ts'
+import { ToolEffects, toolEffectsLayer } from './effects.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { ActionTarget, ConnectionStep } from '@vivid/contracts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
@@ -11,9 +11,6 @@ import { ExecutorTool } from './executor.ts'
 import { ConnectionStore } from './store.ts'
 import { ConnectionProbe, connectionTestLayer, fixture, serviceId } from './testing.ts'
 import { connectionRunner, findTools, resolveTool, useTool } from './tools.ts'
-
-/** Scripted provider state is an actual JSON ingress, decoded once with a shared codec. */
-const decodeEffectInput = Schema.decodeUnknownEffect(Schema.Struct({ tool: Schema.String }))
 
 /** Discovery uses real scoped records; suffixes must remain stable across ranking queries and ownership. */
 describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
@@ -237,9 +234,10 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           shared: false,
         })
         const sizes: number[] = []
+        const states: Schema.Json[] = []
         const model = yield* DecisionModel.make({
           decide: ({ state, decisions }) => {
-            expect(state).toEqual({ request: 'record' })
+            states.push(state)
             sizes.push(Object.keys(decisions).length)
             return Effect.succeed({
               answers: Object.fromEntries(
@@ -255,6 +253,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         const result = yield* findTools(ownerActor, { query: 'record', limit: 25 }).pipe(
           Effect.provideService(DecisionModel.DecisionModel, model),
         )
+        expect(states).toEqual([{ request: 'record' }])
         expect(sizes).toEqual([20])
         expect(result.tools.map((tool) => tool.name)).toEqual([
           'operation_19',
@@ -264,55 +263,58 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
       }),
     )
 
-    /** A caller's eight-result limit must not let eight semantic promotions displace the best
-     * lexical match. The real public discovery seam applies the limit after optional ranking. */
-    it.effect('retains the first lexical result when eight promotions fill the caller limit', () =>
-      Effect.gen(function* () {
-        const { ownerActor } = yield* fixture()
-        const probe = yield* ConnectionProbe
-        const previous = yield* Ref.get(probe.tools)
-        yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
-        yield* Ref.set(probe.tools, [
-          ExecutorTool.make({
-            name: 'needle',
-            description: 'Read needle records',
-            effect: 'read',
-            input: {},
-          }),
-          ...Array.from({ length: 8 }, (_, index) =>
+    /** One-result discovery keeps Jev's winner; larger bounds protect the lexical first in
+     * the final slot. Both choices are observable through the real public discovery seam. */
+    it.effect.each([1, 8])(
+      'keeps the promoted winner and applies the lexical safeguard at limit %s',
+      (limit) =>
+        Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          const probe = yield* ConnectionProbe
+          const previous = yield* Ref.get(probe.tools)
+          yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
+          yield* Ref.set(probe.tools, [
             ExecutorTool.make({
-              name: `lookup_${index}`,
+              name: 'needle',
               description: 'Read needle records',
               effect: 'read',
               input: {},
             }),
-          ),
-        ])
-        yield* (yield* ConnectionStore).begin(ownerActor, {
-          service: serviceId,
-          label: 'Work',
-          shared: false,
-        })
-        const model = yield* DecisionModel.make({
-          decide: ({ decisions }) =>
-            Effect.succeed({
-              answers: Object.fromEntries(
-                Object.keys(decisions).map((key, index) => [
-                  key,
-                  ScriptedAnswer.cases.Probability.make({ probability: index === 0 ? 0.1 : 0.9 }),
-                ]),
-              ),
-              usage: { inputTokens: undefined, outputTokens: undefined },
-            }),
-        })
-        const result = yield* findTools(ownerActor, { query: 'needle', limit: 8 }).pipe(
-          Effect.provideService(DecisionModel.DecisionModel, model),
-        )
-        expect(result.tools.map((tool) => tool.name)).toEqual([
-          'needle',
-          ...Array.from({ length: 7 }, (_, index) => `lookup_${index}`),
-        ])
-      }),
+            ...Array.from({ length: 8 }, (_, index) =>
+              ExecutorTool.make({
+                name: `lookup_${index}`,
+                description: 'Read needle records',
+                effect: 'read',
+                input: {},
+              }),
+            ),
+          ])
+          yield* (yield* ConnectionStore).begin(ownerActor, {
+            service: serviceId,
+            label: 'Work',
+            shared: false,
+          })
+          const model = yield* DecisionModel.make({
+            decide: ({ decisions }) =>
+              Effect.succeed({
+                answers: Object.fromEntries(
+                  Object.keys(decisions).map((key, index) => [
+                    key,
+                    ScriptedAnswer.cases.Probability.make({ probability: index === 0 ? 0.1 : 0.9 }),
+                  ]),
+                ),
+                usage: { inputTokens: undefined, outputTokens: undefined },
+              }),
+          })
+          const result = yield* findTools(ownerActor, { query: 'needle', limit }).pipe(
+            Effect.provideService(DecisionModel.DecisionModel, model),
+          )
+          expect(result.tools.map((tool) => tool.name)).toEqual(
+            limit === 1
+              ? ['lookup_0']
+              : [...Array.from({ length: 7 }, (_, index) => `lookup_${index}`), 'needle'],
+          )
+        }),
     )
 
     /** A sole lexical result has no relative position to enrich. A stalled supplied model
@@ -348,6 +350,72 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         )
         expect(result.tools.map((tool) => tool.name)).toEqual(['read'])
         expect(calls).toBe(0)
+      }),
+    )
+
+    /** Catalog I/O is mandatory OFF work. Its latency must not consume Jev's
+     * shared allowance or prevent relevance when effect hints need no judgment. */
+    it.effect('slow mandatory reads leave the full optional relevance budget', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const store = yield* ConnectionStore
+        yield* store.begin(ownerActor, { service: serviceId, label: 'Work', shared: false })
+        const recordsStarted = yield* Deferred.make<void>()
+        const releaseRecords = yield* Deferred.make<void>()
+        const toolsStarted = yield* Deferred.make<void>()
+        const releaseTools = yield* Deferred.make<void>()
+        const scriptedStore = ConnectionStore.of({
+          ...store,
+          records: Effect.fn('Test.slowRecords')(function* (actor) {
+            yield* Deferred.succeed(recordsStarted, undefined)
+            yield* Deferred.await(releaseRecords)
+            return yield* store.records(actor)
+          }),
+          tools: Effect.fn('Test.slowCatalog')(function* () {
+            yield* Deferred.succeed(toolsStarted, undefined)
+            yield* Deferred.await(releaseTools)
+            return ['list_records', 'search_records'].map((name) =>
+              ExecutorTool.make({
+                name,
+                description: 'Read existing records',
+                effect: 'read',
+                input: {},
+              }),
+            )
+          }),
+        })
+        let calls = 0
+        const model = yield* DecisionModel.make({
+          decide: ({ decisions }) => {
+            calls += 1
+            return Effect.succeed({
+              answers: Object.fromEntries(
+                Object.keys(decisions).map((key, index) => [
+                  key,
+                  ScriptedAnswer.cases.Probability.make({ probability: index === 1 ? 0.9 : 0.1 }),
+                ]),
+              ),
+              usage: { inputTokens: undefined, outputTokens: undefined },
+            })
+          },
+        })
+        const started = yield* Clock.currentTimeMillis
+        const pending = yield* findTools(ownerActor, { query: 'records', limit: 1 }).pipe(
+          Effect.provideService(ConnectionStore, scriptedStore),
+          Effect.provideService(DecisionModel.DecisionModel, model),
+          Effect.forkChild,
+        )
+        yield* Deferred.await(recordsStarted)
+        yield* TestClock.adjust('2300 millis')
+        yield* Deferred.succeed(releaseRecords, undefined)
+        yield* Deferred.await(toolsStarted)
+        yield* TestClock.adjust('2700 millis')
+        yield* Deferred.succeed(releaseTools, undefined)
+        expect((yield* Fiber.join(pending)).tools.map((tool) => tool.name)).toEqual([
+          'search_records',
+        ])
+        expect(calls).toBe(1)
+        expect((yield* Clock.currentTimeMillis) - started).toBe(5000)
       }),
     )
 
@@ -484,6 +552,226 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
       }),
     )
 
+    /** A short remainder cannot fund relevance near its measured median. A typed release
+     * spends 1.5s on effects and proves the remaining 0.5s is skipped silently. */
+    it.effect('skips relevance silently when classification leaves less than its warm floor', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const probe = yield* ConnectionProbe
+        const previous = yield* Ref.get(probe.tools)
+        yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
+        yield* Ref.set(
+          probe.tools,
+          [0, 1].map((index) =>
+            ExecutorTool.make({
+              name: `lookup_${index}`,
+              description: 'Lookup a record',
+              effect: 'write',
+              input: {},
+            }),
+          ),
+        )
+        yield* (yield* ConnectionStore).begin(ownerActor, {
+          service: serviceId,
+          label: 'Work',
+          shared: false,
+        })
+        const effectsStarted = yield* Deferred.make<void>()
+        const releaseEffects = yield* Deferred.make<void>()
+        const lines: string[] = []
+        let calls = 0
+        const modelLayer = Layer.effect(
+          DecisionModel.DecisionModel,
+          DecisionModel.make({
+            decide: Effect.fn('Test.discoveryDeadline')(function* ({ decisions }) {
+              calls += 1
+              if (calls > 1) {
+                return yield* Effect.never
+              }
+              yield* Deferred.succeed(effectsStarted, undefined)
+              yield* Deferred.await(releaseEffects)
+              return {
+                answers: Object.fromEntries(
+                  Object.keys(decisions).map((key) => [
+                    key,
+                    ScriptedAnswer.cases.Classify.make({
+                      label: 'read',
+                      probabilities: { read: 0.99, write: 0.01, destructive: 0 },
+                    }),
+                  ]),
+                ),
+                usage: { inputTokens: undefined, outputTokens: undefined },
+              }
+            }),
+          }),
+        )
+        yield* Effect.gen(function* () {
+          const start = yield* Clock.currentTimeMillis
+          const pending = yield* findTools(ownerActor, { query: 'record' }).pipe(Effect.forkChild)
+          yield* Deferred.await(effectsStarted)
+          yield* TestClock.adjust('1500 millis')
+          yield* Deferred.succeed(releaseEffects, undefined)
+          expect((yield* Fiber.join(pending)).tools.map((tool) => tool.name)).toEqual([
+            'lookup_0',
+            'lookup_1',
+          ])
+          expect((yield* Clock.currentTimeMillis) - start).toBe(1500)
+          expect(calls).toBe(1)
+          expect(lines.some((line) => line.includes('unavailable'))).toBe(false)
+        }).pipe(
+          Effect.provide(Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer)))),
+          Effect.provide(
+            Logger.layer([
+              Logger.make(({ message }) => {
+                lines.push(JSON.stringify(message))
+              }),
+            ]),
+          ),
+        )
+      }),
+    )
+
+    /** Nine real Integrations exceed the four-way classification fanout. The second wave
+     * must stop at the original deadline and retain writes for this caller. Their
+     * bounded lookups continue in the Layer and supply the next call's cached reads;
+     * a shared read hint still bypasses Jev and survives optional cancellation. */
+    it.effect('bounds discovery while late Integration lookups fill the shared cache', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const store = yield* ConnectionStore
+        for (let index = 0; index < 9; index += 1)
+          yield* store.begin(ownerActor, {
+            service: serviceId,
+            label: `Account ${index}`,
+            shared: false,
+          })
+        const scriptedStore = ConnectionStore.of({
+          ...store,
+          tools: Effect.fn('Test.integrationTools')((_actor, row) =>
+            Effect.succeed([
+              ExecutorTool.make({
+                name: `lookup_${row.label}`,
+                description: 'Lookup existing records',
+                effect: 'write',
+                input: {},
+              }),
+              ExecutorTool.make({
+                name: `read_${row.label}`,
+                description: 'Read records',
+                effect: 'read',
+                input: {},
+              }),
+            ]),
+          ),
+        })
+        const firstStarted = yield* Deferred.make<void>()
+        const firstRelease = yield* Deferred.make<void>()
+        const secondStarted = yield* Deferred.make<void>()
+        const secondRelease = yield* Deferred.make<void>()
+        const firstNames: string[] = []
+        const retriedNames: string[] = []
+        let wave = 0
+        const modelLayer = Layer.effect(
+          DecisionModel.DecisionModel,
+          DecisionModel.make({
+            decide: Effect.fn('Test.integrationWaves')(function* ({ decisions }) {
+              // Relevance is a separate provider workload after the second discovery recovers.
+              if (
+                Object.values(decisions).every((decision) =>
+                  Predicate.isTagged(decision, 'Probability'),
+                )
+              )
+                return {
+                  answers: Object.fromEntries(
+                    Object.keys(decisions).map((key) => [
+                      key,
+                      ScriptedAnswer.cases.Probability.make({ probability: 0.1 }),
+                    ]),
+                  ),
+                  usage: { inputTokens: undefined, outputTokens: undefined },
+                }
+              wave += 1
+              const questions = Object.values(decisions).map((decision) => decision.instructions)
+              if (wave === 1) {
+                firstNames.push(...questions)
+                yield* Deferred.succeed(firstStarted, undefined)
+                yield* Deferred.await(firstRelease)
+              } else if (wave === 2) {
+                yield* Deferred.succeed(secondStarted, undefined)
+                yield* Deferred.await(secondRelease)
+              } else retriedNames.push(...questions)
+              return {
+                answers: Object.fromEntries(
+                  Object.keys(decisions).map((key) => [
+                    key,
+                    ScriptedAnswer.cases.Classify.make({
+                      label: 'read',
+                      probabilities: { read: 1, write: 0, destructive: 0 },
+                    }),
+                  ]),
+                ),
+                usage: { inputTokens: undefined, outputTokens: undefined },
+              }
+            }),
+          }),
+        )
+        const lines: string[] = []
+        yield* Effect.gen(function* () {
+          const started = yield* Clock.currentTimeMillis
+          const pending = yield* findTools(ownerActor, { query: 'records', limit: 25 }).pipe(
+            Effect.forkChild,
+          )
+          yield* Deferred.await(firstStarted)
+          yield* TestClock.adjust('1700 millis')
+          yield* Deferred.succeed(firstRelease, undefined)
+          yield* Deferred.await(secondStarted)
+          yield* TestClock.adjust('300 millis')
+          const first = yield* Fiber.join(pending)
+          expect((yield* Clock.currentTimeMillis) - started).toBe(2000)
+          expect(first.tools.filter((tool) => tool.effect === 'read')).toHaveLength(13)
+          expect(first.tools.filter((tool) => tool.effect === 'write')).toHaveLength(5)
+          expect(firstNames).toHaveLength(4)
+          expect(wave).toBe(2)
+          expect(lines.some((line) => line.includes('unavailable'))).toBe(false)
+          // The first caller has left. Await the late public classification
+          // receipt before the second discovery, proving it reads completed cache.
+          yield* TestClock.adjust('100 millis')
+          yield* Deferred.succeed(secondRelease, undefined)
+          const service = yield* store.service(serviceId)
+          yield* (yield* ToolEffects).classifyBatch({
+            serviceId,
+            service: service.name,
+            tools: first.tools
+              .filter((tool) => tool.effect === 'write')
+              .map((tool) =>
+                ExecutorTool.make({
+                  name: tool.name,
+                  description: tool.description,
+                  effect: tool.effect,
+                  input: {},
+                }),
+              ),
+          })
+          const second = yield* findTools(ownerActor, { query: 'records', limit: 25 })
+          expect(second.tools.every((tool) => tool.effect === 'read')).toBe(true)
+          // The ninth Integration never began its lookup before the deadline;
+          // only that unstarted key needs a new request. Four late keys are cached.
+          expect(retriedNames).toHaveLength(1)
+          expect(wave).toBe(3)
+        }).pipe(
+          Effect.provideService(ConnectionStore, scriptedStore),
+          Effect.provide(Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer)))),
+          Effect.provide(
+            Logger.layer([
+              Logger.make(({ message }) => {
+                lines.push(JSON.stringify(message))
+              }),
+            ]),
+          ),
+        )
+      }),
+    )
+
     /** Every execution entrypoint inspects exactly the requested undeclared tool. */
     it.effect('direct use, resolution and approved use never classify the whole catalog', () =>
       Effect.gen(function* () {
@@ -511,26 +799,19 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         const modelLayer = Layer.effect(
           DecisionModel.DecisionModel,
           DecisionModel.make({
-            decide: Effect.fn('Test.requestedEffect')(function* ({ state }) {
-              const input = yield* decodeEffectInput(state).pipe(
-                Effect.mapError(() =>
-                  AiError.make({
-                    module: 'Test',
-                    method: 'decide',
-                    reason: new AiError.InvalidUserInputError({ description: 'Invalid fixture' }),
-                  }),
-                ),
-              )
-              names.push(input.tool)
-              return {
+            decide: Effect.fn('Test.requestedEffect')(({ decisions }) => {
+              const questions = Object.values(decisions)
+              expect(questions).toHaveLength(1)
+              for (const question of questions) names.push(question.instructions)
+              return Effect.succeed({
                 answers: {
-                  effect: ScriptedAnswer.cases.Classify.make({
+                  tool_0: ScriptedAnswer.cases.Classify.make({
                     label: 'read',
                     probabilities: { read: 0.99, write: 0.01, destructive: 0 },
                   }),
                 },
                 usage: { inputTokens: undefined, outputTokens: undefined },
-              }
+              })
             }),
           }),
         )
@@ -553,7 +834,9 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               input: {},
             }),
           })
-          expect(names).toEqual(['lookup_0', 'lookup_1', 'lookup_2'])
+          expect(names).toHaveLength(3)
+          for (const [index, question] of names.entries())
+            expect(question).toContain(`"tool":"lookup_${index}"`)
         }).pipe(Effect.provide(Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer)))))
       }),
     )

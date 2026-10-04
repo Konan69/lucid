@@ -1,0 +1,206 @@
+{
+  "support": [
+    "ca-certificates",
+    "curl",
+    "python3",
+    "python3-venv",
+    "python3-pip",
+    "dbus-x11",
+    "xfce4-panel",
+    "xfce4-appfinder",
+    "xfconf",
+    "adwaita-icon-theme",
+    "fonts-dejavu",
+    "fonts-liberation",
+    "fonts-noto-core",
+    "fonts-noto-cjk",
+    "fonts-noto-color-emoji",
+    "libglu1-mesa",
+    "libnss3",
+    "libxcb-cursor0",
+    "libxkbcommon-x11-0"
+  ],
+  "python": [
+    "openpyxl==3.1.5",
+    "python-docx==1.2.0",
+    "python-pptx==1.0.2",
+    "pypdf==6.1.1",
+    "reportlab==4.4.4",
+    "Pillow==11.3.0"
+  ],
+  "apps": [
+    {
+      "name": "Browser",
+      "purpose": "Browse websites with a persistent profile",
+      "packages": [],
+      "commands": ["google-chrome-stable", "chromium"],
+      "desktop": []
+    },
+    {
+      "name": "LibreOffice Writer",
+      "purpose": "Edit documents and render them headlessly",
+      "packages": ["libreoffice-writer"],
+      "commands": ["libreoffice"],
+      "desktop": ["libreoffice-writer.desktop"]
+    },
+    {
+      "name": "LibreOffice Calc",
+      "purpose": "Edit spreadsheets and recalculate formulas",
+      "packages": ["libreoffice-calc"],
+      "commands": ["libreoffice"],
+      "desktop": ["libreoffice-calc.desktop"]
+    },
+    {
+      "name": "LibreOffice Impress",
+      "purpose": "Edit presentations and render slides headlessly",
+      "packages": ["libreoffice-impress"],
+      "commands": ["libreoffice"],
+      "desktop": ["libreoffice-impress.desktop"]
+    },
+    {
+      "name": "LibreOffice Draw",
+      "purpose": "Edit drawings and open PDFs",
+      "packages": ["libreoffice-draw"],
+      "commands": ["libreoffice"],
+      "desktop": ["libreoffice-draw.desktop"]
+    },
+    {
+      "name": "Poppler",
+      "purpose": "Extract PDF text, inspect metadata and rasterize pages",
+      "packages": ["poppler-utils"],
+      "commands": ["pdftoppm"],
+      "desktop": []
+    },
+    {
+      "name": "qpdf",
+      "purpose": "Validate, merge and split PDFs",
+      "packages": ["qpdf"],
+      "commands": ["qpdf"],
+      "desktop": []
+    },
+    {
+      "name": "ImageMagick",
+      "purpose": "Convert and inspect images",
+      "packages": ["imagemagick"],
+      "commands": ["magick", "convert"],
+      "desktop": []
+    },
+    {
+      "name": "GIMP",
+      "purpose": "Edit raster images",
+      "packages": ["gimp"],
+      "commands": ["gimp"],
+      "desktop": ["gimp.desktop"]
+    },
+    {
+      "name": "Inkscape",
+      "purpose": "Edit vector artwork",
+      "packages": ["inkscape"],
+      "commands": ["inkscape"],
+      "desktop": ["org.inkscape.Inkscape.desktop", "inkscape.desktop"]
+    },
+    {
+      "name": "FFmpeg",
+      "purpose": "Convert, inspect and process audio and video",
+      "packages": ["ffmpeg"],
+      "commands": ["ffmpeg"],
+      "desktop": []
+    },
+    {
+      "name": "Kdenlive",
+      "purpose": "Edit video projects",
+      "packages": ["kdenlive"],
+      "commands": ["kdenlive"],
+      "desktop": ["org.kde.kdenlive.desktop"]
+    },
+    {
+      "name": "Thunar",
+      "purpose": "Browse and manage files",
+      "packages": ["thunar"],
+      "commands": ["thunar"],
+      "desktop": ["thunar.desktop"]
+    },
+    {
+      "name": "Xfce Terminal",
+      "purpose": "Run commands interactively",
+      "packages": ["xfce4-terminal"],
+      "commands": ["xfce4-terminal"],
+      "desktop": ["xfce4-terminal.desktop"]
+    },
+    {
+      "name": "Python 3",
+      "purpose": "Generate and revise office files, PDFs and images",
+      "packages": [],
+      "commands": ["python3"],
+      "desktop": []
+    },
+    {
+      "name": "Node.js",
+      "purpose": "Run JavaScript programs",
+      "packages": ["nodejs"],
+      "commands": ["node"],
+      "desktop": []
+    },
+    {
+      "name": "Blender",
+      "purpose": "Create and render 3D scenes",
+      "packages": ["blender"],
+      "commands": ["blender"],
+      "desktop": ["blender.desktop"]
+    },
+    {
+      "name": "Godot",
+      "purpose": "Build games and interactive scenes",
+      "packages": ["godot3"],
+      "commands": ["godot3"],
+      "desktop": ["org.godotengine.Godot.desktop", "godot3.desktop"]
+    },
+    {
+      "name": "KiCad",
+      "purpose": "Design electronic schematics and circuit boards",
+      "packages": ["kicad", "kicad-symbols", "kicad-footprints"],
+      "commands": ["kicad"],
+      "desktop": ["org.kicad.kicad.desktop", "kicad.desktop"]
+    },
+    {
+      "name": "FreeCAD",
+      "purpose": "Build parametric CAD models",
+      "packages": [],
+      "commands": ["freecad"],
+      "desktop": ["org.freecad.FreeCAD.desktop"]
+    },
+    {
+      "name": "3D Slicer",
+      "purpose": "View and process medical and scientific volumes",
+      "packages": [],
+      "commands": ["Slicer"],
+      "desktop": ["org.slicer.Slicer.desktop"]
+    }
+  ],
+  "archives": [
+    {
+      "name": "FreeCAD",
+      "url": "https://github.com/FreeCAD/FreeCAD/releases/download/1.1.4/FreeCAD_1.1.4-Linux-x86_64-py311.AppImage",
+      "algorithm": "sha256",
+      "digest": "f6dc6ba676e5ac96a565ebc8d657232f94c6158e85b4352141bd1a46f6b43434",
+      "format": "appimage",
+      "directory": "freecad",
+      "command": "freecad",
+      "entry": "AppRun",
+      "icon": "usr/share/icons/hicolor/scalable/apps/org.freecad.FreeCAD.svg",
+      "desktop": "org.freecad.FreeCAD.desktop"
+    },
+    {
+      "name": "3D Slicer",
+      "url": "https://download.slicer.org/bitstream/6aa1beb7ce9de556d3010204",
+      "algorithm": "sha512",
+      "digest": "ac76c5061a8fff20d4e59732855f74360930fd4891450085bcbc6a8eb1a1f4ade9a1ca4fc633142661b714dbe8c4604306079f9546e52053faa5e6f99410cf76",
+      "format": "tar",
+      "directory": "slicer",
+      "command": "Slicer",
+      "entry": "Slicer",
+      "icon": "Slicer.png",
+      "desktop": "org.slicer.Slicer.desktop"
+    }
+  ]
+}

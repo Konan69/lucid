@@ -32,6 +32,7 @@ export const SettingsSection = Schema.Literals([
   'connections',
   'rules',
   'memory',
+  'texting',
   'devices',
   'record',
 ] as const)

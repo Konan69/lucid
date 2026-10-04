@@ -162,6 +162,8 @@ function makeLiveData(session: SignedIn) {
       (client, query) => client.WatchLibrary(query),
     ),
     connections: one((client) => client.WatchConnections()),
+    /** The messaging apps a Person can text Vivid from, and where each stands for them. */
+    channels: one((client) => client.WatchChannels()),
     memory: one((client) => client.WatchMemory()),
     /** What Vivid knows how to do: the procedures it ships with and the ones it was taught. */
     /** Where the Person's Computer stands: off, starting, running and who has the keyboard. */

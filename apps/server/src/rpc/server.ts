@@ -7,6 +7,7 @@ import { artifactHandlers } from '../artifacts/handlers.ts'
 import { approvalHandlers } from '../approvals/handlers.ts'
 import { auditHandlers } from '../audit/handlers.ts'
 import { rpcAuthMiddlewareLayer } from '../auth/middleware.ts'
+import { channelHandlers } from '../channels/handlers.ts'
 import { companyHandlers } from '../companies/handlers.ts'
 import { codeHandlers } from '../code/handlers.ts'
 import { computerHandlers } from '../computers/handlers.ts'
@@ -30,6 +31,7 @@ import { threadHandlers } from '../threads/handlers.ts'
  */
 export const rpcHandlersLayer = VividRpc.toLayer({
   ...artifactHandlers,
+  ...channelHandlers,
   ...companyHandlers,
   ...codeHandlers,
   ...settingsHandlers,

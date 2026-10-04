@@ -99,6 +99,23 @@ export const actingRun = Effect.fn('RunStore.actingRun')(function* (
   return run.id
 })
 
+/** Resolve only the supplied admitted Run and decode its persisted state. What each state
+ * authorizes is the caller's rule: see `dispatchRun` in `computers/device.ts`, where a Run acting
+ * for itself must be Working and an action the Person approved is also sent for a Completed Run. */
+export const admittedRunState = Effect.fn('RunStore.admittedRunState')(function* (input: {
+  readonly runId: RunId
+  readonly threadId: ThreadId
+  readonly personId: PersonId
+}) {
+  const database = yield* Database
+  const [row] = yield* database.run(database.select().from(runs).where(eq(runs.id, input.runId)))
+  if (row === undefined || row.threadId !== input.threadId || row.admittedAt === null)
+    return yield* new NoActingRun({ threadId: input.threadId, reason: 'NoWorkingRun' })
+  if (row.personId !== input.personId)
+    return yield* new NoActingRun({ threadId: input.threadId, reason: 'ActsForAnotherPerson' })
+  return yield* stateOf(row)
+})
+
 /**
  * How many of a Person's newest Runs in a Thread the reviewer looks back over (`requestRuns`).
  * Exported so the reader can tell a complete turn from one this window cut off.
@@ -204,8 +221,8 @@ export const automaticallyNotifies = Effect.fn('RunStore.automaticallyNotifies')
     Decision: () => true,
   })
 })
-const decodeEnding = decodeStored(
-  Schema.Literals(['completed', 'failed', 'stopped', 'unknown']),
+const decodeState = decodeStored(
+  Schema.Literals(['working', 'completed', 'failed', 'stopped', 'unknown']),
   'Run state',
 )
 const decodeFailure = decodeStored(RunFailure, 'Run failure reason')
@@ -231,12 +248,13 @@ const ENDED = {
 
 /** The stored state and its time as the union. A finished state without a time is a database fault. */
 const stateOf = Effect.fn('RunStore.stateOf')(function* (row: typeof runs.$inferSelect) {
-  const { state, finishedAt } = row
+  const { finishedAt } = row
+  const state = yield* decodeState(row.state)
   if (state === 'working') return RunState.cases.Working.make({})
   if (finishedAt === null) {
     return yield* Effect.fail(new DatabaseFailure({ message: 'A finished Run has no finish time' }))
   }
-  const ending = yield* decodeEnding(state)
+  const ending = state
   if (ending === 'failed') {
     // The requested legacy interpretation is explicit; new failures always persist a reason.
     const reason =

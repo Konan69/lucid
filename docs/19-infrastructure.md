@@ -31,6 +31,12 @@ fixes and remote verification described below.
 `pnpm infra:deploy --yes` needs `RAILWAY_API_TOKEN` for the personal Railway account, and is run
 from a clean checkout of `main` so half-edited files never ship.
 
+It reads its settings from `.env.production` in that checkout, never from `.env`. `.env` is a
+developer's local file; a deploy that read it once sent production a model with no key and no
+Executor key. `.env.production` is ignored by Git and holds the production values of the names in
+`.env.example`; the deploy stops if the file is missing. A variable left out of the file is not
+removed from a Railway service that already has it; delete it there with `railway variable delete`.
+
 Known gap, Alchemy `2.0.0-beta.79`: the Railway provider waits about fifty seconds for a deployment
 (`alchemy/src/Railway/ServiceProvider.ts`, ten tries five seconds apart), and an image build takes
 about three minutes. The command therefore reports `ServiceDeployPending` and exits non-zero while

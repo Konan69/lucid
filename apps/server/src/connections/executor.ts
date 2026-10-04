@@ -725,12 +725,16 @@ function catalogEntry(entry: typeof WireCatalogEntry.Type) {
   ]
 }
 
-/** HostedTool.readOnly and annotations.readOnlyHint carry queries and imported MCP read hints;
- * the OpenAPI adapter derives readOnly from GET, HEAD, and OPTIONS (SDK apps openapi implementation).
- * annotations.destructiveHint carries imported MCP destructive hints. Destructive wins. Approval callbacks and raw HTTP methods are NOT
- * exposed by HostedTools.list, so they cannot establish read safety; undeclared/conflicting hints
- * conservatively mean write. Names such as "read_*" never establish safety.
- */
+/** HostedTool.readOnly and annotations.readOnlyHint carry the host's query category;
+ * the OpenAPI adapter derives it from GET, HEAD and OPTIONS. Destructive wins.
+ * Executor packages/apps/src/implementation/protocol-operations.ts protocolOperations
+ * categorizes both absent readOnly and explicit false as mutation. host.ts inspect
+ * then writes readOnly=false and readOnlyHint=false for both; HostedTool in
+ * packages/apps/src/contracts/host.ts exposes no original-declaration provenance.
+ * Thus false here cannot prove the source explicitly declared a write. Approval
+ * callbacks and HTTP methods are absent from HostedTools.list; names never prove
+ * safety. This projection keeps write for missing/conflicting evidence, but Jev
+ * cannot distinguish a declared write from the host's conservative default. */
 function classifyTool(tool: typeof WireTool.Type) {
   if (tool.annotations !== undefined && tool.annotations.destructiveHint === true)
     return 'destructive' as const

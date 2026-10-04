@@ -25,6 +25,7 @@ import { createContext, useContext } from 'react'
  *   carries its name because only the listing it was opened from knows it.
  * - `Settings`: the Person's own settings; `People` is who is in the Company they are working in,
  *   and `Memory` is what Vivid has kept about the Person, for them to correct or remove.
+ *   `Texting` is where they connect their phone number so they can text Vivid.
  */
 export type Routes = {
   Home: undefined
@@ -38,6 +39,7 @@ export type Routes = {
   Settings: undefined
   People: undefined
   Memory: undefined
+  Texting: undefined
 }
 
 /**

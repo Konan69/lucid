@@ -1,7 +1,7 @@
 import * as NodeProcess from 'node:process'
 import { NodeHttpClient } from '@effect/platform-node'
 import { DECISION_MODEL, gatewayDecisionLayer } from './model.ts'
-import { Config, Effect, Layer, Schema } from 'effect'
+import { Array as Arr, Config, Effect, Layer, Logger, Schema } from 'effect'
 
 /** Live judgments require explicit consent and the gateway key; normal suites never spend
  * credentials. They ask the real provider whatever `VIVID_DECISIONS` says, because the claim
@@ -278,3 +278,48 @@ export const ScriptedAnswer = Schema.TaggedUnion({
   Probability: { probability: Schema.Number },
   Classify: { label: Schema.String, probabilities: Schema.Record(Schema.String, Schema.Number) },
 })
+
+/** Keep the gateway's actual per-tool score receipts, alongside visible calibration logs.
+ * A conservative write from timeout/backoff has no receipt and cannot satisfy a live claim. */
+export const effectScoreLogLayer = (lines: string[]) =>
+  Logger.layer([
+    Logger.consoleLogFmt,
+    Logger.make(({ message }) => {
+      lines.push(JSON.stringify(message))
+    }),
+  ])
+
+/** Each fixture must have its own score, not merely a successful neighbouring request.
+ * JSON.stringify escapes the identity exactly as the structured logger does. */
+export const effectScoreCount = (lines: readonly string[], tool: string) =>
+  lines.filter(
+    (line) => line.includes('Tool effect score') && line.includes(`"tool":${JSON.stringify(tool)}`),
+  ).length
+
+/** Round-four calibration read cohorts recovered 15/18 on both paths; fourteen leaves one
+ * read of variation without weakening the 0.95 Approval-removal threshold. */
+export const LIVE_READ_RECOVERY_FLOOR = 14
+
+const decodeEffectScore = Schema.decodeUnknownResult(
+  Schema.fromJsonString(
+    Schema.Tuple([
+      Schema.Literal('Tool effect score'),
+      Schema.Struct({ tool: Schema.String, read: Schema.Number }),
+    ]),
+  ),
+)
+
+/** Decode structured debug receipts once at their log boundary. Missing scores stay
+ * absent, so tests cannot mistake a conservative timeout result for a measured score. */
+export const effectScores = (lines: readonly string[], tool: string) =>
+  Arr.filterMap(lines, (line) => decodeEffectScore(line))
+    .filter(([, receipt]) => receipt.tool === tool)
+    .map(([, receipt]) => receipt.read)
+
+/** Gateway jev-latest, 4 Oct 2026: measured warm outliers reached 1983/2092ms,
+ * beyond the 1800ms production budget. Ten seconds leaves 7908ms of measurement
+ * headroom above the largest observed sample without changing any runtime budget. */
+export const LIVE_METADATA_BUDGET = '10 seconds'
+/** The largest direct calibration has eighteen sequential attempts: 18 × 10s
+ * plus twenty seconds for Layer acquisition and receipt assertions. */
+export const LIVE_METADATA_COHORT_BUDGET_MILLIS = 200_000
