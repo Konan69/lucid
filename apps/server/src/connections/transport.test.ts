@@ -122,7 +122,7 @@ function requestAt<T>(items: readonly T[], index: number): T {
   return item
 }
 
-/** Every scenario drives the public Executor service with the production HTTP Layer. Reusing
+/** Every scenario drives the public Executor service through its Fetch HTTP test Layer. Reusing
  * the captured requests proves route, header, account isolation and submission-body semantics.
  */
 const scenario = <E>(
@@ -136,6 +136,21 @@ const scenario = <E>(
     // the recorded requests are checked.
     yield* run(remote).pipe(Effect.scoped, Effect.provide(remote.configured))
     const requests = yield* Ref.get(remote.requests)
+    // A loopback listener can receive unrelated traffic. Preserve the failing postcondition,
+    // but expose a safe receipt before individual assertions hide the request's provenance.
+    expect(
+      requests
+        .filter((request) => !request.path.includes(`${hostedPrefix}/`))
+        .map(({ path, peer, headers }) => ({
+          path,
+          peer,
+          host: headers.host,
+          userAgent: headers['user-agent'],
+          accept: headers.accept,
+          authorizationPresent: headers.authorization !== undefined,
+          fixtureAuthorization: headers.authorization === 'Bearer isolated-test-key',
+        })),
+    ).toEqual([])
     for (const request of requests) {
       expect(request.path).toContain(`${hostedPrefix}/`)
       expect(request.headers.authorization).toBe('Bearer isolated-test-key')

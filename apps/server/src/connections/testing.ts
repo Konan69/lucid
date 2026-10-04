@@ -1,5 +1,5 @@
 import * as NodeHttp from 'node:http'
-import { NodeHttpServer } from '@effect/platform-node'
+import { NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
@@ -361,6 +361,10 @@ export const hostedTools = [
 ]
 
 interface HostedRequest {
+  readonly peer: {
+    readonly address: Option.Option<string>
+    readonly port: Option.Option<number>
+  }
   readonly path: string
   readonly search: string
   readonly body: Schema.Json
@@ -544,11 +548,19 @@ export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(fu
   const handler = Effect.fn('Executor.HostedTest.request')(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
     const url = new URL(request.url, 'http://fixture.test')
+    // Capture the active peer before reading a body can close its socket. Absent peer metadata
+    // stays explicit so a disconnected peer never acquires invented diagnostic metadata.
+    const socket = NodeHttpServerRequest.toIncomingMessage(request).socket
+    const peer = {
+      address: Option.fromUndefinedOr(socket.remoteAddress),
+      port: Option.fromUndefinedOr(socket.remotePort),
+    }
     const body =
       request.headers['content-type'] === 'application/json'
         ? yield* request.json.pipe(Effect.flatMap(decodeHostedJson))
         : null
     const received = {
+      peer,
       path: `${request.method} ${url.pathname}`,
       search: url.search,
       body,
