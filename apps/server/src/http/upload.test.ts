@@ -1,3 +1,4 @@
+import { workLayer } from '../database/work.ts'
 import { NodeHttpServer } from '@effect/platform-node'
 import * as NodeServices from '@effect/platform-node/NodeServices'
 import { describe, expect, layer } from '@effect/vitest'
@@ -13,7 +14,7 @@ import { silentChangesLayer } from '../live/changes.ts'
 import { bytesRoutes } from './bytes.ts'
 
 const testLayer = Layer.mergeAll(
-  libraryStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer)),
+  libraryStoreLayer.pipe(Layer.provideMerge(workLayer.pipe(Layer.provideMerge(testDatabaseLayer)))),
   testConfigLayer,
   silentChangesLayer,
   NodeServices.layer,

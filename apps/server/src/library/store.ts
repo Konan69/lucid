@@ -6,6 +6,8 @@ import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import {
   DatabaseFailure,
+  CompanyId,
+  PersonId,
   LibraryFolder as LibraryFolderSchema,
   type LibraryFolder,
   type LibraryFolderId,
@@ -34,6 +36,7 @@ import {
   type LibraryFolderCycle,
 } from './access.ts'
 import type { Actor } from '../auth/access.ts'
+import { ingestionBackoff, libraryIngestion } from './ingestion.ts'
 import { itemOperations } from './items.ts'
 import { searchOperation } from './search.ts'
 import { libraryChunks, libraryDocuments, libraryFolders } from './tables.ts'
@@ -50,7 +53,11 @@ export type LibraryFailure =
 
 export const LibraryDocumentRow = createSelectSchema(libraryDocuments)
 export const LibraryDocumentInsert = createInsertSchema(libraryDocuments)
-const FolderRow = createSelectSchema(libraryFolders)
+// Drizzle's generated scalar schemas erase $type brands; restore and validate stored ownership.
+const FolderRow = createSelectSchema(libraryFolders, {
+  personId: PersonId,
+  companyId: Schema.NullOr(CompanyId),
+})
 export const LibraryChunkInsert = createInsertSchema(libraryChunks)
 type LibrarySearchResult = typeof LibrarySearchResultSchema.Type
 export type PatchLibraryFolderInput = typeof PatchLibraryFolderRequest.Type
@@ -140,17 +147,6 @@ export interface LibraryStoreService {
     id: LibraryItemId,
     patch: PatchLibraryItemInput,
   ) => Effect.Effect<Option.Option<LibraryItem>, LibraryFailure>
-  readonly completeItem: (
-    actor: Actor,
-    id: LibraryItemId,
-    extractedText: string,
-    chunks: ReadonlyArray<IndexedChunk>,
-  ) => Effect.Effect<void, LibraryFailure>
-  readonly failItem: (
-    actor: Actor,
-    id: LibraryItemId,
-    message: string,
-  ) => Effect.Effect<void, LibraryFailure>
   readonly removeItem: (actor: Actor, id: LibraryItemId) => Effect.Effect<boolean, LibraryFailure>
   readonly search: (
     actor: Actor,
@@ -240,7 +236,8 @@ export const libraryStoreLayer = Layer.effect(
     const decodeItem = makeDecodeItem(database)
     const decodeFolder = makeDecodeFolder(database)
     const folders = folderOperations(database, decodeFolder)
-    const items = itemOperations(database, decodeItem, folders.getFolder)
+    const queue = yield* libraryIngestion(ingestionBackoff)
+    const items = itemOperations(database, decodeItem, folders.getFolder, queue)
     const search = searchOperation(database)
 
     /** List and Watch share this loader, including selected folder visibility and shelf validation. */

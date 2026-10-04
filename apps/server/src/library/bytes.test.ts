@@ -1,6 +1,9 @@
+import { workLayer } from '../database/work.ts'
 import * as NodeServices from '@effect/platform-node/NodeServices'
 import { describe, expect, layer } from '@effect/vitest'
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Schema } from 'effect'
+import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
+import { LibraryUploadResponse } from '@vivid/contracts'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
@@ -10,11 +13,12 @@ import { fixture } from './fixtures.ts'
 import { LibraryStore, libraryStoreLayer } from './store.ts'
 
 const testLayer = Layer.mergeAll(
-  libraryStoreLayer.pipe(Layer.provideMerge(testDatabaseLayer)),
+  libraryStoreLayer.pipe(Layer.provideMerge(workLayer.pipe(Layer.provideMerge(testDatabaseLayer)))),
   testConfigLayer,
   silentChangesLayer,
   NodeServices.layer,
 )
+const decodeUpload = Schema.decodeUnknownEffect(Schema.fromJsonString(LibraryUploadResponse))
 
 /** Real multipart requests exercise auth, filesystem persistence, ingestion and shelf selection. */
 const uploadRequest = (token: string, shelf: string) => {
@@ -59,7 +63,11 @@ describe.skipIf(!testDatabaseConfigured)('Library bytes HTTP', () => {
     it.effect('uploads and deduplicates authenticated Mine bytes', () =>
       Effect.gen(function* () {
         const { people, send } = yield* httpFixture()
-        expect((yield* send(uploadRequest(people.owner.token, 'Mine'))).status).toBe(201)
+        const response = yield* send(uploadRequest(people.owner.token, 'Mine'))
+        expect(response.status).toBe(201)
+        const web = HttpServerResponse.toWeb(response)
+        const body = yield* Effect.promise(() => web.text())
+        expect((yield* decodeUpload(body)).document.status).toBe('processing')
         expect((yield* send(uploadRequest(people.owner.token, 'Mine'))).status).toBe(200)
       }),
     )

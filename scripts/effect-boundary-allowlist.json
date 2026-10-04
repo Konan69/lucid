@@ -5,9 +5,14 @@
     "symbols": ["query", "transaction"]
   },
   {
-    "file": "apps/server/src/library/ingest.ts",
+    "file": "apps/server/src/library/extraction/main.ts",
     "classification": "third-party-adapter",
     "symbols": ["extractPages"]
+  },
+  {
+    "file": "apps/server/src/library/extraction.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["stop"]
   },
   {
     "file": "packages/agent/runtime/src/app.ts",

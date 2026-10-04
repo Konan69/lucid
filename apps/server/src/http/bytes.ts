@@ -7,18 +7,11 @@ import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
 import * as Multipart from 'effect/unstable/http/Multipart'
-import {
-  InvalidRequest,
-  LibraryItemId,
-  LibraryUploadMetadata,
-  LibraryUploadResponse,
-  NotFound,
-} from '@vivid/contracts'
+import { InvalidRequest, LibraryItemId, LibraryUploadMetadata, NotFound } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
 import { authenticate } from '../auth/session.ts'
-import { changed } from '../live/changes.ts'
 import { libraryFailure } from '../library/failures.ts'
-import { digestBytes, ingestLibraryItem, MAX_LIBRARY_FILE_BYTES } from '../library/ingest.ts'
+import { digestBytes, MAX_LIBRARY_FILE_BYTES } from '../library/ingest.ts'
 import { LibraryStore, type StoredLibraryItem } from '../library/store.ts'
 import {
   multipartRequest,
@@ -89,17 +82,7 @@ const upload = Effect.fn('Http.Library.upload')(function* () {
     .createItem(actor, { ...metadata, bytes, sha256: digestBytes(bytes) })
     .pipe(Effect.mapError(libraryFailure))
   if (result.duplicate === true) return HttpServerResponse.jsonUnsafe(result, { status: 200 })
-  yield* changed(actor)
-  yield* ingestLibraryItem(actor, result.document.id).pipe(Effect.mapError(libraryFailure))
-  const indexed = yield* library
-    .getItem(actor, result.document.id)
-    .pipe(Effect.mapError(libraryFailure))
-  if (Option.isNone(indexed))
-    return yield* Effect.fail(new NotFound({ message: 'Library item no longer exists' }))
-  return HttpServerResponse.jsonUnsafe(
-    LibraryUploadResponse.make({ document: indexed.value, duplicate: false }),
-    { status: 201 },
-  )
+  return HttpServerResponse.jsonUnsafe(result, { status: 201 })
 })
 
 /** All byte responses come from a store lookup already scoped to the authenticated shelves. */
@@ -147,7 +130,7 @@ type BytesFailure = Effect.Error<
   ReturnType<typeof upload> | ReturnType<typeof source> | ReturnType<typeof content>
 >
 
-/** HTTP status mapping preserves authentication, isolation and validation failures. */
+/** HTTP status mapping preserves authentication, isolation, validation and upload failures. */
 const respond = <R>(
   operation: Effect.Effect<HttpServerResponse.HttpServerResponse, BytesFailure, R>,
 ) =>

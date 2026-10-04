@@ -15,7 +15,6 @@ import {
   type LibraryItemId,
 } from '@vivid/contracts'
 import { requireActor, type Actor } from '../auth/access.ts'
-import { changed } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { libraryFailure } from './failures.ts'
 import { LibraryStore } from './store.ts'
@@ -62,7 +61,6 @@ export const libraryHandlers = {
       .pipe(Effect.mapError(libraryFailure))
     if (Option.isNone(document))
       return yield* Effect.fail(new NotFound({ message: 'Library item not found' }))
-    yield* changed(actor)
     return LibraryItemResponse.make({ document: document.value })
   }),
   /** Deleting metadata also deletes its indexed chunks through the database relation. */
@@ -74,7 +72,6 @@ export const libraryHandlers = {
     const actor = yield* requireActor()
     if (!(yield* (yield* LibraryStore).removeItem(actor, id).pipe(Effect.mapError(libraryFailure))))
       return yield* Effect.fail(new NotFound({ message: 'Library item not found' }))
-    yield* changed(actor)
     return undefined
   }),
   /** Search visibility is decided in SQL before ranking, including shared-Thread privacy. */
@@ -121,7 +118,6 @@ export const libraryHandlers = {
         parentId: request.parentId === undefined ? null : request.parentId,
       })
       .pipe(Effect.mapError(libraryFailure))
-    yield* changed(actor)
     return LibraryFolderResponse.make({ folder })
   }),
   /** Folder hierarchy validation stays in the store for every surface and caller. */
@@ -138,7 +134,6 @@ export const libraryHandlers = {
       .pipe(Effect.mapError(libraryFailure))
     if (Option.isNone(folder))
       return yield* Effect.fail(new NotFound({ message: 'Library folder not found' }))
-    yield* changed(actor)
     return LibraryFolderResponse.make({ folder: folder.value })
   }),
   /** Nonempty folders fail visibly instead of deleting another contributor's contents. */
@@ -149,7 +144,6 @@ export const libraryHandlers = {
   }) {
     const actor = yield* requireActor()
     yield* (yield* LibraryStore).removeFolder(actor, id).pipe(Effect.mapError(libraryFailure))
-    yield* changed(actor)
     return undefined
   }),
 }

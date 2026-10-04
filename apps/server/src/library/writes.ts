@@ -3,64 +3,19 @@ import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import {
+  DatabaseFailure,
   LibraryUploadResponse,
   NotFound,
   type LibraryItem,
   type LibraryItemId,
 } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
-import { readableScope, requireEditor, shelfCompany, shelfOf } from './access.ts'
+import { announce } from '../live/changes.ts'
+import { readableScope, requireEditor, shelfCompany, shelfOf, shelfTopics } from './access.ts'
 import { hierarchyWrite, requireFolderShelf } from './hierarchy.ts'
-import type { DecodeItem, IndexedChunk, LibraryDatabase, LibraryStoreService } from './store.ts'
-import { libraryChunks, libraryDocuments } from './tables.ts'
-import type { EffectPgQueryEffectHKT, EffectPgQueryResultHKT } from 'drizzle-orm/effect-postgres'
-import type { PgEffectTransaction } from 'drizzle-orm/pg-core/effect/session'
-
-type LibraryTransaction = PgEffectTransaction<EffectPgQueryEffectHKT, EffectPgQueryResultHKT>
-interface CompletedItemInput {
-  readonly transaction: LibraryTransaction
-  readonly database: LibraryDatabase
-  readonly actor: Actor
-  readonly id: LibraryItemId
-  readonly extractedText: string
-  readonly chunks: ReadonlyArray<IndexedChunk>
-  readonly now: number
-}
-
-/** The parent row lock serializes competing index completions and deletion of this document. */
-const writeCompletedItem = Effect.fn('Library.writeCompletedItem')(function* (
-  input: CompletedItemInput,
-) {
-  const { transaction, database, actor, id, extractedText, chunks, now } = input
-  const scope = yield* readableScope(database, libraryDocuments, actor)
-  const rows = yield* transaction
-    .select()
-    .from(libraryDocuments)
-    .where(and(eq(libraryDocuments.id, id), scope))
-    .for('update')
-  const row = rows[0]
-  if (row === undefined)
-    return yield* Effect.fail(new NotFound({ message: 'Library item not found' }))
-  yield* requireEditor(actor, row)
-  yield* transaction.delete(libraryChunks).where(eq(libraryChunks.documentId, id))
-  yield* Effect.forEach(
-    chunks,
-    (chunk, ordinal) =>
-      transaction.insert(libraryChunks).values({
-        id: crypto.randomUUID(),
-        documentId: id,
-        ordinal,
-        page: chunk.page,
-        text: chunk.text,
-      }),
-    { discard: true, concurrency: 1 },
-  )
-  yield* transaction
-    .update(libraryDocuments)
-    .set({ status: 'ready', extractedText, error: null, updatedAt: now })
-    .where(and(eq(libraryDocuments.id, id), scope))
-  return undefined
-})
+import type { DecodeItem, LibraryDatabase, LibraryStoreService } from './store.ts'
+import { libraryDocuments } from './tables.ts'
+import { LibraryIngestion, type libraryIngestion } from './ingestion.ts'
 
 /** Mutation authority is checked only after the row has passed its SQL visibility predicate. */
 const editorRow = (database: LibraryDatabase) =>
@@ -79,13 +34,17 @@ const editorRow = (database: LibraryDatabase) =>
     return Option.some(row)
   })
 
-/** A conflict-free insert handles simultaneous uploads using the per-shelf unique indexes. */
+/**
+ * A fresh insert, native offer and shelf notice share hierarchyWrite's transaction. The queue
+ * captures the same SqlClient (rc.116 PQ:1297,1347-1353); a duplicate creates no new obligation.
+ */
 const createItemOperation = (
   database: LibraryDatabase,
   decodeItem: DecodeItem,
   dependencies: {
     readonly reads: Pick<LibraryStoreService, 'getItemByDigest'>
     readonly getFolder: LibraryStoreService['getFolder']
+    readonly queue: Effect.Success<ReturnType<typeof libraryIngestion>>
   },
 ): LibraryStoreService['createItem'] => {
   const destination = requireFolderShelf(dependencies.getFolder)
@@ -117,14 +76,29 @@ const createItemOperation = (
           .returning(),
       )
       const row = rows[0]
-      if (row !== undefined)
-        return LibraryUploadResponse.make({ document: yield* decodeItem(row), duplicate: false })
+      if (row !== undefined) {
+        const document = yield* decodeItem(row)
+        yield* dependencies.queue
+          .offer(LibraryIngestion.make({ itemId: document.id }), { id: document.id })
+          .pipe(
+            Effect.mapError(
+              () => new DatabaseFailure({ message: 'Library ingestion could not be recorded' }),
+            ),
+          )
+        return {
+          value: LibraryUploadResponse.make({ document, duplicate: false }),
+          moved: shelfTopics(row),
+        }
+      }
       const existing = yield* dependencies.reads.getItemByDigest(actor, input.shelf, input.sha256)
       if (Option.isNone(existing))
         return yield* Effect.fail(
           new NotFound({ message: 'Duplicate Library item no longer exists' }),
         )
-      return LibraryUploadResponse.make({ document: existing.value, duplicate: true })
+      return {
+        value: LibraryUploadResponse.make({ document: existing.value, duplicate: true }),
+        moved: [],
+      }
     },
     (operation) => hierarchyWrite(database, operation),
   )
@@ -142,7 +116,7 @@ const patchItemOperation = (
     function* (actor, id, patch) {
       const scope = yield* readableScope(database, libraryDocuments, actor)
       const current = yield* editable(actor, id)
-      if (Option.isNone(current)) return Option.none<LibraryItem>()
+      if (Option.isNone(current)) return { value: Option.none<LibraryItem>(), moved: [] }
       const currentItem = yield* decodeItem(current.value)
       const folderId = patch.folderId === undefined ? currentItem.folderId : patch.folderId
       yield* destination(actor, folderId, shelfOf(current.value))
@@ -159,58 +133,44 @@ const patchItemOperation = (
           .returning(),
       )
       const row = rows[0]
-      return row === undefined ? Option.none<LibraryItem>() : Option.some(yield* decodeItem(row))
+      return row === undefined
+        ? { value: Option.none<LibraryItem>(), moved: [] }
+        : { value: Option.some(yield* decodeItem(row)), moved: shelfTopics(row) }
     },
     (operation) => hierarchyWrite(database, operation),
   )
 }
 
-/** Each index state transition retains the initiating Actor's ownership scope. */
-const indexOperations = (
-  database: LibraryDatabase,
-): Pick<LibraryStoreService, 'completeItem' | 'failItem' | 'removeItem'> => {
+/** Deletion retains Actor visibility and stored-owner transactional announcement. */
+const removalOperations = (database: LibraryDatabase): Pick<LibraryStoreService, 'removeItem'> => {
   const editable = editorRow(database)
-  /** Chunks and ready metadata become visible in one transaction. */
-  const completeItem: LibraryStoreService['completeItem'] = Effect.fn('LibraryStore.completeItem')(
-    function* (actor, id, extractedText, chunks) {
-      const now = yield* Clock.currentTimeMillis
-      yield* database.transaction((transaction) =>
-        writeCompletedItem({ transaction, database, actor, id, extractedText, chunks, now }),
-      )
-    },
-  )
-  /** Extraction failure is stored explicitly; a database outage remains a failed operation. */
-  const failItem: LibraryStoreService['failItem'] = Effect.fn('LibraryStore.failItem')(
-    function* (actor, id, message) {
-      const scope = yield* readableScope(database, libraryDocuments, actor)
-      const row = yield* editable(actor, id)
-      if (Option.isNone(row))
-        return yield* Effect.fail(new NotFound({ message: 'Library item not found' }))
-      const now = yield* Clock.currentTimeMillis
-      yield* database.run(
-        database
-          .update(libraryDocuments)
-          .set({ status: 'failed', error: message.slice(0, 1000), updatedAt: now })
-          .where(and(eq(libraryDocuments.id, id), scope)),
-      )
-      return undefined
-    },
-  )
-  /** An admin may delete Company files, while every Mine remains private to its owner. */
+  /**
+   * An admin may delete Company files, while every Mine remains private to its owner. The editor
+   * check and DELETE RETURNING share one transaction; its stored owners supply the commit notice.
+   * live/changes.ts:111-126 announce uses this transaction's writing connection;
+   * PgClient.ts:256-263 notify instead checks out a separate connection.
+   */
   const removeItem: LibraryStoreService['removeItem'] = Effect.fn('LibraryStore.removeItem')(
-    function* (actor, id) {
-      const scope = yield* readableScope(database, libraryDocuments, actor)
-      if (Option.isNone(yield* editable(actor, id))) return false
-      const rows = yield* database.run(
-        database
-          .delete(libraryDocuments)
-          .where(and(eq(libraryDocuments.id, id), scope))
-          .returning({ id: libraryDocuments.id }),
-      )
-      return rows.length > 0
-    },
+    (actor, id) =>
+      database.transaction((transaction) =>
+        Effect.gen(function* () {
+          const scope = yield* readableScope(database, libraryDocuments, actor)
+          if (Option.isNone(yield* editable(actor, id))) return false
+          const rows = yield* transaction
+            .delete(libraryDocuments)
+            .where(and(eq(libraryDocuments.id, id), scope))
+            .returning({
+              personId: libraryDocuments.personId,
+              companyId: libraryDocuments.companyId,
+            })
+          const removed = rows[0]
+          if (removed === undefined) return false
+          yield* announce(transaction, shelfTopics(removed))
+          return true
+        }),
+      ),
   )
-  return { completeItem, failItem, removeItem }
+  return { removeItem }
 }
 
 /** Item reads remain separate from author/admin mutation policy and transactional indexing. */
@@ -220,9 +180,10 @@ export const itemWrites = (
   dependencies: {
     readonly reads: Pick<LibraryStoreService, 'getItemByDigest'>
     readonly getFolder: LibraryStoreService['getFolder']
+    readonly queue: Effect.Success<ReturnType<typeof libraryIngestion>>
   },
 ) => ({
   createItem: createItemOperation(database, decodeItem, dependencies),
   patchItem: patchItemOperation(database, decodeItem, dependencies.getFolder),
-  ...indexOperations(database),
+  ...removalOperations(database),
 })
