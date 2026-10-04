@@ -13,6 +13,7 @@ import { authenticate } from '../auth/session.ts'
 import { libraryFailure } from '../library/failures.ts'
 import { digestBytes, MAX_LIBRARY_FILE_BYTES } from '../library/ingest.ts'
 import { LibraryStore, type StoredLibraryItem } from '../library/store.ts'
+import { observeFailures } from '../observability/failure.ts'
 import {
   multipartRequest,
   persistedUpload,
@@ -152,6 +153,8 @@ const respond = <R>(
   operation: Effect.Effect<HttpServerResponse.HttpServerResponse, BytesFailure, R>,
 ) =>
   operation.pipe(
+    // Recorded before the mapping below: once a failure is a status code it is no longer one.
+    observeFailures('http'),
     Effect.catchTags({
       Unauthenticated: () =>
         Effect.succeed(

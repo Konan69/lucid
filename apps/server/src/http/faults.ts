@@ -8,6 +8,7 @@ import * as HttpIncomingMessage from 'effect/unstable/http/HttpIncomingMessage'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
+import { observeFailures } from '../observability/failure.ts'
 
 /**
  * Where a client reports that it failed to draw (`Fault` in `@vivid/contracts`). The report is
@@ -74,6 +75,8 @@ export const faultRoutes = HttpRouter.use(
       '/api/faults',
       report(budget).pipe(
         Effect.provideService(HttpIncomingMessage.MaxBodySize, LARGEST_REPORT),
+        // A refused report (over budget, unreadable) is counted; the answer below is unchanged.
+        observeFailures('http'),
         Effect.catchTags({
           ReportsOverBudget: () => Effect.succeed(HttpServerResponse.empty({ status: 429 })),
           SchemaError: () => Effect.succeed(HttpServerResponse.empty({ status: 400 })),

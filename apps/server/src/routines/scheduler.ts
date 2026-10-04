@@ -18,6 +18,7 @@ import type { Actor } from '../auth/access.ts'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Changes, Topic } from '../live/changes.ts'
+import { observeFailures } from '../observability/failure.ts'
 import {
   Conversation,
   DeliverySpeaker,
@@ -413,6 +414,8 @@ export const routineSchedulerLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const scheduler = yield* RoutineScheduler
     const pass = scheduler.runDue().pipe(
+      // Recorded before `ignore` discards the failure; the retry on the next pass is unchanged.
+      observeFailures('schedule'),
       Effect.tapError((error) => Effect.logError('Routine scheduler pass failed', error)),
       Effect.ignore,
     )
