@@ -202,14 +202,17 @@ const boundaryKinds = (node) => [
   ...callBoundaryKinds(node),
 ]
 
-/** Inventory raw async and Effect runtime boundaries in one source file. */
+/**
+ * Inventory raw async and Effect runtime boundaries using the file's language. Parsing plain
+ * TypeScript as TSX treats a single-parameter generic arrow as JSX and hides subsequent calls.
+ */
 export function scanSource(file, source) {
   const sourceFile = ts.createSourceFile(
     file,
     source,
     ts.ScriptTarget.Latest,
     true,
-    ts.ScriptKind.TSX,
+    file.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   )
   const findings = []
   const add = (kind, node) => {
