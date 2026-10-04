@@ -52,7 +52,7 @@ describe('connected tool execution', () => {
       const call = yield* Effect.promise(() =>
         Promise.resolve(
           connect.run({
-            data: { service: 'Mail', reason: 'Read your latest mail' },
+            data: { summary: 'Ask to add Mail', service: 'Mail', reason: 'Read your latest mail' },
             signal: new AbortController().signal,
             toolCallId: 'MARK-call',
             log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
@@ -111,7 +111,11 @@ describe('connected tool execution', () => {
         const call = yield* Effect.promise(() =>
           Promise.resolve(
             add.run({
-              data: { address: 'https://records.example/mcp', name: 'Work Records' },
+              data: {
+                summary: 'Add Work Records',
+                address: 'https://records.example/mcp',
+                name: 'Work Records',
+              },
               signal: new AbortController().signal,
               toolCallId: 'MARK-call',
               log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
@@ -150,7 +154,11 @@ describe('connected tool execution', () => {
         const call = yield* Effect.promise(() =>
           Promise.resolve(
             add.run({
-              data: { address: 'https://records.example/mcp', name: 'Work Records' },
+              data: {
+                summary: 'Add Work Records',
+                address: 'https://records.example/mcp',
+                name: 'Work Records',
+              },
               signal: new AbortController().signal,
               toolCallId: 'MARK-call',
               log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
@@ -198,7 +206,11 @@ describe('connected tool execution', () => {
         const call = yield* Effect.promise(() =>
           Promise.resolve(
             add.run({
-              data: { address: 'https://records.example/mcp', name: 'Work Records' },
+              data: {
+                summary: 'Add Work Records',
+                address: 'https://records.example/mcp',
+                name: 'Work Records',
+              },
               signal: new AbortController().signal,
               toolCallId: 'MARK-call',
               log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
@@ -255,7 +267,7 @@ describe('connected tool execution', () => {
       const call = yield* Effect.promise(() =>
         Promise.resolve(
           test.run({
-            data: { account: 'Work Records' },
+            data: { summary: 'Check Work Records', account: 'Work Records' },
             signal: new AbortController().signal,
             toolCallId: 'MARK-call',
             log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
