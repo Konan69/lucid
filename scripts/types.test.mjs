@@ -203,6 +203,7 @@ void test('restored declaration caches retain production, test, and consumer err
   const tests = cachedCheck(root)
   assert.notEqual(tests.status, 0)
   assert.match(tests.stdout, /check\.test\.ts.*TS2322/u)
+  assert.match(tests.stdout, /@vivid\/contracts:types: cache hit/u)
 
   replaceOlder(
     root,

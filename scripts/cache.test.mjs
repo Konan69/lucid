@@ -212,6 +212,35 @@ void test('dependency source invalidates consumers while unrelated leaf checks s
   assert.notEqual(initial.get('@vivid/client-runtime#lint').command, '<NONEXISTENT>')
 })
 
+/** Test-only edits must rerun their owner without rebuilding production or its consumers. */
+void test('shared tests do not invalidate production declarations or ordinary consumers', (t) => {
+  const root = fixture(t)
+  const initial = hashes(root)
+  NodeFS.writeFileSync(
+    NodePath.join(root, 'packages/contracts/src/probe.test.ts'),
+    'export const checked = 1\n',
+  )
+  const changed = hashes(root)
+  for (const task of ['lint', 'typecheck']) {
+    assert.notEqual(
+      initial.get(`@vivid/contracts#${task}`).hash,
+      changed.get(`@vivid/contracts#${task}`).hash,
+    )
+    for (const consumer of ['client-runtime', 'state', 'web', 'mobile', 'desktop']) {
+      assert.equal(
+        initial.get(`@vivid/${consumer}#${task}`).hash,
+        changed.get(`@vivid/${consumer}#${task}`).hash,
+      )
+    }
+  }
+  for (const producer of ['contracts', 'client-runtime', 'state', 'skills', 'agent-runtime']) {
+    assert.equal(
+      initial.get(`@vivid/${producer}#types`).hash,
+      changed.get(`@vivid/${producer}#types`).hash,
+    )
+  }
+})
+
 /** Relative integration imports are real dependencies despite absent manifest edges. */
 void test('integration source invalidates importing checks without cycling production tasks', (t) => {
   const root = fixture(t)

@@ -34,7 +34,11 @@
       "outputs": []
     },
     "checkinputs": {
-      "dependsOn": ["^checkinputs"],
+      "dependsOn": ["^typeinputs"],
+      "outputs": []
+    },
+    "typeinputs": {
+      "dependsOn": ["^typeinputs"],
       "outputs": []
     },
     "//#lint:root": {
@@ -91,14 +95,32 @@
       "interruptible": true
     },
     "types": {
-      "dependsOn": ["^types", "checkinputs"],
+      "dependsOn": ["^types", "typeinputs"],
       "inputs": [
         "$TURBO_DEFAULT$",
+        "!src/**/*.test.ts",
+        "!src/**/*.test.tsx",
+        "!tests/**",
         "$TURBO_ROOT$/tsconfig.base.json",
         "$TURBO_ROOT$/scripts/types.mjs"
       ],
       "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
       "outputs": [".cache/typescript/types/**", ".cache/typescript/types.tsbuildinfo"]
+    },
+    "@vivid/contracts#typeinputs": {
+      "inputs": ["$TURBO_DEFAULT$", "!src/**/*.test.ts", "!src/**/*.test.tsx", "!tests/**"]
+    },
+    "@vivid/client-runtime#typeinputs": {
+      "inputs": ["$TURBO_DEFAULT$", "!src/**/*.test.ts", "!src/**/*.test.tsx", "!tests/**"]
+    },
+    "@vivid/state#typeinputs": {
+      "inputs": ["$TURBO_DEFAULT$", "!src/**/*.test.ts", "!src/**/*.test.tsx", "!tests/**"]
+    },
+    "@vivid/skills#typeinputs": {
+      "inputs": ["$TURBO_DEFAULT$", "!src/**/*.test.ts", "!src/**/*.test.tsx", "!tests/**"]
+    },
+    "@vivid/agent-runtime#typeinputs": {
+      "inputs": ["$TURBO_DEFAULT$", "!src/**/*.test.ts", "!src/**/*.test.tsx", "!tests/**"]
     },
     "@vivid/skills#typecheck": {
       "dependsOn": [
