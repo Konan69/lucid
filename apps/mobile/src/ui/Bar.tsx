@@ -7,20 +7,24 @@ import {
   type NativeStackNavigationOptions,
   type NativeStackNavigationProp,
 } from '@react-navigation/native-stack'
-import type { LucideIcon } from 'lucide-react-native'
+import { PanelLeft, type LucideIcon } from 'lucide-react-native'
 import { useLayoutEffect, useRef } from 'react'
-import { Animated, Platform, View } from 'react-native'
+import { Animated, Platform, useWindowDimensions, View } from 'react-native'
+import { openDrawer } from '../data/drawer'
+import type { Lead } from '../data/lead'
 import { Faces } from './Avatar'
 import { GLASS_SUPPORTED } from './Glass'
-import { IconButton, Label, type Tone } from './ui'
+import { Capsule, Floating, type Origin, type Stand } from './Presence'
+import { IconButton, Label, TARGET, type Tone } from './ui'
 
 /**
  * What a screen puts in the system's navigation bar: its title and at most a couple of actions.
  *
  * The bar is the platform's own (`GLASS_HEADER` in `ui/stack.ts`). On iOS every action is a real
  * `UIBarButtonItem`, so on iOS 26 the system draws it, and the way back, as round liquid glass;
- * nothing here draws a button. A screen says what it wants by rendering `Bar` or `StandingBar`,
- * which draw nothing themselves.
+ * nothing here draws a button. A screen says what it wants by rendering `Bar`, `StandingBar` or
+ * `VividBar`. The first two draw nothing themselves; `VividBar` draws Vivid's capsule, which
+ * floats where the bar's title would be (`ui/Presence.tsx`).
  *
  * Ported from T3 Code mobile `src/native/StackHeader.tsx` (`NativeStackScreenOptions`,
  * `NativeHeaderToolbar`) and its uses in `src/features/settings/SettingsRouteScreen.tsx` and
@@ -43,6 +47,8 @@ import { IconButton, Label, type Tone } from './ui'
  *   react-native-screens draw a custom button, which shows as a second thin capsule.
  * - The line under a title is `unstable_headerSubtitle`, UIKit's own subtitle, set only where
  *   the bar is glass, as the reference does (`ThreadRouteScreen.tsx`).
+ * - What leads a bar that has no way back is `unstable_headerLeftItems`, as the reference sets it
+ *   on a Thread reached with nothing under it (`ThreadRouteScreen.tsx`, `compactHomeHeaderItems`).
  *
  * `unstable_headerSubtitle` and `glassEffect` exist through the two patches described in
  * `ui/stack.ts`, so they need a binary built with them (app version 0.2.0 and later).
@@ -151,7 +157,7 @@ const endOptions = (end: BarEnd, press: PressAt): NativeStackNavigationOptions =
       }
 
 /** Nobody else is here. One value, for the same reason as `NO_ACTIONS`. */
-const NOBODY: ReadonlyArray<PersonSummary> = []
+export const NOBODY: ReadonlyArray<PersonSummary> = []
 
 /** What of an action decides how the bar looks. Its handler does not; `useBar` keeps that fresh. */
 const shownOf = (actions: ReadonlyArray<BarAction>) =>
@@ -208,8 +214,8 @@ export interface Standing {
  *   the state is in the words.
  * - Everywhere else (Android, and iOS without glass): the title and the line as one element in
  *   the solid bar's title slot, with the line in its state's ink. The reference shows no line on
- *   iOS without glass; Vivid does, because nothing else on a Thread says that Vivid is waiting
- *   for the Person or that someone is typing.
+ *   iOS without glass; Vivid does, because nothing else on the Computer's screen says in one
+ *   line how the machine stands.
  *
  * Both fields are always named. `setOptions` merges into what the route already has, so a field
  * left out would keep whatever an earlier bar on the same route put there.
@@ -231,13 +237,9 @@ const standingOptions = (title: string, standing: Standing): NativeStackNavigati
 const PLAIN = { headerTitle: undefined, unstable_headerSubtitle: undefined } as const
 
 /**
- * A bar whose title has a live line under it: a Thread saying that Vivid is working or waiting,
- * the Computer saying how it is. `present` is who else is looking at the same thing.
- *
- * Vivid's face is not in this bar. The reference has no slot for a picture beside the title of a
- * screen that also has the system's way back (its centre items replace the title, its left items
- * replace or follow the back button), and a Thread already shows Vivid's face at work where its
- * words are. So the bar says the state in words and the conversation shows the face.
+ * A bar whose title has a live line under it: the Computer saying how it is. `present` is who
+ * else is looking at the same thing. A Thread used to have this bar too; it has `VividBar` now,
+ * where the state is Vivid's own capsule in the middle and not a line under a title.
  */
 export function StandingBar({
   title,
@@ -261,13 +263,107 @@ function StandingTitle({ title, standing }: { title: string; standing: Standing 
       <Label accessibilityRole="header" numberOfLines={1} size="heading">
         {title}
       </Label>
-      {/* Said again to a screen reader when it changes: it is where a Thread says that Vivid
-          has started working, or is now waiting for the Person. */}
+      {/* Said again to a screen reader when it changes: it is the screen's state in one line. */}
       <Label accessibilityLiveRegion="polite" numberOfLines={1} size="caption" tone={standing.tone}>
         {standing.words}
       </Label>
     </View>
   )
+}
+
+/** The way to the drawer, as the action it is in a bar. */
+const DRAWER: BarAction = {
+  symbol: 'sidebar.left',
+  icon: PanelLeft,
+  label: 'Open menu',
+  disabled: false,
+  onPress: openDrawer,
+}
+
+/**
+ * What stands at the leading edge of a bar (`data/lead.ts`), as the options that put it there.
+ *
+ * These are a screen's own options in the stack, not something a mounted screen sets: what leads
+ * a bar is decided by where the screen is in the stack, and has to be there in the first frame.
+ *
+ * - `drawer`: the system's sidebar symbol as a bar button of its own (the reference's "Show
+ *   thread sidebar" button, `src/features/layout/workspace-sidebar-toolbar.tsx`), and no way
+ *   back. The back swipe is off as well: the screen is beside Home, not over it, and a drag from
+ *   that edge opens the drawer (`ui/Drawer.tsx`). `unstable_headerLeftItems` is iOS's, so Android
+ *   gets the same button drawn by the app in its solid bar.
+ * - `back`: the system's way back and its swipe, with nothing of the app's beside it.
+ */
+export const leadOptions = (lead: Lead): NativeStackNavigationOptions => {
+  if (lead === 'back') {
+    return {
+      headerBackVisible: true,
+      gestureEnabled: true,
+      headerLeft: undefined,
+      unstable_headerLeftItems: undefined,
+    }
+  }
+  if (Platform.OS === 'ios') {
+    return {
+      headerBackVisible: false,
+      gestureEnabled: false,
+      unstable_headerLeftItems: () => barItems([DRAWER], () => openDrawer()),
+    }
+  }
+  return {
+    headerBackVisible: false,
+    gestureEnabled: false,
+    headerLeft: () => (
+      <IconButton icon={DRAWER.icon} label={DRAWER.label} onPress={DRAWER.onPress} />
+    ),
+  }
+}
+
+/**
+ * The room the bar keeps at each side of the capsule: the system's 16-point margin, one 44-point
+ * button for each thing that stands there, and 12 between the buttons and the capsule. The
+ * capsule is centred, so the busier side decides for both. The reference leaves room for its
+ * bar's actions the same way (`src/features/home/WorkspaceConnectionTitle.tsx`, `maxWidth`).
+ */
+const roomBeside = (end: BarEnd): number => {
+  const standing = end.actions.length + (end.present.length > 0 ? 1 : 0)
+  return 16 + TARGET * Math.max(1, standing) + 12
+}
+
+/**
+ * The bar of the two screens a Person meets Vivid on, Home and a Thread: Vivid's capsule in the
+ * middle, saying how it stands, and at the end who else is here and what can be done. What leads
+ * the bar is the screen's own option (`leadOptions`).
+ *
+ * Where the bar is glass the capsule is not in it. The bar's title is left empty and the capsule
+ * floats in the screen at the same place (`Floating`), where it can change shape on the UI thread
+ * and take the disc that rises from the composer; this component is what draws it, so it is put
+ * first inside the screen. Where the bar is solid the screen starts below it and nothing can
+ * float over it, so the capsule goes in the bar's own title slot and changes at once.
+ *
+ * `origin` is the composer's button on the same screen, where "thinking" leaves from.
+ */
+export function VividBar({
+  stand,
+  origin,
+  present,
+  actions,
+}: BarEnd & { stand: Stand; origin: Origin }) {
+  const limit = useWindowDimensions().width - 2 * roomBeside({ present, actions })
+  const people = present.map((person) => [person.id, person.name, person.image])
+  // The capsule is part of the options only where it sits in the bar; where it floats, a change
+  // in how Vivid stands must not hand the navigator new options.
+  const titled = GLASS_SUPPORTED ? [] : [stand, limit]
+  useBar(JSON.stringify([titled, people, shownOf(actions)]), actions, (press) => ({
+    // Named, not left to the screen's own options: `setOptions` merges, and the same route can
+    // have drawn a plain bar with a title first (a Thread that was not there, then one that is).
+    title: '',
+    headerTitle: GLASS_SUPPORTED
+      ? undefined
+      : () => <Capsule stand={stand} morphs={false} limit={limit} />,
+    unstable_headerSubtitle: undefined,
+    ...endOptions({ present, actions }, press),
+  }))
+  return GLASS_SUPPORTED ? <Floating stand={stand} limit={limit} origin={origin} /> : null
 }
 
 /**

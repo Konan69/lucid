@@ -2,6 +2,7 @@ import { BlurView } from 'expo-blur'
 import { GlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect'
 import type { ReactNode, Ref } from 'react'
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
+import Animated from 'react-native-reanimated'
 import { useTheme } from '../theme'
 
 /**
@@ -156,3 +157,10 @@ export function GlassMaterial({ ref, style }: { ref?: Ref<View>; style?: StylePr
     </View>
   )
 }
+
+/**
+ * The glass material as an animated view, so it follows the same layout transition as the outline
+ * it sits behind: the composer's shape and Vivid's capsule at the top of a screen. The reference's
+ * `AnimatedGlassSurface` (`src/features/threads/ThreadComposer.tsx`).
+ */
+export const AnimatedGlassMaterial = Animated.createAnimatedComponent(GlassMaterial)

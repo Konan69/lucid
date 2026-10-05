@@ -17,7 +17,8 @@ import type { ComposerEditorHandle } from '../native/composer/types'
 import { useTheme } from '../theme'
 import { BorderBeam } from '../../vendor/beam'
 import { heldAfter, isOpen, type Held, type Measured } from './composer/expansion'
-import { GlassMaterial } from './Glass'
+import { AnimatedGlassMaterial } from './Glass'
+import type { Origin } from './Presence'
 import { Press, styles, TARGET } from './ui'
 
 /**
@@ -97,9 +98,6 @@ const MORPH = MORPHS
   ? LinearTransition.duration(MORPH_MS).reduceMotion(ReduceMotion.System)
   : undefined
 
-/** The glass material as an animated view, so it follows the same transition as its outline. */
-const AnimatedMaterial = Animated.createAnimatedComponent(GlassMaterial)
-
 /**
  * The composer's shape: an outline that casts the shadow and clips, the system's glass behind,
  * and the content in front as the glass's sibling.
@@ -140,7 +138,7 @@ function Surface({
         },
       ]}
     >
-      <AnimatedMaterial
+      <AnimatedGlassMaterial
         layout={MORPH}
         style={[{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }, rounded]}
       />
@@ -173,6 +171,7 @@ function Surface({
  */
 export function Composer({
   ref,
+  origin,
   value,
   placeholder,
   working,
@@ -182,6 +181,11 @@ export function Composer({
   onStop,
 }: {
   ref?: Ref<ComposerEditorHandle>
+  /**
+   * Put on the button's round, so the screen's bar can find where "thinking" leaves from
+   * (`ui/Presence.tsx`).
+   */
+  origin: Origin
   value: string
   placeholder: string
   /** Vivid is in the middle of a Run here, so the button stops instead of sending. */
@@ -278,7 +282,7 @@ export function Composer({
               shape is a capsule, so the views around it keep their places in the tree. */}
           {open && <View style={{ height: 4 }} />}
           <Animated.View layout={MORPH} style={state.act}>
-            <Act working={working} idle={idle} onPress={send} />
+            <Act origin={origin} working={working} idle={idle} onPress={send} />
           </Animated.View>
         </Surface>
       </BorderBeam>
@@ -291,7 +295,17 @@ export function Composer({
  * 30-point round with a 16-point glyph, the reference's `ComposerActionButton`
  * (`src/components/ComposerToolbar.tsx`). With nothing to do it is dimmed and does not answer.
  */
-function Act({ working, idle, onPress }: { working: boolean; idle: boolean; onPress: () => void }) {
+function Act({
+  origin,
+  working,
+  idle,
+  onPress,
+}: {
+  origin: Origin
+  working: boolean
+  idle: boolean
+  onPress: () => void
+}) {
   const { colors: c } = useTheme()
   return (
     <Press
@@ -308,7 +322,10 @@ function Act({ working, idle, onPress }: { working: boolean; idle: boolean; onPr
         opacity: pressed ? 0.7 : 1,
       })}
     >
-      <View
+      <Animated.View
+        ref={origin}
+        // Kept as a view of its own, so there is always something to measure.
+        collapsable={false}
         style={{
           width: ROUND,
           height: ROUND,
@@ -334,7 +351,7 @@ function Act({ working, idle, onPress }: { working: boolean; idle: boolean; onPr
             color={c['primary-foreground']}
           />
         )}
-      </View>
+      </Animated.View>
     </Press>
   )
 }

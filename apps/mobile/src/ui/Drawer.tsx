@@ -11,6 +11,7 @@ import {
   travel,
   useDrawerOpened,
 } from '../data/drawer'
+import type { Reach } from '../data/lead'
 import { useTheme } from '../theme'
 
 /** The drawer leaves a strip of the page showing, so it reads as over the page, not instead of it. */
@@ -22,16 +23,28 @@ const SIDEWAYS = 14
 const UPRIGHT = 12
 /** A flick this fast (points a second) decides the drawer's direction whatever its position. */
 const FLICK = 500
+/**
+ * How far in from the leading edge a drag may start and still be the drawer's, on a screen whose
+ * own content scrolls sideways. A little wider than the system's back-swipe strip, which it
+ * stands in for there.
+ */
+const STRIP = 28
 
 /**
- * The page with a drawer that comes in from the left over it.
+ * The app with a drawer that comes in from the left over it.
+ *
+ * It wraps the whole stack, not one screen. A screen's bar is the system's navigation bar, which
+ * is drawn over that screen's content, so a drawer inside a screen would slide under the bar's
+ * buttons; around the stack, its scrim and panel cover the bar with everything else.
  *
  * It follows the finger on the UI thread: a pan writes `travel` directly, and letting go hands
  * the finger's speed to a spring that finishes the movement, so a slow drag and a flick both end
- * where they were heading. Closed, a rightward drag anywhere on the page opens it (an edge-only
- * strip would be Android's own back gesture). Open, the scrim over the page closes it by tap or
- * by drag; the panel itself takes no drawer gesture, because the Thread rows in it are swiped.
- * Android's back button closes it too (`data/drawer.ts`).
+ * where they were heading. Closed, a rightward drag opens it from wherever `reach` allows for
+ * the screen in front (`data/lead.ts`): anywhere on Home, only from the leading edge of a Thread
+ * beside it, and not at all elsewhere. Android's own back gesture owns its edges, so there the
+ * edge is never the drawer's and a Thread opens it from its bar. Open, the scrim over the page
+ * closes it by tap or by drag; the panel itself takes no drawer gesture, because the Thread rows
+ * in it are swiped. Android's back button closes it too (`data/drawer.ts`).
  *
  * The scrim is the theme's `backdrop` and the panel its `drawer` with a `drawer-border` edge,
  * the tokens T3 Code mobile's `src/features/threads/ThreadNavigationSidebar.tsx` paints its
@@ -40,7 +53,15 @@ const FLICK = 500
  * Every callback below is a worklet. They read numbers and shared values only; the keyboard and
  * the open flag are reached through `scheduleOnRN`, never captured.
  */
-export function Drawer({ panel, children }: { panel: ReactNode; children: ReactNode }) {
+export function Drawer({
+  panel,
+  reach,
+  children,
+}: {
+  panel: ReactNode
+  reach: Reach
+  children: ReactNode
+}) {
   const { colors: c } = useTheme()
   const span = drawerWidth(useWindowDimensions().width)
   const opened = useDrawerOpened()
@@ -74,7 +95,11 @@ export function Drawer({ panel, children }: { panel: ReactNode; children: ReactN
         scheduleOnRN(settleDrawer, open)
       })
 
-  const opening = drag().activeOffsetX(SIDEWAYS).enabled(!opened)
+  const reachable = reach === 'anywhere' || (reach === 'edge' && Platform.OS === 'ios')
+  const anywhere = drag()
+    .activeOffsetX(SIDEWAYS)
+    .enabled(!opened && reachable)
+  const opening = reach === 'edge' ? anywhere.hitSlop({ left: 0, width: STRIP }) : anywhere
   const closing = Gesture.Exclusive(
     drag().activeOffsetX([-SIDEWAYS, SIDEWAYS]),
     Gesture.Tap().onEnd(() => {

@@ -1,117 +1,80 @@
 import { useAtomValue } from '@effect/atom-react'
 import { useAppearance } from '../data/vivid'
-import type { Thread, ThreadId } from '@vivid/contracts'
+import type { ThreadId } from '@vivid/contracts'
 import { draftPlace, workspaceKey } from '@vivid/state'
-import { Data, Option, Result } from 'effect'
-import { useCallback, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
-import { ScrollView, useWindowDimensions, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { Option } from 'effect'
+import { createRef, useCallback, useState, useSyncExternalStore } from 'react'
+import { ScrollView, View } from 'react-native'
+import Animated, { useAnimatedRef } from 'react-native-reanimated'
 import { arrivalOf, homeShows, Showing, type HomeScreen } from '../data/arrival'
 import { draft, useDraft } from '../data/drafts'
-import { closeDrawer, openDrawer } from '../data/drawer'
 import { LiveState, useLive, useLiveData } from '../data/live'
-import { patchThread, Start, startThread } from '../data/threads'
+import { Start, startThread } from '../data/threads'
 import type { ComposerEditorHandle } from '../native/composer/types'
+import { BarRoom, NO_ACTIONS, NOBODY, VividBar } from '../ui/Bar'
 import { Composer } from '../ui/Composer'
-import { Drawer, drawerWidth } from '../ui/Drawer'
-import { Glass } from '../ui/Glass'
-import { AboveKeyboard } from '../ui/Keyboard'
-import { NameSheet } from '../ui/Sheet'
-import { Face, GUTTER, Label, Notice, Press, styles, TARGET } from '../ui/ui'
+import { AboveKeyboardBelowBar } from '../ui/Keyboard'
+import { Stand, type Origin } from '../ui/Presence'
+import { Label, Notice, styles } from '../ui/ui'
 import { useGo, useMe } from '../workspace'
-import { Filing } from './home/Filing'
 import { First, Waiting } from './home/First'
-import { Menu } from './home/Menu'
-import { Switcher } from './home/Switcher'
 import { useScope } from './project/scope'
 
 /**
- * What is open over Home. It is one thing at a time, so the workspace sheet and a Thread being
- * renamed can never be up together.
+ * Home's composer, for whatever is outside Home and sends the Person here to write: the drawer's
+ * "New thread" (`screen/Side.tsx`). There is one Home on the stack and it stays mounted under
+ * everything, so this holds its composer for as long as the Person can write there, and nothing
+ * while Home has none (a first arrival).
  */
-type Over = Data.TaggedEnum<{
-  Nothing: {}
-  Switching: {}
-  Renaming: { readonly thread: Thread }
-  Filing: { readonly thread: Thread }
-}>
-const Over = Data.taggedEnum<Over>()
+export const homeComposer = createRef<ComposerEditorHandle>()
 
 /**
  * Home: Vivid's greeting and somewhere to write. It is the root of the app and the first screen,
  * and it is only that: every Thread the Person has, the places beside Threads, the workspace and
- * Settings are in the drawer, one swipe or one tap on Vivid's mark away.
+ * Settings are in the drawer, one swipe or one tap on the bar's first button away
+ * (`screen/Side.tsx`).
  *
  * Someone Vivid has not met gets neither. Their first Thread is opened by the server and Vivid
  * speaks first in it (`data/arrival.ts`); Home is only Vivid's face until that Thread covers it,
  * and draws nothing under its bar for the moment before it is known which Person this is.
  *
  * It owns no data. What is local is only what the Person is in the middle of: what they have
- * typed, which sheet is up, and a row's action the server refused.
+ * typed, and whether it is on its way.
  */
 export function Home() {
   // The name this Person or their Company gave Vivid, live.
   const vivid = useAppearance()
   const me = useMe()
   const data = useLiveData()
-  const go = useGo()
-  const width = drawerWidth(useWindowDimensions().width)
   const threads = useLive(data.live.threads)
-  const [over, setOver] = useState<Over>(Over.Nothing())
-  // A swipe or a menu choice on a row that the server refused. The row has nowhere to say it.
-  const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
-  const editor = useRef<ComposerEditorHandle>(null)
+  const origin = useAnimatedRef<Animated.View>()
   const start = useStart()
   const showing = homeShows(useArrival(), threads)
-  const close = () => setOver(Over.Nothing())
   const working =
     LiveState.$is('Ready')(threads) &&
     threads.value.threads.some((thread) => thread.attention === 'Working')
-
-  /** Leaves the drawer for somewhere on the stack. It closes behind the screen that covers it. */
-  const leave = (travel: () => void) => {
-    travel()
-    closeDrawer()
-  }
-
+  // While a first message is on its way Vivid is thinking about what is on this screen, so the
+  // capsule says so and the orb rises to it from the composer. Work in some other Thread is not
+  // this screen's: it shows only in the mood of Vivid's face.
+  const elsewhere = working || Showing.$is('Waiting')(showing) ? 'thinking' : 'happy'
   return (
-    <Drawer
-      panel={
-        <Menu
-          me={me}
-          width={width}
-          refused={refused}
-          onSwitch={() => setOver(Over.Switching())}
-          onFresh={() => {
-            closeDrawer()
-            if (editor.current !== null) editor.current.focus()
-          }}
-          onGo={(place) => leave(() => go.navigate(place))}
-          onProject={(id) => leave(() => go.navigate('Project', { id }))}
-          onOpen={(thread) => leave(() => go.navigate('Chat', { id: thread.id }))}
-          onRename={(thread) => setOver(Over.Renaming({ thread }))}
-          onFile={(thread) => setOver(Over.Filing({ thread }))}
-          onRefused={setRefused}
-        />
-      }
-    >
-      <AboveKeyboard>
-        <Top
-          mood={working || start.sending || Showing.$is('Waiting')(showing) ? 'thinking' : 'happy'}
-        />
-        <Reconnecting />
-        <Under
-          showing={showing}
-          me={me}
-          start={start}
-          editor={editor}
-          placeholder={`Message ${vivid.name}`}
-        />
-      </AboveKeyboard>
-      {Over.$is('Switching')(over) && <Switcher me={me} onClose={close} />}
-      {Over.$is('Renaming')(over) && <Rename thread={over.thread} onClose={close} />}
-      {Over.$is('Filing')(over) && <Filing thread={over.thread} onClose={close} />}
-    </Drawer>
+    <AboveKeyboardBelowBar>
+      <VividBar
+        stand={start.sending ? Stand.Thinking() : Stand.Resting({ mood: elsewhere })}
+        origin={origin}
+        present={NOBODY}
+        actions={NO_ACTIONS}
+      />
+      <BarRoom />
+      <Reconnecting />
+      <Under
+        showing={showing}
+        me={me}
+        start={start}
+        origin={origin}
+        placeholder={`Message ${vivid.name}`}
+      />
+    </AboveKeyboardBelowBar>
   )
 }
 
@@ -144,11 +107,11 @@ function useArrival() {
   return useSyncExternalStore(attend, arrival.standing)
 }
 
-/** What `Writing` needs: who is writing, their words and the send, and the composer's handle. */
+/** What `Writing` needs: who is writing, their words and the send, and the composer's button. */
 interface WritingProps {
   me: ReturnType<typeof useMe>
   start: ReturnType<typeof useStart>
-  editor: RefObject<ComposerEditorHandle | null>
+  origin: Origin
   placeholder: string
 }
 
@@ -167,10 +130,10 @@ function Under({ showing, ...writing }: WritingProps & { showing: Showing }) {
 
 /**
  * Home for someone Vivid has met: the greeting, anything the last send was refused for, and the
- * composer. The words and the send are Home's (`useStart`), because the mark at the top thinks
+ * composer. The words and the send are Home's (`useStart`), because the capsule at the top thinks
  * while a first message is on its way.
  */
-function Writing({ me, start, editor, placeholder }: WritingProps) {
+function Writing({ me, start, origin, placeholder }: WritingProps) {
   return (
     <>
       <ScrollView
@@ -186,7 +149,8 @@ function Writing({ me, start, editor, placeholder }: WritingProps) {
         </View>
       )}
       <Composer
-        ref={editor}
+        ref={homeComposer}
+        origin={origin}
         value={start.draft}
         placeholder={placeholder}
         working={false}
@@ -196,38 +160,6 @@ function Writing({ me, start, editor, placeholder }: WritingProps) {
         onStop={() => undefined}
       />
     </>
-  )
-}
-
-/**
- * The top of Home: Vivid's mark on a round of glass, which opens the drawer. It is the one face
- * on this screen, and it is thinking while Vivid is at work on anything or a first message is on
- * its way.
- */
-function Top({ mood }: { mood: 'happy' | 'thinking' }) {
-  const insets = useSafeAreaInsets()
-  return (
-    <View style={{ paddingTop: insets.top + 6, paddingHorizontal: GUTTER - 4 }}>
-      <Press
-        accessibilityRole="button"
-        accessibilityLabel="Open menu"
-        onPress={openDrawer}
-        containerStyle={{ alignSelf: 'flex-start' }}
-      >
-        <Glass radius={TARGET / 2 + 2}>
-          <View
-            style={{
-              width: TARGET + 4,
-              height: TARGET + 4,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Face size={28} mood={mood} />
-          </View>
-        </Glass>
-      </Press>
-    </View>
   )
 }
 
@@ -316,25 +248,4 @@ function useStart() {
       }),
     ),
   }
-}
-
-/** A Thread's title, changed in a sheet. The list shows the new title before the server answers. */
-function Rename({ thread, onClose }: { thread: Thread; onClose: () => void }) {
-  const data = useLiveData()
-  return (
-    <NameSheet
-      title="Rename thread"
-      label="Title"
-      initial={thread.title}
-      placeholder="What this thread is about"
-      action="Save"
-      maxLength={120}
-      onClose={onClose}
-      onSave={async (title) => {
-        if (title === thread.title) return Option.none()
-        const result = await patchThread(data, thread.id, { title })
-        return Result.isFailure(result) ? Option.some(result.failure.message) : Option.none()
-      }}
-    />
-  )
 }

@@ -14,8 +14,8 @@ import { GLASS_SUPPORTED } from './Glass'
  * on a device behaved (`VALIDATION.md`: the composer stays above the keyboard and leaves no gap
  * when it goes), so it is kept rather than re-derived without a device to check it on.
  *
- * This one is for a screen that starts at the top of the window: one with no bar (Home, the
- * front door), a sheet, or anything under a transparent bar.
+ * This one is for a screen that starts at the top of the window: one with no bar (the front
+ * door), a sheet, or anything under a transparent bar.
  */
 export function AboveKeyboard({ children }: { children: ReactNode }) {
   return <Riding offset={0}>{children}</Riding>
@@ -29,7 +29,7 @@ export function AboveKeyboard({ children }: { children: ReactNode }) {
 const BAR_PUSHES_DOWN = Platform.OS === 'ios' && !GLASS_SUPPORTED
 
 /**
- * The same, for a screen that has the system's bar above it (a Thread).
+ * The same, for a screen that has the system's bar above it (Home, a Thread).
  *
  * `KeyboardAvoidingView` works out how far the keyboard covers it from its own frame, and takes
  * that frame to start at the top of the window. Under a solid bar the screen starts lower by the

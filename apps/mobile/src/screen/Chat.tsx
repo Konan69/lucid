@@ -22,23 +22,24 @@ import {
 import { useIsFocused } from '@react-navigation/native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Monitor, Share2, Users } from 'lucide-react-native'
+import Animated, { useAnimatedRef } from 'react-native-reanimated'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { commit } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
 import { inFront, onForeground } from '../data/foreground'
 import { LiveState, refusalOf, useLive, useLiveData } from '../data/live'
-import { isShown, isStreaming, lastWordsOf, type Around } from '../data/message'
+import { isShown, lastWordsOf, type Around } from '../data/message'
 import { endingOf, newestRun } from '../data/outcome'
 import { conversation, say, UNDELIVERED, UNTITLED } from '../data/threads'
 import { Composer } from '../ui/Composer'
-import { Bar, BarRoom, NO_ACTIONS, StandingBar, type BarAction } from '../ui/Bar'
+import { Bar, BarRoom, NO_ACTIONS, VividBar, type BarAction } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
+import { Stand, type Origin } from '../ui/Presence'
 import {
   Button,
   EDGE,
   Empty,
-  Face,
   GUTTER,
   Label,
   Notice,
@@ -46,11 +47,9 @@ import {
   Skeleton,
   styles,
   TARGET,
-  type Tone,
 } from '../ui/ui'
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
-import { ThinkingOrb } from '../../vendor/orb'
 import { useGo, useMe, type Routes } from '../workspace'
 import { Message } from './chat/Message'
 import { Share } from './chat/Share'
@@ -131,15 +130,17 @@ function Gone() {
 }
 
 /**
- * How Vivid is doing in a Thread, beside the words for it (`standingWords`, shared with the web):
- * the ink the line under the title is said in, where the bar is the app's to colour.
+ * How Vivid stands at the top of a Thread for each thing the Thread can be waiting on
+ * (`ui/Presence.tsx`). At work it is the orb. Waiting for the Person it says so, in the words the
+ * web uses (`standingWords`) and in that state's ink, because nothing else on a Thread does.
+ * Otherwise it is simply there, under its own name.
  */
-const STANDING_TONE = {
-  Working: 'status-working',
-  NeedsYou: 'status-attention',
-  Unread: 'ink-3',
-  Quiet: 'ink-3',
-} as const satisfies Record<Thread['attention'], Tone>
+const STAND = {
+  Working: Stand.Thinking(),
+  NeedsYou: Stand.Saying({ words: standingWords.NeedsYou, tone: 'status-attention' }),
+  Unread: Stand.Resting({ mood: 'happy' }),
+  Quiet: Stand.Resting({ mood: 'happy' }),
+} as const satisfies Record<Thread['attention'], Stand>
 
 /** Who can see a Thread, in a sentence, for whoever cannot see the mark that says so. */
 const audienceWords = (thread: Thread): string =>
@@ -150,23 +151,27 @@ const audienceWords = (thread: Thread): string =>
   })
 
 /**
- * The top of a Thread, said to the system's bar (`ui/Bar.tsx`); nothing is drawn here: the
- * Thread's title, and under it a line saying how Vivid is doing right now (here, working,
- * waiting for the Person). While someone else is writing, the line says
- * that instead, because it is the thing about to change the Thread. Beside the title: who else
- * is looking. In the bar's own buttons: who the Thread is shared with, and the way to Vivid's
- * computer.
+ * The top of a Thread (`VividBar`): Vivid in the middle, saying how it is doing right now
+ * (thinking, waiting for the Person, or simply there). While someone else is writing, it says
+ * that instead, because it is the thing about to change the Thread. At the end of the bar: who
+ * else is looking, who the Thread is shared with, and the way to Vivid's computer.
+ *
+ * The Thread's title is not here. The bar's middle is Vivid's, as the owner asked, and the title
+ * is where the Person chose the Thread: its row in the drawer.
  */
 function Top({
   thread,
   present,
   working,
+  origin,
   onShare,
 }: {
   thread: Option.Option<Thread>
   present: ThreadDetail['present']
   /** Vivid is answering on this phone right now, which the Thread's record may not say yet. */
   working: boolean
+  /** The composer's button, where "thinking" leaves from on its way to the top. */
+  origin: Origin
   onShare: () => void
 }) {
   const me = useMe()
@@ -200,14 +205,16 @@ function Top({
     },
   )
   return (
-    <StandingBar
-      title={Option.match(thread, { onNone: () => '', onSome: (value) => value.title })}
-      standing={{
-        words: someoneTyping
-          ? `${typing.map((seen) => seen.person.name).join(', ')} typing…`
-          : standingWords[attention],
-        tone: someoneTyping ? 'ink-3' : STANDING_TONE[attention],
-      }}
+    <VividBar
+      stand={
+        someoneTyping
+          ? Stand.Saying({
+              words: `${typing.map((seen) => seen.person.name).join(', ')} typing…`,
+              tone: 'ink-2',
+            })
+          : STAND[attention]
+      }
+      origin={origin}
       present={others.map((seen) => seen.person)}
       actions={Option.match(sharing, {
         onNone: () => [computer],
@@ -329,6 +336,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
   const typed = useDraft(place)
   const setTyping = useAtomSet(data.typingIn(id))
   const [sharing, setSharing] = useState(false)
+  const origin = useAnimatedRef<Animated.View>()
   const thread = Option.map(detail, (value) => value.thread)
   const sending = useSend(id, thread, agent, place)
   const { shared } = sending
@@ -399,6 +407,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
         thread={thread}
         present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
         working={working}
+        origin={origin}
         onShare={() => setSharing(true)}
       />
       <View ref={wake} style={{ flex: 1 }}>
@@ -420,6 +429,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
         </View>
       )}
       <Composer
+        origin={origin}
         value={typed}
         placeholder={shared ? `Message everyone and ${vivid.name}` : `Message ${vivid.name}`}
         working={working}
@@ -499,7 +509,6 @@ function Transcript(props: MessagesProps) {
   const { messages, working } = props
   const list = useRef<FlatList<FlueConversationMessage>>(null)
   const [awayAt, setAwayAt] = useState<Option.Option<number>>(Option.none())
-  const streaming = messages.some((message) => message.role === 'assistant' && isStreaming(message))
   const arrived = Option.match(awayAt, {
     onNone: () => 0,
     onSome: (seen) => messages.length - seen,
@@ -544,9 +553,7 @@ function Transcript(props: MessagesProps) {
         // bar stands over, so the oldest words are not left under it (`BarRoom`).
         ListFooterComponent={<BarRoom />}
         // The first thing in an inverted list is the last thing on screen.
-        ListHeaderComponent={
-          <Tail working={working && !streaming} ended={props.ended} trouble={props.trouble} />
-        }
+        ListHeaderComponent={<Tail ended={props.ended} trouble={props.trouble} />}
         renderItem={({ item, index }) => (
           <Message
             message={item}
@@ -632,39 +639,19 @@ function Blank({ ready }: { ready: boolean }) {
 }
 
 /**
- * What sits under the newest message: that Vivid is thinking, that its last Run came to nothing,
- * or that something did not arrive.
+ * What sits under the newest message: that Vivid's last Run came to nothing, or that something
+ * did not arrive. That Vivid is thinking is not said here: it is at the top of the screen, in
+ * Vivid's capsule (`ui/Presence.tsx`), where the orb goes when the Person sends.
  */
 function Tail({
-  working,
   ended,
   trouble,
 }: {
-  working: boolean
   ended: Option.Option<Ended>
   trouble: Option.Option<Trouble>
 }) {
-  // The orb is drawn in Vivid's theme, which a Person can set against the system's.
-  const { dark } = useTheme()
   return (
     <View style={{ gap: 12 }}>
-      {working && (
-        <View
-          accessibilityLiveRegion="polite"
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
-        >
-          <Face size={24} mood="thinking" />
-          {/* The same orb the web shows beside "Thinking…" (`apps/web/src/screen/Thread.tsx`).
-              The words name it, so a screen reader is not told twice. */}
-          <ThinkingOrb
-            state="breathing"
-            size={20}
-            theme={dark ? 'dark' : 'light'}
-            accessibilityLabel=""
-          />
-          <Label tone="ink-2">Thinking…</Label>
-        </View>
-      )}
       {Option.isSome(ended) && (
         <View style={{ gap: 8 }}>
           <Label size="label" tone="ink-2">

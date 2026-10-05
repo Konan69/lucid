@@ -14,9 +14,11 @@ import { createContext, useContext } from 'react'
  * Where a signed-in Person can be in the app. Every place is a screen on one native stack, so
  * going somewhere pushes it and the system's back swipe returns.
  *
- * - `Home`: every Thread the Person can see, and somewhere to write to start a new one. It is
- *   the root, so it is also the first screen: with no Threads yet it is just Vivid and a composer.
- * - `Chat`: one Thread. Only its id travels; its title and everything else are read live.
+ * - `Home`: Vivid's greeting and somewhere to write to start a new Thread. It is the root, so it
+ *   is also the first screen. Every Thread the Person can see is in the drawer around the stack.
+ * - `Chat`: one Thread. Only its id travels; its title and everything else are read live. Opened
+ *   from Home it stands beside Home, with Home's bar and the drawer (`data/lead.ts`); opened from
+ *   anywhere else it is pushed, and the back swipe returns there.
  * - `Computer`: Vivid's computer, reached from a Thread's bar: where it stands and its controls.
  * - `Routines`, `Library`: the places beside Threads, in the drawer. `Projects` is reached from
  *   the quiet group under the Threads.

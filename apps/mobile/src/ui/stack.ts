@@ -60,6 +60,35 @@ export const GLASS_HEADER = {
   unstable_navigationItemStyle: GLASS_SUPPORTED ? 'editor' : undefined,
 } satisfies NativeStackNavigationOptions
 
+/**
+ * The bar of Home and a Thread, the two screens with Vivid's capsule in the middle (`VividBar`).
+ *
+ * The title is empty for good: where the bar is glass the capsule floats in its place, and where
+ * it is solid the capsule is the title's own element. The centre is the capsule's, so the bar is
+ * the system's ordinary `navigator` layout, not `editor`, which stands a title at the leading
+ * edge; the reference drops `editor` in the same way wherever it wants a centred title
+ * (`SHEET_GLASS_HEADER_OPTIONS`). Android centres a title only when asked.
+ */
+export const FRONT_HEADER = {
+  ...GLASS_HEADER,
+  title: '',
+  headerTitleAlign: 'center',
+  unstable_navigationItemStyle: undefined,
+} satisfies NativeStackNavigationOptions
+
+/**
+ * How a Thread arrives beside Home: it fades in, in a little over a fifth of a second.
+ *
+ * The two screens have the same bar and the same composer in the same places, so a push would
+ * slide one copy of each out as the other slid in. A fade leaves them standing and changes only
+ * what is between them, which is what happened: the conversation started. The same holds when
+ * the drawer swaps Home for a Thread, and when "New thread" goes back.
+ */
+export const BESIDE = {
+  animation: 'fade',
+  animationDuration: 220,
+} satisfies NativeStackNavigationOptions
+
 /** An opaque bar, for a screen whose content scrolls inside itself and gives glass nothing to sample. */
 export const SOLID_HEADER = {
   headerShown: true,
