@@ -1,21 +1,21 @@
 import { useAtomValue } from '@effect/atom-react'
-import type { NotificationId } from '@vivid/contracts'
+import type { InvitationId, NotificationId } from '@vivid/contracts'
 import { everyNoticeRead, noticeRows, noticesRead, type NotificationList } from '@vivid/state'
 import { Option } from 'effect'
 import { useState } from 'react'
-import { FlatList, Linking, ScrollView, View } from 'react-native'
+import { FlatList, ScrollView, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Bell, CheckCheck } from 'lucide-react-native'
 import { useNow } from '../data/foreground'
 import { commit } from '../data/haptics'
 import { LiveState, useLive, useLiveData, useLiveValue, type LiveData } from '../data/live'
-import { invitationAddress } from '../data/server'
 import { useTheme } from '../theme'
 import { Bar } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
 import { GUTTER, Label, Notice, radius, styles } from '../ui/ui'
-import { useGo } from '../workspace'
+import { useOpenThread } from '../workspace'
 import { Destination } from './notifications/destination'
+import { Invitation } from './notifications/Invitation'
 import { Item, itemKey, itemsOf } from './notifications/list'
 import { NoticeLine, NoticeOutline } from './notifications/Row'
 
@@ -174,13 +174,13 @@ function Caption({ label }: { label: string }) {
 /**
  * The list itself: a row for each place to go, newest first, under the day it happened.
  *
- * It holds the one thing a row cannot say for itself: that the phone's browser would not take
- * an invitation's page. That is said above the list, where the Person is looking, and cleared by
- * the next press that leaves.
+ * It holds the one thing that opens over it: the invitation a row is about, as a sheet
+ * (`notifications/Invitation.tsx`). An invitation used to be handed to the phone's browser; the
+ * server answers it over the app's own connection, so it is read and accepted here.
  */
 function Listed({ list }: { list: NotificationList }) {
   const data = useLiveData()
-  const go = useGo()
+  const openThread = useOpenThread()
   const insets = useSafeAreaInsets()
   const threads = useLiveValue(data.live.threads)
   // The Threads the server has said are not there for this Person; nothing else makes a row
@@ -188,24 +188,16 @@ function Listed({ list }: { list: NotificationList }) {
   const gone = useAtomValue(data.gone)
   // The moment the app last came to the front: times do not tick under a finger.
   const now = useNow()
-  const [unopened, setUnopened] = useState<Option.Option<string>>(Option.none())
-
-  /** Hands the invitation's page to the phone's browser, and says so here if it is refused. */
-  const leave = (address: string) => {
-    setUnopened(Option.none())
-    void Linking.openURL(address).then(
-      () => undefined,
-      () => setUnopened(Option.some('That invitation could not be opened in your browser.')),
-    )
-  }
+  // The invitation whose sheet is open over the list, if one is.
+  const [invited, setInvited] = useState<Option.Option<InvitationId>>(Option.none())
 
   /** Goes to what a row is about, marking all of it read on the way. */
   const open = (unread: ReadonlyArray<NotificationId>, leads: Destination) => {
     read(data, unread)
     Destination.$match(leads, {
-      Thread: ({ id }) => go.navigate('Chat', { id }),
-      // The phone has no screen that accepts an invitation; the web's page for it does.
-      Invitation: ({ id }) => leave(invitationAddress(data.session.server, id)),
+      Thread: ({ id }) => openThread(id),
+      // Read and answered in a sheet over this list; nothing leaves the app.
+      Invitation: ({ id }) => setInvited(Option.some(id)),
       // Reading it is all a press on these does, and all that is left to do with them.
       Gone: () => undefined,
       Nowhere: () => undefined,
@@ -223,26 +215,29 @@ function Listed({ list }: { list: NotificationList }) {
   )
 
   return (
-    <FlatList
-      data={items}
-      keyExtractor={itemKey}
-      contentInsetAdjustmentBehavior="automatic"
-      ListHeaderComponent={
-        Option.isSome(unopened) ? (
-          <View style={{ paddingHorizontal: GUTTER, paddingTop: 8 }}>
-            <Notice message={unopened.value} />
-          </View>
-        ) : null
-      }
-      renderItem={({ item }) =>
-        Item.$match(item, {
-          Heading: ({ label }) => <Caption label={label} />,
-          Entry: ({ face, leads, unread }) => (
-            <NoticeLine face={face} leads={leads} now={now} onPress={() => open(unread, leads)} />
-          ),
-        })
-      }
-      contentContainerStyle={[styles.column, { paddingBottom: insets.bottom + 24 }]}
-    />
+    <>
+      <FlatList
+        data={items}
+        keyExtractor={itemKey}
+        contentInsetAdjustmentBehavior="automatic"
+        renderItem={({ item }) =>
+          Item.$match(item, {
+            Heading: ({ label }) => <Caption label={label} />,
+            Entry: ({ face, leads, unread }) => (
+              <NoticeLine face={face} leads={leads} now={now} onPress={() => open(unread, leads)} />
+            ),
+          })
+        }
+        contentContainerStyle={[styles.column, { paddingBottom: insets.bottom + 24 }]}
+      />
+      {/* Keyed by the invitation: a second one is asked about afresh, never shown as the first. */}
+      {Option.isSome(invited) && (
+        <Invitation
+          key={invited.value}
+          id={invited.value}
+          onClose={() => setInvited(Option.none())}
+        />
+      )}
+    </>
   )
 }

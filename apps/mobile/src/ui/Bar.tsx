@@ -1,4 +1,5 @@
 import type { PersonSummary } from '@vivid/contracts'
+import type { FaceMood } from '@vivid/marks'
 import { useNavigation, type ParamListBase } from '@react-navigation/native'
 import {
   useAnimatedHeaderHeight,
@@ -10,9 +11,12 @@ import {
 import type { LucideIcon } from 'lucide-react-native'
 import { useLayoutEffect, useRef } from 'react'
 import { Animated, Platform, View } from 'react-native'
+import { openDrawer } from '../data/drawer'
 import { Faces } from './Avatar'
+import { Face } from './Face'
 import { GLASS_SUPPORTED } from './Glass'
-import { IconButton, Label, type Tone } from './ui'
+import { NO_SCROLL_EDGES, SCROLL_EDGES } from './stack'
+import { IconButton, Label, Press, TARGET, type Tone } from './ui'
 
 /**
  * What a screen puts in the system's navigation bar: its title and at most a couple of actions.
@@ -150,6 +154,40 @@ const endOptions = (end: BarEnd, press: PressAt): NativeStackNavigationOptions =
             : () => <BarButtons {...end} press={press} />,
       }
 
+/**
+ * Vivid's mark at the start of the first screen's bar. Pressing it opens the menu (`ui/Drawer.tsx`).
+ * It is the one face on that screen, so it also says how Vivid is: thinking while it is at work.
+ *
+ * On iOS it is a custom item of the system's bar, which on iOS 26 gives it the same round of
+ * glass as every other bar button; the round the app used to draw for it (`Glass` in Home's own
+ * top) is gone with the bar the app drew.
+ */
+function MenuMark({ mood }: { mood: FaceMood }) {
+  return (
+    <Press
+      accessibilityRole="button"
+      accessibilityLabel="Open menu"
+      onPress={openDrawer}
+      style={{ width: TARGET, height: TARGET, alignItems: 'center', justifyContent: 'center' }}
+    >
+      <Face size={28} mood={mood} />
+    </Press>
+  )
+}
+
+/**
+ * The options that put Vivid's mark where a pushed screen has the way back. The first screen is
+ * the root of the stack, so the system draws no way back there and the mark is alone at the start.
+ */
+const menuOptions = (mood: FaceMood): NativeStackNavigationOptions =>
+  Platform.OS === 'ios'
+    ? {
+        unstable_headerLeftItems: () => [
+          { type: 'custom', element: <MenuMark mood={mood} />, hidesSharedBackground: false },
+        ],
+      }
+    : { headerLeft: () => <MenuMark mood={mood} /> }
+
 /** Nobody else is here. One value, for the same reason as `NO_ACTIONS`. */
 const NOBODY: ReadonlyArray<PersonSummary> = []
 
@@ -192,6 +230,23 @@ export function Bar({ title, actions }: { title: string; actions: ReadonlyArray<
     title,
     ...PLAIN,
     ...endOptions({ present: NOBODY, actions }, press),
+  }))
+  return null
+}
+
+/**
+ * The first screen's bar while nothing has been said: Vivid's mark, and no title, because the
+ * greeting under it is what the screen says.
+ */
+export function MenuBar({ mood }: { mood: FaceMood }) {
+  useBar(JSON.stringify(['menu', mood]), NO_ACTIONS, (press) => ({
+    title: '',
+    ...PLAIN,
+    // The greeting's scroller is the right way up; a Thread on this same route turns the effect
+    // off (`MenuStandingBar`), so it is named here to come back on.
+    scrollEdgeEffects: GLASS_SUPPORTED ? SCROLL_EDGES : undefined,
+    ...menuOptions(mood),
+    ...endOptions({ present: NOBODY, actions: NO_ACTIONS }, press),
   }))
   return null
 }
@@ -249,6 +304,31 @@ export function StandingBar({
   useBar(JSON.stringify([title, standing, people, shownOf(actions)]), actions, (press) => ({
     title,
     ...standingOptions(title, standing),
+    ...endOptions({ present, actions }, press),
+  }))
+  return null
+}
+
+/**
+ * A Thread's bar on the first screen: a `StandingBar` that starts with Vivid's mark, since the
+ * Thread is in the first screen's place and there is nothing to go back to.
+ */
+export function MenuStandingBar({
+  mood,
+  title,
+  standing,
+  present,
+  actions,
+}: BarEnd & { mood: FaceMood; title: string; standing: Standing }) {
+  const people = present.map((person) => [person.id, person.name, person.image])
+  const signature = JSON.stringify(['menu', mood, title, standing, people, shownOf(actions)])
+  useBar(signature, actions, (press) => ({
+    title,
+    ...standingOptions(title, standing),
+    // A Thread's list is inverted, and the system's edge effect frosts all of an inverted list
+    // (`NO_SCROLL_EDGES`).
+    scrollEdgeEffects: GLASS_SUPPORTED ? NO_SCROLL_EDGES : undefined,
+    ...menuOptions(mood),
     ...endOptions({ present, actions }, press),
   }))
   return null

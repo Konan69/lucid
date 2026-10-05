@@ -114,6 +114,15 @@ When the load average is above the core count, or memory is in swap, do the work
 
 Simulators, emulators and testing run on the Cloudbox, not on the developer's PC, contended or not. That covers the Android emulator, driving a browser or the app to test it, a live proof, a gate and a suite. A focused test of the file being changed is small and may run on the PC. An iOS simulator needs macOS, which neither machine has: the iPhone app is checked on the phone itself or on a macOS runner, and its JavaScript, which is all that most fixes change, is built on the Cloudbox.
 
+## Shipping a phone change
+
+A change to the phone app reaches the developer's iPhone one of two ways, and which one is decided by whether the native side changed.
+
+- **JavaScript only** (screens, state, copy, assets; `pnpm-lock.yaml`, `patches/`, the `app.json` plugins and `version` all unchanged): it goes over the air. Merge it; the next production deploy publishes it, and the installed app takes it on its second open. Do not build or hand over an IPA for it.
+- **Native** (a native module added or changed, a config plugin, a patch to a native package, an Expo SDK move): raise `version` in `apps/mobile/app.json`, build the IPA from `main`, and put it in the developer's Downloads folder named with its version, `Vivid-<version>.ipa` (`Vivid-0.3.0.ipa`). Delete the IPA it replaces, there and among the CI artifacts, so there is one build to install and its name says which.
+
+Say in the report which of the two the change was. `apps/mobile/README.md` ("Over-the-air updates") has the mechanism.
+
 ## SDKs, servers, and tools
 
 Flue, Alchemy beta, Effect rc, Better Auth, Expo, and related SDKs move quickly. Never assume their APIs from memory. Read installed package source and version-matched docs first; for Flue use `pnpm exec flue docs ...`. Do not hack, reassign, or monkey-patch framework/SDK internals; use public APIs or an owned boundary and document a narrow removable workaround only when source proves a gap.
