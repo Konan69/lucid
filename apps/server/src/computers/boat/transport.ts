@@ -89,6 +89,24 @@ export const boatConfiguration = Effect.fn('Machine.boat.configuration')(functio
   return { key, org, create, adopt }
 })
 
+/** The failure an answer outside 2xx stands for. */
+const refused = Effect.fn('Machine.boat.refused')(function* (
+  response: HttpClientResponse.HttpClientResponse,
+) {
+  // A 5xx is the provider failing, and its body is whatever an edge in front of it sent:
+  // HTML, nothing, half a document. The status alone says it is an outage, so it is
+  // classified before the body is read; decoding first turned such an answer into an
+  // invalid response, which is recorded as the machine's state where an outage is not.
+  if (response.status >= 500)
+    return yield* Effect.fail(new MachineRequestRejected({ status: response.status }))
+  yield* decodeError(response).pipe(
+    Effect.mapError(() => new MachineResponseInvalid({ operation: 'error' })),
+  )
+  if (response.status === 401 || response.status === 403)
+    return yield* Effect.fail(new MachineAuthenticationFailed())
+  return yield* Effect.fail(new MachineRequestRejected({ status: response.status }))
+})
+
 /** Authenticated requests have one response boundary and bounded dispatch/body deadlines. */
 const requests = (
   client: HttpClient.HttpClient,
@@ -99,23 +117,6 @@ const requests = (
   const billed = Option.match(org, {
     onNone: () => Function.identity<HttpClientRequest.HttpClientRequest>,
     onSome: (name) => HttpClientRequest.setHeader('X-Boat-Org', name),
-  })
-  /** The failure an answer outside 2xx stands for. */
-  const refused = Effect.fn('Machine.boat.refused')(function* (
-    response: HttpClientResponse.HttpClientResponse,
-  ) {
-    // A 5xx is the provider failing, and its body is whatever an edge in front of it sent:
-    // HTML, nothing, half a document. The status alone says it is an outage, so it is
-    // classified before the body is read; decoding first turned such an answer into an
-    // invalid response, which is recorded as the machine's state where an outage is not.
-    if (response.status >= 500)
-      return yield* Effect.fail(new MachineRequestRejected({ status: response.status }))
-    yield* decodeError(response).pipe(
-      Effect.mapError(() => new MachineResponseInvalid({ operation: 'error' })),
-    )
-    if (response.status === 401 || response.status === 403)
-      return yield* Effect.fail(new MachineAuthenticationFailed())
-    return yield* Effect.fail(new MachineRequestRejected({ status: response.status }))
   })
   /** Sends one request and hands back Boat's answer, whatever its status. */
   const send = Effect.fn('Machine.boat.send')(function* (input: Request) {
