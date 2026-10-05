@@ -330,6 +330,16 @@ const roomBeside = (end: BarEnd): number => {
 }
 
 /**
+ * The least the capsule is ever allowed: its face and a few letters. A narrow window with a full
+ * bar would otherwise work out to nothing, or less, and a width below zero is not a layout.
+ */
+const LEAST = 96
+
+/** The widest the capsule may be in a window, between what stands at each end of its bar. */
+const limitIn = (window: number, end: BarEnd): number =>
+  Math.max(LEAST, window - 2 * roomBeside(end))
+
+/**
  * The bar of the two screens a Person meets Vivid on, Home and a Thread: Vivid's capsule in the
  * middle, saying how it stands, and at the end who else is here and what can be done. What leads
  * the bar is the screen's own option (`leadOptions`).
@@ -348,7 +358,7 @@ export function VividBar({
   present,
   actions,
 }: BarEnd & { stand: Stand; origin: Origin }) {
-  const limit = useWindowDimensions().width - 2 * roomBeside({ present, actions })
+  const limit = limitIn(useWindowDimensions().width, { present, actions })
   const people = present.map((person) => [person.id, person.name, person.image])
   // The capsule is part of the options only where it sits in the bar; where it floats, a change
   // in how Vivid stands must not hand the navigator new options.
