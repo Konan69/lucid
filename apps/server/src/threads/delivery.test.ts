@@ -40,7 +40,8 @@ import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpServer from 'effect/unstable/http/HttpServer'
 import { findPerson } from '../auth/access.ts'
-import { RoutineStore, routineStoreLayer } from '../routines/store.ts'
+import { RoutineStore, routineStoreServiceLayer } from '../routines/store.ts'
+import { IntegrationWatch } from '../routines/watch.ts'
 import { RoutineScheduler, routineSchedulerServiceLayer } from '../routines/scheduler.ts'
 import { ThreadStore } from './store.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
@@ -563,7 +564,12 @@ describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
       )
       const schedulerContext = yield* Layer.build(
         routineSchedulerServiceLayer.pipe(
-          Layer.provideMerge(routineStoreLayer),
+          // These Routines run on the clock. Nothing here watches an Integration, so the store
+          // gets a stand-in with no methods; the production Layer would build a real Executor
+          // client from settings this suite does not have.
+          Layer.provideMerge(
+            routineStoreServiceLayer.pipe(Layer.provide(Layer.mock(IntegrationWatch, {}))),
+          ),
           Layer.provide(foundation),
         ),
       )
