@@ -2,7 +2,7 @@ import { SymbolView } from './Symbol'
 import { ControlPillMenu } from './Menu'
 import type { MenuAction } from '@react-native-menu/menu'
 import * as Haptics from 'expo-haptics'
-import { useCallback, useRef, useState, type ComponentProps, type ReactNode } from 'react'
+import { useCallback, useRef, type ComponentProps, type ReactNode } from 'react'
 import type { ColorValue, StyleProp, ViewStyle } from 'react-native'
 import { View } from 'react-native'
 import ReanimatedSwipeable, {
@@ -101,7 +101,7 @@ function resolveSecondaryAction(input: {
 
 export function ThreadSwipeable(props: {
   readonly backgroundColor: ColorValue
-  readonly children: (close: () => void) => ReactNode
+  readonly children: ReactNode
   /** Uses action visuals that fit inside compact 44pt rows. The press target
    * still spans the row's full height and width. */
   readonly compactActions?: boolean
@@ -141,12 +141,19 @@ export function ThreadSwipeable(props: {
     props.fullSwipeAction ?? (props.secondaryAction === undefined ? 'delete' : 'primary')
   // Rows are keyed by their Thread and never recycled, so a swipeable belongs to one Thread for
   // its whole life and has nothing to reset.
-  // Handed to the row's children while rendering, so it must not close over a ref. The handle
-  // is read from the swipeable at the moment the row asks to close.
-  const [handle, setHandle] = useState<SwipeableMethods | null>(null)
-  const close = () => {
-    if (handle !== null) handle.close()
-  }
+  //
+  // The swipeable's handle stays in the ref, which the event handlers below read when they run.
+  // It was also kept as state, set from a `ref` callback, and that ended the signed-in app on its
+  // first screen. The swipeable builds a new handle whenever one of its event props is a new
+  // function (`ReanimatedSwipeable`: `swipeableMethods` follows `animateRow`, which follows the
+  // `onSwipeable…` props), and here they are new on every render. So every render detached and
+  // attached the ref, every attach set state, and every state set rendered again, until React
+  // stopped it with "Maximum update depth exceeded". A ref object is attached without a render.
+  //
+  // The reference (T3 Code mobile `features/home/thread-swipe-actions.tsx`) hands its children a
+  // `close` that reads this ref. Vivid's row closes nothing from inside itself, and a function
+  // that reads a ref cannot be handed to children while rendering, so the children here are
+  // plain elements.
   const handleFullSwipeArmedChange = useCallback((armed: boolean) => {
     if (armed && !fullSwipeArmedRef.current) {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
@@ -156,10 +163,7 @@ export function ThreadSwipeable(props: {
 
   return (
     <ReanimatedSwipeable
-      ref={(methods) => {
-        swipeableRef.current = methods
-        setHandle(methods)
-      }}
+      ref={swipeableRef}
       animationOptions={THREAD_SWIPE_SPRING}
       childrenContainerStyle={{ backgroundColor: props.backgroundColor }}
       containerStyle={[{ backgroundColor: props.backgroundColor }, props.containerStyle]}
@@ -227,7 +231,7 @@ export function ThreadSwipeable(props: {
       rightThreshold={actionsWidth * 0.42}
       simultaneousWithExternalGesture={props.simultaneousWithExternalGesture}
     >
-      {props.children(close)}
+      {props.children}
     </ReanimatedSwipeable>
   )
 }
