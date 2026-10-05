@@ -147,7 +147,6 @@ describe('desktop bridge sender authority', () => {
     for (const address of [
       'https://vivid.example/device?user_code=ABCD2345&signin=google',
       'https://vivid.example/device?user_code=ABCD2345',
-      'https://vivid.example/device?user_code=AB%26signin%3Dx&signin=google',
     ]) {
       expect(isApprovalAddress(address, server)).toBe(true)
       expect(ask(address)).toBe(true)
@@ -169,10 +168,27 @@ describe('desktop bridge sender authority', () => {
       'https://vivid.example/device?signin=google',
       'https://vivid.example/device?user_code=',
       'https://vivid.example/device?user_code=ABCD2345&user_code=WXYZ6789',
-      // Anything riding along.
+      // A code the server would never issue: too short, too long, the dashed form a Person
+      // reads, lower case, a look-alike the alphabet leaves out (I, O, 0, 1), or other marks.
+      'https://vivid.example/device?user_code=ABCD234',
+      'https://vivid.example/device?user_code=ABCD23456',
+      'https://vivid.example/device?user_code=ABCD-2345',
+      'https://vivid.example/device?user_code=abcd2345',
+      'https://vivid.example/device?user_code=ABCD234I',
+      'https://vivid.example/device?user_code=ABCD234O',
+      'https://vivid.example/device?user_code=ABCD2340',
+      'https://vivid.example/device?user_code=ABCD2341',
+      'https://vivid.example/device?user_code=AB%26signin%3Dx',
+      'https://vivid.example/device?user_code=ABCD2345%0A',
+      'https://vivid.example/device?user_code=%20ABCD2345',
+      // Anything riding along, in any place.
       'https://vivid.example/device?user_code=ABCD2345&signin=returned',
+      'https://vivid.example/device?user_code=ABCD2345&signin=',
       'https://vivid.example/device?user_code=ABCD2345&signin=google&signin=google',
+      'https://vivid.example/device?signin=google&user_code=ABCD2345',
       'https://vivid.example/device?user_code=ABCD2345&next=https://other.example',
+      'https://vivid.example/device?user_code=ABCD2345&signin=google&next=x',
+      'https://vivid.example/device?next=x&user_code=ABCD2345',
       'https://vivid.example/device?user_code=ABCD2345#fragment',
     ]) {
       expect(isApprovalAddress(address, server)).toBe(false)

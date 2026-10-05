@@ -74,9 +74,12 @@ interface VividDesktopBridge {
 embedded window, so the web app runs a device-code exchange (the phone's way in, shared in
 `@vivid/state`) and asks main to open the selected server's approval page for its code in the
 system browser. Main accepts exactly that address and nothing else: the saved server's origin, the
-path `/device`, one `user_code`, and at most `signin=google` beside it (`isApprovalAddress` in
+path `/device`, one `user_code` in the shape the server issues (eight characters of Better Auth's
+alphabet), and at most `signin=google` after it (`isApprovalAddress` in
 `src/main/security.ts`). Once the code is approved the web app trades the exchange's token for a
 session cookie (`POST /api/auth/adopt-session`), so the window is a cookie session like any other.
+The web app reads the capability off the bridge before offering the button: a shell installed
+before `openApproval` existed shows "Update Vivid to sign in with Google here." instead.
 
 Invalid arguments and persistence failures reject the call. The chooser should display them and
 stay open; `Chosen` means both probe and durable save succeeded, and main replaces the document.
