@@ -65,6 +65,7 @@ import {
   ChannelListResponse,
   ConnectChannelRequest,
 } from './channels.js'
+import { DraftListResponse, DraftSaved, SaveDraftRequest } from './drafts.js'
 import {
   AddIntegrationRequest,
   AddIntegrationOutcome,
@@ -730,6 +731,18 @@ const DisconnectChannel = Rpc.make('DisconnectChannel', {
   success: ChannelLinkResponse,
   error: Schema.Union([RpcFailure, ChannelFailure]),
 })
+// ── Drafts: unsent words that follow the Person across devices ─────────────
+/** The Person's drafts in this workspace. Emits again whenever any device saves or clears one. */
+const WatchDrafts = Rpc.make('WatchDrafts', { ...live, success: DraftListResponse })
+/**
+ * Keeps, replaces or (with empty text) removes the draft of one place. A Thread the caller cannot
+ * see is `NotFound`, as everywhere.
+ */
+const SaveDraft = Rpc.make('SaveDraft', {
+  ...call,
+  payload: SaveDraftRequest,
+  success: DraftSaved,
+})
 // ── The Person's own computers ─────────────────────────────────────────────
 /** The desktop app naming itself after sign-in. The same installation always gets the same Device. */
 const EnrolDevice = Rpc.make('EnrolDevice', {
@@ -738,6 +751,8 @@ const EnrolDevice = Rpc.make('EnrolDevice', {
   success: DeviceResponse,
 })
 const ListDevices = Rpc.make('ListDevices', { ...call, success: DeviceListResponse })
+/** The same owned list, kept current as access and desktop presence change on any device. */
+const WatchDevices = Rpc.make('WatchDevices', { ...live, success: DeviceListResponse })
 /** Lets Vivid use this computer and, in the same step, no other computer of this Person. */
 const AllowDevice = Rpc.make('AllowDevice', {
   ...call,
@@ -907,10 +922,13 @@ export const VividRpc = RpcGroup.make(
   RunCommand,
   Browse,
   WatchChannels,
+  WatchDrafts,
+  SaveDraft,
   ConnectChannel,
   DisconnectChannel,
   EnrolDevice,
   ListDevices,
+  WatchDevices,
   AllowDevice,
   RevokeDevice,
   WatchDeviceRequests,

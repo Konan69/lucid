@@ -1,4 +1,4 @@
-import { Effect, Stream } from 'effect'
+import { Effect, Exit, Scope, Stream } from 'effect'
 import {
   ComputerResponse,
   DeviceListResponse,
@@ -13,7 +13,7 @@ import {
   type WatchDeviceRequestsRequest,
 } from '@vivid/contracts'
 import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
-import { changed } from '../live/changes.ts'
+import { Changes, Topic } from '../live/changes.ts'
 import { live, sessionEnded } from '../live/query.ts'
 import { DeviceRegistry } from './device.ts'
 import { ComputerStore, computerRunCommand, computerBrowse, computerDesktop } from './store.ts'
@@ -26,8 +26,41 @@ const load = Effect.fn('Computer.load')(function* (actor: Actor) {
   return ComputerResponse.make({ computer: yield* store.get(actor.person.id) })
 })
 
+/**
+ * One-shot and live callers share the Person-owned loader. Presence and desktop sockets belong
+ * to this process: the server must stay at one replica until presence is shared and browse
+ * requests can be routed to the replica holding the socket (device.ts#DeviceRegistry).
+ */
+const loadDevices = Effect.fn('Computer.loadDevices')(function* (actor: Pick<Actor, 'person'>) {
+  return DeviceListResponse.make({ devices: yield* (yield* DeviceRegistry).list(actor.person.id) })
+})
+
 /** The calling Person's computers, wrapped for the wire. */
 const one = (device: Device) => DeviceResponse.make({ device })
+
+/**
+ * Admission owns a private scope so a refused watch closes any partial link without publishing.
+ * The caller's acquireRelease closes this scope before announcing Offline, including replacement,
+ * revocation and session expiry. Public Scope APIs preserve registry release ordering.
+ */
+const admitted = Effect.fn('Computer.admitted')(function* (
+  auth: Effect.Success<ReturnType<typeof requirePerson>>,
+  request: WatchDeviceRequestsRequest,
+) {
+  const scope = yield* Scope.make()
+  const requests = yield* (yield* DeviceRegistry)
+    .watch({
+      personId: auth.person.id,
+      sessionId: auth.sessionId,
+      device: request.device,
+      installation: request.installation,
+    })
+    .pipe(
+      Effect.provideService(Scope.Scope, scope),
+      Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))),
+    )
+  return { scope, requests }
+})
 
 /**
  * A Person's call is always about their own Computer and their own computers: none of these takes
@@ -42,25 +75,24 @@ export const computerHandlers = {
   EnrolDevice: Effect.fn('Rpc.EnrolDevice')(function* (request: EnrolDeviceRequest) {
     const auth = yield* requirePerson()
     const device = yield* (yield* DeviceRegistry).enrol(auth.person.id, request)
-    yield* changed(auth)
+    yield* (yield* Changes).publish([Topic.person(auth.person.id)])
     return one(device)
   }),
   ListDevices: Effect.fn('Rpc.ListDevices')(function* () {
-    const auth = yield* requirePerson()
-    return DeviceListResponse.make({
-      devices: yield* (yield* DeviceRegistry).list(auth.person.id),
-    })
+    return yield* loadDevices(yield* requirePerson())
   }),
+  /** Resolve session authority again on every change, as for the other live product lists. */
+  WatchDevices: () => live(loadDevices),
   AllowDevice: Effect.fn('Rpc.AllowDevice')(function* ({ id }: { readonly id: DeviceId }) {
     const auth = yield* requirePerson()
     const device = yield* (yield* DeviceRegistry).allow(auth.person.id, id)
-    yield* changed(auth)
+    yield* (yield* Changes).publish([Topic.person(auth.person.id)])
     return one(device)
   }),
   RevokeDevice: Effect.fn('Rpc.RevokeDevice')(function* ({ id }: { readonly id: DeviceId }) {
     const auth = yield* requirePerson()
     const device = yield* (yield* DeviceRegistry).revoke(auth.person.id, id)
-    yield* changed(auth)
+    yield* (yield* Changes).publish([Topic.person(auth.person.id)])
     return one(device)
   }),
   /**
@@ -72,13 +104,16 @@ export const computerHandlers = {
     Stream.unwrap(
       Effect.gen(function* () {
         const auth = yield* requirePerson()
-        const requests = yield* (yield* DeviceRegistry).watch({
-          personId: auth.person.id,
-          sessionId: auth.sessionId,
-          device: request.device,
-          installation: request.installation,
-        })
-        return requests.pipe(Stream.interruptWhen(sessionEnded(auth.person.id, auth.sessionId)))
+        const changes = yield* Changes
+        const link = yield* Effect.acquireRelease(admitted(auth, request), ({ scope }, exit) =>
+          Scope.close(scope, exit).pipe(
+            Effect.andThen(changes.publish([Topic.person(auth.person.id)])),
+          ),
+        )
+        yield* changes.publish([Topic.person(auth.person.id)])
+        return link.requests.pipe(
+          Stream.interruptWhen(sessionEnded(auth.person.id, auth.sessionId)),
+        )
       }),
     ),
   AnswerDeviceRequest: Effect.fn('Rpc.AnswerDeviceRequest')(function* (input: AnswerDeviceRequest) {

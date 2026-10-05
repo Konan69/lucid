@@ -1,9 +1,17 @@
-import { InvitationId, type Notification, type NotificationId } from '@vivid/contracts'
+import type { Notification, NotificationId } from '@vivid/contracts'
+import {
+  everyNoticeRead,
+  invitationIn,
+  noticeFace,
+  noticeRows,
+  NoticeRow,
+  noticesRead,
+  type NoticeFace,
+} from '@vivid/state'
 import { Option } from 'effect'
 import { Bell, Check, Hand, Share2, UserPlus } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { change, live, LiveState, useLive, useLiveValue } from '../data/live'
-import { everyNoticeRead, noticeRows, NoticeRow, noticesRead } from '../data/notices'
 import { Route, router } from '../data/route'
 import { Button, IconButton } from '../ui/button'
 import { cn } from '../ui/cn'
@@ -43,23 +51,11 @@ function ago(at: number, now: number): string {
  * for an invitation. A new kind of notice fails to compile here.
  */
 const KIND = {
-  finished: { hue: 'green', icon: <Check />, name: 'Vivid finished' },
-  'needs-you': { hue: 'orange', icon: <Hand />, name: 'Vivid needs you' },
-  shared: { hue: 'blue', icon: <Share2 />, name: 'A Thread was shared with you' },
-  invited: { hue: 'violet', icon: <UserPlus />, name: 'You were invited' },
-} as const satisfies Record<Notification['kind'], { hue: Hue; icon: ReactNode; name: string }>
-
-/**
- * What a notice is called when it leads its row. The server writes a title for every notice, but
- * the contract allows an empty one, and a row with a mark, a time and no words was found by
- * looking at the worst-case list: it could not be read or told apart. A notice without a title
- * is called by its kind, which it always has.
- */
-const named = (notice: Notification): string =>
-  notice.title.trim().length === 0 ? KIND[notice.kind].name : notice.title
-
-/** An invitation notice carries its id at the end of its body; the rest is the sentence. */
-const INVITATION = /\s*invitation:(\S+)$/u
+  finished: { hue: 'green', icon: <Check /> },
+  'needs-you': { hue: 'orange', icon: <Hand /> },
+  shared: { hue: 'blue', icon: <Share2 /> },
+  invited: { hue: 'violet', icon: <UserPlus /> },
+} as const satisfies Record<Notification['kind'], { hue: Hue; icon: ReactNode }>
 
 /**
  * What the empty panel says. "Nothing new" is an answer, so it is only said once the server has
@@ -135,10 +131,8 @@ function readAll() {
 const visit = NoticeRow.$match({
   Single: ({ notice }) => {
     if (notice.readAt === null) read([notice.id])
-    const invitation = INVITATION.exec(notice.body)
-    if (invitation !== null && invitation[1] !== undefined) {
-      router.go(Route.Invite({ id: InvitationId.make(invitation[1]) }))
-    }
+    const invitation = invitationIn(notice)
+    if (Option.isSome(invitation)) router.go(Route.Invite({ id: invitation.value }))
   },
   Grouped: ({ threadId, unread }) => {
     read(unread)
@@ -190,7 +184,7 @@ function Panel({ onClose }: { onClose: () => void }) {
       ) : (
         <ul className="min-h-0 flex-1 overflow-y-auto p-1">
           {rows.map((row) => {
-            const face = faceOf(row)
+            const face = noticeFace(row)
             return (
               <li key={face.key}>
                 <Row
@@ -209,44 +203,6 @@ function Panel({ onClose }: { onClose: () => void }) {
     </>
   )
 }
-
-/** What a row says, whichever kind of row it is, so both are drawn on the same three edges. */
-interface Face {
-  /** Stable while notices arrive and are read: the Thread for a group, the notice for a single. */
-  readonly key: string
-  /** The Thread's title, or the notice's own when there is no Thread title to lead with. */
-  readonly heading: string
-  /** The notice the mark, the line and the time are taken from: the newest one. */
-  readonly notice: Notification
-  /**
-   * What the notice is, for someone who cannot see its mark, when the heading does not already
-   * say it: a row led by a Thread's title carries its kind only in the colour of an icon.
-   */
-  readonly spoken: Option.Option<string>
-  /** Whether the Thread is waiting on this Person now. */
-  readonly waiting: boolean
-  /** How many notices of the row are unread. */
-  readonly unread: number
-}
-
-const faceOf = NoticeRow.$match({
-  Single: ({ notice }): Face => ({
-    key: notice.id,
-    heading: named(notice),
-    notice,
-    spoken: Option.none(),
-    waiting: false,
-    unread: notice.readAt === null ? 1 : 0,
-  }),
-  Grouped: ({ threadId, title, newest, waiting, unread }): Face => ({
-    key: threadId,
-    heading: Option.getOrElse(title, () => named(newest)),
-    notice: newest,
-    spoken: Option.map(title, () => newest.title),
-    waiting,
-    unread: unread.length,
-  }),
-})
 
 /**
  * One row: the newest notice's mark, where it leads (a Thread's title), and under it one line of
@@ -269,7 +225,7 @@ function Row({
   now,
   onOpen,
 }: {
-  face: Face
+  face: NoticeFace
   /** The moment "3h ago" is counted from. */
   now: number
   onOpen: () => void
@@ -308,7 +264,7 @@ function Row({
           {Option.isSome(face.spoken) && <span className="sr-only">{face.spoken.value}</span>}
           {face.waiting && <span className="shrink-0 text-attention">Needs you</span>}
           <span className="min-w-0 flex-1 truncate">
-            <bdi>{face.notice.body.replace(INVITATION, '')}</bdi>
+            <bdi>{face.line}</bdi>
           </span>
           {face.unread > 1 && (
             <span className="shrink-0 text-meta font-meta text-ink-2 tabular-nums">

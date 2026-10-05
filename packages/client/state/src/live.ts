@@ -114,6 +114,34 @@ export interface LiveQuery<Value> {
   readonly expect: (change: (current: Value) => Value) => Settle
 }
 
+/**
+ * Where what a kept query shows came from.
+ * - `nothing`: nothing to show yet.
+ * - `device`: the last answer this device wrote down, shown until the server answers. It is
+ *   drawn exactly as a live answer is, with no spinner and no banner: it is nearly always right,
+ *   and the server's first answer replaces it within a moment of the socket opening.
+ * - `server`: the server's own answer.
+ */
+export type Origin = 'nothing' | 'device' | 'server'
+
+/**
+ * A live query whose last answer a device keeps between launches (`snapshot.ts`), so the first
+ * screen draws at once from what was last known and is then corrected by the server.
+ *
+ * The mechanism is T3 Code's (`refs/t3code/packages/client-runtime/src/state/shell.ts`,
+ * `makeEnvironmentShellState`): state starts from the cached snapshot, marked `cached`, and the
+ * first live result replaces it. Vivid's live cache is an Atom per query, not one reducer, so
+ * the cached value is a `seed` atom beside the subscription: `atom` shows the seed only while the
+ * subscription has not answered, and anything the server says, a refusal included, wins.
+ */
+export interface KeptQuery<Value> extends LiveQuery<Value> {
+  /** What the server itself has said, never the seed. Only this is ever written down. */
+  readonly answers: Atom.Atom<LiveResult<Value>>
+  /** The answer this device kept from its last run, set once its store has been read. */
+  readonly seed: Atom.Writable<Option.Option<Value>>
+  readonly origin: Atom.Atom<Origin>
+}
+
 /** What `useLive` returns for a query, for code that names that type. */
 export type LiveStateOf<Query> = Query extends LiveQuery<infer Value> ? LiveState<Value> : never
 
@@ -124,6 +152,9 @@ export interface LiveFamily<Argument, Value> {
 
 /** Failures that mean "this is not yours to see", which asking again will not change. */
 const FINAL = new Set(['Unauthenticated', 'Forbidden', 'NotFound', 'InvalidRequest'])
+
+/** Whether a failure is one that asking again cannot change, so nothing should ask again. */
+export const isFinal = (failure: ProductFailure): boolean => FINAL.has(failure._tag)
 
 /**
  * A subscription that outlives a dropped connection. A failure that is not final (the socket
@@ -198,6 +229,125 @@ function expecting<Value>(
 }
 
 /**
+ * A kept query over one subscription: the seed stands in only while the subscription is still
+ * `Initial`.
+ *
+ * A dropped connection never reaches the atom (`resilient`), so a device that launches with no
+ * network goes on showing what it kept; a final refusal does reach it and has no earlier success
+ * of its own, so a session that is gone stops showing the last Person's data at once.
+ */
+function keeping<Value>(
+  registry: AtomRegistry.AtomRegistry,
+  answers: Atom.Atom<LiveResult<Value>>,
+): KeptQuery<Value> {
+  // Kept alive: a seed is written once, at launch, and must still be there when the first
+  // screen that reads its query mounts.
+  const seed = Atom.keepAlive(Atom.make(Option.none<Value>()))
+  const source = Atom.make((get): LiveResult<Value> => {
+    const result = get(answers)
+    if (!AsyncResult.isInitial(result)) return result
+    return Option.match(get(seed), {
+      onNone: () => result,
+      onSome: (value) => AsyncResult.success(value, { waiting: true }),
+    })
+  })
+  const made = expecting(registry, source)
+  const origin = Atom.make((get): Origin => {
+    if (AsyncResult.isSuccess(get(answers))) return 'server'
+    return AsyncResult.isSuccess(get(source)) ? 'device' : 'nothing'
+  })
+  return { atom: made.atom, expect: made.expect, answers, seed, origin }
+}
+
+/**
+ * Asks every ended query again. A query ends when the server says it is not this Person's to
+ * see, and that answer is about where they were: after they switch workspace or sign in again
+ * the same question can have a different answer, and nothing else would ever ask it.
+ */
+function reopenEnded(registry: AtomRegistry.AtomRegistry, sources: WeakMap<object, object>) {
+  // Only a query something is reading, and only one that ended: an atom nobody has mounted
+  // would be started just by being asked how it is.
+  for (const atom of registry.getNodes().keys()) {
+    if (Predicate.isString(atom) || !sources.has(atom)) continue
+    if (AsyncResult.isFailure(registry.get(atom))) registry.refresh(atom)
+  }
+}
+
+/**
+ * Every live query of one kind, one per argument, each made the first time it is asked for and
+ * the same object for as long as anything holds it.
+ */
+function familyOf<Argument, Value>(
+  key: (argument: Argument) => string,
+  make: (argument: Argument) => LiveQuery<Value>,
+): LiveFamily<Argument, Value> {
+  // Held weakly: the query for a Thread is the same object for as long as anything refers to
+  // it (a screen, a mounted atom), and is collected once nothing does. A plain Map kept one,
+  // with its atoms, for every Thread and folder visited since the page loaded.
+  const queries = new Map<string, WeakRef<LiveQuery<Value>>>()
+  // Takes a name out once its query has been collected, unless a newer query already has it.
+  const forget = (name: string) => {
+    const held = queries.get(name)
+    if (held !== undefined && held.deref() === undefined) queries.delete(name)
+  }
+  // Browsers and Node report a collected query through FinalizationRegistry. Hermes (React
+  // Native) has WeakRef but no FinalizationRegistry, and constructing one there threw
+  // "Property 'FinalizationRegistry' doesn't exist" on the first signed-in render. Without it
+  // the dead names are swept when the next query is made, which bounds the Map the same way.
+  // The installed Effect source makes the same check in `Atom.family`
+  // (effect/src/unstable/reactivity/Atom.ts).
+  const remember: (made: LiveQuery<Value>, name: string) => void =
+    typeof FinalizationRegistry === 'undefined'
+      ? () => {
+          for (const name of queries.keys()) forget(name)
+        }
+      : (
+          (gone) => (made, name) =>
+            gone.register(made, name)
+        )(new FinalizationRegistry<string>(forget))
+  const known = (name: string) =>
+    Option.flatMap(Option.fromUndefinedOr(queries.get(name)), (held) =>
+      Option.fromUndefinedOr(held.deref()),
+    )
+  return {
+    get: (argument) => {
+      const name = key(argument)
+      return Option.getOrElse(known(name), () => {
+        const made = make(argument)
+        remember(made, name)
+        queries.set(name, new WeakRef(made))
+        return made
+      })
+    },
+  }
+}
+
+/**
+ * Who hears that the server no longer accepts this session.
+ *
+ * `gone` is run on that failure from the four places every call and every subscription
+ * passes through (`subscription`, `ask`, `beat`, `run`), so an `Unauthenticated` is heard
+ * whichever call it answers, not only the one that asks who is signed in: a session revoked from
+ * another device is refused on whatever is asked next.
+ */
+function makeLeaving() {
+  const leaving = new Set<() => void>()
+  return {
+    /** Tells everyone listening. Run by `refused` below, on the one failure that means it. */
+    gone: Effect.sync(() => {
+      for (const hear of leaving) hear()
+    }),
+    /** Hears, each time, that the server refused this session. Answers with the way to stop. */
+    whenSessionGone: (hear: () => void) => {
+      leaving.add(hear)
+      return () => {
+        leaving.delete(hear)
+      }
+    },
+  }
+}
+
+/**
  * How long a query stays subscribed after the last screen reading it has gone: five minutes, so
  * moving between Threads, Routines and the Library in the course of a piece of work is instant
  * and current. It costs the server an open subscription, not a refetch.
@@ -225,67 +375,43 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
   // does not make a second, cold one. Once the atom is let go, both can be collected.
   const sources = new WeakMap<object, object>()
 
-  const query = <Value>(
-    watch: (client: Client) => Stream.Stream<Value, ProductFailure>,
-  ): LiveQuery<Value> => {
-    const source = runtime.atom(
+  const { gone, whenSessionGone } = makeLeaving()
+
+  /** One `Watch…` subscription on the app's socket, reopened when the connection drops. */
+  const subscription = <Value>(watch: (client: Client) => Stream.Stream<Value, ProductFailure>) =>
+    runtime.atom(
       resilient(() =>
         Stream.unwrap(
           Effect.gen(function* () {
             return watch(yield* VividRpcClient)
           }),
         ),
+      ).pipe(
+        Stream.tapError((failure) =>
+          Predicate.isTagged(failure, 'Unauthenticated') ? gone : Effect.void,
+        ),
       ),
     )
+
+  const query = <Value>(watch: (client: Client) => Stream.Stream<Value, ProductFailure>) => {
+    const source = subscription(watch)
     const made = expecting(registry, source)
     sources.set(source, made)
+    return made
+  }
+
+  /** A live query that can start from what the device kept (`keeping`). */
+  const kept = <Value>(watch: (client: Client) => Stream.Stream<Value, ProductFailure>) => {
+    const made = keeping(registry, subscription(watch))
+    // `reopen` asks the subscription again, not the view over it.
+    sources.set(made.answers, made)
     return made
   }
 
   const family = <Argument, Value>(
     key: (argument: Argument) => string,
     watch: (client: Client, argument: Argument) => Stream.Stream<Value, ProductFailure>,
-  ): LiveFamily<Argument, Value> => {
-    // Held weakly: the query for a Thread is the same object for as long as anything refers to
-    // it (a screen, a mounted atom), and is collected once nothing does. A plain Map kept one,
-    // with its atoms, for every Thread and folder visited since the page loaded.
-    const queries = new Map<string, WeakRef<LiveQuery<Value>>>()
-    // Takes a name out once its query has been collected, unless a newer query already has it.
-    const forget = (name: string) => {
-      const held = queries.get(name)
-      if (held !== undefined && held.deref() === undefined) queries.delete(name)
-    }
-    // Browsers and Node report a collected query through FinalizationRegistry. Hermes (React
-    // Native) has WeakRef but no FinalizationRegistry, and constructing one there threw
-    // "Property 'FinalizationRegistry' doesn't exist" on the first signed-in render. Without it
-    // the dead names are swept when the next query is made, which bounds the Map the same way.
-    // The installed Effect source makes the same check in `Atom.family`
-    // (effect/src/unstable/reactivity/Atom.ts).
-    const remember: (made: LiveQuery<Value>, name: string) => void =
-      typeof FinalizationRegistry === 'undefined'
-        ? () => {
-            for (const name of queries.keys()) forget(name)
-          }
-        : (
-            (gone) => (made, name) =>
-              gone.register(made, name)
-          )(new FinalizationRegistry<string>(forget))
-    const known = (name: string) =>
-      Option.flatMap(Option.fromUndefinedOr(queries.get(name)), (held) =>
-        Option.fromUndefinedOr(held.deref()),
-      )
-    return {
-      get: (argument) => {
-        const name = key(argument)
-        return Option.getOrElse(known(name), () => {
-          const made = query((client) => watch(client, argument))
-          remember(made, name)
-          queries.set(name, new WeakRef(made))
-          return made
-        })
-      },
-    }
-  }
+  ) => familyOf(key, (argument: Argument) => query((client) => watch(client, argument)))
 
   /**
    * A question whose answer depends on something the Person is typing or choosing: a search.
@@ -304,6 +430,9 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
       return Effect.gen(function* () {
         return yield* call(yield* VividRpcClient, asked)
       }).pipe(
+        Effect.tapError((failure) =>
+          Predicate.isTagged(failure, 'Unauthenticated') ? gone : Effect.void,
+        ),
         Effect.retry({
           while: (failure) => !FINAL.has(failure._tag),
           schedule: Schedule.spaced('1500 millis'),
@@ -330,7 +459,14 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
         const said = get(argument)
         return Effect.gen(function* () {
           yield* call(yield* VividRpcClient, said)
-        }).pipe(Effect.ignore, Effect.repeat(Schedule.spaced(every)), Effect.asVoid)
+        }).pipe(
+          Effect.tapError((failure) =>
+            Predicate.isTagged(failure, 'Unauthenticated') ? gone : Effect.void,
+          ),
+          Effect.ignore,
+          Effect.repeat(Schedule.spaced(every)),
+          Effect.asVoid,
+        )
       }),
       0,
     )
@@ -344,6 +480,10 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
     Effect.result(
       Effect.flatMap(AtomRegistry.getResult(registry, runtime), (context) =>
         Effect.provideContext(program, context),
+      ).pipe(
+        Effect.tapError((failure) =>
+          Predicate.isTagged(failure, 'Unauthenticated') ? gone : Effect.void,
+        ),
       ),
     )
 
@@ -377,19 +517,7 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
       )
     })
 
-  /**
-   * Asks every ended query again. A query ends when the server says it is not this Person's to
-   * see, and that answer is about where they were: after they switch workspace or sign in again
-   * the same question can have a different answer, and nothing else would ever ask it.
-   */
-  const reopen = () => {
-    // Only a query something is reading, and only one that ended: an atom nobody has mounted
-    // would be started just by being asked how it is.
-    for (const atom of registry.getNodes().keys()) {
-      if (Predicate.isString(atom) || !sources.has(atom)) continue
-      if (AsyncResult.isFailure(registry.get(atom))) registry.refresh(atom)
-    }
-  }
+  const reopen = () => reopenEnded(registry, sources)
 
-  return { registry, query, family, ask, beat, run, change, reopen }
+  return { registry, query, kept, family, ask, beat, run, change, reopen, whenSessionGone }
 }

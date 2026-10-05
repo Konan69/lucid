@@ -24,6 +24,7 @@ import { Computer } from './screen/Computer'
 import { Door } from './screen/Door'
 import { Home } from './screen/Home'
 import { Folder, Library } from './screen/Library'
+import { Notifications } from './screen/Notifications'
 import { Project, Projects } from './screen/Projects'
 import { Routines } from './screen/Routines'
 import { Settings } from './screen/Settings'
@@ -236,6 +237,7 @@ function Shell() {
         <Stack.Screen name="People" component={People} />
         <Stack.Screen name="Memory" component={Memory} />
         <Stack.Screen name="Texting" component={Texting} />
+        <Stack.Screen name="Notifications" component={Notifications} />
       </Stack.Navigator>
     </NavigationContainer>
   )

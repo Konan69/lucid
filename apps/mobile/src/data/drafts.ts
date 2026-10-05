@@ -1,9 +1,21 @@
-import { readDrafts, writeDrafts, type Drafts } from '@vivid/state'
-import { Effect, Option, Stream } from 'effect'
+import type { DraftListResponse, DraftSaved, SaveDraftRequest, ThreadId } from '@vivid/contracts'
+import {
+  forgotten,
+  makeDraftSync,
+  readDrafts,
+  writeDrafts,
+  type DraftScope,
+  type Drafts,
+  type ProductFailure,
+} from '@vivid/state'
+import { Effect, Option, Stream, type Result } from 'effect'
+import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import * as Atom from 'effect/unstable/reactivity/Atom'
+import { randomUUID } from 'expo-crypto'
+import { launch } from './app'
 import { door, useDoor } from './door'
-import { keepFile, recallFile } from './storage'
-import { answered, draftsOf, keeping, unread, wordsIn, type Writing } from './writing'
+import { keep, keepFile, recall, recallFile } from './storage'
+import { answered, draftsOf, keeping, revising, unread, wordsIn, type Writing } from './writing'
 
 /**
  * What the Person has typed and not sent, kept on this phone. A composer shows what was left in
@@ -19,6 +31,11 @@ import { answered, draftsOf, keeping, unread, wordsIn, type Writing } from './wr
  *
  * They are device atoms (`door.ts`), not a session's: drafts outlive signing out, and each place
  * is named for its Person (`draftPlace`), so nobody is shown another Person's words.
+ *
+ * They also follow the Person to their other devices. That part belongs to a session, because it
+ * needs a socket and someone signed in: `followDrafts` is started by the session's live data and
+ * stopped with it, and applies the shared rules (`@vivid/state` `drafts.ts`, `sync.ts`) to the
+ * one set of drafts held here.
  */
 
 // A file, not the protected store: drafts can run to pages (see `keepFile`).
@@ -96,6 +113,90 @@ const writtenDown = Atom.make((get) =>
 // Held for the life of the app, like the device's other subscriptions (`appearance.ts`): the store
 // is read at launch, before any screen asks, and every change is written whichever screen made it.
 door.mount(writtenDown)
+
+const INSTALLATION = 'vivid-installation'
+
+/**
+ * The name this installation signs its saves with, made once and kept, so it can tell its own
+ * save coming back from a change made on another device. It is a random word and nothing more:
+ * not a Device, not a session, not the Person. A store that will not keep it gives this run a
+ * name of its own, which costs nothing but an echo being read as news once.
+ */
+const named = Effect.fn('Drafts.named')(function* () {
+  const kept = yield* recall(INSTALLATION).pipe(
+    Effect.catchTag('StorageUnavailable', () => Effect.succeed(Option.none<string>())),
+  )
+  if (Option.isSome(kept)) return kept.value
+  const made = randomUUID()
+  yield* keep(INSTALLATION, made).pipe(Effect.catchTag('StorageUnavailable', () => Effect.void))
+  return made
+})
+
+const installation = Atom.keepAlive(Atom.make(named()))
+
+/** What a session supplies for its drafts to follow the Person: who, where, and the socket. */
+export interface Following {
+  /** Who is signed in and where they are working, once the server itself has said. */
+  readonly scope: () => Option.Option<DraftScope>
+  /** The Threads of where the Person is, once their list has answered. */
+  readonly threads: () => Option.Option<ReadonlySet<ThreadId>>
+  /** One `SaveDraft` call on the session's socket, its refusal in the value. */
+  readonly save: (
+    request: SaveDraftRequest,
+  ) => Effect.Effect<Result.Result<DraftSaved, ProductFailure>>
+  /** Subscribes to what the server holds (`WatchDrafts`); answers with the way to stop. */
+  readonly listen: (hear: (list: DraftListResponse) => void) => () => void
+  /** Subscribes to who is signed in, where, and their Thread list changing; answers with the way to stop. */
+  readonly moved: (hear: () => void) => () => void
+}
+
+/**
+ * Makes this phone's drafts follow the Person for the length of one session, and answers with
+ * the way to stop. It starts once the installation's name has been read, which is a moment after
+ * launch; what the server says before then is said again when it is asked.
+ */
+export function followDrafts(session: Following): () => void {
+  const stops: Array<() => void> = []
+  let started = false
+  const begin = (device: string) => {
+    if (started) return
+    started = true
+    const sync = makeDraftSync({
+      device,
+      read: () => door.get(draftsAtom),
+      update: (change) => door.set(writing, revising(door.get(writing), change)),
+      scope: session.scope,
+      threads: session.threads,
+      save: session.save,
+      launch,
+    })
+    stops.push(
+      sync.stop,
+      // Typing, an answer written back, and the store answering all arrive here.
+      door.subscribe(draftsAtom, sync.changed),
+      session.moved(sync.changed),
+      session.listen(sync.heard),
+    )
+  }
+  stops.push(
+    door.subscribe(
+      installation,
+      (result) => {
+        if (AsyncResult.isSuccess(result)) begin(result.value)
+      },
+      { immediate: true },
+    ),
+  )
+  return () => {
+    for (const stop of stops) stop()
+  }
+}
+
+/**
+ * The session ended: everything the server has a copy of leaves this phone. Words typed here
+ * that it never took stay, named for their Person, because they are nowhere else.
+ */
+export const forgetDrafts = () => door.set(writing, revising(door.get(writing), forgotten))
 
 export const draft = {
   /** The words left in a place right now, for code that runs after a screen has waited. */

@@ -79,6 +79,17 @@ export const answered = (writing: Writing, kept: Drafts, now: number): Writing =
     },
   })
 
+/**
+ * The writing with its drafts changed by something other than typing: the server's answer to a
+ * save, or another device's draft arriving (`@vivid/state` `sync.ts`). Before the store has
+ * answered there are no drafts to change; what arrived waits for it there.
+ */
+export const revising = (writing: Writing, change: (drafts: Drafts) => Drafts): Writing =>
+  Writing.$match(writing, {
+    Unread: () => writing,
+    Read: ({ drafts, blank }) => Writing.Read({ drafts: change(drafts), blank }),
+  })
+
 /** The words in one place right now, exactly as its field should show them. */
 export const wordsIn = (writing: Writing, where: string): string =>
   Writing.$match(writing, {

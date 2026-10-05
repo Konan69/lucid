@@ -1,10 +1,11 @@
-import { draftIn, draftPlace, noDrafts, withDraft, type Drafts } from '@vivid/state'
+import { CompanyId, DraftWorkspace, ThreadId } from '@vivid/contracts'
+import { draftIn, draftPlace, noDrafts, owed, withDraft, type Drafts } from '@vivid/state'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { answered, draftsOf, keeping, unread, wordsIn, type Writing } from './writing.ts'
 
 const ada = (thread: string) =>
-  draftPlace('ada', { workspace: 'northwind', thread: Option.some(thread) })
+  draftPlace('ada', { workspace: 'northwind', thread: Option.some(ThreadId.make(thread)) })
 
 /** Types into `count` places, one after another, starting from `from`. */
 const typedIn = (from: Writing, count: number): Writing =>
@@ -43,7 +44,14 @@ describe('typing before the phone has read its store', () => {
     // Sending empties the composer; the store still holds the words it was sent with.
     const read = answered(keeping(unread, ada('t1'), '', 2), stored, 3)
     expect(wordsIn(read, ada('t1'))).toBe('')
-    expect(kept(read)).toEqual(noDrafts)
+    expect(draftIn(kept(read), ada('t1'))).toBe('')
+    // The emptying is what the Person's other devices still have to hear about.
+    expect(
+      owed(kept(read), {
+        person: 'ada',
+        workspace: DraftWorkspace.cases.Company.make({ company: CompanyId.make('northwind') }),
+      }).map((place) => place.text),
+    ).toEqual([''])
   })
 
   it('writes nothing new when nothing was typed', () => {
@@ -68,14 +76,16 @@ describe('typing once the store has been read', () => {
     expect(wordsIn(many, ada('t0'))).toBe('')
   })
 
-  it('leaves nothing behind for a place that was emptied', () => {
+  it('holds no more than the device keeps for places that were emptied', () => {
     const emptied = Array.from({ length: 200 }, (_, index) => index).reduce(
       (writing, index) =>
         keeping(keeping(writing, ada(`t${index}`), 'hello', index), ada(`t${index}`), '', index),
       read,
     )
-    // No marker per emptied place: the whole of what is held is the empty set it started as.
-    expect(emptied).toEqual(read)
+    // An emptied place is remembered only until the server has been told, and never beyond what
+    // a device keeps: no words are left, and the set does not grow with every place visited.
+    expect(kept(emptied).entries).toHaveLength(50)
+    expect(kept(emptied).entries.every((entry) => entry.text === '')).toBe(true)
   })
 
   it('shows a leading new line in its field without keeping it as a draft', () => {
@@ -91,7 +101,7 @@ describe('typing once the store has been read', () => {
     const stored = withDraft(noDrafts, ada('t1'), 'old words', 1)
     const answeredMidline = answered(keeping(unread, ada('t1'), '\n', 2), stored, 3)
     expect(wordsIn(answeredMidline, ada('t1'))).toBe('\n')
-    expect(kept(answeredMidline)).toEqual(noDrafts)
+    expect(draftIn(kept(answeredMidline), ada('t1'))).toBe('')
   })
 
   it('is not changed by a store that answers a second time', () => {

@@ -192,6 +192,24 @@ const justJoined = Effect.suspend(() =>
 
 export const signOut = () => post('sign-out', {})
 
+/** The part of Better Auth's session answer that says when the session ends. */
+const Ending = Schema.Struct({ session: Schema.Struct({ expiresAt: Schema.String }) })
+
+/**
+ * When this browser's session ends, in epoch milliseconds, as the server says (Better Auth's
+ * `get-session`, whose `session.expiresAt` is an ISO date; better-auth 1.7.5
+ * `dist/api/routes/session.mjs`). The browser cannot read its own session cookie, so this is the
+ * only way it knows. None when there is no session, the server cannot be reached, or the answer
+ * does not read as a date: what depends on it (`data/snapshot.ts`) then keeps nothing.
+ */
+export const sessionExpiry = Effect.suspend(() =>
+  read('get-session', Ending).pipe(
+    Effect.map((here) => Date.parse(here.session.expiresAt)),
+    Effect.map((until) => (Number.isFinite(until) ? Option.some(until) : Option.none<number>())),
+    Effect.orElseSucceed(() => Option.none<number>()),
+  ),
+)
+
 /**
  * One place this Person is signed in, as Better Auth lists it. Its token is a credential, so it
  * is wrapped as it is read: `RedactedFromValue` decodes the plain string the server sends, where

@@ -154,8 +154,9 @@ export interface DeviceService {
  * deadline and a ledger; and a Thread can be shared, so a request is tied to the Run that asked
  * and refused unless that Run is acting for the computer's own Person.
  *
- * Who is listening is kept in this process. That is right for one server and wrong behind more
- * than one, where a request could arrive at an instance the computer is not connected to.
+ * Who is listening is kept in this process. The server must stay at one replica until presence
+ * is shared and browse requests route to the replica holding the desktop socket; otherwise a
+ * second replica reports Offline and cannot deliver work to a connected computer.
  */
 export class DeviceRegistry extends Context.Service<DeviceRegistry, DeviceService>()(
   'vivid/DeviceRegistry',
@@ -754,6 +755,7 @@ const behind = Effect.fn('Device.behind')(function* (missing: ProductMigrationsB
   return yield* new ProductMigrationsBehind({ missing })
 })
 
+/** Single-replica authority: these maps hold presence and the sockets browse requests route to. */
 export const deviceLayer = Layer.effect(
   DeviceRegistry,
   Effect.gen(function* () {

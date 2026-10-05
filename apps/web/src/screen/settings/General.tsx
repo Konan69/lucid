@@ -4,7 +4,8 @@ import { LogOut } from 'lucide-react'
 import { useState } from 'react'
 import { reload, signOut } from '../../data/account'
 import { change, live, LiveState, useLive } from '../../data/live'
-import { run } from '../../data/app'
+import { run, send } from '../../data/app'
+import { sessionEnded } from '../../data/ending'
 import { theme } from '../../data/theme'
 import { mayCustomise, useAppearance } from '../../data/vivid'
 import { PersonAvatar } from '../../ui/Person'
@@ -47,8 +48,14 @@ export function General({ me }: { me: MeResponse }) {
   /** Signs out, and says so when it did not happen: a reload would land them still signed in. */
   async function leave() {
     const left = await run(signOut())
-    if (Result.isSuccess(left)) reload('/')
-    else setStuck(true)
+    if (Result.isFailure(left)) {
+      setStuck(true)
+      return
+    }
+    // Nothing of this Person stays in the browser for whoever opens it next. It is erased
+    // before the page reloads, or the reload would start from it.
+    await send(sessionEnded)
+    reload('/')
   }
 
   return (

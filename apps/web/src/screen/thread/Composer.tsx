@@ -1,6 +1,6 @@
 import { BorderBeam } from 'border-beam'
 import { ArrowUp, Mic, Paperclip, Square } from 'lucide-react'
-import { useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useSyncExternalStore, type ReactNode } from 'react'
 import { draft } from '../../data/drafts'
 import { writing } from '../../data/life'
 import { theme } from '../../data/theme'
@@ -11,9 +11,10 @@ import { attachable, Attached, useAttachments, type Picture } from './Attach'
 
 /**
  * Where a Person writes to Vivid. Enter sends, Shift+Enter makes a new line, and while Vivid is
- * working the send button becomes the way to stop it. What is typed is kept on this device for
- * the place it was typed in (`place`), so it is still here after leaving and coming back; the
- * Thread the composer belongs to decides what sending means.
+ * working the send button becomes the way to stop it. What is typed is kept for the place it was
+ * typed in (`place`), on this device and for the Person's other devices (`data/drafts.ts`), so it
+ * is still here after leaving and coming back; the Thread the composer belongs to decides what
+ * sending means.
  */
 export function Composer({
   place,
@@ -41,17 +42,15 @@ export function Composer({
   /** Something anchored above the composer: a live call, a notice. */
   above?: ReactNode
 }) {
-  const [message, setMessage] = useState(() => draft.in(place))
+  // The field draws the kept draft and holds no copy of it, so what is on screen is what is kept,
+  // and words typed on another device arrive in a composer that is already open.
+  const message = useSyncExternalStore(draft.subscribe, () => draft.in(place))
   const attached = useAttachments(pictures)
   // Something to send: words, or a file that has arrived. A file still on its way holds the send.
   const empty = (message.trim().length === 0 && attached.kept === 0) || attached.sending
   const shown = useSyncExternalStore(theme.subscribe, theme.shown)
 
-  /** The field and the kept draft change together, so what is on screen is what is saved. */
-  function write(next: string) {
-    setMessage(next)
-    draft.keep(place, next)
-  }
+  const write = (next: string) => draft.keep(place, next)
 
   function submit() {
     if (empty) return
