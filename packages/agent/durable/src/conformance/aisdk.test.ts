@@ -209,6 +209,54 @@ it('the stock approval predicate waits for both decisions before posting', async
   expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
 })
 
+// Installed ai/src/ui/last-assistant-message-is-complete-with-approval-responses.ts:35–40
+// requires every tool in the last step to be completed or approval-responded. Pi's unstarted second
+// sequential tool is input-available, so the stock client cannot automatically POST the first decision.
+it('the stock approval predicate cannot advance an unstarted sequential call', async () => {
+  const paid: number[] = []
+  const fixture = await host(
+    {
+      pay: tool({
+        inputSchema: z.object({ amount: z.number() }),
+        execute: async ({ amount }) => {
+          paid.push(amount)
+          return amount
+        },
+      }),
+    },
+    { approval: { pay: true } },
+    { toolExecution: 'sequential' },
+  )
+  const opened = await fixture.open()
+  opened.faux.setResponses([
+    fauxAssistantMessage(
+      [
+        fauxToolCall('pay', { amount: 1 }, { id: 'c1' }),
+        fauxToolCall('pay', { amount: 2 }, { id: 'c2' }),
+      ],
+      { stopReason: 'toolUse' },
+    ),
+    fauxAssistantMessage('Done.'),
+  ])
+  const { chat } = client(opened.transport, lastAssistantMessageIsCompleteWithApprovalResponses)
+  await chat.sendMessage({ text: 'Pay both' })
+  expect(await waiting(opened.harness, opened.root.id, context)).toMatchObject([{ callId: 'c1' }])
+  await chat.addToolApprovalResponse({ id: 'c1', approved: true })
+  if (chat.lastMessage === undefined) throw new Error('Expected the sequential message')
+  expect(
+    chat.lastMessage.parts.find((part) => 'toolCallId' in part && part.toolCallId === 'c1'),
+  ).toMatchObject({ state: 'approval-responded' })
+  expect(
+    chat.lastMessage.parts.find((part) => 'toolCallId' in part && part.toolCallId === 'c2'),
+  ).toMatchObject({ state: 'input-available' })
+  expect(lastAssistantMessageIsCompleteWithApprovalResponses({ messages: chat.messages })).toBe(
+    false,
+  )
+  expect(paid).toEqual([])
+  expect(chat.status).toBe('ready')
+  expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
+})
+
 // AI SDK packages/ai/src/ui/chat.test.ts: sendAutomaticallyWhen > should submit a client tool output when completed text follows the tool call.
 it('the stock tool predicate submits an output even when completed text follows the call', async () => {
   const fixture = await shop()

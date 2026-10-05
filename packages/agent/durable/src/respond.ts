@@ -132,18 +132,30 @@ export const TurnBody = Body.pipe(
 /** Compiled ingress accepts untrusted chat bodies without an untyped application function parameter. */
 export const decodeTurn = Schema.decodeUnknownEffect(TurnBody)
 
-/** Decisions settle first; only outputs for currently answerable calls are accepted from the client. */
+/** Only currently waiting calls accept client settlements; finished and unstarted parts are ignored. */
 const settleHolds = Effect.fn('Durable.settleHolds')(function* (
   harness: Harness,
   conversationId: ConversationId,
   turn: typeof ChatTurn.cases.Resume.Type,
   context: Context,
 ) {
-  for (const decision of turn.decisions) yield* decide(harness, conversationId, decision, context)
   const held = yield* waiting(harness, conversationId, context)
+  const approvable = new Set(
+    held.flatMap((each) => (each.kind === 'approval' ? [each.callId] : [])),
+  )
+  for (const decision of turn.decisions) {
+    if (approvable.has(decision.callId))
+      yield* decide(harness, conversationId, decision, context).pipe(
+        // Another request can settle between observation and admission; the resume remains usable.
+        Effect.catchTag('CallNotWaiting', () => Effect.void),
+      )
+  }
   const answerable = new Set(held.flatMap((each) => (each.kind === 'answer' ? [each.callId] : [])))
   for (const output of turn.outputs) {
-    if (answerable.has(output.callId)) yield* answer(harness, conversationId, output, context)
+    if (answerable.has(output.callId))
+      yield* answer(harness, conversationId, output, context).pipe(
+        Effect.catchTag('CallNotWaiting', () => Effect.void),
+      )
   }
 })
 

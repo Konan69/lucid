@@ -3,7 +3,7 @@ import { tool } from 'ai'
 import { expect, it } from 'vitest'
 import { z } from 'zod'
 
-import { CallNotWaiting, continueRun, decide, streamRun, waiting } from '../main.ts'
+import { CallNotWaiting, continueRun, decide, respond, streamRun, waiting } from '../main.ts'
 import { call, consume, context, host, modelText, shop, signal } from './fixtures/host.ts'
 
 // Review dup.test.ts: Pi generation.startToolRound accepts duplicate ids but public decisions cannot distinguish them.
@@ -215,4 +215,80 @@ it('requires a fresh decision when a later round of the same run reuses an id', 
   } finally {
     release.resolve()
   }
+})
+
+// Review probe.test.ts A: an unstarted sequential slot is not approvable even if the POST names it.
+// This explicitly driven HTTP test does not claim the stock automatic predicate can initiate the POST.
+it('ignores an unstarted sequential decision instead of rejecting the resume', async () => {
+  const paid: number[] = []
+  const executed = signal()
+  const fixture = await host(
+    {
+      pay: tool({
+        inputSchema: z.object({ amount: z.number() }),
+        execute: async ({ amount }) => {
+          paid.push(amount)
+          executed.resolve()
+          return amount
+        },
+      }),
+    },
+    { approval: { pay: true } },
+    { toolExecution: 'sequential' },
+  )
+  const opened = await fixture.open()
+  opened.faux.setResponses([
+    fauxAssistantMessage(
+      [
+        fauxToolCall('pay', { amount: 1 }, { id: 'c1' }),
+        fauxToolCall('pay', { amount: 2 }, { id: 'c2' }),
+      ],
+      { stopReason: 'toolUse' },
+    ),
+    fauxAssistantMessage('Done.'),
+  ])
+  const first = await consume(
+    await streamRun(
+      opened.harness,
+      {
+        conversationId: opened.root.id,
+        content: 'Pay',
+        requestId: 'sequential',
+      },
+      context,
+    ),
+  )
+  expect(first.chunks.filter((chunk) => chunk.type === 'tool-approval-request')).toMatchObject([
+    { toolCallId: 'c1' },
+  ])
+  expect(await waiting(opened.harness, opened.root.id, context)).toMatchObject([{ callId: 'c1' }])
+  const body = {
+    messages: [
+      {
+        role: 'assistant',
+        parts: ['c1', 'c2'].map((id) => ({
+          type: 'tool-pay',
+          toolCallId: id,
+          state: 'approval-responded',
+          approval: { id, approved: true },
+        })),
+      },
+    ],
+  }
+  const response = await respond(
+    opened.harness,
+    opened.root.id,
+    new Request('http://durable.test/chat', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+    context,
+  )
+  expect(response.status).toBe(200)
+  if (response.body === null) throw new Error('Expected the second approval response')
+  // B stops at the source-proven stock-client limitation. Detach the response instead of claiming
+  // a second automatic round trip; Pi keeps c2 held until cleanup cancels the isolated harness.
+  await response.body.cancel()
+  await executed.promise
+  expect(paid).toEqual([1])
 })
