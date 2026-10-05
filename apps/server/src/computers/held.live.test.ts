@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { ComputerState } from '@vivid/contracts'
-import { Effect, Option } from 'effect'
+import { Effect, Option, Stream } from 'effect'
 import { chainFixture, chainLayer } from '../runtime/chains.ts'
 import { bindings } from './boat/bindings.ts'
 import { active } from './boat/state.ts'
@@ -43,11 +43,17 @@ describe.skipIf(process.env['VIVID_LIVE_MACHINE_HELD'] !== '1')('A held machine,
         expect(before.exitCode, 'The machine must already record its holder').toBe(0)
         expect(before.stdout.startsWith(`${machine} `)).toBe(true)
 
+        // A start answers at once with Starting and a worker does the rest (`store.ts`, `begin`),
+        // so the outcome is read where the Person's own screen reads it: the live Computer.
         yield* fixture.rpc.StartComputer()
-        const shown = (yield* fixture.rpc.GetComputer()).computer.state
-        expect(ComputerState.guards.Failed(shown) && shown.reason).toBe(
-          'Vivid’s computer is already in use by another account.',
+        const settled = yield* fixture.rpc.WatchComputer().pipe(
+          Stream.map((answer) => answer.computer.state),
+          Stream.filter((state) => !ComputerState.guards.Starting(state)),
+          Stream.runHead,
         )
+        expect(
+          Option.map(settled, (state) => ComputerState.guards.Failed(state) && state.reason),
+        ).toEqual(Option.some('Vivid’s computer is already in use by another account.'))
         // This server's table does not go on naming the machine, so it has nothing to use it with.
         expect(yield* (yield* bindings()).load(key)).toEqual(Option.none())
         expect((yield* record).stdout).toBe(before.stdout)
