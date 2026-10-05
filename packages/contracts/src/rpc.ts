@@ -19,7 +19,6 @@ import { AuditListResponse } from './audit.js'
 import {
   NotifyPersonOutcome,
   NotifyPersonRequest,
-  PushUnavailable,
   PushKeyResponse,
   PushTargetId,
   PushTargetListResponse,
@@ -219,7 +218,6 @@ export const RpcFailure = Schema.Union([
   DatabaseConstraintViolation,
   DatabaseUnavailable,
   DatabaseFailure,
-  PushUnavailable,
 ])
 export type RpcFailure = typeof RpcFailure.Type
 

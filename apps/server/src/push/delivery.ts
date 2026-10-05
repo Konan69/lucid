@@ -18,7 +18,6 @@ import { observeFailures } from '../observability/failure.ts'
 import { canSee, findThread } from '../threads/access.ts'
 import { Presence } from '../threads/presence.ts'
 import { PushAdapter } from './adapter.ts'
-import { PushConfig, PushConfiguration } from './config.ts'
 import { PushAcceptance, PushReceipt } from './receipts.ts'
 import { pushDeliveries } from './tables.ts'
 import { PushTargets } from './targets.ts'
@@ -103,8 +102,6 @@ const makeAttempt = (services: DeliveryServices) =>
             .pipe(Effect.as(PushReceipt.cases.Failed.make({ reason: 'Gone' }))),
         PushRejected: () => Effect.succeed(PushReceipt.cases.Failed.make({ reason: 'Rejected' })),
         PushUncertain: () => Effect.succeed(PushReceipt.cases.Failed.make({ reason: 'Uncertain' })),
-        PushUnavailable: () =>
-          Effect.succeed(PushReceipt.cases.Failed.make({ reason: 'Rejected' })),
       }),
     )
   })
@@ -159,14 +156,12 @@ const makePush = Effect.fn('Push.make')(function* () {
   const adapter = yield* PushAdapter
   const targets = yield* PushTargets
   const presence = yield* Presence
-  const config = yield* PushConfig
   const send = makeSend({ database, adapter, targets, presence })
   const reconcile = makeReconcile({ database, adapter, targets, presence })
   const deliver = Effect.fn('Push.deliver')(function* (
     personId: PersonId,
     notificationId: NotificationId,
   ) {
-    if (PushConfiguration.$is('Unavailable')(config)) return PushOutcome.cases.Unavailable.make({})
     const rows = yield* database.run(
       database
         .select()
@@ -207,17 +202,6 @@ export interface PushService {
 }
 export class Push extends Context.Service<Push, PushService>()('vivid/Push') {}
 export const pushLayer = Layer.effect(Push, makePush())
-
-/** Tests outside the push seam explicitly provide a complete unavailable delivery authority. */
-export const unavailablePushLayer = Layer.succeed(
-  Push,
-  Push.of({
-    deliver: Effect.fn('Push.unavailable')(() =>
-      Effect.succeed(PushOutcome.cases.Unavailable.make({})),
-    ),
-    reconcile: Effect.fn('Push.unavailableReceipts')(() => Effect.void),
-  }),
-)
 
 /** Expo recommends reading tickets after 15 minutes; this pass never repeats a send. */
 const makeReconcile = (services: DeliveryServices) =>
