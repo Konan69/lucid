@@ -6,28 +6,24 @@ using System.Xml;
 
 namespace Vivid.Windows
 {
-    // The resolved executable is kept private; wire metadata conveys provenance
-    // and refusal without giving the caller arbitrary executable launch authority.
+    // The resolved executable is kept private; wire metadata conveys provenance.
+    // Every listed entry can be launched, terminals and script hosts included: the
+    // caller still names an inventory entry, never a path or a command line.
     internal abstract class InstalledApp
     {
         public string name { get; private set; }
         public string id { get; private set; }
         public string source { get; private set; }
-        public bool launchable { get { return reason == null; } }
-        public string reason { get; protected set; }
+        public bool launchable { get { return true; } }
         internal readonly string Target;
         protected InstalledApp(string name, string id, string source, string target)
-        { this.name = name; this.id = id; this.source = source; Target = target; reason = Shells.Reason(target); }
-        internal virtual string ResolveTarget() { return Target; }
+        { this.name = name; this.id = id; this.source = source; Target = target; }
         internal abstract uint Launch();
     }
     internal sealed class PackagedApp : InstalledApp
     {
         internal readonly string Aumid;
-        private readonly string root;
-        internal PackagedApp(string name, string aumid, string root, string target) : base(name, "package:" + aumid, "machine", target) { Aumid = aumid; this.root = root; }
-        // The broker resolves the AUMID again; re-read the manifest before authorizing it.
-        internal override string ResolveTarget() { return Apps.PackageTarget(root, Aumid); }
+        internal PackagedApp(string name, string aumid, string target) : base(name, "package:" + aumid, "machine", target) { Aumid = aumid; }
         internal override uint Launch() { return Apps.Activate(Aumid); }
     }
     // A menu shortcut retains its own provenance even when activation is packaged.
@@ -35,20 +31,13 @@ namespace Vivid.Windows
     {
         private readonly PackagedApp package;
         internal PackagedShortcutApp(string name, string id, string source, PackagedApp package) : base(name, id, source, package.Target) { this.package = package; }
-        internal override string ResolveTarget() { return package.ResolveTarget(); }
         internal override uint Launch() { return package.Launch(); }
     }
     internal sealed class ShortcutApp : InstalledApp
     {
         internal readonly string Arguments, Directory;
         internal ShortcutApp(string name, string id, string source, string target, string arguments, string directory) : base(name, id, source, target)
-        {
-            Arguments = arguments; Directory = directory; reason = Shells.ShortcutReason(target, arguments);
-            // Unresolved Explorer arguments may invoke another executable through
-            // the shell. Only an explicitly resolved packaged shortcut bypasses this.
-            if (reason != "ShellRefused" && String.Equals(Path.GetFileName(target), "explorer.exe", StringComparison.OrdinalIgnoreCase) && !String.IsNullOrWhiteSpace(arguments))
-                reason = "AppTargetUnverified";
-        }
+        { Arguments = arguments; Directory = directory; }
         internal override uint Launch() { return Apps.Start(this); }
     }
     internal enum InventoryPhase { Unobserved, Observed }
@@ -102,7 +91,7 @@ namespace Vivid.Windows
                         string aumid = Convert.ToString(item.ExtendedProperty("System.AppUserModel.ID"));
                         string package = Convert.ToString(item.ExtendedProperty("System.AppUserModel.PackageInstallPath"));
                         if (String.IsNullOrEmpty(aumid) || String.IsNullOrEmpty(package)) continue;
-                        var app = new PackagedApp((string)item.Name, aumid, package, PackageTarget(package, aumid));
+                        var app = new PackagedApp((string)item.Name, aumid, PackageTarget(package, aumid));
                         result[app.id] = app;
                     }
                     catch (COMException) { skipped++; }
@@ -110,6 +99,8 @@ namespace Vivid.Windows
                     catch (UnauthorizedAccessException) { skipped++; }
                     catch (XmlException) { skipped++; }
                     catch (ArgumentException) { skipped++; }
+                    // Path.GetFullPath on a malformed manifest path: skip the entry, keep the inventory.
+                    catch (NotSupportedException) { skipped++; }
                     catch (AppTargetUnverified) { skipped++; }
                     finally { if (item != null) Marshal.FinalReleaseComObject(item); }
                 }
@@ -179,11 +170,11 @@ namespace Vivid.Windows
                 if (link == null) { skipped++; return; }
                 string target = Environment.ExpandEnvironmentVariables((string)link.TargetPath);
                 string arguments = (string)link.Arguments;
-                if (!File.Exists(target) && Shells.ShortcutReason(target, arguments) != "ShellRefused") { skipped++; return; }
-                // Explorer command-line activation is indirect and cannot prove a GUI
-                // target. Resolve a known AppsFolder AUMID or refuse this launcher.
+                if (!File.Exists(target)) { skipped++; return; }
+                // A shortcut that opens a packaged app through Explorer is listed as that
+                // package, so it is activated through the broker like any other.
                 string prefix = "shell:AppsFolder\\";
-                if (String.Equals(Path.GetFileName(target), "explorer.exe", StringComparison.OrdinalIgnoreCase) && arguments.IndexOf(prefix, StringComparison.OrdinalIgnoreCase) >= 0 && Shells.ShortcutReason(target, arguments) != "ShellRefused")
+                if (String.Equals(Path.GetFileName(target), "explorer.exe", StringComparison.OrdinalIgnoreCase) && arguments.IndexOf(prefix, StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     string aumid = arguments.Substring(arguments.IndexOf(prefix, StringComparison.OrdinalIgnoreCase) + prefix.Length).Trim(' ', '"');
                     InstalledApp package;
@@ -203,10 +194,11 @@ namespace Vivid.Windows
             catch (IOException) { skipped++; }
             catch (UnauthorizedAccessException) { skipped++; }
             catch (ArgumentException) { skipped++; }
+            catch (NotSupportedException) { skipped++; }
             finally { if (link != null) Marshal.FinalReleaseComObject(link); }
         }
-        // Recheck the actual executable immediately before launch: mutable per-user
-        // entries are provenance, not a guarantee that software is installed/trusted.
+        // Launch exactly the inventory entry named. Per-user entries are provenance,
+        // not a guarantee that software is installed or trusted.
         internal object Launch(Fields fields, Budget budget)
         {
             string name = fields.Text("app");
@@ -221,10 +213,6 @@ namespace Vivid.Windows
                 selected = candidate;
             }
             if (selected == null) throw new AppNotInstalled();
-            Shells.Require(selected.reason);
-            Shells.Require(Shells.Reason(selected.ResolveTarget()));
-            var shortcut = selected as ShortcutApp;
-            if (shortcut != null) Shells.Require(Shells.ShortcutReason(shortcut.Target, shortcut.Arguments));
             budget.Check();
             uint pid;
             try { pid = selected.Launch(); }
@@ -241,7 +229,10 @@ namespace Vivid.Windows
         }
         // Fresh Person-session environment excludes desktop/helper secrets; the
         // interactive profile is already loaded. TOKEN_QUERY|TOKEN_DUPLICATE is
-        // required for a primary token. No inherited handles or helper console flags.
+        // required for a primary token. No handles are inherited (bInheritHandles false).
+        // CREATE_NEW_CONSOLE (0x10) gives a console app (a terminal) a console window of
+        // its own rather than the helper's hidden one; a GUI app ignores it. Standard
+        // handles are left to Windows, so that new console's own handles are used.
         // learn.microsoft.com/windows/win32/api/userenv/nf-userenv-createenvironmentblock
         internal static uint Start(ShortcutApp app)
         {
@@ -253,11 +244,11 @@ namespace Vivid.Windows
                 if (!Native.CreateEnvironmentBlock(out environment, token, false)) throw new LaunchFailed();
                 try
                 {
-                    var startup = new Native.Startup { Size = Marshal.SizeOf(typeof(Native.Startup)), Flags = 0x100 };
+                    var startup = new Native.Startup { Size = Marshal.SizeOf(typeof(Native.Startup)) };
                     Native.ProcessInformation process;
                     var command = new System.Text.StringBuilder("\"" + app.Target + "\" " + app.Arguments);
                     string directory = String.IsNullOrEmpty(app.Directory) ? Path.GetDirectoryName(app.Target) : app.Directory;
-                    if (!Native.CreateProcess(app.Target, command, IntPtr.Zero, IntPtr.Zero, false, 0x400,
+                    if (!Native.CreateProcess(app.Target, command, IntPtr.Zero, IntPtr.Zero, false, 0x410,
                         environment, directory, ref startup, out process)) throw new LaunchFailed();
                     try { return process.Id; }
                     finally { Native.CloseHandle(process.Thread); Native.CloseHandle(process.Process); }

@@ -190,7 +190,8 @@ export const routes = Effect.fn('RuntimeTest.routes')(function* () {
           const owned = system.toolsAdded.filter(
             (tool) => !['task', 'activate_skill', 'read_skill_resource'].includes(tool.name),
           )
-          expect(owned).toHaveLength(28)
+          expect(owned).toHaveLength(29)
+          expect(owned.map((tool) => tool.name)).toContain('use_person_computer')
           for (const tool of owned)
             expect(tool.parameters, tool.name).toHaveProperty(
               'required',

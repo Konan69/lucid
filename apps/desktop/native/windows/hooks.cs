@@ -30,10 +30,16 @@ namespace Vivid.Windows
         }
         // Requests are serialized; installation/removal runs on the hook thread.
         internal void Install() { Command(0x8001); if (keyboard == IntPtr.Zero || mouse == IntPtr.Zero) { Remove(); throw new HookUnavailable(); } }
+        // Removal is cleanup on every path (end, stop, dispose, parent exit) and must
+        // never throw: a failure is logged and the caller carries on.
         internal void Remove()
         {
-            if (Native.GetCurrentThreadId() == threadId) Uninstall();
-            else Command(0x8002);
+            try
+            {
+                if (Native.GetCurrentThreadId() == threadId) Uninstall();
+                else Command(0x8002);
+            }
+            catch (Exception) { Diagnostics.Write("HookRemovalFailed"); }
         }
         private void Command(uint command)
         {
@@ -79,17 +85,14 @@ namespace Vivid.Windows
             if (code >= 0)
             {
                 var key = (Native.KeyboardEvent)Marshal.PtrToStructure(data, typeof(Native.KeyboardEvent));
+                // The helper's own events carry its private tag, so an Escape it types into
+                // an app is not a stop. Every other Escape is the Person's and ends the turn.
                 if (key.Extra == Activity.OwnInputTag)
                 {
-                    Activity.Own(key.Time);
                     if (Volatile.Read(ref probing) != 0 && key.Key == 0x87 && (key.Flags & 0x80) != 0)
                     { keyboardReceipt.Set(); return new IntPtr(1); }
                 }
-                else
-                {
-                    Activity.Person();
-                    if (key.Key == 0x1B && (message.ToInt64() == 0x100 || message.ToInt64() == 0x104)) stop();
-                }
+                else if (key.Key == 0x1B && (message.ToInt64() == 0x100 || message.ToInt64() == 0x104)) stop();
             }
             return Native.CallNextHookEx(keyboard, code, message, data);
         }
@@ -101,10 +104,9 @@ namespace Vivid.Windows
                 var value = (Native.MouseEvent)Marshal.PtrToStructure(data, typeof(Native.MouseEvent));
                 if (value.Extra == Activity.OwnInputTag)
                 {
-                    Interlocked.Increment(ref mouseOwn); Activity.Own(value.Time);
+                    Interlocked.Increment(ref mouseOwn);
                     if (Volatile.Read(ref probing) != 0) { mouseReceipt.Set(); return new IntPtr(1); }
                 }
-                else Activity.Person();
             }
             return Native.CallNextHookEx(mouse, code, message, data);
         }
@@ -137,8 +139,12 @@ namespace Vivid.Windows
         }
         public void Dispose()
         {
-            Remove(); Native.PostThreadMessage(threadId, 0x12, UIntPtr.Zero, IntPtr.Zero); thread.Join();
-            ready.Dispose(); changed.Dispose(); keyboardReceipt.Dispose(); mouseReceipt.Dispose();
+            try
+            {
+                Remove(); Native.PostThreadMessage(threadId, 0x12, UIntPtr.Zero, IntPtr.Zero); thread.Join();
+                ready.Dispose(); changed.Dispose(); keyboardReceipt.Dispose(); mouseReceipt.Dispose();
+            }
+            catch (Exception) { Diagnostics.Write("HookDisposeFailed"); }
         }
     }
 }

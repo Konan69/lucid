@@ -17,10 +17,12 @@ namespace Vivid.Windows
             try { using (var output = new Output()) return Serve(arguments, output); }
             catch (Failure error) { Diagnostics.Write(error.Name); return 1; }
             catch (Exception) { Diagnostics.Write("HelperStartupFailed"); return 1; }
+            // A failure before the first request must not be silent: give the stderr
+            // writer a short, bounded moment to write what was queued before exit.
+            finally { Diagnostics.Flush(250); }
         }
         private static int Serve(string[] arguments, Output output)
         {
-            Integrity.VerifyHelper();
             if (!Native.SetProcessDpiAwarenessContext(new IntPtr(-4)))
             { Diagnostics.Write("DpiAwarenessFailed"); return 1; }
             int parentId = 0;
@@ -31,7 +33,7 @@ namespace Vivid.Windows
             using (var input = new BufferedStream(Console.OpenStandardInput(), 8192))
             {
                 if (parent != null)
-                { parent.EnableRaisingEvents = true; parent.Exited += delegate { turn.End(); Environment.Exit(0); }; if (parent.HasExited) return 0; }
+                { parent.EnableRaisingEvents = true; parent.Exited += delegate { try { turn.End(); } catch (Exception) { Diagnostics.Write("ParentExitCleanupFailed"); } Environment.Exit(0); }; if (parent.HasExited) return 0; }
                 var computer = new Computer(turn, testMode);
                 string line; Failure error;
                 while (ReadLine(input, out line, out error))

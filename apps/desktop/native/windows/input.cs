@@ -21,10 +21,10 @@ namespace Vivid.Windows
         }
         // SendInput is global: recheck before each batch, while acknowledging Windows
         // offers no atomic HWND-verify-and-inject operation.
-        internal void CheckTarget() { turn.Check(); budget.Check(); Shells.Verify(window); Integrity.Verify(window); turn.RequireInput(budget); }
-        internal void Check() { CheckTarget(); Activity.RequireIdle(); Windows.Foreground(window); }
-        // Pointer/keyboard fallback activates only after identity, stop and Person-idle checks.
-        internal void Prepare() { CheckTarget(); Activity.RequireIdle(); Windows.Activate(window, budget); }
+        internal void CheckTarget() { turn.Check(); budget.Check(); Integrity.Verify(window); turn.RequireInput(budget); }
+        internal void Check() { CheckTarget(); Windows.Foreground(window); }
+        // Pointer/keyboard fallback activates only after identity and stop checks.
+        internal void Prepare() { CheckTarget(); Windows.Activate(window, budget); }
         // SC_CLOSE is addressed to the validated HWND, so Alt+F4 cannot close a different
         // foreground window if focus changes between validation and global SendInput.
         internal object Close() { CheckTarget(); return Windows.Close(window, budget); }
@@ -35,7 +35,6 @@ namespace Vivid.Windows
             int id = element.Current.ProcessId;
             if (id <= 0) throw new ElevatedTarget();
             uint process = (uint)id;
-            Shells.VerifyProcess(process);
             if (Integrity.ForProcess(process) != TargetAccess.Allowed) throw new ElevatedTarget();
         }
     }
@@ -156,17 +155,14 @@ namespace Vivid.Windows
                 return new CharacterStroke(new[] { Key(key, 0, 0), Key(key, 0, 2) }, 0);
             return new CharacterStroke(new[] { Key(0x10, 0, 0), Key(key, 0, 0), Key(key, 0, 2), Key(0x10, 0, 2) }, 1);
         }
-        // Parse the closed key vocabulary and refuse global system chords before any activation or dispatch.
+        // Parse the closed key vocabulary. Every chord it can spell is sent, the Windows
+        // key, Alt+Tab and the rest included: nothing is refused for where it acts.
         internal static Native.Input[] Chord(string chord)
         {
             string[] names = chord.Split('+');
             var keys = new List<ushort>();
             foreach (string name in names) keys.Add(ParseKey(name.Trim()));
             if (keys.Count > 8) throw Fields.Invalid("key chord length");
-            if (keys.Contains(0x5B) || keys.Contains(0x5C) ||
-                keys.Contains(0x12) && (keys.Contains(0x09) || keys.Contains(0x1B)) ||
-                keys.Contains(0x11) && keys.Contains(0x1B) ||
-                keys.Contains(0x11) && keys.Contains(0x12) && keys.Contains(0x2E)) throw new SystemChordRefused();
             var events = new List<Native.Input>();
             foreach (ushort key in keys) events.Add(Key(key, 0, Extended(key)));
             for (int i = keys.Count - 1; i >= 0; i--) events.Add(Key(keys[i], 0, Extended(keys[i]) | 2));
@@ -228,13 +224,10 @@ namespace Vivid.Windows
         { return new Native.Input { Type = 1, Data = new Native.InputUnion { Keyboard = new Native.Keyboard { Key = key, Scan = scan, Flags = flags } } }; }
         private static uint Extended(ushort key)
         { return key >= 0x21 && key <= 0x2E || key == 0x5B || key == 0x5C || key == 0x6F ? 1U : 0U; }
-        // Check target/modifiers before dispatch. Recover releases for accepted downs, never replay the action.
+        // Check the target before dispatch. Recover releases for accepted downs, never replay the action.
         private static void Send(Native.Input[] events, InputGuard guard)
         {
             guard.Check();
-            foreach (int key in new[] { 0x10, 0x11, 0x12, 0x5B, 0x5C })
-                if ((Native.GetAsyncKeyState(key) & 0x8000) != 0)
-                    throw new ModifierHeld();
             uint sent = Activity.Dispatch(events);
             if (sent != events.Length)
             {

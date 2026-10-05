@@ -51,7 +51,8 @@ owner. The shell uses the same saved origin and staged assets in development and
 
 Import bridge types from `@vivid/desktop/bridge` (`src/shared/bridge.ts`). The chooser receives
 `window.vivid` with `VividDesktopBridge`; selected-server documents receive `VividAppBridge`,
-containing `getAppVersion()`, `pages`, `device` and `openApproval()`:
+containing `getAppVersion()`, `pages`, `device` and `openApproval()` (the notice window has its
+own, smaller bridge: `src/shared/notice.ts`):
 
 ```ts
 interface VividDesktopBridge {
@@ -186,7 +187,7 @@ implemented by mobile. Adding a desktop code flow would require renderer work.
 
 ## Vivid using this computer
 
-Stage 1: the browser only. Once a Person is signed in, the app enrols this installation as one
+Once a Person is signed in, the app enrols this installation as one
 of their computers (`EnrolDevice`, with the machine's host name), and waits. Enrolling grants
 nothing. When the Person allows it (Settings → Devices → Your computers, on any surface), the app
 holds `WatchDeviceRequests` open on the live socket and carries out each `BrowserAction` Vivid
@@ -260,6 +261,44 @@ What running it against real pages changed (each is stated beside its code):
   (`Page.frameRequestedNavigation`) until the page is neither leaving nor loading.
 - A hop stopped by the rule every page obeys (no loopback) is reported to Vivid as
   `NotAllowed`, not answered as the old page.
+
+### Apps on the Person's computer (Windows)
+
+Allowing a computer is the whole permission. Where Vivid's helper is present (Windows, shipped
+under `resources/native/windows`; see `native/windows/README.md`), the app says so when it starts
+listening (`ability.apps`) and carries out `Window` work through it: any app, any window, nothing
+asked and nothing banned.
+
+- **The process** (`main/helper.ts`, `main/wire.ts`): one `Vivid.Windows.exe --parent-pid <pid>`,
+  started at the first work in an app, hidden, private pipes, both drained. One request at a time,
+  each with its turn and its budget; every line is decoded with a schema. A reply that never
+  comes (exit 70 included), a line that is not the protocol, or a request that outlives its
+  budget by 2 s ends the request as lost, and the last two end the process.
+- **Turns** (`main/turn.ts`): one turn per Run, the Run's id as the turn's id. It begins at a
+  Run's first work in an app and ends on `RunEnded`, after 60 s with no work, when work of
+  another Run arrives, and when the link ends (which also ends the process).
+- **Stop**: Escape anywhere (the helper's `stopped` line) or Stop on the notice ends the turn.
+  Work in flight answers `Declined: Stopped`; with nothing in flight the app calls
+  `ReportDeviceStop` at once. That Run is over; a new Run works at once. There is no pause.
+- **Unknown outcomes**: a change that was written to the helper and got no answer, or whose
+  failure does not say nothing was sent, is not answered at all. The server records it as
+  unknown; it is never reported as done, declined or failed.
+- **The mapping** (`main/windows.ts`): each `WindowAction` as helper requests and back. A change
+  answers with a fresh look at the window. Windows get short names of the turn's own (`w1`); the
+  helper's ids never leave the computer.
+- **The notice** (`main/notice.ts`, `apps/web/src/notice.tsx`): a small frameless window, top
+  centre of the primary display, always on top, shown without taking focus, not in the taskbar,
+  and left out of screen captures so it is never in a picture sent to the model. It says
+  "<Vivid's name> is using <app>" with an Esc hint and Stop.
+
+The helper is compiled by `scripts/build.mjs` on Windows (its own `build.ps1`, the compiler that
+ships in Windows) into `dist/native/windows`; a failed compile fails the build, and
+`scripts/packed.mjs` refuses to package a Windows app without it. On other systems the build
+skips it and that app reports `apps: false`.
+
+The tests run the desktop's side against a stand-in process (`main/fake.mjs`) that speaks the
+same lines. Not proved here: the real helper, the notice window, and the packaged installer; they
+need Windows.
 
 ### The proof
 

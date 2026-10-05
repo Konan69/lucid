@@ -4,8 +4,6 @@ import {
   SandboxOperationUnsupportedError,
   type Sandbox,
   type SandboxFactory,
-  type LlmImageContent,
-  type LlmTextContent,
 } from '@flue/runtime'
 import { Type } from '@earendil-works/pi-ai'
 import {
@@ -16,7 +14,6 @@ import {
   CommandOutcome,
   BrowseOutcome,
   UseDesktopRequest,
-  type DesktopView,
 } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
@@ -24,6 +21,8 @@ import * as Struct from 'effect/Struct'
 import * as Option from 'effect/Option'
 import * as Result from 'effect/Result'
 import * as Match from 'effect/Match'
+import { pictureResult } from './picture.ts'
+import { personComputerModelTool } from './windows.ts'
 import { warnFailure } from './result.ts'
 import * as v from 'valibot'
 import { Scope, type RunTool } from './scope.ts'
@@ -129,7 +128,7 @@ const browseProgram = Effect.fn('ComputerTool.browse')(function* (
       onNone: () => undefined,
       onSome: picture,
     })
-  return browseOutcome(outcome)
+  return { ...browseOutcome(outcome), computer: data.computer }
 })
 
 /** The model vocabulary maps exhaustively to the server's closed BrowserAction contract. */
@@ -219,12 +218,6 @@ const desktopParameters = Type.Unsafe<typeof desktopInput.Encoded>(
   Object.assign({}, desktopDocument.schema, { $defs: desktopDocument.definitions }),
 )
 
-type DesktopToolResult = {
-  content: Array<LlmTextContent | LlmImageContent>
-  details: Schema.Json
-  terminate: boolean
-}
-
 /** Browse uses the same Flue native image path as use_desktop; screenshots never enter bounded JSON. */
 export function browseModelTool(runTool: RunTool) {
   return {
@@ -252,21 +245,7 @@ export function browseModelTool(runTool: RunTool) {
           signal: cancellation,
           tool: 'browse',
         },
-      ).then((result): DesktopToolResult => {
-        const metadata = { type: 'text' as const, text: JSON.stringify(result.output) }
-        return Option.match(picture, {
-          onNone: () => ({
-            content: [metadata],
-            details: result.output,
-            terminate: result.terminate,
-          }),
-          onSome: (bytes) => ({
-            content: [metadata, { type: 'image' as const, mimeType: 'image/png', data: bytes }],
-            details: result.output,
-            terminate: result.terminate,
-          }),
-        })
-      })
+      ).then((result) => pictureResult(result, picture))
     },
   }
 }
@@ -287,14 +266,14 @@ export function desktopModelTool(runTool: RunTool) {
     execute(_call: string, input: unknown, signal?: AbortSignal) {
       const request = decodeDesktop(input)
       if (Result.isFailure(request)) {
-        const refusal: DesktopToolResult = {
+        const refusal = {
           content: [{ type: 'text' as const, text: 'The desktop request is invalid.' }],
           details: { ok: false },
           terminate: false,
         }
         return Promise.resolve(refusal)
       }
-      let picture = Option.none<DesktopView>()
+      let picture = Option.none<string>()
       const cancellation = signal === undefined ? new AbortController().signal : signal
       return runTool(
         Effect.gen(function* () {
@@ -305,28 +284,11 @@ export function desktopModelTool(runTool: RunTool) {
           })
           if (DesktopOutcome.isAnyOf(['Blocked', 'Unavailable'])(outcome))
             yield* warnFailure('use_desktop', outcome._tag)
-          if (DesktopOutcome.guards.Completed(outcome)) picture = Option.some(outcome.view)
+          if (DesktopOutcome.guards.Completed(outcome)) picture = Option.some(outcome.view.picture)
           return desktopOutcome(outcome)
         }),
         { signal: cancellation, tool: 'use_desktop' },
-      ).then((result): DesktopToolResult => {
-        const metadata = { type: 'text' as const, text: JSON.stringify(result.output) }
-        return Option.match(picture, {
-          onNone: () => ({
-            content: [metadata],
-            details: result.output,
-            terminate: result.terminate,
-          }),
-          onSome: (view) => ({
-            content: [
-              metadata,
-              { type: 'image' as const, mimeType: 'image/png', data: view.picture },
-            ],
-            details: result.output,
-            terminate: result.terminate,
-          }),
-        })
-      })
+      ).then((result) => pictureResult(result, picture))
     },
   }
 }
@@ -338,7 +300,11 @@ export function desktopModelTool(runTool: RunTool) {
 export function desktopToolFactory(runTool: RunTool) {
   return {
     createSandbox: () => Promise.resolve(toolNamespace()),
-    tools: () => [desktopModelTool(runTool), browseModelTool(runTool)],
+    tools: () => [
+      desktopModelTool(runTool),
+      browseModelTool(runTool),
+      personComputerModelTool(runTool),
+    ],
   } satisfies SandboxFactory
 }
 

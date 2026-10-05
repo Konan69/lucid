@@ -5,15 +5,13 @@ namespace Vivid.Windows
 {
     // TokenIntegrityLevel is TOKEN_MANDATORY_LABEL: its first field is a SID pointer.
     // Compare the final SID RID, not elevation flags; inaccessible tokens fail closed.
+    // The helper runs at whatever integrity the desktop app runs at. A target above
+    // that is reported as ElevatedTarget because Windows drops such input anyway; a
+    // helper started as administrator is at or above every such target and is not refused.
     // devblogs.microsoft.com/oldnewthing/20221017-00/?p=107291
     internal enum TargetAccess { Allowed, Elevated, Unverified }
     internal static class Integrity
     {
-        internal static void VerifyHelper()
-        {
-            int own = Read(Native.GetCurrentProcess());
-            if (own < 0 || own > 0x2000) throw new HelperElevated();
-        }
         internal static void Verify(Window window)
         {
             uint id;
