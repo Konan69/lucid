@@ -1,7 +1,15 @@
 import { NotificationId, ThreadId, type Notification } from '@vivid/contracts'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { everyNoticeRead, noticeRows, noticesRead, NoticeRow, type NoticeThread } from './notices'
+import {
+  everyNoticeRead,
+  invitationIn,
+  noticeFace,
+  noticeRows,
+  noticesRead,
+  NoticeRow,
+  type NoticeThread,
+} from './notices.js'
 
 const NOW = Date.UTC(2026, 9, 4, 12)
 
@@ -388,5 +396,55 @@ describe('noticeTrials', () => {
     const rows = noticeRows(trial.notices, trial.threads)
     expect(rows).toHaveLength(1)
     expect(groupedIn(rows, 0).unread).toHaveLength(40)
+  })
+})
+
+describe('noticeFace', () => {
+  it('leads a Thread’s row with the Thread’s title and says what the notice is', () => {
+    const [row] = noticeRows(
+      [notice('a', NOW, { title: 'Vivid has a question', body: 'Which quarter?' })],
+      [thread('first', 'Board pack', 'NeedsYou')],
+    )
+    expect(Option.map(Option.fromUndefinedOr(row), noticeFace)).toEqual(
+      Option.some({
+        key: 'first',
+        heading: 'Board pack',
+        notice: notice('a', NOW, { title: 'Vivid has a question', body: 'Which quarter?' }),
+        line: 'Which quarter?',
+        spoken: Option.some('Vivid has a question'),
+        waiting: true,
+        unread: 1,
+      }),
+    )
+  })
+
+  it('leads with the notice itself when its Thread was deleted', () => {
+    const [row] = noticeRows([notice('a', NOW, { title: 'Vivid finished' })], [])
+    const face = Option.map(Option.fromUndefinedOr(row), noticeFace)
+    expect(Option.map(face, (shown) => shown.heading)).toEqual(Option.some('Vivid finished'))
+    expect(Option.map(face, (shown) => shown.waiting)).toEqual(Option.some(false))
+  })
+
+  it('calls a notice with no title by its kind', () => {
+    const [row] = noticeRows(
+      [notice('a', NOW, { title: '  ', threadId: null, kind: 'shared' })],
+      [],
+    )
+    expect(Option.map(Option.fromUndefinedOr(row), (shown) => noticeFace(shown).heading)).toEqual(
+      Option.some('A Thread was shared with you'),
+    )
+  })
+
+  it('reads an invitation out of its notice and leaves the sentence', () => {
+    const invited = notice('a', NOW, {
+      kind: 'invited',
+      threadId: null,
+      body: 'Dami invited you to Northwind invitation:inv_42',
+    })
+    expect(invitationIn(invited)).toEqual(Option.some('inv_42'))
+    expect(noticeFace(NoticeRow.Single({ notice: invited })).line).toBe(
+      'Dami invited you to Northwind',
+    )
+    expect(invitationIn(notice('b', NOW, {}))).toEqual(Option.none())
   })
 })

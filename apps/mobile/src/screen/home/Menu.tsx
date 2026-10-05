@@ -20,6 +20,7 @@ import {
 import Animated from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
+  Bell,
   ChevronsUpDown,
   Plus,
   Library as LibraryIcon,
@@ -468,6 +469,38 @@ function Head({
 }
 
 /**
+ * The way to Notifications, first among the places because it is the one that changes while the
+ * Person is away. What is unread is counted at its trailing edge, in the ink and the place a
+ * Project's waiting Threads are counted (`Group`), so the drawer has one way of saying "this
+ * many things want you". It reads the live query itself, so only this line redraws when a
+ * notice arrives.
+ */
+function NotificationsLine({ onOpen }: { onOpen: () => void }) {
+  const data = useLiveData()
+  const state = useLive(data.live.notifications)
+  const unread = LiveState.$is('Ready')(state) ? state.value.unreadCount : 0
+  return (
+    <Line
+      icon={Bell}
+      label="Notifications"
+      accessibilityLabel={unread > 0 ? `Notifications. ${unread} unread` : 'Notifications'}
+      trailing={
+        unread > 0 ? (
+          <Label
+            size="label"
+            tone="status-attention"
+            style={{ fontWeight: '600', fontVariant: ['tabular-nums'] }}
+          >
+            {unread}
+          </Label>
+        ) : undefined
+      }
+      onPress={onOpen}
+    />
+  )
+}
+
+/**
  * What scrolls above the Threads: the places beside them, then the Projects. It owns the sheet
  * that names a new Project, since that is asked for from here.
  */
@@ -492,6 +525,7 @@ function Beside({
   }
   return (
     <View style={{ paddingBottom: 4 }}>
+      <NotificationsLine onOpen={() => onGo('Notifications')} />
       {PLACES.map(({ route, label, icon }) => (
         <Line key={route} icon={icon} label={label} onPress={() => onGo(route)} />
       ))}

@@ -26,6 +26,7 @@ import { createContext, useContext } from 'react'
  * - `Settings`: the Person's own settings; `People` is who is in the Company they are working in,
  *   and `Memory` is what Vivid has kept about the Person, for them to correct or remove.
  *   `Texting` is where they connect their phone number so they can text Vivid.
+ * - `Notifications`: what finished or needs the Person while they were elsewhere, in the drawer.
  */
 export type Routes = {
   Home: undefined
@@ -40,6 +41,7 @@ export type Routes = {
   People: undefined
   Memory: undefined
   Texting: undefined
+  Notifications: undefined
 }
 
 /**

@@ -1,4 +1,5 @@
 import {
+  InvitationId,
   NotificationId,
   ThreadId,
   type Notification,
@@ -13,6 +14,10 @@ import { Array as Arr, Data, Option, Order } from 'effect'
  * Three questions asked in one Thread used to be three rows with the same heading, which read as
  * three things to do when it is one conversation to open. The rows are worked out here, away from
  * React, so the grouping, the order and the counts can be tested without drawing anything.
+ *
+ * It began in the web app (`apps/web/src/data/notices.ts`) and moved here when the phone got its
+ * own notifications screen: the web's panel and the phone's screen list the same rows, say the
+ * same words in them, and mark them read the same way; only how a row is drawn is each app's.
  */
 
 export type NotificationList = typeof NotificationListResponse.Type
@@ -114,6 +119,17 @@ export const noticeRows = (
   return Arr.sort(rows, newestFirst)
 }
 
+/** A notice as it is once read. Every field is named, so a new one cannot be dropped unseen. */
+const readAt = (notice: Notification, at: number): Notification => ({
+  id: notice.id,
+  kind: notice.kind,
+  title: notice.title,
+  body: notice.body,
+  threadId: notice.threadId,
+  createdAt: notice.createdAt,
+  readAt: at,
+})
+
 /**
  * What the list looks like once these notices are read, for showing a press at once. The count
  * goes down by what actually changed: it is the server's count of everything unread, which can
@@ -128,7 +144,7 @@ export const noticesRead =
     ).length
     return {
       notifications: current.notifications.map((notice) =>
-        notice.readAt === null && reading.has(notice.id) ? { ...notice, readAt: at } : notice,
+        notice.readAt === null && reading.has(notice.id) ? readAt(notice, at) : notice,
       ),
       unreadCount: current.unreadCount - changed,
     }
@@ -139,7 +155,81 @@ export const everyNoticeRead =
   (at: number) =>
   (current: NotificationList): NotificationList => ({
     notifications: current.notifications.map((notice) =>
-      notice.readAt === null ? { ...notice, readAt: at } : notice,
+      notice.readAt === null ? readAt(notice, at) : notice,
     ),
     unreadCount: 0,
   })
+
+/**
+ * What each kind of notice is called when nothing better names it. A new kind fails to compile
+ * here until it has a name.
+ */
+export const NOTICE_NAME = {
+  finished: 'Vivid finished',
+  'needs-you': 'Vivid needs you',
+  shared: 'A Thread was shared with you',
+  invited: 'You were invited',
+} as const satisfies Record<Notification['kind'], string>
+
+/**
+ * What a notice is called when it leads its row. The server writes a title for every notice, but
+ * the contract allows an empty one, and a row with a mark, a time and no words was found by
+ * looking at the worst-case list: it could not be read or told apart. A notice without a title
+ * is called by its kind, which it always has.
+ */
+const named = (notice: Notification): string =>
+  notice.title.trim().length === 0 ? NOTICE_NAME[notice.kind] : notice.title
+
+/** An invitation notice carries its id at the end of its body; the rest is the sentence. */
+const INVITATION = /\s*invitation:(\S+)$/u
+
+/** The invitation a notice is about, when its body carries one. */
+export const invitationIn = (notice: Notification): Option.Option<InvitationId> =>
+  Option.flatMap(Option.fromNullOr(INVITATION.exec(notice.body)), (found) =>
+    Option.map(Option.fromUndefinedOr(found[1]), (id) => InvitationId.make(id)),
+  )
+
+/** What a row says, whichever kind of row it is, so both are drawn on the same edges. */
+export interface NoticeFace {
+  /** Stable while notices arrive and are read: the Thread for a group, the notice for a single. */
+  readonly key: string
+  /** The Thread's title, or the notice's own when there is no Thread title to lead with. */
+  readonly heading: string
+  /** The notice the mark, the line and the time are taken from: the newest one. */
+  readonly notice: Notification
+  /** The sentence under the heading: the notice's body without the marker it may end in. */
+  readonly line: string
+  /**
+   * What the notice is, for someone who cannot see its mark, when the heading does not already
+   * say it: a row led by a Thread's title carries its kind only in the colour of an icon.
+   */
+  readonly spoken: Option.Option<string>
+  /** Whether the Thread is waiting on this Person now. */
+  readonly waiting: boolean
+  /** How many notices of the row are unread. */
+  readonly unread: number
+}
+
+const lineOf = (notice: Notification) => notice.body.replace(INVITATION, '')
+
+/** The words of one row. Web and phone draw these same words; neither decides them. */
+export const noticeFace = NoticeRow.$match({
+  Single: ({ notice }): NoticeFace => ({
+    key: notice.id,
+    heading: named(notice),
+    notice,
+    line: lineOf(notice),
+    spoken: Option.none(),
+    waiting: false,
+    unread: notice.readAt === null ? 1 : 0,
+  }),
+  Grouped: ({ threadId, title, newest, waiting, unread }): NoticeFace => ({
+    key: threadId,
+    heading: Option.getOrElse(title, () => named(newest)),
+    notice: newest,
+    line: lineOf(newest),
+    spoken: Option.map(title, () => newest.title),
+    waiting,
+    unread: unread.length,
+  }),
+})
