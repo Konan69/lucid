@@ -266,7 +266,7 @@ describe('what the shell hands over is not trusted', () => {
   )
 })
 
-describe('opening the browser again', () => {
+describe('opening a browser that did not open', () => {
   const waiting: Shown = {
     attempt: 3,
     state: Option.some(Handing.Waiting({ browser: 'unopened' })),
@@ -335,15 +335,15 @@ describe('which way a window signs in with Google', () => {
     )
   })
 
-  it('is not offered in a desktop app installed before the bridge could', () => {
-    expect(wayIn(Option.some({}))).toEqual(Way.Outdated())
+  it('is not offered in a desktop app whose bridge cannot', () => {
+    expect(wayIn(Option.some({}))).toEqual(Way.Unable())
     // The shell that came before this one had another capability in its place.
-    expect(wayIn(Option.some({ openExternal: () => Promise.resolve() }))).toEqual(Way.Outdated())
+    expect(wayIn(Option.some({ openExternal: () => Promise.resolve() }))).toEqual(Way.Unable())
     // A bridge read off the window is whatever that shell put there, whatever its type says.
     expect(wayIn(Option.some({ signIn: { ...signIn, ended: 'not a function' } }))).toEqual(
-      Way.Outdated(),
+      Way.Unable(),
     )
-    expect(wayIn(Option.some({ signIn: { begin: signIn.begin } }))).toEqual(Way.Outdated())
-    expect(wayIn(Option.some('not a bridge'))).toEqual(Way.Outdated())
+    expect(wayIn(Option.some({ signIn: { begin: signIn.begin } }))).toEqual(Way.Unable())
+    expect(wayIn(Option.some('not a bridge'))).toEqual(Way.Unable())
   })
 })

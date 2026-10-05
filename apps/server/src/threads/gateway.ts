@@ -31,6 +31,7 @@ import { Database } from '../database/client.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { sessionRanOut, watch } from '../live/query.ts'
 import { observeFailures } from '../observability/failure.ts'
+import { untraced } from '../observability/quiet.ts'
 import { requireThread, type StoredThread } from './access.ts'
 import { Conversation, DeliverySpeaker, DeliveryMessage, StoredRunOrigin } from './conversation.ts'
 import { IncomingMessage, messageFingerprint, messagePictures } from './pictures.ts'
@@ -231,6 +232,8 @@ const authorizedBody = (
         Effect.andThen(requireThread(thread.id, personId)),
         Effect.andThen(Deferred.succeed(ready, undefined)),
         Effect.asVoid,
+        // Re-run on every topic move while the conversation stream is open; see `untraced`.
+        untraced,
       )
       const removed = watch(
         thread.companyId === null ? topics : [...topics, Topic.company(thread.companyId)],

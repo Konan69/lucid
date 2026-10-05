@@ -20,13 +20,13 @@ import {
 /**
  * Signing in with Google from the desktop app, as the welcome screen sees it: which way this
  * window has, whether a hand-off is happening, where it stands, and what a Person can do about
- * it (start, open the browser again, cancel).
+ * it (start, open a browser that did not open, cancel).
  *
  * Only the desktop app has it. In a browser tab Google sign-in is a redirect and none of this
  * runs. The desktop app's preload puts one capability on the window for it, `vivid.signIn`: the
  * shell opens the system browser on Google and brings back a one-use code, which this window
- * trades for its session (`signin.ts`). A desktop app installed before that capability existed
- * has neither way, and `way` says so (`wayIn`).
+ * trades for its session (`signin.ts`). A desktop app whose shell lacks that capability has
+ * neither way, and `way` says so (`wayIn`).
  *
  * It is a store read with `useSyncExternalStore`, not a hook, because the hand-off outlives any
  * one drawing of the welcome and is started by a press, never by a render.
@@ -103,8 +103,9 @@ export const googleHandoff = {
     stop = start(handOff(parts(way, attempt, destination)))
   },
   /**
-   * Opens the browser again for the attempt this window is waiting on, for a Person who closed
-   * it or was told it did not open. It starts no new attempt, and the wait goes on underneath.
+   * Opens the browser for the attempt this window is waiting on, for a Person who was told it
+   * did not open: the card offers this in that step only. It starts no new attempt, and the wait
+   * goes on underneath.
    *
    * What the shell answers is written only while the card is still waiting on that attempt
    * (`reopened`): a code that lands while the browser is opening must not be painted over.

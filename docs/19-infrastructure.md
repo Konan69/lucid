@@ -49,6 +49,79 @@ the build goes on and succeeds on Railway. Two consequences:
   run, and the plan caps domains per service. After each deploy, delete every server domain except
   the first one, which `PUBLIC_URL` uses. Remove this step when the provider waits for the build.
 
+### Before a production deploy
+
+On 5 October 2026 two sessions ran `pnpm infra:deploy` from the same checkout one minute apart
+(09:13 and 09:14 UTC), neither knowing of the other, and then both tried redeploys and rollbacks on
+the Executor at once. Its old container hung in `stopping` and held the data volume, and the
+Executor answered `502` for 55 minutes. No data was lost. The rules that came out of it:
+
+- **One session deploys production.** It is the integrator named for the repository at the time.
+  Every other session pushes a branch and opens a pull request; it does not run the deploy, a
+  redeploy, a rollback or a Railway mutation, even to ship its own fix quickly, and even when
+  production is down. If you find production broken, tell the Person and the integrator what
+  you see; do not start a second repair beside theirs.
+- A deploy sends everything on `main`, not only the change you came to ship. Read the plan the
+  command prints (`Plan: …` and the `[Resource] update | replace | create` lines). If it touches
+  a resource your change does not, find whose change that is (`git log -- infra/railway.ts`)
+  before going on.
+- Deploys run only from the one clean checkout that holds the Alchemy state (`.alchemy/`). A
+  second checkout has no state and would create every resource again.
+- The Railway CLI's session token lasts about an hour, and a deploy that outlives it fails with
+  `RailwayForbidden … Not Authorized` part-way. Refresh it first (`railway whoami` with the
+  personal profile) and check `user.tokenExpiresAt` in that profile's `config.json`.
+
+### When a service with a volume will not start
+
+Railway attaches a volume to one container at a time, so a deploy of Executor, Helix, PostgreSQL
+or the runtime stops the old container before the new one starts. If the old container hangs in
+`stopping`, it keeps the volume and every new deployment waits at `CREATE_CONTAINER` with no log
+line until Railway fails it (about seventeen minutes), then tries again. The public address
+answers `502` throughout. Redeploying or rolling back does not help: each attempt waits on the
+same volume, and each new attempt cancels the one before it.
+
+How to tell:
+
+1. `railway ssh` into the service answers `Your service's container is not running (status:
+stopping)`.
+2. `railway deployment list --json`: the last deployment that worked still reads `SUCCESS` while
+   newer ones sit in `DEPLOYING`. In the GraphQL API, `deploymentEvents` for a new one ends at
+   `CREATE_CONTAINER` with no `completedAt`.
+
+What cleared it on 5 October: the integrator copied the volume's data off, moved the volume to a
+throwaway service and back to the Executor, and deployed again. Between the two moves the
+Executor ran for about three minutes with no volume, so with an empty store: it passed `/health`
+and refused the server's key (`Invalid API key`). Health alone is therefore not proof of
+recovery; make one real call with the server's key and compare the answer with what it was.
+
+Not proven: a second session sent `deploymentStop` for the stuck deployment in the same minute as
+the first volume move. Which of the two released the container is unknown, so do not rely on
+`deploymentStop` alone.
+
+Ruled out, so do not spend time on them again: the image (it pulled without credentials, and the
+previous image hung the same way), the volume's own state (`READY`), the domain, the target port
+and the region.
+
+### Executor's image
+
+Production's Executor is upstream Executor's source at commit `304bf60`, unchanged, built with
+upstream's own self-host Dockerfile and published as `executor-selfhost:src-304bf60`. No feature
+requires it: adding an Integration by a personal key was proven on the last published tag,
+`2.0.0-beta.8`, as well. The source build is simply newer upstream code that passed the same
+tests. The store schema and migrations are identical in both, the server's key is valid on both,
+and going back to the tag is safe.
+
+### Telemetry volume
+
+The server exports spans and log lines to Sentry over OTLP. Export is by allowlist, and work that
+repeats with nobody asking is not traced at all: timer passes (approvals, routines, push,
+presence), live query reloads and session watchers run under `untraced`
+(`apps/server/src/observability/quiet.ts`), and functions called once per item of a large list
+are `Effect.fnUntraced`. Before those rules, one Person produced 119,000 spans an hour: 95,000
+from three spans per Integration catalogue entry on every catalogue read, the rest from timers
+and reloads. After a deploy, check the rate in Sentry (spans grouped by `span.name`, last hour);
+a name with thousands of spans and no request behind it is a loop being traced.
+
 ## Run locally
 
 1. Install dependencies with `pnpm install` using Node 24 or newer and pnpm `12.4.2`.
