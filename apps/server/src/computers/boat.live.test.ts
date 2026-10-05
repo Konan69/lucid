@@ -43,6 +43,9 @@ const cleanup = Effect.fn('BoatLive.cleanup')(function* (key: MachineKey) {
   const client = yield* HttpClient.HttpClient
   const apiKey = yield* Config.Redacted('VIVID_BOAT_API_KEY')
   const org = yield* Config.option(Config.NonEmptyString('VIVID_BOAT_ORG'))
+  // A machine the installation already had (`VIVID_BOAT_MACHINE`) was taken, not created, by this
+  // test, and is never deleted by it: with that setting it is the only machine there is.
+  const adopted = yield* Config.option(Config.String('VIVID_BOAT_MACHINE'))
   const billed = Option.match(org, {
     onNone: () => Function.identity<HttpClientRequest.HttpClientRequest>,
     onSome: (name) => HttpClientRequest.setHeader('X-Boat-Org', name),
@@ -52,7 +55,11 @@ const cleanup = Effect.fn('BoatLive.cleanup')(function* (key: MachineKey) {
       'delete',
       Effect.gen(function* () {
         const binding = yield* saved.load(key)
-        if (Option.isSome(binding) && binding.value.providerId !== null) {
+        if (
+          Option.isSome(binding) &&
+          binding.value.providerId !== null &&
+          !Option.contains(adopted, binding.value.providerId)
+        ) {
           const id = binding.value.providerId
           const response = yield* client.execute(
             HttpClientRequest.delete(`https://boat.dev/api/v1/sandboxes/${id}`).pipe(

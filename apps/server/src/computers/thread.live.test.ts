@@ -44,10 +44,18 @@ const cleanupComputer = Effect.fn('ThreadProof.cleanupComputer')(function* (
   const database = yield* Database
   const http = yield* HttpClient.HttpClient
   const apiKey = yield* Config.Redacted('VIVID_BOAT_API_KEY')
+  // An installation that names its existing machine (`VIVID_BOAT_MACHINE`) had this Person take
+  // that machine; it was not created here and is not this test's to delete. Until 5 October 2026
+  // this finalizer deleted whatever was bound, which with that setting is the only machine.
+  const adopted = yield* Config.option(Config.String('VIVID_BOAT_MACHINE'))
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
       const binding = yield* saved.load(key)
-      if (Option.isSome(binding) && binding.value.providerId !== null) {
+      if (
+        Option.isSome(binding) &&
+        binding.value.providerId !== null &&
+        !Option.contains(adopted, binding.value.providerId)
+      ) {
         const id = binding.value.providerId
         const response = yield* http.execute(
           HttpClientRequest.delete(`https://boat.dev/api/v1/sandboxes/${id}`).pipe(
