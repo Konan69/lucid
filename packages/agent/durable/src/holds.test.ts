@@ -19,8 +19,8 @@ import { Effect } from 'effect'
 import { z } from 'zod'
 
 import { answer, decide, waiting } from './core.ts'
-import { continueRun, streamRun } from './stream.ts'
-import { toolsExtension } from './tools.ts'
+import { continueRun, streamRun } from './main.ts'
+import { toolsExtension } from './main.ts'
 
 const context = BACKGROUND_CONTEXT
 

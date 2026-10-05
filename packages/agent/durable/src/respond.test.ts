@@ -5,7 +5,7 @@ import { createRegistry, Harness, MemoryStorage } from '@earendil-works/pi-durab
 import { DefaultChatTransport, readUIMessageStream, type UIMessage } from 'ai'
 import { expect, it } from 'vitest'
 
-import { respond } from './respond.ts'
+import { respond } from './main.ts'
 
 const context = BACKGROUND_CONTEXT
 

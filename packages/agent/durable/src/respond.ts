@@ -1,152 +1,148 @@
-import type { Context, JsonValue } from '@earendil-works/chord'
+import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
-import { createUIMessageStreamResponse } from 'ai'
+import type { UIMessageChunk } from 'ai'
+import { Array as Arr, Effect, Option, Schema, SchemaGetter, SchemaIssue, Stream } from 'effect'
 
-import { type Answer, type Decision } from './holds.ts'
-import { answer, decide } from './main.ts'
-import { continueRun, streamRun } from './stream.ts'
-import { waiting } from './main.ts'
+import { TurnInvalid, type PiFailed, type ConversationMissing, type RunMissing } from './errors.ts'
+import { answer, decide } from './holds.ts'
+import { continueRun, prepareRun } from './stream.ts'
+import { waiting } from './waiting.ts'
 
-/**
- * What an AI SDK chat request asks for, read from its newest message.
- *
- * - `input`: a user message, with its client-made id and its text.
- * - `resume`: the assistant message the client already shows, sent back after the person settled
- *   its holds. `known` are its tool call ids, `decisions` its approval responses, `outputs` the
- *   results the client supplied for tools with no server `execute`.
- */
-export type ChatTurn =
-  | { readonly kind: 'input'; readonly messageId: string; readonly text: string }
-  | {
-      readonly kind: 'resume'
-      readonly known: readonly string[]
-      readonly decisions: readonly Decision[]
-      readonly outputs: readonly Answer[]
-    }
+/** The transport-neutral turn carries only the client's newest input or named tool settlements. */
+export const ChatTurn = Schema.TaggedUnion({
+  Input: { messageId: Schema.String, text: Schema.String.check(Schema.isMinLength(1)) },
+  Resume: {
+    known: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
+    decisions: Schema.Array(
+      Schema.Struct({
+        callId: Schema.String,
+        approved: Schema.Boolean,
+        reason: Schema.optionalKey(Schema.String),
+      }),
+    ),
+    outputs: Schema.Array(Schema.Struct({ callId: Schema.String, output: Schema.MutableJson })),
+  },
+})
+export type ChatTurn = typeof ChatTurn.Type
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null
+const ToolName = Schema.String.check(Schema.isPattern(/^(?:tool-|dynamic-tool$)/u))
+const Approval = Schema.Struct({
+  approved: Schema.Boolean,
+  reason: Schema.optionalKey(Schema.String),
+})
+const Part = Schema.Union([
+  Schema.Struct({ type: Schema.Literal('text'), text: Schema.String }),
+  Schema.Struct({
+    type: ToolName,
+    toolCallId: Schema.String,
+    state: Schema.Literal('approval-responded'),
+    approval: Approval,
+  }),
+  Schema.Struct({
+    type: ToolName,
+    toolCallId: Schema.String,
+    state: Schema.Literal('output-available'),
+    output: Schema.MutableJson,
+  }),
+  Schema.Struct({ type: ToolName, toolCallId: Schema.String }),
+  // Unknown part types carry no input/settlement semantics and are intentionally discarded.
+  Schema.Struct({ type: Schema.String }),
+])
+const Message = Schema.Union([
+  Schema.Struct({ role: Schema.Literal('user'), id: Schema.String, parts: Schema.Array(Part) }),
+  Schema.Struct({ role: Schema.Literal('assistant'), parts: Schema.Array(Part) }),
+])
+const Body = Schema.Struct({ messages: Schema.Array(Schema.Unknown) })
+const decodeMessage = Schema.decodeUnknownEffect(Message)
 
-/** Text of one UI message part, when it is a text part. */
-const partText = (part: unknown) =>
-  isRecord(part) && part['type'] === 'text' && typeof part['text'] === 'string'
-    ? [part['text']]
-    : []
-
-/** One tool part of a UI message: a typed tool (`tool-<name>`) or a dynamic one. */
-type ToolPart = Record<string, unknown> & { readonly toolCallId: string }
-
-const toolParts = (parts: readonly unknown[]) =>
-  parts.filter(
-    (part): part is ToolPart =>
-      isRecord(part) &&
-      typeof part['type'] === 'string' &&
-      (part['type'].startsWith('tool-') || part['type'] === 'dynamic-tool') &&
-      typeof part['toolCallId'] === 'string',
+/** Derive only settlements with the complete decoded payload; generic tool parts merely name known calls. */
+function resumed(parts: (typeof Message.Type)['parts']) {
+  const tools = parts.filter(
+    (part): part is Extract<typeof Part.Type, { toolCallId: string }> => 'toolCallId' in part,
   )
-
-/** The approval response on a tool part, when the person has decided. The approval id is the call id. */
-function decisionOf(part: ToolPart): readonly Decision[] {
-  const approval = part['approval']
-  if (part['state'] !== 'approval-responded' || !isRecord(approval)) return []
-  if (typeof approval['approved'] !== 'boolean') return []
-  return typeof approval['reason'] === 'string'
-    ? [{ callId: part.toolCallId, approved: approval['approved'], reason: approval['reason'] }]
-    : [{ callId: part.toolCallId, approved: approval['approved'] }]
-}
-
-/** The output on a tool part, as the JSON it arrived in. */
-const outputOf = (part: ToolPart): readonly Answer[] =>
-  part['state'] === 'output-available'
-    ? [{ callId: part.toolCallId, output: part['output'] as JsonValue }]
-    : []
-
-function userTurn(
-  message: Record<string, unknown>,
-  parts: readonly unknown[],
-): ChatTurn | undefined {
-  if (typeof message['id'] !== 'string') return undefined
-  const text = parts.flatMap(partText).join('\n')
-  return text === '' ? undefined : { kind: 'input', messageId: message['id'], text }
-}
-
-function resumeTurn(parts: readonly unknown[]): ChatTurn | undefined {
-  const tools = toolParts(parts)
-  if (tools.length === 0) return undefined
-  return {
-    kind: 'resume',
+  const decisions = tools.flatMap((part) =>
+    'approval' in part ? [{ callId: part.toolCallId, ...part.approval }] : [],
+  )
+  const outputs = tools.flatMap((part) =>
+    'output' in part ? [{ callId: part.toolCallId, output: part.output }] : [],
+  )
+  return ChatTurn.cases.Resume.makeEffect({
     known: tools.map((part) => part.toolCallId),
-    decisions: tools.flatMap(decisionOf),
-    outputs: tools.flatMap(outputOf),
+    decisions,
+    outputs,
+  })
+}
+
+/** Validate only the newest message; the historical client transcript is neither trusted nor required. */
+const toTurn = Effect.fn('Durable.decodeTurn')(function* (body: typeof Body.Type) {
+  const last = Arr.last(body.messages)
+  if (Option.isNone(last)) return yield* new TurnInvalid({})
+  const message = yield* decodeMessage(last.value)
+  if (message.role === 'user') {
+    const text = message.parts.flatMap((part) => ('text' in part ? [part.text] : [])).join('\n')
+    return yield* ChatTurn.cases.Input.makeEffect({ messageId: message.id, text })
   }
-}
+  return yield* resumed(message.parts)
+})
 
-/**
- * Read the turn out of the body an AI SDK `DefaultChatTransport` posts: `{ id, messages, trigger }`.
- *
- * Only the last message matters. The transcript is durable in Pi Durable, so the history the client
- * sends along is ignored rather than trusted. `undefined` means the body is neither a user turn nor
- * an assistant message with tool calls.
- */
-export function chatTurn(body: unknown): ChatTurn | undefined {
-  if (!isRecord(body) || !Array.isArray(body['messages'])) return undefined
-  const last: unknown = body['messages'].at(-1)
-  if (!isRecord(last) || !Array.isArray(last['parts'])) return undefined
-  if (last['role'] === 'user') return userTurn(last, last['parts'])
-  return last['role'] === 'assistant' ? resumeTurn(last['parts']) : undefined
-}
+/** Compiled ingress accepts untrusted chat bodies without an untyped application function parameter. */
+export const decodeTurn = Schema.decodeUnknownEffect(
+  Body.pipe(
+    Schema.decodeTo(ChatTurn, {
+      decode: SchemaGetter.transformEffect((body) =>
+        toTurn(body).pipe(
+          Effect.mapError((cause) => {
+            if (cause instanceof TurnInvalid)
+              return new SchemaIssue.InvalidValue(
+                { message: 'Expected a user message or a message with tool calls' },
+                body,
+              )
+            return cause instanceof Schema.SchemaError ? cause.issue : cause
+          }),
+        ),
+      ),
+      encode: SchemaGetter.forbiddenEncoding,
+    }),
+  ),
+)
 
-/**
- * Settle the holds a resumed message carries. A client output is taken only for a call that waits
- * for an answer right now: every finished tool part of the message also has an output, and those
- * were produced here, not supplied by the client.
- */
-async function settleHolds(
+/** Decisions settle first; only outputs for currently answerable calls are accepted from the client. */
+const settleHolds = Effect.fn('Durable.settleHolds')(function* (
   harness: Harness,
   conversationId: ConversationId,
-  turn: Extract<ChatTurn, { kind: 'resume' }>,
+  turn: typeof ChatTurn.cases.Resume.Type,
   context: Context,
 ) {
-  for (const decision of turn.decisions) await decide(harness, conversationId, decision, context)
-  const answerable = new Set(
-    (await waiting(harness, conversationId, context)).flatMap((each) =>
-      each.kind === 'answer' ? [each.callId] : [],
-    ),
-  )
+  for (const decision of turn.decisions) yield* decide(harness, conversationId, decision, context)
+  const held = yield* waiting(harness, conversationId, context)
+  const answerable = new Set(held.flatMap((each) => (each.kind === 'answer' ? [each.callId] : [])))
   for (const output of turn.outputs) {
-    if (answerable.has(output.callId)) await answer(harness, conversationId, output, context)
+    if (answerable.has(output.callId)) yield* answer(harness, conversationId, output, context)
   }
-}
+})
 
-/**
- * Answer one AI SDK chat request from a Pi Durable conversation, as the SSE response `useChat` reads.
- *
- * The caller chooses the conversation, which is where its own authorization belongs. The client's
- * message id is the request id, so a retried POST of the same message joins the existing submission
- * instead of asking the model twice.
- *
- * A request whose last message is the assistant's is the AI SDK's way to send approval responses
- * and client tool outputs: they are settled, and the response continues the run from there.
- */
-export async function respond(
+/** Authorize the conversation outside this module; the decoded turn then starts or resumes its run. */
+export const respond = Effect.fn('Durable.respond')(function* (
   harness: Harness,
   conversationId: ConversationId,
-  request: Request,
+  turn: ChatTurn,
   context: Context,
-): Promise<Response> {
-  const turn = chatTurn(await request.json())
-  if (turn === undefined)
-    return new Response('Expected a user message or a message with tool calls', { status: 400 })
-  if (turn.kind === 'input') {
-    const stream = await streamRun(
-      harness,
-      { conversationId, content: turn.text, requestId: turn.messageId },
-      context,
-    )
-    return createUIMessageStreamResponse({ stream })
-  }
-  await settleHolds(harness, conversationId, turn, context)
-  const stream = await continueRun(harness, conversationId, new Set(turn.known), context)
-  if (stream === undefined) return new Response('No run made these tool calls', { status: 409 })
-  return createUIMessageStreamResponse({ stream })
-}
+) {
+  return yield* ChatTurn.match(turn, {
+    Input: (
+      input,
+    ): Effect.Effect<
+      Stream.Stream<UIMessageChunk, ConversationMissing | PiFailed>,
+      ConversationMissing | PiFailed | RunMissing
+    > =>
+      prepareRun(
+        harness,
+        { conversationId, content: input.text, requestId: input.messageId },
+        context,
+      ),
+    Resume: (resume) =>
+      settleHolds(harness, conversationId, resume, context).pipe(
+        Effect.andThen(continueRun(harness, conversationId, new Set(resume.known), context)),
+      ),
+  })
+})

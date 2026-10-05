@@ -18,8 +18,8 @@ import { expect, it } from 'vitest'
 import { z } from 'zod'
 
 import { PlainChat } from './fixtures/chat.ts'
-import { respond } from './respond.ts'
-import { toolsExtension } from './tools.ts'
+import { respond } from './main.ts'
+import { toolsExtension } from './main.ts'
 
 const context = BACKGROUND_CONTEXT
 

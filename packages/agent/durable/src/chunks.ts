@@ -1,3 +1,4 @@
+import { copyJson, type JsonValue } from '@earendil-works/chord'
 import type { AssistantMessage, ToolResultMessage } from '@earendil-works/pi-ai'
 import type {
   AgentEvent,
@@ -12,6 +13,13 @@ import { Array as Arr, Match, Option, Schema } from 'effect'
 const unreachable = (value: never): never => {
   throw new Error(`Unexpected Pi variant: ${String(value)}`)
 }
+
+/** Tool inputs are Pi-validated JSON; retain that guarantee instead of widening to AI SDK unknown. */
+export type Chunk =
+  | Exclude<UIMessageChunk, { type: 'tool-input-available' }>
+  | (Omit<Extract<UIMessageChunk, { type: 'tool-input-available' }>, 'input'> & {
+      readonly input: JsonValue
+    })
 
 /**
  * How far one content block of the in-flight assistant message has been reported.
@@ -47,13 +55,13 @@ export type RunState = {
 export const initialRunState: RunState = { turn: 0, response: 0, blocks: new Map(), failure: [] }
 
 type Block = AssistantMessage['content'][number]
-export type Step = { readonly state: RunState; readonly chunks: readonly UIMessageChunk[] }
+export type Step = { readonly state: RunState; readonly chunks: readonly Chunk[] }
 
 /** Part id of one block. AI SDK text and reasoning parts are matched across chunks by this id. */
 const partId = (state: RunState, contentIndex: number) => `${state.response}:${contentIndex}`
 
 /** Chunks that open a block. A tool call opens as a dynamic tool: the client holds no typed tool set. */
-function openBlock(state: RunState, contentIndex: number, block: Block): readonly UIMessageChunk[] {
+function openBlock(state: RunState, contentIndex: number, block: Block): readonly Chunk[] {
   const id = partId(state, contentIndex)
   switch (block.type) {
     case 'text':
@@ -69,11 +77,7 @@ function openBlock(state: RunState, contentIndex: number, block: Block): readonl
 }
 
 /** Chunks that close a block whose final value is `block`. */
-function closeBlock(
-  state: RunState,
-  contentIndex: number,
-  block: Block,
-): readonly UIMessageChunk[] {
+function closeBlock(state: RunState, contentIndex: number, block: Block): readonly Chunk[] {
   const id = partId(state, contentIndex)
   switch (block.type) {
     case 'text':
@@ -86,7 +90,7 @@ function closeBlock(
           type: 'tool-input-available',
           toolCallId: block.id,
           toolName: block.name,
-          input: block.arguments,
+          input: copyJson(block.arguments),
           dynamic: true,
         },
       ]
@@ -95,7 +99,7 @@ function closeBlock(
 }
 
 /** The text a block holds now, as one delta. Empty text gives no chunk; a tool call has none. */
-function blockBody(state: RunState, contentIndex: number, block: Block): readonly UIMessageChunk[] {
+function blockBody(state: RunState, contentIndex: number, block: Block): readonly Chunk[] {
   const id = partId(state, contentIndex)
   if (block.type === 'text' && block.text !== '')
     return [{ type: 'text-delta', id, delta: block.text }]
@@ -106,11 +110,7 @@ function blockBody(state: RunState, contentIndex: number, block: Block): readonl
 }
 
 /** The whole content of a block that was never streamed, as one delta between its start and end. */
-function wholeBlock(
-  state: RunState,
-  contentIndex: number,
-  block: Block,
-): readonly UIMessageChunk[] {
+function wholeBlock(state: RunState, contentIndex: number, block: Block): readonly Chunk[] {
   return [
     ...openBlock(state, contentIndex, block),
     ...blockBody(state, contentIndex, block),
@@ -134,7 +134,7 @@ const startTurn = (state: RunState): Step => ({
  * earlier attempt, they are removed first: `reset-step` drops every part added since the step began.
  */
 function startResponse(state: RunState, partial: AssistantMessage): Step {
-  const reset: readonly UIMessageChunk[] = state.blocks.size > 0 ? [{ type: 'reset-step' }] : []
+  const reset: readonly Chunk[] = state.blocks.size > 0 ? [{ type: 'reset-step' }] : []
   const fresh: RunState = { ...state, response: state.response + 1, blocks: new Map(), failure: [] }
   return partial.content.reduce<Step>(
     (step, block, contentIndex) => ({
@@ -228,7 +228,7 @@ function toolResult(entry: EntryRecord): Option.Option<ToolResultMessage> {
  * The end of one tool call. An absent entry means the tool task faulted or was orphaned, which the
  * model also sees as a failed call.
  */
-function toolEnd(toolCallId: string, entry: Option.Option<EntryRecord>): readonly UIMessageChunk[] {
+function toolEnd(toolCallId: string, entry: Option.Option<EntryRecord>): readonly Chunk[] {
   const found = Option.flatMap(entry, toolResult)
   if (Option.isNone(found)) {
     return [
@@ -280,8 +280,7 @@ function assistantEnd(state: RunState, message: AssistantMessage): Step {
     const failure = [message.errorMessage ?? 'The model request failed']
     return { state: { ...finished.state, failure }, chunks: finished.chunks }
   }
-  const ending: readonly UIMessageChunk[] =
-    message.stopReason === 'aborted' ? [{ type: 'abort' }] : []
+  const ending: readonly Chunk[] = message.stopReason === 'aborted' ? [{ type: 'abort' }] : []
   return { state: finished.state, chunks: [...finished.chunks, ...ending] }
 }
 
@@ -301,7 +300,7 @@ export function translate(state: RunState, event: AgentEvent): Step {
     Match.when({ type: 'run_end' }, (): Step => ({
       state,
       chunks: [
-        ...state.failure.map((errorText): UIMessageChunk => ({ type: 'error', errorText })),
+        ...state.failure.map((errorText): Chunk => ({ type: 'error', errorText })),
         { type: 'finish' },
       ],
     })),

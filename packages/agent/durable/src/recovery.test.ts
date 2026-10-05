@@ -14,7 +14,7 @@ import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite
 import { readUIMessageStream, type UIMessage } from 'ai'
 import { expect, it } from 'vitest'
 
-import { attachRun } from './stream.ts'
+import { attachRun } from './main.ts'
 
 const context = BACKGROUND_CONTEXT
 
@@ -68,8 +68,9 @@ it('a client that attaches after a crash mid-tool gets the finished run', async 
     const root = await harness.root(context)
 
     // Attach before the scheduler starts, so the stream holds the recovered state and then the rest.
-    const stream = await attachRun(harness, root.id, context)
-    expect(stream).toBeDefined()
+    const attached = await attachRun(harness, root.id, context)
+    if (attached.status !== 'running') throw new Error('expected a running attachment')
+    const stream = attached.stream
     harness.resume()
 
     let message: UIMessage | undefined

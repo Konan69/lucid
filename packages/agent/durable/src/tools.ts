@@ -1,195 +1,264 @@
-import type { JsonValue } from '@earendil-works/chord'
-import type { TSchema } from '@earendil-works/pi-ai'
+import { copyJson, type Context, type JsonValue } from '@earendil-works/chord'
 import {
   defineExtension,
-  type Extension,
   hook,
+  type ToolExecutionApi,
   type ToolExecutionResult,
   type ToolRegistration,
   ToolTask,
 } from '@earendil-works/pi-durable'
 import { asSchema, type Tool, type ToolSet } from 'ai'
-import { Option } from 'effect'
+import { Effect, Option, Predicate, Schema } from 'effect'
 
-import { holdKind, Holds, type Plan, type Source, withPlan } from './holds.ts'
-import { settlement } from './main.ts'
+import { ToolFailed, ToolOutputFailed, ToolSchemaFailed } from './errors.ts'
+import { holdKind, Holds, type Plan, settlement, withPlan } from './holds.ts'
+import * as Pi from './pi.ts'
 
-/** Whether an interrupted call may run again after a crash. Pi Durable's own default is `unsafe`. */
+/** Whether an interrupted call may run again after a crash. Pi's own default is unsafe. */
 export type Replay = 'safe' | 'unsafe'
 
 export type ToolsOptions = {
-  /**
-   * Tools that may rerun after a crash, by name. An AI SDK tool has no such declaration, and
-   * rerunning a tool with a side effect is the dangerous default, so every tool not named here is
-   * `unsafe`: after a crash the model is told the call was interrupted.
-   */
+  /** Only explicitly named server tools may rerun after a crash; the default protects side effects. */
   readonly replay?: Readonly<Record<string, Replay>>
-  /**
-   * Tools whose calls wait for a person's approval, by name: `true` for every call, or a test on
-   * the call's input. The same shape as the AI SDK's per-tool `toolApproval`, without the automatic
-   * statuses. The test runs more than once per call, so it must be pure.
-   */
-  readonly approval?: Readonly<Record<string, boolean | ((input: unknown) => boolean)>>
-  /**
-   * For tools with no `execute`, whose result a person supplies: `wait` keeps the model inside the
-   * call until the answer arrives (the AI SDK's client-side tool), `later` returns at once and
-   * delivers the answer as a new message. Default `wait`.
-   */
+  /** Pure predicates see Pi-validated JSON arguments before the SDK applies transformations. */
+  readonly approval?: Readonly<Record<string, boolean | ((input: JsonValue) => boolean)>>
+  /** Tools without execute wait inside the call by default; later delivers an answer as new input. */
   readonly answers?: Readonly<Record<string, 'wait' | 'later'>>
 }
 
-/** What the model reads as the tool's result. A string stays as written; anything else is JSON. */
-const resultText = (output: unknown) =>
-  typeof output === 'string' ? output : JSON.stringify(output)
-
-/**
- * A tool's output as the JSON Pi Durable stores. `undefined` (a tool that returns nothing) and
- * values JSON cannot carry become what `JSON.stringify` makes of them, or `null`.
- */
-function toJson(output: unknown): JsonValue {
-  const text = JSON.stringify(output)
-  return text === undefined ? null : (JSON.parse(text) as JsonValue)
+type Lookups = {
+  readonly replay: NonNullable<ToolsOptions['replay']>
+  readonly approval: NonNullable<ToolsOptions['approval']>
+  readonly answers: NonNullable<ToolsOptions['answers']>
 }
 
-/**
- * A result with the tool's own output kept beside the text the model reads. The stream gives that
- * output to AI SDK clients as the tool part's `output`, as `streamText` would.
- */
-const result = (output: unknown): ToolExecutionResult => ({
-  content: [{ type: 'text', text: resultText(output) }],
-  details: { output: toJson(output) },
+type Execute = ToolRegistration['execute']
+type Program = (
+  args: Parameters<Execute>[0],
+  api: ToolExecutionApi,
+  context: Context,
+) => Effect.Effect<
+  ToolExecutionResult,
+  ToolFailed | ToolOutputFailed | import('./errors.ts').PiFailed
+>
+
+const decodeText = Schema.decodeUnknownEffect(Schema.String)
+const decodeJsonText = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.MutableJson))
+
+/** The SDK result's serialized text and JSON envelope are validated at its unsafe boundary. */
+type Output = { readonly text: string; readonly output: JsonValue }
+
+/** A bridged result preserves the tool's JSON output beside the text the model reads. */
+const result = (output: Output): ToolExecutionResult => ({
+  content: [{ type: 'text', text: output.text }],
+  details: { output: output.output },
 })
 
+/** Validation and missing answers are existing tool-error values, rather than infrastructure failures. */
 const failure = (text: string): ToolExecutionResult => ({
   isError: true,
   content: [{ type: 'text', text }],
 })
 
-type Execute = ToolRegistration['execute']
+/** Every execute callback runs exactly one Effect through the single Pi runtime ingress. */
+function executeForPi(program: Program): Execute {
+  return function execute(args, api, context) {
+    return Pi.runForPi(program(args, api, context), context.abortSignal)
+  }
+}
 
-/**
- * Run the tool's own `execute`.
- *
- * Pi Durable has already validated the arguments against the JSON Schema. The tool's own validator
- * runs too, because it may transform the value (defaults, coercion) and the tool is typed by its
- * output.
- */
-function serverExecute(tool: Tool, execute: NonNullable<Tool['execute']>): Execute {
-  const schema = asSchema(tool.inputSchema)
-  return async (args, api, context) => {
-    const checked =
+type Server = {
+  readonly name: string
+  readonly schema: ReturnType<typeof asSchema>
+  readonly execute: NonNullable<Tool['execute']>
+}
+
+/** SDK validators may be synchronous or Promise-based; normalize only this external operation. */
+const validate = (server: Server, args: Parameters<Execute>[0]) => {
+  const schema = server.schema
+  if (schema.validate === undefined) return Effect.succeed({ success: true as const, value: args })
+  return Effect.tryPromise({
+    try: async () =>
       schema.validate === undefined
         ? { success: true as const, value: args }
-        : await schema.validate(args)
-    if (!checked.success) return failure(checked.error.message)
-    // Gap: the tool does not receive the transcript as `messages`.
-    const output: unknown = await execute(checked.value, {
-      toolCallId: api.callId,
-      messages: [],
-      abortSignal: context.abortSignal,
-      context: undefined,
-    })
-    return result(output)
-  }
+        : schema.validate(args),
+    catch: (cause) => new ToolFailed({ toolName: server.name, cause }),
+  })
 }
 
-/** The call waited in the hook until a person answered; hand that answer to the model. */
-const waitExecute =
-  (name: string): Execute =>
-  async (_args, api, context) => {
-    const settled = (await api.snapshot(Holds, api.conversationId, context))?.settled[api.callId]
-    return settled?.kind === 'answered'
-      ? result(settled.output)
-      : failure(`Tool ${name} was not answered`)
-  }
-
 /**
- * Record the question and return at once. The answer arrives later as a user message, so the
- * model is told to carry on rather than to wait.
+ * The SDK's execute result is untyped at this third-party ingress. Serialize here, then decode the
+ * actual persisted JSON once. Void returns retain the existing null output representation.
  */
-const laterExecute =
-  (name: string): Execute =>
-  async (_args, api, context) => {
-    await api.commit(async (tx) => {
-      ;(await tx.doc(Holds, api.conversationId)).asked[api.callId] = name
-    }, context)
-    return result({
-      status: 'asked',
-      note: 'The answer will arrive later as a new message. Continue with other work.',
-    })
-  }
+const invoke = Effect.fn('Durable.invokeTool')(function* (
+  server: Server,
+  input: Parameters<Execute>[0],
+  api: ToolExecutionApi,
+  context: Context,
+) {
+  const checked = yield* validate(server, input)
+  if (!checked.success) return failure(checked.error.message)
+  const output = yield* Effect.tryPromise({
+    try: async () =>
+      server.execute(checked.value, {
+        toolCallId: api.callId,
+        messages: [],
+        abortSignal: context.abortSignal,
+        context: undefined,
+      }),
+    catch: (cause) => new ToolFailed({ toolName: server.name, cause }),
+  })
+  const serialized = yield* Effect.try({
+    try: () => ({
+      text: Predicate.isString(output) ? output : JSON.stringify(output),
+      json: JSON.stringify(output),
+    }),
+    catch: (cause) => new ToolOutputFailed({ toolName: server.name, cause }),
+  })
+  const json =
+    serialized.json === undefined
+      ? null
+      : yield* decodeJsonText(serialized.json).pipe(
+          Effect.mapError((cause) => new ToolOutputFailed({ toolName: server.name, cause })),
+        )
+  // Pi requires text content; non-serializable SDK results become a typed tool-output failure.
+  const text = yield* decodeText(serialized.text).pipe(
+    Effect.mapError((cause) => new ToolOutputFailed({ toolName: server.name, cause })),
+  )
+  return result({ text, output: json })
+})
 
-/** How one tool is bridged: its plan, its replay policy, and the `execute` Pi Durable calls. */
+/** A wait hook has already received the durable answer before this tool begins. */
+const answered = Effect.fn('Durable.answeredTool')(function* (
+  name: string,
+  api: ToolExecutionApi,
+  context: Context,
+) {
+  const holds = yield* Pi.snapshot(api, Holds, api.conversationId, context)
+  const settled = holds.pipe(Option.flatMapNullishOr((document) => document.settled[api.callId]))
+  if (Option.isNone(settled) || settled.value.kind !== 'answered')
+    return failure(`Tool ${name} was not answered`)
+  const output = settled.value.output
+  return result({ text: Predicate.isString(output) ? output : JSON.stringify(output), output })
+})
+
+/** Persist the open question before returning; the later answer is submitted separately and deduplicated. */
+const asked = Effect.fn('Durable.askedTool')(function* (
+  name: string,
+  api: ToolExecutionApi,
+  context: Context,
+) {
+  yield* Pi.commit(
+    api,
+    {
+      token: Holds,
+      conversationId: api.conversationId,
+      change: (document) => {
+        document.asked[api.callId] = name
+      },
+    },
+    context,
+  )
+  const output = {
+    status: 'asked',
+    note: 'The answer will arrive later as a new message. Continue with other work.',
+  }
+  return result({ text: JSON.stringify(output), output })
+})
+
 type Bridged = { readonly plan: Plan; readonly replay: Replay; readonly execute: Execute }
 
-function bridge(name: string, tool: Tool, options: ToolsOptions): Bridged {
-  const rule = options.approval?.[name] ?? false
-  const approval = typeof rule === 'function' ? rule : () => rule
+/** Normalize every absent option once; the lookup then has an explicit default for every tool name. */
+function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
+  const rule = lookups.approval[name] ?? false
+  const approval = Predicate.isFunction(rule) ? rule : () => rule
   if (tool.execute !== undefined) {
-    const plan = { approval, source: 'server' as Source }
+    const server: Server = {
+      name,
+      schema: asSchema(tool.inputSchema),
+      execute: tool.execute.bind(tool),
+    }
     return {
-      plan,
-      replay: options.replay?.[name] ?? 'unsafe',
-      execute: serverExecute(tool, tool.execute),
+      plan: { approval, source: 'server' },
+      replay: lookups.replay[name] ?? 'unsafe',
+      execute: executeForPi((args, api, context) => invoke(server, args, api, context)),
     }
   }
-  // Both person-answered forms only read or write the hold document, so rerunning them is safe.
-  const source = options.answers?.[name] ?? 'wait'
-  const execute = source === 'later' ? laterExecute(name) : waitExecute(name)
-  return { plan: { approval: () => false, source }, replay: 'safe', execute }
+  const source = lookups.answers[name] ?? 'wait'
+  const program: Program =
+    source === 'later'
+      ? (_args, api, context) => asked(name, api, context)
+      : (_args, api, context) => answered(name, api, context)
+  return { plan: { approval: () => false, source }, replay: 'safe', execute: executeForPi(program) }
 }
 
-/**
- * One AI SDK tool as a Pi Durable tool.
- *
- * The JSON Schema the AI SDK derives from the input schema (Zod, Valibot, any Standard Schema) is
- * what Pi Durable shows the model and validates against.
- */
-async function registration(name: string, tool: Tool, bridged: Bridged): Promise<ToolRegistration> {
-  const parameters = (await asSchema(tool.inputSchema).jsonSchema) as TSchema
+/** JSON Schema generation is lazy in the SDK; rejection is a registration failure naming the tool. */
+const registration = Effect.fn('Durable.registerTool')(function* (
+  name: string,
+  tool: Tool,
+  bridged: Bridged,
+) {
+  const parameters = yield* Effect.tryPromise({
+    try: async () => asSchema(tool.inputSchema).jsonSchema,
+    catch: (cause) => new ToolSchemaFailed({ toolName: name, cause }),
+  })
+  // TypeBox 1.3.27 TSchema is structural (an empty interface), so the SDK's schema needs no cast.
   return withPlan(
     {
       name,
-      // AI SDK 7 allows a description computed from a context; this bridge has no context to give.
-      description: typeof tool.description === 'string' ? tool.description : '',
+      description: Predicate.isString(tool.description) ? tool.description : '',
       parameters,
       replay: bridged.replay,
       execute: bridged.execute,
     },
     bridged.plan,
   )
-}
+})
 
-/**
- * A set of AI SDK tools as one Pi Durable extension, to install in a registry.
- *
- * The extension also carries the hook that makes approvals and person-answered tools wait: it runs
- * before Pi Durable records a call's intent, which is the only point where a wait survives a
- * restart without the call being reported as interrupted.
- *
- * Async because a schema library may build its JSON Schema lazily.
- */
-export async function toolsExtension(
+/** The hook only waits for plans that hold; a durable denial is Pi's existing block result. */
+const before = Effect.fn('Durable.beforeTool')(function* (
+  plans: ReadonlyMap<string, Plan>,
+  call: Parameters<import('@earendil-works/pi-durable').ToolHooks['beforeTool']>[0],
+  api: Parameters<import('@earendil-works/pi-durable').ToolHooks['beforeTool']>[1],
+  context: Context,
+) {
+  const plan = Option.fromNullishOr(plans.get(call.name))
+  if (Option.isNone(plan) || Option.isNone(holdKind(plan.value, copyJson(call.arguments))))
+    return Option.none<{ block: string }>()
+  const settled = yield* settlement(api, call.id, context)
+  return settled.kind === 'denied'
+    ? Option.some({ block: settled.reason })
+    : Option.none<{ block: string }>()
+})
+
+/** AI SDK tools and the wait hook share one plan per tool; neither snapshots nor streams duplicate it. */
+export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* (
   name: string,
   tools: ToolSet,
-  options: ToolsOptions = {},
-): Promise<Extension> {
+  options: ToolsOptions,
+) {
+  const lookups: Lookups = {
+    replay: options.replay ?? {},
+    approval: options.approval ?? {},
+    answers: options.answers ?? {},
+  }
   const bridged = Object.entries(tools).map(([toolName, tool]) => ({
     toolName,
     tool,
-    bridged: bridge(toolName, tool, options),
+    bridged: bridge(toolName, tool, lookups),
   }))
-  const registrations = await Promise.all(
-    bridged.map((each) => registration(each.toolName, each.tool, each.bridged)),
+  const registrations = yield* Effect.forEach(
+    bridged,
+    (each) => registration(each.toolName, each.tool, each.bridged),
+    { concurrency: 'unbounded' },
   )
   const plans = new Map(bridged.map((each) => [each.toolName, each.bridged.plan]))
   const waits = hook(ToolTask, {
-    beforeTool: async (call, api, context) => {
-      const plan = plans.get(call.name)
-      if (plan === undefined || Option.isNone(holdKind(plan, call.arguments))) return undefined
-      const settled = await settlement(api, call.id, context)
-      return settled.kind === 'denied' ? { block: settled.reason } : undefined
-    },
+    beforeTool: (call, api, context) =>
+      Pi.runForPi(
+        before(plans, call, api, context).pipe(Effect.map(Option.getOrUndefined)),
+        context.abortSignal,
+      ),
   })
   return defineExtension({ name, tools: registrations, hooks: [waits] })
-}
+})

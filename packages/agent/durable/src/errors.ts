@@ -25,6 +25,7 @@ export class PiFailed extends Schema.TaggedError<PiFailed>()(
       'watch',
       'agent',
       'context',
+      'doc',
     ]),
     cause: Schema.Defect(),
   },
@@ -55,4 +56,29 @@ export class ToolSchemaFailed extends Schema.TaggedError<ToolSchemaFailed>()(
     cause: Schema.Defect(),
   },
   { title: 'ToolSchemaFailed' },
+) {}
+
+/** An AI SDK execution/validation operation rejected; Pi reports this as a failed tool call. */
+export class ToolFailed extends Schema.TaggedError<ToolFailed>()(
+  'ToolFailed',
+  {
+    toolName: Schema.String,
+    cause: Schema.Defect(),
+  },
+  { title: 'ToolFailed' },
+) {
+  /** Keep the provider's diagnostic visible to Pi's tool-result error formatting. */
+  override get message() {
+    return String(this.cause)
+  }
+}
+
+/** The SDK output could not be serialized into the durable JSON result representation. */
+export class ToolOutputFailed extends Schema.TaggedError<ToolOutputFailed>()(
+  'ToolOutputFailed',
+  {
+    toolName: Schema.String,
+    cause: Schema.Defect(),
+  },
+  { title: 'ToolOutputFailed' },
 ) {}

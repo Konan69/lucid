@@ -12,7 +12,7 @@ import {
 import { readUIMessageStream, type UIMessage } from 'ai'
 import { expect, it } from 'vitest'
 
-import { streamRun } from './stream.ts'
+import { streamRun } from './main.ts'
 
 const context = BACKGROUND_CONTEXT
 const baseUrl = 'https://api.experientiallabs.ai/v1'

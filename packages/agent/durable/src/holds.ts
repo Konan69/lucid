@@ -53,7 +53,7 @@ export type Source = 'server' | 'wait' | 'later'
 
 /** What the bridge decided for one tool: whether a call needs approval, and where its result comes from. */
 export type Plan = {
-  readonly approval: (input: unknown) => boolean
+  readonly approval: (input: JsonValue) => boolean
   readonly source: Source
 }
 
@@ -79,7 +79,7 @@ export const planOf = (tool: ToolRegistration): Option.Option<Plan> => {
 }
 
 /** What a call waits for under its plan; None means the tool executes without a hold. */
-export function holdKind(plan: Plan, input: unknown): Option.Option<'approval' | 'answer'> {
+export function holdKind(plan: Plan, input: JsonValue): Option.Option<'approval' | 'answer'> {
   if (plan.source === 'wait') return Option.some('answer')
   return plan.approval(input) ? Option.some('approval') : Option.none()
 }

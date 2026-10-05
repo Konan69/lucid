@@ -1,23 +1,93 @@
-import { Effect } from 'effect'
+import type { Context } from '@earendil-works/chord'
+import type { ConversationId, Harness } from '@earendil-works/pi-durable'
+import { createUIMessageStreamResponse, type UIMessageChunk } from 'ai'
+import { Effect, Option, Stream } from 'effect'
 
-import * as Holds from './holds.ts'
-import * as Waiting from './waiting.ts'
+import * as Core from './core.ts'
+import { TurnInvalid } from './errors.ts'
+import { prepareRun } from './stream.ts'
+import type { ToolsOptions } from './tools.ts'
 
-/** Promise facade for callers outside Effect; the durable decision has one implementation. */
-export const decide = (...args: Parameters<typeof Holds.decide>) =>
-  Effect.runPromise(Holds.decide(...args))
+/** Promise facade; tool registration has one Effect implementation. */
+export const toolsExtension = (
+  name: string,
+  tools: Parameters<typeof Core.toolsExtension>[1],
+  options: ToolsOptions = {},
+) => Effect.runPromise(Core.toolsExtension(name, tools, options))
 
-/** Promise facade for person-supplied results, including idempotent late answers. */
-export const answer = (...args: Parameters<typeof Holds.answer>) =>
-  Effect.runPromise(Holds.answer(...args))
+/** Preserve the original tagged error classes at the Promise rejection boundary. */
+export const decide = (...args: Parameters<typeof Core.decide>) =>
+  Effect.runPromise(Core.decide(...args))
 
-/** Promise facade for the derived durable waiting list. */
-export const waiting = (...args: Parameters<typeof Waiting.waiting>) =>
-  Effect.runPromise(Waiting.waiting(...args))
+/** Person-supplied results use the same durable ordering and idempotency as the Effect API. */
+export const answer = (...args: Parameters<typeof Core.answer>) =>
+  Effect.runPromise(Core.answer(...args))
 
-/** Temporary stage-2 hook facade; Pi's AbortSignal interrupts and removes the Deferred registration. */
-export const settlement = (...args: Parameters<typeof Holds.settlement>) =>
-  Effect.runPromise(Holds.settlement(...args), { signal: args[2].abortSignal })
+/** No waiting state is mirrored into the facade; it is derived by the core on every call. */
+export const waiting = (...args: Parameters<typeof Core.waiting>) =>
+  Effect.runPromise(Core.waiting(...args))
+
+/** Stream consumption owns observation; the platform stream cancels only its consumer scope. */
+export const streamRun = (...args: Parameters<typeof Core.streamRun>) =>
+  Effect.runPromise(
+    prepareRun(...args).pipe(Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream))),
+  )
+
+export type Attached =
+  | { readonly status: 'idle' }
+  | { readonly status: 'running'; readonly stream: ReadableStream<UIMessageChunk> }
+
+/** Convert core absence once, into the Promise API's explicit idle/running result. */
+export const attachRun = (...args: Parameters<typeof Core.attachRun>): Promise<Attached> =>
+  Effect.runPromise(
+    Core.attachRun(...args).pipe(
+      Effect.flatMap((attached) =>
+        Option.match(attached, {
+          onNone: () => Effect.succeed<Attached>({ status: 'idle' }),
+          onSome: (stream) =>
+            Stream.toReadableStreamEffect(stream).pipe(
+              Effect.map((readable): Attached => ({ status: 'running', stream: readable })),
+            ),
+        }),
+      ),
+    ),
+  )
+
+/** RunMissing rejects before a platform stream is returned. */
+export const continueRun = (...args: Parameters<typeof Core.continueRun>) =>
+  Effect.runPromise(
+    Core.continueRun(...args).pipe(
+      Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream)),
+    ),
+  )
+
+/** HTTP ingress reads JSON once, decodes the latest turn, and maps only the two chat protocol failures. */
+export const respond = (
+  harness: Harness,
+  conversationId: ConversationId,
+  request: Request,
+  context: Context,
+): Promise<Response> =>
+  Effect.runPromise(
+    Effect.tryPromise({
+      try: () => request.json(),
+      catch: () => new TurnInvalid({}),
+    }).pipe(
+      Effect.flatMap(Core.decodeTurn),
+      Effect.mapError(() => new TurnInvalid({})),
+      Effect.flatMap((turn) => Core.respond(harness, conversationId, turn, context)),
+      Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream)),
+      Effect.map((stream) => createUIMessageStreamResponse({ stream })),
+      Effect.catchTag('TurnInvalid', () =>
+        Effect.succeed(
+          new Response('Expected a user message or a message with tool calls', { status: 400 }),
+        ),
+      ),
+      Effect.catchTag('RunMissing', () =>
+        Effect.succeed(new Response('No run made these tool calls', { status: 409 })),
+      ),
+    ),
+  )
 
 export {
   ConversationMissing,
@@ -25,9 +95,12 @@ export {
   TurnInvalid,
   RunMissing,
   ToolSchemaFailed,
+  ToolFailed,
+  ToolOutputFailed,
 } from './errors.ts'
-export type { Answer, Decision, Settlement } from './holds.ts'
+export type { Answer, Decision, Settlement, Plan, Source } from './holds.ts'
 export type { Waiting } from './waiting.ts'
 export type { Replay, ToolsOptions } from './tools.ts'
 export type { RunInput } from './stream.ts'
-export type { RunState } from './chunks.ts'
+export type { RunState, Step, Chunk } from './chunks.ts'
+export type { ChatTurn } from './respond.ts'

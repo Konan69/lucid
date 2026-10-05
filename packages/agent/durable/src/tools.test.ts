@@ -10,8 +10,8 @@ import { readUIMessageStream, tool, type UIMessage } from 'ai'
 import { expect, it } from 'vitest'
 import { z } from 'zod'
 
-import { streamRun } from './stream.ts'
-import { toolsExtension } from './tools.ts'
+import { streamRun } from './main.ts'
+import { toolsExtension } from './main.ts'
 
 const context = BACKGROUND_CONTEXT
 

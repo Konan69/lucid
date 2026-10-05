@@ -1,15 +1,14 @@
 import type { Context } from '@earendil-works/chord'
-import {
-  type AgentEvent,
-  type AgentEventStream,
-  type Conversation,
-  type ConversationId,
-  type Harness,
-  type SubmissionId,
-  watchEvents,
+import type {
+  AgentEvent,
+  Conversation,
+  ConversationId,
+  Harness,
+  SnapshotEvent,
+  SubmissionId,
 } from '@earendil-works/pi-durable'
 import type { UIMessageChunk } from 'ai'
-import { Option } from 'effect'
+import { Effect, Exit, Option, Scope, Stream } from 'effect'
 
 import { type Desk, emptyRound, needsDesk, parked, present, type Round } from './calls.ts'
 import {
@@ -20,232 +19,205 @@ import {
   type Step,
   translate,
 } from './chunks.ts'
+import { RunMissing } from './errors.ts'
 import { Holds, planOf } from './holds.ts'
+import * as Pi from './pi.ts'
 
-/** What a caller hands to a conversation: user input, with the id that makes a retry idempotent. */
+/** A retried input retains its client request id and therefore Pi's submission identity. */
 export type RunInput = {
   readonly conversationId: ConversationId
   readonly content: string
-  /** Same id after a retry or restart finds the same submission instead of submitting twice. */
   readonly requestId: string
 }
 
-type Controller = ReadableStreamDefaultController<UIMessageChunk>
-
-/** The desk for a batch with no tool chunks: nothing to look up. */
 const noDesk: Desk = { plan: () => Option.none(), settled: {} }
 
-/** Read the conversation's current tools and settlements. Tools can change between turns. */
-async function readDesk(
-  harness: Harness,
-  conversation: Conversation,
-  context: Context,
-): Promise<Desk> {
-  const agent = await conversation.agent(context)
+type Reader = {
+  readonly harness: Harness
+  readonly conversation: Conversation
+  readonly context: Context
+}
+type State = { readonly state: RunState; readonly round: Round }
+type Written = State & { readonly chunks: readonly UIMessageChunk[]; readonly ended: boolean }
+
+/** Resolve tool plans at the point of presentation, since the registry can change between turns. */
+const readDesk = Effect.fn('Durable.readDesk')(function* (reader: Reader) {
+  const agent = yield* Pi.agent(reader.conversation, reader.context)
   const plans = new Map(
     agent.tools.flatMap((tool) => {
       const plan = planOf(tool)
       return Option.isNone(plan) ? [] : [[tool.name, plan.value] as const]
     }),
   )
-  const holds = await harness.snapshot(Holds, conversation.id, context)
+  const holds = yield* Pi.snapshot(reader.harness, Holds, reader.conversation.id, reader.context)
   return {
-    plan: (toolName) => Option.fromNullishOr(plans.get(toolName)),
-    settled: holds?.settled ?? {},
-  }
+    plan: (toolName: string) => Option.fromNullishOr(plans.get(toolName)),
+    settled: Option.match(holds, { onNone: () => ({}), onSome: (document) => document.settled }),
+  } satisfies Desk
+})
+
+/** Parking completes the client's step and response, leaving Pi's durable run untouched. */
+function writeStep(current: State, step: Step, settled: boolean, desk: Desk): Written {
+  const shown = present(current.round, step.chunks, desk)
+  const ended = settled && parked(shown.round)
+  const ending: readonly UIMessageChunk[] = ended
+    ? [{ type: 'finish-step' }, { type: 'finish' }]
+    : []
+  return { state: step.state, round: shown.round, chunks: [...shown.chunks, ...ending], ended }
+}
+
+/** Text events avoid document reads; presentation chunks alone need the desk. */
+const apply = Effect.fn('Durable.streamEvent')(function* (
+  reader: Reader,
+  current: State,
+  event: AgentEvent,
+) {
+  const translated = translate(current.state, event)
+  const desk = needsDesk(translated.chunks) ? yield* readDesk(reader) : noDesk
+  const roundSettled = event.type === 'message_end' || event.type === 'tool_execution_end'
+  const written = writeStep(current, translated, roundSettled, desk)
+  return { ...written, ended: written.ended || event.type === 'run_end' }
+})
+
+/** Accumulate translator and tool-round state, including the terminal event's chunks before stopping. */
+function follow(reader: Reader, events: Stream.Stream<AgentEvent>, initial: State) {
+  return events.pipe(
+    Stream.mapAccumEffect(
+      () => initial,
+      (current, event) =>
+        apply(reader, current, event).pipe(Effect.map((written) => [written, [written]] as const)),
+    ),
+    Stream.takeUntil((written) => written.ended),
+    Stream.flatMap((written) => Stream.fromIterable(written.chunks)),
+  )
+}
+
+/** Skip earlier busy runs until Pi starts the run containing our admitted submission. */
+function matching(events: Stream.Stream<AgentEvent>, submissionId: SubmissionId) {
+  return events.pipe(
+    Stream.dropWhile((event) => event.type !== 'run_start' || !event.inputs.includes(submissionId)),
+  )
 }
 
 /**
- * The writing end of one client stream: it translates events, presents the chunks, writes them, and
- * ends the stream when the run ends or parks.
+ * Start the watch before admission, then process its buffered events after the submission id is
+ * known. A consumer interruption closes observation only; it never aborts the durable run.
  */
-type Writer = {
-  /** Write a replayed prefix. `settledRound`: no response is in flight, so a parked round is final. */
-  readonly prefix: (step: Step, settledRound: boolean) => Promise<'open' | 'ended'>
-  /** Apply one live event. */
-  readonly event: (event: AgentEvent) => Promise<'open' | 'ended'>
-  /** Finish a stream whose run is already over. */
-  readonly finish: () => void
-}
-
-function writer(
-  harness: Harness,
-  conversation: Conversation,
-  events: AgentEventStream,
-  controller: Controller,
-  context: Context,
-): Writer {
-  let state: RunState = initialRunState
-  let round: Round = emptyRound
-  const end = () => {
-    controller.close()
-    void events.stop()
-  }
-  const write = async (chunks: readonly UIMessageChunk[]) => {
-    const desk = needsDesk(chunks) ? await readDesk(harness, conversation, context) : noDesk
-    const shown = present(round, chunks, desk)
-    round = shown.round
-    for (const chunk of shown.chunks) controller.enqueue(chunk)
-  }
-  /** The run waits for a person: finish the client's stream, leave the run in progress. */
-  const park = () => {
-    controller.enqueue({ type: 'finish-step' })
-    controller.enqueue({ type: 'finish' })
-    end()
-    return 'ended' as const
-  }
-  return {
-    prefix: async (step, settledRound) => {
-      state = step.state
-      await write(step.chunks)
-      return settledRound && parked(round) ? park() : 'open'
-    },
-    event: async (event) => {
-      const step = translate(state, event)
-      state = step.state
-      await write(step.chunks)
-      if (event.type === 'run_end') {
-        end()
-        return 'ended'
-      }
-      // A round is complete only when its response has ended; while the response still streams, a
-      // later call of the same round may not have been seen yet.
-      const roundSettled = event.type === 'message_end' || event.type === 'tool_execution_end'
-      return roundSettled && parked(round) ? park() : 'open'
-    },
-    finish: () => {
-      controller.enqueue({ type: 'finish' })
-      end()
-    },
-  }
-}
-
-async function existing(harness: Harness, conversationId: ConversationId, context: Context) {
-  const conversation = await harness.conversation(conversationId, context)
-  if (conversation === undefined) throw new Error(`Conversation ${conversationId} does not exist`)
-  return conversation
-}
-
-/** Feed live event batches to `write` until the stream ends. */
-function follow(events: AgentEventStream, write: Writer) {
-  let ended = false
-  events.start(async (batch) => {
-    for (const event of batch) {
-      if (ended) return
-      ended = (await write.event(event)) === 'ended'
-    }
-  })
+export function streamRun(harness: Harness, input: RunInput, context: Context) {
+  return Stream.unwrap(prepareRun(harness, input, context))
 }
 
 /**
- * Submit one input to a Pi Durable conversation and stream the run that answers it as AI SDK UI
- * message chunks.
- *
- * The event watch is attached before the submission is admitted. Attaching after would lose the
- * events committed between admission and attachment, because Pi Durable replays nothing.
- *
- * Only the run whose inputs include this submission is streamed. A busy conversation queues the
- * input as a follow-up, so events of the run in front of it are skipped. The stream closes at this
- * run's end, or earlier when the run waits for a person: see `parked`.
+ * Admit before returning a transport stream so missing conversations and submission failures reject
+ * the Promise facade. The captured watch scope transfers to consumption, as in reconnection.
  */
-export async function streamRun(
+export const prepareRun = Effect.fn('Durable.prepareRun')(function* (
   harness: Harness,
   input: RunInput,
   context: Context,
-): Promise<ReadableStream<UIMessageChunk>> {
-  const conversation = await existing(harness, input.conversationId, context)
-  const events = await watchEvents(harness, input.conversationId, context)
+) {
+  const scope = yield* Scope.make()
+  return yield* Effect.gen(function* () {
+    const conversation = yield* Pi.conversation(harness, input.conversationId, context)
+    const watched = yield* Pi.watch(harness, input.conversationId, context).pipe(
+      Scope.provide(scope),
+    )
+    const submission = yield* Pi.submit(
+      conversation,
+      { type: 'input', content: input.content, requestId: input.requestId },
+      context,
+    )
+    return follow({ harness, conversation, context }, matching(watched.stream, submission.id), {
+      state: initialRunState,
+      round: emptyRound,
+    }).pipe(Stream.ensuring(Scope.close(scope, Exit.void)))
+  }).pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))))
+})
 
-  return new ReadableStream<UIMessageChunk>({
-    start: async (controller) => {
-      const write = writer(harness, conversation, events, controller, context)
-      let phase: 'before' | 'inside' | 'after' = 'before'
-      let submissionId: SubmissionId | undefined
-      // Batches that arrive before `submit()` returns the submission id cannot be matched yet.
-      const early: AgentEvent[] = []
-      const apply = async (event: AgentEvent, mine: SubmissionId) => {
-        if (phase === 'before' && event.type === 'run_start' && event.inputs.includes(mine))
-          phase = 'inside'
-        if (phase !== 'inside') return
-        if ((await write.event(event)) === 'ended') phase = 'after'
-      }
-      events.start(async (batch) => {
-        if (submissionId === undefined) early.push(...batch)
-        else for (const event of batch) await apply(event, submissionId)
-      })
-      const submission = await conversation.submit(
-        { type: 'input', content: input.content, requestId: input.requestId },
-        context,
-      )
-      submissionId = submission.id
-      for (const event of early.splice(0)) await apply(event, submission.id)
-    },
-    cancel: async () => {
-      // A client that stops reading only detaches. The run is durable and continues.
-      await events.stop()
-    },
-  })
-}
+type Prefix = { readonly step: Step; readonly live: boolean }
+
+/** Replay the captured state, then either follow the same live run or finish the stored run. */
+const resume = Effect.fn('Durable.resumeStream')(function* (
+  reader: Reader,
+  watched: Effect.Success<ReturnType<typeof Pi.watch>>,
+  prefix: Prefix,
+) {
+  const desk = needsDesk(prefix.step.chunks) ? yield* readDesk(reader) : noDesk
+  const settled =
+    watched.snapshot.generation === undefined || watched.snapshot.generation.message === undefined
+  const written = writeStep(
+    { state: initialRunState, round: emptyRound },
+    prefix.step,
+    settled,
+    desk,
+  )
+  const head = Stream.fromIterable(written.chunks)
+  if (written.ended) return head
+  const tail = prefix.live
+    ? follow(reader, watched.stream, written)
+    : Stream.succeed<UIMessageChunk>({ type: 'finish' })
+  return Stream.concat(head, tail)
+})
 
 /**
- * Attach to the run in progress on a conversation: first the chunks that rebuild its current state,
- * then its live events until it ends or parks. This is what a reconnecting or late-joining client
- * with no copy of the run reads. `undefined` means the conversation is idle.
+ * Reconnection must capture its snapshot before returning the Effect's result. Its one-observer
+ * scope transfers to the returned Stream and closes on completion, cancellation, idle, or failure.
+ * This bridges the two-phase API without closing the watch before consumption begins.
  */
-export async function attachRun(
+const reconnect = Effect.fn('Durable.reconnect')(function* (
+  harness: Harness,
+  conversationId: ConversationId,
+  select: (snapshot: SnapshotEvent) => Effect.Effect<Option.Option<Prefix>, RunMissing>,
+  context: Context,
+) {
+  const scope = yield* Scope.make()
+  return yield* Effect.gen(function* () {
+    const conversation = yield* Pi.conversation(harness, conversationId, context)
+    const watched = yield* Pi.watch(harness, conversationId, context).pipe(Scope.provide(scope))
+    const prefix = yield* select(watched.snapshot)
+    if (Option.isNone(prefix)) {
+      yield* Scope.close(scope, Exit.void)
+      return Option.none<Stream.Stream<UIMessageChunk, import('./errors.ts').PiFailed>>()
+    }
+    const stream = yield* resume({ harness, conversation, context }, watched, prefix.value)
+    return Option.some(stream.pipe(Stream.ensuring(Scope.close(scope, Exit.void))))
+  }).pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))))
+})
+
+/** Idle conversations have no stream; a running attachment replays exactly the watch's atomic snapshot. */
+export const attachRun = Effect.fn('Durable.attachRun')(function* (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,
-): Promise<ReadableStream<UIMessageChunk> | undefined> {
-  const conversation = await existing(harness, conversationId, context)
-  const events = await watchEvents(harness, conversationId, context)
-  const prefix = Option.getOrUndefined(replay(events.snapshot))
-  if (prefix === undefined) {
-    await events.stop()
-    return undefined
-  }
-  const settledRound = events.snapshot.generation?.message === undefined
-  return new ReadableStream<UIMessageChunk>({
-    start: async (controller) => {
-      const write = writer(harness, conversation, events, controller, context)
-      if ((await write.prefix(prefix, settledRound)) === 'open') follow(events, write)
-    },
-    cancel: async () => {
-      await events.stop()
-    },
-  })
-}
+) {
+  return yield* reconnect(
+    harness,
+    conversationId,
+    (snapshot) =>
+      Effect.succeed(replay(snapshot).pipe(Option.map((prefix) => ({ step: prefix, live: true })))),
+    context,
+  )
+})
 
-/**
- * Continue a run for a client that already shows its tool calls `known` and has just settled a
- * hold: the results of those calls, the steps after them, and the live events until the run ends or
- * parks again. A run that ended in the meantime is replayed to its end.
- *
- * `undefined` means no assistant message of the conversation made those calls.
- */
-export async function continueRun(
+/** A resume names calls from an assistant entry; absence is a distinct conflict, rather than an idle attachment. */
+export const continueRun = Effect.fn('Durable.continueRun')(function* (
   harness: Harness,
   conversationId: ConversationId,
   known: ReadonlySet<string>,
   context: Context,
-): Promise<ReadableStream<UIMessageChunk> | undefined> {
-  const conversation = await existing(harness, conversationId, context)
-  const events = await watchEvents(harness, conversationId, context)
-  const prefix = Option.getOrUndefined(replayAfter(events.snapshot, known))
-  if (prefix === undefined) {
-    await events.stop()
-    return undefined
-  }
-  const settledRound = events.snapshot.generation?.message === undefined
-  return new ReadableStream<UIMessageChunk>({
-    start: async (controller) => {
-      const write = writer(harness, conversation, events, controller, context)
-      if ((await write.prefix(prefix.step, settledRound)) === 'ended') return
-      if (prefix.live) follow(events, write)
-      else write.finish()
+) {
+  const found = yield* reconnect(
+    harness,
+    conversationId,
+    (snapshot) => {
+      const prefix = replayAfter(snapshot, known)
+      return Option.isSome(prefix)
+        ? Effect.succeed(prefix)
+        : Effect.fail(new RunMissing({ conversationId }))
     },
-    cancel: async () => {
-      await events.stop()
-    },
-  })
-}
+    context,
+  )
+  // The selector cannot return None: retaining that invariant here keeps the shared idle path honest.
+  if (Option.isNone(found)) return yield* new RunMissing({ conversationId })
+  return found.value
+})

@@ -1,4 +1,4 @@
-import type { Context } from '@earendil-works/chord'
+import { copyJson, type Context, type JsonValue } from '@earendil-works/chord'
 import { type ConversationId, type Harness, LiveDoc } from '@earendil-works/pi-durable'
 
 import { Array as Arr, Effect, Option } from 'effect'
@@ -18,7 +18,7 @@ export type Waiting = {
   readonly callId: string
   readonly toolName: string
   /** The call's arguments. Absent for a `later` call, whose round is over. */
-  readonly input?: unknown
+  readonly input?: JsonValue
 }
 
 /**
@@ -67,7 +67,9 @@ export const waiting = Effect.fn('Durable.waiting')(function* (
     const call = Option.fromNullishOr(calls.get(slot.callId))
     const settled = holds.pipe(Option.flatMapNullishOr((document) => document.settled[slot.callId]))
     if (Option.isNone(plan) || Option.isNone(call) || Option.isSome(settled)) return []
-    const kind = holdKind(plan.value, call.value.arguments)
+    // Pi AI exposes readonly JSON while chord owns the mutable JSON used by hold contracts.
+    const input = copyJson(call.value.arguments)
+    const kind = holdKind(plan.value, input)
     return Option.isNone(kind)
       ? []
       : [
@@ -75,7 +77,7 @@ export const waiting = Effect.fn('Durable.waiting')(function* (
             kind: kind.value,
             callId: slot.callId,
             toolName: slot.name,
-            input: call.value.arguments,
+            input,
           },
         ]
   })

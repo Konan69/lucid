@@ -18,7 +18,7 @@ import {
 import { readUIMessageStream, type UIMessage, type UIMessageChunk } from 'ai'
 import { describe, expect, it } from 'vitest'
 
-import { streamRun } from './stream.ts'
+import { streamRun } from './main.ts'
 
 const context = BACKGROUND_CONTEXT
 

@@ -1,4 +1,4 @@
-import type { UIMessageChunk } from 'ai'
+import type { Chunk } from './chunks.ts'
 import { Match, Option } from 'effect'
 
 import { holdKind, type Plan, type Settlement } from './holds.ts'
@@ -28,7 +28,7 @@ export const emptyRound: Round = { awaiting: new Set(), running: new Set() }
  */
 export const parked = (round: Round) => round.awaiting.size > 0 && round.running.size === 0
 
-type Shown = { readonly round: Round; readonly chunks: readonly UIMessageChunk[] }
+type Shown = { readonly round: Round; readonly chunks: readonly Chunk[] }
 
 const without = (set: ReadonlySet<string>, id: string) =>
   new Set([...set].filter((each) => each !== id))
@@ -38,7 +38,7 @@ const close = (round: Round, id: string): Round => ({
   running: without(round.running, id),
 })
 
-type InputAvailable = Extract<UIMessageChunk, { type: 'tool-input-available' }>
+type InputAvailable = Extract<Chunk, { type: 'tool-input-available' }>
 
 /**
  * A call whose input is complete. A bridged tool is a typed tool on the client, so it loses the
@@ -56,7 +56,7 @@ function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown 
   const { dynamic: _dynamic, ...typed } = chunk
   const kind = holdKind(plan.value, chunk.input)
   const settled = desk.settled[chunk.toolCallId]
-  const request: readonly UIMessageChunk[] = Option.contains(kind, 'approval')
+  const request: readonly Chunk[] = Option.contains(kind, 'approval')
     ? [
         {
           type: 'tool-approval-request',
@@ -65,7 +65,7 @@ function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown 
         },
       ]
     : []
-  const response: readonly UIMessageChunk[] =
+  const response: readonly Chunk[] =
     Option.contains(kind, 'approval') && settled !== undefined
       ? [
           {
@@ -85,7 +85,7 @@ function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown 
 }
 
 /** Present one translated chunk. */
-function show(round: Round, chunk: UIMessageChunk, desk: Desk): Shown {
+function show(round: Round, chunk: Chunk, desk: Desk): Shown {
   return Match.value(chunk).pipe(
     Match.when({ type: 'tool-input-start' }, (input): Shown => {
       if (Option.isNone(desk.plan(input.toolName))) return { round, chunks: [input] }
@@ -118,7 +118,7 @@ function show(round: Round, chunk: UIMessageChunk, desk: Desk): Shown {
  * Pure. The translator knows only Pi Durable events; this step adds what depends on the
  * conversation's tools and on the settlements, both given in `desk`.
  */
-export function present(round: Round, chunks: readonly UIMessageChunk[], desk: Desk): Shown {
+export function present(round: Round, chunks: readonly Chunk[], desk: Desk): Shown {
   return chunks.reduce<Shown>(
     (shown, chunk) => {
       const next = show(shown.round, chunk, desk)
@@ -129,7 +129,7 @@ export function present(round: Round, chunks: readonly UIMessageChunk[], desk: D
 }
 
 /** Whether presenting `chunks` needs the desk. Reading it costs a document read, so text skips it. */
-export const needsDesk = (chunks: readonly UIMessageChunk[]) =>
+export const needsDesk = (chunks: readonly Chunk[]) =>
   chunks.some(
     (chunk) =>
       chunk.type === 'tool-input-start' ||
