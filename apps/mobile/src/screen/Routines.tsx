@@ -23,7 +23,8 @@ import { routines } from '@vivid/state'
 import { commit, warn } from '../data/haptics'
 import { LiveState, refusalOf, useLive, useLiveData, useLiveValue } from '../data/live'
 import { useTheme } from '../theme'
-import { Header, Screen } from '../ui/Header'
+import { Bar } from '../ui/Bar'
+import { Screen } from '../ui/Screen'
 import { Row, Section } from '../ui/List'
 import { Live } from '../ui/Live'
 import { Sheet } from '../ui/Sheet'
@@ -34,7 +35,6 @@ import {
   Dot,
   Empty,
   Field,
-  IconButton,
   Label,
   Labelled,
   Notice,
@@ -97,13 +97,21 @@ export function Routines() {
 
   return (
     <Screen>
-      <Header
+      <Bar
         title="Routines"
-        subtitle="What Vivid repeats, so you don’t have to."
-        onBack={go.goBack}
-        trailing={<IconButton icon={Plus} label="New routine" onPress={create} />}
+        actions={[
+          { symbol: 'plus', icon: Plus, label: 'New routine', disabled: false, onPress: create },
+        ]}
       />
-      <ScrollView contentContainerStyle={[styles.page, styles.column]}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.page, styles.column]}
+      >
+        {/* What this place is, as the page's first line. It was the line under the bar's title;
+            the system's bar has no such line without a native change (`ui/Bar.tsx`). */}
+        <Label size="label" tone="ink-2">
+          What Vivid repeats, so you don’t have to.
+        </Label>
         {Option.isSome(undeleted) && <Notice message={undeleted.value} />}
         <Live state={list} loading={<Skeleton rows={4} />}>
           {(value) =>

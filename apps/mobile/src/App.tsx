@@ -33,7 +33,7 @@ import { Texting } from './screen/settings/Texting'
 import { People } from './screen/settings/People'
 import { ThemeProvider, useTheme } from './theme'
 import { Recover } from './ui/Recover'
-import { navigationTheme, pushAnimation } from './ui/stack'
+import { GLASS_HEADER, navigationTheme, pushAnimation } from './ui/stack'
 import { Button, Face, GUTTER, Label } from './ui/ui'
 import { MeProvider, type Routes } from './workspace'
 
@@ -206,8 +206,10 @@ function Stopped({ message }: { message: string }) {
 
 /**
  * The signed-in app: one native stack. Pushing, popping and the back swipe are the platform's
- * own; nothing here animates a screen. Each screen draws its own bar (`ui/Header.tsx`), so the
- * native one is off everywhere.
+ * own; nothing here animates a screen. The bar is the platform's too (`GLASS_HEADER`): its way
+ * back and its buttons are the system's, liquid glass on iOS 26, with each screen's content
+ * scrolling under it. A screen that has actions or a live title says so itself (`ui/Bar.tsx`);
+ * one whose bar is only its name has it here. Home has no bar: its one control is Vivid's mark.
  *
  * Routes are flat on this one stack, never a nested navigator: one navigation controller is what
  * lets the platform carry a bar from one screen to the next (T3 Code mobile `src/Stack.tsx`, the
@@ -220,24 +222,30 @@ function Shell() {
     <NavigationContainer theme={navigationTheme(c, dark)}>
       <Stack.Navigator
         screenOptions={{
-          headerShown: false,
+          ...GLASS_HEADER,
+          // The bar's glyphs are ink, as the app's own controls are; the navigation theme's
+          // `primary` would paint the way back in the accent.
+          headerTintColor: c.foreground,
           contentStyle: { backgroundColor: c.screen },
           animation: pushAnimation(still),
         }}
       >
-        <Stack.Screen name="Home" component={Home} />
-        <Stack.Screen name="Chat" component={Chat} />
-        <Stack.Screen name="Computer" component={Computer} />
-        <Stack.Screen name="Routines" component={Routines} />
-        <Stack.Screen name="Library" component={Library} />
-        <Stack.Screen name="Folder" component={Folder} />
-        <Stack.Screen name="Projects" component={Projects} />
-        <Stack.Screen name="Project" component={Project} />
-        <Stack.Screen name="Settings" component={Settings} />
-        <Stack.Screen name="People" component={People} />
-        <Stack.Screen name="Memory" component={Memory} />
-        <Stack.Screen name="Texting" component={Texting} />
-        <Stack.Screen name="Notifications" component={Notifications} />
+        <Stack.Screen name="Home" component={Home} options={{ headerShown: false }} />
+        {/* Screens that render a `Bar` start with an empty title, so the route's name is never
+            what the bar says before the screen has spoken. */}
+        <Stack.Screen name="Chat" component={Chat} options={{ title: '' }} />
+        <Stack.Screen name="Computer" component={Computer} options={{ title: '' }} />
+        <Stack.Screen name="Routines" component={Routines} options={{ title: '' }} />
+        <Stack.Screen name="Library" component={Library} options={{ title: '' }} />
+        <Stack.Screen name="Folder" component={Folder} options={{ title: '' }} />
+        <Stack.Screen name="Projects" component={Projects} options={{ title: '' }} />
+        {/* The bar is only the way back: the Project's name is the page's own first line. */}
+        <Stack.Screen name="Project" component={Project} options={{ title: '' }} />
+        <Stack.Screen name="Settings" component={Settings} options={{ title: 'Settings' }} />
+        <Stack.Screen name="People" component={People} options={{ title: '' }} />
+        <Stack.Screen name="Memory" component={Memory} options={{ title: 'What Vivid knows' }} />
+        <Stack.Screen name="Texting" component={Texting} options={{ title: 'Text Vivid' }} />
+        <Stack.Screen name="Notifications" component={Notifications} options={{ title: '' }} />
       </Stack.Navigator>
     </NavigationContainer>
   )

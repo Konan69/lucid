@@ -20,7 +20,7 @@ import { useLive, useLiveData, type LiveData } from '../../data/live'
 import { MOBILE_TYPOGRAPHY } from '../../data/typography'
 import { when } from '../../data/when'
 import { Copy } from '../../ui/Copy'
-import { Header, Screen } from '../../ui/Header'
+import { Screen } from '../../ui/Screen'
 import { Section } from '../../ui/List'
 import { Live } from '../../ui/Live'
 import { ServiceMark } from '../../ui/Mark'
@@ -36,7 +36,6 @@ import {
   Skeleton,
   styles,
 } from '../../ui/ui'
-import { useGo } from '../../workspace'
 
 /**
  * Which form of `sms:` link this phone's messaging app reads: Apple's Messages takes the body
@@ -84,14 +83,13 @@ const actsOf = (data: LiveData): TextingActs => {
  */
 export function Texting() {
   const data = useLiveData()
-  const go = useGo()
   const channels = useLive(data.live.channels)
   // One set of actions for the session, so a control's handlers are not rebuilt on every result.
   const acts = useMemo(() => actsOf(data), [data])
   return (
     <Screen>
-      <Header title="Text Vivid" onBack={go.goBack} />
       <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={[styles.page, styles.column]}
       >

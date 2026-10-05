@@ -3,7 +3,7 @@ import type { NotificationId } from '@vivid/contracts'
 import { everyNoticeRead, noticeRows, noticesRead, type NotificationList } from '@vivid/state'
 import { Option } from 'effect'
 import { useState } from 'react'
-import { FlatList, Linking, View } from 'react-native'
+import { FlatList, Linking, ScrollView, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Bell, CheckCheck } from 'lucide-react-native'
 import { useNow } from '../data/foreground'
@@ -11,8 +11,9 @@ import { commit } from '../data/haptics'
 import { LiveState, useLive, useLiveData, useLiveValue, type LiveData } from '../data/live'
 import { invitationAddress } from '../data/server'
 import { useTheme } from '../theme'
-import { Header, Screen } from '../ui/Header'
-import { GUTTER, IconButton, Label, Notice, radius, styles } from '../ui/ui'
+import { Bar } from '../ui/Bar'
+import { Screen } from '../ui/Screen'
+import { GUTTER, Label, Notice, radius, styles } from '../ui/ui'
 import { useGo } from '../workspace'
 import { Destination } from './notifications/destination'
 import { Item, itemKey, itemsOf } from './notifications/list'
@@ -22,8 +23,8 @@ import { NoticeLine, NoticeOutline } from './notifications/Row'
  * Notifications: what finished or needs the Person while they were somewhere else.
  *
  * It is a screen on the app's one stack, pushed from the drawer and left by the system's back
- * swipe, under the bar every screen has (`ui/Header.tsx`); the web hangs a panel from a bell, and
- * a phone has no corner to hang one from. What is listed, in what order and in what words is the
+ * swipe, under the system's bar every screen has (`ui/Bar.tsx`); the web hangs a panel from a
+ * bell, and a phone has no corner to hang one from. What is listed, in what order and in what words is the
  * web's, from the same shared model (`@vivid/state` `notices.ts`). How it is drawn is the
  * phone's: an inbox under day headings, like the Thread list, with "Mark all read" where a
  * screen's one action goes, at the trailing end of the bar.
@@ -42,20 +43,19 @@ export function Notifications() {
   // What is unread is the server's count of everything, which can be more than the notices
   // listed: "Mark all read" stays offered while anything, listed or not, is unread.
   const unread = LiveState.$is('Ready')(state) ? state.value.unreadCount : 0
-  const go = useGo()
   return (
     <Screen>
-      <Header
+      <Bar
         title="Notifications"
-        onBack={go.goBack}
-        trailing={
-          <IconButton
-            icon={CheckCheck}
-            label="Mark all read"
-            disabled={unread === 0}
-            onPress={() => readAll(data)}
-          />
-        }
+        actions={[
+          {
+            symbol: 'checkmark.circle',
+            icon: CheckCheck,
+            label: 'Mark all read',
+            disabled: unread === 0,
+            onPress: () => readAll(data),
+          },
+        ]}
       />
       <Body state={state} />
     </Screen>
@@ -68,20 +68,30 @@ export function Notifications() {
  * `Ready` from the first frame), the server's own sentence when the list cannot be read at all
  * (a live query fails only for good; a dropped connection keeps the last list on screen), and
  * otherwise the list, or the sentence that says there is nothing in it.
+ *
+ * Every one of them is a scroller, the short ones included: under a glass bar the system keeps a
+ * scroller's content clear of the bar (`contentInsetAdjustmentBehavior`), and a plain view would
+ * start beneath it (`ui/Bar.tsx`).
  */
 function Body({ state }: { state: LiveState<NotificationList> }) {
   if (LiveState.$is('Loading')(state)) {
     return (
-      <View style={[styles.column, { paddingTop: 4 }]}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.column, { paddingTop: 4 }]}
+      >
         <NoticeOutline />
-      </View>
+      </ScrollView>
     )
   }
   if (LiveState.$is('Failed')(state)) {
     return (
-      <View style={[styles.page, styles.column]}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.page, styles.column]}
+      >
         <Notice message={state.failure.message} />
-      </View>
+      </ScrollView>
     )
   }
   return state.value.notifications.length === 0 ? <Quiet /> : <Listed list={state.value} />
@@ -117,7 +127,10 @@ function readAll(data: LiveData) {
 function Quiet() {
   const { colors: c } = useTheme()
   return (
-    <View style={[styles.page, styles.column, { paddingTop: 24, gap: 14 }]}>
+    <ScrollView
+      contentInsetAdjustmentBehavior="automatic"
+      contentContainerStyle={[styles.page, styles.column, { paddingTop: 24, gap: 14 }]}
+    >
       <View
         pointerEvents="none"
         style={{
@@ -140,7 +153,7 @@ function Quiet() {
           Vivid will tell you here.
         </Label>
       </View>
-    </View>
+    </ScrollView>
   )
 }
 
@@ -213,6 +226,7 @@ function Listed({ list }: { list: NotificationList }) {
     <FlatList
       data={items}
       keyExtractor={itemKey}
+      contentInsetAdjustmentBehavior="automatic"
       ListHeaderComponent={
         Option.isSome(unopened) ? (
           <View style={{ paddingHorizontal: GUTTER, paddingTop: 8 }}>
