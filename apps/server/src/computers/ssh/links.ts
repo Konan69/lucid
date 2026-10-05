@@ -119,26 +119,32 @@ export const links = <Key>(identity: Identity) => {
         orElse: () => Effect.fail(new LinkUnreachable()),
       }),
     )
+  /** An opening that ended without a connection leaves no token behind. */
+  const settled = (key: Key, token: symbol) =>
+    Effect.sync(() => {
+      if (pending.get(key) === token) pending.delete(key)
+    })
+  /**
+   * Taking the token and registering its removal are one uninterruptible step, so a caller that
+   * gives up at that moment leaves no token; asking where the machine is and the tries can be
+   * interrupted as before.
+   */
   const dial = <Failure>(
     key: Key,
     locate: Effect.Effect<LinkTarget, Failure>,
   ): Effect.Effect<Link, Failure | LinkFailure> =>
-    Effect.suspend(() => {
-      // Asked in the same step that takes the token. A check made earlier could be followed by
-      // `close` and then by this opening, which would make a connection after the owner's last act.
-      if (closed) return Effect.fail(new LinkUnreachable())
-      const token = Symbol('opening')
-      pending.set(key, token)
-      return locate.pipe(
-        Effect.flatMap((target) => tries(key, token, target)),
-        // An opening that ended without a connection leaves no token behind.
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (pending.get(key) === token) pending.delete(key)
-          }),
-        ),
-      )
-    })
+    Effect.uninterruptibleMask((restore) =>
+      Effect.suspend(() => {
+        // Asked in the same step that takes the token. A check made earlier could be followed by
+        // `close` and then by this opening: a connection made after the owner's last act.
+        if (closed) return Effect.fail(new LinkUnreachable())
+        const token = Symbol('opening')
+        pending.set(key, token)
+        return restore(locate.pipe(Effect.flatMap((target) => tries(key, token, target)))).pipe(
+          Effect.ensuring(settled(key, token)),
+        )
+      }),
+    )
   /** `locate` is run only when a connection has to be opened. */
   const get = <Failure>(
     key: Key,
@@ -146,6 +152,9 @@ export const links = <Key>(identity: Identity) => {
   ): Effect.Effect<Link, Failure | LinkFailure> =>
     opening(key).withPermit(
       Effect.gen(function* () {
+        // The owner is closing or has closed: a connection still in the map is on its way out and
+        // is not handed to a new caller.
+        if (closed) return yield* Effect.fail(new LinkUnreachable())
         const found = open.get(key)
         if (found === undefined) return yield* dial(key, locate)
         if (found.link.alive()) return found.link
