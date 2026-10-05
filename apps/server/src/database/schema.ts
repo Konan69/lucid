@@ -4,13 +4,7 @@
  * everything else belongs to the product owner in `product.ts`, which migrates second so its
  * foreign keys to a Person or a Company always find their target.
  */
-export {
-  accountTable,
-  deviceCodeTable,
-  personTable,
-  sessionTable,
-  verificationTable,
-} from '../auth/tables.ts'
+export { accountTable, personTable, sessionTable, verificationTable } from '../auth/tables.ts'
 export { companyTable, invitationTable, membershipTable } from '../companies/tables.ts'
 export { projectTable } from '../projects/tables.ts'
 export { settingsTable } from '../settings/tables.ts'

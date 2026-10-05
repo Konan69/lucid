@@ -6,7 +6,7 @@ import {
   type DesktopView,
   ComputerState,
 } from '@vivid/contracts'
-import { Context, Effect, Layer, Schema, type Redacted } from 'effect'
+import { Context, type Effect, Schema, type Stream, type Redacted } from 'effect'
 
 /** App-owned RFB transport path; neither provider locations nor credentials belong in Running state. */
 export { computerScreenAddress } from '@vivid/contracts'
@@ -30,17 +30,9 @@ const lifecycleStates = {
   Running: { since: ComputerState.cases.Running.fields.since },
   Stopped: ComputerState.cases.Stopped.fields,
   Failed: ComputerState.cases.Failed.fields,
-  Unavailable: ComputerState.cases.Unavailable.fields,
 } satisfies Record<keyof typeof ComputerState.cases, Schema.Struct.Fields>
 export const MachineState = Schema.TaggedUnion(lifecycleStates)
 export type MachineState = typeof MachineState.Type
-
-/** Missing provider configuration is distinct from a failed configured provider. */
-export class MachineUnavailable extends Schema.TaggedError<MachineUnavailable>()(
-  'MachineUnavailable',
-  {},
-  { title: 'MachineUnavailable' },
-) {}
 
 /** A command or browser step cannot run against an absent or stopped machine. */
 export class MachineNotRunning extends Schema.TaggedError<MachineNotRunning>()(
@@ -54,6 +46,17 @@ export class MachineOperationFailed extends Schema.TaggedError<MachineOperationF
   'MachineOperationFailed',
   { operation: Schema.String },
   { title: 'MachineOperationFailed' },
+) {}
+
+/**
+ * The provider did not answer: the connection failed or no reply came in time. Nothing is learned
+ * about the machine. This is an outage, not a refusal, and it ends by itself: every call dials the
+ * provider afresh, so the next one works as soon as the provider answers again.
+ */
+export class MachineUnreachable extends Schema.TaggedError<MachineUnreachable>()(
+  'MachineUnreachable',
+  {},
+  { title: 'MachineUnreachable' },
 ) {}
 
 /** A lost command receipt is uncertain: the provider must not authorize an automatic retry. */
@@ -91,14 +94,10 @@ export class BrowserStepFailed extends Schema.TaggedError<BrowserStepFailed>()(
   { title: 'BrowserStepFailed' },
 ) {}
 
-/** Configuration failures carry no supplied values, including accidentally pasted credentials. */
-export class MachineConfigurationInvalid extends Schema.TaggedError<MachineConfigurationInvalid>()(
-  'MachineConfigurationInvalid',
-  {},
-  { title: 'MachineConfigurationInvalid' },
-) {}
-
-/** Provider authentication is configuration failure, not a retryable machine operation. */
+/**
+ * The provider refused the server's credential. The key is present (the server does not start
+ * without it), so this is a revoked or wrong key, never a retryable machine operation.
+ */
 export class MachineAuthenticationFailed extends Schema.TaggedError<MachineAuthenticationFailed>()(
   'MachineAuthenticationFailed',
   {},
@@ -140,23 +139,55 @@ export class MachineCapabilityUnavailable extends Schema.TaggedError<MachineCapa
   { title: 'MachineCapabilityUnavailable' },
 ) {}
 
-/** Precise adapter failures remain visible for orchestration and RPC translation. */
+/**
+ * Precise adapter failures remain visible for orchestration and RPC translation.
+ *
+ * None of them says "no provider is configured". A server always has its Computer provider: its
+ * settings are required when the server is composed (`boat/transport.ts`), so a missing one is a
+ * server that did not start. What is left here is what can go wrong on a call while the provider
+ * is configured, and each call is tried afresh, so an outage ends when the provider answers again.
+ */
 export type MachineFailure =
-  | MachineUnavailable
   | MachineNotRunning
   | MachineOperationFailed
+  | MachineUnreachable
   | MachineExecutionUnknown
   | MachineResponseInvalid
   | MachineInputInvalid
   | BrowserAddressRefused
   | BrowserStepFailed
-  | MachineConfigurationInvalid
   | MachineAuthenticationFailed
   | MachineCreationUnresolved
   | MachineRequestRejected
   | MachinePersistenceFailed
   | MachineHeld
   | MachineCapabilityUnavailable
+
+/**
+ * What a followed command says while it runs, and how it ended.
+ *
+ * `Printed` is text in the order it was written; one piece is not one line. `Exited` is the last
+ * thing a stream carries. `memory` is the provider saying it ended the command for memory, which
+ * an exit code alone does not tell apart from any other kill.
+ */
+export const MachineOutput = Schema.TaggedUnion({
+  Printed: { text: Schema.String },
+  Exited: {
+    exitCode: Schema.NullOr(Schema.Int),
+    timedOut: Schema.Boolean,
+    memory: Schema.Boolean,
+  },
+})
+export type MachineOutput = typeof MachineOutput.Type
+
+/**
+ * Whether a failure says the provider could not be asked, as opposed to what it answered: no
+ * connection, no reply in time, or the provider's own 5xx. Such a failure is no evidence about the
+ * machine, so callers tell it on the call that met it and never record it as the machine's state.
+ */
+export const isOutage = (failure: MachineFailure): boolean =>
+  failure instanceof MachineUnreachable ||
+  (failure instanceof MachineRequestRejected && failure.status >= 500)
 
 /** One machine boundary; ownership, approvals, receipts, and RPC remain application concerns. */
 export interface MachineOperations {
@@ -172,6 +203,24 @@ export interface MachineOperations {
     readonly command: string
     readonly timeoutSeconds: number
   }) => Effect.Effect<CommandResult, MachineFailure>
+  /**
+   * Starts a command and reports what it prints while it runs; the stream ends with one `Exited`.
+   * `exec` answers only when the command is over, which cannot carry a program that asks for
+   * things as it goes. A followed command does not hold the machine: the actions it asks for
+   * (a command, a browser step) run beside it.
+   */
+  readonly follow: (input: {
+    readonly key: MachineKey
+    readonly command: string
+    readonly timeoutSeconds: number
+  }) => Stream.Stream<MachineOutput, MachineFailure>
+  /** Puts a text file on the machine and creates its directories. A relative path is under the
+   * directory commands start in. */
+  readonly write: (input: {
+    readonly key: MachineKey
+    readonly path: string
+    readonly content: string
+  }) => Effect.Effect<void, MachineFailure>
   readonly browse: (input: {
     readonly key: MachineKey
     readonly action: BrowserAction
@@ -184,26 +233,3 @@ export interface MachineOperations {
 
 /** Authority over the machine provider, distinct from application ownership and approvals. */
 export class Machine extends Context.Service<Machine, MachineOperations>()('vivid/Machine') {}
-
-/** Disabled installations report honest absence of provider authority on every operation. */
-export const unavailableMachineLayer = Layer.effect(
-  Machine,
-  Effect.succeed(
-    Machine.of({
-      ensure: Effect.fn('Machine.unavailable.ensure')(() => Effect.fail(new MachineUnavailable())),
-      stop: Effect.fn('Machine.unavailable.stop')(() => Effect.fail(new MachineUnavailable())),
-      inspect: Effect.fn('Machine.unavailable.inspect')(() =>
-        Effect.succeed(MachineState.cases.Unavailable.make({})),
-      ),
-      status: Effect.fn('Machine.unavailable.status')(() =>
-        Effect.succeed(ComputerState.cases.Unavailable.make({})),
-      ),
-      screen: Effect.fn('Machine.unavailable.screen')(() => Effect.fail(new MachineUnavailable())),
-      exec: Effect.fn('Machine.unavailable.exec')(() => Effect.fail(new MachineUnavailable())),
-      browse: Effect.fn('Machine.unavailable.browse')(() => Effect.fail(new MachineUnavailable())),
-      desktop: Effect.fn('Machine.unavailable.desktop')(() =>
-        Effect.fail(new MachineUnavailable()),
-      ),
-    }),
-  ),
-)

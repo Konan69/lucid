@@ -46,7 +46,6 @@ it.effect(
         for (const push of [
           PushOutcome.cases.Attempted.make({ accepted: 2, failed: 1, uncertain: 0 }),
           PushOutcome.cases.NoTargets.make({}),
-          PushOutcome.cases.Unavailable.make({}),
           PushOutcome.cases.Present.make({}),
         ]) {
           const reply = Effect.fn('NotifyToolsTest.reply')(function* () {

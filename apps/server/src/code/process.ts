@@ -1,7 +1,3 @@
-import * as NodeChildProcess from 'node:child_process'
-import * as NodeProcess from 'node:process'
-import * as NodeURL from 'node:url'
-import * as NodePath from 'node:path'
 import {
   CodeCall,
   CodeOutcome,
@@ -15,7 +11,6 @@ import {
   Cause,
   Predicate,
   Result,
-  Config,
   Context,
   Deferred,
   Effect,
@@ -28,18 +23,11 @@ import {
 } from 'effect'
 import { CodeTiming } from '@vivid/contracts/code'
 import { isCodeName } from '../observability/messages.ts'
+import type { CodeBoundary } from './authority.ts'
 import { boundedLogs, encodedPrefix } from './logs.ts'
 import { budgets, bytes } from './budgets.ts'
-import { prepareWorker } from './source.ts'
-import { checkProgramHost } from './host.ts'
-import { FrameReader, writeFrame } from './pipe.ts'
-import {
-  decodeWorker,
-  encodeParent,
-  ParentMessage,
-  PipeFailure,
-  WorkerMessage,
-} from './protocol.ts'
+import { CodeComputer, type CodeComputerService, type Guest } from './computer.ts'
+import { ParentMessage, PipeFailure, WorkerMessage } from './protocol.ts'
 
 /** A completed callback has a receipt; decisions stop admission before anything returns to the VM. */
 export const CallOutcome = Schema.TaggedUnion({
@@ -64,167 +52,15 @@ type CallStep = typeof CallStep.Type
 
 export interface CodeProcessService {
   readonly run: (
-    input: { readonly request: RunCodeRequest; readonly boundary: ThreadId },
+    input: { readonly request: RunCodeRequest; readonly boundary: CodeBoundary },
     dispatch: Dispatch,
   ) => Effect.Effect<CodeOutcome>
 }
 
-/** A supervised interpreter is an authority seam, not a reusable guest session. */
+/** A supervised program is an authority seam, not a reusable guest session. */
 export class CodeProcess extends Context.Service<CodeProcess, CodeProcessService>()(
   'vivid/CodeProcess',
 ) {}
-
-/** Mount only executable dependencies, contracts and this adapter, never the repository or live state. */
-function command(runtimeDirectory: string, unit: string, source: string) {
-  const root = NodeURL.fileURLToPath(new URL('../../../../', import.meta.url))
-  const server = NodePath.join(root, 'apps/server')
-  const mounts = [
-    '/usr',
-    '/lib',
-    '/lib64',
-    NodePath.join(root, 'node_modules'),
-    NodePath.join(server, 'node_modules'),
-    NodePath.join(server, 'package.json'),
-  ]
-  const args = [
-    '--user',
-    '--pipe',
-    '--wait',
-    '--quiet',
-    `--unit=${unit}`,
-    '-p',
-    `MemoryMax=${budgets.child}`,
-    '-p',
-    'MemorySwapMax=0',
-    '-p',
-    'TasksMax=32',
-    '-p',
-    'CPUQuota=100%',
-    '-p',
-    // Isolation must outlive the parent deadline so it can collect the worker's final receipt.
-    `RuntimeMaxSec=${budgets.seconds + 5}`,
-    '-p',
-    'KillMode=control-group',
-    '-p',
-    'KillSignal=SIGKILL',
-    '/usr/bin/bwrap',
-    '--unshare-all',
-    '--die-with-parent',
-    '--new-session',
-    '--clearenv',
-    '--setenv',
-    'PATH',
-    '/usr/bin:/bin',
-    '--setenv',
-    'NODE_NO_WARNINGS',
-    '1',
-  ]
-  for (const path of mounts) args.push('--ro-bind', path, path)
-  args.push(
-    '--proc',
-    '/proc',
-    '--dev',
-    '/dev',
-    '--tmpfs',
-    '/tmp',
-    '--ro-bind',
-    source,
-    source,
-    '--chdir',
-    '/tmp',
-    '/usr/bin/prlimit',
-    `--cpu=${budgets.seconds + 5}`,
-    '--',
-    NodeProcess.execPath,
-    // Node 24 defaults to 128 parallel WASM compilation tasks; this cgroup has one CPU.
-    // Keep compilation serial so background optimizer work cannot starve VM/pipe callbacks.
-    '--wasm-num-compilation-tasks=1',
-    NodePath.join(source, 'start.mjs'),
-  )
-  return { args, env: { PATH: '/usr/bin:/bin', XDG_RUNTIME_DIR: runtimeDirectory } }
-}
-
-/** Stop precisely the transient unit we created. Its whole cgroup dies, including WASM workers. */
-const stop = Effect.fn('Code.stopProcess')((unit: string, env: NodeJS.ProcessEnv) =>
-  Effect.callback<void>((resume) => {
-    const stopping = NodeChildProcess.spawn('/usr/bin/systemctl', ['--user', 'stop', unit], {
-      env,
-      stdio: 'ignore',
-    })
-    stopping.on('error', () => resume(Effect.void))
-    stopping.on('close', () => resume(Effect.void))
-  }),
-)
-
-/** Failed units retain their resource result until we read it; cleanup then releases that record. */
-const reset = Effect.fn('Code.resetProcess')((unit: string, env: NodeJS.ProcessEnv) =>
-  Effect.callback<void>((resume) => {
-    const resetting = NodeChildProcess.spawn(
-      '/usr/bin/systemctl',
-      ['--user', 'reset-failed', unit],
-      { env, stdio: 'ignore' },
-    )
-    resetting.on('error', () => resume(Effect.void))
-    resetting.on('close', () => resume(Effect.void))
-  }),
-)
-
-/** An OOM is distinguishable from installation/protocol failure; raw journal/driver text is never exposed. */
-const resourceFailure = Effect.fn('Code.resourceFailure')((unit: string, env: NodeJS.ProcessEnv) =>
-  Effect.callback<CodeFailure>((resume) => {
-    const inspect = NodeChildProcess.spawn(
-      '/usr/bin/systemctl',
-      ['--user', 'show', unit, '--property=Result', '--value'],
-      { env, stdio: ['ignore', 'pipe', 'ignore'] },
-    )
-    let result = ''
-    inspect.stdout.on('data', (chunk: Buffer) => {
-      result = (result + chunk.toString('utf8')).slice(0, 100)
-    })
-    inspect.on('error', () => resume(Effect.succeed(CodeFailure.cases.Unavailable.make({}))))
-    inspect.on('close', () => {
-      if (result.trim() === 'oom-kill')
-        return resume(Effect.succeed(CodeFailure.cases.OverLimit.make({ limit: 'memory' })))
-      if (result.trim() === 'timeout')
-        return resume(Effect.succeed(CodeFailure.cases.TimedOut.make({ seconds: budgets.seconds })))
-      resume(Effect.succeed(CodeFailure.cases.Unavailable.make({})))
-    })
-  }),
-)
-
-/** Cancellation owns this captured process and unit; it never searches for someone else's PID. */
-const launch = Effect.fn('Code.launchProcess')(function* (
-  runtimeDirectory: string,
-  source: string,
-) {
-  const unit = `vivid-code-${crypto.randomUUID()}`
-  const options = command(runtimeDirectory, unit, source)
-  const child = yield* Effect.acquireRelease(
-    Effect.callback<
-      NodeChildProcess.ChildProcessByStdio<
-        import('node:stream').Writable,
-        import('node:stream').Readable,
-        null
-      >,
-      PipeFailure
-    >((resume) => {
-      const spawned = NodeChildProcess.spawn('/usr/bin/systemd-run', options.args, {
-        env: options.env,
-        stdio: ['pipe', 'pipe', 'ignore'],
-      })
-      spawned.on('error', () => resume(Effect.fail(new PipeFailure({ reason: 'closed' }))))
-      spawned.once('spawn', () => resume(Effect.succeed(spawned)))
-    }),
-    (spawned) =>
-      Effect.gen(function* () {
-        spawned.stdin.destroy()
-        yield* stop(unit, options.env)
-        yield* reset(unit, options.env)
-        spawned.kill('SIGTERM')
-      }),
-  )
-  return { child, unit, env: options.env }
-})
 
 /** Failure keeps every admitted receipt and fits logs into the remaining final-result bytes. */
 function boundedFailure(failure: CodeFailure, calls: readonly CodeCall[], printed: CodeLogs) {
@@ -512,24 +348,22 @@ export class Execution {
   })
 }
 
-/** The reader continues during an action, so a Done frame closes queued admission immediately. */
+/** The reader continues during an action, so a final message closes queued admission immediately. */
 const readCalls = Effect.fn('Code.readCalls')(function* (
-  child: Pick<NodeChildProcess.ChildProcessWithoutNullStreams, 'stdin' | 'stdout'>,
+  guest: Guest,
   execution: {
     readonly state: Execution
     readonly dispatch: Dispatch
     readonly stopped: Deferred.Deferred<CodeOutcome, PipeFailure>
   },
 ) {
-  const reader = new FrameReader(child.stdout)
-  // Calls overlap, so their replies can finish together; one writer keeps each frame whole.
-  const writes = yield* Semaphore.make(1)
+  // Calls overlap, so their answers can be ready together. Each answer is one request to the
+  // Computer's provider; this bounds how many are on their way at once.
+  const writes = yield* Semaphore.make(budgets.replies)
   const running: Fiber.Fiber<void, PipeFailure>[] = []
   const { state, stopped } = execution
   while (true) {
-    const message = yield* reader.read().pipe(
-      Effect.flatMap((text) => decodeWorker(text, { onExcessProperty: 'error' })),
-      Effect.catchTag('SchemaError', () => Effect.fail(new PipeFailure({ reason: 'invalid' }))),
+    const message = yield* guest.read.pipe(
       Effect.tapError(() =>
         Effect.sync(() =>
           state.end(
@@ -557,7 +391,7 @@ const readCalls = Effect.fn('Code.readCalls')(function* (
     // are still running. Wait for the decision instead; the last of them reports it.
     if (Option.isSome(refused))
       return state.decided ? yield* Deferred.await(stopped) : refused.value
-    const call = runCall(child, message, { ...execution, writes }).pipe(
+    const call = runCall(guest, message, { ...execution, writes }).pipe(
       Effect.catchTag('CodePipeFailure', (failure) =>
         Effect.gen(function* () {
           state.end(
@@ -582,7 +416,7 @@ const readCalls = Effect.fn('Code.readCalls')(function* (
  * when the last of them has returned. Interrupting them would turn a real result into "unknown".
  */
 const runCall = Effect.fn('Code.runCall')(function* (
-  child: Pick<NodeChildProcess.ChildProcessWithoutNullStreams, 'stdin' | 'stdout'>,
+  guest: Guest,
   message: typeof WorkerMessage.cases.Call.Type,
   execution: {
     readonly state: Execution
@@ -599,72 +433,76 @@ const runCall = Effect.fn('Code.runCall')(function* (
   const step = landed.value
   if (CallStep.guards.Stop(step))
     return yield* Deferred.succeed(stopped, step.outcome).pipe(Effect.asVoid)
-  // Admission is checked again inside the permit: a reply that waited behind another frame must
-  // not reach the program after a decision has closed it.
+  // Admission is checked again inside the permit: an answer that waited behind others must not
+  // reach the program after a decision has closed it.
   return yield* writes.withPermit(
     Effect.suspend(() =>
       state.accepting
-        ? writeFrame(
-            child.stdin,
-            encodeParent(ParentMessage.cases.Reply.make({ id: message.id, value: step.value })),
-            'request',
-          )
+        ? guest.send(ParentMessage.cases.Reply.make({ id: message.id, value: step.value }))
         : Effect.void,
     ),
   )
 })
 
-/** Policy decisions race the reader independently, so queued frames can never hide an Approval. */
+/** Policy decisions race the reader independently, so queued messages can never hide an Approval. */
 const exchange = Effect.fn('Code.exchange')(function* (
-  child: Pick<NodeChildProcess.ChildProcessWithoutNullStreams, 'stdin' | 'stdout'>,
+  guest: Guest,
   state: Execution,
   dispatch: Dispatch,
 ) {
   const stopped = yield* Deferred.make<CodeOutcome, PipeFailure>()
   return yield* Effect.raceFirst(
-    readCalls(child, { state, dispatch, stopped }),
+    readCalls(guest, { state, dispatch, stopped }),
     Deferred.await(stopped),
   )
 })
 
-/** The parent clock includes tools and process startup. No failure path replays a program. */
+/**
+ * The server's clock includes waking the Computer, starting the runner and every tool call. No
+ * failure path replays a program. A Computer that cannot be used (the Person has taken it over,
+ * it did not start, its provider is not answering) ends the program before anything ran.
+ */
 const execute = Effect.fn('Code.supervise')(function* (
-  runtimeDirectory: string,
-  source: string,
-  request: RunCodeRequest,
+  computer: CodeComputerService,
+  input: { readonly request: RunCodeRequest; readonly boundary: CodeBoundary },
   dispatch: Dispatch,
 ) {
   const state = new Execution()
-  const child = {
-    current: Option.none<Pick<NodeChildProcess.ChildProcessWithoutNullStreams, 'stdin'>>(),
-  }
+  const running = { guest: Option.none<Guest>() }
   const failed = (failure: CodeFailure) => state.failed(failure)
   const program = Effect.scoped(
     Effect.gen(function* () {
-      const launched = yield* launch(runtimeDirectory, source)
-      child.current = Option.some(launched.child)
-      yield* writeFrame(
-        launched.child.stdin,
-        encodeParent(ParentMessage.cases.Start.make({ code: request.code })),
-        'request',
-      )
-      return yield* exchange(launched.child, state, dispatch).pipe(
-        Effect.catchTag('CodePipeFailure', (failure) =>
+      const guest = yield* computer.open(input.boundary.person)
+      running.guest = Option.some(guest)
+      yield* guest.send(ParentMessage.cases.Start.make({ code: input.request.code }))
+      return yield* exchange(guest, state, dispatch)
+    }).pipe(
+      Effect.catchTags({
+        CodeComputerUnavailable: (error) =>
+          Effect.logWarning('The Computer could not take a program').pipe(
+            Effect.annotateLogs({ 'vivid.computer.failure': error.reason }),
+            Effect.as(failed(CodeFailure.cases.Unavailable.make({}))),
+          ),
+        CodePipeFailure: (failure) =>
           failure.reason === 'size'
-            ? Effect.succeed(state.failed(CodeFailure.cases.OverLimit.make({ limit: 'data' })))
-            : resourceFailure(launched.unit, launched.env).pipe(Effect.map(failed)),
-        ),
-      )
-    }),
+            ? Effect.succeed(failed(CodeFailure.cases.OverLimit.make({ limit: 'data' })))
+            : // The process is over, or the server can no longer talk to it and ends it. What
+              // its provider said about the end tells a memory or time limit apart from the rest.
+              Option.match(running.guest, {
+                onNone: () => Effect.succeed(failed(CodeFailure.cases.Unavailable.make({}))),
+                onSome: (guest) => guest.stopped.pipe(Effect.map(failed)),
+              }),
+      }),
+    ),
   )
   const deadline = Effect.fn('Code.deadline')(function* () {
     yield* Effect.sleep(`${budgets.seconds} seconds`)
-    // Pi's public abort returns buffered output (runtime/host.js/Execution.abort). Grace and
-    // admission share CodeTiming; a missing final frame cannot claim its output was complete.
-    const cancelled = Option.match(child.current, {
+    // Told to stop, the runner still sends what the program printed (as pi's abort returns
+    // buffered output, `runtime/host.js` `Execution.abort`). Grace and admission share
+    // CodeTiming; a missing final message cannot claim its output was complete.
+    const cancelled = Option.match(running.guest, {
       onNone: () => Effect.void,
-      onSome: (running) =>
-        writeFrame(running.stdin, encodeParent(ParentMessage.cases.Cancel.make({})), 'request'),
+      onSome: (guest) => guest.send(ParentMessage.cases.Cancel.make({})),
     })
     return yield* state.timeout(cancelled)
   })()
@@ -675,48 +513,30 @@ const execute = Effect.fn('Code.supervise')(function* (
 export const codeProcessLayer = Layer.effect(
   CodeProcess,
   Effect.gen(function* () {
-    const runtimeDirectory = yield* Config.option(Config.String('XDG_RUNTIME_DIR'))
-    const source = yield* checkProgramHost(runtimeDirectory).pipe(
-      Effect.andThen(prepareWorker()),
-      Effect.map(Option.some),
-      // The shared CodeFailure.Unavailable is the model-visible host capability refusal.
-      // Contracts are unchanged; the precise tagged prerequisite error stays in startup diagnostics.
-      Effect.catchTag('CodeIsolationUnavailable', (error) =>
-        Effect.logError('Programs are unavailable on this host', error.reason, error).pipe(
-          Effect.as(Option.none<string>()),
-        ),
-      ),
-      Effect.catchTag('CodeAssetsUnavailable', (error) =>
-        Effect.logError('Program worker assets could not be prepared', error).pipe(
-          Effect.as(Option.none<string>()),
-        ),
-      ),
-    )
+    const computer = yield* CodeComputer
     const capacity = yield* Semaphore.make(budgets.processes)
     const active = new Set<ThreadId>()
     return CodeProcess.of({
-      run: Effect.fn('Code.run')(function* ({ request, boundary }, dispatch) {
+      run: Effect.fn('Code.run')(function* (input, dispatch) {
         const unavailable = CodeOutcome.cases.Failed.make({
           failure: CodeFailure.cases.Unavailable.make({}),
           calls: [],
           logs: [],
           logsTruncated: false,
         })
-        if (bytes(request.code) > budgets.source)
+        if (bytes(input.request.code) > budgets.source)
           return CodeOutcome.cases.Failed.make({
             failure: CodeFailure.cases.Threw.make({ message: 'Program source exceeds 16 KiB.' }),
             calls: [],
             logs: [],
             logsTruncated: false,
           })
-        if (Option.isNone(runtimeDirectory) || Option.isNone(source) || active.has(boundary))
-          return unavailable
-        active.add(boundary)
+        const thread = input.boundary.thread
+        if (active.has(thread)) return unavailable
+        active.add(thread)
         const admitted = yield* capacity
-          .withPermitsIfAvailable(1)(
-            execute(runtimeDirectory.value, source.value, request, dispatch),
-          )
-          .pipe(Effect.ensuring(Effect.sync(() => active.delete(boundary))))
+          .withPermitsIfAvailable(1)(execute(computer, input, dispatch))
+          .pipe(Effect.ensuring(Effect.sync(() => active.delete(thread))))
         return Option.getOrElse(admitted, () => unavailable)
       }),
     })

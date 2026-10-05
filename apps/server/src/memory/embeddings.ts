@@ -3,7 +3,6 @@ import {
   Array as Arr,
   Cache,
   Exit,
-  Config,
   Context,
   Effect,
   Layer,
@@ -13,26 +12,33 @@ import {
   Schema,
 } from 'effect'
 import { HttpClient, HttpClientRequest, HttpClientResponse, Headers } from 'effect/unstable/http'
+import { optionalSetting, requiredSetting, settingSecret, settingText } from '../config.ts'
 
-/** One dimension recipe governs provider validation and Helix index bootstrap (Effect rc.116 uses Int). */
-export const embeddingDimensions = Config.Int('VIVID_EMBEDDING_DIMENSIONS').pipe(
-  Config.withDefault(1536),
-  Effect.filterOrFail(
-    (dimensions) => dimensions > 0,
-    () =>
-      ServiceUnavailable.make({
-        service: 'memory',
-        message: 'VIVID_EMBEDDING_DIMENSIONS must be positive',
-      }),
-  ),
+/**
+ * The model gateway's key. Memory embeds through the gateway and the background model (Thread
+ * titles, what Vivid learns after a Run) completes through it, so a server does not run without
+ * it: it is required while the server is composed and its absence stops launch naming it.
+ */
+export const modelGatewayKey = requiredSetting(
+  'EXPLABS_API_KEY',
+  settingSecret,
+  'the model gateway key',
 )
-export const embeddingModel = Config.String('VIVID_EMBEDDING_MODEL').pipe(
-  Config.withDefault('text-embedding-3-small'),
-  Effect.filterOrFail(
-    (model) => model.trim().length > 0,
-    () => ServiceUnavailable.make({ service: 'memory', message: 'VIVID_EMBEDDING_MODEL is empty' }),
-  ),
-)
+
+/**
+ * One dimension recipe governs provider validation and Helix index bootstrap. Both embedding
+ * settings have a default, so absence is fine; a malformed value stops launch naming the variable.
+ */
+export const embeddingDimensions = optionalSetting(
+  'VIVID_EMBEDDING_DIMENSIONS',
+  Schema.Int.check(Schema.isGreaterThan(0)),
+  'a positive whole number',
+).pipe(Effect.map(Option.getOrElse(() => 1536)))
+export const embeddingModel = optionalSetting(
+  'VIVID_EMBEDDING_MODEL',
+  settingText,
+  'a model name',
+).pipe(Effect.map(Option.getOrElse(() => 'text-embedding-3-small')))
 
 /** A rate limit is unavailable memory; retain the provider's seconds or HTTP-date without inventing a delay. */
 export class MemoryRateLimited extends Schema.TaggedError<MemoryRateLimited>()(
@@ -149,27 +155,11 @@ export const embeddingsLayer = Layer.effect(
   Embeddings,
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient
-    const key = yield* Config.Redacted('EXPLABS_API_KEY').pipe(
-      Effect.mapError(() =>
-        ServiceUnavailable.make({
-          service: 'memory',
-          message: 'EXPLABS_API_KEY is unconfigured',
-        }),
-      ),
-    )
-    const model = yield* embeddingModel.pipe(
-      Effect.mapError(() =>
-        ServiceUnavailable.make({ service: 'memory', message: 'VIVID_EMBEDDING_MODEL is invalid' }),
-      ),
-    )
-    const dimensions = yield* embeddingDimensions.pipe(
-      Effect.mapError(() =>
-        ServiceUnavailable.make({
-          service: 'memory',
-          message: 'VIVID_EMBEDDING_DIMENSIONS is invalid',
-        }),
-      ),
-    )
+    // Memory needs the gateway for every embedding, so the key is required while the server is
+    // composed. The gateway not answering later is a typed failure on that call, below.
+    const key = yield* modelGatewayKey
+    const model = yield* embeddingModel
+    const dimensions = yield* embeddingDimensions
     /** Cache successes for warm recall and identical remembers; failed/rate-limited requests are never cached. */
     const embedBatch = Effect.fn('Embeddings.embed')(function* (texts) {
       if (texts.length === 0) return []

@@ -5,18 +5,23 @@ and invitation concepts use Better Auth's organization-plugin backend, but are c
 physical model names `company` and `membership`. That mapping is internal to the auth boundary;
 the contracts and HTTP routes use only the Vivid glossary terms.
 
-Browser clients and the Electron web renderer use Better Auth's HttpOnly session cookie. Expo
-uses a bearer session token kept in SecureStore on native devices. The device-authorization
-plugin supports pairing; mobile implements the code exchange.
+Browser clients and the Electron web renderer use Better Auth's HttpOnly session cookie. The
+phone app uses a bearer session token kept in SecureStore.
 
-The desktop app's window is the web app, so it signs in with email and password in the window
-and keeps the same cookie. Google will not sign anyone in inside an app window, so for Google the
-shell opens the system browser on `GET /api/auth/desktop/google`, Google's callback sends the
-browser to a loopback address the shell listens on with a one-use code, and the window trades the
-code and a secret only the app holds for a session of its own at `POST /api/auth/desktop/session`
-(`src/auth/desktop.ts`, after `@better-auth/electron`; the wire contract is
-`packages/contracts/src/signin.ts`). No code is shown to the Person and nothing is approved by
-hand.
+No app signs in with a code a Person reads, types or approves; the device-authorization grant is
+not installed. Email and password are typed in each app. Google will not sign anyone in inside an
+app's own window, so both apps hand Google to a browser they do not own and get the result back
+the same way (`src/auth/signin.ts`, after `@better-auth/electron` and `@better-auth/expo`; the
+wire contract is `packages/contracts/src/signin.ts`): the app keeps a secret and sends its
+digest, Better Auth's own Google callback issues a one-use code only for the session it has just
+made, and the app trades the code and the secret for a session of its own.
+
+- The desktop shell opens the system browser on `GET /api/auth/desktop/google`. The code comes
+  back on a loopback address the shell listens on, and the window trades it at
+  `POST /api/auth/desktop/session` for a cookie.
+- The phone app opens the system browser on `GET /api/auth/phone/google`. The code comes back
+  on the app's own link (`vivid://signin`), which opens the app again, and the app trades it at
+  `POST /api/auth/phone/session` for the session's token.
 
 ## Configuration
 
@@ -60,13 +65,24 @@ mutation routes are closed; Company changes go through the audited product RPCs.
 
 ## External capabilities
 
-Integrations use Executor (`VIVID_EXECUTOR_URL` and `VIVID_EXECUTOR_KEY`), with account references
-stored in PostgreSQL and credentials held by Executor. Memory uses HelixDB when
-`VIVID_HELIX_URL` is set; when it is absent, memory calls report unavailable and nothing is learned.
-The Computer provider is selected by `VIVID_COMPUTER_PROVIDER` (`boat` or `docker`); no selection
-means unavailable. Boat was proven against the real service on 3 October 2026. Check the owning
-adapter files and [current status](../../docs/14-product-feature-set-and-grok-bot-parity.md) for
-configuration and limits. Models use the Experiential Labs gateway; Vivid adds no model retry layer.
+Every part of the product is required. The server does not start without the settings of any of
+these, and the failure names the variable (`requiredSetting` in `src/config.ts`):
+
+- **Computer:** Boat. `VIVID_BOAT_API_KEY` and `VIVID_BOAT_TEMPLATE` (`src/computers/README.md`).
+- **Memory:** HelixDB at `VIVID_HELIX_URL`, with embeddings through the model gateway.
+- **Integrations:** Executor. `VIVID_EXECUTOR_URL`, `VIVID_EXECUTOR_KEY` and
+  `VIVID_EXECUTOR_ORGANIZATION`. Account references are in PostgreSQL; Executor holds credentials.
+- **Texting:** Photon. `VIVID_PHOTON_PROJECT_ID` and `VIVID_PHOTON_PROJECT_SECRET`.
+- **Away notifications:** `VIVID_PUSH_VAPID_PUBLIC`, `VIVID_PUSH_VAPID_PRIVATE` and
+  `VIVID_PUSH_SUBJECT`.
+- **Models:** the Experiential Labs gateway, `EXPLABS_API_KEY`. Vivid adds no model retry layer.
+- **Sign-in with Google:** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_REDIRECT_URI`.
+
+There is no server that runs without one of them, and no local stand-in for any of them. What can
+still happen is the service itself not answering. That is never a mode the server settles into: it
+is a typed failure on the call that met it, the Person or Vivid is told it is not answering right
+now, and the next call tries again, so it is over when the service is back, with no restart. Check
+[current status](../../docs/14-product-feature-set-and-grok-bot-parity.md) for limits.
 
 Google OAuth above is for account sign-in. Google Integrations need their own operator sign-in
 client in Executor; these application credentials do not configure it.

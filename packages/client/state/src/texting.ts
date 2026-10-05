@@ -58,7 +58,7 @@ export const withLink = (current: ChannelListResponse, link: ChannelLink): Chann
 /** Where a channel stands, in the word or two a tile or a row has room for. */
 export const channelWords = (standing: ChannelStanding): string =>
   ChannelStanding.match(standing, {
-    Unavailable: () => 'Not set up',
+    Unavailable: () => 'Not available yet',
     NotConnected: () => 'Not connected',
     Confirming: () => 'Waiting for your text',
     Connected: () => 'Connected',
@@ -69,7 +69,7 @@ export const channelWords = (standing: ChannelStanding): string =>
  * there without a sentence here does not typecheck.
  */
 const SAID = {
-  ChannelUnavailable: (channel) => `${channel} is not set up on this Vivid yet.`,
+  ChannelUnavailable: (channel) => `Vivid cannot text on ${channel} yet.`,
   ChannelAddressInvalid: (channel) =>
     `That is not a phone number ${channel} can reach. Write it with its country code, like +234 801 234 5678.`,
   ChannelAddressTaken: () => 'That number is already connected to someone. Use a different number.',

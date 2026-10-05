@@ -154,9 +154,10 @@ export function ChannelControl({ link, acts }: { link: ChannelLink; acts: Textin
       <View style={{ paddingHorizontal: 16, paddingVertical: 14, gap: 14 }}>
         {ChannelStanding.guards.Unavailable(standing) && (
           <Head channel={channel} quiet words={words}>
-            {/* Shown, not hidden, so a Person looking for iMessage finds it and reads why there
-                is nothing to press: it is text, and looks like text. */}
-            This Vivid is not set up for {channel} yet.
+            {/* A channel Vivid does not text on yet (WhatsApp). Shown, not hidden, so a Person
+                looking for it finds it and reads why there is nothing to press: it is text, and
+                looks like text. */}
+            Vivid cannot text on {channel} yet.
           </Head>
         )}
         {ChannelStanding.guards.NotConnected(standing) && (

@@ -34,43 +34,43 @@ const listenHost = '::'
 const memoryPath = '/var/lib/vivid/memory'
 
 /**
- * Google sign-in is one atomic set: the client's id and secret and the address Google sends a
- * Person back to. `infra/env.ts` already refuses a partial set, so here it is all three or none,
- * and without them the server starts with Google sign-in off.
+ * Sign-in with Google. `infra/env.ts` requires all three, so the hosted server always offers it.
  */
-const googleAccess = (environment: InfrastructureEnvironment) =>
-  Option.match(
-    Option.all({
-      clientId: environment.googleClientId,
-      clientSecret: environment.googleClientSecret,
-      redirectUri: environment.googleRedirectUri,
-    }),
-    {
-      onNone: () => ({}),
-      onSome: (google) => ({
-        GOOGLE_CLIENT_ID: google.clientId,
-        GOOGLE_CLIENT_SECRET: google.clientSecret,
-        GOOGLE_REDIRECT_URI: google.redirectUri,
-      }),
-    },
-  )
+const googleAccess = ({ google }: InfrastructureEnvironment) => ({
+  GOOGLE_CLIENT_ID: google.clientId,
+  GOOGLE_CLIENT_SECRET: google.clientSecret,
+  GOOGLE_REDIRECT_URI: google.redirectUri,
+})
 
 /**
- * The server reaches Executor over the private mesh with a key minted on that Executor. Until
- * the key exists the three settings are absent together and Integrations are off; a URL without
- * its key and organization would stop the server at launch.
+ * The server reaches Executor over the private mesh with a key minted on that Executor.
+ * `infra/env.ts` requires the key and the organization, so the hosted server always has its
+ * Integrations; the server itself refuses to start with any of the three missing.
  */
-const executorAccess = (environment: InfrastructureEnvironment) =>
-  Option.match(environment.executor, {
-    onNone: () => ({}),
-    onSome: ({ key, organization }) => ({
-      VIVID_EXECUTOR_URL: privateUrl(serviceNames.executor, ports.executor),
-      VIVID_EXECUTOR_KEY: key,
-      VIVID_EXECUTOR_ORGANIZATION: organization,
-      /** Lets a Person add an Integration by address; true only with the Executor settings above. */
-      VIVID_EXECUTOR_PUBLIC_ONLY: 'true',
-    }),
-  })
+const executorAccess = ({ executor }: InfrastructureEnvironment) => ({
+  VIVID_EXECUTOR_URL: privateUrl(serviceNames.executor, ports.executor),
+  VIVID_EXECUTOR_KEY: executor.key,
+  VIVID_EXECUTOR_ORGANIZATION: executor.organization,
+  /** Lets a Person add an Integration by address; true only with the Executor settings above. */
+  VIVID_EXECUTOR_PUBLIC_ONLY: 'true',
+})
+
+/**
+ * Texting Vivid over iMessage. These two were on the hosted server by hand and in no file here,
+ * so texting worked by accident and a new environment would have had none (found 5 October
+ * 2026). They are part of the graph now: required at deploy and sent like everything else.
+ */
+const textingAccess = ({ texting }: InfrastructureEnvironment) => ({
+  VIVID_PHOTON_PROJECT_ID: texting.projectId,
+  VIVID_PHOTON_PROJECT_SECRET: texting.projectSecret,
+})
+
+/** Notifications while a Person is away, to browser and phone. */
+const pushAccess = ({ push }: InfrastructureEnvironment) => ({
+  VIVID_PUSH_VAPID_PUBLIC: push.publicKey,
+  VIVID_PUSH_VAPID_PRIVATE: push.privateKey,
+  VIVID_PUSH_SUBJECT: push.subject,
+})
 
 /**
  * Telemetry export is one atomic pair, absent until a backend exists. With it go the two names
@@ -89,6 +89,25 @@ const observabilityAccess = (environment: InfrastructureEnvironment) =>
     }),
   })
 
+/** A setting the server has its own default for is sent only when the deploy sets it. */
+const whenSet = (name: string, value: Option.Option<string>) =>
+  Option.match(value, { onNone: () => ({}), onSome: (set) => ({ [name]: set }) })
+
+/**
+ * Vivid's Computer on Boat. The key and the template are always sent: `infra/env.ts` refuses a
+ * deploy without them, and the server refuses to start without them, so the hosted server never
+ * runs without its Computer. Boat is the only provider, so there is no selector to set. Boat
+ * itself is not a resource of this graph; the server reaches it over the public internet.
+ */
+const computerAccess = ({ computer }: InfrastructureEnvironment) => ({
+  VIVID_BOAT_API_KEY: computer.key,
+  VIVID_BOAT_TEMPLATE: computer.template,
+  ...whenSet('VIVID_BOAT_ORG', computer.organization),
+  ...whenSet('VIVID_BOAT_SIZE', computer.size),
+  ...whenSet('VIVID_BOAT_LIFETIME_SECONDS', computer.lifetimeSeconds),
+  ...whenSet('VIVID_BOAT_MACHINE', computer.machine),
+})
+
 /**
  * The hosted product on Railway: PostgreSQL, the Flue runtime on the private mesh, and the
  * application server as the only public service. The server serves the built web app itself
@@ -96,8 +115,8 @@ const observabilityAccess = (environment: InfrastructureEnvironment) =>
  * origin exactly as they do behind the Vite proxy locally.
  *
  * Helix gives Vivid its memory and Executor its Integrations (`docs/24-executor-scale.md`).
- * Program isolation is not part of this graph yet: the server reports that capability as
- * unavailable (`docs/19-infrastructure.md`).
+ * Programs Vivid writes need nothing in this graph: they run on the Person's Computer, which the
+ * server reaches through its Computer provider (`docs/19-infrastructure.md`).
  */
 export const railwayResources = Effect.fn('railwayResources')(function* (
   target: DeploymentTarget,
@@ -268,7 +287,10 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
       EXPLABS_API_KEY: environment.modelGatewayKey,
       VIVID_HELIX_URL: privateUrl(serviceNames.helix, ports.helix),
+      ...computerAccess(environment),
       ...executorAccess(environment),
+      ...textingAccess(environment),
+      ...pushAccess(environment),
       ...decisionAccess,
       ...observabilityAccess(environment),
       ...googleAccess(environment),

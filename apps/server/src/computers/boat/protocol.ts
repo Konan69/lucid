@@ -96,6 +96,23 @@ export const Command = Schema.Struct({
   stderrTruncated: Schema.optionalKey(Schema.Boolean),
 })
 export type Command = typeof Command.Type
+/**
+ * One line of a streamed command (`stream: true`, `application/x-ndjson`): `started`, then output
+ * as the command writes it, then exactly one `exit` or `error`. `oomKilled` is sent by Boat (seen
+ * 5 October 2026) and is not in its published schema, so its absence is not an error.
+ */
+export const CommandFrame = Schema.Union([
+  Schema.Struct({ type: Schema.Literal('started') }),
+  Schema.Struct({ type: Schema.Literals(['stdout', 'stderr']), data: Schema.String }),
+  Schema.Struct({
+    type: Schema.Literal('exit'),
+    exitCode: Schema.NullOr(Schema.Int),
+    timedOut: Schema.Boolean,
+    oomKilled: Schema.optionalKey(Schema.Boolean),
+  }),
+  Schema.Struct({ type: Schema.Literal('error') }),
+])
+export type CommandFrame = typeof CommandFrame.Type
 export const Written = Schema.Struct({
   ok: Schema.Literal(true),
   type: Schema.Literal('file.written'),

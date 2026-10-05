@@ -42,8 +42,9 @@ On first launch, enter the reachable application origin, for example
 address is selected automatically. The Alchemy stack binds services to loopback; LAN/WSL use
 requires a separately exposed proxy or port forwarding.
 
-Sign in with email/password, create an account, or pair with a code approved by a signed-in
-browser at `/device`. Native session tokens are saved in Expo SecureStore and sent as bearer
+Sign in with email/password, create an account, or continue with Google. Google sign-in opens
+the system browser on Google's account list; picking an account opens the app again on the
+`vivid://signin` link, signed in (`src/data/google.ts`). Native session tokens are saved in Expo SecureStore and sent as bearer
 authority on HTTP requests and the live WebSocket. Browser preview keeps tokens in memory and
 persists only the server address, so reloading signs it out. This is a Person's session token;
 the runtime token stays on the application server.

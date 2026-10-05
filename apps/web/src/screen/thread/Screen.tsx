@@ -147,14 +147,6 @@ function Machine({ computer, onOpen }: { computer: Computer; onOpen: Option.Opti
         <Off />
       </Shot>
     ),
-    Unavailable: () => (
-      <Shot note={Option.some(<Note>Not set up here, so Vivid works without a computer.</Note>)}>
-        {/* Nothing to turn on, so nothing to press: the same frame, and not a button. */}
-        <div className={cn(FRAME, FLAT, 'aspect-16/10')}>
-          <Resting />
-        </div>
-      </Shot>
-    ),
   })
 }
 

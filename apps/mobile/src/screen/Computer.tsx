@@ -53,8 +53,8 @@ const hold = (data: LiveData, held: boolean) =>
 
 /**
  * Vivid's computer: a real machine that is this Person's alone. The screen says honestly where it
- * stands (not started, starting, running and who has the keyboard, off, failed, or not set up on
- * this installation) and gives the Person the controls that matter: turning it on and off, and
+ * stands (not started, starting, running and who has the keyboard, off, or failed) and gives the
+ * Person the controls that matter: turning it on and off, and
  * taking the keyboard and pointer, which stops Vivid acting on it until they hand it back.
  *
  * What it does not do is show the machine's screen. The web panel draws that with a

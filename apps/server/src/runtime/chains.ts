@@ -8,6 +8,7 @@ import {
   PersonId,
   RunId,
   RunState,
+  SendMessageRequest,
   ThreadId,
   RuntimeUnavailable,
 } from '@vivid/contracts'
@@ -21,6 +22,7 @@ import { observeRun, Settlement } from './settlement.ts'
 
 const Account = Schema.Struct({ user: Schema.Struct({ id: PersonId }) })
 const Receipt = Schema.Struct({ submissionId: RunId })
+const sendBody = HttpClientRequest.schemaBodyJson(SendMessageRequest)
 
 const cleanupFailed = () => Effect.sync(() => expect.fail('Thread proof cleanup failed'))
 export const chainLayer = Layer.mergeAll(testDatabaseLayer, NodeHttpClient.layerUndici)
@@ -102,11 +104,13 @@ const chainThread = Effect.fn('ThreadProof.thread')(function* (
   })
   /** The gateway, rather than the runtime token, admits exactly the Person's public message shape. */
   const send = Effect.fn('ThreadProof.send')(function* (body: string) {
-    const sent = yield* HttpClientRequest.bodyJson(
+    // Built from the contract the route decodes: the route answered 400 to every proof once
+    // `kind` became required and this body was still written by hand.
+    const sent = yield* sendBody(
       HttpClientRequest.post(new URL(`/api/vivid/${threadId}`, server)).pipe(
         HttpClientRequest.setHeader('cookie', cookie),
       ),
-      { body, idempotencyKey: NodeCrypto.randomUUID() },
+      SendMessageRequest.make({ kind: 'user', body, idempotencyKey: NodeCrypto.randomUUID() }),
     )
     const accepted = yield* http
       .execute(sent)
