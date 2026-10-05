@@ -43,25 +43,20 @@ const observedState = (record: MachineRecord, since: number) =>
     Match.exhaustive,
   )
 
-/** Adoption grants one Person ownership. Reject an existing holder before binding; the unique
- * constraint arbitrates cross-server races. In either refusal, discard only this unbound intent
- * so later retries never become an unresolved paid create or affect the winning Person. */
+/** Adoption grants one Person ownership; the unique constraint arbitrates cross-server races.
+ * Both refusals preserve the unbound row exactly: it may be a paid-create receipt whose response
+ * was lost before binding. Adoption has no 23-hour expiry check, so later ensures re-check the
+ * holder and fail MachineHeld again. Removing adoption replays the original request and
+ * idempotency key within the paid-create window; expired receipts still require reconciliation
+ * rather than issuing a second paid create. */
 const adopt = Effect.fn('Machine.boat.adopt')(function* (
   saved: Bindings,
   input: { readonly key: MachineKey; readonly binding: Binding; readonly id: ProviderId },
 ) {
   const held = yield* saved.holder(input.id)
-  if (Option.isSome(held) && held.value.key !== input.key) {
-    yield* saved.abandon(input.key, input.binding.intent)
+  if (Option.isSome(held) && held.value.key !== input.key)
     return yield* Effect.fail(new MachineHeld())
-  }
-  return yield* saved
-    .bind(input.key, input.binding.intent, input.id)
-    .pipe(
-      Effect.catchTag('MachineHeld', (failure) =>
-        saved.abandon(input.key, input.binding.intent).pipe(Effect.andThen(Effect.fail(failure))),
-      ),
-    )
+  return yield* saved.bind(input.key, input.binding.intent, input.id)
 })
 
 /** Only paid creates have an expiring provider idempotency receipt; adoption creates nothing. */

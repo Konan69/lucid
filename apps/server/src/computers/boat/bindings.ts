@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, eq, isNull, getTableName } from 'drizzle-orm'
+import { and, eq, getTableName } from 'drizzle-orm'
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core/errors'
 import * as SqlError from 'effect/unstable/sql/SqlError'
 import { Cause, Clock, Effect, Option, Predicate, Schema } from 'effect'
@@ -60,24 +60,6 @@ export const bindings = Effect.fn('Machine.boat.bindings')(function* () {
       const row = rows[0]
       return row === undefined ? Option.none<Binding>() : Option.some(yield* decode(row))
     },
-    (effect) => effect.pipe(Effect.mapError(() => new MachinePersistenceFailed())),
-  )
-  /** A refused adoption may remove only its own still-unbound intent, never a newer or bound row. */
-  const abandon = Effect.fn('Machine.boat.binding.abandon')(
-    (key: MachineKey, intent: string) =>
-      database
-        .run(
-          database
-            .delete(machineBindings)
-            .where(
-              and(
-                eq(machineBindings.key, key),
-                eq(machineBindings.intent, intent),
-                isNull(machineBindings.providerId),
-              ),
-            ),
-        )
-        .pipe(Effect.asVoid),
     (effect) => effect.pipe(Effect.mapError(() => new MachinePersistenceFailed())),
   )
   const intend = Effect.fn('Machine.boat.binding.intend')(
@@ -148,6 +130,6 @@ export const bindings = Effect.fn('Machine.boat.bindings')(function* () {
     },
     (effect) => effect.pipe(Effect.mapError(() => new MachinePersistenceFailed())),
   )
-  return { load, holder, abandon, intend, bind, observe }
+  return { load, holder, intend, bind, observe }
 })
 export type Bindings = Effect.Success<ReturnType<typeof bindings>>

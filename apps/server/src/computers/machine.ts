@@ -123,7 +123,7 @@ export class MachineRequestRejected extends Schema.TaggedError<MachineRequestRej
 export class MachineHeld extends Schema.TaggedError<MachineHeld>()(
   'MachineHeld',
   {},
-  { title: 'The Computer belongs to another account' },
+  { title: 'MachineHeld' },
 ) {}
 
 /** File persistence is required before provisioning and cannot be replaced by an in-memory binding. */

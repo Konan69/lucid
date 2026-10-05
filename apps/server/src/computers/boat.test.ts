@@ -33,6 +33,8 @@ import { machineFailureReason } from './store.ts'
 const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j9f8AAAAASUVORK5CYII='
 const id = 'bx_23456789'
+// The installed machine differs from the paid one so switching adoption cannot fake a collision.
+const adoptedId = 'bx_3456789a'
 interface EvidenceService {
   readonly state: Ref.Ref<'ready' | 'archived'>
   readonly created: Ref.Ref<number>
@@ -114,8 +116,8 @@ const decodeAddress = Schema.decodeUnknownEffect(Schema.String)
 const decodeArgs = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
 )
-const record = (state: 'ready' | 'archived') => ({
-  id,
+const record = (state: 'ready' | 'archived', providerId: string) => ({
+  id: providerId,
   name: 'Fixture',
   state,
   desktopAvailable: state === 'ready',
@@ -406,7 +408,7 @@ const create = Effect.fn('BoatTest.create')(function* (
     type: 'sandbox.created',
     status: 'ready',
     ttlSeconds: body.ttlSeconds,
-    sandbox: record('ready'),
+    sandbox: record('ready', id),
   })
 })
 const commands = Effect.fn('BoatTest.commands')(function* (evidence: EvidenceService) {
@@ -451,14 +453,18 @@ const serverLayer = Layer.effect(
       const path = request.url.split('?')[0]
       if (path === '/api/v1/sandboxes' && request.method === 'POST')
         return yield* create(evidence, request)
-      if (path === `/api/v1/sandboxes/${id}` && request.method === 'GET') {
+      if (
+        (path === `/api/v1/sandboxes/${id}` || path === `/api/v1/sandboxes/${adoptedId}`) &&
+        request.method === 'GET'
+      ) {
+        const requestedId = path === `/api/v1/sandboxes/${adoptedId}` ? adoptedId : id
         if (yield* Ref.get(evidence.malformed))
           return HttpServerResponse.jsonUnsafe({ ok: true, sandbox: {} })
         return HttpServerResponse.jsonUnsafe({
           ok: true,
           type: 'sandbox.info',
-          sandbox: Object.assign({}, record(yield* Ref.get(evidence.state)), {
-            id: (yield* Ref.get(evidence.wrongIdentity)) ? 'bx_abcdefgh' : id,
+          sandbox: Object.assign({}, record(yield* Ref.get(evidence.state), requestedId), {
+            id: (yield* Ref.get(evidence.wrongIdentity)) ? 'bx_abcdefgh' : requestedId,
           }),
         })
       }
@@ -518,7 +524,11 @@ const serverLayer = Layer.effect(
           size: file.content.length,
         })
       }
-      if (path === `/api/v1/sandboxes/${id}/commands`) return yield* commands(evidence)
+      if (
+        path === `/api/v1/sandboxes/${id}/commands` ||
+        path === `/api/v1/sandboxes/${adoptedId}/commands`
+      )
+        return yield* commands(evidence)
       return rejected(404)
     }).pipe(Effect.catch(() => Effect.succeed(rejected(400))))
     yield* server.serve(application)
@@ -559,7 +569,7 @@ const adoptedLayer = configured({
   VIVID_BOAT_API_KEY: 'protocol-test-key',
   VIVID_BOAT_ORG: 'personal',
   VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
-  VIVID_BOAT_MACHINE: id,
+  VIVID_BOAT_MACHINE: adoptedId,
 })
 /** An account that belongs to no organization: there is only the key. */
 const accountLayer = configured({
@@ -581,7 +591,7 @@ const fixture = Effect.fn('BoatTest.fixture')(function* () {
 
 describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => {
   it.effect(
-    'adopts the configured machine for one Person and cleanly refuses another account',
+    'adopts the configured machine for one Person and preserves another account’s refused intent',
     () =>
       Effect.gen(function* () {
         const first = yield* fixture()
@@ -590,7 +600,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         const saved = yield* bindings()
         const evidence = yield* Evidence
         expect((yield* machine.ensure(first))._tag).toBe('Running')
-        expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: id }))
+        expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: adoptedId }))
         const failure = yield* machine.ensure(second).pipe(Effect.flip)
         expect(failure._tag).toBe('MachineHeld')
         expect(machineFailureReason(failure)).toBe(
@@ -598,17 +608,19 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         )
         expect(JSON.stringify(failure)).not.toContain(first)
         expect(JSON.stringify(failure)).not.toContain(second)
-        expect(yield* saved.load(second)).toEqual(Option.none())
-        expect((yield* machine.inspect(second))._tag).toBe('Absent')
+        const refused = yield* saved.load(second)
+        expect(refused).toMatchObject(Option.some({ providerId: null, observedState: 'intent' }))
+        expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+        expect(yield* saved.load(second)).toEqual(refused)
         expect((yield* machine.ensure(first))._tag).toBe('Running')
-        expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: id }))
+        expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: adoptedId }))
         expect(yield* Ref.get(evidence.created)).toBe(0)
         expect(yield* Ref.get(evidence.intents)).toEqual([])
       }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
   )
 
   it.effect(
-    'cleans a held adoption’s stale unbound intent instead of treating it as a paid create',
+    'preserves a stale unbound intent and rechecks ownership without the paid-create age limit',
     () =>
       Effect.gen(function* () {
         const first = yield* fixture()
@@ -625,14 +637,20 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
             .set({ requestedAt: -24 * 60 * 60_000 })
             .where(eq(machineBindings.key, second)),
         )
+        const original = yield* saved.load(second)
+        expect(original).toMatchObject(
+          Option.some({ providerId: null, requestedAt: -24 * 60 * 60_000 }),
+        )
         expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
-        expect(yield* saved.load(second)).toEqual(Option.none())
+        expect(yield* saved.load(second)).toEqual(original)
+        expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+        expect(yield* saved.load(second)).toEqual(original)
         expect((yield* machine.ensure(first))._tag).toBe('Running')
         expect(yield* Ref.get((yield* Evidence).created)).toBe(0)
       }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
   )
 
-  it.effect('maps a real provider-id collision and abandons only the matching unbound intent', () =>
+  it.effect('maps a real provider-id collision without changing either account’s receipt', () =>
     Effect.gen(function* () {
       const first = yield* fixture()
       const second = yield* fixture()
@@ -645,15 +663,60 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         (yield* saved.bind(second, waiting.intent, Protocol.ProviderId.make(id)).pipe(Effect.flip))
           ._tag,
       ).toBe('MachineHeld')
-      yield* saved.abandon(first, owner.intent)
-      yield* saved.abandon(second, owner.intent)
       expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: id }))
       expect(yield* saved.load(second)).toEqual(Option.some(waiting))
-      yield* saved.abandon(second, waiting.intent)
-      expect(yield* saved.load(second)).toEqual(Option.none())
       expect(yield* saved.holder(Protocol.ProviderId.make(id))).toMatchObject(
         Option.some({ key: first }),
       )
+    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  )
+
+  it.effect('replays the original paid-create receipt after adoption is refused and removed', () =>
+    Effect.gen(function* () {
+      const first = yield* fixture()
+      const second = yield* fixture()
+      const machine = yield* Machine
+      const saved = yield* bindings()
+      const api = yield* transport()
+      const evidence = yield* Evidence
+      const original = yield* saved.intend(second, api.create)
+      // Rebuild the Machine layer and replace settings to remove adoption, retaining SQL and HTTP.
+      // A new release must not replace the persisted request when recovering the lost receipt.
+      const paidLayer = Layer.fresh(boatMachineLayer).pipe(
+        Layer.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              VIVID_BOAT_API_KEY: 'protocol-test-key',
+              VIVID_BOAT_ORG: 'personal',
+              VIVID_BOAT_TEMPLATE: 'vivid-computer-new-release',
+            }),
+          ),
+        ),
+      )
+      yield* Ref.set(evidence.breakCreate, true)
+      const lost = yield* Effect.gen(function* () {
+        return yield* (yield* Machine).ensure(second).pipe(Effect.flip)
+      }).pipe(Effect.provide(paidLayer))
+      expect(lost._tag).toBe('MachineRequestRejected')
+      expect(yield* saved.load(second)).toEqual(Option.some(original))
+      expect(yield* Ref.get(evidence.created)).toBe(1)
+      expect(yield* Ref.get(evidence.intents)).toEqual([original.intent])
+      expect((yield* machine.ensure(first))._tag).toBe('Running')
+      expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+      expect(yield* saved.load(second)).toEqual(Option.some(original))
+      expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+      expect(yield* saved.load(second)).toEqual(Option.some(original))
+      expect((yield* machine.ensure(first))._tag).toBe('Running')
+      const recovered = yield* Effect.gen(function* () {
+        return yield* (yield* Machine).ensure(second)
+      }).pipe(Effect.provide(paidLayer))
+      expect(recovered._tag).toBe('Running')
+      expect(yield* saved.load(second)).toMatchObject(
+        Option.some({ intent: original.intent, request: original.request, providerId: id }),
+      )
+      expect(yield* Ref.get(evidence.intents)).toEqual([original.intent, original.intent])
+      expect(yield* Ref.get(evidence.created)).toBe(1)
+      expect((yield* machine.ensure(first))._tag).toBe('Running')
     }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
   )
 
