@@ -152,6 +152,14 @@ Required by the stack:
 - `AUTH_SECRET` — the server requires at least 32 characters, 12 distinct characters, and 3 character classes.
 - `EXPLABS_API_KEY` — the Experiential Labs model gateway.
 - `VIVID_RUNTIME_TOKEN` — shared only between the application server and Flue runtime.
+- `VIVID_BOAT_API_KEY` — the Boat key Vivid's Computer is reached with. A secret.
+- `VIVID_BOAT_TEMPLATE` — the name of the prepared Boat template a Person's Computer is restored
+  from (`infra/computer/prepare.py` prints it).
+
+The Computer is part of the product, so the last two are required like the first three: the stack
+stops before it touches the target and names the variable it lacks. `VIVID_BOAT_ORG`,
+`VIVID_BOAT_SIZE`, `VIVID_BOAT_LIFETIME_SECONDS` and `VIVID_BOAT_MACHINE` are forwarded to the
+hosted server when set (`apps/server/src/computers/README.md` says what each does).
 
 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` form one optional atomic
 set for account sign-in. They do not configure Google Integrations in Executor. `VIVID_MODEL`
@@ -159,13 +167,11 @@ defaults to `explabs/glm-5.3-flash`; pi `0.87.1` and the provider at
 `packages/agent/runtime/src/providers/explabs.ts` supply model access. Vivid adds no model retry
 or fallback layer. AWS credentials are not required locally.
 
-The server also has adapters for Executor (`VIVID_EXECUTOR_URL`, `VIVID_EXECUTOR_KEY`), HelixDB
-(`VIVID_HELIX_URL` and embedding configuration), and Boat (`VIVID_COMPUTER_PROVIDER=boat` and
-Boat configuration). These services are not provisioned here, and their environment values are
-not explicitly forwarded by the stack today. Check the owning adapters for their exact contract.
-Boat was proven against the real service on 3 October 2026; that does not prove this stack
-configures the provider. With no Computer provider or HelixDB address, those capabilities report
-unavailable.
+The hosted stack runs HelixDB as a Railway service and gives the server its private address
+(`VIVID_HELIX_URL`), and it gives the server the Boat settings above. Boat itself is an outside
+service the stack does not provision. The local process graph forwards neither: `Command.Dev`
+merges the stack's variables over the environment `pnpm infra:dev` was started in, so a local
+server reads `VIVID_HELIX_URL` and the Boat settings from that environment.
 
 Outputs contain only web, server, and runtime URLs. Database and application secrets are never
 outputs. Local Alchemy resources create no AWS bill, but real model calls and external services
