@@ -256,9 +256,12 @@ the screen union belongs to its own lane. Runtime placement and external state s
 
 ## Reaching the Computer: one SSH connection
 
-**Status: decided 5 October 2026; being built on `feat/native-computer`; none of it is on `main`
-yet.** This is the step between today and "Runtime on the Computer" below. It is deliberately thin,
-because it is deleted when the runtime moves onto the machine.
+**Status: decided 5 October 2026. Built on `feat/native-computer`: the server holds the connection
+and Vivid has Flue's six file and shell tools on its Computer. It is proven against a real SSH
+server that is not a Computer; it has not yet run on a Person's Computer (see "Not verified").
+`run_command` is still there and goes once that run is done.** This is the step between today and
+"Runtime on the Computer" below. It is deliberately thin, because it is deleted when the runtime
+moves onto the machine.
 
 ### What is wrong today
 
@@ -365,14 +368,69 @@ reach a machine, so starting a conversation does not wake the Computer. With the
 the slot they would, so the rule is: while the Computer is not running, these four questions are
 answered "nothing there" without waking it, and only a tool the model calls wakes it.
 
+### What was built, and where
+
+- `apps/server/src/computers/ssh/link.ts`: one connection; a command, a file read, a file put. It
+  knows SSH only. `ssh/links.ts` keeps one per machine. `ssh/peer.ts` is the SSH server tests use.
+- `apps/server/src/computers/boat.ts`: asks the provider to authorize the key and for the address
+  before every new connection; closes the connection when the machine stops or a call finds it gone.
+- Machine boundary (`machine.ts`): `run`, `read`, `put`. Store (`store.ts`): the same three, which
+  wake the Computer, refuse while the Person holds it, and count as activity. They ask no Approval
+  and consult no rule, by the Person's decision.
+- Calls: `ComputerShell`, `ComputerFileRead`, `ComputerFileWrite` (`packages/contracts`).
+- Runtime: `packages/agent/runtime/src/tools/sandbox.ts` is the machine in Flue's slot.
+- Setting: `VIVID_COMPUTER_SSH_KEY`, the base64 of an OpenSSH private key file. Required: a server
+  without it does not start. The public half is derived from it.
+
+### Decisions the research settled
+
+- **Library: `ssh2` 1.17.0, MIT, pinned.** Read in its installed source: `lib/client.js` (`connect`,
+  `exec`, `sftp`, `hostVerifier`, keepalive) and `lib/protocol/SFTP.js`. One connection carries many
+  channels and the SFTP subsystem. `hostVerifier` receives the host's key bytes, which are compared
+  with the key the provider reported; a different key ends the connection before anything is sent.
+  A keepalive every 15 seconds, three lost, ends a dead connection. It is the most used Node SSH
+  client; its optional native accelerators are not built. Not the `ssh` program: the server image
+  has none, and a program per call would pay the handshake each time.
+- **A command the model cancels.** Closing an SSH channel does not end a command that has no
+  terminal (seen: it ran on). So every command runs under coreutils `timeout`, which makes it a
+  process group: at the deadline the group is signalled and, two seconds later, killed. When the
+  caller stops waiting, `timeout` is sent TERM over the channel and does the same. Tested: the
+  command's child process is gone from the machine in both cases.
+- **Limits.** Kept: a deadline on every command (120 seconds when the model gives none, 600 at
+  most, because one call waits that long), and the Person's takeover. Dropped: the 8,000-character
+  command limit (now 100,000), the 32,768-character output limit (now the last 262,144 bytes of
+  each stream; Flue shows the model the last 50 KB), the Approval check and the rules check. A
+  file read or put in one call is at most 10 MB; larger files are a command's work.
+- **Starting a conversation.** The sandbox does not answer Flue's three discovery questions from
+  the machine: `exists` says no, `stat` and `readdir` refuse. Flue's six tools never call them
+  (they use `readFile`, `writeFile`, `exec`, `resolvePath`). This holds whether the Computer is
+  asleep or awake, for two more reasons than the wake: a file in the Computer's home must not
+  become part of Vivid's instructions, and a skill directory there with the name of one of
+  Vivid's skills would stop every conversation (Flue throws on that at start). Vivid lists and
+  inspects files with `bash`. Tested through Flue itself: a conversation that only looks at the
+  desktop sends the server one call, the desktop one.
+- **Waiting for a woken machine.** The store waits at most 90 seconds for the provider to say the
+  machine runs, and answers "did not become ready within 90 seconds" otherwise. Opening SSH then
+  tries every two seconds while the machine cannot be reached, for at most 75 seconds, and answers
+  "not answering" otherwise. Neither hangs. A wrong host key or a refused key is not retried.
+
 ### Not verified
 
+- Any of it on a Person's Computer. There is no test Computer. After the deploy, check on
+  production, in this order: the server starts with `VIVID_COMPUTER_SSH_KEY` set; in a Thread ask
+  Vivid to write a file on its computer and read it back (`write`, `read`); ask for a command
+  (`bash`); stop the Computer, start a conversation that does not need it, and confirm it stays
+  stopped; ask for a file again and confirm it wakes and answers.
+- A real model turn using the tools. The test drives Flue's own tool code through the server's
+  functions against a real SSH server, with no model and no HTTP hop between runtime and server.
+- Whether cancelling a tool call in the runtime interrupts the server's call. The server ends the
+  command when its call is interrupted (tested); the interruption crossing the RPC was not.
 - How long after a wake a machine accepts SSH. Its command endpoint refuses for 20 to 40 seconds.
   One wake watched on 5 October had not finished starting after ten minutes.
-- The same steps on a Person's Computer. There is no test Computer: the proof on one can only be
-  run on the deployed product.
 - A direct IPv4 session from the hosted server. Only the connection and first bytes were measured
   on that path; the whole session was run through the endpoint.
+- OpenSSH on the Computer accepting a signal request on a channel (it needs OpenSSH 7.9 or later;
+  tested against OpenSSH on Ubuntu). Without it a cancelled command ends at its deadline instead.
 
 ## Runtime on the Computer: planned
 
