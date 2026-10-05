@@ -5,6 +5,7 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Redacted from 'effect/Redacted'
 import * as Ref from 'effect/Ref'
+import * as Schema from 'effect/Schema'
 import { hostedExecutorFixture, hostedPrefix, hostedService } from './testing.ts'
 import { DecisionModel } from 'effect/unstable/ai'
 import { ScriptedAnswer } from '../decisions/testing.ts'
@@ -13,6 +14,7 @@ import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import {
   Executor,
   ExecutorAppId,
+  ExecutorAuthorizationId,
   ExecutorOwnerId,
   ExecutorProfileId,
   ExecutorReferences,
@@ -154,5 +156,41 @@ it.effect('cannot distinguish declared writes from host-defaulted writes', () =>
       ),
     )
     expect(judged.map((tool) => tool.effect)).toEqual(['read', 'read'])
+  }),
+)
+
+/** Executor may echo rejected secrets in its HTTP payload. Completion exposes only the fixed
+ * domain refusal, never that payload or the encoded key in an Error message or public fields. */
+it.effect('does not echo a token when credential submission fails', () =>
+  Effect.gen(function* () {
+    const hosted = yield* hostedExecutorFixture()
+    const token = 'synthetic-token-that-must-stay-private'
+    yield* Ref.update(hosted.replies, (replies) =>
+      new Map(replies).set(`POST ${hostedPrefix}/connections/authorization/submit`, {
+        status: 422,
+        body: Schema.TaggedStruct('AccountFieldsInvalid', {
+          message: Schema.String,
+          supplied: Schema.String,
+        }).make({ message: token, supplied: token }),
+      }),
+    )
+    const references = ExecutorReferences.cases.EnteringKey.make({
+      service: hostedService,
+      app: ExecutorAppId.make('app'),
+      profile: ExecutorProfileId.make('profile'),
+      owner: ExecutorOwnerId.make('owner'),
+      authorization: ExecutorAuthorizationId.make('authorization'),
+      method: 'pat',
+      label: 'Private',
+    })
+    const error = yield* Effect.gen(function* () {
+      return yield* (yield* Executor).complete({
+        references,
+        fields: { token: Redacted.make(token) },
+      })
+    }).pipe(Effect.provide(hosted.configured), Effect.flip)
+    expect(error._tag).toBe('ExecutorRejected')
+    expect(error.message).not.toContain(token)
+    expect(JSON.stringify(error)).not.toContain(token)
   }),
 )

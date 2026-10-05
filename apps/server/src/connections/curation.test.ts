@@ -150,3 +150,25 @@ it.effect(
       expect(find(services, '').services.map((entry) => entry.id)).not.toContain(unreviewed.id)
     }),
 )
+
+/** Personal-key policy must survive stale OAuth/operator hints without a probe or UI special case. */
+it.effect(
+  'offers GitHub token entry and its instructions even when upstream OAuth needs setup',
+  () =>
+    Effect.gen(function* () {
+      const document = yield* decodeCuration(data)
+      const github = Service.make({
+        id: ServiceId.make('curated/github-com-mcp'),
+        name: 'GitHub',
+        description: '',
+        mark: null,
+        authorization: ServiceAuthorization.cases.SetupRequired.make({}),
+      })
+      const found = curatedSearch(document)([github], 'GitHub')
+      expect(found.services[0]).toMatchObject({
+        authorization: { fields: [{ name: 'token', label: 'Personal access token' }] },
+        curation: { auth: 'PersonKey', worksNow: true },
+        description: expect.stringContaining('fine-grained or classic'),
+      })
+    }),
+)

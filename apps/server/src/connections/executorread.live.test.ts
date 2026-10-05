@@ -2,7 +2,7 @@ import * as NodeProcess from 'node:process'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
 import { ConnectionId, ServiceId } from '@vivid/contracts'
-import { ConfigProvider, Effect, Layer, Logger, Redacted } from 'effect'
+import { ConfigProvider, Effect, Layer, Logger, Redacted, Ref } from 'effect'
 import {
   Executor,
   ExecutorOwnerId,
@@ -46,11 +46,13 @@ describe.skipIf(!enabled)('GitHub authenticated read acceptance', () => {
           returnAddress: 'https://vivid.example.test/api/connections/return',
         }
         const step = yield* executor.begin(input)
+        const removed = yield* Ref.make(false)
         // Register cleanup before assertions or token submission can fail.
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
-            const removed = yield* executor.remove(step.references).pipe(Effect.exit)
-            expect(removed._tag).toBe('Success')
+            if (yield* Ref.get(removed)) return
+            const cleanup = yield* executor.remove(step.references).pipe(Effect.exit)
+            expect(cleanup._tag).toBe('Success')
           }),
         )
         expect(ExecutorStep.guards.EnterKey(step)).toBe(true)
@@ -69,7 +71,12 @@ describe.skipIf(!enabled)('GitHub authenticated read acceptance', () => {
           return expect.fail('GitHub must expose its authenticated account read')
         const outcome = yield* executor.call({ references, tool: tool.name, input: {} })
         expect(ExecutorCallOutcome.guards.Completed(outcome)).toBe(true)
-        console.log('ok', tools.length)
+        yield* executor.remove(references)
+        yield* Ref.set(removed, true)
+        const unavailable = yield* executor.tools(references).pipe(Effect.flip)
+        // beta.8 masks a deleted app as organization access denial, before its tool route.
+        expect(unavailable._tag).toBe('ExecutorAccessDenied')
+        NodeProcess.stdout.write(`GitHub read tools=${tools.length} reads=1 removed-app=1\n`)
         return yield* Effect.void
       }).pipe(Effect.scoped, Effect.provide(configured), Effect.provide(Logger.layer([]))),
     { timeout: 120_000 },

@@ -104,13 +104,15 @@ const mcpSource = Effect.fn('Connections.mcpSource')(function* (
   return ConnectionSource.cases.Mcp.make({ address: address.href, authorization })
 })
 
-/** OAuth metadata selects discovery; a plain Bearer challenge selects a masked token field. */
+/** OAuth metadata selects discovery. Missing metadata on an anonymous 401/403, with or without
+ * a Bearer challenge, selects the static-key card; other explicit schemes remain unsupported. */
 const mcpAuthorization = Effect.fn('Connections.mcpAuthorization')(function* (
   address: URL,
   response: HttpClientResponse.HttpClientResponse,
 ) {
   const challenge = response.headers['www-authenticate']
-  if (challenge === undefined || !/^Bearer(?:\s|$)/iu.test(challenge))
+  if (challenge === undefined) return yield* mcpSource(address, 'apiKey')
+  if (!/^Bearer(?:\s|$)/iu.test(challenge))
     return yield* Effect.fail(
       ConnectionAddressInvalid.make({
         reason: 'unsupported integration authorization or specification',

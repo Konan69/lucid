@@ -20,6 +20,10 @@ export const executorFailure = Match.type<ExecutorFailure>().pipe(
         message: 'Public integration address enforcement is not configured.',
       }),
     ServiceUnavailable: (error) => error,
+    ExecutorOAuthSetupFailed: () =>
+      new InvalidRequest({
+        message: 'This Integration could not prepare sign-in. Review its OAuth configuration.',
+      }),
     ExecutorSetupRequired: () => new InvalidRequest({ message: connectionSetupMessage }),
     ExecutorInputInvalid: () =>
       new InvalidRequest({ message: 'Tool input did not match its schema.' }),

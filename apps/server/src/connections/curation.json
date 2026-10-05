@@ -14582,10 +14582,10 @@
       "tier": "Core",
       "kind": "developer",
       "why": "What most people use every day.",
-      "auth": "OneTap",
+      "auth": "PersonKey",
       "operator": null,
       "worksNow": true,
-      "authScheme": "mixed",
+      "authScheme": "pat",
       "sourceKind": "mcp",
       "classifier": "Reviewed"
     },
@@ -61064,5 +61064,14 @@
       "sourceKind": "openapi",
       "classifier": "Reviewed"
     }
-  ]
+  ],
+  "keyed": {
+    "curated/github-com-mcp": {
+      "address": "https://api.githubcopilot.com/mcp/",
+      "host": "api.githubcopilot.com",
+      "header": "Authorization",
+      "prefix": "Bearer ",
+      "instruction": "Use a fine-grained or classic GitHub personal access token with permissions for the tools you need."
+    }
+  }
 }
