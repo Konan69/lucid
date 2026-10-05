@@ -8,7 +8,7 @@ import {
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
-import { draftPlace, standingWords, titleFromMessage, workspaceKey } from '@vivid/state'
+import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useMemo, useRef, useState } from 'react'
@@ -20,25 +20,26 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
-import { Monitor, Share2, SquarePen, Users } from 'lucide-react-native'
+import { Share2, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { commit } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
 import { useDrawerOpened } from '../data/drawer'
 import { inFront, onForeground } from '../data/foreground'
 import { LiveState, refusalOf, useLive, useLiveData } from '../data/live'
-import { isShown, isStreaming, lastWordsOf, type Around } from '../data/message'
+import { isShown, lastWordsOf, type Around } from '../data/message'
 import { endingOf, newestRun } from '../data/outcome'
+import { Stand, standIn } from '../data/stand'
 import { conversation, say, UNDELIVERED, UNTITLED } from '../data/threads'
 import { Composer } from '../ui/Composer'
-import { BarRoom, MenuBar, MenuStandingBar, type BarAction } from '../ui/Bar'
+import { BarRoom, NO_ACTIONS, NOBODY, VividBar, type BarAction } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
+import { useOrigin, type Origin } from '../ui/Presence'
 import {
   Button,
   EDGE,
   Empty,
-  Face,
   GUTTER,
   Label,
   Notice,
@@ -46,12 +47,10 @@ import {
   Skeleton,
   styles,
   TARGET,
-  type Tone,
 } from '../ui/ui'
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
-import { ThinkingOrb } from '../../vendor/orb'
-import { useFront, useGo, useMe } from '../workspace'
+import { useFront, useMe } from '../workspace'
 import { Message } from './chat/Message'
 import { Share } from './chat/Share'
 
@@ -123,9 +122,17 @@ function Present({ id }: { id: ThreadId }) {
  */
 function Gone() {
   const front = useFront()
+  // There is no composer here, so nothing is ever sent from this origin.
+  const origin = useOrigin()
   return (
     <Screen>
-      <MenuBar mood="neutral" />
+      <VividBar
+        stand={Stand.Resting({ mood: 'happy' })}
+        origin={origin}
+        inverted={false}
+        present={NOBODY}
+        actions={NO_ACTIONS}
+      />
       {/* A scroller, so the system keeps these words clear of a glass bar as it does a list. */}
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
@@ -139,17 +146,6 @@ function Gone() {
   )
 }
 
-/**
- * How Vivid is doing in a Thread, beside the words for it (`standingWords`, shared with the web):
- * the ink the line under the title is said in, where the bar is the app's to colour.
- */
-const STANDING_TONE = {
-  Working: 'status-working',
-  NeedsYou: 'status-attention',
-  Unread: 'ink-3',
-  Quiet: 'ink-3',
-} as const satisfies Record<Thread['attention'], Tone>
-
 /** Who can see a Thread, in a sentence, for whoever cannot see the mark that says so. */
 const audienceWords = (thread: Thread): string =>
   ThreadAudience.match(thread.audience, {
@@ -159,50 +155,36 @@ const audienceWords = (thread: Thread): string =>
   })
 
 /**
- * The top of a Thread, said to the system's bar (`ui/Bar.tsx`); nothing is drawn here: the
- * Thread's title, and under it a line saying how Vivid is doing right now (here, working,
- * waiting for the Person). While someone else is writing, the line says
- * that instead, because it is the thing about to change the Thread. Beside the title: who else
- * is looking. In the bar's own buttons: who the Thread is shared with, the way to Vivid's
- * computer, and the way to a new Thread. The bar starts with Vivid's mark, which opens the menu
- * and is thinking while Vivid is at work here.
+ * The top of a Thread (`VividBar`): Vivid in the middle, saying how it is doing right now
+ * (thinking, waiting for the Person, or simply there), or who else is writing (`standIn`). At
+ * the end of the bar: who else is looking, who the Thread is shared with, and the way to call
+ * Vivid. The way to a new Thread and to Vivid's computer are in Vivid's own menu, under its
+ * capsule (`ui/Presence.tsx`); a new Thread is also in the menu the bar starts with.
+ *
+ * The Thread's title is not here. The bar's middle is Vivid's, as the owner asked, and the title
+ * is where the Person chose the Thread: its row in the menu.
  */
 function Top({
   thread,
   present,
   working,
+  origin,
   onShare,
 }: {
   thread: Option.Option<Thread>
   present: ThreadDetail['present']
   /** Vivid is answering on this phone right now, which the Thread's record may not say yet. */
   working: boolean
+  /** The composer on this screen, where a send leaves from on its way to the top. */
+  origin: Origin
   onShare: () => void
 }) {
   const me = useMe()
-  const go = useGo()
-  const front = useFront()
   const others = present.filter((seen) => seen.person.id !== me.person.id)
   const typing = others.filter((seen) => seen.typing)
   const attention: Thread['attention'] = working
     ? 'Working'
     : Option.match(thread, { onNone: () => 'Quiet', onSome: (value) => value.attention })
-  const someoneTyping = typing.length > 0
-  const computer: BarAction = {
-    symbol: 'desktopcomputer',
-    icon: Monitor,
-    label: 'Vivid’s computer',
-    disabled: false,
-    onPress: () => go.navigate('Computer'),
-  }
-  // Back to the greeting and an empty composer, in this same place.
-  const fresh: BarAction = {
-    symbol: 'square.and.pencil',
-    icon: SquarePen,
-    label: 'New thread',
-    disabled: false,
-    onPress: () => front.fresh(),
-  }
   // Who can see the Thread is a choice only inside a Company.
   const sharing = Option.map(
     Option.filter(thread, () => Workspace.guards.Company(me.workspace)),
@@ -219,19 +201,18 @@ function Top({
     },
   )
   return (
-    <MenuStandingBar
-      mood={attention === 'Working' ? 'thinking' : 'happy'}
-      title={Option.match(thread, { onNone: () => '', onSome: (value) => value.title })}
-      standing={{
-        words: someoneTyping
-          ? `${typing.map((seen) => seen.person.name).join(', ')} typing…`
-          : standingWords[attention],
-        tone: someoneTyping ? 'ink-3' : STANDING_TONE[attention],
-      }}
+    <VividBar
+      stand={standIn(
+        attention,
+        typing.map((seen) => seen.person.name),
+      )}
+      origin={origin}
+      // A Thread's list is upside down, which the system's edge effect cannot be given.
+      inverted
       present={others.map((seen) => seen.person)}
       actions={Option.match(sharing, {
-        onNone: () => [computer, fresh],
-        onSome: (share) => [share, computer, fresh],
+        onNone: () => NO_ACTIONS,
+        onSome: (share) => [share],
       })}
     />
   )
@@ -277,6 +258,11 @@ function useSend(
 ) {
   const data = useLiveData()
   const [unsent, setUnsent] = useState<Option.Option<Unsent>>(Option.none())
+  // A delivery is on its way and has not been answered. In a private Thread the stream says so
+  // itself the moment it is sent. In a shared one the message goes to the server first, and
+  // nothing on this phone says Vivid has it until the Thread's record comes back; for that
+  // moment this is what the top of the screen goes by.
+  const [pending, setPending] = useState(false)
   const shared = Option.exists(thread, (value) => !ThreadAudience.guards.Private(value.audience))
 
   /**
@@ -295,6 +281,7 @@ function useSend(
 
   function send(delivery: Delivery) {
     setUnsent(Option.none())
+    setPending(true)
     // A Thread started without a name takes its first message as one. A refusal is not said: the
     // Person did not ask for this, the Thread keeps the title it had, and the next message tries
     // again because the title is still the unnamed one.
@@ -304,6 +291,7 @@ function useSend(
       )
     }
     return deliver(delivery).then((why) => {
+      setPending(false)
       if (Option.isNone(why)) return true
       setUnsent(Option.some({ ...delivery, why: why.value }))
       // Nothing in a shared Thread shows words that did not arrive, so they go back into the
@@ -316,6 +304,7 @@ function useSend(
 
   return {
     shared,
+    pending,
     unsent,
     /**
      * Sends words: as the delivery still in doubt when they are its words, else as a new one.
@@ -357,6 +346,7 @@ function Conversation({
   const typed = useDraft(place)
   const setTyping = useAtomSet(data.typingIn(id))
   const [sharing, setSharing] = useState(false)
+  const origin = useOrigin()
   const thread = Option.map(detail, (value) => value.thread)
   const sending = useSend(id, thread, agent, place)
   const { shared } = sending
@@ -426,7 +416,11 @@ function Conversation({
       <Top
         thread={thread}
         present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
-        working={working}
+        // What was just sent is being thought about from the moment it leaves, which the
+        // capsule shows as the disc from the composer reaches it; the composer's own button
+        // waits for Vivid to have really started before it becomes the way to stop.
+        working={working || sending.pending}
+        origin={origin}
         onShare={() => setSharing(true)}
       />
       <View ref={wake} style={{ flex: 1 }}>
@@ -448,6 +442,7 @@ function Conversation({
         </View>
       )}
       <Composer
+        origin={origin}
         value={typed}
         autoFocus={writing}
         placeholder={shared ? `Message everyone and ${vivid.name}` : `Message ${vivid.name}`}
@@ -528,7 +523,6 @@ function Transcript(props: MessagesProps) {
   const { messages, working } = props
   const list = useRef<FlatList<FlueConversationMessage>>(null)
   const [awayAt, setAwayAt] = useState<Option.Option<number>>(Option.none())
-  const streaming = messages.some((message) => message.role === 'assistant' && isStreaming(message))
   const arrived = Option.match(awayAt, {
     onNone: () => 0,
     onSome: (seen) => messages.length - seen,
@@ -573,9 +567,7 @@ function Transcript(props: MessagesProps) {
         // bar stands over, so the oldest words are not left under it (`BarRoom`).
         ListFooterComponent={<BarRoom />}
         // The first thing in an inverted list is the last thing on screen.
-        ListHeaderComponent={
-          <Tail working={working && !streaming} ended={props.ended} trouble={props.trouble} />
-        }
+        ListHeaderComponent={<Tail ended={props.ended} trouble={props.trouble} />}
         renderItem={({ item, index }) => (
           <Message
             message={item}
@@ -661,39 +653,19 @@ function Blank({ ready }: { ready: boolean }) {
 }
 
 /**
- * What sits under the newest message: that Vivid is thinking, that its last Run came to nothing,
- * or that something did not arrive.
+ * What sits under the newest message: that Vivid's last Run came to nothing, or that something
+ * did not arrive. That Vivid is thinking is not said here: it is at the top of the screen, in
+ * Vivid's capsule (`ui/Presence.tsx`), where what the Person sends goes.
  */
 function Tail({
-  working,
   ended,
   trouble,
 }: {
-  working: boolean
   ended: Option.Option<Ended>
   trouble: Option.Option<Trouble>
 }) {
-  // The orb is drawn in Vivid's theme, which a Person can set against the system's.
-  const { dark } = useTheme()
   return (
     <View style={{ gap: 12 }}>
-      {working && (
-        <View
-          accessibilityLiveRegion="polite"
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
-        >
-          <Face size={24} mood="thinking" />
-          {/* The same orb the web shows beside "Thinking…" (`apps/web/src/screen/Thread.tsx`).
-              The words name it, so a screen reader is not told twice. */}
-          <ThinkingOrb
-            state="breathing"
-            size={20}
-            theme={dark ? 'dark' : 'light'}
-            accessibilityLabel=""
-          />
-          <Label tone="ink-2">Thinking…</Label>
-        </View>
-      )}
       {Option.isSome(ended) && (
         <View style={{ gap: 8 }}>
           <Label size="label" tone="ink-2">

@@ -8,7 +8,7 @@ import { StatusBar, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { door, patienceAtom, useDoor } from './data/door'
-import { makeFront } from './data/front'
+import { Front, makeFront } from './data/front'
 import {
   Entry,
   entryAtom,
@@ -34,10 +34,11 @@ import { Texting } from './screen/settings/Texting'
 import { People } from './screen/settings/People'
 import { ThemeProvider, useTheme } from './theme'
 import { Drawer } from './ui/Drawer'
+import { Presence, type Place } from './ui/Presence'
 import { Recover } from './ui/Recover'
 import { GLASS_HEADER, navigationTheme, SCREEN_CHANGE } from './ui/stack'
 import { Button, Face, GUTTER, Label } from './ui/ui'
-import { FrontProvider, MeProvider, type Routes } from './workspace'
+import { FrontProvider, MeProvider, useFront, useShowing, type Routes } from './workspace'
 
 const Stack = createNativeStackNavigator<Routes>()
 
@@ -216,8 +217,37 @@ type StackLayout = Parameters<NonNullable<ComponentProps<typeof Stack.Navigator>
 const underMenu = ({ children, state, navigation }: StackLayout) => (
   <Drawer reachable={state.index === 0} panel={<Panel go={navigation} />}>
     {children}
+    <Vivid go={navigation} />
   </Drawer>
 )
+
+/**
+ * Vivid's capsule over the stack (`ui/Presence.tsx`), and where the rows of its menu lead. It is
+ * drawn here, after the stack and inside the menu's page, so it is over the system's bar, where
+ * it can be pressed, and under the open menu.
+ *
+ * A new Thread is offered only while a Thread is in front: on the greeting the Person is already
+ * starting one. The other rows are Vivid's own places, pushed over whatever is in front.
+ */
+function Vivid({ go }: { go: StackLayout['navigation'] }) {
+  const front = useFront()
+  const thread = Front.$is('Thread')(useShowing())
+  return (
+    <Presence
+      menu={{
+        places: thread ? IN_THREAD : ON_GREETING,
+        onGo: (place) => {
+          if (place === 'Fresh') front.fresh()
+          else go.navigate(place)
+        },
+      }}
+    />
+  )
+}
+
+/** The rows of Vivid's menu, in order. One list each, so a render does not make a new one. */
+const IN_THREAD: ReadonlyArray<Place> = ['Fresh', 'Computer', 'Memory']
+const ON_GREETING: ReadonlyArray<Place> = ['Computer', 'Memory']
 
 /**
  * The signed-in app: one native stack, with the menu over it.
@@ -230,7 +260,8 @@ const underMenu = ({ children, state, navigation }: StackLayout) => (
  * The bar is the platform's (`GLASS_HEADER`): its way back and its buttons are the system's,
  * liquid glass on iOS 26, with each screen's content scrolling under it. A screen that has
  * actions or a live title says so itself (`ui/Bar.tsx`); one whose bar is only its name has it
- * here. Home's bar starts with Vivid's mark, which opens the menu.
+ * here. Home's bar starts with the way to the menu, has Vivid's capsule in the middle (one
+ * capsule, drawn over the stack: `Vivid` above) and ends with the way to call Vivid.
  *
  * The menu is the navigator's `layout`, so it is drawn over the stack and its bar and is handed
  * the stack's state: it can be dragged open only while Home is the screen in front.

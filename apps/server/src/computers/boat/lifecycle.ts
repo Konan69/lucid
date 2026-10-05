@@ -8,7 +8,7 @@ import {
   type MachineKey,
   type MachineFailure,
 } from '../machine.ts'
-import { active, observations } from './state.ts'
+import { active, observations, type Identity } from './state.ts'
 import type { Transport } from './transport.ts'
 import type { Bindings } from './bindings.ts'
 import type { MachineRecord, ProviderId } from './protocol.ts'
@@ -103,11 +103,18 @@ const bind = Effect.fn('Machine.boat.reconcileBinding')(function* (
   })
 })
 
-/** Persist before provisioning, replay only the original intent, and wait for snapshot archival. */
+/**
+ * Persist before provisioning, replay only the original intent, and wait for snapshot archival.
+ *
+ * `admit` is the adapter's question to a running machine, whether this binding is its holder
+ * (`holder.ts`). The two things here that act on a running machine without waking it ask first:
+ * the screen and the stop.
+ */
 export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
   api: Transport,
   saved: Bindings,
   invalidate: (key: MachineKey) => void,
+  admit: (key: MachineKey, identity: Identity) => Effect.Effect<Identity, MachineFailure>,
 ) {
   const { bound, running, permission, wait, invalidateViewer } = yield* observations(api, saved)
   const creating = new Set<MachineKey>()
@@ -169,6 +176,8 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
   const status = Effect.fn('Machine.boat.status')(function* (key: MachineKey) {
     const observed = yield* inspect(key)
     if (!MachineState.guards.Running(observed)) return observed
+    // The screen is the holder's alone: the machine is asked before a viewer is issued for it.
+    yield* admit(key, yield* bound(key))
     return ComputerState.cases.Running.make({
       since: observed.since,
       screen: yield* permission(key),
@@ -184,6 +193,9 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
       const identity = yield* bound(key)
       const record = (yield* api.get(identity.id)).sandbox
       if (record.state === 'archived') return undefined
+      // A running machine is stopped only by its holder. One between states takes no command, so
+      // it cannot be asked; the stop is sent as it always was.
+      if (active(record.state)) yield* admit(key, identity)
       invalidate(key)
       yield* invalidateViewer(key)
       yield* api.transition(identity.id, 'stop')
