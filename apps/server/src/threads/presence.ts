@@ -5,6 +5,7 @@ import * as Layer from 'effect/Layer'
 import * as Schedule from 'effect/Schedule'
 import type { PersonId, PersonSummary, Presence as PresenceEntry, ThreadId } from '@vivid/contracts'
 import { Changes, Topic } from '../live/changes.ts'
+import { untracedTimer } from '../observability/timer.ts'
 
 /** How long a Person stays "here" after their client last said so. Clients report every 5 s. */
 const PRESENT_FOR_MS = 15_000
@@ -100,7 +101,7 @@ const makePresence = Effect.fn('Presence.make')(function* () {
     yield* changes.publish(changed.map(Topic.thread))
   })
 
-  yield* sweep().pipe(Effect.repeat(Schedule.spaced(SWEEP_EVERY)), Effect.forkScoped)
+  yield* sweep().pipe(untracedTimer, Effect.repeat(Schedule.spaced(SWEEP_EVERY)), Effect.forkScoped)
 
   return Presence.of({ report, here, watching, present: presentPerson })
 })
