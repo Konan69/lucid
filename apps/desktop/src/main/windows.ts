@@ -14,20 +14,20 @@ import {
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import { HelperCall, HelperReply, changes, type HelperWindow } from './wire.ts'
+import { ComputerCall, ComputerReply, changes, screenshotPng, ESCAPE_STOPPED, type ComputerWindow } from './wire.ts'
 
 /**
  * The one place where Vivid's vocabulary for a Person's computer (`WindowAction`, `WindowResult`,
- * `WindowRefusal` in `packages/contracts/src/windows.ts`) meets the helper's methods
- * (`apps/desktop/native/windows/README.md`, the method table).
+ * `WindowRefusal` in `packages/contracts/src/windows.ts`) meets the Computer's methods
+ * (`vendor/computer/README.md`).
  *
  * Three rules shape every mapping:
- * - A change answers with the window as it is afterwards: after every input the helper has
+ * - A change answers with the window as it is afterwards: after every input the Computer has
  *   already thrown away its picture and its element numbers for that window (README, "Every
  *   input attempt after activation invalidates both the screenshot id and text indexes"), so this
  *   module looks again and that fresh view is the answer.
  * - A change whose outcome is not known is never answered. When a request that changes something
- *   was written and no reply came, or the helper's reply says it cannot tell what went in, the
+ *   was written and no reply came, or the Computer's reply says it cannot tell what went in, the
  *   result is `Unknown`: the caller sends nothing, and the server records the outcome as unknown.
  * - Nothing here is a rule of Vivid's about what may be done. Once the Person has allowed their
  *   computer, any app and any window is worked in; the only refusals are what happened (a stop,
@@ -41,7 +41,7 @@ export const Performed = Schema.TaggedUnion({
   /** A change was sent and what came of it is not known. Nothing is answered. */
   Unknown: {},
   /**
-   * The helper's Escape hooks are gone (`HookUnavailable`). Nothing was sent. Without the hooks
+   * The Computer's Escape hooks are gone (`HookUnavailable`). Nothing was sent. Without the hooks
    * the Person cannot stop Vivid from the keyboard, so the turn ends and the notice comes down.
    */
   HooksLost: {},
@@ -66,84 +66,46 @@ class Ended extends Schema.TaggedError<Ended>()(
 ) {}
 
 /**
- * The helper's failure names that are one of the contract's refusals. Every name is from
- * `failure.cs`; the stale-look family is one refusal because Vivid does the same thing for each:
- * look again.
- */
-const REFUSALS = {
-  PersonStopped: 'Stopped',
-  ElevatedTarget: 'Elevated',
-  WindowGone: 'WindowGone',
-  ScreenshotStale: 'LookStale',
-  ScreenshotRequired: 'LookStale',
-  ScreenshotIdRequired: 'LookStale',
-  TextRequired: 'LookStale',
-  ElementGone: 'LookStale',
-  ForegroundRefused: 'NotInFront',
-  UnknownMethod: 'Unsupported',
-} as const satisfies Record<string, WindowRefusal>
-const refusalName = Schema.decodeUnknownOption(
-  Schema.Literals([
-    'PersonStopped',
-    'ElevatedTarget',
-    'WindowGone',
-    'ScreenshotStale',
-    'ScreenshotRequired',
-    'ScreenshotIdRequired',
-    'TextRequired',
-    'ElementGone',
-    'ForegroundRefused',
-    'UnknownMethod',
-  ]),
-)
-
-/**
- * The failures the helper raises before it sends anything, which are not a contract refusal:
- * the request was wrong, the app is not in the inventory, the turn is not the helper's. For a
- * change these are a plain `Failed`; every other unnamed failure of a change (a native batch
- * that was cut short, a budget that ran out, a defect) may have sent something, and is unknown.
+ * The failures the Computer raises before it sends anything, which are not a contract refusal:
+ * the request was wrong, its budget was exhausted before anything ran, or the app is missing.
+ * Each is a verified message of the vendored binary (see `vendor/computer/README.md`). For a
+ * change these are a plain `Failed`; every other failure of a change may have sent something,
+ * and is unknown.
  */
 const nothingSent = Schema.is(
   Schema.Literals([
+    'computer-use request budget exhausted',
+    'app is required',
+    'app is not in the inventory',
     'InvalidRequest',
-    'InvalidClickCount',
     'BadJson',
-    'ModifierHeld',
-    'AppNameRequired',
-    'AppInventoryRequired',
-    'AppNotInstalled',
-    'AppNameAmbiguous',
-    'LaunchFailed',
-    'NoActiveTurn',
-    'TurnMismatch',
   ]),
 )
 
-/** What a helper failure means for the request that got it. */
-const refused = (call: HelperCall, name: string): Performed => {
-  if (name === 'HookUnavailable') return Performed.cases.HooksLost.make({})
-  const known = refusalName(name)
-  if (Option.isSome(known)) return declined(REFUSALS[known.value])
+/** What a failure message means for the request that got it. */
+const refused = (call: ComputerCall, name: string): Performed => {
+  // The supervisor's one long message for a turn the Person stopped; the same Escape as exit 130.
+  if (name.startsWith(ESCAPE_STOPPED)) return declined('Stopped')
   return changes(call) && !nothingSent(name) ? unknown : failed
 }
 
 /** What no reply, or a reply that is not the method's shape, means for the request. */
-const lost = (call: HelperCall, sent: boolean): Performed =>
+const lost = (call: ComputerCall, sent: boolean): Performed =>
   sent && changes(call) ? unknown : failed
 
-/** Sends one request to the helper within this turn and this work's deadline. */
-export type Asking = (call: HelperCall) => Effect.Effect<HelperReply>
+/** Sends one request to the Computer within this turn and this work's deadline. */
+export type Asking = (call: ComputerCall) => Effect.Effect<ComputerReply>
 
 /**
- * What one turn remembers. The helper's window ids hold a process id and a window handle, and can
+ * What one turn remembers. The Computer's window ids hold a process id and a window handle, and can
  * be longer than the contract allows, so each window gets a short name of this turn's own
- * (`w1`, `w2`); the helper's `{app, id}` pair never leaves this computer. `looks` is the latest
- * look of each window: the helper checks a picture's id itself but has no id for the outline, so
+ * (`w1`, `w2`); the Computer's `{app, id}` pair never leaves this computer. `looks` is the latest
+ * look of each window: the Computer checks a picture's id itself but has no id for the outline, so
  * an element number from an older look is refused here.
  */
 export interface Table {
   readonly apps: Map<AppId, AppName>
-  readonly windows: Map<WindowId, HelperWindow>
+  readonly windows: Map<WindowId, ComputerWindow>
   readonly named: Map<string, WindowId>
   readonly looks: Map<WindowId, LookId>
 }
@@ -157,12 +119,12 @@ export const blankTable = (): Table => ({
 /** Asks, and decodes the result with the schema of the method asked. Unknown data stops here. */
 const ask = <S extends Schema.Top & { readonly DecodingServices: never }>(
   asking: Asking,
-  call: HelperCall,
+  call: ComputerCall,
   result: S,
 ) =>
   Effect.gen(function* () {
     const reply = yield* asking(call)
-    return yield* HelperReply.match(reply, {
+    return yield* ComputerReply.match(reply, {
       Refused: ({ name }) => Effect.fail(new Ended({ outcome: refused(call, name) })),
       Lost: ({ sent }) => Effect.fail(new Ended({ outcome: lost(call, sent) })),
       Answered: (answered) =>
@@ -173,34 +135,49 @@ const ask = <S extends Schema.Top & { readonly DecodingServices: never }>(
     })
   })
 
-const Nothing = Schema.Struct({})
-const AppList = Schema.Struct({
-  apps: Schema.Array(Schema.Struct({ name: Schema.String, id: Schema.String })),
-  skipped: Schema.Int,
+/**
+ * The reply shapes, decoded once at the ingress (`wire.ts`):
+ * - `list_apps` is a flat array of the inventory's entries, each with its id and, when the
+ *   system names it, a display name;
+ * - `list_windows` is a flat array, whose ids are integers (Vivid carries them as strings, and
+ *   mints its own short names per turn — `Table`);
+ * - `get_window_state` carries the accessibility tree and one or more screenshots, each a PNG
+ *   data URL or file path with its size (`screenshotPng` turns either into the PNG itself);
+ * - `press_key` answers `{}`, or `null` when there is nothing to say.
+ */
+const AppEntry = Schema.Struct({
+  id: Schema.String,
+  displayName: Schema.optionalKey(Schema.String),
 })
-const WindowList = Schema.Array(
-  Schema.Struct({ app: Schema.String, id: Schema.String, title: Schema.String }),
-)
+const WindowEntry = Schema.Struct({
+  app: Schema.String,
+  id: Schema.Number,
+  title: Schema.optionalKey(Schema.String),
+})
 const State = Schema.Struct({
-  text: Schema.String,
-  truncated: Schema.Boolean,
-  screenshot: Schema.Struct({
-    id: Schema.String,
-    width: Schema.Int,
-    height: Schema.Int,
-    png: Schema.String,
+  screenshots: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      url: Schema.String,
+      width: Schema.Number,
+      height: Schema.Number,
+    }),
+  ),
+  accessibility: Schema.Struct({ tree: Schema.String }),
+})
+const Nothing = Schema.Union([Schema.Struct({}), Schema.Null])
+const Pressed = Schema.Union([
+  Schema.Struct({
+    outcome: Schema.OptionFromOptionalKey(Schema.Literals(['closed', 'closePending'])),
   }),
-})
-/** `press_key` answers `{}`, or what an exact Alt+F4 did (README, the `press_key` row). */
-const Pressed = Schema.Struct({
-  outcome: Schema.OptionFromOptionalKey(Schema.Literals(['closed', 'closePending'])),
-})
+  Schema.Null,
+])
 const listedApp = Schema.decodeUnknownOption(InstalledApp)
 const appName = Schema.decodeUnknownOption(AppName)
 const lookId = Schema.decodeUnknownOption(LookId)
 
 /** A window Vivid named must be one this turn listed; otherwise it is gone as far as Vivid knows. */
-const windowOf = (table: Table, window: WindowId): Effect.Effect<HelperWindow, Ended> =>
+const windowOf = (table: Table, window: WindowId): Effect.Effect<ComputerWindow, Ended> =>
   Option.match(Option.fromUndefinedOr(table.windows.get(window)), {
     onNone: () => Effect.fail(new Ended({ outcome: declined('WindowGone') })),
     onSome: (known) => Effect.succeed(known),
@@ -213,22 +190,26 @@ const latest = (table: Table, window: WindowId, look: LookId) =>
     : Effect.fail(new Ended({ outcome: declined('LookStale') }))
 
 /**
- * `list_apps`. Every app the helper lists is offered. An entry whose id or name does not fit the
- * contract's bounds is counted with the helper's own `skipped`, never cut to fit: a cut id would
- * name nothing.
+ * `list_apps`. Every app the Computer lists is offered, named by the system's display name when
+ * it has one and by its id when it has not. An entry whose id or name does not fit the
+ * contract's bounds is dropped and counted in `skipped`, never cut to fit: a cut id would name
+ * nothing. The supervisor's inventory has no skipped count of its own; this one is Vivid's.
  */
 const listApps = Effect.fn('DesktopWindows.listApps')(function* (asking: Asking, table: Table) {
-  const listed = yield* ask(asking, HelperCall.cases.ListApps.make({}), AppList)
-  const apps = listed.apps.flatMap((entry) => Option.toArray(listedApp(entry)))
+  const listed = yield* ask(asking, ComputerCall.cases.ListApps.make({}), Schema.Array(AppEntry))
   table.apps.clear()
-  for (const app of apps) table.apps.set(app.id, app.name)
-  return WindowResult.cases.Apps.make({
-    apps,
-    skipped: listed.skipped + listed.apps.length - apps.length,
-  })
+  const apps = listed.flatMap((entry) =>
+    Option.toArray(
+      Option.map(listedApp({ name: entry.displayName ?? entry.id, id: entry.id }), (app) => {
+        table.apps.set(app.id, app.name)
+        return app
+      }),
+    ),
+  )
+  return WindowResult.cases.Apps.make({ apps, skipped: listed.length - apps.length })
 })
 
-/** The short name this turn gives a helper window, the same one each time it is listed. */
+/** The short name this turn gives a Computer window, the same one each time it is listed. */
 const nameWindow = (table: Table, id: string): WindowId =>
   Option.getOrElse(Option.fromUndefinedOr(table.named.get(id)), () => {
     const minted = WindowId.make(`w${table.named.size + 1}`)
@@ -241,15 +222,17 @@ const listWindows = Effect.fn('DesktopWindows.listWindows')(function* (
   asking: Asking,
   table: Table,
 ) {
-  const listed = yield* ask(asking, HelperCall.cases.ListWindows.make({}), WindowList)
+  const listed = yield* ask(asking, ComputerCall.cases.ListWindows.make({}), Schema.Array(WindowEntry))
   table.windows.clear()
   const windows = listed.flatMap((entry) =>
     Option.toArray(
       Option.map(appName(entry.app), (app) => {
-        const id = nameWindow(table, entry.id)
-        table.windows.set(id, { app: entry.app, id: entry.id })
-        // The contract bounds a title at 400; the helper's buffer is longer. The start is kept.
-        return OpenWindow.make({ id, app, title: entry.title.slice(0, 400) })
+        // The supervisor's window id is an integer; Vivid carries it as a string.
+        const knownId = String(entry.id)
+        const id = nameWindow(table, knownId)
+        table.windows.set(id, { app: entry.app, id: knownId })
+        // The contract bounds a title at 400; the Computer's buffer is longer. The start is kept.
+        return OpenWindow.make({ id, app, title: (entry.title ?? '').slice(0, 400) })
       }),
     ),
   )
@@ -263,20 +246,29 @@ const look = Effect.fn('DesktopWindows.look')(function* (
   window: WindowId,
 ) {
   const known = yield* windowOf(table, window)
-  const call = HelperCall.cases.WindowState.make({ window: known })
+  const call = ComputerCall.cases.WindowState.make({ window: known })
   const state = yield* ask(asking, call, State)
-  const seen = Option.all({ app: appName(known.app), look: lookId(state.screenshot.id) })
-  if (Option.isNone(seen)) return yield* new Ended({ outcome: failed })
-  table.looks.set(window, seen.value.look)
+  // One look is one picture: the first screenshot the supervisor returns, whose id is the look
+  // id the element numbers and points belong to. Its URL becomes the PNG here, at the ingress
+  // (`screenshotPng`); a look without a decodable picture is not a look.
+  const seen = state.screenshots[0]
+  if (seen === undefined) return yield* new Ended({ outcome: failed })
+  const seen_ = Option.all({
+    app: appName(known.app),
+    look: lookId(seen.id),
+    picture: screenshotPng(seen.url),
+  })
+  if (Option.isNone(seen_)) return yield* new Ended({ outcome: failed })
+  table.looks.set(window, seen_.value.look)
   return WindowView.make({
     window,
-    app: seen.value.app,
-    look: seen.value.look,
-    picture: state.screenshot.png,
-    width: state.screenshot.width,
-    height: state.screenshot.height,
-    outline: state.text,
-    truncated: state.truncated,
+    app: seen_.value.app,
+    look: seen_.value.look,
+    picture: seen_.value.picture,
+    width: Math.round(seen.width),
+    height: Math.round(seen.height),
+    outline: state.accessibility.tree,
+    truncated: false,
   })
 })
 
@@ -296,7 +288,7 @@ const lookAfter = (asking: Asking, table: Table, window: WindowId) =>
 const change = Effect.fn('DesktopWindows.change')(function* (
   asking: Asking,
   table: Table,
-  input: { readonly window: WindowId; readonly call: HelperCall },
+  input: { readonly window: WindowId; readonly call: ComputerCall },
 ) {
   table.looks.delete(input.window)
   yield* ask(asking, input.call, Nothing)
@@ -311,11 +303,11 @@ const change = Effect.fn('DesktopWindows.change')(function* (
 const type = Effect.fn('DesktopWindows.type')(function* (
   asking: Asking,
   table: Table,
-  input: { readonly window: WindowId; readonly call: HelperCall; readonly length: number },
+  input: { readonly window: WindowId; readonly call: ComputerCall; readonly length: number },
 ) {
   table.looks.delete(input.window)
   const reply = yield* asking(input.call)
-  const sent = yield* HelperReply.match(reply, {
+  const sent = yield* ComputerReply.match(reply, {
     Answered: () => Effect.succeed({ complete: true, sent: input.length }),
     Lost: (gone) => Effect.fail(new Ended({ outcome: lost(input.call, gone.sent) })),
     Refused: ({ name, delivered, reason }) => {
@@ -331,7 +323,7 @@ const type = Effect.fn('DesktopWindows.type')(function* (
 })
 
 /**
- * A key or a chord, and closing. The helper answers an exact Alt+F4 with what the window did:
+ * A key or a chord, and closing. The Computer answers an exact Alt+F4 with what the window did:
  * `closed`, or `closePending` when the app asked something first (unsaved changes), which is
  * shown to Vivid as `Closing` and never pressed again by this module.
  */
@@ -342,25 +334,26 @@ const press = Effect.fn('DesktopWindows.press')(function* (
 ) {
   const known = yield* windowOf(table, input.window)
   table.looks.delete(input.window)
-  const call = HelperCall.cases.PressKey.make({ window: known, key: input.key })
+  const call = ComputerCall.cases.PressKey.make({ window: known, key: input.key })
   const pressed = yield* ask(asking, call, Pressed)
-  if (Option.contains(pressed.outcome, 'closed')) {
+  // The Computer says nothing about what a key did; an exact Alt+F4 that closes says so.
+  if (pressed !== null && Option.contains(pressed.outcome, 'closed')) {
     table.windows.delete(input.window)
     return WindowResult.cases.Closed.make({})
   }
   const view = yield* lookAfter(asking, table, input.window)
-  return Option.isSome(pressed.outcome)
+  return pressed !== null && Option.isSome(pressed.outcome)
     ? WindowResult.cases.Closing.make({ view })
     : WindowResult.cases.Seen.make({ view })
 })
 
 /** `launch_app`, then the windows as they now are: a new app shows up there, a moment later. */
 const open = Effect.fn('DesktopWindows.open')(function* (asking: Asking, table: Table, app: AppId) {
-  // The helper launches by name from its own inventory of this turn, with the id to tell two
+  // The Computer launches by name from its own inventory of this turn, with the id to tell two
   // apps of one name apart; an id this turn never listed names nothing to launch.
   const name = Option.fromUndefinedOr(table.apps.get(app))
   if (Option.isNone(name)) return yield* new Ended({ outcome: failed })
-  yield* ask(asking, HelperCall.cases.LaunchApp.make({ app: name.value, id: app }), Nothing)
+  yield* ask(asking, ComputerCall.cases.LaunchApp.make({ app: name.value, id: app }), Nothing)
   return yield* listWindows(asking, table).pipe(
     Effect.mapError((ended) =>
       plainlyFailed(ended.outcome) ? new Ended({ outcome: unknown }) : ended,
@@ -368,7 +361,7 @@ const open = Effect.fn('DesktopWindows.open')(function* (asking: Asking, table: 
   )
 })
 
-/** Wheel units for the helper: 120 a notch, positive Y down and positive X right (README). */
+/** Wheel units for the Computer: 120 a notch, positive Y down and positive X right (README). */
 const wheel = (direction: 'up' | 'down' | 'left' | 'right', notches: number) => {
   const units = notches * 120
   return {
@@ -383,14 +376,14 @@ const wheel = (direction: 'up' | 'down' | 'left' | 'right', notches: number) => 
 const located = Effect.fn('DesktopWindows.located')(function* (
   table: Table,
   action: { readonly window: WindowId; readonly look: LookId },
-  call: (window: HelperWindow) => HelperCall,
+  call: (window: ComputerWindow) => ComputerCall,
 ) {
   const known = yield* windowOf(table, action.window)
   yield* latest(table, action.window, action.look)
   return { window: action.window, call: call(known) }
 })
 
-/** Each action as the helper's requests. Exhaustive: a new action fails to typecheck here. */
+/** Each action as the Computer's requests. Exhaustive: a new action fails to typecheck here. */
 const route = (asking: Asking, table: Table, action: WindowAction) =>
   WindowAction.match<Effect.Effect<WindowResult, Ended>>(action, {
     ListApps: () => listApps(asking, table),
@@ -400,25 +393,25 @@ const route = (asking: Asking, table: Table, action: WindowAction) =>
       look(asking, table, window).pipe(
         Effect.map((view) => WindowResult.cases.Seen.make({ view })),
       ),
-    // Press and Choose are both the helper's element click, which uses the element's own way:
+    // Press and Choose are both the Computer's element click, which uses the element's own way:
     // invoke, then toggle, then select (README, "Single left element clicks prefer…").
     Press: (press_) =>
       located(table, press_, (window) =>
-        HelperCall.cases.ClickElement.make({ window, element: press_.element }),
+        ComputerCall.cases.ClickElement.make({ window, element: press_.element }),
       ).pipe(Effect.flatMap((input) => change(asking, table, input))),
     Choose: (choose) =>
       located(table, choose, (window) =>
-        HelperCall.cases.ClickElement.make({ window, element: choose.element }),
+        ComputerCall.cases.ClickElement.make({ window, element: choose.element }),
       ).pipe(Effect.flatMap((input) => change(asking, table, input))),
     Fill: (fill) =>
       located(table, fill, (window) =>
-        HelperCall.cases.FillElement.make({ window, element: fill.element, text: fill.text }),
+        ComputerCall.cases.FillElement.make({ window, element: fill.element, text: fill.text }),
       ).pipe(
         Effect.flatMap((input) => type(asking, table, { ...input, length: fill.text.length })),
       ),
     Click: (click) =>
       located(table, click, (window) =>
-        HelperCall.cases.ClickPoint.make({
+        ComputerCall.cases.ClickPoint.make({
           window,
           x: click.at.x,
           y: click.at.y,
@@ -429,7 +422,7 @@ const route = (asking: Asking, table: Table, action: WindowAction) =>
       ).pipe(Effect.flatMap((input) => change(asking, table, input))),
     Scroll: (scroll) =>
       located(table, scroll, (window) =>
-        HelperCall.cases.Scroll.make({
+        ComputerCall.cases.Scroll.make({
           window,
           x: scroll.at.x,
           y: scroll.at.y,
@@ -442,7 +435,7 @@ const route = (asking: Asking, table: Table, action: WindowAction) =>
         Effect.flatMap((known) =>
           type(asking, table, {
             window,
-            call: HelperCall.cases.TypeText.make({ window: known, text }),
+            call: ComputerCall.cases.TypeText.make({ window: known, text }),
             length: text.length,
           }),
         ),
@@ -451,7 +444,7 @@ const route = (asking: Asking, table: Table, action: WindowAction) =>
     Close: ({ window }) => press(asking, table, { window, key: 'Alt+F4' }),
   })
 
-/** Carries out one action on the Person's computer through the helper, to how it ended. */
+/** Carries out one action on the Person's computer through the Computer, to how it ended. */
 export const perform = (asking: Asking, table: Table, action: WindowAction) =>
   route(asking, table, action).pipe(
     Effect.map(did),

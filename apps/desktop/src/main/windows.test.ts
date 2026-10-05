@@ -10,35 +10,33 @@ import {
 } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
-import * as Schema from 'effect/Schema'
-import { HelperCall, HelperReply } from './wire.ts'
+import { ComputerCall, ComputerReply, ESCAPE_STOPPED } from './wire.ts'
 import { Performed, blankTable, perform, type Asking } from './windows.ts'
 
-const answered = (result: typeof Schema.Json.Type) => HelperReply.cases.Answered.make({ result })
+const answered = (result: unknown) => ComputerReply.cases.Answered.make({ result })
 const refusedBy = (name: string) =>
-  HelperReply.cases.Refused.make({ name, delivered: Option.none(), reason: Option.none() })
+  ComputerReply.cases.Refused.make({ name, delivered: Option.none(), reason: Option.none() })
+/** One window state as the Computer itself answers `get_window_state` (`vendor/computer/README.md`). */
 const state = (look: string) =>
   answered({
-    window: { app: 'notepad', id: 'h1' },
-    text: '0 Window "Notes"',
-    truncated: true,
-    screenshot: { id: look, width: 800, height: 600, png: 'iVBORw0KGgo=' },
+    window: { app: 'notepad', id: 7 },
+    screenshots: [{ id: look, url: 'data:image/png;base64,iVBORw0KGgo=', width: 800, height: 600 }],
+    accessibility: { tree: '0 Window "Notes"', focused_element: 1 },
   })
-const listed = answered([
-  { app: 'notepad', id: 'h1', pid: 4, title: 'Notes - Notepad', inputAccess: 'Allowed' },
-])
+/** One window as the Computer itself lists them: an integer id. */
+const listed = answered([{ app: 'notepad', id: 7, title: 'Notes - Notepad' }])
 
 /**
- * A helper that answers each request with the next scripted reply and records what was asked.
- * This is the helper's side of the mapping only; the process and its pipes are `helper.test.ts`.
+ * A Computer that answers each request with the next scripted reply and records what was asked.
+ * This is the mapping's side only; the process and its pipes are `Computer.test.ts`.
  */
-const scripted = (replies: ReadonlyArray<HelperReply>) => {
-  const asked: Array<HelperCall> = []
+const scripted = (replies: ReadonlyArray<ComputerReply>) => {
+  const asked: Array<ComputerCall> = []
   const asking: Asking = (call) =>
     Effect.sync(() => {
       const reply = replies[asked.length]
       asked.push(call)
-      return reply === undefined ? HelperReply.cases.Lost.make({ sent: false }) : reply
+      return reply === undefined ? ComputerReply.cases.Lost.make({ sent: false }) : reply
     })
   return { asked, asking, methods: () => asked.map((call) => call._tag) }
 }
@@ -66,37 +64,43 @@ const seen = (performed: Performed): string => {
 }
 
 /** A turn that has listed its one window and looked at it once, as `look1`. */
-const looked = (after: ReadonlyArray<HelperReply>) =>
+const looked = (after: ReadonlyArray<ComputerReply>) =>
   Effect.gen(function* () {
-    const helper = scripted([listed, state('look1'), ...after])
+    const Computer = scripted([
+      // list_windows, then the first look.
+      listed,
+      state('look1'),
+      ...after,
+    ])
     const table = blankTable()
-    yield* perform(helper.asking, table, WindowAction.cases.ListWindows.make({}))
-    yield* perform(helper.asking, table, WindowAction.cases.Look.make({ window: w1 }))
-    return { helper, table, run: (action: WindowAction) => perform(helper.asking, table, action) }
+    yield* perform(Computer.asking, table, WindowAction.cases.ListWindows.make({}))
+    yield* perform(Computer.asking, table, WindowAction.cases.Look.make({ window: w1 }))
+    return { Computer, table, run: (action: WindowAction) => perform(Computer.asking, table, action) }
   })
 
-describe('Vivid’s actions as the helper’s requests', () => {
-  it.effect('lists every app, terminals included, counting what does not fit as skipped', () =>
+describe('Vivid’s actions as the Computer’s requests', () => {
+  it.effect('lists every app, named or id-only, counting what does not fit as skipped', () =>
     Effect.gen(function* () {
-      const helper = scripted([
-        answered({
-          apps: [
-            { name: 'Terminal', id: 'machine:Terminal.lnk', launchable: true },
-            { name: '', id: 'machine:Nameless.lnk' },
-          ],
-          skipped: 2,
-        }),
+      const Computer = scripted([
+        answered([
+          { id: 'machine:Terminal.lnk', displayName: 'Terminal' },
+          { id: 'machine:Nameless.lnk', displayName: '' },
+          { id: 'machine' },
+        ]),
       ])
       const result = yield* perform(
-        helper.asking,
+        Computer.asking,
         blankTable(),
         WindowAction.cases.ListApps.make({}),
       )
       expect(result).toEqual(
         did(
           WindowResult.cases.Apps.make({
-            apps: [{ id: AppId.make('machine:Terminal.lnk'), name: 'Terminal' }],
-            skipped: 3,
+            apps: [
+              { id: AppId.make('machine:Terminal.lnk'), name: 'Terminal' },
+              { id: AppId.make('machine'), name: 'machine' },
+            ],
+            skipped: 1,
           }),
         ),
       )
@@ -105,9 +109,9 @@ describe('Vivid’s actions as the helper’s requests', () => {
 
   it.effect('lists windows with their titles under names of this turn’s own', () =>
     Effect.gen(function* () {
-      const helper = scripted([listed, listed])
+      const Computer = scripted([listed, listed])
       const table = blankTable()
-      const first = yield* perform(helper.asking, table, WindowAction.cases.ListWindows.make({}))
+      const first = yield* perform(Computer.asking, table, WindowAction.cases.ListWindows.make({}))
       expect(first).toEqual(
         did(
           WindowResult.cases.Windows.make({
@@ -116,7 +120,7 @@ describe('Vivid’s actions as the helper’s requests', () => {
         ),
       )
       // Listed again, the same window keeps its name.
-      expect(yield* perform(helper.asking, table, WindowAction.cases.ListWindows.make({}))).toEqual(
+      expect(yield* perform(Computer.asking, table, WindowAction.cases.ListWindows.make({}))).toEqual(
         first,
       )
     }),
@@ -124,7 +128,7 @@ describe('Vivid’s actions as the helper’s requests', () => {
 
   it.effect('a look is the picture and the outline, named by the picture’s id', () =>
     Effect.gen(function* () {
-      const { helper, run } = yield* looked([state('look2')])
+      const { Computer, run } = yield* looked([state('look2')])
       const result = yield* run(WindowAction.cases.Look.make({ window: w1 }))
       expect(result).toEqual(
         did(
@@ -137,33 +141,33 @@ describe('Vivid’s actions as the helper’s requests', () => {
               width: 800,
               height: 600,
               outline: '0 Window "Notes"',
-              truncated: true,
+              truncated: false,
             },
           }),
         ),
       )
-      expect(helper.asked[2]).toEqual(
-        HelperCall.cases.WindowState.make({ window: { app: 'notepad', id: 'h1' } }),
+      expect(Computer.asked[2]).toEqual(
+        ComputerCall.cases.WindowState.make({ window: { app: 'notepad', id: '7' } }),
       )
     }),
   )
 
-  it.effect('a window this turn never listed is gone, and the helper is not asked', () =>
+  it.effect('a window this turn never listed is gone, and the Computer is not asked', () =>
     Effect.gen(function* () {
-      const helper = scripted([])
+      const Computer = scripted([])
       const result = yield* perform(
-        helper.asking,
+        Computer.asking,
         blankTable(),
         WindowAction.cases.Look.make({ window: WindowId.make('w9') }),
       )
       expect(result).toEqual(declined('WindowGone'))
-      expect(helper.asked).toEqual([])
+      expect(Computer.asked).toEqual([])
     }),
   )
 
   it.effect('a click answers with the window as it is afterwards', () =>
     Effect.gen(function* () {
-      const { helper, run } = yield* looked([answered({}), state('look2')])
+      const { Computer, run } = yield* looked([answered({}), state('look2')])
       const result = yield* run(
         WindowAction.cases.Click.make({
           window: w1,
@@ -174,13 +178,13 @@ describe('Vivid’s actions as the helper’s requests', () => {
         }),
       )
       expect(seen(result)).toBe('Seen look2')
-      expect(helper.methods().slice(2)).toEqual(['ClickPoint', 'WindowState'])
+      expect(Computer.methods().slice(2)).toEqual(['ClickPoint', 'WindowState'])
     }),
   )
 
   it.effect('an element or a point from an older look is stale, and nothing is sent', () =>
     Effect.gen(function* () {
-      const { helper, run } = yield* looked([answered({}), state('look2')])
+      const { Computer, run } = yield* looked([answered({}), state('look2')])
       const press = WindowAction.cases.Press.make({
         window: w1,
         look: LookId.make('look1'),
@@ -189,13 +193,13 @@ describe('Vivid’s actions as the helper’s requests', () => {
       yield* run(press)
       // The press above made `look1` old: the same numbers now mean something else.
       expect(yield* run(press)).toEqual(declined('LookStale'))
-      expect(helper.methods().slice(2)).toEqual(['ClickElement', 'WindowState'])
+      expect(Computer.methods().slice(2)).toEqual(['ClickElement', 'WindowState'])
     }),
   )
 
   it.effect('scrolling down is positive wheel units, 120 a notch', () =>
     Effect.gen(function* () {
-      const { helper, run } = yield* looked([answered({}), state('look2')])
+      const { Computer, run } = yield* looked([answered({}), state('look2')])
       yield* run(
         WindowAction.cases.Scroll.make({
           window: w1,
@@ -205,9 +209,9 @@ describe('Vivid’s actions as the helper’s requests', () => {
           notches: 3,
         }),
       )
-      expect(helper.asked[2]).toEqual(
-        HelperCall.cases.Scroll.make({
-          window: { app: 'notepad', id: 'h1' },
+      expect(Computer.asked[2]).toEqual(
+        ComputerCall.cases.Scroll.make({
+          window: { app: 'notepad', id: '7' },
           x: 1,
           y: 2,
           look: 'look1',
@@ -218,101 +222,37 @@ describe('Vivid’s actions as the helper’s requests', () => {
     }),
   )
 
-  it.effect('typing cut short says how much went in, so it is never typed again', () =>
+  it.effect('the Computer refusing a change is unknown when it may have gone in, failed when not', () =>
     Effect.gen(function* () {
-      const { run } = yield* looked([
-        HelperReply.cases.Refused.make({
-          name: 'TypingInterrupted',
-          delivered: Option.some(3),
-          reason: Option.some('NativeInputFailed'),
-        }),
-        state('look2'),
-      ])
-      const result = yield* run(WindowAction.cases.Type.make({ window: w1, text: 'hello' }))
-      expect(seen(result)).toBe('Typed look2 false 3')
-    }),
-  )
-
-  it.effect('typing interrupted before anything went in is what interrupted it', () =>
-    Effect.gen(function* () {
-      const { run } = yield* looked([
-        HelperReply.cases.Refused.make({
-          name: 'TypingInterrupted',
-          delivered: Option.some(0),
-          reason: Option.some('ForegroundRefused'),
-        }),
-      ])
-      expect(yield* run(WindowAction.cases.Type.make({ window: w1, text: 'hello' }))).toEqual(
-        declined('NotInFront'),
-      )
-    }),
-  )
-
-  it.effect('closing answers closed, or shows the question the app asked first', () =>
-    Effect.gen(function* () {
-      const closing = yield* looked([answered({ outcome: 'closePending' }), state('look2')])
-      const pending = yield* closing.run(WindowAction.cases.Close.make({ window: w1 }))
-      expect(seen(pending)).toBe('Closing look2')
-      expect(closing.helper.asked[2]).toEqual(
-        HelperCall.cases.PressKey.make({ window: { app: 'notepad', id: 'h1' }, key: 'Alt+F4' }),
-      )
-      const closed = yield* looked([answered({ outcome: 'closed' })])
-      expect(yield* closed.run(WindowAction.cases.Close.make({ window: w1 }))).toEqual(
-        did(WindowResult.cases.Closed.make({})),
-      )
-    }),
-  )
-
-  it.effect('opening launches by the listed name and id, then lists the windows', () =>
-    Effect.gen(function* () {
-      const helper = scripted([
-        answered({ apps: [{ name: 'Terminal', id: 'machine:Terminal.lnk' }], skipped: 0 }),
-        answered({ pid: 1, app: 'Terminal', id: 'machine:Terminal.lnk' }),
-        listed,
-      ])
-      const table = blankTable()
-      yield* perform(helper.asking, table, WindowAction.cases.ListApps.make({}))
-      const result = yield* perform(
-        helper.asking,
-        table,
-        WindowAction.cases.Open.make({ app: AppId.make('machine:Terminal.lnk') }),
-      )
-      expect(seen(result)).toBe('Windows 1')
-      expect(helper.asked[1]).toEqual(
-        HelperCall.cases.LaunchApp.make({ app: 'Terminal', id: 'machine:Terminal.lnk' }),
-      )
-    }),
-  )
-
-  it.effect.each([
-    ['PersonStopped', declined('Stopped')],
-    ['ElevatedTarget', declined('Elevated')],
-    ['WindowGone', declined('WindowGone')],
-    ['ScreenshotStale', declined('LookStale')],
-    ['ElementGone', declined('LookStale')],
-    ['ForegroundRefused', declined('NotInFront')],
-    ['UnknownMethod', declined('Unsupported')],
-    ['HookUnavailable', Performed.cases.HooksLost.make({})],
-    // The request was wrong and nothing was sent.
-    ['InvalidRequest', failed],
-    // Something may have gone in: not done, not refused, not failed.
-    ['NativeInputFailed', unknown],
-    ['RequestBudgetExhausted', unknown],
-    ['SomethingNew', unknown],
-  ] as const)('the helper refusing a change with %s', ([name, expected]) =>
-    Effect.gen(function* () {
-      const { run } = yield* looked([refusedBy(name)])
+      const { run } = yield* looked([refusedBy('NativeInputFailed')])
+      // Something may have gone in: not done, not refused, not failed.
       expect(yield* run(WindowAction.cases.Keys.make({ window: w1, keys: 'Enter' }))).toEqual(
-        expected,
+        unknown,
+      )
+      // The budget gate rejects a request before anything runs: nothing was sent.
+      const rejected = yield* looked([
+        refusedBy('computer-use request budget exhausted'),
+      ])
+      expect(yield* rejected.run(WindowAction.cases.Keys.make({ window: w1, keys: 'Enter' }))).toEqual(
+        failed,
+      )
+    }),
+  )
+
+  it.effect('Escape refuses the change in flight as Stopped', () =>
+    Effect.gen(function* () {
+      const { run } = yield* looked([refusedBy(ESCAPE_STOPPED)])
+      expect(yield* run(WindowAction.cases.Keys.make({ window: w1, keys: 'Enter' }))).toEqual(
+        declined('Stopped'),
       )
     }),
   )
 
   it.effect('a read that fails for an unnamed reason simply failed', () =>
     Effect.gen(function* () {
-      const helper = scripted([refusedBy('AppInventoryFailed')])
+      const Computer = scripted([refusedBy('something went wrong')])
       expect(
-        yield* perform(helper.asking, blankTable(), WindowAction.cases.ListApps.make({})),
+        yield* perform(Computer.asking, blankTable(), WindowAction.cases.ListApps.make({})),
       ).toEqual(failed)
     }),
   )
@@ -320,28 +260,56 @@ describe('Vivid’s actions as the helper’s requests', () => {
   it.effect('a change that was written and got no reply is unknown; one never written failed', () =>
     Effect.gen(function* () {
       const keys = WindowAction.cases.Keys.make({ window: w1, keys: 'Enter' })
-      const sent = yield* looked([HelperReply.cases.Lost.make({ sent: true })])
+      const sent = yield* looked([ComputerReply.cases.Lost.make({ sent: true })])
       expect(yield* sent.run(keys)).toEqual(unknown)
-      const unsent = yield* looked([HelperReply.cases.Lost.make({ sent: false })])
+      const unsent = yield* looked([ComputerReply.cases.Lost.make({ sent: false })])
       expect(yield* unsent.run(keys)).toEqual(failed)
     }),
   )
 
   it.effect('a change that went in but could not be seen afterwards is unknown, not failed', () =>
     Effect.gen(function* () {
-      const { run } = yield* looked([answered({}), refusedBy('ScreenshotFailed')])
+      const { run } = yield* looked([answered({}), refusedBy('something went wrong')])
       expect(yield* run(WindowAction.cases.Keys.make({ window: w1, keys: 'Enter' }))).toEqual(
         unknown,
       )
     }),
   )
 
-  it.effect('a click that closed its window says the window is gone', () =>
+  it.effect('closing a window sends the exact Alt+F4 and answers with what it now shows', () =>
     Effect.gen(function* () {
-      const { run } = yield* looked([answered({}), refusedBy('WindowGone')])
-      expect(yield* run(WindowAction.cases.Keys.make({ window: w1, keys: 'Enter' }))).toEqual(
-        declined('WindowGone'),
+      const { run } = yield* looked([answered(null), state('look2')])
+      // The supervisor says nothing about what a key did; what the window now shows is the answer.
+      expect(seen(yield* run(WindowAction.cases.Close.make({ window: w1 })))).toBe('Seen look2')
+    }),
+  )
+
+  it.effect('opening launches by the inventory id, then lists the windows', () =>
+    Effect.gen(function* () {
+      const Computer = scripted([
+        answered([{ id: 'machine:Terminal.lnk', displayName: 'Terminal' }]),
+        answered({}),
+        listed,
+      ])
+      const table = blankTable()
+      yield* perform(Computer.asking, table, WindowAction.cases.ListApps.make({}))
+      const result = yield* perform(
+        Computer.asking,
+        table,
+        WindowAction.cases.Open.make({ app: AppId.make('machine:Terminal.lnk') }),
       )
+      expect(seen(result)).toBe('Windows 1')
+      expect(Computer.asked[1]).toEqual(
+        ComputerCall.cases.LaunchApp.make({ app: 'Terminal', id: 'machine:Terminal.lnk' }),
+      )
+    }),
+  )
+
+  it.effect('typing reports what the Computer says, complete when it says nothing about it', () =>
+    Effect.gen(function* () {
+      const { run } = yield* looked([answered({}), state('look2')])
+      const result = yield* run(WindowAction.cases.Type.make({ window: w1, text: 'hello' }))
+      expect(seen(result)).toBe('Typed look2 true 5')
     }),
   )
 })

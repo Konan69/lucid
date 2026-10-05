@@ -15,7 +15,7 @@ import { Browser } from './browser.ts'
 import { executor } from './control.ts'
 import { connectDevice, deviceLink, sessionChanges } from './device.ts'
 import { controlledBrowser } from './driver.ts'
-import { locateHelper } from './helper.ts'
+import { locateComputer } from './computer.ts'
 import { createNotice } from './notice.ts'
 import { turns } from './turn.ts'
 import { installationIdentity } from './installation.ts'
@@ -186,7 +186,7 @@ function createBrowser(
 
 /**
  * Vivid using this computer. The executor acts in whichever Browser the open window has; the
- * turn keeper works in the Person's apps through Vivid's helper and owns the notice; the link
+ * turn keeper works in the Person's apps through Vivid's Computer and owns the notice; the link
  * enrols this installation, listens while the Person allows it, and hands each piece of work to
  * the one it is for. The installation identity is read here and goes nowhere else in the app. A
  * computer whose identity cannot be kept, or that has no host name, is not linked at all.
@@ -197,8 +197,8 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
   readonly browser: () => Option.Option<Browser>
 }) {
   // Everything Vivid holds on this computer outside the app's own window lives in this scope:
-  // the helper process and the fibers around it. Quitting closes it, which kills the helper;
-  // the helper also ends by itself when this process does (`--parent-pid`).
+  // the Computer process and the fibers around it. Quitting closes it, which kills the Computer;
+  // the Computer also ends by itself when this process does (`--parent-pid`).
   const held = yield* Scope.make()
   app.on('before-quit', () => {
     Effect.runFork(Scope.close(held, Exit.void))
@@ -215,7 +215,7 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
     stop: () => stopTurn(),
   })
   const windows = yield* turns({
-    helper: locateHelper({
+    computer: locateComputer({
       platform: NodeProcess.platform,
       packaged: app.isPackaged,
       resources: NodeProcess.resourcesPath,

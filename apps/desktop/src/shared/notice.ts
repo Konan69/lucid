@@ -11,10 +11,10 @@ export const NOTICE_NAMESPACE = 'vividNotice'
  * What the notice says while Vivid works on the Person's computer.
  *
  * The notice is up for a whole turn, which is one Run's work in apps
- * (`apps/desktop/native/windows/README.md`, "show its notice for the whole turn").
+ * (the vendored Computer draws no notice; the desktop shows one for the whole turn).
  * `Working` is before Vivid has looked at any window, when there is no app to name yet; it is a
  * different thing to say from `WorkingIn`, not the same state with a blank name. `Stopping` is
- * the moment between the Person pressing Stop and the helper letting go.
+ * the moment between the Person pressing Stop and the Computer letting go.
  */
 export const NoticeState = Schema.TaggedUnion({
   Hidden: {},

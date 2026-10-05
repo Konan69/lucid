@@ -42,17 +42,15 @@ mac:
     - dmg
   category: public.app-category.productivity
 
-# A Windows app without Vivid's helper would say nothing and simply not work in apps, so the
-# packaged result is checked (scripts/packed.mjs) and the build fails when the helper is absent.
+# A Windows app without Vivid's Computer would say nothing and simply not work in apps, so the
+# packaged result is checked (scripts/packed.mjs) and the build fails when the pair is absent.
 afterPack: ./scripts/packed.mjs
 
 win:
   target:
     - nsis
   extraResources:
-    # Vivid's Windows helper, compiled by scripts/build.mjs on Windows. Main starts it from
-    # `resources/native/windows` (src/main/helper.ts).
-    - from: dist/native/windows
-      to: native/windows
-      filter:
-        - Vivid.Windows.exe
+    # Vivid's Computer: the vendored supervisor and its engine beside it (`vendor/computer/`).
+    # Main starts both from `resources/native/computer` (src/main/computer.ts).
+    - from: vendor/computer
+      to: native/computer

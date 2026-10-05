@@ -13,7 +13,7 @@ import * as Option from 'effect/Option'
 import * as Queue from 'effect/Queue'
 import * as TestClock from 'effect/testing/TestClock'
 import { NoticeState } from '../shared/notice.ts'
-import { fakeHelper } from './fake.ts'
+import { fakeComputer } from './fake.ts'
 import { turns } from './turn.ts'
 
 const first = RunId.make('run-1')
@@ -22,13 +22,13 @@ const w1 = WindowId.make('w1')
 const stopped = Option.some(DeviceAnswer.cases.Declined.make({ reason: 'Stopped' }))
 
 /**
- * The turn keeper over the stand-in helper process (`fake.mjs`), with the notice as a queue of
+ * The turn keeper over the stand-in Computer process (`fake.mjs`), with the notice as a queue of
  * what it was told to show. Taking from that queue is how a test waits: nothing sleeps.
  */
 const fixture = Effect.fn('fixture')(function* () {
   const shown = yield* Queue.unbounded<string>()
   const keeper = yield* turns({
-    helper: Option.some(fakeHelper),
+    computer: Option.some(fakeComputer),
     notice: (state) => {
       Queue.offerUnsafe(
         shown,
@@ -79,7 +79,7 @@ describe('Vivid’s turn on the Person’s computer', () => {
       const { notice, list, tagOf } = yield* fixture()
       yield* list(first)
       expect(yield* notice).toBe('Working')
-      // The stand-in refuses a second turn while one is active, as the helper does.
+      // The stand-in refuses a second turn while one is active, as the Computer does.
       expect(tagOf(yield* list(second))).toBe('Windows')
       expect(yield* notice).toBe('Hidden')
       expect(yield* notice).toBe('Working')
@@ -130,7 +130,7 @@ describe('Vivid’s turn on the Person’s computer', () => {
     }),
   )
 
-  it.effect('Stop on the notice ends work the helper is still doing', () =>
+  it.effect('Stop on the notice ends work the Computer is still doing', () =>
     Effect.gen(function* () {
       const { keeper, notice, list, type, tagOf } = yield* fixture()
       yield* list(first)
@@ -139,7 +139,8 @@ describe('Vivid’s turn on the Person’s computer', () => {
       keeper.stop()
       expect(yield* Fiber.join(hanging)).toEqual(stopped)
       expect(yield* notice).toBe('Stopping')
-      expect(tagOf(yield* list(second))).not.toBe('Windows')
+      // A stop ends that Run's turn and nothing more: another Run works at once.
+      expect(tagOf(yield* list(second))).toBe('Windows')
     }),
   )
 
@@ -156,7 +157,7 @@ describe('Vivid’s turn on the Person’s computer', () => {
     }),
   )
 
-  it.effect('a change the helper died on is not answered, and the next work starts it again', () =>
+  it.effect('a change the Computer died on is not answered, and the next work starts it again', () =>
     Effect.gen(function* () {
       const { notice, list, type, tagOf } = yield* fixture()
       yield* list(first)
@@ -169,15 +170,11 @@ describe('Vivid’s turn on the Person’s computer', () => {
     }),
   )
 
-  it.effect('without the Escape hooks the turn ends: the Person could not stop it', () =>
+  it.effect('a change refused before anything was sent fails plainly', () =>
     Effect.gen(function* () {
-      const { notice, list, type } = yield* fixture()
+      const { list, type, tagOf } = yield* fixture()
       yield* list(first)
-      expect(yield* notice).toBe('Working')
-      expect(yield* type(first, 'hooks')).toEqual(
-        Option.some(DeviceAnswer.cases.Declined.make({ reason: 'Unsupported' })),
-      )
-      expect(yield* notice).toBe('Hidden')
+      expect(tagOf(yield* type(first, 'unsent'))).toBe('Failed')
     }),
   )
 
@@ -195,22 +192,22 @@ describe('Vivid’s turn on the Person’s computer', () => {
     }),
   )
 
-  it.effect('the link ending takes the notice down and lets the helper go', () =>
+  it.effect('the link ending takes the notice down and lets the Computer go', () =>
     Effect.gen(function* () {
       const { keeper, notice, list, tagOf } = yield* fixture()
       yield* list(first)
       expect(yield* notice).toBe('Working')
       yield* keeper.unlinked
       expect(yield* notice).toBe('Hidden')
-      // Linked again, the same Run's work starts a new helper and a new turn.
+      // Linked again, the same Run's work starts a new Computer and a new turn.
       expect(tagOf(yield* list(first))).toBe('Windows')
       expect(yield* notice).toBe('Working')
     }),
   )
 
-  it.effect('a computer with no helper says apps are unsupported and starts nothing', () =>
+  it.effect('a computer with no Computer says apps are unsupported and starts nothing', () =>
     Effect.gen(function* () {
-      const keeper = yield* turns({ helper: Option.none(), notice: () => undefined })
+      const keeper = yield* turns({ computer: Option.none(), notice: () => undefined })
       expect(keeper.apps).toBe(false)
       const answer = yield* keeper.execute({
         runId: first,

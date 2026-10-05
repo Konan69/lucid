@@ -11,26 +11,26 @@ import * as Schema from 'effect/Schema'
 import * as Scope from 'effect/Scope'
 import * as Semaphore from 'effect/Semaphore'
 import { NoticeState } from '../shared/notice.ts'
-import { startHelper, type Helper, type HelperCommand } from './helper.ts'
-import { HelperCall, HelperReply } from './wire.ts'
+import { startComputer, type Computer, type ComputerCommand } from './computer.ts'
+import { ComputerCall, ComputerReply } from './wire.ts'
 import { Performed, blankTable, perform, type Table } from './windows.ts'
 
 /**
- * Vivid's turns on the Person's computer: when the helper runs, when a turn begins and ends,
+ * Vivid's turns on the Person's computer: when the Computer runs, when a turn begins and ends,
  * what the notice says, and what a stop does.
  *
- * The rules, each from the helper's README ("What the desktop app must do") or the contract
+ * The rules, each from the Computer's README ("What the desktop app must do") or the contract
  * (`DeviceRequest` in `packages/contracts/src/computers.ts`):
  * - One turn per Run, and the Run's id is the turn's id. The turn begins at the first work in an
  *   app of that Run, and the notice goes up with it. It ends when the server says the Run ended,
  *   when no work has come for `IDLE_TURN`, when work of a different Run arrives, when the link to
  *   Vivid ends, and when the app quits.
- * - A stop ends the turn, and nothing more. The Person pressing Escape (the helper's `stopped`
+ * - A stop ends the turn, and nothing more. The Person pressing Escape (the Computer's `stopped`
  *   line) or Stop on the notice: work in flight is answered `Declined: Stopped`; with nothing in
  *   flight the stopped Run is put on `stops`, for the link to tell the server at once. The notice
  *   comes down. That Run's turn is not begun again; a new Run works at once. There is no pause
  *   after a stop and nothing is kept about it beyond the one Run it ended.
- * - The helper is started at the first work in an app, not before, and is one process. If it
+ * - The Computer is started at the first work in an app, not before, and is one process. If it
  *   dies it is started again by the next work; nothing is replayed.
  * - Work whose outcome is not known is not answered (`Performed.Unknown`).
  *
@@ -41,12 +41,12 @@ import { Performed, blankTable, perform, type Table } from './windows.ts'
 /** How long a turn stays open with no work before it is ended and the notice taken down. */
 export const IDLE_TURN = Duration.seconds(60)
 
-/** What beginning or ending a turn may take: these do nothing slow in the helper. */
+/** What beginning or ending a turn may take: these do nothing slow in the Computer. */
 const TURN_BUDGET_MS = 3_000
 
 export interface TurnDependencies {
-  /** How to start the helper, when this computer has one. */
-  readonly helper: Option.Option<HelperCommand>
+  /** How to start the Computer, when this computer has one. */
+  readonly computer: Option.Option<ComputerCommand>
   /** Says what the notice shows now. `Hidden` takes it down. */
   readonly notice: (state: NoticeState) => void
 }
@@ -58,18 +58,18 @@ export interface WindowWork {
   readonly expiresAt: number
 }
 
-/** What reaches this module from outside a fiber: the helper's lines and the notice's button. */
+/** What reaches this module from outside a fiber: the Computer's lines and the notice's button. */
 const Signal = Schema.TaggedUnion({
-  /** The helper's `stopped` line: Escape, during the turn with this id. */
+  /** The Computer's `stopped` line: Escape, during the turn with this id. */
   Escaped: { turn: Schema.String },
   /** Stop on the notice. */
   StopPressed: {},
-  /** The helper process is gone. `generation` says which one, so an old exit is not a new one. */
-  HelperGone: { generation: Schema.Int },
+  /** The Computer process is gone. `generation` says which one, so an old exit is not a new one. */
+  ComputerGone: { generation: Schema.Int },
 })
 
 interface Running {
-  readonly helper: Helper
+  readonly computer: Computer
   readonly scope: Scope.Closeable
   readonly generation: number
 }
@@ -82,11 +82,11 @@ interface Flying {
   readonly stop: Deferred.Deferred<void>
 }
 
-/** The helper would not begin a turn for this Run. `answer` is what that means for the work. */
+/** The Computer would not begin a turn for this Run. `answer` is what that means for the work. */
 class NotBegun extends Schema.TaggedError<NotBegun>()(
   'NotBegun',
   { answer: DeviceAnswer },
-  { title: 'The helper did not begin the turn' },
+  { title: 'The Computer did not begin the turn' },
 ) {}
 
 const isStopped = (answer: DeviceAnswer) =>
@@ -107,9 +107,9 @@ const appShown = (result: WindowResult): Option.Option<string> =>
     Closing: ({ view }) => Option.some(view.app),
   })
 
-/** What beginning a turn the helper refused means for the work that needed it. */
+/** What beginning a turn the Computer refused means for the work that needed it. */
 const notBegun = (name: string): DeviceAnswer => {
-  // The helper holds this Run as stopped: its turn is over for good.
+  // The Computer holds this Run as stopped: its turn is over for good.
   if (name === 'PersonStopped') return declinedStopped
   // No Escape hooks, so no way for the Person to stop Vivid, so no turn.
   if (name === 'HookUnavailable') return unsupported
@@ -156,15 +156,15 @@ const cancelIdle = (keeper: Keeper) =>
     return Option.match(waiting, { onNone: () => Effect.void, onSome: Fiber.interrupt })
   })
 
-/** Tells the helper the turn is over. Its reply changes nothing: the turn is over here anyway. */
-const releaseHelper = (keeper: Keeper, runId: RunId) =>
+/** Tells the Computer the turn is over. Its reply changes nothing: the turn is over here anyway. */
+const releaseComputer = (keeper: Keeper, runId: RunId) =>
   Effect.suspend(() =>
     Option.match(keeper.running, {
       onNone: () => Effect.void,
-      onSome: ({ helper }) =>
-        helper
+      onSome: ({ computer }) =>
+        computer
           .ask({
-            call: HelperCall.cases.EndTurn.make({}),
+            call: ComputerCall.cases.EndTurn.make({}),
             turn: Option.some(runId),
             budget: TURN_BUDGET_MS,
           })
@@ -172,15 +172,15 @@ const releaseHelper = (keeper: Keeper, runId: RunId) =>
     }),
   )
 
-/** Ends the turn in progress, if there is one: notice down, idle end cancelled, helper told. */
+/** Ends the turn in progress, if there is one: notice down, idle end cancelled, Computer told. */
 const endTurn = Effect.fn('DesktopTurn.end')(function* (keeper: Keeper) {
   yield* cancelIdle(keeper)
   const dropped = yield* dropTurn(keeper)
-  if (Option.isSome(dropped)) yield* releaseHelper(keeper, dropped.value.runId)
+  if (Option.isSome(dropped)) yield* releaseComputer(keeper, dropped.value.runId)
 })
 
-/** Ends the helper process. The next work starts a new one. */
-const stopHelper = (keeper: Keeper) =>
+/** Ends the Computer process. The next work starts a new one. */
+const stopComputer = (keeper: Keeper) =>
   Effect.suspend(() => {
     const current = keeper.running
     keeper.running = Option.none()
@@ -193,7 +193,7 @@ const stopHelper = (keeper: Keeper) =>
 /**
  * The Person stopped this Run. Work in flight is answered `Declined: Stopped`; with nothing in
  * flight the Run goes on `stops`, to be reported at once. Said twice it changes nothing: the
- * helper refusing the request in flight and its `stopped` line both report the same Escape.
+ * Computer refusing the request in flight and its `stopped` line both report the same Escape.
  */
 const personStopped = (keeper: Keeper, runId: RunId) =>
   Effect.sync(() => {
@@ -204,7 +204,7 @@ const personStopped = (keeper: Keeper, runId: RunId) =>
     else Queue.offerUnsafe(keeper.stops, runId)
   })
 
-/** Escape, as the helper's `stopped` line. The helper has already ended that turn itself. */
+/** Escape, as the Computer's `stopped` line. The Computer has already ended that turn itself. */
 const escaped = Effect.fn('DesktopTurn.escaped')(function* (keeper: Keeper, turn: string) {
   const current = Option.filter(keeper.turn, ({ runId }) => runId === turn)
   if (Option.isNone(current)) return
@@ -214,8 +214,8 @@ const escaped = Effect.fn('DesktopTurn.escaped')(function* (keeper: Keeper, turn
 })
 
 /**
- * Stop on the notice. The helper has no stop of its own to call; ending the turn removes its
- * hooks and its authority. It is asked after the request in flight, which the helper finishes
+ * Stop on the notice. The Computer has no stop of its own to call; ending the turn removes its
+ * hooks and its authority. It is asked after the request in flight, which the Computer finishes
  * first, and the notice says "Stopping" until then.
  */
 const stopPressed = Effect.fn('DesktopTurn.stopPressed')(function* (keeper: Keeper) {
@@ -225,50 +225,56 @@ const stopPressed = Effect.fn('DesktopTurn.stopPressed')(function* (keeper: Keep
   keeper.turn = Option.none()
   keeper.dependencies.notice(NoticeState.cases.Stopping.make({}))
   yield* personStopped(keeper, current.value.runId)
-  yield* releaseHelper(keeper, current.value.runId)
+  yield* releaseComputer(keeper, current.value.runId)
   keeper.dependencies.notice(hidden)
 })
 
-/** The helper process went away by itself: the turn went with it. The next work starts anew. */
-const helperGone = Effect.fn('DesktopTurn.helperGone')(function* (
+/** The Computer process went away by itself: the turn went with it. The next work starts anew. */
+const computerGone = Effect.fn('DesktopTurn.computerGone')(function* (
   keeper: Keeper,
   generation: number,
 ) {
   if (!Option.exists(keeper.running, (current) => current.generation === generation)) return
   yield* cancelIdle(keeper)
   yield* dropTurn(keeper)
-  yield* stopHelper(keeper)
+  yield* stopComputer(keeper)
 })
 
 const heard = (keeper: Keeper, signal: typeof Signal.Type) =>
   Signal.match(signal, {
     Escaped: ({ turn }) => escaped(keeper, turn),
     StopPressed: () => stopPressed(keeper),
-    HelperGone: ({ generation }) => helperGone(keeper, generation),
+    ComputerGone: ({ generation }) => computerGone(keeper, generation),
   })
 
-/** The helper process, started now if it is not running. */
-const helperNow = Effect.fn('DesktopTurn.helper')(function* (
+/**
+ * The Computer process, started now if it is not running, or if the one running is gone — an
+ * Escape ends the process itself, so the next work starts a new one rather than talking to a
+ * dead child.
+ */
+const computerNow = Effect.fn('DesktopTurn.computer')(function* (
   keeper: Keeper,
-  command: HelperCommand,
+  command: ComputerCommand,
 ) {
-  if (Option.isSome(keeper.running)) return keeper.running.value.helper
+  const running = keeper.running
+  if (Option.isSome(running) && running.value.computer.alive()) return running.value.computer
+  if (Option.isSome(running)) yield* stopComputer(keeper)
   keeper.generations += 1
   const generation = keeper.generations
   const scope = yield* Scope.fork(keeper.scope)
-  const helper = yield* startHelper(command, {
+  const computer = yield* startComputer(command, {
     stopped: (event) => {
       Queue.offerUnsafe(keeper.signals, Signal.cases.Escaped.make({ turn: event.turn }))
     },
     gone: () => {
-      Queue.offerUnsafe(keeper.signals, Signal.cases.HelperGone.make({ generation }))
+      Queue.offerUnsafe(keeper.signals, Signal.cases.ComputerGone.make({ generation }))
     },
   }).pipe(
     Scope.provide(scope),
     Effect.onError(() => Scope.close(scope, Exit.void)),
   )
-  keeper.running = Option.some({ helper, scope, generation })
-  return helper
+  keeper.running = Option.some({ computer, scope, generation })
+  return computer
 })
 
 /** The idle end itself, once its minute has passed: only if no work came since it was armed. */
@@ -293,23 +299,23 @@ const armIdle = Effect.fn('DesktopTurn.armIdle')(function* (keeper: Keeper, runI
 
 /**
  * The turn for this Run, begun now if it is not the one in progress. Work of another Run ends
- * the turn in progress first: the helper has one turn, and a turn is one Run's.
+ * the turn in progress first: the Computer has one turn, and a turn is one Run's.
  */
 const turnFor = Effect.fn('DesktopTurn.turnFor')(function* (
   keeper: Keeper,
-  helper: Helper,
+  computer: Computer,
   runId: RunId,
 ) {
   const current = Option.filter(keeper.turn, (now) => now.runId === runId)
   if (Option.isSome(current)) return current.value
   yield* endTurn(keeper)
-  const reply = yield* helper.ask({
-    call: HelperCall.cases.BeginTurn.make({}),
+  const reply = yield* computer.ask({
+    call: ComputerCall.cases.BeginTurn.make({}),
     turn: Option.some(runId),
     budget: TURN_BUDGET_MS,
   })
-  // The helper would not begin, or is gone. Nothing was done.
-  yield* HelperReply.match<Effect.Effect<void, NotBegun>>(reply, {
+  // The Computer would not begin, or is gone. Nothing was done.
+  yield* ComputerReply.match<Effect.Effect<void, NotBegun>>(reply, {
     Answered: () => Effect.void,
     Lost: () => Effect.fail(new NotBegun({ answer: failed })),
     Refused: ({ name }) => Effect.fail(new NotBegun({ answer: notBegun(name) })),
@@ -336,18 +342,18 @@ const settle = (keeper: Keeper, performed: Performed) =>
       }),
   })
 
-/** One piece of work through the helper, to its answer or to no answer. */
+/** One piece of work through the Computer, to its answer or to no answer. */
 const work = Effect.fn('DesktopTurn.work')(function* (
   keeper: Keeper,
-  command: HelperCommand,
+  command: ComputerCommand,
   input: WindowWork,
 ) {
-  const helper = yield* helperNow(keeper, command)
-  const begun = yield* turnFor(keeper, helper, input.runId)
-  // Each request gets what is left of this work's deadline, cut to the helper's own ceiling.
-  const asking = Effect.fn('DesktopTurn.ask')(function* (call: HelperCall) {
+  const computer = yield* computerNow(keeper, command)
+  const begun = yield* turnFor(keeper, computer, input.runId)
+  // Each request gets what is left of this work's deadline, cut to the Computer's own ceiling.
+  const asking = Effect.fn('DesktopTurn.ask')(function* (call: ComputerCall) {
     const now = yield* Clock.currentTimeMillis
-    return yield* helper.ask({
+    return yield* computer.ask({
       call,
       turn: Option.some(input.runId),
       budget: input.expiresAt - now,
@@ -359,10 +365,10 @@ const work = Effect.fn('DesktopTurn.work')(function* (
 })
 
 /** The same, with the two ways it cannot start turned into their answers. */
-const worked = (keeper: Keeper, command: HelperCommand, input: WindowWork) =>
+const worked = (keeper: Keeper, command: ComputerCommand, input: WindowWork) =>
   work(keeper, command, input).pipe(
     Effect.catchTags({
-      HelperUnavailable: () => Effect.succeed(Option.some(failed)),
+      ComputerUnavailable: () => Effect.succeed(Option.some(failed)),
       NotBegun: ({ answer }) => Effect.succeed(Option.some(answer)),
     }),
   )
@@ -376,8 +382,8 @@ const execute = Effect.fn('DesktopTurn.execute')(function* (keeper: Keeper, inpu
   const now = yield* Clock.currentTimeMillis
   if (now >= input.expiresAt) return Option.none<DeviceAnswer>()
   if (Option.contains(keeper.stoppedRun, input.runId)) return Option.some(declinedStopped)
-  // No helper on this computer: the ability said so, and the server should not have asked.
-  const command = keeper.dependencies.helper
+  // No Computer on this computer: the ability said so, and the server should not have asked.
+  const command = keeper.dependencies.computer
   if (Option.isNone(command)) return Option.some(unsupported)
   const stop = yield* Deferred.make<void>()
   keeper.flying = Option.some({ runId: input.runId, stop })
@@ -393,7 +399,7 @@ const execute = Effect.fn('DesktopTurn.execute')(function* (keeper: Keeper, inpu
       }),
     ),
   )
-  // The helper answering `PersonStopped` is the same stop as its `stopped` line.
+  // The Computer answering `PersonStopped` is the same stop as its `stopped` line.
   if (Option.exists(answer, isStopped)) {
     yield* cancelIdle(keeper)
     yield* dropTurn(keeper)
@@ -404,7 +410,7 @@ const execute = Effect.fn('DesktopTurn.execute')(function* (keeper: Keeper, inpu
 
 /**
  * Makes the turn keeper. It lives in the scope it is made in: closing that scope ends the
- * helper process with everything else.
+ * Computer process with everything else.
  */
 export const turns = Effect.fn('DesktopTurn.make')(function* (dependencies: TurnDependencies) {
   const keeper: Keeper = {
@@ -427,8 +433,8 @@ export const turns = Effect.fn('DesktopTurn.make')(function* (dependencies: Turn
   yield* Effect.forkScoped(Effect.forever(listening))
   const serially = Semaphore.withPermit(keeper.serial)
   return {
-    /** Whether this computer can work in apps at all: it has the helper. */
-    apps: Option.isSome(dependencies.helper),
+    /** Whether this computer can work in apps at all: it has the Computer. */
+    apps: Option.isSome(dependencies.computer),
     execute: (input: WindowWork) => serially(execute(keeper, input)),
     /** The server said this Run is over: its turn ends and the notice comes down. */
     ended: (runId: RunId) =>
@@ -437,8 +443,8 @@ export const turns = Effect.fn('DesktopTurn.make')(function* (dependencies: Turn
           Option.exists(keeper.turn, (now) => now.runId === runId) ? endTurn(keeper) : Effect.void,
         ),
       ),
-    /** The link to Vivid ended, or the app is quitting: the turn ends and the helper with it. */
-    unlinked: serially(endTurn(keeper).pipe(Effect.andThen(stopHelper(keeper)))),
+    /** The link to Vivid ended, or the app is quitting: the turn ends and the Computer with it. */
+    unlinked: serially(endTurn(keeper).pipe(Effect.andThen(stopComputer(keeper)))),
     /** Stop on the notice. Callable from outside any fiber. */
     stop: (): void => {
       Queue.offerUnsafe(keeper.signals, Signal.cases.StopPressed.make({}))

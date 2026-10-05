@@ -187,7 +187,7 @@ export interface DeviceLinkDependencies {
   readonly connect: Effect.Effect<Option.Option<DeviceServer>, never, Scope.Scope>
   /**
    * What this app can do, asked each time it starts listening. `apps` is true only where Vivid's
-   * helper is on this computer.
+   * Computer is on this computer.
    */
   readonly ability: () => DeviceAbility
   /**
@@ -300,7 +300,7 @@ export const deviceLink = Effect.fn('DesktopDevice.makeLink')(function* (
           ),
         ),
       ),
-      // Consent ends action for apps as for pages: the turn ends and the helper is let go.
+      // Consent ends action for apps as for pages: the turn ends and the Computer is let go.
     ).pipe(Effect.ensuring(dependencies.unlinked))
     // The server closes a link on revoke, on sign-out and when a newer link replaces it.
     // Enrolling again is how the app learns which; until then it is not listening.

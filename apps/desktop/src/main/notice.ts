@@ -12,8 +12,8 @@ import {
 /**
  * The notice: "Vivid is using your computer", on screen for as long as a turn lasts.
  *
- * The helper draws nothing (`apps/desktop/native/windows/README.md`: "desktop main draws and owns
- * the notice"). The reference shows a small always-on-top pill at the top centre of the screen
+ * The vendored Computer draws its own status pill; the desktop draws and owns the notice beside
+ * it. The reference shows a small always-on-top pill at the top centre of the screen
  * with the way to stop it (`~/codex-recon`, MAIN-PROCESS-ANALYSIS.md, "pill"); the placement and
  * the purpose are kept, the look is Vivid's own and is drawn by the web renderer
  * (`apps/web/src/notice.tsx`), so it uses the app's face, name, tokens and glass.
@@ -30,7 +30,7 @@ import {
  * - `transparent`: the pill has its own rounded shape and shadow; the window is only its box.
  *
  * It is placed at the top centre of the primary display each time it comes up, and can be
- * dragged for the rest of that turn. Nothing about where it was is kept: the helper's pointer
+ * dragged for the rest of that turn. Nothing about where it was is kept: the Computer's pointer
  * input is limited to the primary display, so that is where Vivid is working.
  */
 
