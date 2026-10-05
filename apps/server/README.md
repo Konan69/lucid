@@ -69,8 +69,8 @@ mutation routes are closed; Company changes go through the audited product RPCs.
 Every part of the product is required. The server does not start without the settings of any of
 these, and the failure names the variable (`requiredSetting` in `src/config.ts`):
 
-- **Computer:** Boat. `VIVID_BOAT_API_KEY`, `VIVID_BOAT_TEMPLATE` and `VIVID_COMPUTER_SSH_KEY`
-  (`src/computers/README.md`).
+- **Computer:** Boat. `VIVID_BOAT_API_KEY` and `VIVID_BOAT_TEMPLATE` (`src/computers/README.md`).
+  No SSH key is configured: each connection to a Computer makes its own.
 - **Memory:** HelixDB at `VIVID_HELIX_URL`, with embeddings through the model gateway.
 - **Integrations:** Executor. `VIVID_EXECUTOR_URL`, `VIVID_EXECUTOR_KEY` and
   `VIVID_EXECUTOR_ORGANIZATION`. Account references are in PostgreSQL; Executor holds credentials.

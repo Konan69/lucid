@@ -7,7 +7,9 @@ import {
   LinkFileRefused,
   LinkRunLost,
   LinkUnreachable,
+  KEY_TAG,
   OUTPUT_BYTES,
+  connectionIdentity,
   openLink,
   type Link,
 } from './link.ts'
@@ -214,11 +216,11 @@ it.live.skipIf(!peerAvailable)(
       const second = yield* peer()
       second.authorize(first.identity.publicKey)
       const located = yield* Ref.make(0)
-      const held = links<string>(first.identity)
+      const held = links<string>(first.authorizedFile)
       yield* Effect.addFinalizer(() => held.close)
       // The machine "resumes somewhere else": its provider names the second server from then on.
       const locate = Ref.updateAndGet(located, (count) => count + 1).pipe(
-        Effect.map((count) => ({ ...(count === 1 ? first : second), identity: undefined })),
+        Effect.map((count) => (count === 1 ? first : { ...second, identity: first.identity })),
       )
       const one = yield* held.get('machine', locate)
       expect(yield* held.get('machine', locate)).toBe(one)
@@ -239,13 +241,13 @@ it.live.skipIf(!peerAvailable)(
   () =>
     Effect.gen(function* () {
       const server = yield* peer()
-      const held = links<string>(server.identity)
+      const held = links<string>(server.authorizedFile)
       yield* Effect.addFinalizer(() => held.close)
       // The first machine's provider has been asked where it is and has not answered: a machine
       // that is still waking. `asked` says the opening is under way, so nothing here waits on time.
       const asked = yield* Deferred.make<void>()
       const answer = yield* Deferred.make<void>()
-      const target = { ...server, identity: undefined }
+      const target = server
       const waking = yield* held
         .get(
           'waking',
@@ -274,12 +276,12 @@ it.live.skipIf(!peerAvailable)(
   () =>
     Effect.gen(function* () {
       const server = yield* peer()
-      const held = links<string>(server.identity)
+      const held = links<string>(server.authorizedFile)
       yield* Effect.addFinalizer(() => held.close)
       const located = yield* Ref.make(0)
       const asked = yield* Deferred.make<void>()
       const answer = yield* Deferred.make<void>()
-      const target = { ...server, identity: undefined }
+      const target = server
       // The first asking is held until the test answers it; later ones answer at once.
       const locate = Ref.updateAndGet(located, (count) => count + 1).pipe(
         Effect.tap((count) =>
@@ -308,12 +310,10 @@ it.live.skipIf(!peerAvailable)(
   () =>
     Effect.gen(function* () {
       const server = yield* peer()
-      const held = links<string>(server.identity)
+      const held = links<string>(server.authorizedFile)
       yield* Effect.addFinalizer(() => held.close)
       const located = yield* Ref.make(0)
-      const locate = Ref.update(located, (count) => count + 1).pipe(
-        Effect.as({ ...server, identity: undefined }),
-      )
+      const locate = Ref.update(located, (count) => count + 1).pipe(Effect.as(server))
       const old = yield* held.get('machine', locate)
       yield* hangUp(old, server.home)
       const fresh = yield* held.get('machine', locate)
@@ -332,14 +332,14 @@ it.live.skipIf(!peerAvailable)(
   () =>
     Effect.gen(function* () {
       const server = yield* peer()
-      const held = links<string>(server.identity)
+      const held = links<string>(server.authorizedFile)
       const located = yield* Ref.make(0)
       const asked = yield* Deferred.make<void>()
       const answer = yield* Deferred.make<void>()
       const locate = Ref.update(located, (count) => count + 1).pipe(
         Effect.andThen(Deferred.succeed(asked, undefined)),
         Effect.andThen(Deferred.await(answer)),
-        Effect.as({ ...server, identity: undefined }),
+        Effect.as(server),
       )
       const opening = yield* held.get('machine', locate).pipe(Effect.flip, Effect.forkChild)
       yield* Deferred.await(asked)
@@ -358,11 +358,9 @@ it.live.skipIf(!peerAvailable)(
   () =>
     Effect.gen(function* () {
       const server = yield* peer()
-      const held = links<string>(server.identity)
+      const held = links<string>(server.authorizedFile)
       const located = yield* Ref.make(0)
-      const locate = Ref.update(located, (count) => count + 1).pipe(
-        Effect.as({ ...server, identity: undefined }),
-      )
+      const locate = Ref.update(located, (count) => count + 1).pipe(Effect.as(server))
       yield* held.close
       expect(yield* Effect.flip(held.get('machine', locate))).toBeInstanceOf(LinkUnreachable)
       expect(yield* Ref.get(located)).toBe(0)
@@ -382,4 +380,64 @@ it.live.skipIf(!peerAvailable)(
       expect(refused).toBeInstanceOf(LinkFileRefused)
     }).pipe(Effect.scoped),
   30_000,
+)
+
+it.live.skipIf(!peerAvailable)(
+  'gives every opening a key of its own and removes the lines of the openings before it, keeping lines that are not Vivid’s',
+  () =>
+    Effect.gen(function* () {
+      const machine = yield* peer()
+      const other = yield* peer()
+      // On the machine before Vivid's first connection: a key of the Person's own, with options
+      // and a comment, and the line of the one key an installation used to have.
+      const persons = `no-pty ${machine.stranger.split(' ').slice(0, 2).join(' ')} ada@laptop`
+      const retired = `${other.stranger.split(' ').slice(0, 2).join(' ')} vivid`
+      machine.authorize(persons)
+      machine.authorize(retired)
+      const presented: Array<string> = []
+      /** What a provider does when asked: makes nothing, lets the given key in, says where. */
+      const locate = (server: typeof machine) =>
+        connectionIdentity.pipe(
+          Effect.map((identity) => {
+            presented.push(identity.publicKey)
+            server.authorize(identity.publicKey)
+            return { ...server, identity }
+          }),
+        )
+      const held = links<string>(machine.authorizedFile)
+      const elsewhere = links<string>(other.authorizedFile)
+      yield* Effect.addFinalizer(() => held.close)
+      yield* Effect.addFinalizer(() => elsewhere.close)
+
+      yield* held.get('machine', locate(machine))
+      yield* held.forget('machine')
+      const second = yield* held.get('machine', locate(machine))
+      yield* elsewhere.get('other', locate(other))
+
+      const [one, two, three] = presented
+      if (one === undefined || two === undefined || three === undefined)
+        expect.fail('Three openings were expected')
+      expect(new Set(presented).size).toBe(3)
+      for (const line of presented) expect(line.endsWith(` ${KEY_TAG}`)).toBe(true)
+
+      // The second opening works, and what the machine now lets in is the Person's key and the
+      // second opening's: the first opening's line and the retired key's line are gone.
+      const run = yield* second.run({
+        command: 'echo in',
+        directory: machine.home,
+        timeoutSeconds: 10,
+      })
+      expect(run.stdout.trim()).toBe('in')
+      const lines = machine.authorizedLines()
+      expect(lines).toContain(persons)
+      expect(lines).toContain(two)
+      expect(lines).not.toContain(one)
+      expect(lines).not.toContain(retired)
+      // The fixture's own first key carried Vivid's tag too, and went with the rest.
+      expect(lines).toHaveLength(2)
+      // The other machine never saw the first machine's keys.
+      expect(other.authorizedLines()).toContain(three)
+      expect(other.authorizedLines()).not.toContain(two)
+    }).pipe(Effect.scoped),
+  40_000,
 )

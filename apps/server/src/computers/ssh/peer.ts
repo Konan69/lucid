@@ -2,9 +2,8 @@ import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
-import { Effect, Redacted } from 'effect'
-import ssh2 from 'ssh2'
-import { identity } from './link.ts'
+import { Effect } from 'effect'
+import { connectionIdentity } from './link.ts'
 
 /** Where OpenSSH's server is on a Debian or Ubuntu machine; a suite that needs a peer is skipped
  * where it is not installed. */
@@ -30,8 +29,7 @@ export const peer = Effect.fn('Test.sshPeer')(function* () {
   const home = NodePath.join(root, 'home')
   NodeFS.mkdirSync(home)
   keygen(NodePath.join(root, 'host'))
-  keygen(NodePath.join(root, 'client'))
-  NodeFS.copyFileSync(NodePath.join(root, 'client.pub'), NodePath.join(root, 'authorized'))
+  NodeFS.writeFileSync(NodePath.join(root, 'authorized'), '')
   NodeFS.writeFileSync(
     NodePath.join(root, 'config'),
     [
@@ -44,6 +42,9 @@ export const peer = Effect.fn('Test.sshPeer')(function* () {
       'UsePAM no',
       'StrictModes no',
       'Subsystem sftp internal-sftp',
+      // A session's home is the fixture's, never the developer's: a command that works on
+      // files under the home (the authorized keys among them) cannot reach real ones.
+      `SetEnv HOME=${home}`,
       '',
     ].join('\n'),
   )
@@ -67,17 +68,24 @@ export const peer = Effect.fn('Test.sshPeer')(function* () {
     // The captured child and the group it leads, nothing found by a name.
     (started) => Effect.sync(() => endGroup(started)),
   )
-  const key = yield* identity(
-    Redacted.make(NodeFS.readFileSync(NodePath.join(root, 'client'), 'utf8')),
-  )
+  const authorizedFile = NodePath.join(root, 'authorized')
+  const authorize = (publicKey: string) => NodeFS.appendFileSync(authorizedFile, `${publicKey}\n`)
+  // A pair of its own, let in as a provider lets a connection's key in.
+  const key = yield* connectionIdentity
+  authorize(key.publicKey)
   const stranger = yield* Effect.sync(() => {
     keygen(NodePath.join(root, 'stranger'))
     return NodeFS.readFileSync(NodePath.join(root, 'stranger.pub'), 'utf8').trim()
   })
   return {
     /** Lets another key in, as a provider does when asked to authorize one. */
-    authorize: (publicKey: string) =>
-      NodeFS.appendFileSync(NodePath.join(root, 'authorized'), `${publicKey}\n`),
+    authorize,
+    /** The file the server reads its let-in keys from, and its lines as they are now. */
+    authorizedFile,
+    authorizedLines: () =>
+      NodeFS.readFileSync(authorizedFile, 'utf8')
+        .split('\n')
+        .filter((line) => line !== ''),
     /** The machine goes: the listener and every open session, at once. */
     end: Effect.callback<void>((resume) => {
       if (child.exitCode !== null || child.signalCode !== null) return resume(Effect.void)
@@ -120,10 +128,3 @@ const freePort = Effect.callback<number>((resume) => {
   })
   server.on('close', () => resume(Effect.succeed(Number(text.trim()))))
 })
-
-/**
- * A key made now, in the form the `VIVID_COMPUTER_SSH_KEY` setting takes (base64 of the private
- * key file). For suites that compose the provider and never connect; no key is checked in.
- */
-export const throwawayKeySetting = () =>
-  Buffer.from(ssh2.utils.generateKeyPairSync('ed25519').private).toString('base64')

@@ -96,22 +96,84 @@ export const FILE_BYTES = 10_485_760
 export const shellWord = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`
 
 /**
- * The installation's key pair from its private key (OpenSSH or PEM text). The public half is
- * derived, never configured apart: two settings could disagree.
+ * The comment on every key line Vivid puts on a machine, declared once: it is written on the key
+ * a connection is given and it is how the lines of ended connections are found and removed
+ * (`pruneKeys`). A machine's provider keeps the comment of a key it is asked to authorize (seen
+ * on Boat, 5 October 2026).
  */
-export const identity = Effect.fn('Link.identity')(function* (key: Redacted.Redacted) {
-  const parsed = ssh2.utils.parseKey(Redacted.value(key))
-  // ssh2 answers an Error for text that is not a key, and an array for a file of several keys.
-  if (parsed instanceof Error || Array.isArray(parsed))
-    return yield* Effect.fail(new LinkKeyRefused())
-  if (!parsed.isPrivateKey()) return yield* Effect.fail(new LinkKeyRefused())
-  return {
-    privateKey: key,
-    /** One `authorized_keys` line: the type and the key, with a name that says whose it is. */
-    publicKey: `${parsed.type} ${parsed.getPublicSSH().toString('base64')} vivid`,
+export const KEY_TAG = 'vivid-connection'
+/** The comment of the one key an installation used before keys belonged to connections. A line
+ * with it is Vivid's too, and is removed the same way. */
+const RETIRED_KEY_TAG = 'vivid'
+
+/** One connection's key pair. The private half never leaves `Redacted` except into the client. */
+export interface Identity {
+  readonly privateKey: Redacted.Redacted
+  /** One `authorized_keys` line: the type, the key, and `KEY_TAG`. */
+  readonly publicKey: string
+}
+
+/**
+ * A key pair for ONE opening of ONE machine, made in memory (ed25519, about 1.5 ms). It is never
+ * a setting, never stored, never logged, and never used for a second opening or a second
+ * machine: a key shared by machines would let whoever holds one Person's machine reach every
+ * other Person's. A Person never holds it either; a Person's own SSH access to their Computer, if
+ * it is ever built, is that Person's own key.
+ */
+export const connectionIdentity: Effect.Effect<Identity, LinkKeyRefused> = Effect.suspend(() => {
+  // ssh2 1.17.0 now and then writes an ed25519 private key that its own reader refuses
+  // ("Malformed OpenSSH private key": 15 of 3,000 on 5 October 2026). A pair is used only when
+  // the reader that will log in with it accepts it; eight refusals in a row do not happen.
+  for (let tries = 0; tries < 8; tries += 1) {
+    const pair = ssh2.utils.generateKeyPairSync('ed25519')
+    const parsed = ssh2.utils.parseKey(pair.private)
+    if (parsed instanceof Error || Array.isArray(parsed)) continue
+    return Effect.succeed({
+      privateKey: Redacted.make(pair.private),
+      publicKey: `${parsed.type} ${parsed.getPublicSSH().toString('base64')} ${KEY_TAG}`,
+    })
   }
+  return Effect.fail(new LinkKeyRefused())
 })
-export type Identity = Effect.Success<ReturnType<typeof identity>>
+
+/**
+ * Removes from the machine's authorized keys every line of Vivid's except this connection's, and
+ * keeps every other line (the Person's own keys, the provider's tools). A key line outlives its
+ * connection, so without this they pile up, and each is a key that still opens the machine.
+ *
+ * A line is Vivid's only when it is exactly "type key comment" with one of Vivid's two comments;
+ * a line with options or any other comment is someone else's and is copied as it is. The file is
+ * rewritten through a temporary file beside it (mode 600) and moved into place, never truncated
+ * where it is. `file` is absolute or relative to the user's home.
+ *
+ * This relies on one server holding a machine's connection at a time: two servers opening the
+ * same machine would each remove the other's line. A connection that is already open is not
+ * affected when its line goes; only a new login reads the file.
+ *
+ * It answers whether it worked and never fails: the caller's command does not depend on it. No
+ * key material is in what it answers.
+ */
+export const pruneKeys = Effect.fn('Link.pruneKeys')(function* (
+  link: Link,
+  identity: Identity,
+  file: string,
+) {
+  const [, current] = identity.publicKey.split(' ')
+  const script = [
+    'cd "$HOME" || exit 1',
+    `file=${shellWord(file)}`,
+    '[ -f "$file" ] || exit 0',
+    'next=$(mktemp "$(dirname "$file")/.keys.XXXXXX") || exit 1',
+    'chmod 600 "$next" || { rm -f "$next"; exit 1; }',
+    `awk -v keep=${shellWord(String(current))} -v tag=${shellWord(KEY_TAG)} -v old=${shellWord(RETIRED_KEY_TAG)} ` +
+      `'NF == 3 && ($3 == tag || $3 == old) && $2 != keep { next } { print }' "$file" > "$next" ` +
+      '&& mv "$next" "$file" || { rm -f "$next"; exit 1; }',
+  ].join('\n')
+  const run = yield* Effect.result(
+    link.run({ command: script, directory: '/', timeoutSeconds: 20 }),
+  )
+  return Result.isSuccess(run) && run.success.exitCode === 0
+})
 
 /** Keeps the last `OUTPUT_BYTES` of a stream as it arrives, so a flood cannot hold memory. */
 const tail = () => {

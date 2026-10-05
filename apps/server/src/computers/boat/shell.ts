@@ -16,6 +16,7 @@ import {
   LinkHostMismatch,
   LinkKeyRefused,
   LinkRunLost,
+  connectionIdentity,
   LinkUnreachable,
   type Link,
   type LinkFailure,
@@ -63,15 +64,20 @@ const isLinkFailure = (
  * The SSH connections to Boat machines: where each machine is, asked of Boat before every new
  * connection, and the machine boundary's words for what goes wrong on one.
  */
+/** Where OpenSSH on a Boat machine reads the keys it lets in, under the user's home. */
+const AUTHORIZED_KEYS = '.ssh/authorized_keys'
+
 export const machineLinks = (api: Transport) => {
-  const connections = links<MachineKey>(api.pair)
+  const connections = links<MachineKey>(AUTHORIZED_KEYS)
   /**
-   * Lets the installation's key in and reads where the machine is now. Boat gives a machine its
+   * Makes this opening's key pair, has Boat let its public half in on this one machine, and reads
+   * where the machine is now. Boat gives a machine its
    * own IPv4 on one wake and only IPv6 on another, and then names an IPv4 endpoint; the endpoint
    * wins when it is set, because the hosted server has no IPv6 route.
    */
   const locate = Effect.fn('Machine.boat.locate')(function* (id: ProviderId) {
-    const reply = yield* api.authorize(id)
+    const identity = yield* connectionIdentity
+    const reply = yield* api.authorize(id, identity.publicKey)
     const place = yield* Option.fromNullishOr(reply.sshEndpoint).pipe(
       Option.filter((value) => value !== ''),
       Option.match({
@@ -79,7 +85,7 @@ export const machineLinks = (api: Transport) => {
         onSome: endpoint,
       }),
     )
-    return { ...place, user: reply.sshUser, hostKey: reply.hostKey }
+    return { ...place, user: reply.sshUser, hostKey: reply.hostKey, identity }
   })
   /**
    * One call on the machine's connection. `accepted` answers the running machine that has

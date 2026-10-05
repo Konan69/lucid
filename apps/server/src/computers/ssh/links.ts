@@ -1,18 +1,33 @@
 import { Effect, Exit, Schedule, Scope, Semaphore } from 'effect'
-import { type Identity, type Link, type LinkFailure, LinkUnreachable, openLink } from './link.ts'
+import {
+  type Identity,
+  type Link,
+  type LinkFailure,
+  LinkUnreachable,
+  openLink,
+  pruneKeys,
+} from './link.ts'
 
-/** Where a machine is now and which key it presents, as its provider reports them. */
+/**
+ * Where a machine is now and which key it presents, as its provider reports them, with the key
+ * pair this one opening was given: the provider authorized its public half on this machine when
+ * it was asked where the machine is.
+ */
 export interface LinkTarget {
   readonly host: string
   readonly port: number
   readonly user: string
   readonly hostKey: string
+  readonly identity: Identity
 }
 
 /**
  * The open connections, one per machine, for whoever holds machines (`boat.ts`).
  *
- * A connection is opened the first time a machine is used and reused after that. `locate` is
+ * A connection is opened the first time a machine is used and reused after that. No key is held
+ * here: each opening is given its own pair by `locate` (`LinkTarget.identity`), so no two
+ * machines, and no two openings of one machine, ever present the same key. `authorizedKeys` is
+ * the machine's authorized-keys file, where the lines of ended connections are removed. `locate` is
  * asked before every opening and never between: a machine's address and host key change when it
  * resumes, so they are facts about one connection, not about the machine.
  *
@@ -28,7 +43,7 @@ export interface LinkTarget {
  * reached, for at most 75 seconds. A wrong host key or a refused key is not retried: waiting does
  * not change either.
  */
-export const links = <Key>(identity: Identity) => {
+export const links = <Key>(authorizedKeys: string) => {
   const open = new Map<Key, { readonly link: Link; readonly scope: Scope.Closeable }>()
   // One opening at a time for each machine: two first uses of one machine must not make two
   // connections. Machines do not wait for each other. An opening asks the provider where the
@@ -86,9 +101,7 @@ export const links = <Key>(identity: Identity) => {
       Effect.gen(function* () {
         if (pending.get(key) !== token) return yield* Effect.fail(new LinkUnreachable())
         const scope = yield* Scope.make()
-        const link = yield* restore(
-          openLink({ ...target, identity }).pipe(Scope.provide(scope)),
-        ).pipe(
+        const link = yield* restore(openLink(target).pipe(Scope.provide(scope))).pipe(
           Effect.onExit((exit) =>
             Exit.isSuccess(exit) ? Effect.void : Scope.close(scope, Exit.void),
           ),
@@ -119,6 +132,21 @@ export const links = <Key>(identity: Identity) => {
         orElse: () => Effect.fail(new LinkUnreachable()),
       }),
     )
+  /**
+   * The first act on a new connection: the key lines of this machine's earlier connections go
+   * (`pruneKeys`). A prune that did not work is logged, without any key, and the connection is
+   * used all the same: the caller's command does not depend on it, and the next opening prunes
+   * again.
+   */
+  const pruned = (link: Link, identity: Identity) =>
+    pruneKeys(link, identity, authorizedKeys).pipe(
+      Effect.flatMap((done) =>
+        done ? Effect.void : Effect.logWarning('Old SSH key lines could not be removed.'),
+      ),
+    )
+  /** A connection for this opening, with the earlier openings' key lines removed. */
+  const opened = (key: Key, token: symbol, target: LinkTarget) =>
+    tries(key, token, target).pipe(Effect.tap((link) => pruned(link, target.identity)))
   /** An opening that ended without a connection leaves no token behind. */
   const settled = (key: Key, token: symbol) =>
     Effect.sync(() => {
@@ -140,7 +168,7 @@ export const links = <Key>(identity: Identity) => {
         if (closed) return Effect.fail(new LinkUnreachable())
         const token = Symbol('opening')
         pending.set(key, token)
-        return restore(locate.pipe(Effect.flatMap((target) => tries(key, token, target)))).pipe(
+        return restore(locate.pipe(Effect.flatMap((target) => opened(key, token, target)))).pipe(
           Effect.ensuring(settled(key, token)),
         )
       }),

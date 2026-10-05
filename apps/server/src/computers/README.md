@@ -4,13 +4,17 @@ Boat is the only Computer provider and every Vivid has it. `Machine` owns its li
 browser input and native desktop actions. `computerStoreLayer` owns Person scope, takeover and
 approvals; `computerHandlers` exposes the shared RPC contract.
 
-The server does not start without these three, and the failure names the variable:
+The server does not start without these two, and the failure names the variable:
 
 ```dotenv
 VIVID_BOAT_API_KEY=…        # secret
 VIVID_BOAT_TEMPLATE=vivid-computer-20261004
-VIVID_COMPUTER_SSH_KEY=…    # secret: base64 of an OpenSSH private key file (`ssh-keygen -t ed25519`, then `base64 -w0`)
 ```
+
+The server reaches a Computer's shell and files over SSH, and no SSH key is a setting. Each
+connection makes its own key pair in memory, has Boat let the public half in on that one machine,
+and drops the pair when the connection ends; the first thing a new connection does is remove the
+key lines of earlier connections from the machine (`ssh/link.ts`, `ssh/links.ts`).
 
 There is no provider selector and no "no provider" server. Optional, each with a default or a real
 choice behind it: `VIVID_BOAT_ORG` (omit it for the key's own wallet; set it to the paying

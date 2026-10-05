@@ -164,10 +164,8 @@ Required by the stack:
 - `VIVID_BOAT_API_KEY` — the Boat key Vivid's Computer is reached with. A secret.
 - `VIVID_BOAT_TEMPLATE` — the name of the prepared Boat template a Person's Computer is restored
   from (`infra/computer/prepare.py` prints it).
-- `VIVID_COMPUTER_SSH_KEY` — the one SSH key the server reaches every Computer with, as the base64
-  of an OpenSSH private key file (`ssh-keygen -t ed25519 -N '' -f key`, then `base64 -w0 key`). A
-  secret. Make it once and keep it: a new key is authorized on each Computer at its next wake, and
-  the deploy does not run without one.
+- No SSH key is a setting. The server makes a key pair for each connection to a Computer and
+  has Boat authorize it on that one machine (`docs/04-computer.md`, "Reaching the Computer").
 - `VIVID_PHOTON_PROJECT_ID`, `VIVID_PHOTON_PROJECT_SECRET` — the Photon project Vivid texts
   through. The secret is a secret.
 - `VIVID_PUSH_VAPID_PUBLIC`, `VIVID_PUSH_VAPID_PRIVATE`, `VIVID_PUSH_SUBJECT` — the key pair and

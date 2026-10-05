@@ -311,10 +311,22 @@ hosted: runtime --> server --SSH--> the Person's Computer
   IPv6 one; the same machine had each within one hour. For an IPv6-only machine the answer also
   carries an SSH endpoint, a host and port on IPv4. The hosted server has no IPv6 route, so the
   rule is: use the SSH endpoint when the answer has one, else the machine's address on port 22.
-- **Keys.** One key pair for the installation. The private half is a required server setting. The
-  public half is authorized on a Computer through the provider when the Computer wakes; the same
-  call returns the machine's host key, which the server checks when it connects. A wrong host is a
-  wrong machine, so this is correctness, not hardening.
+- **Keys.** A key pair belongs to one connection to one Computer. When the server opens a
+  connection it makes an ed25519 pair in memory, has the provider let the public half in on that
+  one machine, logs in with the private half, and drops the pair when the connection ends. No key
+  is a setting, none is stored or logged, and none is ever used for a second opening or a second
+  machine: with one key for the installation, whoever held one Person's Computer could have
+  reached every other Person's. The call that lets the key in also returns the machine's host key,
+  which the server checks when it connects. A wrong host is a wrong machine, so that is
+  correctness, not hardening.
+- **Old keys do not pile up.** A key line stays in the machine's authorized keys after its
+  connection ends. So the first thing a new connection does, on the machine, is remove every other
+  line of Vivid's and keep every line that is not (the Person's own keys, the provider's tools).
+  Vivid's lines are known by one comment, `vivid-connection`; the line of the one key an
+  installation used before (comment `vivid`) is removed the same way. This relies on one server
+  holding a machine's connection at a time. An open connection is not affected when its line goes.
+- **A Person never holds a key of Vivid's.** If a Person is ever given SSH access to their own
+  Computer, it is with that Person's own key, on their own machine. Vivid's key is not reused.
 - **One connection per awake Computer,** held by the server, because the server already owns
   waking, bindings, takeover and the idle stop. It is opened on first use, kept alive, closed when
   the Computer stops, and reopened after a failure with a fresh address. Commands, files and later
@@ -427,11 +439,14 @@ answered "nothing there" without waking it, and only a tool the model calls wake
   and consult no rule, by the Person's decision.
 - Calls: `ComputerShell`, `ComputerFileRead`, `ComputerFileWrite` (`packages/contracts`).
 - Runtime: `packages/agent/runtime/src/tools/sandbox.ts` is the machine in Flue's slot.
-- Setting: `VIVID_COMPUTER_SSH_KEY`, the base64 of an OpenSSH private key file. Required: a server
-  without it does not start. The public half is derived from it.
+- Settings: none. An earlier version of this step had one installation key as a setting; it is
+  deleted, and a server needs only the provider's key and template.
 
 ### Decisions the research settled
 
+- **Key pairs come from the library, checked.** `ssh2` 1.17.0 now and then writes an ed25519
+  private key that its own reader refuses (15 of 3,000 tried). A pair is used only after the
+  reader has accepted it; Node's own key format is not one the library reads.
 - **Library: `ssh2` 1.17.0, MIT, pinned.** Read in its installed source: `lib/client.js` (`connect`,
   `exec`, `sftp`, `hostVerifier`, keepalive) and `lib/protocol/SFTP.js`. One connection carries many
   channels and the SFTP subsystem. `hostVerifier` receives the host's key bytes, which are compared
@@ -474,10 +489,14 @@ answered "nothing there" without waking it, and only a tool the model calls wake
 
 - Vivid's own tools on a Person's Computer. The connection itself was run there (above); the
   built tools were not: there is no test Computer. After the deploy, check on production, in this
-  order: the server starts with `VIVID_COMPUTER_SSH_KEY` set; in a Thread ask Vivid to write a
+  order: in a Thread ask Vivid to write a
   file on its computer and read it back (`write`, `read`); ask for a command (`bash`); stop the
   Computer, start a conversation that does not need it, and confirm it stays stopped; ask for a
   file again and confirm it wakes and answers.
+- Whether the provider puts back, after a resume, a key it was given earlier. The removal at each
+  opening takes it out either way.
+- The removal of old key lines on a Computer (`~/.ssh/authorized_keys`). It is tested on a real SSH
+  server with its own key file.
 - A real model turn using the tools. The test drives Flue's own tool code through the server's
   functions against a real SSH server, with no model and no HTTP hop between runtime and server.
 - Whether cancelling a tool call in the runtime interrupts the server's call. The server ends the

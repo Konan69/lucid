@@ -1,4 +1,3 @@
-import * as NodeBuffer from 'node:buffer'
 import { Effect, Function, Option, Redacted, Schema, Stream } from 'effect'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
@@ -11,14 +10,7 @@ import {
   MachineUnreachable,
   type MachineKey,
 } from '../machine.ts'
-import {
-  configError,
-  optionalSetting,
-  requiredSetting,
-  settingSecret,
-  settingText,
-} from '../../config.ts'
-import { identity } from '../ssh/link.ts'
+import { optionalSetting, requiredSetting, settingSecret, settingText } from '../../config.ts'
 import * as Protocol from './protocol.ts'
 
 const Request = Schema.TaggedUnion({
@@ -94,22 +86,7 @@ export const boatConfiguration = Effect.fn('Machine.boat.configuration')(functio
     Protocol.ProviderId,
     'a Boat machine id',
   )
-  // The installation's one SSH key, as base64 of the private key file: a key file has line
-  // breaks and ends with one, which a setting may not (`settingText`). The public half is derived
-  // from it (`ssh/link.ts`), so there is no second setting that could disagree.
-  const ssh = yield* requiredSetting(
-    'VIVID_COMPUTER_SSH_KEY',
-    settingSecret,
-    'the base64 of an OpenSSH private key',
-  )
-  const pair = yield* identity(
-    Redacted.make(NodeBuffer.Buffer.from(Redacted.value(ssh), 'base64').toString('utf8')),
-  ).pipe(
-    Effect.mapError(() =>
-      configError('VIVID_COMPUTER_SSH_KEY', 'the base64 of an OpenSSH private key'),
-    ),
-  )
-  return { key, org, create, adopt, pair }
+  return { key, org, create, adopt }
 })
 
 /** The failure an answer outside 2xx stands for. */
@@ -280,7 +257,7 @@ const requests = (
  * No general retry: commands are non-idempotent, creates use durable explicit intents. */
 export const transport = Effect.fn('Machine.boat.transport')(function* () {
   const client = yield* HttpClient.HttpClient
-  const { key, org, create, adopt, pair } = yield* boatConfiguration()
+  const { key, org, create, adopt } = yield* boatConfiguration()
   const { whole: request, followed, started } = requests(client, key, org)
   // The sizes a start may use, in the order it tries them: the configured size, then each larger
   // one. A larger machine always holds the disk and the work; it costs more only while it runs,
@@ -327,15 +304,14 @@ export const transport = Effect.fn('Machine.boat.transport')(function* () {
     create,
     /** The existing machine this installation uses, when it names one. */
     adopt,
-    /** The installation's SSH key pair. */
-    pair,
     /**
-     * Lets the installation's key in and says where the machine is now and which host key it
-     * presents. Asked before every new connection: all three change when a machine resumes.
+     * Lets one public key in on one machine and says where the machine is now and which host key
+     * it presents. Asked before every new connection, with that connection's own key: the
+     * address and the host key change when a machine resumes, and a key is never used twice.
      */
-    authorize: Effect.fn('Machine.boat.authorize')((id: Protocol.ProviderId) =>
+    authorize: Effect.fn('Machine.boat.authorize')((id: Protocol.ProviderId, publicKey: string) =>
       request(
-        Request.cases.Post.make({ path: `/sandboxes/${id}/sshkey`, body: { key: pair.publicKey } }),
+        Request.cases.Post.make({ path: `/sandboxes/${id}/sshkey`, body: { key: publicKey } }),
         Protocol.Authorized,
       ),
     ),

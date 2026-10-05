@@ -2,14 +2,10 @@ import { describe, expect, it } from '@effect/vitest'
 import { ConfigProvider, Effect, Option } from 'effect'
 import { ConfigurationError } from '../config.ts'
 import { boatConfiguration } from './boat/transport.ts'
-import { throwawayKeySetting } from './ssh/peer.ts'
-
-const sshKeySetting = throwawayKeySetting()
 
 const complete = {
   VIVID_BOAT_API_KEY: 'settings-test-key',
   VIVID_BOAT_TEMPLATE: 'vivid-computer-settings-test',
-  VIVID_COMPUTER_SSH_KEY: sshKeySetting,
 }
 
 /** The whole environment is replaced, so a developer's own Boat settings cannot leak into a case. */
@@ -23,7 +19,7 @@ const reading = (settings: Readonly<Record<string, string>>) =>
  * provider Layer does while the server is composed; a failure here is a failed launch.
  */
 describe('Computer provider settings', () => {
-  it.effect.each(['VIVID_BOAT_API_KEY', 'VIVID_BOAT_TEMPLATE', 'VIVID_COMPUTER_SSH_KEY'] as const)(
+  it.effect.each(['VIVID_BOAT_API_KEY', 'VIVID_BOAT_TEMPLATE'] as const)(
     'refuses to compose without %s and names it',
     (missing) =>
       Effect.gen(function* () {

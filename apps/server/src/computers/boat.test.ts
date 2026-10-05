@@ -1,3 +1,5 @@
+import { peer, peerAvailable } from './ssh/peer.ts'
+import { KEY_TAG } from './ssh/link.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeBuffer from 'node:buffer'
 import * as NodeHttp from 'node:http'
@@ -67,9 +69,6 @@ import {
   computerStoreLayer,
   machineFailureReason,
 } from './store.ts'
-import { throwawayKeySetting } from './ssh/peer.ts'
-
-const sshKeySetting = throwawayKeySetting()
 
 // Deliberate PNG fixture, not a claim that the guest was exercised.
 const png =
@@ -123,6 +122,9 @@ interface EvidenceService {
   readonly wrongIdentity: Ref.Ref<boolean>
   /** The organization every request must name as the payer; none when the key's own account pays. */
   readonly org: Ref.Ref<Option.Option<string>>
+  /** Where the fake says a machine is for SSH, and each public key it was asked to let in. */
+  readonly ssh: Ref.Ref<Option.Option<Effect.Success<ReturnType<typeof peer>>>>
+  readonly sshKeys: Ref.Ref<ReadonlyArray<string>>
 }
 class Evidence extends Context.Service<Evidence, EvidenceService>()('vivid/BoatProtocolEvidence') {}
 const evidenceLayer = Layer.effect(
@@ -161,6 +163,8 @@ const evidenceLayer = Layer.effect(
       edgeDown: yield* Ref.make(false),
       wrongIdentity: yield* Ref.make(false),
       org: yield* Ref.make(Option.some('personal')),
+      ssh: yield* Ref.make(Option.none<Effect.Success<ReturnType<typeof peer>>>()),
+      sshKeys: yield* Ref.make<ReadonlyArray<string>>([]),
     })
   }),
 )
@@ -617,6 +621,32 @@ const commands = Effect.fn('BoatTest.commands')(function* (evidence: EvidenceSer
   return yield* native(evidence, input.command)
 })
 
+const decodeSshKey = HttpServerRequest.schemaBodyJson(Schema.Struct({ key: Schema.String }))
+
+/** Boat's `sshkey` call as measured: it lets the given key in on the machine and answers where
+ * the machine is and which host key it presents. The machine here is the real SSH test server. */
+const authorized = Effect.fn('BoatProtocolTest.authorized')(function* (
+  evidence: EvidenceService,
+  request: HttpServerRequest.HttpServerRequest,
+) {
+  const { key: publicKey } = yield* decodeSshKey.pipe(
+    Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+  )
+  const server = yield* Ref.get(evidence.ssh)
+  if (Option.isNone(server)) return rejected(404)
+  yield* Ref.update(evidence.sshKeys, (keys) => [...keys, publicKey])
+  server.value.authorize(publicKey)
+  return yield* HttpServerResponse.json({
+    ok: true,
+    type: 'ssh_key.configured',
+    success: true,
+    machineIp: server.value.host,
+    sshEndpoint: `${server.value.host}:${server.value.port}`,
+    sshUser: server.value.user,
+    hostKey: server.value.hostKey,
+  })
+})
+
 /** Actual ephemeral HTTP, real Effect HttpClient and real durable Drizzle binding. */
 const serverLayer = Layer.effect(
   HttpClient.HttpClient,
@@ -729,6 +759,8 @@ const serverLayer = Layer.effect(
         path === `/api/v1/sandboxes/${adoptedId}/commands`
       )
         return yield* commands(evidence)
+      if (path === `/api/v1/sandboxes/${id}/sshkey` && request.method === 'POST')
+        return yield* authorized(evidence, request)
       return rejected(404)
     }).pipe(Effect.catch(() => Effect.succeed(rejected(400))))
     yield* server.serve(application)
@@ -763,21 +795,18 @@ const testLayer = configured({
   VIVID_BOAT_API_KEY: 'protocol-test-key',
   VIVID_BOAT_ORG: 'personal',
   VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
-  VIVID_COMPUTER_SSH_KEY: sshKeySetting,
 })
 /** One installation already owns this machine; adopting it must never call paid creation. */
 const adoptedLayer = configured({
   VIVID_BOAT_API_KEY: 'protocol-test-key',
   VIVID_BOAT_ORG: 'personal',
   VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
-  VIVID_COMPUTER_SSH_KEY: sshKeySetting,
   VIVID_BOAT_MACHINE: adoptedId,
 })
 /** An account that belongs to no organization: there is only the key. */
 const accountLayer = configured({
   VIVID_BOAT_API_KEY: 'protocol-test-key',
   VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
-  VIVID_COMPUTER_SSH_KEY: sshKeySetting,
 })
 
 /**
@@ -1131,6 +1160,46 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
     }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
   )
 
+  it.live.skipIf(!peerAvailable)(
+    'asks Boat to let in a different key for every opening of a machine, and reaches it with that key',
+    () =>
+      Effect.gen(function* () {
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        const key = yield* fixture()
+        const server = yield* peer()
+        yield* Ref.set(evidence.ssh, Option.some(server))
+        expect((yield* machine.ensure(key))._tag).toBe('Running')
+        const first = yield* machine.run({
+          key,
+          command: 'echo one',
+          directory: server.home,
+          timeoutSeconds: 10,
+        })
+        expect(first.stdout.trim()).toBe('one')
+        // A second command uses the open connection: Boat is not asked again.
+        yield* machine.run({ key, command: 'true', directory: server.home, timeoutSeconds: 10 })
+        expect(yield* Ref.get(evidence.sshKeys)).toHaveLength(1)
+        // The machine stops and resumes: the connection to the machine it was is closed, and the
+        // next command opens another with a key of its own.
+        yield* machine.stop(key)
+        expect((yield* machine.ensure(key))._tag).toBe('Running')
+        const second = yield* machine.run({
+          key,
+          command: 'echo two',
+          directory: server.home,
+          timeoutSeconds: 10,
+        })
+        expect(second.stdout.trim()).toBe('two')
+        const [one, two, ...more] = yield* Ref.get(evidence.sshKeys)
+        if (one === undefined || two === undefined) expect.fail('Two openings were expected')
+        expect(more).toEqual([])
+        expect(one).not.toBe(two)
+        for (const sent of [one, two]) expect(sent.endsWith(` ${KEY_TAG}`)).toBe(true)
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    40_000,
+  )
+
   /**
    * A row can name a machine without a wake having made it: written by hand, or left in a table
    * from before the machine kept its record. Such a server finds the machine running under its
@@ -1215,7 +1284,6 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
               VIVID_BOAT_API_KEY: 'protocol-test-key',
               VIVID_BOAT_ORG: 'personal',
               VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
-              VIVID_COMPUTER_SSH_KEY: sshKeySetting,
             }),
           ),
         ),
@@ -1373,7 +1441,6 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
               VIVID_BOAT_API_KEY: 'protocol-test-key',
               VIVID_BOAT_ORG: 'personal',
               VIVID_BOAT_TEMPLATE: 'vivid-computer-new-release',
-              VIVID_COMPUTER_SSH_KEY: sshKeySetting,
             }),
           ),
         ),
@@ -1844,7 +1911,6 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
                     VIVID_BOAT_SIZE: 'large',
                     VIVID_BOAT_LIFETIME_SECONDS: '7200',
                     VIVID_BOAT_TEMPLATE: 'vivid-computer-new-release',
-                    VIVID_COMPUTER_SSH_KEY: sshKeySetting,
                   }),
                   { asPrimary: true },
                 ),
