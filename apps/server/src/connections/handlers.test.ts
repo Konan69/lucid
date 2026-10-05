@@ -214,6 +214,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
             app: row.references.app,
             profile: row.references.profile,
             owner: row.references.owner,
+            appOwnership: row.references.appOwnership,
             authorization: ExecutorAuthorizationId.make('retained-renewal'),
           })
           const executor = yield* Executor

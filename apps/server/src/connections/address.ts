@@ -104,14 +104,21 @@ const mcpSource = Effect.fn('Connections.mcpSource')(function* (
   return ConnectionSource.cases.Mcp.make({ address: address.href, authorization })
 })
 
-/** OAuth metadata selects discovery. Missing metadata on an anonymous 401/403, with or without
- * a Bearer challenge, selects the static-key card; other explicit schemes remain unsupported. */
+/** OAuth metadata selects discovery. A Bearer challenge without metadata, or a bare 401,
+ * selects the static-key card; other explicit schemes remain unsupported. A 403 with no
+ * challenge is a block (firewall, rate limit, login wall), not a request for a credential. */
 const mcpAuthorization = Effect.fn('Connections.mcpAuthorization')(function* (
   address: URL,
   response: HttpClientResponse.HttpClientResponse,
 ) {
   const challenge = response.headers['www-authenticate']
-  if (challenge === undefined) return yield* mcpSource(address, 'apiKey')
+  if (challenge === undefined) {
+    if (response.status !== 401)
+      return yield* Effect.fail(
+        ConnectionAddressInvalid.make({ reason: 'not an MCP server or OpenAPI specification' }),
+      )
+    return yield* mcpSource(address, 'apiKey')
+  }
   if (!/^Bearer(?:\s|$)/iu.test(challenge))
     return yield* Effect.fail(
       ConnectionAddressInvalid.make({

@@ -43,6 +43,7 @@ describe('Executor installation', () => {
         const references = ExecutorReferences.cases.Public.make({
           service: publicService,
           owner: ExecutorOwnerId.make('unconfigured'),
+          appOwnership: 'Shared',
           app: ExecutorAppId.make('unconfigured-app'),
           profile: ExecutorProfileId.make('unconfigured-profile'),
         })
@@ -118,6 +119,7 @@ it.effect('cannot distinguish declared writes from host-defaulted writes', () =>
       app: ExecutorAppId.make('app'),
       profile: ExecutorProfileId.make('profile'),
       owner: ExecutorOwnerId.make('owner'),
+      appOwnership: 'Shared',
     })
     const tools = yield* Effect.flatMap(Executor, (executor) => executor.tools(references)).pipe(
       Effect.provide(hosted.configured),
@@ -179,6 +181,7 @@ it.effect('does not echo a token when credential submission fails', () =>
       app: ExecutorAppId.make('app'),
       profile: ExecutorProfileId.make('profile'),
       owner: ExecutorOwnerId.make('owner'),
+      appOwnership: 'Shared',
       authorization: ExecutorAuthorizationId.make('authorization'),
       method: 'pat',
       label: 'Private',

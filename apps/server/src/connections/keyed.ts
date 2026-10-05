@@ -21,11 +21,16 @@ export const KeyedApp = Schema.Struct({ name: Schema.NonEmptyString, ...KeyedTra
 /** Port the proven defineProvider/secrets + mcpRouter mechanism, keeping Executor responsible
  * for credential storage and header injection. A fixed account identifier and JSON literals
  * prevent supplied names, URLs, hosts and header policies from becoming executable syntax. */
+/** JSON.stringify leaves U+2028/U+2029 raw; older parsers end a line there, so escape them. */
+function literal(value: string) {
+  return JSON.stringify(value).replace(/\u2028/gu, '\\u2028').replace(/\u2029/gu, '\\u2029')
+}
+
 export function keyedFiles(input: typeof KeyedApp.Type) {
   const source = `import { defineApp, defineProvider, secrets, object, string } from "apps";
 import { mcpRouter } from "apps/mcp";
-const service = defineProvider({ name: ${JSON.stringify(input.name)}, hosts: [${JSON.stringify(input.host)}], auth: { pat: secrets({ label: "Personal access token", fields: object({ token: string() }) }) } });
-export default defineApp({ accounts: { service } }, async ({ accounts, signal, cache }) => ({ tools: await mcpRouter({ url: ${JSON.stringify(input.address.href)}, headers: { [${JSON.stringify(input.header)}]: ${JSON.stringify(input.prefix)} + accounts.service.fields.token }, accountId: accounts.service.id, cache: cache.forAccount(accounts.service), signal }) }));
+const service = defineProvider({ name: ${literal(input.name)}, hosts: [${literal(input.host)}], auth: { pat: secrets({ label: "Personal access token", fields: object({ token: string() }) }) } });
+export default defineApp({ accounts: { service } }, async ({ accounts, signal, cache }) => ({ tools: await mcpRouter({ url: ${literal(input.address.href)}, headers: { [${literal(input.header)}]: ${literal(input.prefix)} + accounts.service.fields.token }, accountId: accounts.service.id, cache: cache.forAccount(accounts.service), signal }) }));
 `
   return [
     { path: 'index.ts', content: source },

@@ -69,6 +69,7 @@ const fixture = Effect.fn('AddressTest.fixture')(function* () {
         headers: { 'content-type': 'text/html' },
       })
     if (request.url === '/keywithoutmetadata') return HttpServerResponse.empty({ status: 401 })
+    if (request.url === '/blocked') return HttpServerResponse.empty({ status: 403 })
     if (request.url === '/key')
       return HttpServerResponse.empty({ status: 401, headers: { 'www-authenticate': 'Bearer' } })
     if (request.url === '/oauth')
@@ -236,6 +237,10 @@ describe('public integration addresses', () => {
             authorization: 'apiKey',
           }),
         )
+        // A bare 403 is a firewall, rate limit or login wall, never a request for a key.
+        expect(yield* inspect('/blocked').pipe(Effect.flip)).toMatchObject({
+          reason: 'not an MCP server or OpenAPI specification',
+        })
         expect(yield* inspect('/key')).toEqual(
           ConnectionSource.cases.Mcp.make({
             address: 'https://integration.example/key',

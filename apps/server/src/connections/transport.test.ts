@@ -54,6 +54,7 @@ const identity = {
   app: ExecutorAppId.make('app'),
   profile: ExecutorProfileId.make('profile'),
   owner: ExecutorOwnerId.make('private-owner'),
+  appOwnership: 'Shared' as const,
 }
 const references = ExecutorReferences.cases.Public.make(identity)
 const authorized = ExecutorReferences.cases.Authorized.make({

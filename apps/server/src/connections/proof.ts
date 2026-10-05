@@ -121,6 +121,7 @@ export const proofConnection = Effect.fn('ThreadProof.connection')(function* (
     profile: profile.id,
     owner,
     service: ServiceId.make('proof-records'),
+    appOwnership: 'Shared',
   })
   const context = yield* Layer.build(executorLayer)
   const executor = yield* Executor.pipe(Effect.provideContext(context))

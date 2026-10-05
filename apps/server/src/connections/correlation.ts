@@ -41,6 +41,7 @@ export const correlateSignIn = Effect.fn('Connections.correlateSignIn')(function
       app: references.app,
       profile: references.profile,
       owner: references.owner,
+      appOwnership: references.appOwnership,
       authorization: references.authorization,
       stateHash,
     }),

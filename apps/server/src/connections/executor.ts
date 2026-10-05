@@ -62,10 +62,11 @@ const referenceFields = {
   app: ExecutorAppId,
   profile: ExecutorProfileId,
   owner: ExecutorOwnerId,
-  /** Existing references all name shared catalogue/import code. New keyed code is dedicated. */
+  /** Rows stored before ownership existed all name shared catalogue/import code, so only
+   * decoding defaults. Construction must state it: a rebuilt reference that silently became
+   * Shared would leave a dedicated app on Executor after removal. */
   appOwnership: Schema.Literals(['Shared', 'Dedicated']).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(Schema.Literal('Shared').make('Shared'))),
-    Schema.withConstructorDefault(Effect.succeed(Schema.Literal('Shared').make('Shared'))),
   ),
 }
 /** Pending authorization has no account identity yet; status resolves it after completion. */
@@ -1768,6 +1769,15 @@ function makeKeyed(http: ExecutorHttp, configure: ReturnType<typeof makeConfigur
     input: typeof BeginInput.Type,
     transport: typeof KeyedTransport.Type,
   ) {
+    // The key travels in a request header on every call; plain HTTP would expose it in transit.
+    if (transport.address.protocol !== 'https:')
+      return yield* Effect.fail(
+        ExecutorRejected.make({
+          service: 'connections',
+          tool: null,
+          message: 'An Integration that needs a key must use an https address.',
+        }),
+      )
     const files = keyedFiles({
       name: input.label,
       address: transport.address,
@@ -1805,17 +1815,15 @@ function makeKeyed(http: ExecutorHttp, configure: ReturnType<typeof makeConfigur
   }, Effect.scoped)
 }
 
-/** No static-key attempt follows transport, private destination or mismatched-resource failures.
- * Missing OAuth discovery and unsupported/client-required methods can instead request a key. */
+/** A key is requested only when the service itself offers no sign-in Vivid can start: no OAuth
+ * discovery, a client that must be registered or approved by hand, or an unsupported method.
+ * Rejected metadata, registration, client or redirect also describe a fault in Vivid's or
+ * Executor's own OAuth setup, where a key card could never work, so they stay failures. */
 function keyInsteadOfOAuth(reason: typeof OAuthSetupReason.Type) {
   return [
     'discovery_missing',
     'client_not_approved',
     'client_registration_required',
-    'client_metadata_rejected',
-    'registration_rejected',
-    'invalid_client',
-    'invalid_redirect',
     'unsupported',
   ].includes(reason)
 }
@@ -1856,7 +1864,10 @@ function makeAdd(
             prefix: 'Bearer ',
           })
         : policy
-    if (input.source.authorization === 'apiKey') return yield* keyed(input, transport)
+    // A curated key policy is the proven route for that address, so it does not depend on
+    // which OAuth failure the service happens to report.
+    if (policy !== undefined || input.source.authorization === 'apiKey')
+      return yield* keyed(input, transport)
     const app = yield* Effect.acquireRelease(
       install(ServiceId.make(`import:${input.connectionId}`), (name) => {
         // Executor resolves the inspected URL again; production requires public-only egress.
