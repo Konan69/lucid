@@ -44,9 +44,13 @@ import { PageUnavailable, type Tab } from '../shared/pages.ts'
 import { DesktopSettings, settingsLayer } from './settings.ts'
 import { clearingLeft, storageLeftBehind } from './leaving.ts'
 import { registerAppProxy } from './proxy.ts'
-import { secureSession } from './session.ts'
+import { APP_PARTITION, secureSession } from './session.ts'
 import { isAllowedBridgeRequest } from './security.ts'
 import { ServerAddress, ServerSettings } from '../shared/settings.ts'
+import { startTelemetry } from './telemetry.ts'
+
+// First, before anything that can fail and before any scheme is registered (`telemetry.ts`).
+startTelemetry()
 
 const PLACEMENT_FILE = 'window-placement.json'
 const INSTALLATION_FILE = 'installation.json'
@@ -290,7 +294,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
     : NodePath.resolve(__dirname, '../renderer')
   const chooserPath = NodePath.join(root, 'chooser.html')
   const chooserUrl = NodeURL.pathToFileURL(chooserPath).href
-  const desktopSession = session.fromPartition('persist:vivid')
+  const desktopSession = session.fromPartition(APP_PARTITION)
   /** Protocol, navigation, permissions, and IPC follow the same durable selection. */
   const renderer = (): RendererSource =>
     ServerSettings.match<RendererSource>(serverSettings, {

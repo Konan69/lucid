@@ -3,6 +3,13 @@ import type { ServerSettings } from '../shared/settings.ts'
 import { isAllowedPermission, isAllowedResponse, isAppRequest } from './security.ts'
 
 /**
+ * The Chromium partition the app's own window lives in: its cookies, its storage and the requests
+ * `secureSession` guards. Named once, because error reporting has to answer in the same one
+ * (`telemetry.ts`).
+ */
+export const APP_PARTITION = 'persist:vivid'
+
+/**
  * One app session owns both request and permission checks. Block foreign network requests,
  * including redirected uploads and WebSockets, before sending headers. Response guards reject
  * foreign Location headers before Chromium follows them, including cookie-aware session.fetch.
