@@ -2,7 +2,7 @@ import { defineTool } from '@flue/runtime'
 import { Memory, MemoryKind } from '@vivid/contracts'
 import { Effect, Result, Schema } from 'effect'
 import * as v from 'valibot'
-import { forCompany, text } from './inputs.ts'
+import { summary, forCompany, text } from './inputs.ts'
 import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
 import { named } from './names.ts'
@@ -37,7 +37,7 @@ function forgetTool(runTool: RunTool) {
     name: 'forget',
     description:
       'Forget one remembered fact the person asks to remove. Several matches are listed first; ask which one and forget nothing until they choose.',
-    input: v.object({ what: text('The person’s words for the fact to forget.', 1000) }),
+    input: v.object({ summary, what: text('The person’s words for the fact to forget.', 1000) }),
     run({ data, signal }) {
       return runTool(
         Effect.gen(function* () {
@@ -61,6 +61,7 @@ function correctTool(runTool: RunTool) {
     description:
       'Correct one remembered fact when the person says it is wrong. List several matches and ask which one before changing anything.',
     input: v.object({
+      summary,
       was: text('The person’s words for the remembered fact that is wrong.', 1000),
       now: text('The corrected, self-contained fact.', 1000),
     }),
@@ -90,7 +91,7 @@ export function memoryTools(runTool: RunTool) {
       name: 'recall',
       description:
         'Look up relevant memories. Confirm current facts through a Connection before acting.',
-      input: v.object({ query: text('The person, preference or fact to recall.', 400) }),
+      input: v.object({ summary, query: text('The person, preference or fact to recall.', 400) }),
       /** Provenance and scope are projected into names rather than raw records. */
       run({ data, signal }) {
         return runTool(
@@ -108,6 +109,7 @@ export function memoryTools(runTool: RunTool) {
       description:
         'Save a fact or preference when asked. Share with the Company only when the person explicitly asks.',
       input: v.object({
+        summary,
         kind: v.pipe(v.picklist(MemoryKind.literals), v.description('The kind of memory.')),
         content: text('A self-contained fact or preference.', 1000),
         forCompany,
@@ -117,7 +119,11 @@ export function memoryTools(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            const response = yield* client.Remember(data)
+            const response = yield* client.Remember({
+              kind: data.kind,
+              content: data.content,
+              forCompany: data.forCompany,
+            })
             return { output: views.remembered(response.memory) }
           }),
           { signal, tool: 'remember' },

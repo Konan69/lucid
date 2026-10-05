@@ -109,6 +109,18 @@ const openExternal = Effect.fn('DesktopPreload.openExternal')(function* (value: 
   return yield* new UnexpectedBridgeResponse({})
 })
 
+/**
+ * Sends the approval page for a sign-in code to the system browser. Preload checks only that it
+ * is a web address; whether it is the selected server's approval page is main's decision, made
+ * against the server it has saved, which a document cannot change.
+ */
+const openApproval = Effect.fn('DesktopPreload.openApproval')(function* (value: string) {
+  const address = yield* decodeExternal(value)
+  const response = yield* invoke(BridgeRequest.cases.OpenApproval.make({ address }))
+  if (BridgeResponse.guards.ExternalOpened(response)) return undefined
+  return yield* new UnexpectedBridgeResponse({})
+})
+
 /** What this computer is to Vivid. `refresh` also asks the server again, after a decision. */
 const deviceLink = Effect.fn('DesktopPreload.deviceLink')(function* (
   request:
@@ -134,6 +146,7 @@ const bridge: VividDesktopBridge = {
   },
   getAppVersion: () => Effect.runPromise(getAppVersion()),
   openExternal: (url) => Effect.runPromise(openExternal(url)),
+  openApproval: (address) => Effect.runPromise(openApproval(address)),
 }
 // Preload limits the visible API; main independently checks the actual sender frame on every call.
 const chooserDocument =
@@ -142,5 +155,10 @@ contextBridge.exposeInMainWorld(
   BRIDGE_NAMESPACE,
   chooserDocument
     ? bridge
-    : { getAppVersion: bridge.getAppVersion, pages: bridge.pages, device: bridge.device },
+    : {
+        getAppVersion: bridge.getAppVersion,
+        pages: bridge.pages,
+        device: bridge.device,
+        openApproval: bridge.openApproval,
+      },
 )

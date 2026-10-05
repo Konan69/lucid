@@ -2,16 +2,15 @@ import type { MeResponse } from '@vivid/contracts'
 import { Workspace } from '@vivid/contracts'
 import { draftPlace, greetingAt, standingWords, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
-import { ChevronDown } from 'lucide-react'
 import { lazy, Suspense, useState, useSyncExternalStore } from 'react'
 import { Arrival, arrival } from '../data/arrival'
 import { live, LiveState, useLive } from '../data/live'
 import { Route, router } from '../data/route'
 import { startThread } from '../data/threads'
 import { useAppearance } from '../data/vivid'
-import { Face, type FaceMood } from '../ui/Face'
-import { BAR } from './bar'
+import { Face } from '../ui/Face'
 import { Composer } from './thread/Composer'
+import { HeroButton } from './thread/Header'
 
 // The card around Vivid is the Thread's own and is fetched when it is first opened, as there.
 const AboutHome = lazy(async () => ({ default: (await import('./thread/About')).AboutHome }))
@@ -97,13 +96,15 @@ function Back({ me, working }: { me: MeResponse; working: boolean }) {
   const mood = working ? 'thinking' : 'happy'
   return (
     <section className="relative flex h-full min-w-0 flex-1 flex-col bg-surface-0">
-      <header className={BAR}>
-        <Chip name={name} mood={mood} open={about} onPress={() => setAbout((value) => !value)} />
+      {/* Vivid sits where a Thread puts it: the face at 56 with its name capsule under it, at
+          the top centre (`HeroButton`, the same piece a conversation starts with). */}
+      <header className="flex shrink-0 justify-center pt-4">
+        <HeroButton mood={mood} open={about} onOpen={() => setAbout((value) => !value)} />
       </header>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <div className="mx-auto flex w-full max-w-(--thread-max-w) shrink-0 grow flex-col px-2 py-6 sm:px-0">
           <div className="my-auto">
-            <div className="motion-enter px-4 sm:px-6">
+            <div className="motion-enter px-4 text-center sm:px-6">
               <h1 className="font-display text-display font-strong tracking-display text-balance wrap-break-word text-ink">
                 {first === undefined || first.length === 0 ? `${hello}.` : `${hello}, ${first}.`}
               </h1>
@@ -137,44 +138,5 @@ function Back({ me, working }: { me: MeResponse; working: boolean }) {
         </Suspense>
       )}
     </section>
-  )
-}
-
-/**
- * Vivid in Home's bar: its face, the name this Person or their Company gave it, and a chevron
- * because it opens something. One button, and the one face on the page.
- *
- * The face is 28, the size a Thread's bar draws it, and sits on the bar's own leading edge: the
- * pill's fill reaches 4 past it on every side (36 high around a 28 face, so the two curves are
- * concentric) and the pill is pulled back by that 4. A name is at most 24 characters
- * (`VIVID_NAME_MAX`); in a pane too narrow for that it is cut with an ellipsis and the face and
- * chevron keep their size.
- */
-function Chip({
-  name,
-  mood,
-  open,
-  onPress,
-}: {
-  name: string
-  mood: FaceMood
-  open: boolean
-  onPress: () => void
-}) {
-  return (
-    // A plain button, not `Button`: no size of that one is a 36-high pill around a face, and its
-    // contract is not a screen's to restyle. The fill and its hover are `Button`'s `secondary`.
-    <button
-      type="button"
-      aria-haspopup="dialog"
-      aria-expanded={open}
-      onClick={onPress}
-      className="-ms-1 inline-flex h-9 max-w-full min-w-0 motion-press cursor-pointer items-center gap-2 rounded-full bg-wash-selected ps-1 pe-2.5 text-title font-title whitespace-nowrap text-ink select-none hover:bg-wash-pressed aria-expanded:bg-wash-pressed"
-    >
-      {/* The name beside it is the button's name; the face must not say it a second time. */}
-      <Face size={28} mood={mood} label="" />
-      <span className="min-w-0 truncate">{name}</span>
-      <ChevronDown className="size-3.5 shrink-0 text-ink-3" />
-    </button>
   )
 }

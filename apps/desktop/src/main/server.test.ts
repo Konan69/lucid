@@ -98,7 +98,7 @@ describe('desktop server selection', () => {
             }),
           ),
         )
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
   it.effect('denies selected-server documents before shell settings or browsing can change', () =>
@@ -145,8 +145,59 @@ describe('desktop server selection', () => {
         ).toEqual(BridgeResponse.cases.AppVersion.make({ value: '1.0.0' }))
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
         expect(changes).toEqual([])
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
+  )
+
+  it.effect(
+    'hands a selected-server document’s own approval page, and nothing else, to the browser',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* directory
+        yield* Effect.gen(function* () {
+          const settings = yield* DesktopSettings
+          const opened: string[] = []
+          const handlers: BridgeHandlers = {
+            pages: () => Effect.fail(new PageUnavailable({})),
+            settings,
+            getAppVersion: () => '1.0.0',
+            device: unlinked,
+            openExternal: (url) => Effect.sync(() => opened.push(url)),
+            onServerChanged: () => undefined,
+          }
+          const server = ServerSettings.cases.Server.make({
+            origin: ServerAddress.make('https://vivid.example'),
+          })
+          const authorize = (request: BridgeRequest) =>
+            isAllowedBridgeRequest(
+              'https://vivid.example/',
+              server,
+              'file:///application/chooser.html',
+              request,
+            )
+          const approval = 'https://vivid.example/device?user_code=ABCD2345&signin=google'
+          expect(
+            yield* handleBridgeRequest(
+              BridgeRequest.cases.OpenApproval.make({ address: approval }),
+              handlers,
+              authorize,
+            ),
+          ).toEqual(BridgeResponse.cases.ExternalOpened.make({}))
+          for (const address of [
+            'https://other.example/device?user_code=ABCD2345',
+            'https://vivid.example/settings?user_code=ABCD2345',
+            'https://vivid.example/device',
+          ])
+            expect(
+              yield* handleBridgeRequest(
+                BridgeRequest.cases.OpenApproval.make({ address }),
+                handlers,
+                authorize,
+              ).pipe(Effect.flip),
+            ).toBeInstanceOf(InvalidBridgeMessage)
+          expect(opened).toEqual([approval])
+        }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
+      }),
   )
 
   it.live('verifies /health before saving and bridge forget returns to the chooser', () =>
@@ -189,7 +240,7 @@ describe('desktop server selection', () => {
         ).toEqual(BridgeResponse.cases.Forgotten.make({}))
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
         expect(changes).toEqual(['Server', 'NoServer'])
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 
@@ -205,7 +256,7 @@ describe('desktop server selection', () => {
         expect(yield* chooseServer(origin, settings)).toEqual(ServerChoice.cases.NotVivid.make({}))
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
         expect(NodeFS.readdirSync(root)).toEqual([])
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 
@@ -229,7 +280,7 @@ describe('desktop server selection', () => {
         expect(result._tag).toBe('Unreachable')
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
         expect(foreignRequests).toBe(0)
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 
@@ -243,7 +294,7 @@ describe('desktop server selection', () => {
         const before = yield* settings.set(ServerAddress.make('https://vivid.example'))
         expect((yield* chooseServer(origin, settings))._tag).toBe('Unreachable')
         expect(yield* settings.get).toEqual(before)
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 
@@ -268,7 +319,7 @@ describe('desktop server selection', () => {
           }),
         )
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 

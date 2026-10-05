@@ -21,10 +21,7 @@ function AlertDialogOverlay({ className, ...props }: AlertDialogPrimitive.Backdr
   return (
     <AlertDialogPrimitive.Backdrop
       data-slot="alert-dialog-overlay"
-      className={cn(
-        'fixed inset-0 isolate z-50 bg-scrim motion-fade backdrop-blur-scrim',
-        className,
-      )}
+      className={cn('fixed inset-0 isolate z-50 motion-fade glass-scrim', className)}
       {...props}
     />
   )
@@ -47,7 +44,7 @@ function AlertDialogContent({
         ref={countSurface}
         data-size={size}
         className={cn(
-          'group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 motion-dialog gap-5 rounded-dialog bg-popover p-6 text-popover-foreground lift-lg outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-64 sm:data-[size=default]:max-w-sm',
+          'group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 motion-dialog gap-5 rounded-dialog p-6 text-popover-foreground lift-lg glass-modal outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-64 sm:data-[size=default]:max-w-sm',
           className,
         )}
         {...props}

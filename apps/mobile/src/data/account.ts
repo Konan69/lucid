@@ -1,5 +1,6 @@
+import type { PairingClient } from '@vivid/contracts/auth'
+import { DEVICE_GRANT, Wire, type PairingTransport } from '@vivid/state'
 import { Effect, Option, Redacted, Schema } from 'effect'
-import { CLIENT_ID, DEVICE_GRANT, Wire, type PairingTransport } from './device'
 import { AccountRefused, AccountUnreachable, type RefusalReason } from './refusal'
 import { accountAddress, type ServerAddress } from './server'
 import type { SignedIn } from './session'
@@ -147,6 +148,12 @@ export const signOut = (session: SignedIn) => asPerson(session, 'sign-out', {})
 export const approveDevice = (session: SignedIn, userCode: string) =>
   Effect.andThen(claimDevice(session, userCode), asPerson(session, 'device/approve', { userCode }))
 
+/**
+ * Names this app to the server, which issues a code to Vivid's own apps only and tells the Person
+ * approving it which one asked (`PairingClient`).
+ */
+const CLIENT_ID: PairingClient = 'vivid-mobile'
+
 /** One request of the code exchange, with "no answer" kept apart from "an answer that says no". */
 const wire = (posting: Omit<Posting, 'headers'>) =>
   post({ ...posting, headers: {} }).pipe(
@@ -154,7 +161,7 @@ const wire = (posting: Omit<Posting, 'headers'>) =>
     Effect.catchTag('AccountUnreachable', () => Effect.succeed(Wire.Unreachable())),
   )
 
-/** The code exchange's two requests against one server. See `device.ts` for the protocol. */
+/** The code exchange's two requests against one server. See `pairing.ts` in `@vivid/state` for the protocol. */
 export const pairingTransport = (server: ServerAddress): PairingTransport => ({
   requestCode: wire({ server, path: 'device/code', fields: { client_id: CLIENT_ID } }),
   askToken: (deviceCode) =>

@@ -75,13 +75,66 @@ export function isAllowedResponse(input: {
   )
 }
 
-/** Only the chooser changes shell authority; app documents receive the closed page capability. */
+/** The path the server names as its device-approval page (`verificationUri` in its auth provider). */
+const APPROVAL_PATH = '/device'
+/**
+ * A sign-in code exactly as the server issues it: eight characters of Better Auth's own alphabet,
+ * which leaves out the look-alikes I, O, 0 and 1 (`defaultCharset` and `userCodeLength`'s default
+ * in better-auth 1.7.5 `dist/plugins/device-authorization/routes.mjs` and `index.mjs`; the server
+ * sets neither, `apps/server/src/auth/provider.ts`). The server sends it in capitals with no dash,
+ * and the app passes it on untouched, so the dashed form a Person reads is not an address form.
+ */
+const USER_CODE = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/
+/** The whole query of an approval address: the code, with or without the mark that starts Google. */
+const APPROVAL_QUERY = Schema.Union([
+  Schema.Tuple([
+    Schema.Tuple([Schema.Literal('user_code'), Schema.String.check(Schema.isPattern(USER_CODE))]),
+  ]),
+  Schema.Tuple([
+    Schema.Tuple([Schema.Literal('user_code'), Schema.String.check(Schema.isPattern(USER_CODE))]),
+    Schema.Tuple([Schema.Literal('signin'), Schema.Literal('google')]),
+  ]),
+])
+const isApprovalQuery = Schema.is(APPROVAL_QUERY)
+
+/**
+ * Whether an address is the selected server's approval page for one sign-in code, and nothing
+ * else. This is the only same-origin address the shell hands to the system browser: the desktop
+ * window signs in with Google by having the Person approve a code there (the phone's answer,
+ * `googlePlace` in `@vivid/state`), and every other app address belongs inside the window.
+ *
+ * It is exact on purpose. The origin is the saved server's and uses a page scheme, never a
+ * WebSocket's. The path is the approval page alone. The query is one `user_code` in the shape the
+ * server issues, then at most `signin=google`, in the order `googlePlace` writes them: no other
+ * parameter, no repeat, no other value. Credentials and a fragment are refused, so nothing a
+ * document adds can ride along to the browser.
+ */
+export function isApprovalAddress(address: string, server: ServerSettings): boolean {
+  if (!/^https?:/.test(address) || !isAppRequest(address, server)) return false
+  return Option.exists(
+    decodeUrl(address),
+    (parsed) =>
+      parsed.pathname === APPROVAL_PATH &&
+      parsed.hash === '' &&
+      isApprovalQuery([...parsed.searchParams.entries()]),
+  )
+}
+
+/**
+ * Only the chooser changes shell authority; app documents receive the closed page capability.
+ *
+ * Opening the approval page is decided first and by its address, whoever asks: it is granted to
+ * the selected server's own document for that server's approval page, and to nothing else, the
+ * chooser included (which has no server to approve a sign-in on).
+ */
 export function isAllowedBridgeRequest(
   url: string,
   server: ServerSettings,
   chooser: string,
   request: BridgeRequest,
 ): boolean {
+  if (BridgeRequest.guards.OpenApproval(request))
+    return isTrustedDocument(url, server, chooser) && isApprovalAddress(request.address, server)
   if (isTrustedDocument(url, ServerSettings.cases.NoServer.make({}), chooser)) return true
   return (
     BridgeRequest.isAnyOf(['GetAppVersion', 'Pages', 'GetDeviceLink', 'RefreshDeviceLink'])(

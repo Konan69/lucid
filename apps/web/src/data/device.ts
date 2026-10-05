@@ -1,4 +1,5 @@
-import { Option } from 'effect'
+import { PairingClient } from '@vivid/contracts/auth'
+import { Option, Schema } from 'effect'
 
 /**
  * What to call a device from the way it introduced itself (its user-agent), in the words a Person
@@ -47,3 +48,34 @@ export const deviceName = (agent: Option.Option<string>): string =>
       )
     },
   })
+
+/**
+ * What to call the app behind a sign-in request, on the page where a Person decides whether to
+ * approve it. It comes from the name the app gave the server when it asked for its code.
+ *
+ * That name is a label, not proof: anything that can reach the server can give one of Vivid's
+ * names. So the words say what kind of app asked ("A Vivid desktop app"), never whose it is or
+ * that it is the Person's own; what proves that is the code matching the one on their device,
+ * which the page says beside this. A request with a name this app has no words for, or with
+ * none, is "An app".
+ */
+const ASKERS = {
+  'vivid-desktop': 'A Vivid desktop app',
+  'vivid-mobile': 'A Vivid phone app',
+} as const satisfies Record<PairingClient, string>
+
+const decodeClient = Schema.decodeUnknownOption(PairingClient)
+
+export const askerName = (client: Option.Option<string>): string =>
+  Option.match(Option.flatMap(client, decodeClient), {
+    onNone: () => 'An app',
+    onSome: (known) => ASKERS[known],
+  })
+
+/**
+ * A code the way the server reads it: letters and digits only, in capitals. A Person types it as
+ * they read it, with a dash or in lower case, and the server ignores both (`normalizeUserCode` in
+ * better-auth 1.7.5 `dist/plugins/device-authorization/routes.mjs`).
+ */
+export const plainCode = (typed: string): string =>
+  typed.replace(/[^a-zA-Z0-9]/gu, '').toUpperCase()

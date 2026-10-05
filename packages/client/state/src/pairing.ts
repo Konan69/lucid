@@ -1,24 +1,27 @@
 import { Data, Duration, Effect, Option, Redacted, Ref, Schedule, Schema, Stream } from 'effect'
 
 /**
- * Signing a phone in with a code: the OAuth device authorization grant (RFC 8628) as Better
+ * Signing a device in with a code: the OAuth device authorization grant (RFC 8628) as Better
  * Auth's `deviceAuthorization` plugin serves it.
  *
- * The phone asks the server for a code and shows it. Someone already signed in on another device
- * enters it there (Settings → Devices). Meanwhile the phone asks the server, at the pace the
+ * The device asks the server for a code and shows it. Someone already signed in somewhere else
+ * enters it there (Settings → Devices). Meanwhile the device asks the server, at the pace the
  * server set, whether that has happened; the answer that says yes carries the session token.
  * This is the reason a phone can reach a Vivid running on the Person's own machine with no
  * password typed into it.
  *
+ * Two apps sign in this way, which is why it lives here and not in either of them. The phone
+ * does, for a code and for Google. The desktop app does for Google alone: its window cannot run
+ * Google's sign-in, so it hands the Person to the system browser with a code to approve, exactly
+ * as the phone does. Each app supplies its own transport and names itself to the server.
+ *
  * Everything here is pure: the transport that actually talks to a server is passed in, and time
- * is Effect's clock. The asking is the one protocol-mandated wait in the app; nothing else polls.
+ * is Effect's clock. The asking is the one protocol-mandated wait in either app; nothing else
+ * polls. There is no React Native and no DOM in it.
  *
  * Endpoint payloads verified against the installed plugin source,
  * `better-auth/dist/plugins/device-authorization/routes.mjs` (better-auth 1.7.5).
  */
-
-/** Names this app to the server. The server records it with the code and checks it on exchange. */
-export const CLIENT_ID = 'vivid-mobile'
 
 /** The grant type RFC 8628 §3.4 requires on the token request. */
 export const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code'
@@ -46,7 +49,7 @@ export type Ending = 'expired' | 'denied' | 'refused' | 'unreachable'
  * Where an exchange stands, which is exactly what the screen draws.
  *
  * - `Asking`: waiting for the server to issue a code.
- * - `Waiting`: the code is on screen and the phone is asking whether it has been entered.
+ * - `Waiting`: the code is on screen and the device is asking whether it has been entered.
  * - `Approved`: it was entered; this is the session's token.
  * - `Ended`: it will not complete, and a new code is needed to try again.
  */
@@ -164,7 +167,7 @@ const SLOWER = Duration.seconds(5)
  * Asks until the exchange is over. The first question waits one interval, because nobody can
  * have entered a code that was shown an instant ago; every later one waits the current pace,
  * which only ever lengthens. The code's own lifetime bounds the whole thing, so a server that
- * never says "expired" still cannot keep the phone asking forever.
+ * never says "expired" still cannot keep the device asking forever.
  */
 const settle = Effect.fn('Device.settle')(function* (transport: PairingTransport, code: Issued) {
   const pace = yield* Ref.make(code.interval)
@@ -222,3 +225,24 @@ export const spellCode = (userCode: string): string => {
     ? `${userCode.slice(0, half)}-${userCode.slice(half)}`
     : userCode
 }
+
+/**
+ * The place in the web app where a signed-in Person lets a waiting device in: Settings → Devices
+ * with the code already filled in. It is a path, because the server serves the web app: each app
+ * puts the origin of its own server in front (the phone the address the Person gave it, the
+ * desktop app the origin its window is on). The path is the one the server names as the
+ * plugin's `verificationUri` (`apps/server/src/auth/provider.ts`).
+ */
+export const approvalPlace = (userCode: string): string =>
+  `/device?user_code=${encodeURIComponent(userCode)}`
+
+/**
+ * The same place, marked so the web app starts Google sign-in at once when nobody is signed in
+ * there (`signin=google`, read by the web app's `data/google.ts`).
+ *
+ * A device that cannot run Google's sign-in itself borrows the browser's: the Person signs in
+ * with Google on the web, lands on the approval page with this device's code already filled in,
+ * and approves it. The exchange the device is already running then hands it a session of its
+ * own. A browser that is already signed in skips Google and opens straight on the approval.
+ */
+export const googlePlace = (userCode: string): string => `${approvalPlace(userCode)}&signin=google`

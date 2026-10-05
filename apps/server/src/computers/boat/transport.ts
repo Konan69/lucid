@@ -57,7 +57,13 @@ const configuration = Effect.fn('Machine.boat.configuration')(
       onNone: () => Protocol.CreateRequest.make(machine),
       onSome: (name) => Protocol.CreateRequest.make({ ...machine, org: name }),
     })
-    return { key, org, create }
+    // An installation that already has its machine names it here, and a Person's Computer is
+    // that machine instead of a new one. Boat's trial account refuses to create machines once
+    // its free hours are used, while it still resumes one that exists (seen 4 October 2026:
+    // create answered `trial_compute_limit_reached`, resume of the prepared machine answered
+    // 202). This is for one Person: the first owner keeps the machine; other accounts are refused.
+    const adopt = yield* Config.option(Config.schema(Protocol.ProviderId, 'VIVID_BOAT_MACHINE'))
+    return { key, org, create, adopt }
   },
   (program) => program.pipe(Effect.mapError(() => new MachineConfigurationInvalid())),
 )
@@ -132,7 +138,7 @@ const requests = (
  * No general retry: commands are non-idempotent, creates use durable explicit intents. */
 export const transport = Effect.fn('Machine.boat.transport')(function* () {
   const client = yield* HttpClient.HttpClient
-  const { key, org, create } = yield* configuration()
+  const { key, org, create, adopt } = yield* configuration()
   const request = requests(client, key, org)
   /** The command receipt is uncertain on transport loss, a malformed receipt, or Boat's direct-execution 5xx.
    * Never rerun user input automatically, including a desktop action. */
@@ -161,6 +167,8 @@ export const transport = Effect.fn('Machine.boat.transport')(function* () {
   })
   return {
     create,
+    /** The existing machine this installation uses, when it names one. */
+    adopt,
     get: Effect.fn('Machine.boat.get')(function* (id: Protocol.ProviderId) {
       const reply = yield* request(
         Request.cases.Get.make({ path: `/sandboxes/${id}` }),

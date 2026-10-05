@@ -137,7 +137,12 @@ describe('Program model tools', () => {
             terminate: true,
           })
           const reading = yield* Effect.promise(() =>
-            Promise.resolve(page.run({ ...context, data: { address: 'https://example.com' } })),
+            Promise.resolve(
+              page.run({
+                ...context,
+                data: { summary: 'Public example page', address: 'https://example.com' },
+              }),
+            ),
           ).pipe(Effect.forkScoped)
           const pageRequest = yield* Queue.take(requests)
           if (!Predicate.isTagged(pageRequest, 'Request'))

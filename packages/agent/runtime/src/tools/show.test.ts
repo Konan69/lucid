@@ -102,12 +102,13 @@ const context = {
 /** Real model-input decoding and the registered Flue callback require no server authority or storage. */
 describe('show tool', () => {
   it.each(Object.values(samples))('matches the surface contract for $_tag', (sample) => {
-    const input = { show: sample }
+    const input = { summary: 'Launch details', show: sample }
     const parsed = v.safeParse(show.input, input)
     const decoded = decodeRequest(input)
     expect(parsed.success).toBe(true)
     expect(Option.isSome(decoded)).toBe(true)
-    if (parsed.success && Option.isSome(decoded)) expect(parsed.output).toEqual(decoded.value)
+    if (parsed.success && Option.isSome(decoded))
+      expect(parsed.output.show).toEqual(decoded.value.show)
   })
 
   it.each([
@@ -125,7 +126,7 @@ describe('show tool', () => {
     { name: 'empty unit', value: { ...samples.Chart, unit: '' } },
     { name: 'maximum draft body', value: { ...samples.Draft, body: 'x'.repeat(20_000) } },
   ])('accepts $name identically', ({ value }) => {
-    const input = { show: value }
+    const input = { summary: 'Launch details', show: value }
     expect(v.safeParse(show.input, input).success).toBe(true)
     expect(Option.isSome(decodeRequest(input))).toBe(true)
   })
@@ -352,7 +353,7 @@ describe('show tool', () => {
       },
     },
   ])('refuses $name without weakening the surface contract', async ({ value }) => {
-    const input = { show: value }
+    const input = { summary: 'Launch details', show: value }
     const result = decodeRefusal(await show.run({ ...context, data: v.parse(show.input, input) }))
     expect(result.output.ok).toBe(false)
     expect(Option.isSome(decodeRequest(input))).toBe(false)
@@ -367,6 +368,7 @@ describe('show tool', () => {
         await show.run({
           ...context,
           data: v.parse(show.input, {
+            summary: 'Launch details',
             show: {
               ...samples.Comparison,
               items: [incomplete, { name: 'Meet', good: [], bad: [], facts: [] }],
@@ -379,14 +381,17 @@ describe('show tool', () => {
       expect(result.output.message).toContain('call show again once')
       expect(
         decodeReceipt(
-          await show.run({ ...context, data: v.parse(show.input, { show: samples.Comparison }) }),
+          await show.run({
+            ...context,
+            data: v.parse(show.input, { summary: 'Launch details', show: samples.Comparison }),
+          }),
         ).output,
       ).toEqual({ ok: true, shown: 'comparison' })
     },
   )
 
   it('refuses quoted JSON instead of silently changing the display payload', async () => {
-    const input = { show: `${JSON.stringify(samples.Comparison)}]` }
+    const input = { summary: 'Launch details', show: `${JSON.stringify(samples.Comparison)}]` }
     const result = decodeRefusal(await show.run({ ...context, data: v.parse(show.input, input) }))
     expect(result.output.message).toContain('show: Provide show as a JSON object')
     expect(result.output.message).toContain('do not quote or stringify it')
@@ -396,6 +401,7 @@ describe('show tool', () => {
 
   it('names the field and 200-character rule for an overlong comparison label', async () => {
     const input = {
+      summary: 'Launch details',
       show: {
         ...samples.Comparison,
         items: [
@@ -412,7 +418,10 @@ describe('show tool', () => {
     'terminates $_tag for the Person to answer',
     async (sample) => {
       const result = decodeReceipt(
-        await show.run({ ...context, data: v.parse(show.input, { show: sample }) }),
+        await show.run({
+          ...context,
+          data: v.parse(show.input, { summary: 'Launch details', show: sample }),
+        }),
       )
       expect(result.terminate).toBe(true)
       expect(result.output).toMatchObject({ ok: true, shown: sample._tag.toLowerCase() })
@@ -423,7 +432,10 @@ describe('show tool', () => {
 
   it('acknowledges Table without terminating or duplicating its display', async () => {
     const result = decodeReceipt(
-      await show.run({ ...context, data: v.parse(show.input, { show: samples.Table }) }),
+      await show.run({
+        ...context,
+        data: v.parse(show.input, { summary: 'Launch details', show: samples.Table }),
+      }),
     )
     expect(result).toEqual({ output: { ok: true, shown: 'table' }, terminate: false })
   })

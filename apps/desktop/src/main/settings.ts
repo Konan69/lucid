@@ -37,6 +37,19 @@ class SettingsMissing extends Schema.TaggedError<SettingsMissing>()(
   { title: 'Desktop settings are absent' },
 ) {}
 
+/**
+ * Where an installation with no stored choice starts. A packaged Vivid ships with its own address
+ * (`home`), so a Person opens the app and is in Vivid; the address chooser was the first thing
+ * they saw and asked for something they have no reason to know. A build with no home (development)
+ * still starts at the chooser. A Person who chose "Use a Different Vivid" has a stored `NoServer`
+ * or `Server`, which is read as it is and never replaced by this.
+ */
+const unchosen = (home: Option.Option<ServerAddress>): ServerSettings =>
+  Option.match(home, {
+    onNone: () => ServerSettings.cases.NoServer.make({}),
+    onSome: (origin) => ServerSettings.cases.Server.make({ origin }),
+  })
+
 /** Keep every damaged file beside its original, without overwriting an earlier recovery copy. */
 const preserveDamagedSettings = Effect.fn('DesktopSettings.preserveDamaged')(function* (
   path: string,
@@ -54,25 +67,26 @@ const preserveDamagedSettings = Effect.fn('DesktopSettings.preserveDamaged')(fun
       Effect.sync(() => console.error('desktop: settings could not be moved; original retained')),
     ),
   )
+  // A damaged file means a choice was made here once and cannot be read. Sending that
+  // installation to the shipped address would silently replace the server someone picked, so it
+  // starts at the chooser and the Person says where.
   return ServerSettings.cases.NoServer.make({})
 })
 
-/** Decode disk ingress once; missing, damaged, and unreadable settings all show the chooser. */
-export const readServerSettings = Effect.fn('DesktopSettings.read')(function* (path: string) {
-  const text = yield* Effect.try({
+/**
+ * Decode disk ingress once. Missing settings start where an installation with no choice starts
+ * (`unchosen`); damaged and unreadable ones start at the chooser.
+ */
+export const readServerSettings = Effect.fn('DesktopSettings.read')(function* (
+  path: string,
+  home: Option.Option<ServerAddress>,
+) {
+  return yield* Effect.try({
     try: () => NodeFS.readFileSync(path, 'utf8'),
     catch: (cause) =>
       Option.isSome(missingFile(cause)) ? new SettingsMissing({}) : new SettingsReadFailed({}),
   }).pipe(
-    Effect.map(Option.some),
-    Effect.catchTags({
-      SettingsMissing: () => Effect.succeed(Option.none<string>()),
-      SettingsReadFailed: () =>
-        preserveDamagedSettings(path).pipe(Effect.as(Option.none<string>())),
-    }),
-  )
-  if (Option.isNone(text)) return ServerSettings.cases.NoServer.make({})
-  return yield* decodeSettings(text.value).pipe(
+    Effect.flatMap(decodeSettings),
     Effect.map((stored) =>
       stored.version === 1
         ? ServerSettings.cases.Server.make({
@@ -80,7 +94,11 @@ export const readServerSettings = Effect.fn('DesktopSettings.read')(function* (p
           })
         : stored.server,
     ),
-    Effect.catchTag('SchemaError', () => preserveDamagedSettings(path)),
+    Effect.catchTags({
+      SettingsMissing: () => Effect.succeed(unchosen(home)),
+      SettingsReadFailed: () => preserveDamagedSettings(path),
+      SchemaError: () => preserveDamagedSettings(path),
+    }),
   )
 })
 
@@ -158,11 +176,11 @@ export class DesktopSettings extends Context.Service<DesktopSettings, DesktopSet
 ) {}
 
 /** Acquire recovery-safe disk state; concurrent choose and forget calls cannot race writes. */
-export const settingsLayer = (path: string) =>
+export const settingsLayer = (path: string, home: Option.Option<ServerAddress>) =>
   Layer.effect(
     DesktopSettings,
     Effect.gen(function* () {
-      const state = yield* Ref.make(yield* readServerSettings(path))
+      const state = yield* Ref.make(yield* readServerSettings(path, home))
       const writes = yield* Semaphore.make(1)
       /** Publish the new authority only after its durable replacement succeeds. */
       const save = Effect.fn('DesktopSettings.save')(

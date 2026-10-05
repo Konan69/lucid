@@ -2,7 +2,7 @@ import { VividRpcClient } from '@vivid/client-runtime'
 import { Array as Arr, Data, Effect, Layer, Option, Order, Redacted, Schema } from 'effect'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import { auth } from './auth'
-import { deviceName } from './device'
+import { askerName, deviceName, plainCode } from './device'
 import { firstArrival, googleAddresses, outcomeOf, type GoogleOutcome } from './google'
 
 /**
@@ -192,10 +192,14 @@ const justJoined = Effect.suspend(() =>
 
 export const signOut = () => post('sign-out', {})
 
-/** One place this Person is signed in, as Better Auth lists it. Its token is a credential. */
+/**
+ * One place this Person is signed in, as Better Auth lists it. Its token is a credential, so it
+ * is wrapped as it is read: `RedactedFromValue` decodes the plain string the server sends, where
+ * `Schema.Redacted` accepts only a value that is already wrapped and refused every answer.
+ */
 const Session = Schema.Struct({
   id: Schema.String,
-  token: Schema.Redacted(Schema.String),
+  token: Schema.RedactedFromValue(Schema.String),
   userAgent: Schema.NullOr(Schema.String),
   updatedAt: Schema.String,
 })
@@ -262,26 +266,52 @@ export const signOutDevice = (device: SignedInDevice) =>
 /** Signs out everywhere except here. */
 export const signOutElsewhere = () => post('revoke-other-sessions', {})
 
-/** What Better Auth answers when a signed-in Person claims a waiting code: the code it bound. */
-const ClaimedCode = Schema.Struct({ user_code: Schema.String })
+/**
+ * What Better Auth answers when a signed-in Person opens a waiting code (`deviceVerify` in
+ * better-auth 1.7.5 `dist/plugins/device-authorization/routes.mjs`): where the request stands,
+ * and, to the Person the code is now bound to and to nobody else, which app asked.
+ */
+const OpenedCode = Schema.Struct({
+  status: Schema.Literals(['pending', 'approved', 'denied']),
+  client_id: Schema.optionalKey(Schema.String),
+})
+
+/** A request to sign an app in that is waiting for this Person's decision. */
+export interface SignInRequest {
+  /** The code as the server reads it, which is what the decision is sent with. */
+  readonly code: string
+  /** What to call the app that asked. A label from the request, never proof (`askerName`). */
+  readonly asker: string
+}
 
 /**
- * Binds a waiting code to the Person signed in here. Better Auth 1.7.5 refuses to approve or deny
- * a code no session has claimed (`DEVICE_CODE_NOT_CLAIMED`, `plugins/device-authorization/routes.mjs`):
- * the claim is its proof that the Person deciding is the one who opened the code, so it comes
- * first, in the same browser, and the decision follows. Before this the web sent the decision
- * alone and every pairing was refused while the device waited out its code.
+ * Opens a waiting code for the Person signed in here, to be looked at before it is decided.
+ *
+ * It does two things in one request, both Better Auth's. It binds the code to this Person:
+ * Better Auth 1.7.5 refuses to approve or deny a code no session has claimed
+ * (`DEVICE_CODE_NOT_CLAIMED`), and the claim is this `GET /device?user_code=…`. And it answers
+ * with who asked, which is what lets the page say what is about to be signed in before anything
+ * is. A code that is not waiting any more (already decided, run out, never issued) is refused.
  */
-const claimDevice = (userCode: string) =>
-  read(`device?user_code=${encodeURIComponent(userCode)}`, ClaimedCode)
+export const openDevice = Effect.fn('Account.openDevice')(function* (typed: string) {
+  const code = plainCode(typed)
+  const opened = yield* read(`device?user_code=${encodeURIComponent(code)}`, OpenedCode)
+  if (opened.status !== 'pending')
+    return yield* Effect.fail(new AccountRefused({ message: 'That code is not waiting.' }))
+  const request: SignInRequest = {
+    code,
+    asker: askerName(Option.fromUndefinedOr(opened.client_id)),
+  }
+  return request
+})
 
-/** Lets a device that is waiting with this code sign in as the Person approving it. */
-export const approveDevice = (userCode: string) =>
-  Effect.andThen(claimDevice(userCode), post('device/approve', { userCode }))
+/** Lets the app that is waiting with this request sign in as the Person approving it. */
+export const approveDevice = (request: SignInRequest) =>
+  post('device/approve', { userCode: request.code })
 
-/** Tells a waiting device it will not be signed in. */
-export const denyDevice = (userCode: string) =>
-  Effect.andThen(claimDevice(userCode), post('device/deny', { userCode }))
+/** Tells the waiting app it will not be signed in (`deviceDeny`, the same plugin's own route). */
+export const denyDevice = (request: SignInRequest) =>
+  post('device/deny', { userCode: request.code })
 
 /**
  * The session lives in a cookie the live socket read when it opened, so a change of session means

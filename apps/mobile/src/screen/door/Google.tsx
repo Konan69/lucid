@@ -1,7 +1,7 @@
+import { Pairing, spellCode, type Ending } from '@vivid/state'
 import { Option } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import Svg, { Path } from 'react-native-svg'
-import { Pairing, spellCode, type Ending } from '../../data/device'
 import { door, useDoor } from '../../data/door'
 import { commit } from '../../data/haptics'
 import { googlePairingAtom, reopenGoogleAtom } from '../../data/signing'

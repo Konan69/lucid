@@ -83,7 +83,7 @@ describe('Routine Library authority', () => {
         const result = yield* Effect.promise(() =>
           Promise.resolve(
             page.run({
-              data: { address: 'https://example.com' },
+              data: { summary: 'Example page', address: 'https://example.com' },
               signal: new AbortController().signal,
               toolCallId: 'test-call',
               log: { info: () => void 0, warn: () => void 0, error: () => void 0 },

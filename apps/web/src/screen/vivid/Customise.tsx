@@ -121,8 +121,9 @@ export function Customise({ onClose }: { onClose: () => void }) {
     <Dialog {...useSurface(onClose)}>
       {/* The sheet's own close control is drawn below, over the preview's pane. On a narrow
           window the whole sheet scrolls here; wide, it is a fixed height and only the choices do. */}
-      <DialogContent showCloseButton={false} flush className="sm:max-w-3xl">
-        {/* The two panes have their own fills and reach the sheet's edge (`flush`). */}
+      <DialogContent showCloseButton={false} flush solid className="sm:max-w-3xl">
+        {/* The two panes have their own fills and reach the sheet's edge (`flush`), so the sheet
+            under them is the solid layer (`solid`): nothing would be seen through glass there. */}
         <form
           noValidate
           onSubmit={(event) => void save(event)}

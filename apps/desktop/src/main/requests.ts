@@ -77,6 +77,15 @@ export const handleBridgeRequest = Effect.fn('DesktopBridge.handleRequest')(func
           Effect.succeed(BridgeResponse.cases.ExternalOpenFailed.make({})),
         ),
       ),
+    // The same hand-off to the operating system as `OpenExternal`. What differs is who may ask
+    // and for what, which `authorize` has already decided from the address.
+    OpenApproval: ({ address }) =>
+      handlers.openExternal(address).pipe(
+        Effect.as(BridgeResponse.cases.ExternalOpened.make({})),
+        Effect.catchTag('ExternalUrlOpenFailed', () =>
+          Effect.succeed(BridgeResponse.cases.ExternalOpenFailed.make({})),
+        ),
+      ),
     GetDeviceLink: () =>
       Effect.sync(() => BridgeResponse.cases.DeviceLink.make({ value: handlers.device.state() })),
     RefreshDeviceLink: () =>

@@ -10,7 +10,11 @@ const HexColor = Schema.String.check(
 )
 const RgbTriplet = Schema.String.check(
   Schema.makeFilter((value) =>
-    /^\d{1,3} \d{1,3} \d{1,3}$/u.test(value) ? true : 'Expected an RGB triplet',
+    // Each channel is a byte: a larger number would become a malformed hexadecimal colour.
+    /^\d{1,3} \d{1,3} \d{1,3}$/u.test(value) &&
+    value.split(' ').every((channel) => Number(channel) <= 255)
+      ? true
+      : 'Expected an RGB triplet of 0 to 255',
   ),
 )
 
@@ -44,12 +48,18 @@ const decodeThemeSurfaces = Schema.decodeUnknownEffect(ThemeSurfaces)
 /**
  * Extract only the two native-window colors owned by design tokens. Schema validates capture
  * count and format together, so CSS changes cannot silently substitute a raw fallback color.
+ *
+ * The page colour is read from `--screen`, the literal the tokens declare; `--surface-0` is
+ * `var(--screen)` and so carries no colour of its own. Reading `--surface-0` for a hexadecimal
+ * value stopped the app at startup once the tokens were layered that way. The first two
+ * declarations are the default dark and light schemes; the named themes after them are the web
+ * app's and do not colour the native window.
  */
 const parseThemeSurfaces = Effect.fn('DesktopTheme.parseTokens')(function* (
   path: string,
   css: string,
 ) {
-  const surfaces = [...css.matchAll(/--surface-0:\s*(#[0-9a-fA-F]{6})/gu)].map((match) => match[1])
+  const surfaces = [...css.matchAll(/--screen:\s*(#[0-9a-fA-F]{6})/gu)].map((match) => match[1])
   const inks = [...css.matchAll(/--ink-base:\s*(\d{1,3} \d{1,3} \d{1,3})/gu)].map(
     (match) => match[1],
   )
@@ -76,8 +86,18 @@ export const loadThemeSurfaces = Effect.fn('DesktopTheme.loadTokens')(function* 
 export const surfaceFor = (surfaces: ThemeSurfaces, resolved: ResolvedColorScheme): string =>
   resolved === 'dark' ? surfaces.dark : surfaces.light
 
-/** Solid native title-bar glyph color derived from the shared RGB token. */
+/**
+ * Solid native title-bar glyph color derived from the shared RGB token, as `#rrggbb`.
+ *
+ * The token is the space-separated triplet CSS uses inside `rgb(… / alpha)`. Windows' title-bar
+ * overlay does not read `rgb(250 250 250)`: given that, it drew its default black glyphs, which
+ * on the dark page left minimise, maximise and close invisible. Hexadecimal is the form the
+ * window's own background already uses.
+ */
 export const inkFor = (surfaces: ThemeSurfaces, resolved: ResolvedColorScheme): string => {
   const triplet = resolved === 'dark' ? surfaces.inkBase.dark : surfaces.inkBase.light
-  return `rgb(${triplet})`
+  const channels = triplet
+    .split(' ')
+    .map((channel) => Number(channel).toString(16).padStart(2, '0'))
+  return `#${channels.join('')}`
 }
