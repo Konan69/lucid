@@ -57,7 +57,8 @@
     "react-native-web": "catalog:",
     "react-native-worklets": "catalog:",
     "thinking-orbs": "^0.3.2",
-    "@sentry/react-native": "catalog:"
+    "@sentry/react-native": "catalog:",
+    "@sentry/core": "10.75.2"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

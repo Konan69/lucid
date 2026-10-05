@@ -1,4 +1,15 @@
-import type { Breadcrumb, ErrorEvent, Exception, StackFrame } from '@sentry/react'
+import type {
+  Breadcrumb,
+  DebugImage,
+  Envelope,
+  ErrorEvent,
+  Event,
+  EventEnvelope,
+  EventItem,
+  Exception,
+  StackFrame,
+  Transport,
+} from '@sentry/core'
 import { Option, Schema } from 'effect'
 
 /**
@@ -15,6 +26,12 @@ import { Option, Schema } from 'effect'
  * The mobile and desktop apps keep their own copy of this file (`apps/mobile/src/data/scrub.ts`,
  * `apps/desktop/src/main/scrub.ts`), because each is typed by its own SDK's events. A change to
  * what may leave is made in all three.
+ *
+ * It is enforced twice. `scrub` and `scrubBreadcrumb` are the SDK's `beforeSend` and
+ * `beforeBreadcrumb`. `guarded` then wraps the SDK's transport, the one place everything that
+ * leaves has to pass: the SDK adds attachments to a report after `beforeSend`, and sends its own
+ * internal errors without calling it (`sendEvent` and `_processEvent` in `@sentry/core`
+ * `client.js`), so the hooks alone are not the whole way out.
  */
 
 /** One field of a context or a breadcrumb that may leave: a name, a version, an address. */
@@ -111,14 +128,49 @@ const requested = Schema.decodeUnknownOption(Request)
 const moved = Schema.decodeUnknownOption(Move)
 
 /** An address without its query or fragment: where a request went, not what it asked for. */
-export const withoutQuery = (address: string): string => {
+const withoutQuery = (address: string): string => {
   const cut = address.search(/[?#]/u)
   return cut === -1 ? address : address.slice(0, cut)
 }
 
+/** The scheme and the authority of an address: `https://name:password@host:port`. */
+const ORIGIN = /^[a-z][a-z0-9+.-]*:\/\/[^/]*/iu
+
+/**
+ * Where a Person's own folders end and the app begins, in the paths a report can hold. Each
+ * matches from the start of a path to the end of the part that is not the app's:
+ * - a home folder (`/Users/NAME/`, `/home/NAME/`, `C:/Users/NAME/`), which is the Person's name;
+ * - an Android app's data folder (`/data/user/0/PACKAGE/`);
+ * - an app bundle (`.../Vivid.app/`), whose path on a phone holds an install id;
+ * - the desktop app's archive (`.../resources/app.asar/`).
+ * They are applied in this order and each cuts what the one before left, so a path inside all of
+ * them ends as its place in the archive.
+ */
+const ROOTS = [
+  /^.*\/(?:Users|home)\/[^/]+\//iu,
+  /^.*\/data\/(?:user\/\d+|data)\/[^/]+\//u,
+  /^.*\.app\//u,
+  /^.*app\.asar(?:\.unpacked)?\//u,
+]
+
+/**
+ * Where something is in the app, and nothing about whose machine or which server it is on: an
+ * address loses its query and fragment, then its scheme, credentials and host, then every folder
+ * down to the app's own (`ROOTS`). A Windows path is read with forward slashes first. What is
+ * left names a file of the build, which is the same on every machine.
+ *
+ * Every address and path in a report goes through this: a frame's file and module, a debug
+ * image's file, the page's address and a breadcrumb's.
+ */
+export const place = (address: string): string =>
+  ROOTS.reduce(
+    (path, root) => path.replace(root, ''),
+    withoutQuery(address).replaceAll('\\', '/').replace(ORIGIN, ''),
+  )
+
 /** The same for an address the SDK may have left out, which stays left out. */
 const bare = ({ address }: { readonly address?: string }) =>
-  Option.getOrUndefined(Option.map(Option.fromUndefinedOr(address), withoutQuery))
+  Option.getOrUndefined(Option.map(Option.fromUndefinedOr(address), place))
 
 /**
  * One stack frame: where it is and what it is called. The source lines around it and the values
@@ -129,7 +181,7 @@ const frame = (from: StackFrame): StackFrame => ({
   filename: bare({ address: from.filename }),
   abs_path: bare({ address: from.abs_path }),
   function: from.function,
-  module: from.module,
+  module: bare({ address: from.module }),
   platform: from.platform,
   lineno: from.lineno,
   colno: from.colno,
@@ -173,8 +225,8 @@ const REQUESTS = new Set(['fetch', 'xhr', 'http'])
 
 /**
  * One breadcrumb, or null when nothing of it may leave. Two kinds are kept, cut down: a request
- * (its method, its status and its address without the query) and a move between screens (the two
- * addresses without their queries). Every other kind is dropped whole, because its text is the
+ * (its method, its status and where in the app it went, `place`) and a move between screens (the
+ * two places). Every other kind is dropped whole, because its text is the
  * Person's: a console line prints what the app was handling, and a click is named by the label of
  * what was pressed, which can be a Thread's title.
  *
@@ -210,7 +262,7 @@ export const scrubBreadcrumb = (from: Breadcrumb): Breadcrumb | null => {
 /**
  * The browser's own description of itself, which is the only thing Sentry can tell the system
  * from on the web. Every other header, the cookies and the body of the page's request are left
- * behind, and the page's address loses its query.
+ * behind, and the page's address is cut to its place in the app (`place`).
  */
 const request = (from: NonNullable<ErrorEvent['request']>): ErrorEvent['request'] => {
   const agent = from.headers === undefined ? undefined : from.headers['User-Agent']
@@ -220,12 +272,46 @@ const request = (from: NonNullable<ErrorEvent['request']>): ErrorEvent['request'
   }
 }
 
+/** The one fingerprint the SDK writes itself: group this report the way Sentry would anyway. */
+const DEFAULT_FINGERPRINT = '{{ default }}'
+
+/**
+ * A fingerprint is free text that code chooses to group reports by, so it can be anything: an
+ * email, a Thread's title. Only one made of nothing but the SDK's default marker is kept.
+ */
+const fingerprint = (from: ReadonlyArray<string>) =>
+  from.every((part) => part === DEFAULT_FINGERPRINT) ? [...from] : undefined
+
+/**
+ * One loaded file a frame can belong to, cut to what turns a frame back into a name: which kind
+ * it is, its debug id, where it was loaded (native code only) and its place in the app. A kind
+ * this does not name (`wasm`, which Vivid does not load) is left out.
+ */
+const image = (from: DebugImage): ReadonlyArray<DebugImage> => {
+  if (from.type === 'sourcemap')
+    return [{ type: 'sourcemap', debug_id: from.debug_id, code_file: place(from.code_file) }]
+  if (from.type === 'macho')
+    return [
+      {
+        type: 'macho',
+        debug_id: from.debug_id,
+        image_addr: from.image_addr,
+        image_size: from.image_size,
+        code_file: bare({ address: from.code_file }),
+      },
+    ]
+  return []
+}
+
 /**
  * The SDK's `beforeSend`: the report that leaves, built from the allowed parts of the one the SDK
  * made. The user, the extras, the message, the request's body, cookies and headers, and anything
  * this function does not name are not copied, so they are gone.
+ *
+ * It takes any event and always returns an error report, because `guarded` runs it again over
+ * whatever reaches the transport.
  */
-export const scrub = (event: ErrorEvent): ErrorEvent => ({
+export const scrub = (event: Event): ErrorEvent => ({
   type: undefined,
   event_id: event.event_id,
   timestamp: event.timestamp,
@@ -235,9 +321,16 @@ export const scrub = (event: ErrorEvent): ErrorEvent => ({
   dist: event.dist,
   environment: event.environment,
   sdk: event.sdk,
-  fingerprint: event.fingerprint,
-  // Which loaded files the frames belong to: their debug ids and load addresses, nothing else.
-  debug_meta: event.debug_meta,
+  fingerprint: event.fingerprint === undefined ? undefined : fingerprint(event.fingerprint),
+  debug_meta:
+    event.debug_meta === undefined
+      ? undefined
+      : {
+          images:
+            event.debug_meta.images === undefined
+              ? undefined
+              : event.debug_meta.images.flatMap(image),
+        },
   exception:
     event.exception === undefined
       ? undefined
@@ -257,4 +350,46 @@ export const scrub = (event: ErrorEvent): ErrorEvent => ({
   tags: Option.getOrUndefined(tags(event.tags)),
   contexts: Option.getOrUndefined(contexts(event.contexts)),
   request: event.request === undefined ? undefined : request(event.request),
+})
+
+/** Whether an envelope is the kind that carries a report: only that kind has an `event` item. */
+const carriesEvent = (envelope: Envelope): envelope is EventEnvelope =>
+  envelope[1].some(([header]) => header.type === 'event')
+
+/** Whether one item of such an envelope is the report itself. */
+const isEvent = (item: EventEnvelope[1][number]): item is EventItem => item[0].type === 'event'
+
+/**
+ * What of an envelope may leave: the error reports in it, each through `scrub` once more, under a
+ * header cut to its id, its time and where it is going. None when it carries no report.
+ *
+ * An envelope is how the SDK sends everything, not only errors: sessions, its own counts of what
+ * it dropped, replays, profiles, feedback, check-ins, transactions, and the attachments (a
+ * screenshot, a view hierarchy) that ride beside a report. All of those are other item types and
+ * are left behind here, whatever switched them on. The header's `trace` goes too: it names the
+ * screen a trace started on, and Vivid sends no traces.
+ */
+export const outbound = (envelope: Envelope): Option.Option<EventEnvelope> => {
+  if (!carriesEvent(envelope)) return Option.none()
+  const [headers, items] = envelope
+  const reports: Array<EventItem> = []
+  for (const item of items) if (isEvent(item)) reports.push([{ type: 'event' }, scrub(item[1])])
+  return Option.some([
+    { event_id: headers.event_id, sent_at: headers.sent_at, dsn: headers.dsn, sdk: headers.sdk },
+    reports,
+  ])
+}
+
+/**
+ * A transport that sends only what `outbound` allows. An envelope with nothing allowed in it is
+ * answered as sent, with the empty answer the SDK's own transports give for a request that needs
+ * no reply, so the SDK neither retries it nor counts a failure.
+ */
+export const guarded = (inner: Transport): Transport => ({
+  send: (envelope) =>
+    Option.match(outbound(envelope), {
+      onNone: () => Promise.resolve({}),
+      onSome: (kept) => inner.send(kept),
+    }),
+  flush: (timeout) => inner.flush(timeout),
 })

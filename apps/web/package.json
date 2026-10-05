@@ -35,7 +35,8 @@
     "remark-gfm": "^4.0.1",
     "thinking-orbs": "^0.3.2",
     "@sentry/electron": "catalog:",
-    "@sentry/react": "catalog:"
+    "@sentry/react": "catalog:",
+    "@sentry/core": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

@@ -212,6 +212,9 @@ catalogs:
     '@react-navigation/native-stack':
       specifier: 7.19.2
       version: 7.19.2
+    '@sentry/core':
+      specifier: 11.1.0
+      version: 11.1.0
     '@sentry/electron':
       specifier: 8.0.0
       version: 8.0.0
@@ -429,6 +432,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@sentry/core':
+        specifier: 'catalog:'
+        version: 11.1.0
       '@sentry/electron':
         specifier: 'catalog:'
         version: 8.0.0(@babel/core@7.29.7(supports-color@8.1.1))
@@ -493,6 +499,9 @@ importers:
       '@react-navigation/native-stack':
         specifier: 'catalog:'
         version: 7.19.2(@react-navigation/native@7.4.1(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-safe-area-context@5.7.0(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native-screens@4.26.2(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native@0.86.3(@react-native/metro-config@0.86.3(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
+      '@sentry/core':
+        specifier: 10.75.2
+        version: 10.75.2
       '@sentry/react-native':
         specifier: 'catalog:'
         version: 8.29.0(6dc07fbba0d9189e09814666d9800a63)
@@ -750,6 +759,9 @@ importers:
       '@novnc/novnc':
         specifier: ^1.7.0
         version: 1.7.0
+      '@sentry/core':
+        specifier: 'catalog:'
+        version: 11.1.0
       '@sentry/electron':
         specifier: 'catalog:'
         version: 8.0.0(@babel/core@7.29.7(supports-color@8.1.1))
