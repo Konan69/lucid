@@ -1,11 +1,12 @@
 import * as NodeChildProcess from 'node:child_process'
-import * as NodeProcess from 'node:process'
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
+import * as NodeProcess from 'node:process'
 import * as Deferred from 'effect/Deferred'
 import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
+import * as Queue from 'effect/Queue'
 import * as Schema from 'effect/Schema'
 import * as Semaphore from 'effect/Semaphore'
 import {
@@ -14,12 +15,12 @@ import {
   ComputerLine,
   ComputerReply,
   LINE_LIMIT_BYTES,
+  ESCAPE_STOPPED,
   budgetCeiling,
   decodeLine,
   lineFramer,
   reachesWire,
   requestLine,
-  ESCAPE_STOPPED,
 } from './wire.ts'
 
 /**
@@ -29,7 +30,8 @@ import {
  * What the vendored binary asks of the desktop (`vendor/computer/README.md`, "How the desktop
  * app uses them") and where it is done here:
  * - one process, `--parent-pid <main pid>`, `windowsHide`, private piped stdio that never
- *   reaches a renderer (`spawnComputer`);
+ *   reaches a renderer (`spawnComputer`), with the engine beside it started the reference's own
+ *   way and ended with the same scope;
  * - BOTH stdout and stderr drained for as long as the process lives, stderr into a bounded ring
  *   whose content is never logged — its lines are the supervisor's own diagnostics, and nothing
  *   from another program is worth trusting into a log;
@@ -42,8 +44,9 @@ import {
  *   line that is not this protocol, or a line over the cap ends the process, and only the
  *   process this module spawned;
  * - exit 130 is the Person's Escape (the supervisor's own stop): it is reported as the turn's
- *   `stopped` event with no cooldown, and every request in flight is `Lost`.
- * - exit for any other reason ends the request in flight as `Lost`, never as an answer.
+ *   `stopped` event with no cooldown, and the request in flight is refused with the supervisor's
+ *   own Escape message, so both roads end in the same answer. Exit for any other reason ends the
+ *   request in flight as `Lost`, never as an answer.
  *
  * The process belongs to a scope: closing it ends the process and waits for it to be gone.
  * `BeginTurn` and `Status` never reach the wire (module comment in `wire.ts`); `BeginTurn`
@@ -145,27 +148,52 @@ export interface ComputerListeners {
 interface Waiting {
   readonly id: number
   readonly reply: Deferred.Deferred<ComputerReply>
-  /** The request as written, so an approval ask can be answered with the same request again. */
-  readonly line: string
-  readonly app: (approval: string) => string
+  /** The request as asked, so an approval ask can be answered with the same request again. */
+  readonly asked: {
+    readonly call: ComputerCall
+    readonly turn: Option.Option<string>
+    readonly budget: number
+  }
   rounds: number
 }
+
+/** What the wires to one Computer process remember while it lives. */
+interface Bus {
+  waiting: Option.Option<Waiting>
+  /** The turn the last wire request carried: an `end_turn` is sent before a different one. */
+  wireTurn: Option.Option<string>
+  gone: boolean
+  next: number
+  diagnostics: Buffer
+}
+
+const newBus = (): Bus => ({
+  waiting: Option.none(),
+  wireTurn: Option.none(),
+  gone: false,
+  next: 1,
+  diagnostics: Buffer.alloc(0),
+})
 
 /**
  * Starts the process and returns the wires to it. The narrow unsafe part of this module: Node's
  * `spawn` and its event emitters. The release step ends the process this call spawned (never one
  * found by name) and waits until Node reports it gone, so a closed scope leaves nothing running.
+ * The engine, when there is one, runs beside the supervisor — the reference's own way, same
+ * `--parent-pid`, hidden — and is ended with it.
  */
 const spawnComputer = Effect.fn('DesktopComputer.spawn')(function* (command: ComputerCommand) {
   const ended = yield* Deferred.make<void>()
-  // The engine runs beside the supervisor, the reference's own way: same `--parent-pid`, hidden,
-  // and ended with the same scope. It is not talked to; the pair finds each other itself.
   const engine = Option.map(command.engine, (path) =>
     NodeChildProcess.spawn(path, ['--parent-pid', String(NodeProcess.pid)], {
       stdio: 'ignore',
       windowsHide: true,
     }),
   )
+  const stopAll = (spawned: NodeChildProcess.ChildProcess): void => {
+    Option.map(engine, (running) => running.kill())
+    spawned.kill()
+  }
   const child = yield* Effect.acquireRelease(
     Effect.try({
       try: () =>
@@ -176,10 +204,7 @@ const spawnComputer = Effect.fn('DesktopComputer.spawn')(function* (command: Com
       catch: () => new ComputerUnavailable({}),
     }),
     (spawned) =>
-      Effect.sync(() => {
-        Option.map(engine, (process_) => process_.kill())
-        spawned.kill()
-      }).pipe(Effect.andThen(Deferred.await(ended)), Effect.asVoid),
+      Effect.sync(() => stopAll(spawned)).pipe(Effect.andThen(Deferred.await(ended)), Effect.asVoid),
   )
   // `error` is how Node reports a program that could not be started; `close` follows an exit
   // once both output pipes have drained. Either means there is no process to talk to.
@@ -194,6 +219,85 @@ const spawnComputer = Effect.fn('DesktopComputer.spawn')(function* (command: Com
   return { child, ended }
 })
 
+/** The reply that ends a request in flight when the process is gone without an answer. */
+const lost = (sent: boolean) => ComputerReply.cases.Lost.make({ sent })
+
+/** Ends the request in flight, if there is one, as `Lost`: no answer will come. */
+const lose = (bus: Bus): void => {
+  Option.map(bus.waiting, (pending) =>
+    Deferred.doneUnsafe(pending.reply, Effect.succeed(lost(true))),
+  )
+  bus.waiting = Option.none()
+}
+
+
+/** The reply the supervisor sends for a turn the Person stopped: the in-flight request's refusal. */
+const escapeRefusal = () =>
+  ComputerReply.cases.Refused.make({
+    name: ESCAPE_STOPPED,
+    delivered: Option.none(),
+    reason: Option.none(),
+  })
+
+/**
+ * The process ended: nothing answers after this. Escape (exit 130) says the turn's stop and
+ * refuses the request in flight with the supervisor's own message for it; any other exit ends
+ * the request as lost.
+ */
+const onEnded = (
+  bus: Bus,
+  child: NodeChildProcess.ChildProcess,
+  listeners: ComputerListeners,
+): void => {
+  bus.gone = true
+  const escapeTurn = bus.wireTurn
+  const escape = child.exitCode === 130 && Option.isSome(escapeTurn)
+  if (escape) {
+    const inFlight = bus.waiting
+    bus.waiting = Option.none()
+    Option.map(inFlight, (pending) =>
+      Deferred.doneUnsafe(pending.reply, Effect.succeed(escapeRefusal())),
+    )
+  } else {
+    lose(bus)
+  }
+  // The exit code and how much it said, never what it said.
+  console.info(
+    `desktop: Vivid's Computer ended (code ${String(child.exitCode)}, ${bus.diagnostics.length} bytes of diagnostics)`,
+  )
+  if (escape && Option.isSome(escapeTurn))
+    listeners.stopped({ turn: escapeTurn.value, cooldown: 0 })
+  listeners.gone()
+}
+
+/**
+ * Answers one approval ask: the same request again with the approved app in its `meta`, the
+ * reference client's own answer — until the supervisor takes it or the ask has come back too
+ * many times to be one.
+ */
+const resendApproval =
+  (bus: Bus, write: (line: string) => void) =>
+  (ask: { readonly id: number; readonly app: string }) =>
+    Effect.gen(function* () {
+      const current = Option.filter(bus.waiting, (candidate) => candidate.id === ask.id)
+      if (Option.isNone(current)) return
+      const pending = current.value
+      pending.rounds += 1
+      if (pending.rounds >= APPROVAL_ROUNDS) {
+        bus.waiting = Option.none()
+        Deferred.doneUnsafe(pending.reply, Effect.succeed(escapeRefusal()))
+        return
+      }
+      const line = yield* requestLine({
+        id: pending.id,
+        call: pending.asked.call,
+        turn: pending.asked.turn,
+        budget: pending.asked.budget,
+        approvedApp: Option.some(ask.app),
+      }).pipe(Effect.option)
+      if (Option.isSome(line)) write(line.value)
+    })
+
 /**
  * Starts the Computer in the current scope.
  *
@@ -205,67 +309,38 @@ export const startComputer = Effect.fn('DesktopComputer.start')(function* (
   listeners: ComputerListeners,
 ) {
   const { child, ended } = yield* spawnComputer(command)
+  const bus = newBus()
   const serial = yield* Semaphore.make(1)
+  /** Approval asks waiting for their re-send, answered by the desktop itself (module comment). */
+  const approvals = yield* Queue.unbounded<{ readonly id: number; readonly app: string }>()
   const frame = lineFramer(LINE_LIMIT_BYTES)
-  let waiting = Option.none<Waiting>()
-  let gone = false
-  let next = 1
-  let diagnostics = Buffer.alloc(0)
-  /** The turn the last wire request carried: an `end_turn` is sent before a different one. */
-  let wireTurn = Option.none<string>()
 
-  const lose = (): void => {
-    Option.map(waiting, (current) =>
-      Deferred.doneUnsafe(
-        current.reply,
-        Effect.succeed(ComputerReply.cases.Lost.make({ sent: true })),
-      ),
-    )
-    waiting = Option.none()
-  }
-  const forget = (id: number): void => {
-    waiting = Option.filter(waiting, (current) => current.id !== id)
-  }
-  /** The stream is no longer this protocol: stop reading it and end the process. */
-  const distrust = (): void => {
-    lose()
-    child.kill()
-  }
   /** Writes a line to the supervisor, ignoring a failing pipe: the exit ends the request. */
   const write = (line: string): void => {
     child.stdin.write(`${line}\n`, () => undefined)
+  }
+  const forget = (id: number): void => {
+    bus.waiting = Option.filter(bus.waiting, (current) => current.id !== id)
+  }
+  /** The stream is no longer this protocol: stop reading it and end the process. */
+  const distrust = (): void => {
+    lose(bus)
+    child.kill()
   }
   const heard = (line: ComputerLine): void =>
     ComputerLine.match(line, {
       Stopped: ({ turn, cooldown }) => listeners.stopped({ turn, cooldown }),
       Reply: ({ id, reply }) => {
-        const current = Option.filter(waiting, (candidate) => candidate.id === id)
+        const current = Option.filter(bus.waiting, (candidate) => candidate.id === id)
         if (Option.isNone(current)) return
-        waiting = Option.none()
+        bus.waiting = Option.none()
         Deferred.doneUnsafe(current.value.reply, Effect.succeed(reply))
       },
       Approval: ({ id, app }) => {
-        const current = Option.filter(waiting, (candidate) => candidate.id === id)
-        if (Option.isNone(current)) return
-        const pending = current.value
-        pending.rounds += 1
-        if (pending.rounds >= APPROVAL_ROUNDS) {
-          waiting = Option.none()
-          Deferred.doneUnsafe(
-            pending.reply,
-            Effect.succeed(
-              ComputerReply.cases.Refused.make({
-                name: 'NotApproved',
-                delivered: Option.none(),
-                reason: Option.none(),
-              }),
-            ),
-          )
-          return
-        }
         // The reference client's own answer to an approval ask: the same request again, with the
-        // approved app merged into its `meta`. Nothing is asked of the Person.
-        write(pending.app(app))
+        // approved app merged into its `meta`. Nothing is asked of the Person. The re-send runs
+        // on its own fiber, since encoding a line is an Effect.
+        Queue.offerUnsafe(approvals, { id, app })
       },
     })
   child.stdout.on('data', (chunk: Buffer) => {
@@ -278,91 +353,65 @@ export const startComputer = Effect.fn('DesktopComputer.start')(function* (
   // Drained so a full pipe can never block the supervisor; kept bounded; read by nobody but a
   // developer with a debugger. Not logged: see the module comment.
   child.stderr.on('data', (chunk: Buffer) => {
-    diagnostics = Buffer.concat([diagnostics, chunk]).subarray(-DIAGNOSTIC_RING_BYTES)
+    bus.diagnostics = Buffer.concat([bus.diagnostics, chunk]).subarray(-DIAGNOSTIC_RING_BYTES)
   })
+
+  // Answers approval asks, one at a time: the same request again with the approved app in its
+  // `meta`, until the supervisor takes it or the ask has come back too many times to be one.
   yield* Effect.forkScoped(
-    Deferred.await(ended).pipe(
-      Effect.andThen(
-        Effect.sync(() => {
-          gone = true
-          const escape = child.exitCode === 130
-          const escapeTurn = Option.getOrUndefined(wireTurn)
-          if (escape && escapeTurn !== undefined) {
-            // Escape ends any request in flight with the supervisor's own message for it, and
-            // says the turn's stop, exactly as a refusal: both roads end in the same answer.
-            const inFlight = waiting
-            waiting = Option.none()
-            Option.map(inFlight, (pending) =>
-              Deferred.doneUnsafe(
-                pending.reply,
-                Effect.succeed(
-                  ComputerReply.cases.Refused.make({
-                    name: ESCAPE_STOPPED,
-                    delivered: Option.none(),
-                    reason: Option.none(),
-                  }),
-                ),
-              ),
-            )
-          } else {
-            lose()
-          }
-          // The exit code and how much it said, never what it said.
-          console.info(
-            `desktop: Vivid's Computer ended (code ${String(child.exitCode)}, ${diagnostics.length} bytes of diagnostics)`,
-          )
-          if (escape && escapeTurn !== undefined)
-            listeners.stopped({ turn: escapeTurn, cooldown: 0 })
-          listeners.gone()
-        }),
-      ),
-    ),
+    Queue.take(approvals).pipe(Effect.flatMap(resendApproval(bus, write)), Effect.forever),
+  )
+
+  // The process ended: nothing answers after this (`onEnded`).
+  yield* Effect.forkScoped(
+    Deferred.await(ended).pipe(Effect.andThen(Effect.sync(() => onEnded(bus, child, listeners)))),
   )
 
   const ask: Computer['ask'] = Effect.fn('DesktopComputer.ask')(function* (input) {
-    if (gone) return ComputerReply.cases.Lost.make({ sent: false })
+    if (bus.gone) return lost(false)
     // The turn switch is announced first, the reference client's own way: one turn at a time on
     // the wire, and `end_turn` before a different turn's request. A failed announcement changes
     // nothing — the request itself is what carries the new turn's `meta`.
     const turnChanged =
       Option.isSome(input.turn) &&
-      Option.isSome(wireTurn) &&
-      input.turn.value !== wireTurn.value
+      Option.isSome(bus.wireTurn) &&
+      input.turn.value !== bus.wireTurn.value
     if (turnChanged) {
       const farewell = yield* requestLine({
-        id: next,
+        id: bus.next,
         call: ComputerCall.cases.EndTurn.make({}),
-        turn: wireTurn,
+        turn: bus.wireTurn,
         budget: budgetCeiling(ComputerCall.cases.EndTurn.make({})),
+        approvedApp: Option.none(),
       }).pipe(Effect.option)
       if (Option.isSome(farewell)) write(farewell.value)
-      next += 1
+      bus.next += 1
     }
     // Calls that stay local are answered here: the turn has begun as far as the desktop is
     // concerned, and the first wire request carries it (`wire.ts`, module comment).
     if (!reachesWire(input.call)) {
-      wireTurn = input.turn
+      bus.wireTurn = input.turn
       return ComputerReply.cases.Answered.make({ result: {} })
     }
-    const id = next
-    next += 1
+    const id = bus.next
+    bus.next += 1
     const budget = Math.max(0, Math.min(Math.floor(input.budget), budgetCeiling(input.call)))
-    const line = yield* requestLine({ id, call: input.call, turn: input.turn, budget }).pipe(
-      Effect.option,
-    )
-    if (Option.isNone(line) || line.value === '') return ComputerReply.cases.Lost.make({ sent: false })
-    wireTurn = input.turn
+    const line = yield* requestLine({
+      id,
+      call: input.call,
+      turn: input.turn,
+      budget,
+      approvedApp: Option.none(),
+    }).pipe(Effect.option)
+    if (Option.isNone(line) || line.value === '') return lost(false)
+    bus.wireTurn = input.turn
     const reply = yield* Deferred.make<ComputerReply>()
-    /** Answers one approval ask: the same line with the approved app merged into its `meta`. */
-    const approved = (approval: string): string => {
-      const request = JSON.parse(line.value) as {
-        meta?: Record<string, unknown>
-        [key: string]: unknown
-      }
-      request.meta = { ...request.meta, 'x-oai-cua-approved-app': approval }
-      return JSON.stringify(request)
-    }
-    waiting = Option.some({ id, reply, line: line.value, app: approved, rounds: 0 })
+    bus.waiting = Option.some({
+      id,
+      reply,
+      asked: { call: input.call, turn: input.turn, budget },
+      rounds: 0,
+    })
     const answered = yield* Effect.sync(() => write(line.value)).pipe(
       Effect.andThen(Deferred.await(reply)),
       Effect.timeoutOption(Duration.millis(budget + WATCHDOG_GRACE_MS)),
@@ -372,8 +421,8 @@ export const startComputer = Effect.fn('DesktopComputer.start')(function* (
     if (Option.isSome(answered)) return answered.value
     // The supervisor neither answered nor stopped by itself: end the process this app spawned.
     child.kill()
-    return ComputerReply.cases.Lost.make({ sent: true })
+    return lost(true)
   }, Semaphore.withPermit(serial))
 
-  return { ask, alive: () => !gone } satisfies Computer
+  return { ask, alive: () => !bus.gone } satisfies Computer
 })

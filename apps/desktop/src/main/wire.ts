@@ -133,52 +133,13 @@ const wireWindow = (window: ComputerWindow): { app?: string; id: number | string
  * - filling an element is `set_value`: the element's own way of taking text, not keystrokes;
  * - scrolling is in wheel units, 120 a notch (`windows.ts`), with the same screenshot id.
  */
-const methodOf = (call: ComputerCall): { method: string; params: Record<string, unknown> } =>
-  ComputerCall.match(call, {
-    BeginTurn: () => ({ method: '', params: {} }),
-    EndTurn: () => ({ method: 'end_turn', params: {} }),
-    Status: () => ({ method: '', params: {} }),
-    ListApps: () => ({ method: 'list_apps', params: {} }),
-    ListWindows: () => ({ method: 'list_windows', params: {} }),
-    LaunchApp: ({ app, id }) => ({ method: 'launch_app', params: { app: id || app } }),
-    WindowState: ({ window }) => ({
-      method: 'get_window_state',
-      params: { window: wireWindow(window), include_text: true, include_screenshot: true },
-    }),
-    ClickElement: ({ window, element }) => ({
-      method: 'click_element',
-      params: { window: wireWindow(window), element_index: element, click_count: 1 },
-    }),
-    ClickPoint: ({ window, x, y, look, count, button }) => ({
-      method: 'click',
-      params: {
-        window: wireWindow(window),
-        x,
-        y,
-        screenshotId: look,
-        click_count: count,
-        mouse_button: button,
-      },
-    }),
-    TypeText: ({ window, text }) => ({ method: 'type_text', params: { window: wireWindow(window), text } }),
-    FillElement: ({ window, element, text }) => ({
-      method: 'set_value',
-      params: { window: wireWindow(window), element_index: element, value: text },
-    }),
-    PressKey: ({ window, key }) => ({ method: 'press_key', params: { window: wireWindow(window), key } }),
-    Scroll: ({ window, x, y, look, scrollX, scrollY }) => ({
-      method: 'scroll',
-      params: { window: wireWindow(window), x, y, screenshotId: look, scrollX, scrollY },
-    }),
-  })
-
 /**
  * The turn metadata the supervisor reads, exactly the reference's own shape: one JSON object of
  * `session_id` and `turn_id` under `x-codex-turn-metadata`, both id characters only, and the
  * budget under `x-oai-cua-request-budget-ms` (the reference's `meta` keys). The session and the
  * turn are the same Run here: the supervisor keys its Escape-interrupt markers by the pair.
  */
-const metaOf = (turn: string, budget: number): Record<string, unknown> => {
+const metaOf = (turn: string, budget: number) => {
   const id = turn.replace(/[^A-Za-z0-9._-]/g, '_')
   return {
     'x-codex-turn-metadata': JSON.stringify({ session_id: id, turn_id: id }),
@@ -207,20 +168,112 @@ export class RequestUnwritable extends Schema.TaggedError<RequestUnwritable>()(
   { title: 'The request could not be encoded for the Computer' },
 ) {}
 
-/** Encodes one request as its line, without the newline. `None` for a call that stays local. */
+/**
+ * One request as the supervisor takes it: the envelope with its `meta`, and — when the desktop
+ * is answering an approval ask — the approved app added to that `meta`, exactly the reference
+ * client's own answer. Built as a value first, so an approval re-sends the same request without
+ * re-parsing anything.
+ *
+ * The supervisor's method name and `params` for a request, exactly as its methods take them
+ * (`vendor/computer/README.md`):
+ * - `launch_app` takes the inventory id (`{app}`), which is what `Open` carries as its `id`;
+ * - a click on an element is the `click_element` method, a click at a point is `click` with
+ *   `x`/`y` and the look's screenshot id, which is how the point's pixels become screen
+ *   coordinates;
+ * - filling an element is `set_value`: the element's own way of taking text, not keystrokes;
+ * - scrolling is in wheel units, 120 a notch (`windows.ts`), with the same screenshot id.
+ */
+const requestObject = (input: {
+  readonly id: number
+  readonly call: ComputerCall
+  readonly turn: Option.Option<string>
+  readonly budget: number
+  readonly approvedApp: Option.Option<string>
+}) => {
+  const meta = Option.match(input.turn, {
+    onNone: () => ({}),
+    onSome: (turn) => metaOf(turn, input.budget),
+  })
+  const withApproval = Option.match(input.approvedApp, {
+    onNone: () => meta,
+    onSome: (app) => ({ ...meta, 'x-oai-cua-approved-app': app }),
+  })
+  return ComputerCall.match(input.call, {
+    BeginTurn: () => ({ id: input.id, method: '', params: {}, meta: withApproval }),
+    EndTurn: () => ({ id: input.id, method: 'end_turn', params: {}, meta: withApproval }),
+    Status: () => ({ id: input.id, method: '', params: {}, meta: withApproval }),
+    ListApps: () => ({ id: input.id, method: 'list_apps', params: {}, meta: withApproval }),
+    ListWindows: () => ({ id: input.id, method: 'list_windows', params: {}, meta: withApproval }),
+    LaunchApp: ({ app, id }) => ({
+      id: input.id,
+      method: 'launch_app',
+      params: { app: id || app },
+      meta: withApproval,
+    }),
+    // Text and picture together: one look is both what Vivid sees and what it may act on.
+    WindowState: ({ window }) => ({
+      id: input.id,
+      method: 'get_window_state',
+      params: { window: wireWindow(window), include_text: true, include_screenshot: true },
+      meta: withApproval,
+    }),
+    ClickElement: ({ window, element }) => ({
+      id: input.id,
+      method: 'click_element',
+      params: { window: wireWindow(window), element_index: element, click_count: 1 },
+      meta: withApproval,
+    }),
+    ClickPoint: ({ window, x, y, look, count, button }) => ({
+      id: input.id,
+      method: 'click',
+      params: {
+        window: wireWindow(window),
+        x,
+        y,
+        screenshotId: look,
+        click_count: count,
+        mouse_button: button,
+      },
+      meta: withApproval,
+    }),
+    TypeText: ({ window, text }) => ({
+      id: input.id,
+      method: 'type_text',
+      params: { window: wireWindow(window), text },
+      meta: withApproval,
+    }),
+    FillElement: ({ window, element, text }) => ({
+      id: input.id,
+      method: 'set_value',
+      params: { window: wireWindow(window), element_index: element, value: text },
+      meta: withApproval,
+    }),
+    PressKey: ({ window, key }) => ({
+      id: input.id,
+      method: 'press_key',
+      params: { window: wireWindow(window), key },
+      meta: withApproval,
+    }),
+    Scroll: ({ window, x, y, look, scrollX, scrollY }) => ({
+      id: input.id,
+      method: 'scroll',
+      params: { window: wireWindow(window), x, y, screenshotId: look, scrollX, scrollY },
+      meta: withApproval,
+    }),
+  })
+}
+
+/** Encodes one request as its line, without the newline. Empty for a call that stays local. */
 export const requestLine = (input: {
   readonly id: number
   readonly call: ComputerCall
   readonly turn: Option.Option<string>
   readonly budget: number
+  /** Set only when re-sending a request the supervisor answered with an approval ask. */
+  readonly approvedApp: Option.Option<string>
 }): Effect.Effect<string, RequestUnwritable> => {
   if (!reachesWire(input.call)) return Effect.succeed('')
-  const { method, params } = methodOf(input.call)
-  const meta = Option.match(input.turn, {
-    onNone: () => ({}),
-    onSome: (turn) => metaOf(turn, input.budget),
-  })
-  return encodeRequestLine({ id: input.id, method, params, meta }).pipe(
+  return encodeRequestLine(requestObject(input)).pipe(
     Effect.mapError(() => new RequestUnwritable({})),
   )
 }
@@ -331,19 +384,15 @@ export const ESCAPE_STOPPED = 'Computer Use was stopped by the user with the phy
  * a path to a PNG on this computer. Vivid carries the PNG itself, base64, so both shapes are
  * decoded here, once, at the ingress. Anything else is not a picture: `None`.
  */
-export const screenshotPng = (url: string): Option.Option<string> => {
-const data = url.startsWith('data:image/png;base64,')
-    ? url.slice('data:image/png;base64,'.length)
-    : undefined
-  if (data !== undefined) return Option.some(data)
-  if (/^[A-Za-z]:[\\/]/.test(url) || url.startsWith('\\\\')) {
-    try {
-      return Option.some(NodeFS.readFileSync(url).toString('base64'))
-    } catch {
-      return Option.none()
-    }
-  }
-  return Option.none()
+export const screenshotPng = (url: string): Effect.Effect<Option.Option<string>> => {
+  const prefix = 'data:image/png;base64,'
+  if (url.startsWith(prefix)) return Effect.succeed(Option.some(url.slice(prefix.length)))
+  if (!/^[A-Za-z]:[\\/]/.test(url) && !url.startsWith('\\\\')) return Effect.succeed(Option.none())
+  // A file that cannot be read is not a picture: the failure is folded into the `None`.
+  return Effect.try({
+    try: () => Option.some(NodeFS.readFileSync(url).toString('base64')),
+    catch: (cause) => cause,
+  }).pipe(Effect.option, Effect.map(Option.flatten))
 }
 
 /**

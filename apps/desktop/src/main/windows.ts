@@ -253,10 +253,11 @@ const look = Effect.fn('DesktopWindows.look')(function* (
   // (`screenshotPng`); a look without a decodable picture is not a look.
   const seen = state.screenshots[0]
   if (seen === undefined) return yield* new Ended({ outcome: failed })
+  const picture = yield* screenshotPng(seen.url)
   const seen_ = Option.all({
     app: appName(known.app),
     look: lookId(seen.id),
-    picture: screenshotPng(seen.url),
+    picture,
   })
   if (Option.isNone(seen_)) return yield* new Ended({ outcome: failed })
   table.looks.set(window, seen_.value.look)

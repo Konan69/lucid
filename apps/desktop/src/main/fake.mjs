@@ -8,7 +8,6 @@ import * as NodeProcess from 'node:process'
 import * as NodeReadline from 'node:readline'
 import * as Schema from 'effect/Schema'
 
-const ESCAPE = 'Computer Use was stopped by the user with the physical Escape key. Stop your work.'
 let approvalOnce = false
 let escapeAfterLook = false
 let looks = 0
@@ -16,8 +15,6 @@ let looks = 0
 const send = (value) => NodeProcess.stdout.write(`${JSON.stringify(value)}\n`)
 const ok = (id, result) => send({ id, ok: true, result })
 const fail = (id, message) => send({ id, ok: false, error: message })
-const approve = (id, app) =>
-  send({ id, ok: false, approvalRequest: { app, displayName: app, allowPersistentApproval: true } })
 
 const window = { app: 'notepad', id: 7 }
 

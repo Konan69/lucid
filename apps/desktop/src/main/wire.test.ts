@@ -87,6 +87,7 @@ describe('the Computer’s JSON lines', () => {
         }),
         turn: Option.some('run-1'),
         budget: 5000,
+        approvedApp: Option.none(),
       })
       expect(written(click)).toEqual({
         id: 9,
@@ -110,6 +111,7 @@ describe('the Computer’s JSON lines', () => {
         call: ComputerCall.cases.LaunchApp.make({ app: 'Notepad', id: 'notepad.app' }),
         turn: Option.some('run-2'),
         budget: 15_000,
+        approvedApp: Option.none(),
       })
       expect(written(launch)).toEqual({
         id: 2,
@@ -126,6 +128,7 @@ describe('the Computer’s JSON lines', () => {
         call: ComputerCall.cases.FillElement.make({ window, element: 4, text: 'hello' }),
         turn: Option.some('run-2'),
         budget: 10_000,
+        approvedApp: Option.none(),
       })
       expect(written(fill)).toEqual({
         id: 3,
@@ -142,7 +145,9 @@ describe('the Computer’s JSON lines', () => {
   it.effect('begin turn and status stay local; the rest reach the wire', () =>
     Effect.gen(function* () {
       const local = (call: ComputerCall) =>
-        requestLine({ id: 1, call, turn: Option.none(), budget: 1000 }).pipe(Effect.option)
+        requestLine({ id: 1, call, turn: Option.none(), budget: 1000, approvedApp: Option.none() }).pipe(
+        Effect.option,
+      )
       expect(yield* local(ComputerCall.cases.BeginTurn.make({}))).toEqual(Option.some(''))
       expect(yield* local(ComputerCall.cases.Status.make({}))).toEqual(Option.some(''))
       const end = yield* requestLine({
@@ -150,6 +155,7 @@ describe('the Computer’s JSON lines', () => {
         call: ComputerCall.cases.EndTurn.make({}),
         turn: Option.some('run-1'),
         budget: 3000,
+        approvedApp: Option.none(),
       })
       expect(written(end)).toEqual({
         id: 8,
@@ -163,10 +169,14 @@ describe('the Computer’s JSON lines', () => {
     }),
   )
 
-  it('a picture arrives as a data URL or a path; anything else is not one', () => {
-    expect(screenshotPng('data:image/png;base64,iVBORw0KGgo=')).toEqual(Option.some('iVBORw0KGgo='))
-    expect(screenshotPng('notepad.png')).toEqual(Option.none())
-  })
+  it.effect('a picture arrives as a data URL or a path; anything else is not one', () =>
+    Effect.gen(function* () {
+      expect(yield* screenshotPng('data:image/png;base64,iVBORw0KGgo=')).toEqual(
+        Option.some('iVBORw0KGgo='),
+      )
+      expect(yield* screenshotPng('notepad.png')).toEqual(Option.none())
+    }),
+  )
 
   it('reads change nothing; input and a launch do', () => {
     expect(changes(ComputerCall.cases.WindowState.make({ window }))).toBe(false)
