@@ -9,6 +9,7 @@ import {
   DevicePresence,
   DeviceRequest,
   DeviceRequestId,
+  DeviceWork,
   RunId,
   ThreadId,
   type AnswerDeviceRequest,
@@ -42,13 +43,15 @@ const pending = device(DeviceAccess.cases.Pending.make({ since: 0 }))
 const allowed = device(DeviceAccess.cases.Allowed.make({ since: 0 }))
 const revoked = device(DeviceAccess.cases.Revoked.make({ since: 0 }))
 
-const request = DeviceRequest.make({
+const runId = RunId.make('run-1')
+const request = DeviceRequest.cases.Act.make({
   id: DeviceRequestId.make('3f0e2f52-6d0f-4c0f-9a34-6f6b3c0f8a11'),
   threadId: ThreadId.make('thread-1'),
-  runId: RunId.make('run-1'),
-  action: BrowserAction.cases.Read.make({}),
+  runId,
+  work: DeviceWork.cases.Page.make({ action: BrowserAction.cases.Read.make({}) }),
   expiresAt: 30_000,
 })
+const ability = { pages: true, apps: true }
 const failed = DeviceAnswer.cases.Failed.make({})
 
 /**
@@ -73,8 +76,8 @@ const fixture = Effect.fn('fixture')(function* (options: {
       Queue.offerUnsafe(heard, 'enrol')
       return next === undefined ? Effect.fail(new LinkDown({})) : next
     }),
-    watch: () => {
-      Queue.offerUnsafe(heard, 'watch')
+    watch: (_device, said) => {
+      Queue.offerUnsafe(heard, said.apps ? 'watch' : 'watch without apps')
       return Stream.fromQueue(requests)
     },
     answer: (answer) =>
@@ -82,10 +85,19 @@ const fixture = Effect.fn('fixture')(function* (options: {
         answers.push(answer)
         Queue.offerUnsafe(heard, 'answer')
       }),
+    stopped: (_device, stoppedRun) =>
+      Effect.sync(() => {
+        Queue.offerUnsafe(heard, `stopped ${stoppedRun}`)
+      }),
   }
+  const stops = yield* Queue.unbounded<RunId>()
   const signedIn = options.signedIn === undefined ? () => true : options.signedIn
   const link = yield* deviceLink({
     connect: Effect.sync(() => (signedIn() ? Option.some(server) : Option.none())),
+    ability: () => ability,
+    ended: (ended) => Effect.sync(() => Queue.offerUnsafe(heard, `ended ${ended}`)),
+    unlinked: Effect.sync(() => Queue.offerUnsafe(heard, 'unlinked')),
+    stops,
     execute: () =>
       Effect.sync(() => Queue.offerUnsafe(heard, 'execute')).pipe(
         Effect.andThen(
@@ -94,7 +106,7 @@ const fixture = Effect.fn('fixture')(function* (options: {
       ),
   })
   yield* Effect.forkScoped(link.run)
-  return { link, heard, requests, answers, next: Queue.take(heard) }
+  return { link, heard, requests, answers, stops, next: Queue.take(heard) }
 })
 
 describe('this computer’s link to Vivid', () => {
@@ -214,6 +226,7 @@ describe('this computer’s link to Vivid', () => {
         expect(yield* next).toBe('execute')
         link.restart()
         expect(yield* Queue.take(released)).toBe('released')
+        expect(yield* next).toBe('unlinked')
         expect(yield* next).toBe('enrol')
       }),
   )
@@ -273,6 +286,8 @@ describe('this computer’s link to Vivid', () => {
       expect(yield* next).toBe('enrol')
       expect(yield* next).toBe('watch')
       yield* Queue.end(requests)
+      // Listening ended: whatever Vivid held on this computer is let go before looking again.
+      expect(yield* next).toBe('unlinked')
       yield* TestClock.adjust('1 second')
       expect(yield* next).toBe('enrol')
       yield* TestClock.adjust('10 minutes')
@@ -290,8 +305,22 @@ describe('this computer’s link to Vivid', () => {
       yield* TestClock.adjust('1 minute')
       expect(yield* Queue.size(heard)).toBe(0)
       link.restart()
+      expect(yield* next).toBe('unlinked')
       expect(yield* next).toBe('enrol')
       expect(yield* next).toBe('watch')
+    }),
+  )
+
+  it.effect('a Run ending is passed on, and a stop between two actions is reported', () =>
+    Effect.gen(function* () {
+      const { next, requests, stops } = yield* fixture({ enrolments: [Effect.succeed(allowed)] })
+      expect(yield* next).toBe('enrol')
+      // The app says what it can do when it starts listening.
+      expect(yield* next).toBe('watch')
+      yield* Queue.offer(requests, DeviceRequest.cases.RunEnded.make({ runId }))
+      expect(yield* next).toBe('ended run-1')
+      yield* Queue.offer(stops, runId)
+      expect(yield* next).toBe('stopped run-1')
     }),
   )
 })

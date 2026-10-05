@@ -6,11 +6,13 @@ import {
   Unauthenticated,
   type AnswerDeviceRequest,
   type Device,
+  DeviceRequest,
+  type DeviceAbility,
   type DeviceAnswer,
   type DeviceId,
   type DeviceName,
-  type DeviceRequest,
   type InstallationId,
+  type RunId,
 } from '@vivid/contracts'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
@@ -52,17 +54,28 @@ class LinkRetry extends Schema.TaggedError<LinkRetry>()(
 
 export type LinkFailure = LinkSignedOut | LinkRefused | LinkDown
 
+/** One piece of work the server sent: the `Act` case of `DeviceRequest`. */
+export type DeviceAct = typeof DeviceRequest.cases.Act.Type
+
 /**
- * The three Device calls the link makes, on one connection, as one signed-in session. A narrow
+ * The Device calls the link makes, on one connection, as one signed-in session. A narrow
  * seam over the shared typed client so the link's behaviour can be tested without a socket.
  */
 export interface DeviceServer {
   /** Names this installation to the server. Repeating it returns the same Device. */
   readonly enrol: Effect.Effect<Device, LinkFailure>
-  /** Listens for actions. Open, it is what makes this computer `Connected`. */
-  readonly watch: (device: DeviceId) => Stream.Stream<DeviceRequest, LinkFailure>
+  /**
+   * Listens for work, saying what this app can do right now. Open, it is what makes this
+   * computer `Connected`.
+   */
+  readonly watch: (
+    device: DeviceId,
+    ability: DeviceAbility,
+  ) => Stream.Stream<DeviceRequest, LinkFailure>
   /** Answers one action, on the connection it arrived on. */
   readonly answer: (answer: AnswerDeviceRequest) => Effect.Effect<void, LinkFailure>
+  /** Says the Person stopped Vivid on this computer with nothing in flight (`ReportDeviceStop`). */
+  readonly stopped: (device: DeviceId, runId: RunId) => Effect.Effect<void, LinkFailure>
 }
 
 const signedOut = Schema.is(Unauthenticated)
@@ -87,11 +100,15 @@ export const deviceServer = (
     Effect.map((response) => response.device),
     Effect.mapError(linkFailure),
   ),
-  watch: (device) =>
+  watch: (device, ability) =>
     client
-      .WatchDeviceRequests({ device, installation: identity.installation })
+      .WatchDeviceRequests({ device, installation: identity.installation, ability })
       .pipe(Stream.mapError(linkFailure)),
   answer: (answer) => client.AnswerDeviceRequest(answer).pipe(Effect.mapError(linkFailure)),
+  stopped: (device, runId) =>
+    client
+      .ReportDeviceStop({ device, installation: identity.installation, runId })
+      .pipe(Effect.mapError(linkFailure)),
 })
 
 /** The live endpoint of a chosen server: the same origin, on the socket scheme. */
@@ -168,8 +185,22 @@ export function sessionChanges(known: Map<string, string>) {
 export interface DeviceLinkDependencies {
   /** One connection as the signed-in session, or nothing when no server is chosen. */
   readonly connect: Effect.Effect<Option.Option<DeviceServer>, never, Scope.Scope>
-  /** Carries out one action. Nothing means its deadline passed and there is no one to answer. */
-  readonly execute: (request: DeviceRequest) => Effect.Effect<Option.Option<DeviceAnswer>>
+  /**
+   * What this app can do, asked each time it starts listening. `apps` is true only where Vivid's
+   * helper is on this computer.
+   */
+  readonly ability: () => DeviceAbility
+  /**
+   * Carries out one piece of work. Nothing means there is no one to answer or nothing honest to
+   * say: its deadline passed, or a change was sent and what came of it is not known.
+   */
+  readonly execute: (request: DeviceAct) => Effect.Effect<Option.Option<DeviceAnswer>>
+  /** The server said this Run is over: the turn in the Person's apps ends with it. */
+  readonly ended: (runId: RunId) => Effect.Effect<void>
+  /** Listening ended, for any reason. Whatever Vivid held on this computer is let go. */
+  readonly unlinked: Effect.Effect<void>
+  /** The Runs the Person stopped with nothing in flight, to tell the server at once. */
+  readonly stops: Queue.Dequeue<RunId>
 }
 
 /**
@@ -191,6 +222,11 @@ export const reconnect = Schedule.min([
  * server, or the Person using the list of computers. A connection that drops is retried on the
  * same schedule, and nothing sent while it was down is asked for again; the server does not
  * replay, and an action is authority to act once.
+ *
+ * Work is a step in a page of the app's own browser or an action in an app on the computer; the
+ * link does not tell them apart beyond handing each to `execute`. `RunEnded` is passed on so the
+ * turn in the Person's apps ends with its Run, and a stop the Person made between two actions is
+ * reported on the same connection.
  *
  * Consent ends action, at once. An action runs in a fiber that belongs to the listening itself:
  * when the server ends the link (revoke, sign-out, a newer link), when the connection fails, or
@@ -225,7 +261,7 @@ export const deviceLink = Effect.fn('DesktopDevice.makeLink')(function* (
   const handle = Effect.fn('DesktopDevice.handle')(function* (
     server: DeviceServer,
     device: DeviceId,
-    request: DeviceRequest,
+    request: DeviceAct,
   ) {
     const answer = yield* dependencies.execute(request)
     if (Option.isNone(answer)) return undefined
@@ -248,11 +284,24 @@ export const deviceLink = Effect.fn('DesktopDevice.makeLink')(function* (
     device: DeviceId,
   ) {
     link = DeviceLink.cases.Linked.make({ device })
-    yield* Effect.scoped(
-      Stream.runForEach(server.watch(device), (request) =>
-        Effect.forkScoped(handle(server, device, request)),
-      ),
+    // A stop with nothing in flight has no answer to ride on, so it is said by itself. A report
+    // the server will not take changes nothing here: the Run is stopped on this computer already.
+    const reporting = Stream.runForEach(Stream.fromQueue(dependencies.stops), (runId) =>
+      server.stopped(device, runId).pipe(Effect.ignore),
     )
+    yield* Effect.scoped(
+      Effect.forkScoped(reporting).pipe(
+        Effect.andThen(
+          Stream.runForEach(server.watch(device, dependencies.ability()), (request) =>
+            DeviceRequest.match<Effect.Effect<void, never, Scope.Scope>>(request, {
+              Act: (act) => Effect.forkScoped(handle(server, device, act)).pipe(Effect.asVoid),
+              RunEnded: ({ runId }) => dependencies.ended(runId),
+            }),
+          ),
+        ),
+      ),
+      // Consent ends action for apps as for pages: the turn ends and the helper is let go.
+    ).pipe(Effect.ensuring(dependencies.unlinked))
     // The server closes a link on revoke, on sign-out and when a newer link replaces it.
     // Enrolling again is how the app learns which; until then it is not listening.
     return yield* again(DeviceLink.cases.Waiting.make({ device }))
