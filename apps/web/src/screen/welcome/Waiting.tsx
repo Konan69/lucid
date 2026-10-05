@@ -1,6 +1,7 @@
-import { Pairing, spellCode, type Ending } from '@vivid/state'
+import { spellCode, type Ending } from '@vivid/state'
 import { Option } from 'effect'
-import { useId } from 'react'
+import { useId, type ReactNode } from 'react'
+import { Handing, type Opened } from '../../data/pairing'
 import { Button } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import { GoogleMark } from './Google'
@@ -30,27 +31,22 @@ const ENDINGS = {
   },
 } as const satisfies Record<Ending, { title: string; detail: string }>
 
-/**
- * What the card says for a state that is still on its way: its heading, the one sentence that
- * says what to do, and under the code what is happening right now. The sentence is the same
- * while the browser is opening and while it is open, so it can be read before the browser
- * covers it and is still there on coming back.
- */
+/** The one sentence that says what to do, there before the browser covers it and on coming back. */
 const HANDING =
   'Your browser opens. Sign in with Google there, approve this app, then come back here.'
-const SAID = {
-  Asking: { title: 'Continue with Google', lead: HANDING, now: 'Opening your browser…' },
-  Waiting: {
-    title: 'Continue with Google',
-    lead: HANDING,
-    now: 'Waiting for you to approve this app. The browser shows this code.',
+
+/**
+ * What is happening with the browser, under the code. A browser that did not open is said as a
+ * fault, with what to do about it: the button under it.
+ */
+const BROWSER = {
+  opening: { tone: 'quiet', words: 'Opening your browser…' },
+  opened: {
+    tone: 'quiet',
+    words: 'Waiting for you to approve this app. The browser shows this code.',
   },
-  Approved: {
-    title: 'You are in',
-    lead: 'This app was approved in your browser.',
-    now: 'Opening Vivid…',
-  },
-} as const
+  unopened: { tone: 'danger', words: 'Your browser did not open. Open it again.' },
+} as const satisfies Record<Opened, { tone: 'quiet' | 'danger'; words: string }>
 
 /** The dots drawn where the code will be, so the card is the same size before it arrives. */
 const NO_CODE = '····-····'
@@ -85,81 +81,90 @@ function Code({ code }: { code: Option.Option<string> }) {
 }
 
 /**
- * The welcome's card while the desktop app signs in with Google. The window cannot show Google's
- * sign-in itself, so it hands the Person to their browser and waits (`data/handoff.ts`): there
- * they sign in with Google and approve this app, and the window then signs itself in and starts
- * again, so there is nothing to press here on success.
- *
- * It is the phone's Google step (`apps/mobile/src/screen/door/Google.tsx`) drawn as this
- * screen's own card: the same panel the form sits in, the same buttons, nothing new. It takes
- * the form's place rather than covering it, because while this runs the form is not a choice.
- *
- * - On its way (`Asking`, `Waiting`, `Approved`): the one sentence that says what to do, the
- *   code, what is happening now, and two ways out: open the browser again, for a Person who
- *   closed it, and cancel. Nothing here is filled in the primary colour, because nothing here is
- *   the next step: that is in the browser. "Open the browser again" is there from the start and
- *   rests until there is a code, so the card does not change height under the pointer.
- * - Ended: why, and one filled button to start again, with the way back to the form under it.
+ * The card itself: the welcome's own panel, with a heading that names it. Every state of the
+ * hand-off is drawn in this one element, so it arrives once (`animate-rise-in`) and the keyboard
+ * stays in it while what it says changes.
  */
-export function Waiting({
-  state,
-  onReopen,
-  onAgain,
-  onCancel,
-}: {
-  state: Pairing
-  onReopen: () => void
-  onAgain: () => void
-  onCancel: () => void
-}) {
-  const title = useId()
-  if (Pairing.$is('Ended')(state)) {
-    const ending = ENDINGS[state.why]
-    return (
-      <section
-        ref={focusCard}
-        tabIndex={-1}
-        aria-labelledby={title}
-        className="flex animate-rise-in flex-col gap-3 rounded-panel bg-surface-3 p-6 edge outline-none"
-      >
-        <h2 id={title} className="text-dialog font-title text-balance text-ink">
-          {ending.title}
-        </h2>
-        <p role="alert" className="text-label text-pretty text-ink-3">
-          {ending.detail}
-        </p>
-        <Button onClick={onAgain} className="mt-1 w-full">
-          Try again
-        </Button>
-        <Button variant="ghost" onClick={onCancel} className="w-full">
-          Back
-        </Button>
-      </section>
-    )
-  }
-  const said = SAID[state._tag]
-  const code = Pairing.$is('Waiting')(state)
-    ? Option.some(spellCode(state.userCode))
-    : Option.none()
+function Card({ title, mark, children }: { title: string; mark: boolean; children: ReactNode }) {
+  const id = useId()
   return (
     <section
       ref={focusCard}
       tabIndex={-1}
-      aria-labelledby={title}
+      aria-labelledby={id}
       className="flex animate-rise-in flex-col gap-3 rounded-panel bg-surface-3 p-6 edge outline-none"
     >
-      <h2
-        id={title}
-        className="flex items-center gap-2 text-dialog font-title text-balance text-ink"
-      >
-        <GoogleMark />
-        {said.title}
+      <h2 id={id} className="flex items-center gap-2 text-dialog font-title text-balance text-ink">
+        {mark && <GoogleMark />}
+        {title}
       </h2>
-      <p className="text-label text-pretty text-ink-2">{said.lead}</p>
-      <Code code={code} />
-      {/* One line that changes with the exchange, so a screen reader hears each step once. */}
-      <p role="status" className="text-label text-pretty text-ink-3">
-        {said.now}
+      {children}
+    </section>
+  )
+}
+
+/**
+ * A hand-off that stopped short: what happened, one filled button for the way forward, and the
+ * way back to the form under it.
+ */
+function Stopped({
+  title,
+  detail,
+  onAgain,
+  back,
+  onBack,
+}: {
+  title: string
+  detail: string
+  onAgain: () => void
+  back: string
+  onBack: () => void
+}) {
+  return (
+    <Card title={title} mark={false}>
+      <p role="alert" className="text-label text-pretty text-ink-3">
+        {detail}
+      </p>
+      <Button onClick={onAgain} className="mt-1 w-full">
+        Try again
+      </Button>
+      <Button variant="ghost" onClick={onBack} className="w-full">
+        {back}
+      </Button>
+    </Card>
+  )
+}
+
+/**
+ * A hand-off on its way: the one sentence that says what to do, the code, what is happening now,
+ * and two ways out. Nothing here is filled in the primary colour, because nothing here is the
+ * next step: that is in the browser. "Open the browser again" is there from the start and rests
+ * until there is a code, so the card does not change height under the pointer.
+ */
+function Going({
+  code,
+  now,
+  onReopen,
+  onCancel,
+}: {
+  code: Option.Option<string>
+  now: (typeof BROWSER)[Opened]
+  onReopen: () => void
+  onCancel: () => void
+}) {
+  return (
+    <Card title="Continue with Google" mark>
+      <p className="text-label text-pretty text-ink-2">{HANDING}</p>
+      <Code code={Option.map(code, spellCode)} />
+      {/* One line that changes with the exchange. A fault interrupts; the rest wait their turn. */}
+      <p
+        role={now.tone === 'danger' ? 'alert' : 'status'}
+        className={cn(
+          'text-label text-pretty',
+          now.tone === 'danger' ? 'text-danger' : 'text-ink-3',
+        )}
+      >
+        {now.words}
       </p>
       <Button
         variant="outline"
@@ -169,15 +174,80 @@ export function Waiting({
       >
         Open the browser again
       </Button>
-      <Button
-        variant="ghost"
-        // Once approved the window is signing itself in; there is nothing left to cancel.
-        disabled={Pairing.$is('Approved')(state)}
-        onClick={onCancel}
-        className="w-full"
-      >
+      <Button variant="ghost" onClick={onCancel} className="w-full">
         Cancel
       </Button>
-    </section>
+    </Card>
   )
+}
+
+/**
+ * The welcome's card while the desktop app signs in with Google. The window cannot show Google's
+ * sign-in itself, so it hands the Person to their browser and waits (`data/handoff.ts`): there
+ * they sign in with Google and approve this app, and the window then signs itself in and starts
+ * again, so there is nothing to press here on success.
+ *
+ * It is the phone's Google step (`apps/mobile/src/screen/door/Google.tsx`) drawn as this
+ * screen's own card: the same panel the form sits in, the same buttons, nothing new. It takes
+ * the form's place rather than covering it, because while this runs the form is not a choice.
+ *
+ * Every state has a way out. While the approved session is being made this window's own
+ * (`Adopting`) that is Cancel, and if that step gets no answer (`Unfinished`) the card says so and
+ * offers it again, with the approval it already has; it never rests on "You are in" over a
+ * window that is not.
+ */
+export function Waiting({
+  state,
+  onReopen,
+  onAgain,
+  onRetry,
+  onCancel,
+}: {
+  state: Handing
+  onReopen: () => void
+  onAgain: () => void
+  onRetry: () => void
+  onCancel: () => void
+}) {
+  return Handing.$match(state, {
+    Asking: () => (
+      <Going code={Option.none()} now={BROWSER.opening} onReopen={onReopen} onCancel={onCancel} />
+    ),
+    Waiting: ({ userCode, browser }) => (
+      <Going
+        code={Option.some(userCode)}
+        now={BROWSER[browser]}
+        onReopen={onReopen}
+        onCancel={onCancel}
+      />
+    ),
+    Adopting: () => (
+      <Card title="You are in" mark={false}>
+        <p role="status" className="text-label text-pretty text-ink-3">
+          This app was approved in your browser. Opening Vivid…
+        </p>
+        <Button variant="ghost" onClick={onCancel} className="w-full">
+          Cancel
+        </Button>
+      </Card>
+    ),
+    Unfinished: () => (
+      <Stopped
+        title="That did not finish"
+        detail="This app was approved, but Vivid did not answer in time. Try again."
+        onAgain={onRetry}
+        back="Cancel"
+        onBack={onCancel}
+      />
+    ),
+    Ended: ({ why }) => (
+      <Stopped
+        title={ENDINGS[why].title}
+        detail={ENDINGS[why].detail}
+        onAgain={onAgain}
+        back="Back"
+        onBack={onCancel}
+      />
+    ),
+  })
 }

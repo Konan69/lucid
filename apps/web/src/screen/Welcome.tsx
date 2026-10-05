@@ -11,6 +11,7 @@ import {
 import { run, send } from '../data/app'
 import { readAddress, SAID, Standing } from '../data/google'
 import { googleHandoff } from '../data/handoff'
+import { Way } from '../data/pairing'
 import { Button } from '../ui/button'
 import { Face } from '../ui/Face'
 import { Field, FieldDescription, FieldLabel } from '../ui/field'
@@ -70,13 +71,14 @@ function Said({ notice }: { notice: Notice }) {
 type Busy = 'none' | 'email' | 'google'
 
 /**
- * Whether Google sign-in happens in this window. In a browser it does: the page leaves for Google
- * and comes back signed in. In the desktop app it cannot, because Google refuses to sign anyone
- * in inside an embedded window, so the same button hands the Person to their system browser and
- * this window waits for them (`data/handoff.ts`, the phone's way in). The button is offered in
- * both; only what pressing it does differs.
+ * How Google sign-in happens in this window (`Way`). In a browser the page leaves for Google and
+ * comes back signed in. In the desktop app it cannot, because Google refuses to sign anyone in
+ * inside an embedded window, so the same button hands the Person to their system browser and
+ * this window waits for them (`data/handoff.ts`, the phone's way in). A desktop app too old to
+ * do that offers no button at all, and says what would bring it.
  */
-const GOOGLE_HERE = !googleHandoff.available
+const GOOGLE = googleHandoff.way
+const GOOGLE_HERE = Way.$is('Browser')(GOOGLE)
 
 // The landing of a first sign-in with Google is a page load like any other, and by then somebody
 // is signed in, so no welcome is drawn to notice it. This module is loaded with the app, which
@@ -220,6 +222,7 @@ export function Welcome({ returnTo }: { returnTo: string }) {
               state={handoff.value}
               onReopen={googleHandoff.reopen}
               onAgain={() => googleHandoff.start(destination)}
+              onRetry={() => googleHandoff.retry(destination)}
               onCancel={googleHandoff.cancel}
             />
           ) : (
@@ -259,7 +262,7 @@ export function Welcome({ returnTo }: { returnTo: string }) {
                 <Button type="submit" disabled={busy !== 'none'} className="mt-1 w-full">
                   {busy === 'email' ? 'One moment…' : copy.action}
                 </Button>
-                <GoogleWay
+                <GoogleChoice
                   destination={destination}
                   starting={opened.starting}
                   resting={busy !== 'none'}
@@ -283,6 +286,20 @@ export function Welcome({ returnTo }: { returnTo: string }) {
         </div>
       </div>
     </main>
+  )
+}
+
+/**
+ * Google, under the form: the button, or in a desktop app too old to hand the Person to a
+ * browser, one line saying what would bring it. A button that cannot work is not offered.
+ */
+function GoogleChoice(props: Parameters<typeof GoogleWay>[0]) {
+  return Way.$is('Outdated')(GOOGLE) ? (
+    <p className="text-center text-label text-pretty text-ink-3">
+      Update Vivid to sign in with Google here.
+    </p>
+  ) : (
+    <GoogleWay {...props} />
   )
 }
 
