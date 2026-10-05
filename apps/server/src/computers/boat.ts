@@ -86,7 +86,7 @@ export const boatMachineLayer = Layer.effect(
       (key) =>
         Effect.suspend(() => {
           forget(key)
-          return connections.drop(key)
+          return connections.forget(key)
         }),
       admit,
     )

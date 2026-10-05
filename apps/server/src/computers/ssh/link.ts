@@ -376,6 +376,9 @@ const sameHost = (expected: string, presented: NodeBuffer.Buffer) => {
   return encoded !== undefined && NodeBuffer.Buffer.from(encoded, 'base64').equals(presented)
 }
 
+/** The scope that holds a connection destroys it when it closes. */
+const closing = (client: Client) => Effect.addFinalizer(() => Effect.sync(() => client.destroy()))
+
 /**
  * Opens the connection and holds it for the scope. A machine that has just been woken refuses
  * connections for a while, so the caller retries this; nothing here waits or retries. The wait
@@ -390,7 +393,7 @@ export const openLink = Effect.fn('Link.open')(function* (input: {
   readonly hostKey: string
 }): Effect.fn.Return<Link, LinkFailure, Scope.Scope> {
   const calls = waiting()
-  const client = yield* Effect.callback<Client, LinkFailure>((resume) => {
+  const dialled = Effect.callback<Client, LinkFailure>((resume) => {
     const connection = new ssh2.Client()
     let mismatch = false
     let settled = false
@@ -431,7 +434,12 @@ export const openLink = Effect.fn('Link.open')(function* (input: {
     })
     return Effect.sync(() => connection.destroy())
   })
-  yield* Effect.addFinalizer(() => Effect.sync(() => client.destroy()))
+  // Only the wait can be interrupted (it then destroys its own socket, above). Once the host has
+  // answered "ready", registering the close with the scope is not interruptible: an interruption
+  // between the two would leave an open connection that nothing closes.
+  const client = yield* Effect.uninterruptibleMask((restore) =>
+    Effect.tap(restore(dialled), closing),
+  )
   const sftp = yield* subsystem(client, calls)
   const { read, put } = files(sftp, calls)
   return { run: runner(client, calls), alive: calls.alive, read, put }

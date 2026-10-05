@@ -84,7 +84,8 @@ export const machineLinks = (api: Transport) => {
   /**
    * One call on the machine's connection. `accepted` answers the running machine that has
    * accepted this binding, and is asked only when a connection has to be opened. A call that
-   * finds the connection gone closes it, so the next call dials afresh with a new address; this
+   * finds its connection gone closes that connection, so the next call dials afresh with a new
+   * address; it closes no other, because by then another call may have opened a new one. This
    * call is not repeated, because a command may have run.
    */
   const over =
@@ -96,11 +97,14 @@ export const machineLinks = (api: Transport) => {
       connections
         .get(key, accepted(key).pipe(Effect.flatMap((identity) => locate(identity.id))))
         .pipe(
-          Effect.flatMap(call),
-          Effect.tapError((failure) =>
-            failure instanceof LinkUnreachable || failure instanceof LinkRunLost
-              ? connections.drop(key)
-              : Effect.void,
+          Effect.flatMap((link) =>
+            call(link).pipe(
+              Effect.tapError((failure) =>
+                failure instanceof LinkUnreachable || failure instanceof LinkRunLost
+                  ? connections.discard(key, link)
+                  : Effect.void,
+              ),
+            ),
           ),
           Effect.mapError((failure) => {
             // The command started and its end was not heard: uncertain, never run again.
@@ -137,5 +141,5 @@ export const machineLinks = (api: Transport) => {
       ),
     }
   }
-  return { drop: connections.drop, close: connections.close, operations }
+  return { forget: connections.forget, close: connections.close, operations }
 }
