@@ -176,7 +176,7 @@ const baseline = Effect.fn('RuntimeRoutesTest.baseline')(function* () {
 
 describe.skipIf(!testDatabaseConfigured)('production Flue routes on disposable PostgreSQL', () => {
   it.live(
-    'H1 assembles required summaries for every Vivid tool and durably completes an authenticated signal',
+    'H1 assembles the words every Vivid tool must say for its step and durably completes an authenticated signal',
     () => baseline.pipe(Effect.scoped),
   )
 
