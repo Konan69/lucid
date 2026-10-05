@@ -11,12 +11,12 @@ import { PanelLeft, Phone, type LucideIcon } from 'lucide-react-native'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { Animated, Platform, useWindowDimensions, View } from 'react-native'
 import { openDrawer } from '../data/drawer'
-import type { Lead } from '../data/lead'
 import type { Stand } from '../data/stand'
 import { useAppearance } from '../data/vivid'
 import { Faces } from './Avatar'
 import { GLASS_SUPPORTED } from './Glass'
-import { fronting, type Front, type Origin } from './Presence'
+import { capsule, type Origin, type Told } from './Presence'
+import { NO_SCROLL_EDGES, SCROLL_EDGES } from './stack'
 import { IconButton, Label, TARGET, type Tone } from './ui'
 
 /**
@@ -49,8 +49,6 @@ import { IconButton, Label, TARGET, type Tone } from './ui'
  *   react-native-screens draw a custom button, which shows as a second thin capsule.
  * - The line under a title is `unstable_headerSubtitle`, UIKit's own subtitle, set only where
  *   the bar is glass, as the reference does (`ThreadRouteScreen.tsx`).
- * - What leads a bar that has no way back is `unstable_headerLeftItems`, as the reference sets it
- *   on a Thread reached with nothing under it (`ThreadRouteScreen.tsx`, `compactHomeHeaderItems`).
  *
  * `unstable_headerSubtitle` and `glassEffect` exist through the two patches described in
  * `ui/stack.ts`, so they need a binary built with them (app version 0.2.0 and later).
@@ -158,6 +156,34 @@ const endOptions = (end: BarEnd, press: PressAt): NativeStackNavigationOptions =
             : () => <BarButtons {...end} press={press} />,
       }
 
+/** The way to the menu, as the action it is in a bar. */
+const MENU: BarAction = {
+  symbol: 'sidebar.left',
+  icon: PanelLeft,
+  label: 'Open menu',
+  disabled: false,
+  onPress: openDrawer,
+}
+
+/**
+ * The options that put the way to the menu where a pushed screen has the way back. The first
+ * screen is the root of the stack, so the system draws no way back there and this button is
+ * alone at the start.
+ *
+ * It is the system's sidebar symbol as a bar button of its own (the reference's "Show thread
+ * sidebar" button, `src/features/layout/workspace-sidebar-toolbar.tsx`), so on iOS 26 the system
+ * draws it as round glass like every other bar button. Vivid's face used to be the button; the
+ * owner asked for a sidebar icon here and Vivid in the centre (5 October 2026), and the face is
+ * in Vivid's capsule now (`ui/Presence.tsx`). `unstable_headerLeftItems` is iOS's, so Android
+ * gets the same button drawn by the app in its solid bar.
+ */
+const menuOptions = (): NativeStackNavigationOptions =>
+  Platform.OS === 'ios'
+    ? { unstable_headerLeftItems: () => barItems([MENU], () => openDrawer()) }
+    : {
+        headerLeft: () => <IconButton icon={MENU.icon} label={MENU.label} onPress={MENU.onPress} />,
+      }
+
 /** Nobody else is here. One value, for the same reason as `NO_ACTIONS`. */
 export const NOBODY: ReadonlyArray<PersonSummary> = []
 
@@ -216,8 +242,8 @@ export interface Standing {
  *   the state is in the words.
  * - Everywhere else (Android, and iOS without glass): the title and the line as one element in
  *   the solid bar's title slot, with the line in its state's ink. The reference shows no line on
- *   iOS without glass; Vivid does, because nothing else on the Computer's screen says in one
- *   line how the machine stands.
+ *   iOS without glass; Vivid does, because nothing else on a Thread says that Vivid is waiting
+ *   for the Person or that someone is typing.
  *
  * Both fields are always named. `setOptions` merges into what the route already has, so a field
  * left out would keep whatever an earlier bar on the same route put there.
@@ -239,9 +265,13 @@ const standingOptions = (title: string, standing: Standing): NativeStackNavigati
 const PLAIN = { headerTitle: undefined, unstable_headerSubtitle: undefined } as const
 
 /**
- * A bar whose title has a live line under it: the Computer saying how it is. `present` is who
- * else is looking at the same thing. A Thread used to have this bar too; it has `VividBar` now,
- * where the state is Vivid's own capsule in the middle and not a line under a title.
+ * A bar whose title has a live line under it: a Thread saying that Vivid is working or waiting,
+ * the Computer saying how it is. `present` is who else is looking at the same thing.
+ *
+ * Vivid's face is not in this bar. The reference has no slot for a picture beside the title of a
+ * screen that also has the system's way back (its centre items replace the title, its left items
+ * replace or follow the back button), and a Thread already shows Vivid's face at work where its
+ * words are. So the bar says the state in words and the conversation shows the face.
  */
 export function StandingBar({
   title,
@@ -256,68 +286,6 @@ export function StandingBar({
     ...endOptions({ present, actions }, press),
   }))
   return null
-}
-
-/** The title element of a solid bar. The header role stays on the title's words. */
-function StandingTitle({ title, standing }: { title: string; standing: Standing }) {
-  return (
-    <View>
-      <Label accessibilityRole="header" numberOfLines={1} size="heading">
-        {title}
-      </Label>
-      {/* Said again to a screen reader when it changes: it is the screen's state in one line. */}
-      <Label accessibilityLiveRegion="polite" numberOfLines={1} size="caption" tone={standing.tone}>
-        {standing.words}
-      </Label>
-    </View>
-  )
-}
-
-/** The way to the drawer, as the action it is in a bar. */
-const DRAWER: BarAction = {
-  symbol: 'sidebar.left',
-  icon: PanelLeft,
-  label: 'Open menu',
-  disabled: false,
-  onPress: openDrawer,
-}
-
-/**
- * What stands at the leading edge of a bar (`data/lead.ts`), as the options that put it there.
- *
- * These are a screen's own options in the stack, not something a mounted screen sets: what leads
- * a bar is decided by where the screen is in the stack, and has to be there in the first frame.
- *
- * - `drawer`: the system's sidebar symbol as a bar button of its own (the reference's "Show
- *   thread sidebar" button, `src/features/layout/workspace-sidebar-toolbar.tsx`), and no way
- *   back. The back swipe is off as well: the screen is beside Home, not over it, and a drag from
- *   that edge opens the drawer (`ui/Drawer.tsx`). `unstable_headerLeftItems` is iOS's, so Android
- *   gets the same button drawn by the app in its solid bar.
- * - `back`: the system's way back and its swipe, with nothing of the app's beside it.
- */
-export const leadOptions = (lead: Lead): NativeStackNavigationOptions => {
-  if (lead === 'back') {
-    return {
-      headerBackVisible: true,
-      gestureEnabled: true,
-      headerLeft: undefined,
-      unstable_headerLeftItems: undefined,
-    }
-  }
-  if (Platform.OS === 'ios') {
-    return {
-      headerBackVisible: false,
-      gestureEnabled: false,
-      unstable_headerLeftItems: () => barItems([DRAWER], () => openDrawer()),
-    }
-  }
-  return {
-    headerBackVisible: false,
-    gestureEnabled: false,
-    headerLeft: () => (
-      <IconButton icon={DRAWER.icon} label={DRAWER.label} onPress={DRAWER.onPress} />
-    ),
-  }
 }
 
 /**
@@ -342,7 +310,7 @@ const limitIn = (window: number, end: BarEnd): number =>
   Math.max(LEAST, window - 2 * roomBeside(end))
 
 /**
- * The way to call Vivid, which ends the bar of Home and of a Thread.
+ * The way to call Vivid, which ends the first screen's bar.
  *
  * It does nothing yet. Vivid has no calls (`docs/22-one-product.md`, "Not in this build"), and
  * the owner asked for the button to stand in its place before they exist (5 October 2026: "do
@@ -359,7 +327,7 @@ const callAction = (name: string): BarAction => ({
 })
 
 /**
- * Tells the capsule over the stack how Vivid stands on this screen (`fronting`, `ui/Presence.tsx`),
+ * Tells the capsule over the stack how Vivid stands on this screen (`capsule`, `ui/Presence.tsx`),
  * for as long as this screen is the one in front.
  *
  * It is said in a layout effect, before paint, for the reason a screen's bar options are
@@ -368,7 +336,7 @@ const callAction = (name: string): BarAction => ({
  * it would show has changed. A screen that is covered, or gone, takes back only what it said
  * itself, so it can never clear what the screen now in front has already said.
  */
-function useFronting(said: Front) {
+function useTelling(said: Told) {
   const focused = useIsFocused()
   // This screen's own token. State, not a ref: it is read while rendering the effects below.
   const [owner] = useState(() => Symbol('screen'))
@@ -377,46 +345,78 @@ function useFronting(said: Front) {
     latest.current = said
   })
   const signature = JSON.stringify([said.stand, said.limit])
-  const { button, sends } = said.origin
+  const { id, button, sends } = said.origin
   useLayoutEffect(() => {
-    if (focused) fronting.say(owner, latest.current)
-    else fronting.leave(owner)
-  }, [focused, owner, signature, button, sends])
-  useLayoutEffect(() => () => fronting.leave(owner), [owner])
+    if (focused) capsule.say(owner, latest.current)
+    else capsule.leave(owner)
+  }, [focused, owner, signature, id, button, sends])
+  useLayoutEffect(() => () => capsule.leave(owner), [owner])
 }
 
 /**
- * The bar of the two screens a Person meets Vivid on, Home and a Thread: the way to the drawer
- * first (the screen's own option, `leadOptions`), Vivid's capsule in the middle, and at the end
- * who else is here, what can be done, and the way to call Vivid.
+ * The first screen's bar, whether it shows the greeting or a Thread: the way to the menu first,
+ * Vivid's capsule in the middle, and at the end who else is here, what can be done, and the way
+ * to call Vivid.
  *
  * The capsule is not in the bar. The bar's title is left empty and one capsule floats over the
  * whole stack in its place (`Presence`), where it can be pressed, change shape on the UI thread
  * and take the disc that rises from the composer. This says what that capsule should show while
- * the screen is in front, and draws nothing itself.
+ * the screen is in front, and draws nothing itself. A Thread's title is not in its bar either:
+ * the owner asked for Vivid in the centre, and the title is where the Person chose the Thread,
+ * its row in the menu.
+ *
+ * `inverted` says the screen's scroller is a Thread's upside-down list, which the system's edge
+ * effect frosts whole (`NO_SCROLL_EDGES`); the greeting's scroller is the right way up and keeps
+ * the effect. Both are named every time, because the two share one route and `setOptions` merges.
  *
  * `origin` is the composer on the same screen, where a send leaves from.
  */
 export function VividBar({
   stand,
   origin,
+  inverted,
   present,
   actions,
-}: BarEnd & { stand: Stand; origin: Origin }) {
+}: BarEnd & { stand: Stand; origin: Origin; inverted: boolean }) {
   const vivid = useAppearance()
   const end: BarEnd = { present, actions: [...actions, callAction(vivid.name)] }
   const limit = limitIn(useWindowDimensions().width, end)
   const people = present.map((person) => [person.id, person.name, person.image])
-  useBar(JSON.stringify([people, shownOf(end.actions)]), end.actions, (press) => ({
-    // Named, not left to the screen's own options: `setOptions` merges, and the same route can
-    // have drawn a plain bar with a title first (a Thread that was not there, then one that is).
-    title: '',
-    headerTitle: undefined,
-    unstable_headerSubtitle: undefined,
-    ...endOptions(end, press),
-  }))
-  useFronting({ stand, origin, limit })
+  useBar(
+    JSON.stringify(['vivid', inverted, people, shownOf(end.actions)]),
+    end.actions,
+    (press) => ({
+      title: '',
+      ...PLAIN,
+      scrollEdgeEffects: edgesFor(inverted),
+      ...menuOptions(),
+      ...endOptions(end, press),
+    }),
+  )
+  useTelling({ stand, origin, limit })
   return null
+}
+
+/** The system's edge effect for the first screen's scroller, where the bar is glass. */
+const edgesFor = (inverted: boolean): NativeStackNavigationOptions['scrollEdgeEffects'] => {
+  if (!GLASS_SUPPORTED) return undefined
+  return inverted ? NO_SCROLL_EDGES : SCROLL_EDGES
+}
+
+/** The title element of a solid bar. The header role stays on the title's words. */
+function StandingTitle({ title, standing }: { title: string; standing: Standing }) {
+  return (
+    <View>
+      <Label accessibilityRole="header" numberOfLines={1} size="heading">
+        {title}
+      </Label>
+      {/* Said again to a screen reader when it changes: it is where a Thread says that Vivid
+          has started working, or is now waiting for the Person. */}
+      <Label accessibilityLiveRegion="polite" numberOfLines={1} size="caption" tone={standing.tone}>
+        {standing.words}
+      </Label>
+    </View>
+  )
 }
 
 /**

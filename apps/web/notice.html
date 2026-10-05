@@ -1,0 +1,25 @@
+<!doctype html>
+<!--
+  The notice the desktop app shows while Vivid works in the Person's apps: a small window that
+  stays on top of the screen. The desktop shell loads this document in a frameless, transparent
+  window of its own (apps/desktop/src/main/notice.ts); nothing else links to it.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vivid</title>
+    <script>
+      ;(function () {
+        var stored = localStorage.getItem('vivid-theme')
+        var theme =
+          stored || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+        document.documentElement.dataset.theme = theme
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/notice.tsx"></script>
+  </body>
+</html>

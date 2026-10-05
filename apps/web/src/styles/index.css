@@ -391,6 +391,17 @@ html[data-theme='light'] {
 
 /* ── Scroll fades ──────────────────────────────────────────── */
 /* Scrolls without a visible track, for panes whose edge fade already signals overflow. */
+/* A frameless desktop window is moved by whatever is marked as its drag region. `window-drag` is
+   the handle; `window-hold` keeps a control on it out of the region, or a press on the control
+   would start a drag instead. Used by the notice window (`src/notice.tsx`); in a browser tab
+   both do nothing. */
+@utility window-drag {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+@utility window-hold {
+  -webkit-app-region: no-drag;
+}
 @utility scrollbar-hidden {
   scrollbar-width: none;
 }

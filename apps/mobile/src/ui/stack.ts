@@ -5,11 +5,11 @@ import type { Colors } from '../theme'
 import { GLASS_SUPPORTED } from './Glass'
 
 /**
- * The native stack's option sets. Every screen transition in the app is the platform's own push,
- * pop, sheet or modal; nothing here is animated from JavaScript.
+ * The native stack's option sets. Every screen transition in the app is the platform's own
+ * cross-fade, sheet or modal; nothing here is animated from JavaScript.
  *
  * Ported from T3 Code mobile `src/Stack.tsx` (`GLASS_HEADER_OPTIONS`, `SOLID_HEADER_OPTIONS`,
- * the sheet variants, and the `simple_push` note beside its root navigator) and
+ * the sheet variants) and
  * `src/native/scrollEdgeEffects.ts` (`nativeHeaderScrollEdgeEffects`). The title's weight is
  * carried by `HEADER_TITLE`, in Vivid's type scale.
  *
@@ -33,8 +33,30 @@ const HEADER_TITLE = { fontSize: 18, fontWeight: '800' } as const
  * platform and version (its note: forcing `soft` made the bar read as a local overlay instead of
  * sampling the content edge to edge), so the value is written out here instead of computed.
  */
-const SCROLL_EDGES = {
+export const SCROLL_EDGES = {
   top: 'automatic',
+  bottom: 'hidden',
+  left: 'hidden',
+  right: 'hidden',
+} as const
+
+/**
+ * No edge effect at all, for a screen whose scroller is upside down: a Thread's inverted list.
+ *
+ * The system gives the effect to the scroll view's own top edge. An inverted list is the same
+ * scroll view turned over, so its own top is at the foot of the screen, beside the composer, and
+ * the edge under the bar is its own bottom. The system then measures "from the top edge to the
+ * bar" across the whole list, and frosts and dims all of it whenever the list is not resting at
+ * its newest words: the owner's iPhone showed a Thread's whole conversation blurred between a
+ * sharp bar and a sharp composer while Vivid was thinking (5 October 2026, iOS 26, app 0.2.0).
+ * The reference has no such screen to copy from: T3 Code mobile's thread feed is not inverted.
+ *
+ * Not reproduced: there is no iOS 26 device or simulator to run it on from here. The reading is
+ * from the screenshot and from where react-native-screens applies the effect
+ * (`RNSScrollEdgeEffectApplicator`, to the first scroll view under the screen).
+ */
+export const NO_SCROLL_EDGES = {
+  top: 'hidden',
   bottom: 'hidden',
   left: 'hidden',
   right: 'hidden',
@@ -60,38 +82,6 @@ export const GLASS_HEADER = {
   unstable_navigationItemStyle: GLASS_SUPPORTED ? 'editor' : undefined,
 } satisfies NativeStackNavigationOptions
 
-/**
- * The bar of Home and a Thread, the two screens with Vivid's capsule in the middle (`VividBar`).
- *
- * The title is empty for good: the capsule floats over the stack in its place
- * (`ui/Presence.tsx`). The centre is the capsule's, so the bar is the system's ordinary
- * `navigator` layout, not `editor`, which stands a title at the leading edge; the reference
- * drops `editor` in the same way wherever it wants a centred title
- * (`SHEET_GLASS_HEADER_OPTIONS`). A screen that draws a plain titled bar on one of these routes
- * (a Thread that is not there) gets that title centred too, on Android only when asked.
- */
-export const FRONT_HEADER = {
-  ...GLASS_HEADER,
-  title: '',
-  headerTitleAlign: 'center',
-  unstable_navigationItemStyle: undefined,
-} satisfies NativeStackNavigationOptions
-
-/**
- * How a Thread arrives beside Home: it fades in. On iOS that takes a little over a fifth of a
- * second; Android has its own fade, 150 ms, and takes no duration from here
- * (react-native-screens `ScreenViewManager.kt`, `setTransitionDuration`).
- *
- * The two screens have the same bar and the same composer in the same places, so a push would
- * slide one copy of each out as the other slid in. A fade leaves them standing and changes only
- * what is between them, which is what happened: the conversation started. The same holds when
- * the drawer swaps Home for a Thread, and when "New thread" goes back.
- */
-export const BESIDE = {
-  animation: 'fade',
-  animationDuration: 220,
-} satisfies NativeStackNavigationOptions
-
 /** An opaque bar, for a screen whose content scrolls inside itself and gives glass nothing to sample. */
 export const SOLID_HEADER = {
   headerShown: true,
@@ -105,14 +95,30 @@ export const SOLID_HEADER = {
 } satisfies NativeStackNavigationOptions
 
 /**
- * How one screen replaces another. iOS uses `simple_push`: the platform's push and its back
- * swipe, without the cast shadow and the native bar transition that fight a transparent bar.
- * Android keeps its default. With reduced motion the screens cross-fade and nothing travels.
+ * How one screen replaces another: it fades in where it stands, and nothing travels.
+ *
+ * Screens used to be pushed (`simple_push` on iOS, the platform's default on Android), so every
+ * change of screen slid one over another. The owner asked for no slide anywhere (5 Oct 2026); a
+ * cross-fade is what the stack already used for reduced motion, so that is now the one way. It is
+ * short: a change of screen happens many times a day, and a long fade would be felt as waiting.
+ * The system's back swipe is still the Person's finger moving the screen, which is theirs to do.
+ *
+ * `animationDuration` is honoured on iOS only (react-native-screens, `fade` among the kinds it
+ * applies to); Android fades at the platform's own short length.
  */
-export const pushAnimation = (still: boolean): NativeStackNavigationOptions['animation'] => {
-  if (still) return 'fade'
-  return Platform.OS === 'ios' ? 'simple_push' : 'default'
-}
+export const SCREEN_CHANGE = {
+  animation: 'fade',
+  animationDuration: 150,
+} satisfies NativeStackNavigationOptions
+
+/**
+ * The front door's stack still asks for its animation by this name, with whether motion is
+ * reduced (`screen/Door.tsx`, which another piece of work is rewriting). The answer no longer
+ * depends on that: the door fades as every other screen does. It goes when the door reads
+ * `SCREEN_CHANGE` itself.
+ */
+export const pushAnimation = (_still: boolean): NativeStackNavigationOptions['animation'] =>
+  SCREEN_CHANGE.animation
 
 /** A sheet that rests at a little over half the screen and can be pulled nearly full. */
 export const SHEET = {

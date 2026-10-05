@@ -13,6 +13,7 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { findPerson } from '../auth/access.ts'
+import { DeviceRegistry, deviceLayer } from '../computers/device.ts'
 import { ChannelReplies } from '../channels/replies.ts'
 import { Database } from '../database/client.ts'
 import { Changes } from '../live/changes.ts'
@@ -85,6 +86,7 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   const learning = yield* Learning
   const titles = yield* ThreadTitles
   const channels = yield* ChannelReplies
+  const devices = yield* DeviceRegistry
   const scope = yield* Effect.scope
 
   /** Tells the Person Vivid worked for that it is done, unless they are watching it happen. */
@@ -113,7 +115,9 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
 
   return Effect.fn('Conversation.observe')(function* (run: Followed) {
     const settlement = yield* runtime.settled(run.threadId, run.id)
-    if (!(yield* runs.end(run.id, endingOf(settlement)))) return
+    const changed = yield* runs.end(run.id, endingOf(settlement))
+    yield* devices.ended(run.id)
+    if (!changed) return
     // Naming lives in the server scope as its own fiber; even a stalled model cannot hold settlement open.
     yield* titles.afterRun(run.threadId).pipe(Effect.forkIn(scope))
     const thread = yield* findThread(run.threadId).pipe(Effect.provideService(Database, database))
@@ -334,4 +338,6 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
 })
 
 /** Needs a `Scope`: the Runs it observes live as long as the server does. */
-export const conversationLayer = Layer.effect(Conversation, makeConversation())
+export const conversationLayer = Layer.effect(Conversation, makeConversation()).pipe(
+  Layer.provideMerge(deviceLayer),
+)

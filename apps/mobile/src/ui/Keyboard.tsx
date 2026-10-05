@@ -14,32 +14,27 @@ import { GLASS_SUPPORTED } from './Glass'
  * on a device behaved (`VALIDATION.md`: the composer stays above the keyboard and leaves no gap
  * when it goes), so it is kept rather than re-derived without a device to check it on.
  *
- * This one is for a screen that starts at the top of the window: one with no bar (the front
- * door), a sheet, or anything under a transparent bar.
+ * This one is for a screen that starts at the top of the window: one with no bar (Home, the
+ * front door), a sheet, or anything under a transparent bar.
  */
 export function AboveKeyboard({ children }: { children: ReactNode }) {
   return <Riding offset={0}>{children}</Riding>
 }
 
 /**
- * Whether a solid system bar pushes a screen down the window. It does wherever the bar is not
- * glass: with glass the bar is transparent and the screen starts at the top.
+ * Whether a solid system bar pushes a screen down the window: wherever the bar is not glass. With
+ * glass the bar is transparent and the screen starts at the top.
  *
- * Android used to be left out, on the grounds that it resizes the window for the keyboard itself
- * (`softwareKeyboardLayoutMode: resize`). An edge-to-edge Android (15 and later) does not: the
- * keyboard is an inset over a window that stays the same size, and the composer of a Thread sat
- * under the keyboard by exactly the bar's height (seen on an API 35 emulator, 5 October 2026).
+ * Android used to be left out, on the reasoning that it resizes the window for the keyboard
+ * itself. It does not once the app draws edge to edge (Android 15 and later): the keyboard is
+ * then an inset over a window that keeps its size, and the padding below is all that lifts the
+ * composer. Seen on an Android 15 emulator on 5 October 2026, when the first screen got the
+ * system's bar: the composer stood under the keyboard by exactly the bar's height, with its send
+ * button out of sight.
  */
 const BAR_PUSHES_DOWN = !GLASS_SUPPORTED
-
-/** A window's height, and the tallest a screen in it has been seen: its frame with no keyboard. */
-interface Resting {
-  readonly window: number
-  readonly tallest: number
-}
-
 /**
- * The same, for a screen that has the system's bar above it (Home, a Thread).
+ * The same, for a screen that has the system's bar above it (a Thread).
  *
  * `KeyboardAvoidingView` works out how far the keyboard covers it from its own frame, and takes
  * that frame to start at the top of the window. Under a solid bar the screen starts lower by the
@@ -47,34 +42,19 @@ interface Resting {
  * under the keyboard. `keyboardVerticalOffset` is the view's distance from the top of the window.
  *
  * That distance is measured, not looked up: the screen reaches the bottom of the window, so it
- * is the window's height less the screen's own, read when the screen is laid out. The screen's
- * own height is the tallest it has been in this window. An Android that does resize its window
- * for the keyboard reports a shorter frame while the keyboard is up, and that shorter frame is
- * not the screen's resting one; taking the tallest leaves the offset at the bar's height, and on
- * such a device the padding then works out to nothing, which is right, because the window has
- * already made the room. The stack's own number is only offered as an animated value
- * (`useAnimatedHeaderHeight`), and the hook that gives it as a number lives in a package this app
- * does not depend on. T3 Code mobile gets the same result from `react-native-keyboard-controller`
- * (`automaticOffset`), a native module Vivid does not ship.
+ * is the window's height less the screen's own, read when the screen is laid out. The stack's own
+ * number is only offered as an animated value (`useAnimatedHeaderHeight`), and the hook that
+ * gives it as a number lives in a package this app does not depend on. T3 Code mobile gets the
+ * same result from `react-native-keyboard-controller` (`automaticOffset`), a native module Vivid
+ * does not ship.
  */
 export function AboveKeyboardBelowBar({ children }: { children: ReactNode }) {
   const window = useWindowDimensions().height
-  const [resting, setResting] = useState<Resting>({ window, tallest: 0 })
+  // The screen's height with no keyboard padding: padding shrinks the content, not this frame.
+  const [height, setHeight] = useState(window)
   if (!BAR_PUSHES_DOWN) return <Riding offset={0}>{children}</Riding>
-  // A frame measured in another window (the device was turned) says nothing about this one.
-  const tallest = resting.window === window ? resting.tallest : 0
   return (
-    <Riding
-      // Until the screen has been laid out once there is nothing to measure against, and no
-      // keyboard to avoid either.
-      offset={tallest === 0 ? 0 : Math.max(0, window - tallest)}
-      onHeight={(height) =>
-        setResting((seen) => {
-          const before = seen.window === window ? seen.tallest : 0
-          return height > before ? { window, tallest: height } : seen
-        })
-      }
-    >
+    <Riding offset={Math.max(0, window - height)} onHeight={setHeight}>
       {children}
     </Riding>
   )

@@ -1,13 +1,12 @@
 import { useAtomValue } from '@effect/atom-react'
 import { useAppearance } from '../data/vivid'
-import type { ThreadId } from '@vivid/contracts'
 import { draftPlace, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
 import { useCallback, useState, useSyncExternalStore } from 'react'
-import { ScrollView, View } from 'react-native'
+import { Keyboard, ScrollView, View } from 'react-native'
 import { arrivalOf, homeShows, Showing, type HomeScreen } from '../data/arrival'
 import { draft, useDraft } from '../data/drafts'
-import { homeComposer } from '../data/fresh'
+import { Front } from '../data/front'
 import { LiveState, useLive, useLiveData } from '../data/live'
 import { Stand } from '../data/stand'
 import { Start, startThread } from '../data/threads'
@@ -16,24 +15,43 @@ import { Composer } from '../ui/Composer'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
 import { useOrigin, type Origin } from '../ui/Presence'
 import { Label, Notice, styles } from '../ui/ui'
-import { useGo, useMe } from '../workspace'
+import { useFront, useGo, useMe, useShowing } from '../workspace'
+import { Chat } from './Chat'
 import { First, Waiting } from './home/First'
 import { useScope } from './project/scope'
 
 /**
- * Home: Vivid's greeting and somewhere to write. It is the root of the app and the first screen,
- * and it is only that: every Thread the Person has, the places beside Threads, the workspace and
- * Settings are in the drawer, one swipe or one tap on the bar's first button away
- * (`screen/Side.tsx`).
+ * The first screen, and the root of the app: somewhere to start a new Thread, or one Thread, in
+ * the same place (`data/front.ts`).
  *
- * Someone Vivid has not met gets neither. Their first Thread is opened by the server and Vivid
- * speaks first in it (`data/arrival.ts`); Home is only Vivid's face until that Thread covers it,
- * and draws nothing under its bar for the moment before it is known which Person this is.
+ * A Thread used to be a second screen pushed over this one, so a first message ended with the
+ * Thread sliding in over the words just typed. Now the greeting is replaced by the conversation
+ * where it stands: no screen is pushed, nothing moves, and the bar and the composer are in the
+ * same places before and after. Choosing a Thread in the menu, or anywhere else in the app, puts
+ * it here the same way.
  *
- * It owns no data. What is local is only what the Person is in the middle of: what they have
- * typed, and whether it is on its way.
+ * Every Thread the Person has, the places beside Threads, the workspace and Settings are in the
+ * menu (`screen/home/Panel.tsx`), one swipe or one tap on the bar's first button away. The menu
+ * is drawn by the shell, over the stack and its bar, not by this screen.
  */
 export function Home() {
+  return Front.$match(useShowing(), {
+    Fresh: () => <Fresh />,
+    Thread: ({ id, writing }) => <Chat id={id} writing={writing} />,
+  })
+}
+
+/**
+ * Somewhere to start a new Thread: Vivid's greeting and the composer.
+ *
+ * Someone Vivid has not met gets neither. Their first Thread is opened by the server and Vivid
+ * speaks first in it (`data/arrival.ts`); this is only Vivid's face until that Thread takes its
+ * place, and draws nothing under its bar for the moment before it is known which Person this is.
+ *
+ * It owns no data. What is local is only what the Person is in the middle of: what they have
+ * typed, and a send the server refused.
+ */
+function Fresh() {
   // The name this Person or their Company gave Vivid, live.
   const vivid = useAppearance()
   const me = useMe()
@@ -46,14 +64,16 @@ export function Home() {
     LiveState.$is('Ready')(threads) &&
     threads.value.threads.some((thread) => thread.attention === 'Working')
   // While a first message is on its way Vivid is thinking about what is on this screen, so the
-  // capsule says so and the orb rises to it from the composer. Work in some other Thread is not
-  // this screen's: it shows only in the mood of Vivid's face.
+  // capsule says so and what was sent rises to it from the composer. Work in some other Thread
+  // is not this screen's: it shows only in the mood of Vivid's face.
   const elsewhere = working || Showing.$is('Waiting')(showing) ? 'thinking' : 'happy'
+
   return (
     <AboveKeyboardBelowBar>
       <VividBar
         stand={start.sending ? Stand.Thinking() : Stand.Resting({ mood: elsewhere })}
         origin={origin}
+        inverted={false}
         present={NOBODY}
         actions={NO_ACTIONS}
       />
@@ -71,35 +91,30 @@ export function Home() {
 }
 
 /**
- * Where this session's first arrival stands, read as Home listens to it. Listening is also how
- * the arrival reaches the stack: it is told whether Home is in front, how to open a Thread over
- * it, and when Home comes back or has been covered, all from this screen's own navigator. So the
- * server is asked from the Thread list and Home's focus, never from Home having rendered.
+ * Where this session's first arrival stands, read as the first screen listens to it. Listening
+ * is also how the arrival reaches the app: it is told whether the first screen is in front, how
+ * to put a Thread there, and when the Person comes back to it. So the server is asked from the
+ * Thread list and the screen's focus, never from the screen having rendered.
  */
 function useArrival() {
   const arrival = arrivalOf(useLiveData())
   const go = useGo()
+  const front = useFront()
   const attend = useCallback(
     (watcher: () => void) => {
       const home: HomeScreen = {
         isFocused: () => go.isFocused(),
-        open: (id) => go.navigate('Chat', { id }),
+        open: (id) => front.open(id, false),
         onFocus: (heard) => go.addListener('focus', heard),
-        // The stack says a screen's transition ended and whether it was the one going away;
-        // for Home that is the Thread having finished sliding over it.
-        onCovered: (heard) =>
-          go.addListener('transitionEnd', (event) => {
-            if (event.data.closing) heard()
-          }),
       }
       return arrival.attend(home, watcher)
     },
-    [arrival, go],
+    [arrival, go, front],
   )
   return useSyncExternalStore(attend, arrival.standing)
 }
 
-/** What `Writing` needs: who is writing, their words and the send, and the composer's button. */
+/** What `Writing` needs: who is writing, their words and the send, and where a send leaves from. */
 interface WritingProps {
   me: ReturnType<typeof useMe>
   start: ReturnType<typeof useStart>
@@ -108,7 +123,7 @@ interface WritingProps {
 }
 
 /**
- * What Home draws under its bar (`homeShows`): nothing yet, Vivid's face while a first Thread is
+ * What is drawn under the bar before anything is said (`homeShows`): nothing yet, Vivid's face while a first Thread is
  * being opened, or the greeting and the composer.
  */
 function Under({ showing, ...writing }: WritingProps & { showing: Showing }) {
@@ -121,9 +136,9 @@ function Under({ showing, ...writing }: WritingProps & { showing: Showing }) {
 }
 
 /**
- * Home for someone Vivid has met: the greeting, anything the last send was refused for, and the
- * composer. The words and the send are Home's (`useStart`), because the capsule at the top thinks
- * while a first message is on its way.
+ * For someone Vivid has met: the greeting, anything the last send was refused for, and the
+ * composer. The words and the send are `Fresh`'s (`useStart`), because Vivid's capsule at the top
+ * thinks while a first message is on its way.
  */
 function Writing({ me, start, origin, placeholder }: WritingProps) {
   return (
@@ -141,10 +156,9 @@ function Writing({ me, start, origin, placeholder }: WritingProps) {
         </View>
       )}
       <Composer
-        // Held where the drawer's "New thread" can reach it (`data/fresh.ts`).
-        ref={homeComposer}
         origin={origin}
         value={start.draft}
+        autoFocus={false}
         placeholder={placeholder}
         working={false}
         disabled={start.sending}
@@ -178,10 +192,11 @@ function Reconnecting() {
 }
 
 /**
- * Starting a Thread from the composer at the bottom of Home.
+ * Starting a Thread from the composer under the greeting.
  *
- * The Person is taken to the Thread only once their message is with Vivid, so words they typed
- * are never dropped on the way to a screen that could not say so. If the Thread was made and the
+ * The Thread takes the greeting's place only once the message is with Vivid, so words the Person
+ * typed are never dropped on the way to a conversation that could not say so. It takes the
+ * keyboard too when the keyboard was up (`Front.Thread.writing`), so sending does not put it away. If the Thread was made and the
  * message did not arrive, sending again speaks into that Thread instead of making a second one.
  *
  * The words are kept on the phone as they are typed (`data/drafts.ts`), under the Person's own
@@ -192,7 +207,7 @@ function Reconnecting() {
 function useStart() {
   const me = useMe()
   const data = useLiveData()
-  const go = useGo()
+  const front = useFront()
   const place = draftPlace(me.person.id, {
     workspace: workspaceKey(me.workspace),
     thread: Option.none(),
@@ -203,26 +218,28 @@ function useStart() {
   const [sending, setSending] = useState(false)
   const [last, setLast] = useState<Option.Option<Start>>(Option.none())
 
-  /** The empty Thread an earlier attempt left behind, when there is one. */
-  const resume = Option.flatMap(last, (outcome) =>
-    Start.$is('NotSaid')(outcome) ? Option.some(outcome.id) : Option.none<ThreadId>(),
-  )
-
   async function send() {
     const message = typed.trim()
     if (message.length === 0 || sending) return
     setSending(true)
     // A Thread started while the drawer is scoped to a Project is filed in that Project.
     const projectId = Option.getOrNull(Option.map(scoped, (project) => project.id))
-    const outcome = await startThread(data, { message, projectId, resume })
+    // The empty Thread an earlier attempt left behind is spoken into, not made again. It is the
+    // shell's to remember (`front.unsaid`): this screen is taken down between the two attempts
+    // whenever the Person looks at another Thread first.
+    const outcome = await startThread(data, { message, projectId, resume: front.unsaid() })
     setSending(false)
+    // A Thread that was made and not reached is owed these words; one that started owes nothing.
+    // A refusal to make one changes neither.
+    if (Start.$is('NotSaid')(outcome)) front.owe(Option.some(outcome.id))
+    if (Start.$is('Started')(outcome)) front.owe(Option.none())
     if (Start.$is('Started')(outcome)) {
       // Only the words that were sent leave the composer. It stays usable while the send is on
       // its way, so by now it can hold a second request; emptying it whatever it held used to
       // throw that away. Anything else is still the Person's and is here when they come back.
       if (draft.in(place).trim() === message) setDraft('')
       setLast(Option.none())
-      go.navigate('Chat', { id: outcome.id })
+      front.open(outcome.id, Keyboard.isVisible())
       return
     }
     setLast(Option.some(outcome))

@@ -20,19 +20,19 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
-import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Share2, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { commit } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
+import { useDrawerOpened } from '../data/drawer'
 import { inFront, onForeground } from '../data/foreground'
 import { LiveState, refusalOf, useLive, useLiveData } from '../data/live'
 import { isShown, lastWordsOf, type Around } from '../data/message'
 import { endingOf, newestRun } from '../data/outcome'
-import { standIn } from '../data/stand'
+import { Stand, standIn } from '../data/stand'
 import { conversation, say, UNDELIVERED, UNTITLED } from '../data/threads'
 import { Composer } from '../ui/Composer'
-import { Bar, BarRoom, NO_ACTIONS, VividBar, type BarAction } from '../ui/Bar'
+import { BarRoom, NO_ACTIONS, NOBODY, VividBar, type BarAction } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
 import { useOrigin, type Origin } from '../ui/Presence'
@@ -50,12 +50,14 @@ import {
 } from '../ui/ui'
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
-import { useGo, useMe, type Routes } from '../workspace'
+import { useFront, useMe } from '../workspace'
 import { Message } from './chat/Message'
 import { Share } from './chat/Share'
 
 /**
- * One Thread: the conversation with Vivid, and everything live around it.
+ * One Thread: the conversation with Vivid, and everything live around it. It is drawn in the
+ * first screen's place (`screen/Home.tsx`), not as a screen of its own; `writing` says its
+ * composer takes the keyboard over from the one a first message was typed in.
  *
  * Two sources feed this screen. The words come from Flue's stream through the server's gateway,
  * token by token. Everything else (who is in the Thread, who Vivid acted for, what is waiting on
@@ -67,9 +69,8 @@ import { Share } from './chat/Share'
  * marks the Thread read (`seenThread`) then, and the Thread's plain query otherwise: the same
  * detail is drawn either way, and a reply that lands while the screen is covered stays unread.
  */
-export function Chat({ route }: NativeStackScreenProps<Routes, 'Chat'>) {
+export function Chat({ id, writing }: { id: ThreadId; writing: boolean }) {
   const data = useLiveData()
-  const { id } = route.params
   const looking = useLooking()
   const detail = useLive(looking ? data.seenThread(id) : data.live.thread.get(id))
   if (LiveState.$is('Failed')(detail)) return <Gone />
@@ -79,6 +80,7 @@ export function Chat({ route }: NativeStackScreenProps<Routes, 'Chat'>) {
       <Conversation
         key={id}
         id={id}
+        writing={writing}
         detail={LiveState.$is('Ready')(detail) ? Option.some(detail.value) : Option.none()}
       />
     </>
@@ -86,17 +88,21 @@ export function Chat({ route }: NativeStackScreenProps<Routes, 'Chat'>) {
 }
 
 /**
- * Whether the Person is looking at this screen: it is the one on top, and the app is in front.
+ * Whether the Person is looking at this Thread: the first screen, where it is drawn, is the one
+ * on top, and the app is in front.
  *
  * A native stack keeps a screen mounted under whatever is pushed over it, and an app in the
  * background can go on receiving for a while. Being mounted used to be taken for looking, so a
  * Thread the Person had left behind went on marking its replies read and saying they were there,
- * and the server, believing it, sent no notification for work they had not seen.
+ * and the server, believing it, sent no notification for work they had not seen. The open menu
+ * counts as covering it for the same reason.
  */
 function useLooking(): boolean {
   const focused = useIsFocused()
   const front = useAtomValue(inFront)
-  return focused && front
+  // The menu is drawn over the first screen without taking its focus, and it covers the Thread.
+  const covered = useDrawerOpened()
+  return focused && front && !covered
 }
 
 /**
@@ -110,19 +116,30 @@ function Present({ id }: { id: ThreadId }) {
   return null
 }
 
-/** A Thread that is not there, or not this Person's to see. The two look the same on purpose. */
+/**
+ * A Thread that is not there, or not this Person's to see. The two look the same on purpose. The
+ * way on is a new Thread: this is the first screen, so there is nowhere to go back to.
+ */
 function Gone() {
-  const go = useGo()
+  const front = useFront()
+  // There is no composer here, so nothing is ever sent from this origin.
+  const origin = useOrigin()
   return (
     <Screen>
-      <Bar title="Thread" actions={NO_ACTIONS} />
+      <VividBar
+        stand={Stand.Resting({ mood: 'happy' })}
+        origin={origin}
+        inverted={false}
+        present={NOBODY}
+        actions={NO_ACTIONS}
+      />
       {/* A scroller, so the system keeps these words clear of a glass bar as it does a list. */}
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ paddingHorizontal: GUTTER }}
       >
         <Empty line="This thread is not here. It may have been deleted, or it is in a space you are not working in right now.">
-          <Button label="Back" onPress={go.goBack} />
+          <Button label="New thread" onPress={() => front.fresh()} />
         </Empty>
       </ScrollView>
     </Screen>
@@ -141,10 +158,11 @@ const audienceWords = (thread: Thread): string =>
  * The top of a Thread (`VividBar`): Vivid in the middle, saying how it is doing right now
  * (thinking, waiting for the Person, or simply there), or who else is writing (`standIn`). At
  * the end of the bar: who else is looking, who the Thread is shared with, and the way to call
- * Vivid. The way to Vivid's computer is in Vivid's own menu, under its capsule.
+ * Vivid. The way to a new Thread and to Vivid's computer are in Vivid's own menu, under its
+ * capsule (`ui/Presence.tsx`), and in the menu the bar starts with.
  *
  * The Thread's title is not here. The bar's middle is Vivid's, as the owner asked, and the title
- * is where the Person chose the Thread: its row in the drawer.
+ * is where the Person chose the Thread: its row in the menu.
  */
 function Top({
   thread,
@@ -189,6 +207,8 @@ function Top({
         typing.map((seen) => seen.person.name),
       )}
       origin={origin}
+      // A Thread's list is upside down, which the system's edge effect cannot be given.
+      inverted
       present={others.map((seen) => seen.person)}
       actions={Option.match(sharing, {
         onNone: () => NO_ACTIONS,
@@ -291,7 +311,15 @@ function useSend(
  * is keyed by the Thread (`Chat`), so everything held here, the stream and the delivery that is in
  * doubt included, belongs to that one Thread and to nothing opened after it.
  */
-function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<ThreadDetail> }) {
+function Conversation({
+  id,
+  writing,
+  detail,
+}: {
+  id: ThreadId
+  writing: boolean
+  detail: Option.Option<ThreadDetail>
+}) {
   // The name this Person or their Company gave Vivid, live.
   const vivid = useAppearance()
   const me = useMe()
@@ -405,6 +433,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
       <Composer
         origin={origin}
         value={typed}
+        autoFocus={writing}
         placeholder={shared ? `Message everyone and ${vivid.name}` : `Message ${vivid.name}`}
         working={working}
         disabled={false}
@@ -615,7 +644,7 @@ function Blank({ ready }: { ready: boolean }) {
 /**
  * What sits under the newest message: that Vivid's last Run came to nothing, or that something
  * did not arrive. That Vivid is thinking is not said here: it is at the top of the screen, in
- * Vivid's capsule (`ui/Presence.tsx`), where the orb goes when the Person sends.
+ * Vivid's capsule (`ui/Presence.tsx`), where what the Person sends goes.
  */
 function Tail({
   ended,

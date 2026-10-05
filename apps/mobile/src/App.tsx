@@ -1,19 +1,14 @@
 import { RegistryContext } from '@effect/atom-react'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { NavigationContainer } from '@react-navigation/native'
-import {
-  createNativeStackNavigator,
-  type NativeStackNavigationOptions,
-} from '@react-navigation/native-stack'
+import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import { workspaceKey } from '@vivid/state'
-import { useState } from 'react'
+import { useState, type ComponentProps } from 'react'
 import { StatusBar, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
-import { useReducedMotion } from 'react-native-reanimated'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { door, patienceAtom, useDoor } from './data/door'
-import { homeShown } from './data/fresh'
-import { leadOf, reachOf, type Reach } from './data/lead'
+import { Front, makeFront } from './data/front'
 import {
   Entry,
   entryAtom,
@@ -25,26 +20,25 @@ import {
 } from './data/live'
 import { leaveAtom } from './data/signing'
 import { Broken } from './screen/Broken'
-import { Chat } from './screen/Chat'
 import { Computer } from './screen/Computer'
 import { Door } from './screen/Door'
 import { Home } from './screen/Home'
+import { Panel } from './screen/home/Panel'
 import { Folder, Library } from './screen/Library'
 import { Notifications } from './screen/Notifications'
 import { Project, Projects } from './screen/Projects'
 import { Routines } from './screen/Routines'
 import { Settings } from './screen/Settings'
-import { Side } from './screen/Side'
 import { Memory } from './screen/settings/Memory'
 import { Texting } from './screen/settings/Texting'
 import { People } from './screen/settings/People'
 import { ThemeProvider, useTheme } from './theme'
-import { leadOptions } from './ui/Bar'
-import { Presence } from './ui/Presence'
+import { Drawer } from './ui/Drawer'
+import { Presence, type Place } from './ui/Presence'
 import { Recover } from './ui/Recover'
-import { BESIDE, FRONT_HEADER, GLASS_HEADER, navigationTheme, pushAnimation } from './ui/stack'
+import { GLASS_HEADER, navigationTheme, SCREEN_CHANGE } from './ui/stack'
 import { Button, Face, GUTTER, Label } from './ui/ui'
-import { MeProvider, useGo, type Routes } from './workspace'
+import { FrontProvider, MeProvider, useFront, useShowing, type Routes } from './workspace'
 
 const Stack = createNativeStackNavigator<Routes>()
 
@@ -213,100 +207,90 @@ function Stopped({ message }: { message: string }) {
   )
 }
 
-/** A screen as the stack lists it: which one it is, and which screen it is. */
-interface Placed {
-  readonly key: string
-  readonly name: string
-}
+/** What the stack hands its `layout`: its screens, where it stands, and its navigation. */
+type StackLayout = Parameters<NonNullable<ComponentProps<typeof Stack.Navigator>['layout']>>[0]
 
 /**
- * A Thread's own options, from where it stands in the stack (`data/lead.ts`). Beside Home it has
- * Home's bar, led by the way to the drawer, and it fades in; opened from anywhere else it is
- * under that place, led by the way back, and it is pushed like any other screen.
+ * The stack with the menu over it. The menu can be dragged open only while Home, the first route,
+ * is the screen in front: over any other screen the same drag is the system's way back.
  */
-const threadOptions = (
-  routes: ReadonlyArray<Placed>,
-  key: string,
-  still: boolean,
-): NativeStackNavigationOptions => {
-  const lead = leadOf(
-    routes,
-    routes.findIndex((route) => route.key === key),
-  )
-  const arrival = lead === 'drawer' ? BESIDE : { animation: pushAnimation(still) }
-  return { ...FRONT_HEADER, ...leadOptions(lead), ...arrival }
-}
+const underMenu = ({ children, state, navigation }: StackLayout) => (
+  <Drawer reachable={state.index === 0} panel={<Panel go={navigation} />}>
+    {children}
+    <Vivid go={navigation} />
+  </Drawer>
+)
 
 /**
- * Vivid's capsule over the stack (`ui/Presence.tsx`), and where the places in its menu lead. It
- * is outside every screen, so `useGo` here is the stack's own container: it goes to places, and
- * the screen in front is what they are pushed over.
- */
-function Vivid() {
-  const go = useGo()
-  return <Presence onGo={(place) => go.navigate(place)} />
-}
-
-/**
- * The signed-in app: one native stack, with the drawer around it (`screen/Side.tsx`). Pushing,
- * popping and the back swipe are the platform's own; nothing here animates a screen. The bar is
- * the platform's too (`GLASS_HEADER`): its way back and its buttons are the system's, liquid glass
- * on iOS 26, with each screen's content scrolling under it. A screen that has actions or a live
- * title says so itself (`ui/Bar.tsx`); one whose bar is only its name has it here.
+ * Vivid's capsule over the stack (`ui/Presence.tsx`), and where the rows of its menu lead. It is
+ * drawn here, after the stack and inside the menu's page, so it is over the system's bar, where
+ * it can be pressed, and under the open menu.
  *
- * Home and a Thread are the two screens a Person meets Vivid on, and they share one bar
- * (`FRONT_HEADER`): the way to the drawer first, Vivid's capsule in the middle (one capsule,
- * drawn over the stack: `Vivid` below), and the way to call Vivid at the end.
+ * A new Thread is offered only while a Thread is in front: on the greeting the Person is already
+ * starting one. The other rows are Vivid's own places, pushed over whatever is in front.
+ */
+function Vivid({ go }: { go: StackLayout['navigation'] }) {
+  const front = useFront()
+  const thread = Front.$is('Thread')(useShowing())
+  return (
+    <Presence
+      menu={{
+        places: thread ? IN_THREAD : ON_GREETING,
+        onGo: (place) => {
+          if (place === 'Fresh') front.fresh()
+          else go.navigate(place)
+        },
+      }}
+    />
+  )
+}
+
+/** The rows of Vivid's menu, in order. One list each, so a render does not make a new one. */
+const IN_THREAD: ReadonlyArray<Place> = ['Fresh', 'Computer', 'Memory']
+const ON_GREETING: ReadonlyArray<Place> = ['Computer', 'Memory']
+
+/**
+ * The signed-in app: one native stack, with the menu over it.
+ *
+ * The first screen is Home, and a Thread is shown in Home's own place (`data/front.ts`), so the
+ * commonest change in the app, from the greeting to a conversation or from one Thread to another,
+ * changes no screen at all. The other places are screens over Home; one replaces another by a
+ * short cross-fade and nothing slides (`SCREEN_CHANGE`).
+ *
+ * The bar is the platform's (`GLASS_HEADER`): its way back and its buttons are the system's,
+ * liquid glass on iOS 26, with each screen's content scrolling under it. A screen that has
+ * actions or a live title says so itself (`ui/Bar.tsx`); one whose bar is only its name has it
+ * here. Home's bar starts with the way to the menu, has Vivid's capsule in the middle (one
+ * capsule, drawn over the stack: `Vivid` above) and ends with the way to call Vivid.
+ *
+ * The menu is the navigator's `layout`, so it is drawn over the stack and its bar and is handed
+ * the stack's state: it can be dragged open only while Home is the screen in front.
  *
  * Routes are flat on this one stack, never a nested navigator: one navigation controller is what
  * lets the platform carry a bar from one screen to the next (T3 Code mobile `src/Stack.tsx`, the
- * note beside `THREAD_LINKING_PREFIX`). How one screen replaces another is `pushAnimation`.
+ * note beside `THREAD_LINKING_PREFIX`).
  */
 function Shell() {
   const { colors: c, dark } = useTheme()
-  const still = useReducedMotion()
-  // Where a drag may open the drawer, for the screen now in front. The stack starts on Home, and
-  // says so each time the screen in front changes.
-  const [reach, setReach] = useState<Reach>('anywhere')
+  // What Home shows belongs to this shell, which is built again for each workspace (`Session`).
+  const [front] = useState(makeFront)
   return (
-    <NavigationContainer
-      theme={navigationTheme(c, dark)}
-      onStateChange={(state) => {
-        if (state !== undefined) setReach(reachOf(state.routes, state.index))
-      }}
-    >
-      <Side reach={reach}>
+    <FrontProvider value={front}>
+      <NavigationContainer theme={navigationTheme(c, dark)}>
         <Stack.Navigator
+          layout={underMenu}
           screenOptions={{
             ...GLASS_HEADER,
+            ...SCREEN_CHANGE,
             // The bar's glyphs are ink, as the app's own controls are; the navigation theme's
             // `primary` would paint the way back in the accent.
             headerTintColor: c.foreground,
             contentStyle: { backgroundColor: c.screen },
-            animation: pushAnimation(still),
           }}
         >
-          <Stack.Screen
-            name="Home"
-            component={Home}
-            options={{ ...FRONT_HEADER, ...leadOptions('drawer') }}
-            // Home is back in view once whatever covered it has finished leaving, which is when
-            // a new Thread asked for from the drawer can take the keyboard (`data/fresh.ts`).
-            listeners={{
-              transitionEnd: (event) => {
-                if (!event.data.closing) homeShown()
-              },
-            }}
-          />
-          <Stack.Screen
-            name="Chat"
-            component={Chat}
-            options={({ navigation, route }) =>
-              threadOptions(navigation.getState().routes, route.key, still)
-            }
-          />
-          {/* Screens that render a `Bar` start with an empty title, so the route's name is never
-              what the bar says before the screen has spoken. */}
+          {/* Screens that render a bar of their own start with an empty title, so the route's
+              name is never what the bar says before the screen has spoken. */}
+          <Stack.Screen name="Home" component={Home} options={{ title: '' }} />
           <Stack.Screen name="Computer" component={Computer} options={{ title: '' }} />
           <Stack.Screen name="Routines" component={Routines} options={{ title: '' }} />
           <Stack.Screen name="Library" component={Library} options={{ title: '' }} />
@@ -320,8 +304,7 @@ function Shell() {
           <Stack.Screen name="Texting" component={Texting} options={{ title: 'Text Vivid' }} />
           <Stack.Screen name="Notifications" component={Notifications} options={{ title: '' }} />
         </Stack.Navigator>
-        <Vivid />
-      </Side>
-    </NavigationContainer>
+      </NavigationContainer>
+    </FrontProvider>
   )
 }

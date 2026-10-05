@@ -47,3 +47,12 @@ Thumbs.db
 # Alchemy local state and dev logs
 .alchemy/
 .alchemy.*/
+
+# Python installer bytecode
+__pycache__/
+*.pyc
+
+# The Computer binaries are fetched from GitHub Releases, not committed:
+# apps/desktop/vendor/computer/fetch.sh verifies and places them.
+apps/desktop/vendor/computer/codex-computer-use.exe
+apps/desktop/vendor/computer/swift/

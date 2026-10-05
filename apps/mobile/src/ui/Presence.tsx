@@ -33,8 +33,8 @@ import { Face, Label, TARGET, type Tone } from './ui'
  * Vivid at the top centre of a screen: a capsule of the system's glass holding its face and its
  * name, between the bar's own buttons. It is where a Person looks to see how Vivid is doing, so
  * while Vivid works the capsule widens to the orb and the word for it, and what the Person sends
- * rises to it from the composer. Pressing it opens Vivid's own menu: its computer, and what it
- * knows.
+ * rises to it from the composer. Pressing it opens Vivid's own menu: a new Thread, its computer,
+ * and what it knows.
  *
  * The buttons either side are the system's bar items (`ui/Bar.tsx`). The capsule is the same
  * material the composer is (`AnimatedGlassMaterial`), placed where the bar's title would be: the
@@ -47,7 +47,7 @@ import { Face, Label, TARGET, type Tone } from './ui'
  * slot it could not change shape (the reference found that natively driven animation blanks a
  * view the bar has taken in, `src/features/home/WorkspaceConnectionTitle.tsx`, `StatusFadeIn`).
  * Over the stack it is an ordinary view, as the composer is, and it is the same view on both
- * platforms. The screen in front says what it should show (`fronting`).
+ * platforms. The screen in front says what it should show (`capsule`).
  */
 
 /** The word beside the orb. The web says the same beside its own (`apps/web/src/screen/Thread.tsx`). */
@@ -130,7 +130,7 @@ export function useOrigin(): Origin {
 }
 
 /** What the screen in front says about Vivid, for the one capsule over the stack to show. */
-export interface Front {
+export interface Told {
   readonly stand: Stand
   readonly origin: Origin
   /** The widest the capsule may be between that screen's bar buttons. */
@@ -141,11 +141,11 @@ export interface Front {
 export type Speaker = symbol
 
 /** The screen that last spoke, and what it said. Nobody, on a screen that has no capsule. */
-let front: Option.Option<{ readonly owner: Speaker; readonly said: Front }> = Option.none()
+let told: Option.Option<{ readonly owner: Speaker; readonly said: Told }> = Option.none()
 const heard = new Set<() => void>()
 
-const becomes = (next: typeof front) => {
-  front = next
+const becomes = (next: typeof told) => {
+  told = next
   for (const listener of heard) listener()
 }
 
@@ -155,10 +155,10 @@ const becomes = (next: typeof front) => {
  * is the screen's own token, so a screen that leaves can never clear what the next one has
  * already said, whichever of the two React happens to run first.
  */
-export const fronting = {
-  say: (owner: Speaker, said: Front) => becomes(Option.some({ owner, said })),
+export const capsule = {
+  say: (owner: Speaker, said: Told) => becomes(Option.some({ owner, said })),
   leave: (owner: Speaker) => {
-    if (Option.isSome(front) && front.value.owner === owner) becomes(Option.none())
+    if (Option.isSome(told) && told.value.owner === owner) becomes(Option.none())
   },
 }
 
@@ -168,7 +168,7 @@ const listen = (listener: () => void) => {
     heard.delete(listener)
   }
 }
-const spoken = () => front
+const spoken = () => told
 
 /** The orb comes in as the disc that rose from the composer reaches it, never before it. */
 const LAND = FadeIn.duration(180).delay(140).reduceMotion(ReduceMotion.System)
@@ -181,14 +181,27 @@ const LAND = FadeIn.duration(180).delay(140).reduceMotion(ReduceMotion.System)
  */
 const SPEAK = FadeIn.duration(180).delay(90).reduceMotion(ReduceMotion.System)
 
-/** What Vivid's menu holds: the places that are Vivid's own. */
-export type Place = 'Computer' | 'Memory'
+/**
+ * What Vivid's menu can hold: a new Thread with it, and the places that are Vivid's own. The
+ * shell says which of them there are right now (a new Thread is not offered where one is already
+ * being started).
+ */
+export type Place = 'Fresh' | 'Computer' | 'Memory'
 
-/** The system's symbol for each place in the menu. */
+/** The system's symbol for each row of the menu. */
 const SYMBOL = {
+  Fresh: 'square.and.pencil',
   Computer: 'desktopcomputer',
   Memory: 'brain',
 } as const satisfies Record<Place, string>
+
+/** Each row's words, with the name the Person gave Vivid. */
+const titleOf = (place: Place, name: string): string =>
+  ({
+    Fresh: 'New thread',
+    Computer: `${name}’s computer`,
+    Memory: `What ${name} knows`,
+  })[place]
 
 /**
  * One row of the menu. iOS draws the system's symbols by name; Android's menu takes a drawable
@@ -217,12 +230,12 @@ function Capsule({
   stand,
   limit,
   slot,
-  onGo,
+  menu,
 }: {
   stand: Stand
   limit: number
   slot: AnimatedRef<Animated.View>
-  onGo: (place: Place) => void
+  menu: Menu
 }) {
   const { colors: c, dark } = useTheme()
   const vivid = useAppearance()
@@ -232,14 +245,11 @@ function Capsule({
   return (
     <MenuView
       themeVariant={dark ? 'dark' : 'light'}
-      actions={[
-        rowFor('Computer', `${vivid.name}’s computer`),
-        rowFor('Memory', `What ${vivid.name} knows`),
-      ]}
+      actions={menu.places.map((place) => rowFor(place, titleOf(place, vivid.name)))}
       onPressAction={({ nativeEvent }) => {
-        if (nativeEvent.event === 'Computer' || nativeEvent.event === 'Memory') {
-          onGo(nativeEvent.event)
-        }
+        // The menu answers with a row's id, which is text: it is one of these places or nothing.
+        const chosen = menu.places.find((place) => place === nativeEvent.event)
+        if (chosen !== undefined) menu.onGo(chosen)
       }}
     >
       <Animated.View
@@ -330,6 +340,12 @@ function Capsule({
   )
 }
 
+/** Vivid's menu: what is in it right now, and where each row leads. */
+export interface Menu {
+  readonly places: ReadonlyArray<Place>
+  readonly onGo: (place: Place) => void
+}
+
 /** The round the composer's button is drawn as (`ui/Composer.tsx`), which is what leaves it. */
 const DISC = 30
 
@@ -376,7 +392,7 @@ const LANDED = { opacity: 0, transform: [{ translateX: 0 }, { translateY: 0 }, {
  *
  * The layer takes no touches of its own: only the capsule in it can be pressed.
  */
-function Floating({ said, onGo }: { said: Front; onGo: (place: Place) => void }) {
+function Floating({ said, menu }: { said: Told; menu: Menu }) {
   const { colors: c } = useTheme()
   const insets = useSafeAreaInsets()
   const layer = useAnimatedRef<Animated.View>()
@@ -451,7 +467,7 @@ function Floating({ said, onGo }: { said: Front; onGo: (place: Place) => void })
           justifyContent: 'center',
         }}
       >
-        <Capsule stand={said.stand} limit={said.limit} slot={slot} onGo={onGo} />
+        <Capsule stand={said.stand} limit={said.limit} slot={slot} menu={menu} />
       </View>
       <Animated.View
         // Decoration: the capsule says the state to a screen reader.
@@ -476,15 +492,13 @@ function Floating({ said, onGo }: { said: Front; onGo: (place: Place) => void })
 }
 
 /**
- * Vivid's capsule over the stack, for as long as the screen in front has one: Home and a Thread
- * say how Vivid stands (`VividBar`), and every other screen says nothing, so there it is not
+ * Vivid's capsule over the stack, for as long as the screen in front has one: the first screen
+ * says how Vivid stands (`VividBar`), and every other screen says nothing, so there it is not
  * drawn. It is put after the stack and inside the drawer's page, so it is over the system's bar
  * and under an open drawer.
- *
- * `onGo` goes to one of the places in Vivid's menu.
  */
-export function Presence({ onGo }: { onGo: (place: Place) => void }) {
+export function Presence({ menu }: { menu: Menu }) {
   const now = useSyncExternalStore(listen, spoken, spoken)
   if (Option.isNone(now)) return null
-  return <Floating said={now.value.said} onGo={onGo} />
+  return <Floating said={now.value.said} menu={menu} />
 }

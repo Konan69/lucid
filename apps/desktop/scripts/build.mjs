@@ -44,3 +44,10 @@ await build({
   entryPoints: ['src/preload/main.ts'],
   outfile: 'dist/preload/main.cjs',
 })
+
+// The notice window has a preload of its own, with only what the notice may do.
+await build({
+  ...shared,
+  entryPoints: ['src/preload/notice.ts'],
+  outfile: 'dist/preload/notice.cjs',
+})

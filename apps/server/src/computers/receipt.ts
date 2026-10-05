@@ -1,5 +1,5 @@
 import { Schema } from 'effect'
-import { DeviceAnswer, DeviceRefusal } from '@vivid/contracts'
+import { DeviceAnswer, DeviceRefusal, WindowRefusal } from '@vivid/contracts'
 
 /**
  * What the ledger knows about one dispatch to a Person's computer.
@@ -15,6 +15,8 @@ export const DeviceReceipt = Schema.TaggedUnion({
   Dispatched: {},
   Done: {},
   Refused: { reason: DeviceRefusal },
+  Did: {},
+  Declined: { reason: WindowRefusal },
   Failed: {},
   OutcomeUnknown: {},
 })
@@ -25,6 +27,8 @@ export const receiptOf = (answer: DeviceAnswer): DeviceReceipt =>
   DeviceAnswer.match(answer, {
     Done: (): DeviceReceipt => DeviceReceipt.cases.Done.make({}),
     Refused: ({ reason }): DeviceReceipt => DeviceReceipt.cases.Refused.make({ reason }),
+    Did: (): DeviceReceipt => DeviceReceipt.cases.Did.make({}),
+    Declined: ({ reason }): DeviceReceipt => DeviceReceipt.cases.Declined.make({ reason }),
     Failed: (): DeviceReceipt => DeviceReceipt.cases.Failed.make({}),
   })
 

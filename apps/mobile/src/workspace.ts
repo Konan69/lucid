@@ -8,19 +8,17 @@ import type {
 } from '@vivid/contracts'
 import { useNavigation } from '@react-navigation/native'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
-import { createContext, useContext } from 'react'
+import { createContext, useContext, useSyncExternalStore } from 'react'
+import type { Front, FrontStore } from './data/front'
 
 /**
  * Where a signed-in Person can be in the app. Every place is a screen on one native stack, so
- * going somewhere pushes it and the system's back swipe returns.
+ * going somewhere puts it over the first screen and the system's way back returns.
  *
- * - `Home`: Vivid's greeting and somewhere to write to start a new Thread. It is the root, so it
- *   is also the first screen. Every Thread the Person can see is in the drawer around the stack.
- * - `Chat`: one Thread. Only its id travels; its title and everything else are read live. Opened
- *   from Home it stands beside Home, with Home's bar and the drawer (`data/lead.ts`); opened from
- *   anywhere else it is pushed, and the back swipe returns there.
- * - `Computer`: Vivid's computer, reached from Vivid's own menu at the top of Home and of a
- *   Thread (`ui/Presence.tsx`): where it stands and its controls.
+ * - `Home`: the first screen and the root. It is somewhere to write to start a new Thread, or
+ *   one Thread, in the same place (`data/front.ts`); a Thread is not a screen of its own, so
+ *   starting or choosing one never changes screens.
+ * - `Computer`: Vivid's computer, reached from a Thread's bar: where it stands and its controls.
  * - `Routines`, `Library`: the places beside Threads, in the drawer. `Projects` is reached from
  *   the quiet group under the Threads.
  * - `Folder`, `Project`: one level down inside the Library or a Project. Each level is its own
@@ -33,7 +31,6 @@ import { createContext, useContext } from 'react'
  */
 export type Routes = {
   Home: undefined
-  Chat: { id: ThreadId }
   Computer: undefined
   Routines: undefined
   Library: undefined
@@ -68,6 +65,40 @@ export function useMe(): MeResponse {
  * `navigate` would treat as already being there.
  */
 export const useGo = () => useNavigation<NativeStackNavigationProp<Routes>>()
+
+/**
+ * What the first screen is showing, for every screen inside the shell (`data/front.ts`). `null`
+ * is the value outside the shell, as it is for `MeContext`.
+ */
+const FrontContext = createContext<FrontStore | null>(null)
+
+export const FrontProvider = FrontContext.Provider
+
+/** The store of what the first screen shows: to put a Thread there, or to start afresh. */
+export function useFront(): FrontStore {
+  const front = useContext(FrontContext)
+  if (front === null) throw new Error('This screen is drawn outside the signed-in shell.')
+  return front
+}
+
+/** What the first screen is showing right now. */
+export function useShowing(): Front {
+  const front = useFront()
+  return useSyncExternalStore(front.subscribe, front.showing, front.showing)
+}
+
+/**
+ * Opens a Thread from a screen that is over the first one (a Project, a Routine, a notification):
+ * the Thread is put in front, and the stack returns to the first screen, where it is.
+ */
+export function useOpenThread(): (id: ThreadId) => void {
+  const front = useFront()
+  const go = useGo()
+  return (id) => {
+    front.open(id, false)
+    go.popTo('Home')
+  }
+}
 
 /** A Membership's role as it is written on screen. A new role fails to compile here. */
 export const ROLE_NAME = {

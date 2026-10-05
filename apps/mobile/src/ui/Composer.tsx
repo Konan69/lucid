@@ -174,6 +174,7 @@ export function Composer({
   origin,
   value,
   placeholder,
+  autoFocus,
   working,
   disabled,
   onChange,
@@ -188,6 +189,11 @@ export function Composer({
   origin: Origin
   value: string
   placeholder: string
+  /**
+   * Takes the keyboard as it appears. Only a Thread that has just taken the greeting's place
+   * asks for it (`Front.Thread.writing`), so the keyboard a first message was typed on stays up.
+   */
+  autoFocus: boolean
   /** Vivid is in the middle of a Run here, so the button stops instead of sending. */
   working: boolean
   /** A send is already on its way, so another cannot start. */
@@ -268,6 +274,7 @@ export function Composer({
               ref={ref}
               value={value}
               placeholder={placeholder}
+              autoFocus={autoFocus}
               multiline
               onChangeText={onChange}
               onSubmit={send}
