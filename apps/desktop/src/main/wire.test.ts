@@ -103,6 +103,7 @@ describe('the Computer’s JSON lines', () => {
         meta: {
           'x-codex-turn-metadata': JSON.stringify({ session_id: 'run-1', turn_id: 'run-1' }),
           'x-oai-cua-request-budget-ms': 5000,
+          'x-codex-browser-use-security-mode': 'disabled-for-local-testing',
         },
       })
       // A launch names the app by its inventory id.
@@ -120,6 +121,7 @@ describe('the Computer’s JSON lines', () => {
         meta: {
           'x-codex-turn-metadata': JSON.stringify({ session_id: 'run-2', turn_id: 'run-2' }),
           'x-oai-cua-request-budget-ms': 15_000,
+          'x-codex-browser-use-security-mode': 'disabled-for-local-testing',
         },
       })
       // A fill is `set_value`: the element's own way of taking text.
@@ -137,6 +139,7 @@ describe('the Computer’s JSON lines', () => {
         meta: {
           'x-codex-turn-metadata': JSON.stringify({ session_id: 'run-2', turn_id: 'run-2' }),
           'x-oai-cua-request-budget-ms': 10_000,
+          'x-codex-browser-use-security-mode': 'disabled-for-local-testing',
         },
       })
     }),
@@ -168,6 +171,7 @@ describe('the Computer’s JSON lines', () => {
         meta: {
           'x-codex-turn-metadata': JSON.stringify({ session_id: 'run-1', turn_id: 'run-1' }),
           'x-oai-cua-request-budget-ms': 3000,
+          'x-codex-browser-use-security-mode': 'disabled-for-local-testing',
         },
       })
     }),
