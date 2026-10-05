@@ -11,6 +11,7 @@ export default defineConfig({
       'src/{code,computers,approvals,connections,routines}/thread.live.test.ts',
       'src/threads/first.live.test.ts',
       'src/memory/outage.live.test.ts',
+      'src/computers/held.live.test.ts',
     ],
     maxWorkers: 1,
     fileParallelism: false,
