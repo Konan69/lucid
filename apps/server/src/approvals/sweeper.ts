@@ -4,7 +4,7 @@ import * as Schedule from 'effect/Schedule'
 import { InputStore } from '../inputs/store.ts'
 import { observeFailures } from '../observability/failure.ts'
 import { ApprovalStore } from './store.ts'
-import { untracedTimer } from '../observability/timer.ts'
+import { untraced } from '../observability/quiet.ts'
 
 /** The scoped worker uses the store's Clock-based claim; shutdown interrupts only this worker. */
 export const approvalSweeperLayer = Layer.effectDiscard(
@@ -30,6 +30,6 @@ export const approvalSweeperLayer = Layer.effectDiscard(
       ],
       { discard: true },
     )
-    yield* pass.pipe(untracedTimer, Effect.repeat(Schedule.spaced('30 seconds')), Effect.forkScoped)
+    yield* pass.pipe(untraced, Effect.repeat(Schedule.spaced('30 seconds')), Effect.forkScoped)
   }),
 )
