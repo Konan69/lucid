@@ -28,6 +28,8 @@ const liveExecutor = executorLayer.pipe(
   Layer.provide(
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({
+        GOOGLE_CLIENT_ID: 'isolated-test-client',
+        GOOGLE_CLIENT_SECRET: 'isolated-test-secret',
         VIVID_EXECUTOR_URL: executorUrl,
         VIVID_EXECUTOR_KEY: executorKey,
         VIVID_EXECUTOR_PUBLIC_ONLY: true,

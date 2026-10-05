@@ -47,6 +47,7 @@ import {
   ExecutorCallOutcome,
 } from './executor.ts'
 import { unconfiguredDecisionLayer } from '../decisions/model.ts'
+import { googleService } from './google.ts'
 import { toolEffectsLayer } from './effects.ts'
 import { connectionStoreLayer } from './store.ts'
 
@@ -357,6 +358,14 @@ const decodeHostedImport = Schema.decodeUnknownEffect(HostedImport)
 const decodeHostedProfileInput = Schema.decodeUnknownEffect(HostedProfileInput)
 const decodeHostedJson = Schema.decodeUnknownEffect(Schema.Json)
 
+/**
+ * What Executor's own catalogue contributed to a list. Vivid's Google services lead every list
+ * and come from the server itself, so a test about the remote catalogue reads past them.
+ */
+export function remoteEntries<Entry extends { readonly id: ServiceId }>(entries: readonly Entry[]) {
+  return entries.filter((entry) => Option.isNone(googleService(entry.id)))
+}
+
 export const hostedOrganization = 'test-organization'
 export const hostedPrefix = `/api/organizations/${hostedOrganization}`
 export const hostedService = ServiceId.make('test/service')
@@ -409,11 +418,16 @@ const hostedWrite = Effect.fn('Executor.HostedTest.write')(function* (
   state: HostedState,
   request: HostedRequest,
 ) {
-  if (request.path === 'POST /apps/install' || request.path === 'POST /apps/import') {
+  // Install and deploy both name the app at the top of the body; an import names it in `source`.
+  if (
+    request.path === 'POST /apps/install' ||
+    request.path === 'POST /apps/deploy' ||
+    request.path === 'POST /apps/import'
+  ) {
     const { name } =
-      request.path === 'POST /apps/install'
-        ? yield* decodeHostedInstall(request.body)
-        : (yield* decodeHostedImport(request.body)).source
+      request.path === 'POST /apps/import'
+        ? (yield* decodeHostedImport(request.body)).source
+        : yield* decodeHostedInstall(request.body)
     const app = yield* Ref.modify(state.apps, (apps) => {
       const created = { id: apps.length === 0 ? 'app' : `app-${apps.length + 1}`, name }
       return [created, [...apps, created]]
@@ -597,6 +611,8 @@ export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(fu
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
+          GOOGLE_CLIENT_ID: 'isolated-test-client',
+          GOOGLE_CLIENT_SECRET: 'isolated-test-secret',
           VIVID_EXECUTOR_URL: url.href.replace(/\/$/u, ''),
           VIVID_EXECUTOR_KEY: 'isolated-test-key',
           VIVID_EXECUTOR_ORGANIZATION: hostedOrganization,
@@ -617,6 +633,7 @@ function hostedRoute(path: string) {
       'GET /providers/provider/oauth/oauth/setup',
       'GET /connections/authorization',
       'POST /apps/install',
+      'POST /apps/deploy',
       'POST /apps/import',
       'POST /accounts/account/connections',
       'POST /connections/authorization/submit',
