@@ -1,4 +1,4 @@
-import { Buffer } from 'node:buffer'
+import * as NodeBuffer from 'node:buffer'
 import { Effect, Function, Option, Redacted, Schema, Stream } from 'effect'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
@@ -103,7 +103,7 @@ export const boatConfiguration = Effect.fn('Machine.boat.configuration')(functio
     'the base64 of an OpenSSH private key',
   )
   const pair = yield* identity(
-    Redacted.make(Buffer.from(Redacted.value(ssh), 'base64').toString('utf8')),
+    Redacted.make(NodeBuffer.Buffer.from(Redacted.value(ssh), 'base64').toString('utf8')),
   ).pipe(
     Effect.mapError(() =>
       configError('VIVID_COMPUTER_SSH_KEY', 'the base64 of an OpenSSH private key'),

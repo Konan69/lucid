@@ -409,7 +409,11 @@ export interface ComputerStoreService {
    */
   readonly run: (
     person: PersonId,
-    input: { readonly command: string; readonly directory: string; readonly timeoutSeconds: number },
+    input: {
+      readonly command: string
+      readonly directory: string
+      readonly timeoutSeconds: number
+    },
   ) => Effect.Effect<MachineRun, StoreError | MachineFailure | ReadinessFailure>
   readonly read: (
     person: PersonId,
@@ -873,6 +877,36 @@ const browserReceipt = Effect.fn('ComputerStore.browserReceipt')(function* (
   })
 })
 
+/**
+ * The Computer's own shell and files, each run as an action is: `execute` wakes the Computer,
+ * refuses while the Person holds it and counts the activity.
+ */
+const ownMachine = (
+  machine: Machine['Service'],
+  execute: <A>(
+    person: PersonId,
+    action: (key: MachineKey) => Effect.Effect<A, MachineFailure>,
+  ) => Effect.Effect<A, StoreError | MachineFailure | ReadinessFailure>,
+) => ({
+  run: Effect.fn('ComputerStore.run')(
+    (
+      person: PersonId,
+      input: {
+        readonly command: string
+        readonly directory: string
+        readonly timeoutSeconds: number
+      },
+    ) => execute(person, (key) => machine.run({ key, ...input })),
+  ),
+  read: Effect.fn('ComputerStore.read')((person: PersonId, path: string) =>
+    execute(person, (key) => machine.read({ key, path })),
+  ),
+  put: Effect.fn('ComputerStore.put')(
+    (person: PersonId, input: { readonly path: string; readonly content: Uint8Array }) =>
+      execute(person, (key) => machine.put({ key, ...input })),
+  ),
+})
+
 /** Capture provider and database dependencies once; callers need only the Computer authority. */
 export const computerStoreLayer = Layer.effect(
   ComputerStore,
@@ -966,23 +1000,6 @@ export const computerStoreLayer = Layer.effect(
       execute(person, (key) => state.machine.desktop({ key, action })),
     )
     const attach = (person: PersonId) => attached(state, person)
-    const run = Effect.fn('ComputerStore.run')(
-      (
-        person: PersonId,
-        input: {
-          readonly command: string
-          readonly directory: string
-          readonly timeoutSeconds: number
-        },
-      ) => execute(person, (key) => state.machine.run({ key, ...input })),
-    )
-    const read = Effect.fn('ComputerStore.read')((person: PersonId, path: string) =>
-      execute(person, (key) => state.machine.read({ key, path })),
-    )
-    const put = Effect.fn('ComputerStore.put')(
-      (person: PersonId, input: { readonly path: string; readonly content: Uint8Array }) =>
-        execute(person, (key) => state.machine.put({ key, ...input })),
-    )
     /** Manual lifecycle activity updates the same durable deadline as Vivid's actions. */
     const start = Effect.fn('ComputerStore.startActive')(function* (person: PersonId) {
       const computer = yield* state.start(person)
@@ -1019,9 +1036,7 @@ export const computerStoreLayer = Layer.effect(
       browse,
       desktop,
       attach,
-      run,
-      read,
-      put,
+      ...ownMachine(state.machine, execute),
     })
   }),
 )

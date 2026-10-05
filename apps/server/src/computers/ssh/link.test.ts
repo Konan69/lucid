@@ -2,15 +2,15 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import { expect, it } from '@effect/vitest'
 import { Effect, Fiber } from 'effect'
-import { FILE_BYTES, OUTPUT_BYTES, openLink } from './link.ts'
+import { FILE_BYTES, LinkFileRefused, OUTPUT_BYTES, openLink } from './link.ts'
 import { peer, peerAvailable } from './peer.ts'
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
 const bytes = (value: string) => new TextEncoder().encode(value)
 
 /** One server and one connection for a test, as the adapter holds one per awake machine. */
-const connected = Effect.gen(function* () {
-  const server = yield* peer
+const connected = Effect.fn('LinkTest.connected')(function* () {
+  const server = yield* peer()
   const link = yield* openLink(server)
   return { server, link }
 })
@@ -19,7 +19,7 @@ it.live.skipIf(!peerAvailable)(
   'puts a file in directories that do not exist, reads it back, and a command sees it',
   () =>
     Effect.gen(function* () {
-      const { server, link } = yield* connected
+      const { server, link } = yield* connected()
       const path = NodePath.join(server.home, 'notes/today/list.txt')
       yield* link.put(path, bytes('milk\nbread\n'))
       expect(NodeFS.readFileSync(path, 'utf8')).toBe('milk\nbread\n')
@@ -40,7 +40,7 @@ it.live.skipIf(!peerAvailable)(
   'carries bytes that are not text unchanged in both directions',
   () =>
     Effect.gen(function* () {
-      const { server, link } = yield* connected
+      const { server, link } = yield* connected()
       const picture = Uint8Array.from({ length: 70_000 }, (_, index) => (index * 7) % 256)
       const path = NodePath.join(server.home, 'picture.bin')
       yield* link.put(path, picture)
@@ -53,11 +53,12 @@ it.live.skipIf(!peerAvailable)(
   'says why a file could not be read: missing, a directory, or too large',
   () =>
     Effect.gen(function* () {
-      const { server, link } = yield* connected
+      const { server, link } = yield* connected()
       const missing = yield* Effect.flip(link.read(NodePath.join(server.home, 'absent.txt')))
-      expect(missing).toMatchObject({ _tag: 'LinkFileRefused', reason: 'missing' })
+      expect(missing).toBeInstanceOf(LinkFileRefused)
+      expect(missing).toMatchObject({ reason: 'missing' })
       const directory = yield* Effect.flip(link.read(server.home))
-      expect(directory).toMatchObject({ _tag: 'LinkFileRefused', reason: 'directory' })
+      expect(directory).toMatchObject({ reason: 'directory' })
       const large = NodePath.join(server.home, 'large.bin')
       NodeFS.writeFileSync(large, Buffer.alloc(FILE_BYTES + 1))
       expect(yield* Effect.flip(link.read(large))).toMatchObject({ reason: 'large' })
@@ -72,7 +73,7 @@ it.live.skipIf(!peerAvailable)(
   'ends a command and its children at the deadline',
   () =>
     Effect.gen(function* () {
-      const { server, link } = yield* connected
+      const { server, link } = yield* connected()
       const run = yield* link.run({
         command: 'echo started; sleep 300 & echo $! > pid; wait',
         directory: server.home,
@@ -81,7 +82,11 @@ it.live.skipIf(!peerAvailable)(
       expect(run).toMatchObject({ exitCode: null, timedOut: true })
       expect(run.stdout.trim()).toBe('started')
       const pid = NodeFS.readFileSync(NodePath.join(server.home, 'pid'), 'utf8').trim()
-      const after = yield* link.run({ command: gone(pid), directory: server.home, timeoutSeconds: 20 })
+      const after = yield* link.run({
+        command: gone(pid),
+        directory: server.home,
+        timeoutSeconds: 20,
+      })
       expect(after.stdout.trim()).toBe('gone')
     }).pipe(Effect.scoped),
   40_000,
@@ -91,7 +96,7 @@ it.live.skipIf(!peerAvailable)(
   'ends a command on the machine when the caller stops waiting for it',
   () =>
     Effect.gen(function* () {
-      const { server, link } = yield* connected
+      const { server, link } = yield* connected()
       const pidFile = NodePath.join(server.home, 'pid')
       const running = yield* Effect.forkChild(
         link.run({
@@ -108,7 +113,11 @@ it.live.skipIf(!peerAvailable)(
       })
       yield* Fiber.interrupt(running)
       const pid = NodeFS.readFileSync(pidFile, 'utf8').trim()
-      const after = yield* link.run({ command: gone(pid), directory: server.home, timeoutSeconds: 20 })
+      const after = yield* link.run({
+        command: gone(pid),
+        directory: server.home,
+        timeoutSeconds: 20,
+      })
       expect(after.stdout.trim()).toBe('gone')
     }).pipe(Effect.scoped),
   40_000,
@@ -118,7 +127,7 @@ it.live.skipIf(!peerAvailable)(
   'keeps the end of an output that is larger than the limit',
   () =>
     Effect.gen(function* () {
-      const { server, link } = yield* connected
+      const { server, link } = yield* connected()
       const run = yield* link.run({
         command: `head -c ${OUTPUT_BYTES * 3} /dev/zero | tr '\\0' a; echo; echo last-line`,
         directory: server.home,
@@ -135,7 +144,7 @@ it.live.skipIf(!peerAvailable)(
   'refuses a host that does not present the expected key, before anything is sent',
   () =>
     Effect.gen(function* () {
-      const server = yield* peer
+      const server = yield* peer()
       const failure = yield* Effect.flip(openLink({ ...server, hostKey: server.stranger }))
       expect(failure._tag).toBe('LinkHostMismatch')
     }).pipe(Effect.scoped),
@@ -146,7 +155,7 @@ it.live.skipIf(!peerAvailable)(
   'reports an unreachable machine when the server goes while the connection is open',
   () =>
     Effect.gen(function* () {
-      const { server, link } = yield* connected
+      const { server, link } = yield* connected()
       // Ending the listener leaves the session's own process; end the whole group's sessions by
       // closing from this side is not the claim, so the peer is killed outright.
       server.child.kill('SIGKILL')
@@ -157,7 +166,11 @@ it.live.skipIf(!peerAvailable)(
       const refused = yield* Effect.flip(openLink(server))
       expect(refused._tag).toBe('LinkUnreachable')
       // The open session has its own server process, which outlives the listener: it still works.
-      const run = yield* link.run({ command: 'echo alive', directory: server.home, timeoutSeconds: 10 })
+      const run = yield* link.run({
+        command: 'echo alive',
+        directory: server.home,
+        timeoutSeconds: 10,
+      })
       expect(run.stdout.trim()).toBe('alive')
     }).pipe(Effect.scoped),
   30_000,

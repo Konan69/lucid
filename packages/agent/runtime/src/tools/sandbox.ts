@@ -16,7 +16,7 @@ import {
   ComputerFileWriteOutcome,
   ComputerShellOutcome,
 } from '@vivid/contracts'
-import { Effect } from 'effect'
+import { Effect, Option } from 'effect'
 import { Scope, type RunScoped } from './scope.ts'
 
 /** Where Vivid's commands start and relative paths resolve: the home of the Computer's user. Boat
@@ -66,11 +66,9 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
         options: ['workspace discovery; use a command to list or inspect files'],
       }),
     )
-  const shell: SandboxDriver['exec'] = (command, options) => {
-    const timeoutMs = options?.timeoutMs
+  const shell: SandboxDriver['exec'] = (command, options = {}) => {
+    const { timeoutMs, cwd, env, signal } = options
     const seconds = timeoutMs === undefined ? DEFAULT_SECONDS : Math.ceil(timeoutMs / 1000)
-    const cwd = options?.cwd
-    const env = options?.env
     return run(
       Effect.gen(function* () {
         const { client } = yield* Scope
@@ -110,7 +108,7 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
             ),
         })
       }),
-      options?.signal,
+      Option.fromUndefinedOr(signal),
     )
   }
   const bytes = (path: string) =>
@@ -124,7 +122,7 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
           Unavailable: ({ reason }) => Effect.fail(new Error(reason)),
         })
       }),
-      undefined,
+      Option.none(),
     )
   const driver: SandboxDriver = {
     exec: shell,
@@ -136,7 +134,7 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
           const { client } = yield* Scope
           const outcome = yield* client.ComputerFileWrite({
             path,
-            content: typeof content === 'string' ? new TextEncoder().encode(content) : content,
+            content: content instanceof Uint8Array ? content : new TextEncoder().encode(content),
           })
           return yield* ComputerFileWriteOutcome.match<Effect.Effect<void, Error>>(outcome, {
             Written: () => Effect.void,
@@ -144,18 +142,18 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
             Unavailable: ({ reason }) => Effect.fail(new Error(reason)),
           })
         }),
-        undefined,
+        Option.none(),
       ),
     exists: () => Promise.resolve(false),
     stat: () => unsupported('stat'),
     readdir: () => unsupported('readdir'),
     // The machine's own `mkdir` and `rm`: their flags mean what Node's options mean (Flue
     // reference, "SandboxDriver": an adapter that runs verbs through the shell does these there).
-    mkdir: (path, options) =>
-      shell(`mkdir ${options?.recursive === true ? '-p ' : ''}-- ${word(path)}`).then(checked),
-    rm: (path, options) =>
+    mkdir: (path, { recursive } = {}) =>
+      shell(`mkdir ${recursive === true ? '-p ' : ''}-- ${word(path)}`).then(checked),
+    rm: (path, { recursive, force } = {}) =>
       shell(
-        `rm ${options?.recursive === true ? '-r ' : ''}${options?.force === true ? '-f ' : ''}-- ${word(path)}`,
+        `rm ${recursive === true ? '-r ' : ''}${force === true ? '-f ' : ''}-- ${word(path)}`,
       ).then(checked),
   }
   return sandboxFromDriver(driver, home)

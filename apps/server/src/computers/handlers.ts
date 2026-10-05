@@ -181,9 +181,7 @@ export const computerHandlers = {
     yield* requireVivid()
     return yield* computerShell(yield* requireActor(), request)
   }),
-  ComputerFileRead: Effect.fn('Rpc.ComputerFileRead')(function* (
-    request: ComputerFileReadRequest,
-  ) {
+  ComputerFileRead: Effect.fn('Rpc.ComputerFileRead')(function* (request: ComputerFileReadRequest) {
     yield* requireVivid()
     return yield* computerFileRead(yield* requireActor(), request)
   }),

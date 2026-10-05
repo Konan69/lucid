@@ -22,7 +22,10 @@ import { Effect, Exit, Layer, Option, Predicate, Queue, Ref, Schema, Stream } fr
 import * as RpcClient from 'effect/unstable/rpc/RpcClient'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/unstable/rpc/RpcMessage'
-import { Scope as ToolScope, scopedRunner } from '../../../../packages/agent/runtime/src/tools/scope.ts'
+import {
+  Scope as ToolScope,
+  scopedRunner,
+} from '../../../../packages/agent/runtime/src/tools/scope.ts'
 import {
   computerSandbox,
   machineTools,
@@ -32,13 +35,8 @@ import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { changesLayer } from '../live/changes.ts'
-import {
-  Machine,
-  MachineNotRunning,
-  MachineState,
-  computerScreenAddress,
-} from './machine.ts'
-import { linkFailure } from './boat.ts'
+import { Machine, MachineNotRunning, MachineState, computerScreenAddress } from './machine.ts'
+import { linkFailure } from './boat/shell.ts'
 import { openLink } from './ssh/link.ts'
 import { peer, peerAvailable } from './ssh/peer.ts'
 import {
@@ -57,16 +55,18 @@ import {
  * are the ones production uses. What it cannot show is Boat: authorizing the key, an address
  * that changes on resume, and a machine that refuses SSH just after a wake.
  */
-const standIn = Effect.gen(function* () {
-  const server = yield* peer
+const standIn = Effect.fn('ShellTest.standIn')(function* () {
+  const server = yield* peer()
   const link = yield* openLink(server)
   const wakes = yield* Ref.make(0)
   const awake = yield* Ref.make(false)
-  const state = Effect.gen(function* () {
-    return (yield* Ref.get(awake))
-      ? MachineState.cases.Running.make({ since: 1 })
-      : ComputerState.cases.Stopped.make({ since: 1 })
-  })
+  const state = Ref.get(awake).pipe(
+    Effect.map((running) =>
+      running
+        ? MachineState.cases.Running.make({ since: 1 })
+        : ComputerState.cases.Stopped.make({ since: 1 }),
+    ),
+  )
   const unused = (operation: string) => () => Effect.die(`The stand-in does not ${operation}`)
   const machine = Machine.of({
     ensure: Effect.fn('StandIn.ensure')(function* () {
@@ -77,14 +77,16 @@ const standIn = Effect.gen(function* () {
     stop: () => Ref.set(awake, false),
     inspect: () => state,
     status: () =>
-      Effect.gen(function* () {
-        return (yield* Ref.get(awake))
-          ? ComputerState.cases.Running.make({
-              since: 1,
-              screen: ComputerScreen.cases.Relay.make({ address: computerScreenAddress }),
-            })
-          : ComputerState.cases.Stopped.make({ since: 1 })
-      }),
+      Ref.get(awake).pipe(
+        Effect.map((running) =>
+          running
+            ? ComputerState.cases.Running.make({
+                since: 1,
+                screen: ComputerScreen.cases.Relay.make({ address: computerScreenAddress }),
+              })
+            : ComputerState.cases.Stopped.make({ since: 1 }),
+        ),
+      ),
     screen: (key) => Effect.fail(new MachineNotRunning({ key })),
     exec: unused('run provider commands'),
     follow: () => Stream.die('The stand-in does not follow commands'),
@@ -93,21 +95,18 @@ const standIn = Effect.gen(function* () {
     desktop: unused('use the desktop'),
     run: (input) => link.run(input).pipe(Effect.mapError(linkFailure)),
     read: ({ path }) => link.read(path).pipe(Effect.mapError(linkFailure)),
-    put: ({ path, content }) =>
-      link.put(path, content).pipe(Effect.mapError(linkFailure)),
+    put: ({ path, content }) => link.put(path, content).pipe(Effect.mapError(linkFailure)),
   })
   return { server, wakes, machine }
 })
 
 /** One Person with a Computer, and Vivid acting for them in a Thread. */
-const acting = Effect.gen(function* () {
+const acting = Effect.fn('ShellTest.acting')(function* () {
   const database = yield* Database
   const id = PersonId.make(`shell-${NodeCrypto.randomUUID()}`)
   const person = Person.make({ id, name: 'Shell test', email: `${id}@example.test`, image: null })
   yield* Effect.acquireRelease(database.run(database.insert(personTable).values(person)), () =>
-    database
-      .run(database.delete(personTable).where(eq(personTable.id, id)))
-      .pipe(Effect.ignore),
+    database.run(database.delete(personTable).where(eq(personTable.id, id))).pipe(Effect.ignore),
   )
   const actor: Actor = {
     person,
@@ -134,12 +133,12 @@ describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer
     'writes, edits and reads a file and runs a command with Flue’s own tools, and only then wakes the Computer',
     () =>
       Effect.gen(function* () {
-        const { server, wakes, machine } = yield* standIn
+        const { server, wakes, machine } = yield* standIn()
         const store = computerStoreLayer.pipe(
           Layer.provide(Layer.succeed(Machine, machine)),
           Layer.provide(changesLayer),
         )
-        const actor = yield* acting
+        const actor = yield* acting()
         // The runtime's generated client, answered by the server's own functions for these
         // calls: the same code the RPC handlers run, minus the HTTP hop and the session check.
         const requests =
@@ -196,19 +195,27 @@ describe.skipIf(!testDatabaseConfigured || !peerAvailable)("Vivid's own Computer
         ) => Effect.promise(result).pipe(Effect.map(textOf))
 
         // Relative paths are under the Computer's home, as they are for a person at a shell.
-        yield* said(() => write.execute('call', { path: 'work/notes.md', content: 'Buy milk\nCall Ada\n' }))
+        yield* said(() =>
+          write.execute('call', { path: 'work/notes.md', content: 'Buy milk\nCall Ada\n' }),
+        )
         expect(yield* Ref.get(wakes)).toBe(1)
         const notes = NodePath.join(server.home, 'work/notes.md')
         expect(NodeFS.readFileSync(notes, 'utf8')).toBe('Buy milk\nCall Ada\n')
 
         yield* said(() =>
-          edit.execute('call', { path: 'work/notes.md', oldText: 'Call Ada', newText: 'Call Grace' }),
+          edit.execute('call', {
+            path: 'work/notes.md',
+            oldText: 'Call Ada',
+            newText: 'Call Grace',
+          }),
         )
         expect(yield* said(() => read.execute('call', { path: 'work/notes.md' }))).toContain(
           'Call Grace',
         )
         const counted = yield* said(() =>
-          bash.execute('call', { command: 'pwd; wc -l < work/notes.md; grep -c Grace work/notes.md' }),
+          bash.execute('call', {
+            command: 'pwd; wc -l < work/notes.md; grep -c Grace work/notes.md',
+          }),
         )
         expect(counted.trim().split(/\s+/)).toEqual([server.home, '2', '1'])
         expect(yield* said(() => grep.execute('call', { pattern: 'Grace' }))).toContain('notes.md')

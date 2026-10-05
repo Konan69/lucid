@@ -521,7 +521,16 @@ describe.skipIf(!testDatabaseConfigured)('Flue desktop picture to model', () => 
         expect(calls).toBe(2)
         expect(received).toBe(true)
         // Flue's own six on the real Computer, beside the tools that return pictures.
-        for (const tool of ['read', 'write', 'edit', 'bash', 'grep', 'glob', 'use_desktop', 'browse'])
+        for (const tool of [
+          'read',
+          'write',
+          'edit',
+          'bash',
+          'grep',
+          'glob',
+          'use_desktop',
+          'browse',
+        ])
           expect(declared).toContain(`"name":"${tool}"`)
         // The one request the server saw was the desktop step, answered above. Flue looked for a
         // workspace when the conversation started (AGENTS.md, skills, a directory listing) and

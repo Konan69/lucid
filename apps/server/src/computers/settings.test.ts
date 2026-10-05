@@ -23,9 +23,7 @@ const reading = (settings: Readonly<Record<string, string>>) =>
  * provider Layer does while the server is composed; a failure here is a failed launch.
  */
 describe('Computer provider settings', () => {
-  it.effect.each(
-    ['VIVID_BOAT_API_KEY', 'VIVID_BOAT_TEMPLATE', 'VIVID_COMPUTER_SSH_KEY'] as const,
-  )(
+  it.effect.each(['VIVID_BOAT_API_KEY', 'VIVID_BOAT_TEMPLATE', 'VIVID_COMPUTER_SSH_KEY'] as const)(
     'refuses to compose without %s and names it',
     (missing) =>
       Effect.gen(function* () {

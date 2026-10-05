@@ -143,7 +143,13 @@ export class MachineCapabilityUnavailable extends Schema.TaggedError<MachineCapa
  * The machine's file system answered a read or a write with a refusal: the file is not there, is
  * a directory, may not be touched, or is larger than one call carries. The machine is fine.
  */
-export const MachineFileReason = Schema.Literals(['missing', 'denied', 'directory', 'large', 'other'])
+export const MachineFileReason = Schema.Literals([
+  'missing',
+  'denied',
+  'directory',
+  'large',
+  'other',
+])
 export class MachineFileRefused extends Schema.TaggedError<MachineFileRefused>()(
   'MachineFileRefused',
   { reason: MachineFileReason },

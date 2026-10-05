@@ -22,7 +22,7 @@ const keygen = (file: string) =>
  * to speak to. It is not a Vivid Computer: no provider wakes it and its address does not change.
  * `home` is a fresh directory, so a test's files never touch the developer's own.
  */
-export const peer = Effect.gen(function* () {
+export const peer = Effect.fn('Test.sshPeer')(function* () {
   const root = yield* Effect.acquireRelease(
     Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-ssh-'))),
     (path) => Effect.sync(() => NodeFS.rmSync(path, { recursive: true, force: true })),

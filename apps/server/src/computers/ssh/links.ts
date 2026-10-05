@@ -44,7 +44,7 @@ export const links = <Key>(identity: Identity) => {
     const link = yield* openLink({ ...target, identity }).pipe(
       Scope.provide(scope),
       Effect.retry({
-        while: (failure: LinkFailure) => failure._tag === 'LinkUnreachable',
+        while: (failure: LinkFailure) => failure instanceof LinkUnreachable,
         schedule: Schedule.spaced('2 seconds'),
         times: 30,
       }),

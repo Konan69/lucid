@@ -1,5 +1,5 @@
-import { Buffer } from 'node:buffer'
-import { Effect, Redacted, Schema, type Scope } from 'effect'
+import * as NodeBuffer from 'node:buffer'
+import { Effect, Option, Predicate, Redacted, Result, Schema, type Scope } from 'effect'
 import { Client, utils, type ClientChannel, type SFTPWrapper } from 'ssh2'
 
 /**
@@ -90,7 +90,8 @@ export const shellWord = (value: string) => `'${value.replaceAll("'", `'\\''`)}'
 export const identity = Effect.fn('Link.identity')(function* (key: Redacted.Redacted) {
   const parsed = utils.parseKey(Redacted.value(key))
   // ssh2 answers an Error for text that is not a key, and an array for a file of several keys.
-  if (parsed instanceof Error || Array.isArray(parsed)) return yield* Effect.fail(new LinkKeyRefused())
+  if (parsed instanceof Error || Array.isArray(parsed))
+    return yield* Effect.fail(new LinkKeyRefused())
   if (!parsed.isPrivateKey()) return yield* Effect.fail(new LinkKeyRefused())
   return {
     privateKey: key,
@@ -102,11 +103,11 @@ export type Identity = Effect.Success<ReturnType<typeof identity>>
 
 /** Keeps the last `OUTPUT_BYTES` of a stream as it arrives, so a flood cannot hold memory. */
 const tail = () => {
-  let kept: ReadonlyArray<Buffer> = []
+  let kept: ReadonlyArray<NodeBuffer.Buffer> = []
   let size = 0
   let cut = false
   return {
-    add: (piece: Buffer) => {
+    add: (piece: NodeBuffer.Buffer) => {
       kept = [...kept, piece]
       size += piece.length
       // Drop whole pieces from the front while what stays is still a full tail.
@@ -119,7 +120,7 @@ const tail = () => {
       }
     },
     text: () => {
-      const all = Buffer.concat(kept)
+      const all = NodeBuffer.Buffer.concat(kept)
       if (all.length <= OUTPUT_BYTES) return { text: all.toString('utf8'), cut }
       return { text: all.subarray(all.length - OUTPUT_BYTES).toString('utf8'), cut: true }
     },
@@ -136,7 +137,7 @@ const refusal = (error: Error & { readonly code?: unknown }): FileRefusal => {
 /** The connection went, as opposed to the machine answering "no": ssh2 gives a status code only
  * for an SFTP answer. */
 const fileFailure = (error: Error & { readonly code?: unknown }) =>
-  typeof error.code === 'number'
+  Predicate.isNumber(error.code)
     ? new LinkFileRefused({ reason: refusal(error) })
     : new LinkUnreachable()
 
@@ -178,7 +179,7 @@ const files = (sftp: SFTPWrapper) => {
     })
   const write = (path: string, content: Uint8Array) =>
     Effect.callback<void, LinkUnreachable | LinkFileRefused>((resume) => {
-      sftp.writeFile(path, Buffer.from(content), (error) => {
+      sftp.writeFile(path, NodeBuffer.Buffer.from(content), (error) => {
         if (error !== undefined && error !== null) return resume(Effect.fail(fileFailure(error)))
         return resume(Effect.void)
       })
@@ -188,7 +189,7 @@ const files = (sftp: SFTPWrapper) => {
       return yield* Effect.fail(new LinkFileRefused({ reason: 'large' }))
     // Straight first: the directory nearly always exists, and that is one round trip.
     const direct = yield* Effect.result(write(path, content))
-    if (direct._tag === 'Success') return undefined
+    if (Result.isSuccess(direct)) return undefined
     if (!(direct.failure instanceof LinkFileRefused) || direct.failure.reason !== 'missing')
       return yield* Effect.fail(direct.failure)
     yield* Effect.forEach(ancestors(directoryOf(path)), make, { discard: true })
@@ -217,7 +218,7 @@ const runner =
     Effect.callback<LinkRun, LinkUnreachable>((resume) => {
       const stdout = tail()
       const stderr = tail()
-      let channel: ClientChannel | undefined
+      let channel = Option.none<ClientChannel>()
       const started = Date.now()
       const finish = (code: number | null, timedOut: boolean) => {
         clearTimeout(timer)
@@ -234,8 +235,10 @@ const runner =
         )
       }
       const stop = () => {
-        channel?.signal('TERM')
-        channel?.close()
+        Option.map(channel, (open) => {
+          open.signal('TERM')
+          open.close()
+        })
       }
       // A login shell, as a person at the machine has: their PATH and their profile.
       const script = `cd -- ${shellWord(directory)} || exit 1\n${command}`
@@ -253,7 +256,7 @@ const runner =
             clearTimeout(timer)
             return resume(Effect.fail(new LinkUnreachable()))
           }
-          channel = opened
+          channel = Option.some(opened)
           opened.on('data', stdout.add)
           opened.stderr.on('data', stderr.add)
           opened.on('close', (code: number | null) => {
@@ -261,7 +264,7 @@ const runner =
             // command may exit with those codes itself, so the clock decides which it was.
             const expired =
               (code === 124 || code === 137) && Date.now() - started >= timeoutSeconds * 1000
-            finish(typeof code === 'number' ? code : null, expired)
+            finish(Predicate.isNumber(code) ? code : null, expired)
           })
           return undefined
         },
@@ -283,9 +286,9 @@ const subsystem = (client: Client) =>
 
 /** The key the host presents, compared with the one the provider reported, byte for byte.
  * `expected` is an OpenSSH public key line; its second word is the wire encoding ssh2 passes. */
-const sameHost = (expected: string, presented: Buffer) => {
+const sameHost = (expected: string, presented: NodeBuffer.Buffer) => {
   const [, encoded] = expected.trim().split(/\s+/)
-  return encoded !== undefined && Buffer.from(encoded, 'base64').equals(presented)
+  return encoded !== undefined && NodeBuffer.Buffer.from(encoded, 'base64').equals(presented)
 }
 
 /**
@@ -306,7 +309,8 @@ export const openLink = Effect.fn('Link.open')(function* (input: {
       connection.once('ready', () => resume(Effect.succeed(connection)))
       connection.once('error', (error: Error & { readonly level?: string }) => {
         if (mismatch) return resume(Effect.fail(new LinkHostMismatch()))
-        if (error.level === 'client-authentication') return resume(Effect.fail(new LinkKeyRefused()))
+        if (error.level === 'client-authentication')
+          return resume(Effect.fail(new LinkKeyRefused()))
         return resume(Effect.fail(new LinkUnreachable()))
       })
       connection.connect({
@@ -319,7 +323,7 @@ export const openLink = Effect.fn('Link.open')(function* (input: {
         // fifteen seconds keeps it, and three lost ones end it so the next call dials afresh.
         keepaliveInterval: 15_000,
         keepaliveCountMax: 3,
-        hostVerifier: (presented: Buffer) => {
+        hostVerifier: (presented: NodeBuffer.Buffer) => {
           mismatch = !sameHost(input.hostKey, presented)
           return !mismatch
         },

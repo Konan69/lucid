@@ -63,7 +63,7 @@ export type RunTool = ReturnType<typeof toolRunner>
 export function scopedRunner(layer: Layer.Layer<Scope, ToolFailure>) {
   return function runScoped<A>(
     program: Effect.Effect<A, ToolFailure | Error, Scope>,
-    signal: AbortSignal | undefined,
+    signal: Option.Option<AbortSignal>,
   ): Promise<A> {
     const settled = program.pipe(
       Effect.provide(layer),
@@ -74,7 +74,10 @@ export function scopedRunner(layer: Layer.Layer<Scope, ToolFailure>) {
       ),
     )
     // oxlint-disable-next-line vivid/no-runpromise-in-library -- The Flue sandbox verb boundary, classified exactly by the Effect audit.
-    return Effect.runPromise(settled, signal === undefined ? {} : { signal })
+    return Effect.runPromise(
+      settled,
+      Option.match(signal, { onNone: () => ({}), onSome: (value) => ({ signal: value }) }),
+    )
   }
 }
 
