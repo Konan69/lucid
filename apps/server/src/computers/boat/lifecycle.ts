@@ -113,7 +113,7 @@ const bind = Effect.fn('Machine.boat.reconcileBinding')(function* (
 export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
   api: Transport,
   saved: Bindings,
-  invalidate: (key: MachineKey) => void,
+  invalidate: (key: MachineKey) => Effect.Effect<void>,
   admit: (key: MachineKey, identity: Identity) => Effect.Effect<Identity, MachineFailure>,
 ) {
   const { bound, running, permission, wait, invalidateViewer } = yield* observations(api, saved)
@@ -138,7 +138,7 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
     let record = (yield* api.get(identity.id)).sandbox
     if (record.state === 'archiving') record = yield* wait(key, 'archived')
     if (record.state === 'archived') {
-      invalidate(key)
+      yield* invalidate(key)
       yield* invalidateViewer(key)
       if (!record.snapshotAvailable)
         return yield* Effect.fail(new MachineOperationFailed({ operation: 'snapshot-missing' }))
@@ -196,7 +196,7 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
       // A running machine is stopped only by its holder. One between states takes no command, so
       // it cannot be asked; the stop is sent as it always was.
       if (active(record.state)) yield* admit(key, identity)
-      invalidate(key)
+      yield* invalidate(key)
       yield* invalidateViewer(key)
       yield* api.transition(identity.id, 'stop')
       const archived = yield* wait(key, 'archived')

@@ -256,9 +256,12 @@ the screen union belongs to its own lane. Runtime placement and external state s
 
 ## Reaching the Computer: one SSH connection
 
-**Status: decided 5 October 2026; being built on `feat/native-computer`; none of it is on `main`
-yet.** This is the step between today and "Runtime on the Computer" below. It is deliberately thin,
-because it is deleted when the runtime moves onto the machine.
+**Status: decided 5 October 2026. Built on `feat/native-computer`: the server holds the connection
+and Vivid has Flue's six file and shell tools on its Computer. It is proven against a real SSH
+server that is not a Computer; it has not yet run on a Person's Computer (see "Not verified").
+`run_command` is still there and goes once that run is done.** This is the step between today and
+"Runtime on the Computer" below. It is deliberately thin, because it is deleted when the runtime
+moves onto the machine.
 
 ### What is wrong today
 
@@ -330,8 +333,8 @@ hosted: runtime --> server --SSH--> the Person's Computer
 
 ### Measured on 5 October 2026
 
-On a second machine of the same provider account, not on a Person's Computer. "Hosted server"
-means inside the production server's container.
+On a second machine of the same provider account. "Hosted server" means inside the production
+server's container. The same steps on a Person's Computer are in the next section.
 
 | What                                                                                  | Result                                                                                          |
 | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
@@ -355,6 +358,54 @@ through the endpoint is slower and uneven. Which of the two a machine gets is th
 choice at each wake. One held connection pays the handshake once; each command still pays the
 path.
 
+### Measured on a Person's Computer, 5 October 2026
+
+The one production Computer. It had only an IPv6 address that evening, so every connection went
+through the endpoint. Each session used a throwaway key, authorized through the provider and
+removed afterwards.
+
+One wake:
+
+| What                                                    | Result                                                                                  |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| A first resume                                          | "Provisioning" for 18 minutes 37 seconds, then "archived" again, with no error reported |
+| The next resume, until the provider reported an address | 4 minutes 29 seconds                                                                    |
+| The machine's own uptime when SSH first answered        | 298 s: it had booted at the resume, long before the provider reported an address        |
+| From the reported address to an accepted SSH login      | At most 28 s; the probe made other calls first                                          |
+| The provider's command endpoint in those 28 s           | Did not answer                                                                          |
+| The states reported during that start                   | "provisioning", "archived" for half a minute, then "provisioned" with the address       |
+| The provider's stop timer afterwards                    | Two hours after the start, not counted from the last activity                           |
+
+Two whole sessions from the hosted server:
+
+| What                                               | First session    | Second session         |
+| -------------------------------------------------- | ---------------- | ---------------------- |
+| Handshake and key login                            | 0.54 s           | 1.14 s                 |
+| The host key against the one the provider reported | Equal            | Equal                  |
+| First command                                      | 29.4 s           | 0.37 s                 |
+| Three more commands on the held connection         | 0.13 s each      | 0.36 s, 0.36 s, 1.02 s |
+| 256 KB of command output received                  | 0.35 s           | 0.58 s                 |
+| A small file written, read back and removed        | Identical; 1.2 s | Identical; 0.9 s       |
+| A 256 KB file written                              | 4.9 s            | 4.4 s                  |
+| The same 256 KB sent as command input              | Not run          | 4.1 s                  |
+| The same file written with parallel requests       | Not run          | 4.5 s                  |
+| The 256 KB file read back                          | Identical; 1.3 s | Identical; 0.7 s       |
+
+What the numbers say:
+
+- The mechanics hold on a Person's Computer from the hosted server: the key call, the address
+  rule, the host key, commands and files on one held connection.
+- Sending to the machine through the endpoint is slow, about 60 KB a second whichever way the
+  bytes are sent, so it is the path and not the client call. Receiving is about ten times faster.
+- One first command stalled for 29 seconds and the cause is not known. A caller's time limit has
+  to allow for it.
+- The provider's guide says a resume takes a few seconds. That evening one did not finish at all
+  and the next took four and a half minutes. Waiting for a Computer needs an upper bound and a
+  failure the model can read.
+- A state of "archived" in the middle of a start is not proof that the start failed.
+- The machine was running a test suite during both sessions (load 3 on 4 cores), so the command
+  times are not clean.
+
 ### What starting a conversation asks of the machine
 
 Read in the installed Flue 2.2.2 (`discoverSessionContext`). When a conversation starts and the
@@ -365,14 +416,80 @@ reach a machine, so starting a conversation does not wake the Computer. With the
 the slot they would, so the rule is: while the Computer is not running, these four questions are
 answered "nothing there" without waking it, and only a tool the model calls wakes it.
 
+### What was built, and where
+
+- `apps/server/src/computers/ssh/link.ts`: one connection; a command, a file read, a file put. It
+  knows SSH only. `ssh/links.ts` keeps one per machine. `ssh/peer.ts` is the SSH server tests use.
+- `apps/server/src/computers/boat.ts`: asks the provider to authorize the key and for the address
+  before every new connection; closes the connection when the machine stops or a call finds it gone.
+- Machine boundary (`machine.ts`): `run`, `read`, `put`. Store (`store.ts`): the same three, which
+  wake the Computer, refuse while the Person holds it, and count as activity. They ask no Approval
+  and consult no rule, by the Person's decision.
+- Calls: `ComputerShell`, `ComputerFileRead`, `ComputerFileWrite` (`packages/contracts`).
+- Runtime: `packages/agent/runtime/src/tools/sandbox.ts` is the machine in Flue's slot.
+- Setting: `VIVID_COMPUTER_SSH_KEY`, the base64 of an OpenSSH private key file. Required: a server
+  without it does not start. The public half is derived from it.
+
+### Decisions the research settled
+
+- **Library: `ssh2` 1.17.0, MIT, pinned.** Read in its installed source: `lib/client.js` (`connect`,
+  `exec`, `sftp`, `hostVerifier`, keepalive) and `lib/protocol/SFTP.js`. One connection carries many
+  channels and the SFTP subsystem. `hostVerifier` receives the host's key bytes, which are compared
+  with the key the provider reported; a different key ends the connection before anything is sent.
+  A keepalive every 15 seconds, three lost, ends a dead connection. It is the most used Node SSH
+  client; its optional native accelerators are not built. Not the `ssh` program: the server image
+  has none, and a program per call would pay the handshake each time.
+- **A command the model cancels.** Closing an SSH channel does not end a command that has no
+  terminal (seen: it ran on). So every command runs under coreutils `timeout`, which makes it a
+  process group: at the deadline the group is signalled and, two seconds later, killed. When the
+  caller stops waiting, `timeout` is sent TERM over the channel and does the same. Tested: the
+  command's child process is gone from the machine in both cases.
+- **Limits.** Kept: a deadline on every command (120 seconds when the model gives none, 600 at
+  most, because one call waits that long), and the Person's takeover. Dropped: the 8,000-character
+  command limit (now 100,000), the 32,768-character output limit (now the last 262,144 bytes of
+  each stream; Flue shows the model the last 50 KB), the Approval check and the rules check. A
+  file read or put in one call is at most 10 MB; larger files are a command's work.
+- **Starting a conversation.** The sandbox does not answer Flue's three discovery questions from
+  the machine: `exists` says no, `stat` and `readdir` refuse. Flue's six tools never call them
+  (they use `readFile`, `writeFile`, `exec`, `resolvePath`). This holds whether the Computer is
+  asleep or awake, for two more reasons than the wake: a file in the Computer's home must not
+  become part of Vivid's instructions, and a skill directory there with the name of one of
+  Vivid's skills would stop every conversation (Flue throws on that at start). Vivid lists and
+  inspects files with `bash`. Tested through Flue itself: a conversation that only looks at the
+  desktop sends the server one call, the desktop one.
+- **A connection that dies.** The link knows when its connection closes: every call waiting on it
+  is told at once, and a call made afterwards is refused without reaching the library. A command
+  whose end was not heard is reported as "may have run", never as ended, and is not run again. The
+  next use of the machine asks the provider where it is now and opens a new connection. The
+  provider's stop timer counts from the resume, not from activity, so a held connection does end.
+- **Slow sending.** Sending to a machine through the provider's endpoint was measured at about
+  60 KB a second, so a 10 MB put takes about three minutes. A put has no deadline of its own, and
+  the keepalive keeps answering during it, so a slow upload is not taken for a dead connection.
+- **Waiting for a woken machine.** The store waits at most 90 seconds for the provider to say the
+  machine runs, and answers "did not become ready within 90 seconds" otherwise. Opening SSH then
+  tries every two seconds while the machine cannot be reached, for at most 75 seconds, and answers
+  "not answering" otherwise. Neither hangs. A wrong host key or a refused key is not retried.
+
 ### Not verified
 
-- How long after a wake a machine accepts SSH. Its command endpoint refuses for 20 to 40 seconds.
-  One wake watched on 5 October had not finished starting after ten minutes.
-- The same steps on a Person's Computer. There is no test Computer: the proof on one can only be
-  run on the deployed product.
-- A direct IPv4 session from the hosted server. Only the connection and first bytes were measured
-  on that path; the whole session was run through the endpoint.
+- Vivid's own tools on a Person's Computer. The connection itself was run there (above); the
+  built tools were not: there is no test Computer. After the deploy, check on production, in this
+  order: the server starts with `VIVID_COMPUTER_SSH_KEY` set; in a Thread ask Vivid to write a
+  file on its computer and read it back (`write`, `read`); ask for a command (`bash`); stop the
+  Computer, start a conversation that does not need it, and confirm it stays stopped; ask for a
+  file again and confirm it wakes and answers.
+- A real model turn using the tools. The test drives Flue's own tool code through the server's
+  functions against a real SSH server, with no model and no HTTP hop between runtime and server.
+- Whether cancelling a tool call in the runtime interrupts the server's call. The server ends the
+  command when its call is interrupted (tested); the interruption crossing the RPC was not.
+- Whether the runtime's call to the server waits long enough for a large put on the slow path.
+- OpenSSH on the Computer accepting a signal request on a channel (it needs OpenSSH 7.9 or later;
+  tested against OpenSSH on Ubuntu). Without it a cancelled command ends at its deadline instead.
+- How long a normal wake takes. Only the one slow start above was timed.
+- A machine with its own IPv4 address, from the hosted server: only the connection and the first
+  bytes were measured on that path. Every whole session went through the endpoint.
+- Why sending is slow through the endpoint, and whether it is as slow on a machine with its own
+  IPv4 address.
 
 ## Runtime on the Computer: planned
 

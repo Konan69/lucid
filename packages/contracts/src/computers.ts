@@ -51,6 +51,69 @@ export interface Computer extends Schema.Schema.Type<typeof Computer> {}
 
 export const ComputerResponse = Schema.Struct({ computer: Computer })
 
+/**
+ * Vivid's own use of its Computer's shell and files, as a person uses their machine. These carry
+ * no summary and no approval: the Person allowed Vivid its Computer, and what Vivid does there is
+ * not asked about. The acting Person comes from the call's authority, never from these fields.
+ */
+/** Absolute: the machine has no "current directory" between calls, so a relative path has no meaning. */
+export const ComputerPath = Schema.String.check(Schema.isPattern(/^\//), Schema.isMaxLength(4096))
+
+/** A command in a directory. The deadline is the caller's; the machine ends the command at it. */
+export const ComputerShellRequest = Schema.Struct({
+  command: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(100_000)),
+  directory: ComputerPath,
+  timeoutSeconds: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 600 })),
+})
+export interface ComputerShellRequest extends Schema.Schema.Type<typeof ComputerShellRequest> {}
+
+/** `Unavailable` is the Computer not being usable now (asleep and not waking, held by the
+ * Person, the provider not answering), in a sentence Vivid can read. */
+export const ComputerShellOutcome = Schema.TaggedUnion({
+  /** `exitCode` is absent when the command was ended at its deadline or by a signal. */
+  Completed: {
+    stdout: Schema.String,
+    stderr: Schema.String,
+    exitCode: Schema.NullOr(Schema.Int),
+    timedOut: Schema.Boolean,
+    /** Only the end of an output stream was kept. */
+    truncated: Schema.Boolean,
+  },
+  Unavailable: { reason: Schema.String },
+  /** The connection went while the command ran: it may have run, and is not run again. */
+  OutcomeUnknown: {},
+})
+export type ComputerShellOutcome = typeof ComputerShellOutcome.Type
+
+export const ComputerFileReadRequest = Schema.Struct({ path: ComputerPath })
+export interface ComputerFileReadRequest extends Schema.Schema.Type<
+  typeof ComputerFileReadRequest
+> {}
+
+/** A whole file as its bytes; text is the reader's decision. */
+export const ComputerFileReadOutcome = Schema.TaggedUnion({
+  Read: { content: Schema.Uint8ArrayFromBase64 },
+  /** The machine answered no: there is no such file, it is a directory, it is too large. */
+  Refused: { reason: Schema.String },
+  Unavailable: { reason: Schema.String },
+})
+export type ComputerFileReadOutcome = typeof ComputerFileReadOutcome.Type
+
+export const ComputerFileWriteRequest = Schema.Struct({
+  path: ComputerPath,
+  content: Schema.Uint8ArrayFromBase64,
+})
+export interface ComputerFileWriteRequest extends Schema.Schema.Type<
+  typeof ComputerFileWriteRequest
+> {}
+
+export const ComputerFileWriteOutcome = Schema.TaggedUnion({
+  Written: {},
+  Refused: { reason: Schema.String },
+  Unavailable: { reason: Schema.String },
+})
+export type ComputerFileWriteOutcome = typeof ComputerFileWriteOutcome.Type
+
 /** One command Vivid runs on the Computer. */
 export const RunCommandRequest = Schema.Struct({
   command: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(8000)),

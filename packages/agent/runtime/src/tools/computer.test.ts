@@ -37,9 +37,9 @@ import { Effect, Exit, Layer, Option, Predicate, Queue, Schema } from 'effect'
 import * as RpcClient from 'effect/unstable/rpc/RpcClient'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/unstable/rpc/RpcMessage'
-import { browseModelTool, desktopModelTool, desktopToolFactory } from './computer.ts'
+import { browseModelTool, computerSandboxFactory, desktopModelTool } from './computer.ts'
 import { personComputerModelTool } from './windows.ts'
-import { Scope, toolRunner } from './scope.ts'
+import { Scope, scopedRunner, toolRunner } from './scope.ts'
 import { disposableStorage } from '../../tests/schema.ts'
 
 /** Valid PNG with a large ancillary text chunk proves image bytes bypass the text budget. */
@@ -88,7 +88,7 @@ const fixture = Effect.fn('DesktopToolsTest.fixture')(function* () {
     browser: browseModelTool(runTool),
     person: personComputerModelTool(runTool),
     tool: desktopModelTool(runTool),
-    factory: desktopToolFactory(runTool),
+    factory: computerSandboxFactory(runTool, scopedRunner(scope)),
   }
 })
 
@@ -446,7 +446,7 @@ function modelReply(model: Model<Api>, request: boolean) {
 
 describe.skipIf(!testDatabaseConfigured)('Flue desktop picture to model', () => {
   it.live(
-    'passes PNG bytes through actual Flue execution into the next model request',
+    'gives the model the machine tools and pictures, and starting a conversation asks the Computer nothing',
     () =>
       Effect.gen(function* () {
         const transport = yield* fixture()
@@ -458,6 +458,7 @@ describe.skipIf(!testDatabaseConfigured)('Flue desktop picture to model', () => 
         const modelAddress = `openrouter/${model.id}`
         let calls = 0
         let received = false
+        let declared = ''
         const provider = {
           ...builtIn,
           auth: {
@@ -468,6 +469,9 @@ describe.skipIf(!testDatabaseConfigured)('Flue desktop picture to model', () => 
           },
           streamSimple: (chosen: Model<Api>, context: ModelContext) => {
             calls += 1
+            // Flue declares the callable tools to the model on the transcript's system
+            // messages (pi-agent-core agent-loop, `toolsAdded`); the first request has them all.
+            if (calls === 1) declared = JSON.stringify(context.messages)
             if (calls > 1)
               received = context.messages.some(
                 (message) =>
@@ -516,6 +520,22 @@ describe.skipIf(!testDatabaseConfigured)('Flue desktop picture to model', () => 
         )
         expect(calls).toBe(2)
         expect(received).toBe(true)
+        // Flue's own six on the real Computer, beside the tools that return pictures.
+        for (const tool of [
+          'read',
+          'write',
+          'edit',
+          'bash',
+          'grep',
+          'glob',
+          'use_desktop',
+          'browse',
+        ])
+          expect(declared).toContain(`"name":"${tool}"`)
+        // The one request the server saw was the desktop step, answered above. Flue looked for a
+        // workspace when the conversation started (AGENTS.md, skills, a directory listing) and
+        // none of that became a call: a sleeping Computer is not woken by a conversation.
+        expect(yield* Queue.size(transport.requests)).toBe(0)
       }).pipe(Effect.scoped),
     15000,
   )

@@ -241,6 +241,11 @@ const providerLayer = Layer.effect(
     const write = Effect.fn('Test.Machine.write')(() =>
       Effect.fail(new MachineOperationFailed({ operation: 'write' })),
     )
+    // Nor does any use the machine's own shell and files; `shell.test.ts` runs those for real.
+    const unused = (operation: string) =>
+      Effect.fn(`Test.Machine.${operation}`)(() =>
+        Effect.fail(new MachineOperationFailed({ operation })),
+      )
     return Machine.of({
       status,
       inspect,
@@ -249,6 +254,9 @@ const providerLayer = Layer.effect(
       exec,
       follow,
       write,
+      run: unused('run'),
+      read: unused('read'),
+      put: unused('put'),
       browse,
       screen,
       desktop,
