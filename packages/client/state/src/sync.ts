@@ -1,0 +1,148 @@
+import type { Draft, DraftSaved, SaveDraftRequest } from '@vivid/contracts'
+import { Effect, Option, Result } from 'effect'
+import {
+  abandoned,
+  heard,
+  owed,
+  saved,
+  saveOf,
+  type DraftScope,
+  type Drafts,
+  type Owed,
+} from './drafts.js'
+import { isFinal, type ProductFailure } from './live.js'
+
+/**
+ * The timing around the draft model (`drafts.ts`): when a device's unsaved keystrokes are sent,
+ * and when what the server holds is laid over the device's copy. Web and phone build one of these
+ * each, over their own store and their own socket, so the two cannot drift apart in the rules.
+ *
+ * It holds no drafts. The device's store is the one copy; this reads it, asks the model what is
+ * owed, and writes back what the model says an answer changed.
+ */
+
+/**
+ * How long a place's words rest before they are saved. Long enough that a sentence being typed is
+ * one save, not one per letter; short enough that putting the laptop down and picking the phone
+ * up finds the words already there.
+ */
+const REST = '700 millis'
+
+export interface DraftSyncInput {
+  /** The name this installation made up for itself (`SaveDraftRequest.device`). */
+  readonly device: string
+  /** The device's drafts as they stand, or none while its store has not answered yet. */
+  readonly read: () => Option.Option<Drafts>
+  /** Changes the device's drafts, from what they are at that moment. */
+  readonly update: (change: (drafts: Drafts) => Drafts) => void
+  /** Who is signed in and where they are working, once the server has said. */
+  readonly scope: () => Option.Option<DraftScope>
+  /** One `SaveDraft` call, its refusal in the value. */
+  readonly save: (
+    request: SaveDraftRequest,
+  ) => Effect.Effect<Result.Result<DraftSaved, ProductFailure>>
+  /** Starts a program on the app's runtime and hands back the way to stop it. */
+  readonly launch: (program: Effect.Effect<void>) => () => void
+}
+
+/** One place's save on its way: the words it carries, and how to call it off. */
+interface Underway {
+  readonly text: string
+  readonly stop: () => void
+}
+
+export function makeDraftSync(input: DraftSyncInput) {
+  const underway = new Map<string, Underway>()
+
+  /** What the model does with the server's answer to one save. */
+  const settle = (sent: Owed, answer: Result.Result<DraftSaved, ProductFailure>) =>
+    Result.match(answer, {
+      onSuccess: (outcome) => input.update((drafts) => saved(drafts, sent, outcome)),
+      // A save that did not get through is not said while someone types: the words are on the
+      // device, and the next change or the next reconnect sends them. Only a refusal that asking
+      // again cannot change (the Thread is gone) stops the place owing them.
+      onFailure: (failure) => {
+        if (isFinal(failure)) input.update((drafts) => abandoned(drafts, sent))
+      },
+    })
+
+  /**
+   * Saves one place once it has rested. There is one save per place at a time, and a newer state
+   * of the place replaces it wherever it stands: waiting, or already sent and not yet answered.
+   * An answer that is never read costs nothing, because the save that replaced it carries newer
+   * words and brings back a newer revision.
+   */
+  const send = (sent: Owed) => {
+    const before = underway.get(sent.where)
+    if (before !== undefined) before.stop()
+    const mine: Underway = {
+      text: sent.text,
+      stop: input.launch(
+        Effect.sleep(REST).pipe(
+          Effect.andThen(input.save(saveOf(sent, input.device))),
+          Effect.flatMap((answer) =>
+            Effect.sync(() => {
+              // Let go of first: settling changes the store, which asks what is owed again.
+              if (underway.get(sent.where) === mine) underway.delete(sent.where)
+              settle(sent, answer)
+            }),
+          ),
+        ),
+      ),
+    }
+    underway.set(sent.where, mine)
+  }
+
+  /**
+   * What `WatchDrafts` last said, while it cannot be used yet: the server has not said who is
+   * signed in and where, or the device's store has not answered. Both arrive within a moment of
+   * launch and in no fixed order, and a list dropped then would not come again until a draft
+   * changed somewhere.
+   */
+  let waiting = Option.none<ReadonlyArray<Draft>>()
+
+  /**
+   * Brings the device's copy and the server's together as far as is possible right now: a list
+   * that was waiting is laid over the device's drafts, and every owed place that is not already
+   * on its way with the same words is sent.
+   */
+  const reconcile = () => {
+    const scope = input.scope()
+    if (Option.isNone(scope) || Option.isNone(input.read())) return
+    if (Option.isSome(waiting)) {
+      const list = waiting.value
+      waiting = Option.none()
+      input.update((drafts) => heard(drafts, scope.value, input.device, list))
+    }
+    for (const place of Option.match(input.read(), {
+      onNone: () => [],
+      onSome: (drafts) => owed(drafts, scope.value),
+    })) {
+      const before = underway.get(place.where)
+      if (before === undefined || before.text !== place.text) send(place)
+    }
+  }
+
+  return {
+    /**
+     * Something this depends on changed: the Person typed, an answer was written back, the
+     * device's store answered, or the server said who is signed in and where.
+     */
+    changed: reconcile,
+    /**
+     * `WatchDrafts` said what the server holds. It says so again each time the socket comes
+     * back, which makes this the reconnect rule as well: places with nothing unsaved take the
+     * server's, and every place with unsaved keystrokes is saved, including one whose last save
+     * was lost with the old socket.
+     */
+    heard: (list: ReadonlyArray<Draft>) => {
+      waiting = Option.some(list)
+      reconcile()
+    },
+    /** Calls off every save on its way, when the session that would carry them ends. */
+    stop: () => {
+      for (const save of underway.values()) save.stop()
+      underway.clear()
+    },
+  }
+}

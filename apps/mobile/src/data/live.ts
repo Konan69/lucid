@@ -25,6 +25,7 @@ import * as Atom from 'effect/unstable/reactivity/Atom'
 import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
 import { door } from './door'
+import { followDrafts } from './drafts'
 import { forgetAppearance, vividAtom } from './vivid'
 import { inFront } from './foreground'
 import { liveAddress } from './server'
@@ -169,6 +170,8 @@ function makeLiveData(session: SignedIn) {
     /** Where the Person's Computer stands: off, starting, running and who has the keyboard. */
     computer: one((client) => client.WatchComputer()),
     suggestions: one((client) => client.WatchSuggestions()),
+    /** What the Person has typed and not sent, on any device, where they are working. */
+    drafts: one((client) => client.WatchDrafts()),
   }
 
   // Where the Person was working when a query was last asked, for the subscription below.
@@ -184,6 +187,27 @@ function makeLiveData(session: SignedIn) {
     if (Equal.equals(now, whereabouts)) return
     whereabouts = now
     engine.reopen()
+  })
+
+  // What is typed on this phone follows the Person to their other devices, and what they typed
+  // there arrives here, for as long as this session has a socket (`data/drafts.ts`).
+  const unfollow = followDrafts({
+    scope: () => {
+      const me = engine.registry.get(live.me.atom)
+      return AsyncResult.isSuccess(me)
+        ? Option.some({ person: me.value.person.id, workspace: workspaceKey(me.value.workspace) })
+        : Option.none()
+    },
+    save: (request) => engine.change((client) => client.SaveDraft(request)),
+    listen: (hear) =>
+      engine.registry.subscribe(
+        live.drafts.atom,
+        (result) => {
+          if (AsyncResult.isSuccess(result)) hear(result.value.drafts)
+        },
+        { immediate: true },
+      ),
+    moved: (hear) => engine.registry.subscribe(live.me.atom, hear),
   })
 
   /** Whether this Person has something typed in a Thread's composer. The composer sets it. */
@@ -254,6 +278,11 @@ function makeLiveData(session: SignedIn) {
 
   return {
     session,
+    /** Ends the session's live data: every subscription, the socket, and what rode on it. */
+    dispose: () => {
+      unfollow()
+      engine.registry.dispose()
+    },
     registry: engine.registry,
     live,
     /** Runs one program with the session's client, on the same socket the queries use. */
@@ -305,7 +334,7 @@ export const entryAtom = Atom.keepAlive(
       onSuccess: ({ value }) => {
         if (!Session.$is('SignedIn')(value)) return Entry.Door({ session: value })
         const data = makeLiveData(value)
-        get.addFinalizer(() => data.registry.dispose())
+        get.addFinalizer(data.dispose)
         return Entry.In({ data })
       },
     }),

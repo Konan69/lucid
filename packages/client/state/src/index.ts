@@ -1,5 +1,6 @@
 export * from './activity.js'
 export * from './drafts.js'
+export * from './sync.js'
 export * from './link.js'
 export * from './live.js'
 export * from './pairing.js'

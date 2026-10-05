@@ -55,6 +55,8 @@ export const live = {
   memory: one((client) => client.WatchMemory()),
   computer: one((client) => client.WatchComputer()),
   suggestions: one((client) => client.WatchSuggestions()),
+  /** What the Person has typed and not sent, on any device, where they are working. */
+  drafts: one((client) => client.WatchDrafts()),
 }
 
 /** What the Person has typed into the catalog search. Empty asks for the most-used services. */

@@ -125,6 +125,9 @@ export interface LiveFamily<Argument, Value> {
 /** Failures that mean "this is not yours to see", which asking again will not change. */
 const FINAL = new Set(['Unauthenticated', 'Forbidden', 'NotFound', 'InvalidRequest'])
 
+/** Whether a failure is one that asking again cannot change, so nothing should ask again. */
+export const isFinal = (failure: ProductFailure): boolean => FINAL.has(failure._tag)
+
 /**
  * A subscription that outlives a dropped connection. A failure that is not final (the socket
  * closed, the server restarted) re-opens the subscription after a moment, and the atom keeps its
