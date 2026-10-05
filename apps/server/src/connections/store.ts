@@ -5,6 +5,7 @@ import {
   Context,
   Effect,
   Exit,
+  Fiber,
   Layer,
   Redacted,
   Schema,
@@ -385,6 +386,23 @@ function listCatalogLifetime(
     : 0
 }
 
+/** Explicit search/management never inherit list failures. Effect rc.116's installed
+ * src/internal/effect.ts:4454 delegates cachedWithTTL to cachedInvalidateWithTTL;
+ * lines 4400–4422 share the owner's exit, including interruption, with waiting readers.
+ * Fork each cached read into the Layer scope (forkIn, lines 5553–5568), then join it:
+ * disconnecting a caller removes only its join observer (fiberJoin, lines 860–867).
+ * The probe keeps the caller's Clock and pending-reader deduplication; Layer shutdown
+ * still interrupts it. Starting immediately keeps overlapping zero-TTL readers together.
+ * Success refresh and unavailability backoff retain their TTL policy.
+ */
+const rememberListCatalog = Effect.fn('Connections.rememberListCatalog')(function* (
+  catalog: Effect.Effect<ReadonlyArray<Service>, ReturnType<typeof executorFailure>>,
+) {
+  const scope = yield* Effect.scope
+  const cached = yield* Effect.cachedWithTTL(catalog, listCatalogLifetime)
+  return cached.pipe(Effect.forkIn(scope, { startImmediately: true }), Effect.flatMap(Fiber.join))
+})
+
 /** Capture authority once; the adapter owns discovery and catalog cache lifetimes. */
 const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const executor: ExecutorService = yield* Executor
@@ -404,10 +422,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const catalogServices = Effect.fn('Connections.catalog')(function* () {
     return (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).map(catalogService)
   })
-  /** Explicit search/management never inherit list failures. rc.116 cachedWithTTL retains the
-   * exit and deduplicates pending readers using the caller's Clock.
-   */
-  const listCatalog = yield* Effect.cachedWithTTL(catalogServices(), listCatalogLifetime)
+  const listCatalog = yield* rememberListCatalog(catalogServices())
   /** Inspect the selected candidate without retaining any account or credential. */
   const inspectService = Effect.fn('Connections.inspectService')(function* (service: Service) {
     const authorization = yield* executor
