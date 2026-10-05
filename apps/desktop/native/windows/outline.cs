@@ -72,6 +72,9 @@ namespace Vivid.Windows
                 if ((current.ControlType == ControlType.Document || current.ControlType == ControlType.Edit ||
                     current.ControlType == ControlType.Text) && element.TryGetCurrentPattern(TextPattern.Pattern, out pattern))
                     return ((TextPattern)pattern).DocumentRange.GetText(201);
+                // UIA Name (current or cached) has no max-length/length-only API.
+                // Caching still allocates the whole BSTR; it cannot bound this fetch.
+                // Keep virtual labels, cap immediately in Limit, and document this limit.
                 return current.Name;
             }
             private string Limit(string value)

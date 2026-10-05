@@ -21,13 +21,23 @@ namespace Vivid.Windows
         }
         // SendInput is global: recheck before each batch, while acknowledging Windows
         // offers no atomic HWND-verify-and-inject operation.
-        internal void CheckTarget() { turn.Check(); budget.Check(); Shells.Verify(window); Integrity.Verify(window); }
+        internal void CheckTarget() { turn.Check(); budget.Check(); Shells.Verify(window); Integrity.Verify(window); turn.RequireInput(budget); }
         internal void Check() { CheckTarget(); Activity.RequireIdle(); Windows.Foreground(window); }
         // Pointer/keyboard fallback activates only after identity, stop and Person-idle checks.
         internal void Prepare() { CheckTarget(); Activity.RequireIdle(); Windows.Activate(window, budget); }
         // SC_CLOSE is addressed to the validated HWND, so Alt+F4 cannot close a different
         // foreground window if focus changes between validation and global SendInput.
-        internal void Close() { CheckTarget(); Activity.RequireIdle(); Windows.Close(window, budget); }
+        internal object Close() { CheckTarget(); return Windows.Close(window, budget); }
+        // Hosted accessibility controls may belong to a different process than the HWND.
+        internal void CheckElement(AutomationElement element)
+        {
+            CheckTarget();
+            int id = element.Current.ProcessId;
+            if (id <= 0) throw new ElevatedTarget();
+            uint process = (uint)id;
+            Shells.VerifyProcess(process);
+            if (Integrity.ForProcess(process) != TargetAccess.Allowed) throw new ElevatedTarget();
+        }
     }
 
     internal static class Input
@@ -48,7 +58,7 @@ namespace Vivid.Windows
         }
         // Invoke respects the application's accessibility contract. Non-left clicks or
         // repeated clicks need actual pointer events rather than an unrelated invocation.
-        // Invoke/Toggle/Select need target authority, never foreground or Person-idle authority.
+        // Invoke/Toggle/Select need hook/target/Person-idle authority, but no foreground.
         internal static void Element(Window window, AutomationElement element, int count, string button, InputGuard guard)
         {
             try { ElementInput(window, element, count, button, guard); }
@@ -60,14 +70,15 @@ namespace Vivid.Windows
         // Read the live provider element, then invoke or dispatch pointer events to its current bounds.
         private static void ElementInput(Window window, AutomationElement element, int count, string button, InputGuard guard)
         {
+            guard.CheckElement(element);
             if (!element.Current.IsEnabled) throw new ElementGone("the accessibility element is disabled");
             object pattern;
             if (count == 1 && button == "left" && element.TryGetCurrentPattern(InvokePattern.Pattern, out pattern))
-            { guard.CheckTarget(); ((InvokePattern)pattern).Invoke(); Console.Error.WriteLine("VividInputPattern=InvokePattern"); return; }
+            { guard.CheckElement(element); ((InvokePattern)pattern).Invoke(); Diagnostics.Write("VividInputPattern=InvokePattern"); return; }
             if (count == 1 && button == "left" && element.TryGetCurrentPattern(TogglePattern.Pattern, out pattern))
-            { guard.CheckTarget(); ((TogglePattern)pattern).Toggle(); Console.Error.WriteLine("VividInputPattern=TogglePattern"); return; }
+            { guard.CheckElement(element); ((TogglePattern)pattern).Toggle(); Diagnostics.Write("VividInputPattern=TogglePattern"); return; }
             if (count == 1 && button == "left" && element.TryGetCurrentPattern(SelectionItemPattern.Pattern, out pattern))
-            { guard.CheckTarget(); ((SelectionItemPattern)pattern).Select(); Console.Error.WriteLine("VividInputPattern=SelectionItemPattern"); return; }
+            { guard.CheckElement(element); ((SelectionItemPattern)pattern).Select(); Diagnostics.Write("VividInputPattern=SelectionItemPattern"); return; }
             guard.Prepare();
             var bounds = element.Current.BoundingRectangle;
             if (bounds.IsEmpty || bounds.Width <= 0 || bounds.Height <= 0)
@@ -83,14 +94,15 @@ namespace Vivid.Windows
             if (text.Length > 4000) throw Fields.Invalid("text length");
             try
             {
+                guard.CheckElement(element);
                 if (!element.Current.IsEnabled) throw new ElementGone("the accessibility element is disabled");
                 object pattern;
                 if (element.TryGetCurrentPattern(ValuePattern.Pattern, out pattern))
                 {
                     var value = (ValuePattern)pattern;
                     if (value.Current.IsReadOnly) throw new ElementGone("the accessibility value is read-only");
-                    guard.CheckTarget(); value.SetValue(text);
-                    Console.Error.WriteLine("VividInputPattern=ValuePattern.SetValue"); return;
+                    guard.CheckElement(element); value.SetValue(text);
+                    Diagnostics.Write("VividInputPattern=ValuePattern.SetValue"); return;
                 }
                 guard.Prepare();
                 var bounds = element.Current.BoundingRectangle;
@@ -167,8 +179,8 @@ namespace Vivid.Windows
                 (chord[0].Data.Keyboard.Key == 0x12 && chord[1].Data.Keyboard.Key == 0x73 ||
                  chord[1].Data.Keyboard.Key == 0x12 && chord[0].Data.Keyboard.Key == 0x73);
         }
-        internal static void Press(Native.Input[] chord, InputGuard guard)
-        { if (ClosesWindow(chord)) guard.Close(); else Send(chord, guard); }
+        internal static object Press(Native.Input[] chord, InputGuard guard)
+        { if (ClosesWindow(chord)) return guard.Close(); Send(chord, guard); return new { }; }
         // scrollX/Y are signed Windows wheel units (120 per notch), not pixels.
         // Keep both axes in one balanced native batch after verifying its origin point.
         internal static void Scroll(Window window, int x, int y, int horizontal, int vertical, InputGuard guard)

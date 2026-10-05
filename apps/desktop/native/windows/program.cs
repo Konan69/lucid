@@ -15,19 +15,19 @@ namespace Vivid.Windows
         {
             Console.OutputEncoding = new UTF8Encoding(false);
             try { using (var output = new Output()) return Serve(arguments, output); }
-            catch (Failure error) { Console.Error.WriteLine(error.Name); return 1; }
-            catch (Exception) { Console.Error.WriteLine("HelperStartupFailed"); return 1; }
+            catch (Failure error) { Diagnostics.Write(error.Name); return 1; }
+            catch (Exception) { Diagnostics.Write("HelperStartupFailed"); return 1; }
         }
         private static int Serve(string[] arguments, Output output)
         {
             Integrity.VerifyHelper();
             if (!Native.SetProcessDpiAwarenessContext(new IntPtr(-4)))
-            { Console.Error.WriteLine("DpiAwarenessFailed"); return 1; }
+            { Diagnostics.Write("DpiAwarenessFailed"); return 1; }
             int parentId = 0;
             bool testMode = false;
             if (!Options(arguments, ref parentId, ref testMode)) return 1;
             using (Process parent = Parent(parentId))
-            using (var turn = new Turn(delegate { output.Notify(Encode(new { @event = "stopped" })); }))
+            using (var turn = new Turn(delegate(string id, uint cooldown) { output.Notify(Encode(new { @event = "stopped", turn = id, cooldown_ms = cooldown })); }))
             using (var input = new BufferedStream(Console.OpenStandardInput(), 8192))
             {
                 if (parent != null)
@@ -68,7 +68,7 @@ namespace Vivid.Windows
             {
                 if (arguments[i] == "--test-mode") { testMode = true; continue; }
                 if (arguments[i] == "--parent-pid" && i + 1 < arguments.Length && Int32.TryParse(arguments[++i], out parent) && parent > 0) continue;
-                Console.Error.WriteLine("InvalidHelperOptions"); return false;
+                Diagnostics.Write("InvalidHelperOptions"); return false;
             }
             return true;
         }

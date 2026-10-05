@@ -133,6 +133,7 @@ namespace Vivid.Windows
             if (Native.GetGUIThreadInfo(0, ref gui) && gui.Focus != IntPtr.Zero)
                 focused = Native.GetWindowThreadProcessId(gui.Focus, out process);
             bool attachedForeground = false, attachedTarget = false, attachedFocus = false;
+            string diagnostic = null;
             try
             {
                 if (foreground != 0 && foreground != current)
@@ -144,14 +145,14 @@ namespace Vivid.Windows
                 if (focused != 0 && focused != current && focused != foreground && focused != target)
                     attachedFocus = Native.AttachThreadInput(current, focused, true);
                 Activity.RequireIdle();
-                if (Native.IsIconic(window.Handle)) Native.ShowWindow(window.Handle, 9);
+                if (Native.IsIconic(window.Handle)) Native.ShowWindowAsync(window.Handle, 9);
                 Activity.RequireIdle();
                 bool brought = Native.BringWindowToTop(window.Handle);
                 bool accepted = Native.SetForegroundWindow(window.Handle);
                 if (!accepted || !IsForeground(window))
-                    Console.Error.WriteLine("VividActivationDenied attachedForeground=" + attachedForeground +
+                    diagnostic = "VividActivationDenied attachedForeground=" + attachedForeground +
                         "; attachedTarget=" + attachedTarget + "; attachedFocus=" + attachedFocus + "; focusThread=" + focused + "; brought=" + brought + "; accepted=" + accepted +
-                        "; currentThread=" + current + "; foregroundThread=" + foreground + "; targetThread=" + target + "; " + Diagnostic());
+                        "; currentThread=" + current + "; foregroundThread=" + foreground + "; targetThread=" + target;
             }
             finally
             {
@@ -159,6 +160,7 @@ namespace Vivid.Windows
                 if (attachedTarget) Native.AttachThreadInput(current, target, false);
                 if (attachedForeground) Native.AttachThreadInput(current, foreground, false);
             }
+            if (diagnostic != null) Diagnostics.Write(diagnostic + "; " + Diagnostic());
         }
         // The activation receipt orders cross-queue focus before its first input batch.
         // It is not an acknowledgement that an application interpreted typed characters.
@@ -170,17 +172,11 @@ namespace Vivid.Windows
                 throw new NativeInputFailed("named window did not acknowledge its input queue; do not retry automatically", 0);
             budget.Check();
         }
-        // DefWindowProc's documented SC_CLOSE is the native equivalent of Alt+F4,
-        // addressed to the named HWND. A timeout is uncertain and is never replayed.
-        // learn.microsoft.com/windows/win32/menurc/wm-syscommand
-        internal static void Close(Window window, Budget budget)
-        {
-            UIntPtr unused;
-            if (Native.SendMessageTimeout(window.Handle, 0x112, new UIntPtr(0xF060), IntPtr.Zero,
-                2, budget.Remaining, out unused) == IntPtr.Zero)
-                throw new NativeInputFailed("named window did not acknowledge close; do not retry automatically", 0);
-            budget.Check();
-        }
+        // Post close, then observe native create/show/destroy receipts for at most
+        // 350ms. A modal save handler cannot block this request or race its watchdog.
+        // Microsoft PostMessage/SetWinEventHook: out-of-context receipts need a pump.
+        internal static object Close(Window window, Budget budget)
+        { return Closing.Post(window, budget); }
         // Diagnostics contain only a class, process name and idle age; never window text.
         internal static string Diagnostic()
         {
