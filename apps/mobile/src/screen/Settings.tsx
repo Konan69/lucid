@@ -10,12 +10,12 @@ import {
 import { channelWords } from '@vivid/state'
 import { Data, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
-import { Linking, ScrollView, Switch, View } from 'react-native'
+import { ScrollView, Switch, View } from 'react-native'
 import { followThemeAtom } from '../data/appearance'
 import { door } from '../data/door'
 import { warn } from '../data/haptics'
 import { refusalOf, useLive, useLiveData, useLiveValue, type LiveData } from '../data/live'
-import { connectionsAddress, recordAddress, rulesAddress, serverName } from '../data/server'
+import { serverName } from '../data/server'
 import { leaveAtom } from '../data/signing'
 import { useAppearance } from '../data/vivid'
 import { Avatar, pictureOf } from '../ui/Avatar'
@@ -28,6 +28,9 @@ import { confirmDestructive, Label, Notice, Segmented, Skeleton, styles } from '
 import { useGo, useMe } from '../workspace'
 import { useTheme } from '../theme'
 import { Devices } from './settings/Devices'
+import { Integrations } from './settings/Integrations'
+import { Record } from './settings/Record'
+import { Rules } from './settings/Rules'
 import { Customise } from './vivid/Customise'
 import { Themes } from './settings/Themes'
 
@@ -37,23 +40,33 @@ const THEMES = [
   { value: 'dark', label: 'Dark' },
 ] as const satisfies ReadonlyArray<{ value: Theme; label: string }>
 
+/** What is open over Settings. One thing at a time. */
+type Over = Data.TaggedEnum<{
+  Nothing: {}
+  Zone: {}
+  Devices: {}
+  Customise: {}
+  Integrations: {}
+  Rules: {}
+  Record: {}
+}>
+const Over = Data.taggedEnum<Over>()
+
 /**
- * The parts of Settings that are done in the web app, which the server also serves: each row
- * opens that section in the phone's browser instead of pretending the phone can do it.
+ * What belongs to the workspace and is done in a sheet over Settings: the services Vivid can use,
+ * what it may do without asking, and what it did. Each row opened the web app in the phone's
+ * browser before; the server answers all three over the app's own connection, so they are done
+ * here, where the Person already is.
  */
-const IN_BROWSER = [
+const IN_PLACE = [
   {
     title: 'Integrations',
-    detail: 'Connect services in your browser.',
-    address: connectionsAddress,
+    detail: 'The services Vivid can use for you.',
+    over: Over.Integrations(),
   },
-  { title: 'Rules', detail: 'What Vivid must ask about first.', address: rulesAddress },
-  { title: 'Record', detail: 'What Vivid did, and for whom.', address: recordAddress },
-] as const
-
-/** What is open over Settings. One thing at a time. */
-type Over = Data.TaggedEnum<{ Nothing: {}; Zone: {}; Devices: {}; Customise: {} }>
-const Over = Data.taggedEnum<Over>()
+  { title: 'Rules', detail: 'What Vivid must ask about first.', over: Over.Rules() },
+  { title: 'Record', detail: 'What Vivid did, and for whom.', over: Over.Record() },
+] as const satisfies ReadonlyArray<{ title: string; detail: string; over: Over }>
 
 /**
  * Settings: the Person's own preferences and what Vivid has kept about them, which are the same
@@ -112,7 +125,7 @@ export function Settings() {
             onPress={() => setOver(Over.Devices())}
           />
         </Section>
-        <Shared workspace={me.workspace} onPeople={() => go.navigate('People')} />
+        <Shared workspace={me.workspace} onPeople={() => go.navigate('People')} onOpen={setOver} />
         <Section title="Account">
           <Row title="Sign out" danger onPress={leave} />
         </Section>
@@ -120,6 +133,9 @@ export function Settings() {
       {Over.$is('Devices')(over) && <Devices onClose={close} />}
       {Over.$is('Zone')(over) && <Zone onClose={close} />}
       {Over.$is('Customise')(over) && <Customise onClose={close} />}
+      {Over.$is('Integrations')(over) && <Integrations onClose={close} />}
+      {Over.$is('Rules')(over) && <Rules onClose={close} />}
+      {Over.$is('Record')(over) && <Record onClose={close} />}
     </Screen>
   )
 }
@@ -207,44 +223,36 @@ function Sharing({ workspace, onPeople }: { workspace: Workspace; onPeople: () =
 
 /**
  * What belongs to the workspace the Person is working in, under that workspace's name as the web
- * app has it. Connections, rules and the record exist in a Company and in a Person's own space
- * alike and are done in the web app, so those rows leave for the browser and are marked as
- * leaving.
+ * app has it. Integrations, rules and the record exist in a Company and in a Person's own space
+ * alike; each row opens its sheet over this screen (`IN_PLACE`), and none of them leaves the app.
  */
-function Shared({ workspace, onPeople }: { workspace: Workspace; onPeople: () => void }) {
-  const data = useLiveData()
-  const [unopened, setUnopened] = useState<Option.Option<string>>(Option.none())
-
-  /** Hands an address to the phone's browser, and says so here if the phone would not take it. */
-  const open = (address: string) => {
-    setUnopened(Option.none())
-    void Linking.openURL(address).then(
-      () => undefined,
-      () => setUnopened(Option.some('That page could not be opened in your browser.')),
-    )
-  }
-
+function Shared({
+  workspace,
+  onPeople,
+  onOpen,
+}: {
+  workspace: Workspace
+  onPeople: () => void
+  /** Opens one of the workspace's sheets over Settings. */
+  onOpen: (over: Over) => void
+}) {
   return (
-    <>
-      {Option.isSome(unopened) && <Notice message={unopened.value} />}
-      <Section
-        title={Workspace.match(workspace, {
-          Personal: () => 'Your space',
-          Company: ({ company }) => company.name,
-        })}
-      >
-        <Sharing workspace={workspace} onPeople={onPeople} />
-        {IN_BROWSER.map((page) => (
-          <Row
-            key={page.title}
-            outside
-            title={page.title}
-            detail={page.detail}
-            onPress={() => open(page.address(data.session.server))}
-          />
-        ))}
-      </Section>
-    </>
+    <Section
+      title={Workspace.match(workspace, {
+        Personal: () => 'Your space',
+        Company: ({ company }) => company.name,
+      })}
+    >
+      <Sharing workspace={workspace} onPeople={onPeople} />
+      {IN_PLACE.map((sheet) => (
+        <Row
+          key={sheet.title}
+          title={sheet.title}
+          detail={sheet.detail}
+          onPress={() => onOpen(sheet.over)}
+        />
+      ))}
+    </Section>
   )
 }
 

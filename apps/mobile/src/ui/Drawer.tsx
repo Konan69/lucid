@@ -85,7 +85,9 @@ export function Drawer({
         scheduleOnRN(settleDrawer, open)
       })
 
-  const opening = drag().activeOffsetX(SIDEWAYS).enabled(reachable && !opened)
+  const opening = drag()
+    .activeOffsetX(SIDEWAYS)
+    .enabled(reachable && !opened)
   const closing = Gesture.Exclusive(
     drag().activeOffsetX([-SIDEWAYS, SIDEWAYS]),
     Gesture.Tap().onEnd(() => {
