@@ -12,6 +12,8 @@ import { companyHandlers } from '../companies/handlers.ts'
 import { codeHandlers } from '../code/handlers.ts'
 import { computerHandlers } from '../computers/handlers.ts'
 import { connectionHandlers } from '../connections/handlers.ts'
+import { draftHandlers } from '../drafts/handlers.ts'
+import { draftStoreLayer } from '../drafts/store.ts'
 import { inputHandlers } from '../inputs/handlers.ts'
 import { libraryHandlers } from '../library/handlers.ts'
 import { memoryHandlers } from '../memory/handlers.ts'
@@ -47,11 +49,12 @@ export const rpcHandlersLayer = VividRpc.toLayer({
   ...projectHandlers,
   ...libraryHandlers,
   ...connectionHandlers,
+  ...draftHandlers,
   ...memoryHandlers,
   ...skillHandlers,
   ...computerHandlers,
   ...searchHandlers,
-})
+}).pipe(Layer.provide(draftStoreLayer))
 
 /**
  * The live endpoint: one WebSocket per client, carrying every `Watch…` subscription and every
