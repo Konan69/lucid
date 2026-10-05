@@ -1,7 +1,7 @@
 import type { Envelope, ErrorEvent, Transport } from '@sentry/core'
 import * as Option from 'effect/Option'
 import { describe, expect, it } from 'vitest'
-import { guarded, outbound, place, scrub, scrubBreadcrumb } from './scrub'
+import { REMOVED, file, guarded, outbound, place, scrub, scrubBreadcrumb } from './scrub.ts'
 
 /** What a Person wrote. None of it may be anywhere in a report that leaves. */
 const SECRET = 'meet Ada at the old harbour'
@@ -9,7 +9,7 @@ const SECRET = 'meet Ada at the old harbour'
 /** A report as the SDK builds one, with the Person's words in every place the SDK can put them. */
 const reported: ErrorEvent = {
   type: undefined,
-  event_id: 'a3f1',
+  event_id: 'a3f1a3f1a3f1a3f1a3f1a3f1a3f1a3f1',
   timestamp: 1_790_000_000,
   level: 'error',
   platform: 'javascript',
@@ -22,7 +22,7 @@ const reported: ErrorEvent = {
   user: { id: 'person-1', email: 'ada@example.com', username: 'Ada', ip_address: '10.0.0.7' },
   extra: { draft: SECRET },
   request: {
-    url: `https://vivid.example/thread/7?q=${SECRET}#${SECRET}`,
+    url: `https://vivid.example/t/7?q=${SECRET}#${SECRET}`,
     data: { text: SECRET },
     cookies: { session: SECRET },
     query_string: `q=${SECRET}`,
@@ -30,7 +30,7 @@ const reported: ErrorEvent = {
   },
   tags: { 'event.process': 'renderer', thread: SECRET },
   contexts: {
-    os: { name: 'iOS', version: '19.1' },
+    os: { name: 'iOS', version: '19.1', kernel_version: SECRET },
     device: { model: 'iPhone17,1', name: SECRET },
     state: { state: { type: 'redux', value: { draft: SECRET } } },
   },
@@ -43,7 +43,7 @@ const reported: ErrorEvent = {
         stacktrace: {
           frames: [
             {
-              filename: `https://vivid.example/assets/index.js?v=${SECRET}`,
+              filename: `https://vivid.example/assets/index-6j2QNZhH.js?v=${SECRET}`,
               function: 'decode',
               lineno: 12,
               colno: 40,
@@ -67,12 +67,12 @@ const reported: ErrorEvent = {
       data: {
         method: 'POST',
         status_code: 500,
-        url: `/api/threads/7/messages?text=${SECRET}`,
+        url: `/api/vivid/threads/7/messages?text=${SECRET}`,
         'url.query': SECRET,
         request_body_size: 31,
       },
     },
-    { category: 'navigation', data: { from: `/a?x=${SECRET}`, to: `/b#${SECRET}` } },
+    { category: 'navigation', data: { from: `/t/7?x=${SECRET}`, to: `/routines#${SECRET}` } },
   ],
 }
 
@@ -91,10 +91,7 @@ describe('scrub', () => {
     expect(sent.extra).toBeUndefined()
     expect(sent.message).toBeUndefined()
     expect(sent.logentry).toBeUndefined()
-    expect(sent.request).toEqual({
-      url: '/thread/7',
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-    })
+    expect(sent.request).toEqual({ url: '/t/:id', headers: { 'User-Agent': 'Mozilla/5.0' } })
   })
 
   it('keeps the kind of error and where it happened', () => {
@@ -106,7 +103,7 @@ describe('scrub', () => {
           stacktrace: {
             frames: [
               {
-                filename: '/assets/index.js',
+                filename: '/assets/index-6j2QNZhH.js',
                 function: 'decode',
                 lineno: 12,
                 colno: 40,
@@ -130,15 +127,205 @@ describe('scrub', () => {
     })
   })
 
-  it('keeps a request and a move between screens, without their queries, and no other breadcrumb', () => {
+  it('keeps a request and a move between screens as the app’s own routes, and no other breadcrumb', () => {
     expect(sent.breadcrumbs).toEqual([
       {
         category: 'fetch',
         type: 'http',
-        data: { method: 'POST', status_code: 500, url: '/api/threads/7/messages' },
+        data: { method: 'POST', status_code: 500, url: '/api/vivid' },
       },
-      { category: 'navigation', data: { from: '/a', to: '/b' } },
+      { category: 'navigation', data: { from: '/t/:id', to: '/routines' } },
     ])
+  })
+})
+
+describe('a path is kept only as a file of the build', () => {
+  it('keeps the main and preload bundles as their place in the archive, wherever the archive is', () => {
+    expect(
+      file('/Users/ada/Applications/Vivid.app/Contents/Resources/app.asar/dist/main/main.cjs'),
+    ).toBe('dist/main/main.cjs')
+    expect(
+      file(
+        'C:\\Users\\Ada Lovelace\\AppData\\Local\\Programs\\vivid\\resources\\app.asar\\dist\\preload\\main.cjs',
+      ),
+    ).toBe('dist/preload/main.cjs')
+    expect(file('app:///dist/main/main.cjs')).toBe('dist/main/main.cjs')
+  })
+
+  it('keeps a module of Node or Electron, and a script of the pages the window draws', () => {
+    expect(file('node:internal/process/task_queues')).toBe('node:internal/process/task_queues')
+    expect(file('https://ada:pw@vivid.example:8443/assets/chevron-right-BBgoygqL.js?x=1')).toBe(
+      '/assets/chevron-right-BBgoygqL.js',
+    )
+  })
+
+  it.each([
+    ['a network share', '\\\\Ada-PC\\private\\main.js'],
+    ['a folder outside the home folder', '/opt/Ada/main.js'],
+    ['a path with its slashes escaped', '/Users%2FAda%2Fmain.js'],
+    ['another file in the archive', '/opt/Vivid/resources/app.asar/dist/main/ada.cjs'],
+    ['a module that only starts like one of Node’s', 'node:Ada/Private'],
+    ['a path escaped wrongly', '/assets/%E0%A4%A.js'],
+    ['a hundred kilobytes', `/assets/${'a'.repeat(100_000)}-6j2QNZhH.js`],
+  ])('removes %s', (_, path) => {
+    expect(file(path)).toBe(REMOVED)
+  })
+})
+
+describe('an address is kept only as one of the app’s routes', () => {
+  it('replaces the part of a route that changes', () => {
+    expect(place('https://vivid.example/t/8f2c?settings=memory')).toBe('/t/:id')
+    expect(place('/projects/ada%40example.com')).toBe('/projects/:id')
+    expect(place('/invite/Ada%20Lovelace')).toBe('/invite/:id')
+    expect(place('/')).toBe('/')
+    expect(place('/api/auth/sign-in/email?email=ada@example.com')).toBe('/api/auth')
+  })
+
+  it.each([
+    ['an address the app has no route for', '/thread/ada%40example.com'],
+    ['an api the server does not have', '/api/ada/private'],
+    ['a route with more under it', '/t/7/ada@example.com'],
+    ['a hundred kilobytes', `/t/${'a'.repeat(100_000)}`],
+  ])('removes %s', (_, address) => {
+    expect(place(address)).toBe(REMOVED)
+  })
+})
+
+describe('what names a Person or their machine', () => {
+  /** A report whose only content is the places a name had been getting through. */
+  const named: ErrorEvent = {
+    type: undefined,
+    release: 'Ada Lovelace',
+    dist: 'ada private',
+    environment: 'Ada',
+    fingerprint: ['{{ default }}', 'ada@example.com'],
+    sdk: {
+      name: 'sentry.javascript.react',
+      version: '11.1.0',
+      integrations: ['Dedupe', 'AdaSecret'],
+      packages: [{ name: 'npm:@sentry/react', version: 'Ada 1' }],
+      settings: { infer_ip: 'auto' },
+    },
+    tags: { 'event.process': 'Ada Private', 'expo.updates.channel': 'ada private' },
+    contexts: {
+      os: { name: 'Ada OS', version: 'ada', build: 'ada private' },
+      browser: { name: 'Ada', version: '1.2.3' },
+    },
+    debug_meta: {
+      images: [
+        {
+          type: 'sourcemap',
+          debug_id: 'c0ffee00-0000-4000-8000-000000000001',
+          code_file: `https://ada:pw@vivid.example/assets/index-6j2QNZhH.js?draft=${SECRET}#${SECRET}`,
+        },
+        {
+          type: 'macho',
+          debug_id: 'ada private',
+          image_addr: 'ada',
+          code_file: '/Users/ada/Library/Developer/Vivid.app/Frameworks/hermes.framework/hermes',
+        },
+      ],
+    },
+    exception: {
+      values: [
+        {
+          type: 'Error: ada@example.com',
+          module: '/Users/Ada/private',
+          mechanism: { type: 'ada@example.com', source: 'ada private' },
+          stacktrace: {
+            frames: [
+              {
+                filename: '/Users/ada/Applications/Vivid.app/Contents/Resources/app.asar/x.js',
+                abs_path: 'file:///home/ada/vivid/dist/main/main.cjs',
+                module: 'C:\\Users\\Ada Lovelace\\AppData\\Local\\Programs\\vivid\\main',
+                function: 'send("ada@example.com")',
+                platform: 'ada',
+                instruction_addr: 'ada',
+                addr_mode: 'ada',
+                debug_id: 'ada private',
+              },
+              { function: 'Object.<anonymous>', module: 'async App' },
+              { function: '?' },
+            ],
+          },
+        },
+      ],
+    },
+  }
+  const sent = scrub(named)
+  const wire = JSON.stringify(sent)
+
+  it('leaves no trace of the name anywhere', () => {
+    expect(wire).not.toMatch(/ada|lovelace|vivid\.example|Users|home|private/iu)
+  })
+
+  it('drops a fingerprint that is not the SDK default', () => {
+    expect(sent.fingerprint).toBeUndefined()
+    expect(scrub({ type: undefined, fingerprint: ['{{ default }}'] }).fingerprint).toEqual([
+      '{{ default }}',
+    ])
+  })
+
+  it('rebuilds the debug images from their kind, their id and which file of the build they are', () => {
+    expect(sent.debug_meta).toEqual({
+      images: [
+        {
+          type: 'sourcemap',
+          debug_id: 'c0ffee00-0000-4000-8000-000000000001',
+          code_file: '/assets/index-6j2QNZhH.js',
+        },
+        { type: 'macho', debug_id: REMOVED, image_addr: REMOVED, code_file: REMOVED },
+      ],
+    })
+  })
+
+  it('keeps a name out of code only when it is shaped like one', () => {
+    expect(sent.exception).toEqual({
+      values: [
+        {
+          type: REMOVED,
+          module: REMOVED,
+          mechanism: { type: REMOVED, source: REMOVED },
+          stacktrace: {
+            frames: [
+              {
+                filename: REMOVED,
+                abs_path: REMOVED,
+                module: REMOVED,
+                function: REMOVED,
+                platform: REMOVED,
+                instruction_addr: REMOVED,
+                addr_mode: REMOVED,
+                debug_id: REMOVED,
+              },
+              { function: 'Object.<anonymous>', module: 'async App' },
+              { function: '?' },
+            ],
+          },
+        },
+      ],
+    })
+  })
+
+  it('keeps of the SDK’s account of itself only its own words, and never lets it ask for the address', () => {
+    expect(sent.sdk).toEqual({
+      name: 'sentry.javascript.react',
+      version: '11.1.0',
+      integrations: ['Dedupe'],
+      packages: [{ name: 'npm:@sentry/react', version: REMOVED }],
+      settings: { infer_ip: 'never' },
+    })
+  })
+
+  it('keeps a tag, a context and the build’s names only by their shape', () => {
+    expect(sent.release).toBe(REMOVED)
+    expect(sent.dist).toBe(REMOVED)
+    expect(sent.environment).toBe(REMOVED)
+    expect(sent.tags).toEqual({ 'event.process': REMOVED, 'expo.updates.channel': REMOVED })
+    expect(sent.contexts).toEqual({
+      os: { name: REMOVED, version: REMOVED, build: REMOVED },
+      browser: { name: REMOVED, version: '1.2.3' },
+    })
   })
 })
 
@@ -149,12 +336,20 @@ describe('the one message that may leave', () => {
     message: "'renderer' process exited with 'crashed'",
   }
 
-  it('keeps the sentence the SDK writes when a window ends', () => {
+  it('keeps the sentence the SDK writes when a window or a helper ends', () => {
     expect(scrub(ended).message).toBe("'renderer' process exited with 'crashed'")
+    expect(scrub({ ...ended, message: "'GPU' process exited with 'oom'" }).message).toBe(
+      "'GPU' process exited with 'oom'",
+    )
   })
 
-  it('drops a message that only starts like it', () => {
-    expect(scrub({ ...ended, message: `${ended.message}: ${SECRET}` }).message).toBeUndefined()
+  it.each([
+    ['a process Electron has no name for', "'Ada Private' process exited with 'secret'"],
+    ['a reason Electron has no name for', "'renderer' process exited with 'ada@example.com'"],
+    ['a sentence that only starts like it', `'renderer' process exited with 'crashed': ${SECRET}`],
+    ['any other sentence', SECRET],
+  ])('drops %s', (_, message) => {
+    expect(scrub({ ...ended, message }).message).toBeUndefined()
   })
 })
 
@@ -163,142 +358,26 @@ describe('scrubBreadcrumb', () => {
     expect(scrubBreadcrumb({ category: 'console', message: SECRET })).toBeNull()
   })
 
-  it('cuts the query from an xhr address', () => {
+  it('keeps of an xhr only its method and which route it went to', () => {
     expect(
-      scrubBreadcrumb({ category: 'xhr', data: { method: 'GET', url: `/api/x?q=${SECRET}` } }),
-    ).toEqual({ category: 'xhr', data: { method: 'GET', url: '/api/x' } })
-  })
-})
-
-describe('place', () => {
-  it('cuts at the query or the fragment, whichever comes first', () => {
-    expect(place('/a/b?c=d#e')).toBe('/a/b')
-    expect(place('/a/b#e?c=d')).toBe('/a/b')
-    expect(place('/a/b')).toBe('/a/b')
-  })
-
-  it('cuts the scheme, the credentials and the host from an address', () => {
-    expect(place('https://ada:pw@vivid.example:8443/thread/7?x=1')).toBe('/thread/7')
-    expect(place('app:///index.android.bundle')).toBe('/index.android.bundle')
-  })
-
-  it('leaves a name that is not a path as it is', () => {
-    expect(place('node:internal/process/task_queues')).toBe('node:internal/process/task_queues')
-    expect(place('com.facebook.react.bridge.JavaModuleWrapper')).toBe(
-      'com.facebook.react.bridge.JavaModuleWrapper',
-    )
-  })
-})
-
-describe('what names a Person or their machine', () => {
-  /** A report whose only content is the three places a name or a query had been getting through. */
-  const named: ErrorEvent = {
-    type: undefined,
-    fingerprint: ['{{ default }}', 'ada@example.com'],
-    debug_meta: {
-      images: [
-        {
-          type: 'sourcemap',
-          debug_id: 'c0ffee00-0000-4000-8000-000000000001',
-          code_file: `https://ada:pw@vivid.example/assets/index.js?draft=${SECRET}#${SECRET}`,
-        },
-        {
-          type: 'macho',
-          debug_id: 'c0ffee00-0000-4000-8000-000000000002',
-          image_addr: '0x100000000',
-          code_file: '/Users/ada/Library/Developer/Vivid.app/Frameworks/hermes.framework/hermes',
-        },
-      ],
-    },
-    exception: {
-      values: [
-        {
-          type: 'Error',
-          stacktrace: {
-            frames: [
-              {
-                filename:
-                  '/Users/ada/Applications/Vivid.app/Contents/Resources/app.asar/dist/main/main.cjs',
-                abs_path: 'file:///home/ada/vivid/dist/main/main.cjs',
-                module:
-                  'C:\\Users\\Ada Lovelace\\AppData\\Local\\Programs\\vivid\\resources\\app.asar\\dist\\main\\main',
-                function: 'boot',
-              },
-              {
-                filename: `https://ada:pw@vivid.example/assets/index.js?draft=${SECRET}`,
-                abs_path: '/var/mobile/Containers/Bundle/Application/1F2E/Vivid.app/main.jsbundle',
-                module: '/data/user/0/work.vivid.mobile/files/.expo-internal/bundle',
-              },
-            ],
-          },
-        },
-      ],
-    },
-  }
-  const sent = scrub(named)
-  const wire = JSON.stringify(sent)
-
-  it('drops a fingerprint that is not the SDK default', () => {
-    expect(sent.fingerprint).toBeUndefined()
-    expect(wire).not.toContain('ada@example.com')
-    expect(scrub({ type: undefined, fingerprint: ['{{ default }}'] }).fingerprint).toEqual([
-      '{{ default }}',
-    ])
-  })
-
-  it('rebuilds the debug images from their kind, their id and where the file is in the app', () => {
-    expect(sent.debug_meta).toEqual({
-      images: [
-        {
-          type: 'sourcemap',
-          debug_id: 'c0ffee00-0000-4000-8000-000000000001',
-          code_file: '/assets/index.js',
-        },
-        {
-          type: 'macho',
-          debug_id: 'c0ffee00-0000-4000-8000-000000000002',
-          image_addr: '0x100000000',
-          code_file: 'Frameworks/hermes.framework/hermes',
-        },
-      ],
-    })
-  })
-
-  it('names every frame by its place in the app, never by whose machine it is on', () => {
-    expect(wire).not.toMatch(/ada|lovelace|vivid\.example|Users|home/iu)
-    expect(sent.exception).toEqual({
-      values: [
-        {
-          type: 'Error',
-          stacktrace: {
-            frames: [
-              {
-                filename: 'dist/main/main.cjs',
-                abs_path: 'vivid/dist/main/main.cjs',
-                module: 'dist/main/main',
-                function: 'boot',
-              },
-              {
-                filename: '/assets/index.js',
-                abs_path: 'main.jsbundle',
-                module: 'files/.expo-internal/bundle',
-              },
-            ],
-          },
-        },
-      ],
-    })
+      scrubBreadcrumb({
+        category: 'xhr',
+        type: SECRET,
+        data: { method: SECRET, url: `/api/library/${SECRET}?q=${SECRET}` },
+      }),
+    ).toEqual({ category: 'xhr', type: REMOVED, data: { method: REMOVED, url: '/api/library' } })
   })
 })
 
 describe('what reaches the transport', () => {
   const sentAt = '2026-10-05T10:00:00.000Z'
+  const id = 'a3f1a3f1a3f1a3f1a3f1a3f1a3f1a3f1'
   /** An envelope as the SDK builds one for a report that had a screenshot attached after `beforeSend`. */
   const withAttachment: Envelope = [
     {
-      event_id: 'a3f1',
+      event_id: id,
       sent_at: sentAt,
-      dsn: 'https://key@o1.ingest.sentry.io/2',
+      dsn: 'https://0123456789abcdef0123456789abcdef@o1.ingest.us.sentry.io/2',
       trace: { trace_id: 't1', public_key: 'key', transaction: `/thread/${SECRET}` },
     },
     [
@@ -308,14 +387,24 @@ describe('what reaches the transport', () => {
   ]
 
   it('keeps the report, scrubbed again, and drops what rides beside it', () => {
-    const kept = Option.getOrThrow(outbound(withAttachment))
-    expect(kept[1].map(([header]) => header.type)).toEqual(['event'])
-    expect(kept[0]).toEqual({
-      event_id: 'a3f1',
+    const allowed = Option.getOrThrow(outbound(withAttachment))
+    expect(allowed[1].map(([header]) => header.type)).toEqual(['event'])
+    expect(allowed[0]).toEqual({
+      event_id: id,
       sent_at: sentAt,
-      dsn: 'https://key@o1.ingest.sentry.io/2',
+      dsn: 'https://0123456789abcdef0123456789abcdef@o1.ingest.us.sentry.io/2',
     })
-    expect(JSON.stringify(kept)).not.toContain(SECRET)
+    expect(JSON.stringify(allowed)).not.toContain(SECRET)
+  })
+
+  it('keeps a header only by its shape', () => {
+    const allowed = Option.getOrThrow(
+      outbound([
+        { event_id: SECRET, sent_at: SECRET, dsn: SECRET },
+        [[{ type: 'event' }, reported]],
+      ]),
+    )
+    expect(allowed[0]).toEqual({ event_id: REMOVED, sent_at: REMOVED, dsn: REMOVED })
   })
 
   it('lets through nothing that is not an error report', () => {
