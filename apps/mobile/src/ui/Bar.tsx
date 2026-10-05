@@ -1,5 +1,5 @@
 import type { PersonSummary } from '@vivid/contracts'
-import { useNavigation, type ParamListBase } from '@react-navigation/native'
+import { useIsFocused, useNavigation, type ParamListBase } from '@react-navigation/native'
 import {
   useAnimatedHeaderHeight,
   type NativeStackHeaderItem,
@@ -7,15 +7,16 @@ import {
   type NativeStackNavigationOptions,
   type NativeStackNavigationProp,
 } from '@react-navigation/native-stack'
-import { PanelLeft, type LucideIcon } from 'lucide-react-native'
-import { useLayoutEffect, useRef } from 'react'
+import { PanelLeft, Phone, type LucideIcon } from 'lucide-react-native'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { Animated, Platform, useWindowDimensions, View } from 'react-native'
 import { openDrawer } from '../data/drawer'
 import type { Lead } from '../data/lead'
 import type { Stand } from '../data/stand'
+import { useAppearance } from '../data/vivid'
 import { Faces } from './Avatar'
 import { GLASS_SUPPORTED } from './Glass'
-import { Capsule, Floating, type Origin } from './Presence'
+import { fronting, type Front, type Origin } from './Presence'
 import { IconButton, Label, TARGET, type Tone } from './ui'
 
 /**
@@ -24,8 +25,8 @@ import { IconButton, Label, TARGET, type Tone } from './ui'
  * The bar is the platform's own (`GLASS_HEADER` in `ui/stack.ts`). On iOS every action is a real
  * `UIBarButtonItem`, so on iOS 26 the system draws it, and the way back, as round liquid glass;
  * nothing here draws a button. A screen says what it wants by rendering `Bar`, `StandingBar` or
- * `VividBar`. The first two draw nothing themselves; `VividBar` draws Vivid's capsule, which
- * floats where the bar's title would be (`ui/Presence.tsx`).
+ * `VividBar`, which draw nothing themselves. `VividBar` also says what Vivid's capsule shows,
+ * which floats over the stack where the bar's title would be (`ui/Presence.tsx`).
  *
  * Ported from T3 Code mobile `src/native/StackHeader.tsx` (`NativeStackScreenOptions`,
  * `NativeHeaderToolbar`) and its uses in `src/features/settings/SettingsRouteScreen.tsx` and
@@ -341,15 +342,58 @@ const limitIn = (window: number, end: BarEnd): number =>
   Math.max(LEAST, window - 2 * roomBeside(end))
 
 /**
- * The bar of the two screens a Person meets Vivid on, Home and a Thread: Vivid's capsule in the
- * middle, saying how it stands, and at the end who else is here and what can be done. What leads
- * the bar is the screen's own option (`leadOptions`).
+ * The way to call Vivid, which ends the bar of Home and of a Thread.
  *
- * Where the bar is glass the capsule is not in it. The bar's title is left empty and the capsule
- * floats in the screen at the same place (`Floating`), where it can change shape on the UI thread
- * and take the disc that rises from the composer; this component is what draws it, so it is put
- * first inside the screen. Where the bar is solid the screen starts below it and nothing can
- * float over it, so the capsule goes in the bar's own title slot and changes at once.
+ * It does nothing yet. Vivid has no calls (`docs/22-one-product.md`, "Not in this build"), and
+ * the owner asked for the button to stand in its place before they exist (5 October 2026: "do
+ * nothing for now but it should be there"). It is drawn as any other bar button, not dimmed: it
+ * is part of the bar's shape, and a screen reader is told plainly that it is not available. When
+ * calls are built, this is the one place that starts them.
+ */
+const callAction = (name: string): BarAction => ({
+  symbol: 'phone',
+  icon: Phone,
+  label: `Call ${name}. Not available yet`,
+  disabled: false,
+  onPress: () => undefined,
+})
+
+/**
+ * Tells the capsule over the stack how Vivid stands on this screen (`fronting`, `ui/Presence.tsx`),
+ * for as long as this screen is the one in front.
+ *
+ * It is said in a layout effect, before paint, for the reason a screen's bar options are
+ * (`useBar`): what a screen says cannot be handed up while it renders, and said any later the
+ * capsule would be seen for a frame as the last screen left it. It is said again only when what
+ * it would show has changed. A screen that is covered, or gone, takes back only what it said
+ * itself, so it can never clear what the screen now in front has already said.
+ */
+function useFronting(said: Front) {
+  const focused = useIsFocused()
+  // This screen's own token. State, not a ref: it is read while rendering the effects below.
+  const [owner] = useState(() => Symbol('screen'))
+  const latest = useRef(said)
+  useLayoutEffect(() => {
+    latest.current = said
+  })
+  const signature = JSON.stringify([said.stand, said.limit])
+  const { button, sends } = said.origin
+  useLayoutEffect(() => {
+    if (focused) fronting.say(owner, latest.current)
+    else fronting.leave(owner)
+  }, [focused, owner, signature, button, sends])
+  useLayoutEffect(() => () => fronting.leave(owner), [owner])
+}
+
+/**
+ * The bar of the two screens a Person meets Vivid on, Home and a Thread: the way to the drawer
+ * first (the screen's own option, `leadOptions`), Vivid's capsule in the middle, and at the end
+ * who else is here, what can be done, and the way to call Vivid.
+ *
+ * The capsule is not in the bar. The bar's title is left empty and one capsule floats over the
+ * whole stack in its place (`Presence`), where it can be pressed, change shape on the UI thread
+ * and take the disc that rises from the composer. This says what that capsule should show while
+ * the screen is in front, and draws nothing itself.
  *
  * `origin` is the composer on the same screen, where a send leaves from.
  */
@@ -359,22 +403,20 @@ export function VividBar({
   present,
   actions,
 }: BarEnd & { stand: Stand; origin: Origin }) {
-  const limit = limitIn(useWindowDimensions().width, { present, actions })
+  const vivid = useAppearance()
+  const end: BarEnd = { present, actions: [...actions, callAction(vivid.name)] }
+  const limit = limitIn(useWindowDimensions().width, end)
   const people = present.map((person) => [person.id, person.name, person.image])
-  // The capsule is part of the options only where it sits in the bar; where it floats, a change
-  // in how Vivid stands must not hand the navigator new options.
-  const titled = GLASS_SUPPORTED ? [] : [stand, limit]
-  useBar(JSON.stringify([titled, people, shownOf(actions)]), actions, (press) => ({
+  useBar(JSON.stringify([people, shownOf(end.actions)]), end.actions, (press) => ({
     // Named, not left to the screen's own options: `setOptions` merges, and the same route can
     // have drawn a plain bar with a title first (a Thread that was not there, then one that is).
     title: '',
-    headerTitle: GLASS_SUPPORTED
-      ? undefined
-      : () => <Capsule stand={stand} morphs={false} limit={limit} />,
+    headerTitle: undefined,
     unstable_headerSubtitle: undefined,
-    ...endOptions({ present, actions }, press),
+    ...endOptions(end, press),
   }))
-  return GLASS_SUPPORTED ? <Floating stand={stand} limit={limit} origin={origin} /> : null
+  useFronting({ stand, origin, limit })
+  return null
 }
 
 /**

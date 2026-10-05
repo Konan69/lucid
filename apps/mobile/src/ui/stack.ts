@@ -63,11 +63,12 @@ export const GLASS_HEADER = {
 /**
  * The bar of Home and a Thread, the two screens with Vivid's capsule in the middle (`VividBar`).
  *
- * The title is empty for good: where the bar is glass the capsule floats in its place, and where
- * it is solid the capsule is the title's own element. The centre is the capsule's, so the bar is
- * the system's ordinary `navigator` layout, not `editor`, which stands a title at the leading
- * edge; the reference drops `editor` in the same way wherever it wants a centred title
- * (`SHEET_GLASS_HEADER_OPTIONS`). Android centres a title only when asked.
+ * The title is empty for good: the capsule floats over the stack in its place
+ * (`ui/Presence.tsx`). The centre is the capsule's, so the bar is the system's ordinary
+ * `navigator` layout, not `editor`, which stands a title at the leading edge; the reference
+ * drops `editor` in the same way wherever it wants a centred title
+ * (`SHEET_GLASS_HEADER_OPTIONS`). A screen that draws a plain titled bar on one of these routes
+ * (a Thread that is not there) gets that title centred too, on Android only when asked.
  */
 export const FRONT_HEADER = {
   ...GLASS_HEADER,

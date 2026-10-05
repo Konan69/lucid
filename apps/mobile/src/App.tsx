@@ -40,10 +40,11 @@ import { Texting } from './screen/settings/Texting'
 import { People } from './screen/settings/People'
 import { ThemeProvider, useTheme } from './theme'
 import { leadOptions } from './ui/Bar'
+import { Presence } from './ui/Presence'
 import { Recover } from './ui/Recover'
 import { BESIDE, FRONT_HEADER, GLASS_HEADER, navigationTheme, pushAnimation } from './ui/stack'
 import { Button, Face, GUTTER, Label } from './ui/ui'
-import { MeProvider, type Routes } from './workspace'
+import { MeProvider, useGo, type Routes } from './workspace'
 
 const Stack = createNativeStackNavigator<Routes>()
 
@@ -237,6 +238,16 @@ const threadOptions = (
 }
 
 /**
+ * Vivid's capsule over the stack (`ui/Presence.tsx`), and where the places in its menu lead. It
+ * is outside every screen, so `useGo` here is the stack's own container: it goes to places, and
+ * the screen in front is what they are pushed over.
+ */
+function Vivid() {
+  const go = useGo()
+  return <Presence onGo={(place) => go.navigate(place)} />
+}
+
+/**
  * The signed-in app: one native stack, with the drawer around it (`screen/Side.tsx`). Pushing,
  * popping and the back swipe are the platform's own; nothing here animates a screen. The bar is
  * the platform's too (`GLASS_HEADER`): its way back and its buttons are the system's, liquid glass
@@ -244,8 +255,8 @@ const threadOptions = (
  * title says so itself (`ui/Bar.tsx`); one whose bar is only its name has it here.
  *
  * Home and a Thread are the two screens a Person meets Vivid on, and they share one bar
- * (`FRONT_HEADER`): the way to the drawer first, Vivid's capsule in the middle, and the screen's
- * actions at the end.
+ * (`FRONT_HEADER`): the way to the drawer first, Vivid's capsule in the middle (one capsule,
+ * drawn over the stack: `Vivid` below), and the way to call Vivid at the end.
  *
  * Routes are flat on this one stack, never a nested navigator: one navigation controller is what
  * lets the platform carry a bar from one screen to the next (T3 Code mobile `src/Stack.tsx`, the
@@ -309,6 +320,7 @@ function Shell() {
           <Stack.Screen name="Texting" component={Texting} options={{ title: 'Text Vivid' }} />
           <Stack.Screen name="Notifications" component={Notifications} options={{ title: '' }} />
         </Stack.Navigator>
+        <Vivid />
       </Side>
     </NavigationContainer>
   )

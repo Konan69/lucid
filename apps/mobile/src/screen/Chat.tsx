@@ -52,7 +52,6 @@ import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 import { useGo, useMe, type Routes } from '../workspace'
 import { Message } from './chat/Message'
-import { useComputerAction } from './Computer'
 import { Share } from './chat/Share'
 
 /**
@@ -141,8 +140,8 @@ const audienceWords = (thread: Thread): string =>
 /**
  * The top of a Thread (`VividBar`): Vivid in the middle, saying how it is doing right now
  * (thinking, waiting for the Person, or simply there), or who else is writing (`standIn`). At
- * the end of the bar: who else is looking, who the Thread is shared with, and the way to Vivid's
- * computer.
+ * the end of the bar: who else is looking, who the Thread is shared with, and the way to call
+ * Vivid. The way to Vivid's computer is in Vivid's own menu, under its capsule.
  *
  * The Thread's title is not here. The bar's middle is Vivid's, as the owner asked, and the title
  * is where the Person chose the Thread: its row in the drawer.
@@ -163,7 +162,6 @@ function Top({
   onShare: () => void
 }) {
   const me = useMe()
-  const computer = useComputerAction()
   const others = present.filter((seen) => seen.person.id !== me.person.id)
   const typing = others.filter((seen) => seen.typing)
   const attention: Thread['attention'] = working
@@ -193,8 +191,8 @@ function Top({
       origin={origin}
       present={others.map((seen) => seen.person)}
       actions={Option.match(sharing, {
-        onNone: () => [computer],
-        onSome: (share) => [share, computer],
+        onNone: () => NO_ACTIONS,
+        onSome: (share) => [share],
       })}
     />
   )
