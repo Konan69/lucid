@@ -234,7 +234,7 @@ export function Composer({
       onStop()
       return
     }
-    // Counted on the UI thread's own value, so the disc leaves in the frame of the press.
+    // Counted in a value the UI thread reads, so the disc leaves without waiting for a render.
     origin.sends.set((count) => count + 1)
     onSend()
   }

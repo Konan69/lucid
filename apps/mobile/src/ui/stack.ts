@@ -77,7 +77,9 @@ export const FRONT_HEADER = {
 } satisfies NativeStackNavigationOptions
 
 /**
- * How a Thread arrives beside Home: it fades in, in a little over a fifth of a second.
+ * How a Thread arrives beside Home: it fades in. On iOS that takes a little over a fifth of a
+ * second; Android has its own fade, 150 ms, and takes no duration from here
+ * (react-native-screens `ScreenViewManager.kt`, `setTransitionDuration`).
  *
  * The two screens have the same bar and the same composer in the same places, so a push would
  * slide one copy of each out as the other slid in. A fade leaves them standing and changes only

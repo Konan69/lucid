@@ -25,9 +25,10 @@ const INSET = 28
  * first there, for real (`data/arrival.ts`); until that Thread is open Home is `Waiting`. This
  * greeting is what Home is afterwards, and what it is if that Thread could not be opened.
  *
- * It is type alone. Vivid's face is the mark at the top of this screen, which is also the way to
- * the drawer, so a second, larger face here would be decoration; the light it used to sit in is
- * gone for the same reason. Suggestion cards were removed by the owner on 3 October 2026.
+ * It is type alone. Vivid's face is in its capsule at the top of this screen, beside its name
+ * (`ui/Presence.tsx`), so a second, larger face here would be decoration; the light it used to
+ * sit in is gone for the same reason. Suggestion cards were removed by the owner on 3 October
+ * 2026.
  *
  * Nothing here moves: the screen is drawn whole.
  */

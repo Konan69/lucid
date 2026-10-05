@@ -12,6 +12,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { useReducedMotion } from 'react-native-reanimated'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { door, patienceAtom, useDoor } from './data/door'
+import { homeShown } from './data/fresh'
 import { leadOf, reachOf, type Reach } from './data/lead'
 import {
   Entry,
@@ -278,6 +279,13 @@ function Shell() {
             name="Home"
             component={Home}
             options={{ ...FRONT_HEADER, ...leadOptions('drawer') }}
+            // Home is back in view once whatever covered it has finished leaving, which is when
+            // a new Thread asked for from the drawer can take the keyboard (`data/fresh.ts`).
+            listeners={{
+              transitionEnd: (event) => {
+                if (!event.data.closing) homeShown()
+              },
+            }}
           />
           <Stack.Screen
             name="Chat"

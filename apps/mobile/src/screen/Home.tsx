@@ -3,13 +3,13 @@ import { useAppearance } from '../data/vivid'
 import type { ThreadId } from '@vivid/contracts'
 import { draftPlace, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
-import { createRef, useCallback, useState, useSyncExternalStore } from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
 import { ScrollView, View } from 'react-native'
 import { arrivalOf, homeShows, Showing, type HomeScreen } from '../data/arrival'
 import { draft, useDraft } from '../data/drafts'
+import { homeComposer } from '../data/fresh'
 import { LiveState, useLive, useLiveData } from '../data/live'
 import { Start, startThread } from '../data/threads'
-import type { ComposerEditorHandle } from '../native/composer/types'
 import { BarRoom, NOBODY, VividBar } from '../ui/Bar'
 import { Composer } from '../ui/Composer'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
@@ -19,14 +19,6 @@ import { useGo, useMe } from '../workspace'
 import { useComputerAction } from './Computer'
 import { First, Waiting } from './home/First'
 import { useScope } from './project/scope'
-
-/**
- * Home's composer, for whatever is outside Home and sends the Person here to write: the drawer's
- * "New thread" (`screen/Side.tsx`). There is one Home on the stack and it stays mounted under
- * everything, so this holds its composer for as long as the Person can write there, and nothing
- * while Home has none (a first arrival).
- */
-export const homeComposer = createRef<ComposerEditorHandle>()
 
 /**
  * Home: Vivid's greeting and somewhere to write. It is the root of the app and the first screen,
@@ -152,6 +144,7 @@ function Writing({ me, start, origin, placeholder }: WritingProps) {
         </View>
       )}
       <Composer
+        // Held where the drawer's "New thread" can reach it (`data/fresh.ts`).
         ref={homeComposer}
         origin={origin}
         value={start.draft}

@@ -128,8 +128,10 @@ const LAND = FadeIn.duration(180).delay(140).reduceMotion(ReduceMotion.System)
  *
  * `morphs` is false where the capsule sits in the system bar's own title slot (`ui/Bar.tsx`, on a
  * solid bar). The reference found that natively driven animation blanks a view the bar has taken
- * in (`src/features/home/WorkspaceConnectionTitle.tsx`, `StatusFadeIn`), so there the capsule
- * changes at once and nothing in it is animated.
+ * in (`src/features/home/WorkspaceConnectionTitle.tsx`, `StatusFadeIn`), so there nothing in the
+ * capsule is moved by the animation library: its shape and its pieces change at once, and a face
+ * in a new mood is a new face, not the old one turning (`Face` eases its tilt). The orb still
+ * draws itself, on a canvas of its own that no animated value drives.
  *
  * `slot` is where the face or the orb stands, for the disc that flies to it.
  */
@@ -155,6 +157,7 @@ export function Capsule({
     Saying: (saying) => saying.words,
   })
   const tone: Tone = Stand.$is('Saying')(stand) ? stand.tone : 'ink'
+  const mood = Stand.$is('Resting')(stand) ? stand.mood : 'neutral'
   return (
     <Animated.View
       accessible
@@ -210,12 +213,13 @@ export function Capsule({
                 />
               </Piece>
             ) : (
-              <Piece key="face" morphs={morphs} entering={APPEAR} shrinks={false}>
-                <Face
-                  size={SLOT}
-                  mood={Stand.$is('Resting')(stand) ? stand.mood : 'neutral'}
-                  label=""
-                />
+              <Piece
+                key={morphs ? 'face' : `face-${mood}`}
+                morphs={morphs}
+                entering={APPEAR}
+                shrinks={false}
+              >
+                <Face size={SLOT} mood={mood} label="" />
               </Piece>
             )}
           </Animated.View>

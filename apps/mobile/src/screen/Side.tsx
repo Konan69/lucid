@@ -4,13 +4,13 @@ import { Data, Option, Result } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { useWindowDimensions } from 'react-native'
 import { closeDrawer } from '../data/drawer'
+import { writeAfresh } from '../data/fresh'
 import type { Reach } from '../data/lead'
 import { useLiveData } from '../data/live'
 import { patchThread } from '../data/threads'
 import { Drawer, drawerWidth } from '../ui/Drawer'
 import { NameSheet } from '../ui/Sheet'
 import { useGo, useMe } from '../workspace'
-import { homeComposer } from './Home'
 import { Filing } from './home/Filing'
 import { Menu } from './home/Menu'
 import { Switcher } from './home/Switcher'
@@ -60,13 +60,16 @@ export function Side({ reach, children }: { reach: Reach; children: ReactNode })
   }
 
   /**
-   * A new Thread is Home: back to it from wherever the drawer was opened, and straight into its
-   * composer. `popTo` is the stack's own way back to a screen already on it; from Home itself it
-   * changes nothing.
+   * A new Thread is Home: back to it from wherever the drawer was opened, and into its composer
+   * (`data/fresh.ts`, which waits for Home to be back in view when it is not in front now).
+   * `popTo` is the stack's own way back to a screen already on it; from Home itself it changes
+   * nothing.
    */
   const fresh = () => {
+    const stack = go.getState()
+    const front = stack.routes[stack.index]
+    writeAfresh(front !== undefined && front.name === 'Home')
     leave(() => go.dispatch(StackActions.popTo('Home')))
-    if (homeComposer.current !== null) homeComposer.current.focus()
   }
 
   return (

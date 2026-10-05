@@ -1,5 +1,6 @@
+import { Option } from 'effect'
 import { useSyncExternalStore } from 'react'
-import { BackHandler, Keyboard } from 'react-native'
+import { BackHandler, Keyboard, type NativeEventSubscription } from 'react-native'
 import { makeMutable, ReduceMotion, withSpring } from 'react-native-reanimated'
 
 /**
@@ -33,10 +34,32 @@ export const DRAWER_SPRING = {
 let opened = false
 const listeners = new Set<() => void>()
 
+/**
+ * Android's back button, heard only while the drawer is open, where it closes the drawer and
+ * goes no further.
+ *
+ * React Native asks the newest listener first and stops at the first that answers
+ * (`Libraries/Utilities/BackHandler.android.js`). The stack listens too, from the moment it
+ * mounts, and goes back whenever it can. The drawer used to listen for the life of the app, from
+ * before the stack existed: that was enough while it could only be open over Home, where the
+ * stack has nowhere to go back to. It opens over a Thread now, and there the stack answered
+ * first and took the Thread away from under the open drawer. Listening from the moment it opens
+ * makes the drawer the newest, so it is asked first.
+ */
+let back: Option.Option<NativeEventSubscription> = Option.none()
+
+const hearBack = (): NativeEventSubscription =>
+  BackHandler.addEventListener('hardwareBackPress', () => {
+    closeDrawer()
+    return true
+  })
+
 /** Records where the drawer came to rest. Called from JavaScript, or by a gesture's end. */
 export function settleDrawer(next: boolean) {
   if (opened === next) return
   opened = next
+  if (Option.isSome(back)) back.value.remove()
+  back = next ? Option.some(hearBack()) : Option.none()
   for (const listener of listeners) listener()
 }
 
@@ -55,14 +78,6 @@ export function closeDrawer() {
   travel.value = withSpring(0, DRAWER_SPRING)
   settleDrawer(false)
 }
-
-// Android's back button closes an open drawer before it does anything else. Subscribed for the
-// life of the app, as the keyboard store is: there is one drawer and it outlives every screen.
-BackHandler.addEventListener('hardwareBackPress', () => {
-  if (!opened) return false
-  closeDrawer()
-  return true
-})
 
 const subscribe = (listener: () => void) => {
   listeners.add(listener)
