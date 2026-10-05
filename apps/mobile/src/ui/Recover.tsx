@@ -1,5 +1,6 @@
 import { Component, createContext, useContext, type ErrorInfo, type ReactNode } from 'react'
 import { reportFault } from '../data/fault'
+import { captureFault } from '../data/telemetry'
 
 interface Props {
   /** What is drawn in place of the part that broke. It can offer `useAgain()` as a way back. */
@@ -44,14 +45,14 @@ export class Recover extends Component<Props, State> {
 
   /**
    * Catching the error here hides it from everyone but the Person looking at the fallback, so it
-   * is reported to the server's log as it is caught (`data/fault.ts`).
+   * is reported as it is caught: to the server's log (`data/fault.ts`) and to Sentry
+   * (`data/telemetry.ts`).
    */
   override componentDidCatch(error: Error, info: ErrorInfo) {
     // React's types promise an `Error`, but it hands over whatever was thrown, unchanged.
-    reportFault(
-      error instanceof Error ? error : new Error(String(error)),
-      info.componentStack === undefined ? null : info.componentStack,
-    )
+    const thrown = error instanceof Error ? error : new Error(String(error))
+    reportFault(thrown, info.componentStack === undefined ? null : info.componentStack)
+    captureFault(thrown)
   }
 
   readonly again = () => this.setState({ broken: false })

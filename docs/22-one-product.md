@@ -463,7 +463,7 @@ Each step leaves a product that runs.
 8. **The Computer.** A machine per Person behind a provider boundary, with commands and a browser
    that pass through the trust loop.
 9. **The surface.** Every screen on real data on web, mobile and desktop: the search palette,
-   notifications, the empty states, device pairing and the packaged desktop build.
+   notifications, the empty states, signing in on each app and the packaged desktop build.
 
 ## Not in this build
 

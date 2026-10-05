@@ -27,7 +27,6 @@ import { NameSheet } from '../ui/Sheet'
 import { confirmDestructive, Label, Notice, Segmented, Skeleton, styles } from '../ui/ui'
 import { useGo, useMe } from '../workspace'
 import { useTheme } from '../theme'
-import { Devices } from './settings/Devices'
 import { Integrations } from './settings/Integrations'
 import { Record } from './settings/Record'
 import { Rules } from './settings/Rules'
@@ -44,7 +43,6 @@ const THEMES = [
 type Over = Data.TaggedEnum<{
   Nothing: {}
   Zone: {}
-  Devices: {}
   Customise: {}
   Integrations: {}
   Rules: {}
@@ -84,8 +82,7 @@ export function Settings() {
   const leave = () =>
     confirmDestructive({
       title: 'Sign out of this phone?',
-      detail:
-        'Your threads stay where they are. You will need a code or your password to sign in here again.',
+      detail: 'Your threads stay where they are. You will need to sign in here again.',
       action: 'Sign out',
       onConfirm: () => {
         warn()
@@ -116,21 +113,17 @@ export function Settings() {
         <Live state={settings} loading={<Skeleton rows={3} />}>
           {(value) => <Preferences settings={value} onZone={() => setOver(Over.Zone())} />}
         </Live>
-        <Section title="This phone">
-          {/* Where this phone's Vivid is means nothing to a Person; a developer checks it here. */}
-          {__DEV__ && <Row title="Server" detail={serverName(data.session.server)} />}
-          <Row
-            title="Sign in another device"
-            detail="Enter the code it shows, and it signs in as you."
-            onPress={() => setOver(Over.Devices())}
-          />
-        </Section>
+        {/* Where this phone's Vivid is means nothing to a Person; a developer checks it here. */}
+        {__DEV__ && (
+          <Section title="This phone">
+            <Row title="Server" detail={serverName(data.session.server)} />
+          </Section>
+        )}
         <Shared workspace={me.workspace} onPeople={() => go.navigate('People')} onOpen={setOver} />
         <Section title="Account">
           <Row title="Sign out" danger onPress={leave} />
         </Section>
       </ScrollView>
-      {Over.$is('Devices')(over) && <Devices onClose={close} />}
       {Over.$is('Zone')(over) && <Zone onClose={close} />}
       {Over.$is('Customise')(over) && <Customise onClose={close} />}
       {Over.$is('Integrations')(over) && <Integrations onClose={close} />}

@@ -235,6 +235,16 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.summary)],
   },
+  // The Person's own computer, not Vivid's: "your", so the line never reads as the machine
+  // Vivid keeps for itself (`use_desktop` above).
+  use_person_computer: {
+    said: {
+      running: 'Working on your computer',
+      done: 'Worked on your computer',
+      failed: 'Your computer did not do it',
+    },
+    detail: (asked) => [said(asked.summary)],
+  },
   run_code: {
     said: {
       running: 'Writing a program',

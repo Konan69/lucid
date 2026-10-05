@@ -354,3 +354,7 @@ Approval ends the Run's turn; a stopped or failed Run sends nothing, and that is
 not sent. Only a sent action without a known result is OutcomeUnknown.
 Page metadata carries an optional branded PNG attachment, omitted when genuinely absent.
 Each encoded PNG is capped at 8 MiB before device-answer and history retention.
+
+## The Person's own computer: apps
+
+Allowing a Device once lets Vivid work in any app on that Person's Windows computer, including terminals, through the Vivid desktop app. Nothing is asked after that: no per-app Approval, extra switch or app restrictions. A notice stays visible while Vivid works; Escape or Stop ends the Run. When that Run settles, the server tells its connected Device to end the notice. An offline Device simply misses that signal. Dispatch uses the existing 30-second deadline and content-free ledger and is never replayed after a lost answer. Presence and links live in one process, so the server must run as a single replica.

@@ -6,10 +6,8 @@ import { Data, Option, Schema } from 'effect'
  * a browser, a server or Better Auth to be checked.
  *
  * Signing in with Google leaves the page and comes back, so the address is the only thing that
- * survives the trip. Three marks travel in it, each put there by this module:
+ * survives the trip. Two marks travel in it, each put there by this module:
  *
- * - `signin=google`: start at once. The phone opens the browser at such an address, so the Person
- *   who pressed "Continue with Google" on the phone is not asked to press it again here.
  * - `signin=returned`: Google sign-in came back without signing anyone in. Better Auth adds
  *   `error=<code>` beside it (`redirectOnError` in better-auth 1.7.5 `dist/api/routes/callback.mjs`).
  * - `joined=google`: this is the first time this Person signed in, so there is an account that
@@ -62,12 +60,10 @@ export const SAID = {
  * Where the address stands on Google sign-in.
  *
  * - `Plain`: it says nothing about it.
- * - `Start`: it asks for Google sign-in to begin as soon as the page is up.
  * - `Returned`: a Google sign-in came back without signing anyone in, and why.
  */
 export type Standing = Data.TaggedEnum<{
   Plain: {}
-  Start: {}
   Returned: { readonly outcome: GoogleOutcome }
 }>
 export const Standing = Data.taggedEnum<Standing>()
@@ -76,7 +72,7 @@ export const Standing = Data.taggedEnum<Standing>()
 const MARKS = ['signin', 'error', 'error_description', 'joined'] as const
 
 const Marks = Schema.Struct({
-  signin: Schema.optionalKey(Schema.Literals(['google', 'returned'])),
+  signin: Schema.optionalKey(Schema.Literal('returned')),
   error: Schema.optionalKey(Schema.String),
   joined: Schema.optionalKey(Schema.Literal('google')),
 })
@@ -110,7 +106,6 @@ const marked = (address: string, mark: (typeof MARKS)[number], value: string) =>
 const standingOf = {
   onNone: () => Standing.Plain(),
   onSome: (marks: typeof Marks.Type): Standing => {
-    if (marks.signin === 'google') return Standing.Start()
     if (marks.signin === 'returned' && marks.error !== undefined)
       return Standing.Returned({ outcome: outcomeOf(marks.error) })
     return Standing.Plain()
@@ -141,11 +136,11 @@ export const readAddress = (
  * The three addresses Better Auth is given for one Google sign-in, each a place in this app:
  * where a Person who already has an account lands, where one whose account was just made lands
  * (the same place, marked so the time zone is adopted), and where a failure lands (the same
- * place again, marked so the welcome says why and does not start over).
+ * place again, marked so the welcome says why).
  */
 export const googleAddresses = (address: string) => {
   // Marks an earlier attempt left in the address are taken off first, so none of the three can
-  // carry "start at once" or an old error into the next landing.
+  // carry an old error into the next landing.
   const { destination } = readAddress(address)
   return {
     callbackURL: destination,

@@ -1,6 +1,5 @@
 import * as Context from 'effect/Context'
 import * as Data from 'effect/Data'
-import * as Schema from 'effect/Schema'
 import type { Workspace } from './companies.js'
 import type { Person, SessionId, ThreadId } from './identity.js'
 
@@ -36,14 +35,3 @@ export const runtimeHeaders = {
   thread: 'x-vivid-thread',
   actor: 'x-vivid-actor',
 } as const
-
-/**
- * The apps that sign in with a code (the device authorization grant), by the name each gives the
- * server as its `client_id`. This is the whole list: the server issues a code to no other name,
- * and the page where a Person approves a code says which of these asked.
- *
- * A name is a label, not proof. Anything that can reach the server can send one of these, so it
- * decides only the words a Person reads, never whether a request is trusted.
- */
-export const PairingClient = Schema.Literals(['vivid-mobile'])
-export type PairingClient = typeof PairingClient.Type

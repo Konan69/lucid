@@ -1,6 +1,6 @@
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { askerName, deviceName, plainCode } from './device'
+import { deviceName } from './device'
 
 const named = (agent: string) => deviceName(Option.some(agent))
 
@@ -36,25 +36,5 @@ describe('what a signed-in device is called', () => {
   it('still lists what it cannot recognise', () => {
     expect(named('curl/8.5.0')).toBe('A device')
     expect(deviceName(Option.none())).toBe('A device')
-  })
-})
-
-describe('what the app behind a sign-in request is called', () => {
-  it('names the kind of Vivid app that asked', () => {
-    expect(askerName(Option.some('vivid-mobile'))).toBe('A Vivid phone app')
-  })
-
-  it('calls anything else an app, and never guesses', () => {
-    expect(askerName(Option.none())).toBe('An app')
-    expect(askerName(Option.some('someone-else'))).toBe('An app')
-    expect(askerName(Option.some('Vivid-Mobile'))).toBe('An app')
-    expect(askerName(Option.some(''))).toBe('An app')
-  })
-})
-
-describe('a code as the server reads it', () => {
-  it('drops the dash and the case a Person typed it with', () => {
-    expect(plainCode(' abcd-2345 ')).toBe('ABCD2345')
-    expect(plainCode('ABCD2345')).toBe('ABCD2345')
   })
 })
