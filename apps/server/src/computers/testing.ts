@@ -33,6 +33,15 @@ export const absentMachineLayer = Layer.succeed(
     write: Effect.fn('Machine.absent.write')(({ key }: { readonly key: MachineKey }) =>
       Effect.fail(new MachineNotRunning({ key })),
     ),
+    run: Effect.fn('Machine.absent.run')(({ key }: { readonly key: MachineKey }) =>
+      Effect.fail(new MachineNotRunning({ key })),
+    ),
+    read: Effect.fn('Machine.absent.read')(({ key }: { readonly key: MachineKey }) =>
+      Effect.fail(new MachineNotRunning({ key })),
+    ),
+    put: Effect.fn('Machine.absent.put')(({ key }: { readonly key: MachineKey }) =>
+      Effect.fail(new MachineNotRunning({ key })),
+    ),
     browse: Effect.fn('Machine.absent.browse')(({ key }: { readonly key: MachineKey }) =>
       Effect.fail(new MachineNotRunning({ key })),
     ),

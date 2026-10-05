@@ -29,6 +29,12 @@ import {
   ProposedAction,
   type BrowseRequest,
   type RunCommandRequest,
+  type ComputerShellRequest,
+  ComputerShellOutcome,
+  type ComputerFileReadRequest,
+  ComputerFileReadOutcome,
+  type ComputerFileWriteRequest,
+  ComputerFileWriteOutcome,
   type Person,
   Computer,
   ComputerId,
@@ -51,6 +57,9 @@ import {
   type MachineFailure,
   type MachineScreen,
   type MachineOutput,
+  type MachineRun,
+  type MachineFileReason,
+  MachineFileRefused,
 } from './machine.ts'
 import { BrowseAuthority, DeviceRegistry } from './device.ts'
 import { requireThread } from '../threads/access.ts'
@@ -91,6 +100,15 @@ const notAnswering = 'Vivid’s computer is not answering right now. Try again i
 const unanswered = (since: number) =>
   ComputerState.cases.Failed.make({ since, reason: notAnswering })
 
+/** Why a file could not be read or written, as Vivid is told it. */
+const fileRefusals = {
+  missing: 'There is no file at that path.',
+  denied: 'The Computer does not permit that on this path.',
+  directory: 'That path is a directory, not a file.',
+  large: 'The file is larger than 10 MB. Work on it with a command.',
+  other: 'The Computer could not read or write that file.',
+} satisfies Record<typeof MachineFileReason.Type, string>
+
 /** Only the typed provider failure is translated, without leaking commands, credentials or host details. */
 export const machineFailureReason = (failure: MachineFailure): string =>
   Match.value(failure).pipe(
@@ -116,6 +134,7 @@ export const machineFailureReason = (failure: MachineFailure): string =>
       BrowserStepFailed: () => 'The browser could not complete the requested step.',
       MachineExecutionUnknown: () =>
         'The command receipt was lost; it may have run. Do not retry it automatically.',
+      MachineFileRefused: ({ reason }) => fileRefusals[reason],
     }),
   )
 
@@ -384,6 +403,23 @@ export interface ComputerStoreService {
     person: PersonId,
     action: BrowserAction,
   ) => Effect.Effect<BrowseResult, StoreError | MachineFailure | ReadinessFailure>
+  /**
+   * The Computer's own shell and files, used as a person uses their machine: woken if asleep,
+   * refused while the Person holds it, and counted as activity. No Approval is asked and no rule
+   * is consulted: the Person allowed Vivid its Computer, and what Vivid does on it is its own.
+   */
+  readonly run: (
+    person: PersonId,
+    input: { readonly command: string; readonly directory: string; readonly timeoutSeconds: number },
+  ) => Effect.Effect<MachineRun, StoreError | MachineFailure | ReadinessFailure>
+  readonly read: (
+    person: PersonId,
+    path: string,
+  ) => Effect.Effect<Uint8Array, StoreError | MachineFailure | ReadinessFailure>
+  readonly put: (
+    person: PersonId,
+    input: { readonly path: string; readonly content: Uint8Array },
+  ) => Effect.Effect<void, StoreError | MachineFailure | ReadinessFailure>
   /**
    * The Person's Computer for work of Vivid's own that lasts: a program. It is woken and checked
    * like any action, and it stays awake until the scope closes. Unlike an action it does not hold
@@ -931,6 +967,23 @@ export const computerStoreLayer = Layer.effect(
       execute(person, (key) => state.machine.desktop({ key, action })),
     )
     const attach = (person: PersonId) => attached(state, person)
+    const run = Effect.fn('ComputerStore.run')(
+      (
+        person: PersonId,
+        input: {
+          readonly command: string
+          readonly directory: string
+          readonly timeoutSeconds: number
+        },
+      ) => execute(person, (key) => state.machine.run({ key, ...input })),
+    )
+    const read = Effect.fn('ComputerStore.read')((person: PersonId, path: string) =>
+      execute(person, (key) => state.machine.read({ key, path })),
+    )
+    const put = Effect.fn('ComputerStore.put')(
+      (person: PersonId, input: { readonly path: string; readonly content: Uint8Array }) =>
+        execute(person, (key) => state.machine.put({ key, ...input })),
+    )
     /** Manual lifecycle activity updates the same durable deadline as Vivid's actions. */
     const start = Effect.fn('ComputerStore.startActive')(function* (person: PersonId) {
       const computer = yield* state.start(person)
@@ -967,6 +1020,9 @@ export const computerStoreLayer = Layer.effect(
       browse,
       desktop,
       attach,
+      run,
+      read,
+      put,
     })
   }),
 )
@@ -1006,6 +1062,7 @@ const executionRefusals = <A>(
     MachinePersistenceFailed: handle,
     MachineHeld: handle,
     MachineCapabilityUnavailable: handle,
+    MachineFileRefused: handle,
     ComputerHeld: handle,
     ComputerStartFailed: handle,
     ComputerNotReady: handle,
@@ -1082,6 +1139,83 @@ export const computerRunCommand = Effect.fn('Computer.runCommand')(function* (
           ),
     },
   )
+})
+
+/** A refusal by the machine's file system is told apart from a Computer that cannot be used. */
+const fileOutcome = <A, Done>(
+  work: Effect.Effect<A, ExecutionFailure>,
+  outcomes: {
+    readonly done: (value: A) => Done
+    readonly refused: (reason: string) => Done
+    readonly unavailable: (reason: string) => Done
+  },
+) =>
+  work.pipe(
+    Effect.map(outcomes.done),
+    Effect.catchTag('MachineExecutionUnknown', (failure) =>
+      Effect.succeed(outcomes.unavailable(machineFailureReason(failure))),
+    ),
+    Effect.catchTags(
+      executionRefusals((failure) =>
+        Effect.succeed(
+          failure instanceof MachineFileRefused
+            ? outcomes.refused(executionReason(failure))
+            : outcomes.unavailable(executionReason(failure)),
+        ),
+      ),
+    ),
+  )
+
+/**
+ * Vivid's own shell on the acting Person's Computer. There is no Gate here, by the Person's
+ * decision (5 October 2026: once Vivid is allowed its Computer, nothing on it is asked about or
+ * banned). Takeover still refuses it: a Person who is using the Computer is not typed over.
+ */
+export const computerShell = Effect.fn('Computer.shell')(function* (
+  actor: Actor,
+  request: ComputerShellRequest,
+) {
+  const store = yield* ComputerStore
+  return yield* store.run(actor.person.id, request).pipe(
+    Effect.map((run) => ComputerShellOutcome.cases.Completed.make(run)),
+    Effect.catchTag('MachineExecutionUnknown', () =>
+      Effect.succeed(ComputerShellOutcome.cases.OutcomeUnknown.make({})),
+    ),
+    Effect.catchTags(
+      executionRefusals((failure) =>
+        Effect.succeed(
+          ComputerShellOutcome.cases.Unavailable.make({ reason: executionReason(failure) }),
+        ),
+      ),
+    ),
+  )
+})
+
+export const computerFileRead = Effect.fn('Computer.fileRead')(function* (
+  actor: Actor,
+  request: ComputerFileReadRequest,
+) {
+  const store = yield* ComputerStore
+  return yield* fileOutcome<Uint8Array, ComputerFileReadOutcome>(
+    store.read(actor.person.id, request.path),
+    {
+      done: (content) => ComputerFileReadOutcome.cases.Read.make({ content }),
+      refused: (reason) => ComputerFileReadOutcome.cases.Refused.make({ reason }),
+      unavailable: (reason) => ComputerFileReadOutcome.cases.Unavailable.make({ reason }),
+    },
+  )
+})
+
+export const computerFileWrite = Effect.fn('Computer.fileWrite')(function* (
+  actor: Actor,
+  request: ComputerFileWriteRequest,
+) {
+  const store = yield* ComputerStore
+  return yield* fileOutcome<void, ComputerFileWriteOutcome>(store.put(actor.person.id, request), {
+    done: () => ComputerFileWriteOutcome.cases.Written.make({}),
+    refused: (reason) => ComputerFileWriteOutcome.cases.Refused.make({ reason }),
+    unavailable: (reason) => ComputerFileWriteOutcome.cases.Unavailable.make({ reason }),
+  })
 })
 
 /** Device availability is explicit and never grants permission to use the cloud Computer instead. */

@@ -7,6 +7,9 @@ import {
   MachineOutput,
   MachineResponseInvalid,
   MachineOperationFailed,
+  MachineAuthenticationFailed,
+  MachineFileRefused,
+  MachineUnreachable,
   type MachineFailure,
   type MachineKey,
 } from './machine.ts'
@@ -18,6 +21,15 @@ import { guestDriver } from './boat/guest.ts'
 import { desktopStep, look } from './boat/desktop.ts'
 import { browse } from './boat/browser.ts'
 import { lifecycle } from './boat/lifecycle.ts'
+import { links } from './ssh/links.ts'
+import {
+  LinkFileRefused,
+  LinkHostMismatch,
+  LinkKeyRefused,
+  LinkUnreachable,
+  type Link,
+  type LinkFailure,
+} from './ssh/link.ts'
 
 /** What Boat says about a streamed command, as the machine boundary tells it. Standard error is
  * dropped: it is never part of what a caller reads. */
@@ -59,6 +71,33 @@ const followed = (
     .pipe(Stream.mapEffect(told), Stream.flattenIterable)
 }
 
+/** "host:port", as Boat names a machine that has no public address of its own. */
+const endpoint = (value: string) => {
+  const cut = value.lastIndexOf(':')
+  return { host: value.slice(0, cut), port: Number(value.slice(cut + 1)) }
+}
+
+/**
+ * What an SSH failure says at the machine boundary. A host that presents another key is some other
+ * machine at an address this one had: the provider's answer did not describe what was reached,
+ * which is an invalid response, never a machine to use. A lost or refused connection is an outage
+ * of the path to the machine and says nothing about the machine.
+ */
+const linkFailure = (failure: LinkFailure | LinkFileRefused): MachineFailure => {
+  if (failure instanceof LinkFileRefused) return new MachineFileRefused({ reason: failure.reason })
+  if (failure instanceof LinkHostMismatch)
+    return new MachineResponseInvalid({ operation: 'ssh-host-key' })
+  if (failure instanceof LinkKeyRefused) return new MachineAuthenticationFailed()
+  return new MachineUnreachable()
+}
+const isLinkFailure = (
+  failure: MachineFailure | LinkFailure | LinkFileRefused,
+): failure is LinkFailure | LinkFileRefused =>
+  failure instanceof LinkUnreachable ||
+  failure instanceof LinkHostMismatch ||
+  failure instanceof LinkKeyRefused ||
+  failure instanceof LinkFileRefused
+
 /** Boat ships the desktop and Chrome; this Layer owns a pinned guest driver prerequisite.
  * Binding lookup is durable; only per-process serialization is cached. Viewer authority is
  * cached until sixty seconds before expiry and never persisted, logged or reused across Persons. */
@@ -69,14 +108,44 @@ export const boatMachineLayer = Layer.effect(
     const saved = yield* bindings()
     const drivers = new Map<MachineKey, { readonly native: Driver; readonly generation: string }>()
     const tabs = new Map<MachineKey, BrowseResult['tabs']>()
+    // The lifecycle tells this Layer when a machine stops or resumes (`invalidate` below); the
+    // connection to the machine it was is closed then.
+    const connections = links<MachineKey>(api.pair)
     const { ensure, status, inspect, stop, running, permit } = yield* lifecycle(
       api,
       saved,
       (key) => {
         tabs.delete(key)
         drivers.delete(key)
+        return connections.drop(key)
       },
     )
+    /** Lets the installation's key in and reads where the machine is now. */
+    const locate = Effect.fn('Machine.boat.locate')(function* (key: MachineKey) {
+      const identity = yield* running(key)
+      const reply = yield* api.authorize(identity.id)
+      const place =
+        typeof reply.sshEndpoint === 'string' && reply.sshEndpoint !== ''
+          ? endpoint(reply.sshEndpoint)
+          : { host: reply.machineIp, port: 22 }
+      return { ...place, user: reply.sshUser, hostKey: reply.hostKey }
+    })
+    /**
+     * One call on the machine's connection. A call that finds the connection gone closes it, so
+     * the next call dials afresh with a new address; this call is not repeated, because a command
+     * may have run.
+     */
+    const overLink = <A>(
+      key: MachineKey,
+      call: (link: Link) => Effect.Effect<A, LinkFailure | LinkFileRefused>,
+    ): Effect.Effect<A, MachineFailure> =>
+      connections.get(key, locate(key)).pipe(
+        Effect.flatMap(call),
+        Effect.tapError((failure) =>
+          failure instanceof LinkUnreachable ? connections.drop(key) : Effect.void,
+        ),
+        Effect.mapError((failure) => (isLinkFailure(failure) ? linkFailure(failure) : failure)),
+      )
     /** Keep the public session through one guest generation so later reads retain the existing
      * profile grant. Resume or a guest service restart discards stale refs and session authority. */
     const nativeDriver = Effect.fn('Machine.boat.native')(function* (key: MachineKey) {
@@ -151,6 +220,27 @@ export const boatMachineLayer = Layer.effect(
         const identity = yield* running(input.key)
         yield* api.write(identity.id, input.path, input.content)
       }),
+      run: Effect.fn('Machine.boat.run')(function* (input) {
+        if (
+          !Number.isInteger(input.timeoutSeconds) ||
+          input.timeoutSeconds < 1 ||
+          input.command.length < 1
+        )
+          return yield* Effect.fail(new MachineInputInvalid())
+        return yield* overLink(input.key, (link) =>
+          link.run({
+            command: input.command,
+            directory: input.directory,
+            timeoutSeconds: input.timeoutSeconds,
+          }),
+        )
+      }),
+      read: Effect.fn('Machine.boat.read')((input) =>
+        overLink(input.key, (link) => link.read(input.path)),
+      ),
+      put: Effect.fn('Machine.boat.put')((input) =>
+        overLink(input.key, (link) => link.put(input.path, input.content)),
+      ),
       desktop: Effect.fn('Machine.boat.desktop')(
         function* (input) {
           const identity = yield* running(input.key)

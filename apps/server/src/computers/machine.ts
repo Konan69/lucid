@@ -140,6 +140,17 @@ export class MachineCapabilityUnavailable extends Schema.TaggedError<MachineCapa
 ) {}
 
 /**
+ * The machine's file system answered a read or a write with a refusal: the file is not there, is
+ * a directory, may not be touched, or is larger than one call carries. The machine is fine.
+ */
+export const MachineFileReason = Schema.Literals(['missing', 'denied', 'directory', 'large', 'other'])
+export class MachineFileRefused extends Schema.TaggedError<MachineFileRefused>()(
+  'MachineFileRefused',
+  { reason: MachineFileReason },
+  { title: 'MachineFileRefused' },
+) {}
+
+/**
  * Precise adapter failures remain visible for orchestration and RPC translation.
  *
  * None of them says "no provider is configured". A server always has its Computer provider: its
@@ -162,6 +173,7 @@ export type MachineFailure =
   | MachinePersistenceFailed
   | MachineHeld
   | MachineCapabilityUnavailable
+  | MachineFileRefused
 
 /**
  * What a followed command says while it runs, and how it ended.
@@ -179,6 +191,19 @@ export const MachineOutput = Schema.TaggedUnion({
   },
 })
 export type MachineOutput = typeof MachineOutput.Type
+
+/**
+ * How a command on the machine ended, with what it printed on each stream. `exitCode` is absent
+ * when the command was ended at its deadline (`timedOut`) or by a signal. `truncated` says only
+ * the end of a stream was kept.
+ */
+export interface MachineRun {
+  readonly stdout: string
+  readonly stderr: string
+  readonly exitCode: number | null
+  readonly timedOut: boolean
+  readonly truncated: boolean
+}
 
 /**
  * Whether a failure says the provider could not be asked, as opposed to what it answered: no
@@ -220,6 +245,28 @@ export interface MachineOperations {
     readonly key: MachineKey
     readonly path: string
     readonly content: string
+  }) => Effect.Effect<void, MachineFailure>
+  /**
+   * The machine's own shell and files, over its SSH connection (`ssh/link.ts`). These are what a
+   * person at the machine has: a command with both output streams and its exit code, in a
+   * directory, and whole files as bytes. `exec`, `follow` and `write` above go through the
+   * provider's API and stay until this path has run on a Person's Computer; then they move here.
+   */
+  readonly run: (input: {
+    readonly key: MachineKey
+    readonly command: string
+    readonly directory: string
+    readonly timeoutSeconds: number
+  }) => Effect.Effect<MachineRun, MachineFailure>
+  readonly read: (input: {
+    readonly key: MachineKey
+    readonly path: string
+  }) => Effect.Effect<Uint8Array, MachineFailure>
+  /** Replaces the file and creates the directories above it. */
+  readonly put: (input: {
+    readonly key: MachineKey
+    readonly path: string
+    readonly content: Uint8Array
   }) => Effect.Effect<void, MachineFailure>
   readonly browse: (input: {
     readonly key: MachineKey

@@ -102,6 +102,7 @@ const whenSet = (name: string, value: Option.Option<string>) =>
 const computerAccess = ({ computer }: InfrastructureEnvironment) => ({
   VIVID_BOAT_API_KEY: computer.key,
   VIVID_BOAT_TEMPLATE: computer.template,
+  VIVID_COMPUTER_SSH_KEY: computer.sshKey,
   ...whenSet('VIVID_BOAT_ORG', computer.organization),
   ...whenSet('VIVID_BOAT_SIZE', computer.size),
   ...whenSet('VIVID_BOAT_LIFETIME_SECONDS', computer.lifetimeSeconds),

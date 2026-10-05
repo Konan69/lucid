@@ -107,7 +107,7 @@ const bind = Effect.fn('Machine.boat.reconcileBinding')(function* (
 export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
   api: Transport,
   saved: Bindings,
-  invalidate: (key: MachineKey) => void,
+  invalidate: (key: MachineKey) => Effect.Effect<void>,
 ) {
   const { bound, running, permission, wait, invalidateViewer } = yield* observations(api, saved)
   const creating = new Set<MachineKey>()
@@ -131,7 +131,7 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
     let record = (yield* api.get(identity.id)).sandbox
     if (record.state === 'archiving') record = yield* wait(key, 'archived')
     if (record.state === 'archived') {
-      invalidate(key)
+      yield* invalidate(key)
       yield* invalidateViewer(key)
       if (!record.snapshotAvailable)
         return yield* Effect.fail(new MachineOperationFailed({ operation: 'snapshot-missing' }))
@@ -184,7 +184,7 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
       const identity = yield* bound(key)
       const record = (yield* api.get(identity.id)).sandbox
       if (record.state === 'archived') return undefined
-      invalidate(key)
+      yield* invalidate(key)
       yield* invalidateViewer(key)
       yield* api.transition(identity.id, 'stop')
       const archived = yield* wait(key, 'archived')

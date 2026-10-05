@@ -59,6 +59,9 @@ import {
   computerStoreLayer,
   machineFailureReason,
 } from './store.ts'
+import { throwawayKeySetting } from './ssh/peer.ts'
+
+const sshKeySetting = throwawayKeySetting()
 
 // Deliberate PNG fixture, not a claim that the guest was exercised.
 const png =
@@ -606,18 +609,21 @@ const testLayer = configured({
   VIVID_BOAT_API_KEY: 'protocol-test-key',
   VIVID_BOAT_ORG: 'personal',
   VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
+  VIVID_COMPUTER_SSH_KEY: sshKeySetting,
 })
 /** One installation already owns this machine; adopting it must never call paid creation. */
 const adoptedLayer = configured({
   VIVID_BOAT_API_KEY: 'protocol-test-key',
   VIVID_BOAT_ORG: 'personal',
   VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
+  VIVID_COMPUTER_SSH_KEY: sshKeySetting,
   VIVID_BOAT_MACHINE: adoptedId,
 })
 /** An account that belongs to no organization: there is only the key. */
 const accountLayer = configured({
   VIVID_BOAT_API_KEY: 'protocol-test-key',
   VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
+  VIVID_COMPUTER_SSH_KEY: sshKeySetting,
 })
 
 /**
@@ -807,6 +813,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
               VIVID_BOAT_API_KEY: 'protocol-test-key',
               VIVID_BOAT_ORG: 'personal',
               VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
+              VIVID_COMPUTER_SSH_KEY: sshKeySetting,
             }),
           ),
         ),
@@ -920,8 +927,8 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
               return bound
             }),
           }
-          const owner = yield* lifecycle(api, racing, () => {})
-          const contender = yield* lifecycle(api, racing, () => {})
+          const owner = yield* lifecycle(api, racing, () => Effect.void)
+          const contender = yield* lifecycle(api, racing, () => Effect.void)
           const winning = yield* owner.ensure(first).pipe(Effect.forkChild)
           expect((yield* contender.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
           expect((yield* Fiber.join(winning))._tag).toBe('Running')
@@ -954,6 +961,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
               VIVID_BOAT_API_KEY: 'protocol-test-key',
               VIVID_BOAT_ORG: 'personal',
               VIVID_BOAT_TEMPLATE: 'vivid-computer-new-release',
+              VIVID_COMPUTER_SSH_KEY: sshKeySetting,
             }),
           ),
         ),
@@ -1256,6 +1264,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
                     VIVID_BOAT_SIZE: 'large',
                     VIVID_BOAT_LIFETIME_SECONDS: '7200',
                     VIVID_BOAT_TEMPLATE: 'vivid-computer-new-release',
+                    VIVID_COMPUTER_SSH_KEY: sshKeySetting,
                   }),
                   { asPrimary: true },
                 ),

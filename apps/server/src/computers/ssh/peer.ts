@@ -3,6 +3,7 @@ import * as NodeFS from 'node:fs'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import { Effect, Redacted } from 'effect'
+import { utils } from 'ssh2'
 import { identity } from './link.ts'
 
 /** Where OpenSSH's server is on a Debian or Ubuntu machine; a suite that needs a peer is skipped
@@ -102,3 +103,10 @@ const freePort = Effect.callback<number>((resume) => {
   })
   server.on('close', () => resume(Effect.succeed(Number(text.trim()))))
 })
+
+/**
+ * A key made now, in the form the `VIVID_COMPUTER_SSH_KEY` setting takes (base64 of the private
+ * key file). For suites that compose the provider and never connect; no key is checked in.
+ */
+export const throwawayKeySetting = () =>
+  Buffer.from(utils.generateKeyPairSync('ed25519').private).toString('base64')
