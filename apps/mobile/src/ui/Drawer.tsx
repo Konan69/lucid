@@ -24,12 +24,14 @@ const UPRIGHT = 12
 const FLICK = 500
 
 /**
- * The page with a drawer that comes in from the left over it.
+ * The app with a drawer that comes in from the left over it: over the stack and the system's bar,
+ * which is why the shell draws it and no screen does (`Shell` in `App.tsx`).
  *
  * It follows the finger on the UI thread: a pan writes `travel` directly, and letting go hands
  * the finger's speed to a spring that finishes the movement, so a slow drag and a flick both end
- * where they were heading. Closed, a rightward drag anywhere on the page opens it (an edge-only
- * strip would be Android's own back gesture). Open, the scrim over the page closes it by tap or
+ * where they were heading. Closed, a rightward drag anywhere on the first screen opens it (an
+ * edge-only strip would be Android's own back gesture). On any screen over the first it cannot be
+ * reached (`reachable`): there the same drag from the edge is the system's way back. Open, the scrim over the page closes it by tap or
  * by drag; the panel itself takes no drawer gesture, because the Thread rows in it are swiped.
  * Android's back button closes it too (`data/drawer.ts`).
  *
@@ -40,7 +42,16 @@ const FLICK = 500
  * Every callback below is a worklet. They read numbers and shared values only; the keyboard and
  * the open flag are reached through `scheduleOnRN`, never captured.
  */
-export function Drawer({ panel, children }: { panel: ReactNode; children: ReactNode }) {
+export function Drawer({
+  reachable,
+  panel,
+  children,
+}: {
+  /** The first screen is the one in front, so a drag may open the drawer. */
+  reachable: boolean
+  panel: ReactNode
+  children: ReactNode
+}) {
   const { colors: c } = useTheme()
   const span = drawerWidth(useWindowDimensions().width)
   const opened = useDrawerOpened()
@@ -74,7 +85,7 @@ export function Drawer({ panel, children }: { panel: ReactNode; children: ReactN
         scheduleOnRN(settleDrawer, open)
       })
 
-  const opening = drag().activeOffsetX(SIDEWAYS).enabled(!opened)
+  const opening = drag().activeOffsetX(SIDEWAYS).enabled(reachable && !opened)
   const closing = Gesture.Exclusive(
     drag().activeOffsetX([-SIDEWAYS, SIDEWAYS]),
     Gesture.Tap().onEnd(() => {

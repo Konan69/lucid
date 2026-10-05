@@ -20,8 +20,7 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
-import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import { Monitor, Share2, Users } from 'lucide-react-native'
+import { Monitor, Share2, SquarePen, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { commit } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
@@ -31,7 +30,7 @@ import { isShown, isStreaming, lastWordsOf, type Around } from '../data/message'
 import { endingOf, newestRun } from '../data/outcome'
 import { conversation, say, UNDELIVERED, UNTITLED } from '../data/threads'
 import { Composer } from '../ui/Composer'
-import { Bar, BarRoom, NO_ACTIONS, StandingBar, type BarAction } from '../ui/Bar'
+import { BarRoom, MenuBar, MenuStandingBar, type BarAction } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
 import {
@@ -51,12 +50,14 @@ import {
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 import { ThinkingOrb } from '../../vendor/orb'
-import { useGo, useMe, type Routes } from '../workspace'
+import { useFront, useGo, useMe } from '../workspace'
 import { Message } from './chat/Message'
 import { Share } from './chat/Share'
 
 /**
- * One Thread: the conversation with Vivid, and everything live around it.
+ * One Thread: the conversation with Vivid, and everything live around it. It is drawn in the
+ * first screen's place (`screen/Home.tsx`), not as a screen of its own; `writing` says its
+ * composer takes the keyboard over from the one a first message was typed in.
  *
  * Two sources feed this screen. The words come from Flue's stream through the server's gateway,
  * token by token. Everything else (who is in the Thread, who Vivid acted for, what is waiting on
@@ -68,9 +69,8 @@ import { Share } from './chat/Share'
  * marks the Thread read (`seenThread`) then, and the Thread's plain query otherwise: the same
  * detail is drawn either way, and a reply that lands while the screen is covered stays unread.
  */
-export function Chat({ route }: NativeStackScreenProps<Routes, 'Chat'>) {
+export function Chat({ id, writing }: { id: ThreadId; writing: boolean }) {
   const data = useLiveData()
-  const { id } = route.params
   const looking = useLooking()
   const detail = useLive(looking ? data.seenThread(id) : data.live.thread.get(id))
   if (LiveState.$is('Failed')(detail)) return <Gone />
@@ -80,6 +80,7 @@ export function Chat({ route }: NativeStackScreenProps<Routes, 'Chat'>) {
       <Conversation
         key={id}
         id={id}
+        writing={writing}
         detail={LiveState.$is('Ready')(detail) ? Option.some(detail.value) : Option.none()}
       />
     </>
@@ -87,7 +88,8 @@ export function Chat({ route }: NativeStackScreenProps<Routes, 'Chat'>) {
 }
 
 /**
- * Whether the Person is looking at this screen: it is the one on top, and the app is in front.
+ * Whether the Person is looking at this Thread: the first screen, where it is drawn, is the one
+ * on top, and the app is in front.
  *
  * A native stack keeps a screen mounted under whatever is pushed over it, and an app in the
  * background can go on receiving for a while. Being mounted used to be taken for looking, so a
@@ -111,19 +113,22 @@ function Present({ id }: { id: ThreadId }) {
   return null
 }
 
-/** A Thread that is not there, or not this Person's to see. The two look the same on purpose. */
+/**
+ * A Thread that is not there, or not this Person's to see. The two look the same on purpose. The
+ * way on is a new Thread: this is the first screen, so there is nowhere to go back to.
+ */
 function Gone() {
-  const go = useGo()
+  const front = useFront()
   return (
     <Screen>
-      <Bar title="Thread" actions={NO_ACTIONS} />
+      <MenuBar mood="neutral" />
       {/* A scroller, so the system keeps these words clear of a glass bar as it does a list. */}
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ paddingHorizontal: GUTTER }}
       >
         <Empty line="This thread is not here. It may have been deleted, or it is in a space you are not working in right now.">
-          <Button label="Back" onPress={go.goBack} />
+          <Button label="New thread" onPress={() => front.fresh()} />
         </Empty>
       </ScrollView>
     </Screen>
@@ -154,8 +159,9 @@ const audienceWords = (thread: Thread): string =>
  * Thread's title, and under it a line saying how Vivid is doing right now (here, working,
  * waiting for the Person). While someone else is writing, the line says
  * that instead, because it is the thing about to change the Thread. Beside the title: who else
- * is looking. In the bar's own buttons: who the Thread is shared with, and the way to Vivid's
- * computer.
+ * is looking. In the bar's own buttons: who the Thread is shared with, the way to Vivid's
+ * computer, and the way to a new Thread. The bar starts with Vivid's mark, which opens the menu
+ * and is thinking while Vivid is at work here.
  */
 function Top({
   thread,
@@ -171,6 +177,7 @@ function Top({
 }) {
   const me = useMe()
   const go = useGo()
+  const front = useFront()
   const others = present.filter((seen) => seen.person.id !== me.person.id)
   const typing = others.filter((seen) => seen.typing)
   const attention: Thread['attention'] = working
@@ -183,6 +190,14 @@ function Top({
     label: 'Vivid’s computer',
     disabled: false,
     onPress: () => go.navigate('Computer'),
+  }
+  // Back to the greeting and an empty composer, in this same place.
+  const fresh: BarAction = {
+    symbol: 'square.and.pencil',
+    icon: SquarePen,
+    label: 'New thread',
+    disabled: false,
+    onPress: () => front.fresh(),
   }
   // Who can see the Thread is a choice only inside a Company.
   const sharing = Option.map(
@@ -200,7 +215,8 @@ function Top({
     },
   )
   return (
-    <StandingBar
+    <MenuStandingBar
+      mood={attention === 'Working' ? 'thinking' : 'happy'}
       title={Option.match(thread, { onNone: () => '', onSome: (value) => value.title })}
       standing={{
         words: someoneTyping
@@ -210,8 +226,8 @@ function Top({
       }}
       present={others.map((seen) => seen.person)}
       actions={Option.match(sharing, {
-        onNone: () => [computer],
-        onSome: (share) => [share, computer],
+        onNone: () => [computer, fresh],
+        onSome: (share) => [share, computer, fresh],
       })}
     />
   )
@@ -310,7 +326,15 @@ function useSend(
  * is keyed by the Thread (`Chat`), so everything held here, the stream and the delivery that is in
  * doubt included, belongs to that one Thread and to nothing opened after it.
  */
-function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<ThreadDetail> }) {
+function Conversation({
+  id,
+  writing,
+  detail,
+}: {
+  id: ThreadId
+  writing: boolean
+  detail: Option.Option<ThreadDetail>
+}) {
   // The name this Person or their Company gave Vivid, live.
   const vivid = useAppearance()
   const me = useMe()
@@ -421,6 +445,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
       )}
       <Composer
         value={typed}
+        autoFocus={writing}
         placeholder={shared ? `Message everyone and ${vivid.name}` : `Message ${vivid.name}`}
         working={working}
         disabled={false}

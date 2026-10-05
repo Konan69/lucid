@@ -32,7 +32,7 @@ import {
   Skeleton,
   styles,
 } from '../ui/ui'
-import { useGo, useMe, type Routes } from '../workspace'
+import { useGo, useOpenThread, useMe, type Routes } from '../workspace'
 
 /** One level of one shelf: which shelf, which folder on it (or its top), and the query read. */
 interface Level {
@@ -387,7 +387,7 @@ function ItemSheet({
   onUndeleted: (message: string) => void
 }) {
   const data = useLiveData()
-  const go = useGo()
+  const openThread = useOpenThread()
   const [renaming, setRenaming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
@@ -402,7 +402,7 @@ function ItemSheet({
     setBusy(false)
     if (Start.$is('Started')(outcome)) {
       onClose()
-      go.navigate('Chat', { id: outcome.id })
+      openThread(outcome.id)
       return
     }
     setRefused(Option.some(outcome.message))

@@ -3,11 +3,12 @@ import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { NavigationContainer } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import { workspaceKey } from '@vivid/state'
+import { useState, type ComponentProps } from 'react'
 import { StatusBar, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
-import { useReducedMotion } from 'react-native-reanimated'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { door, patienceAtom, useDoor } from './data/door'
+import { makeFront } from './data/front'
 import {
   Entry,
   entryAtom,
@@ -19,10 +20,10 @@ import {
 } from './data/live'
 import { leaveAtom } from './data/signing'
 import { Broken } from './screen/Broken'
-import { Chat } from './screen/Chat'
 import { Computer } from './screen/Computer'
 import { Door } from './screen/Door'
 import { Home } from './screen/Home'
+import { Panel } from './screen/home/Panel'
 import { Folder, Library } from './screen/Library'
 import { Notifications } from './screen/Notifications'
 import { Project, Projects } from './screen/Projects'
@@ -32,10 +33,11 @@ import { Memory } from './screen/settings/Memory'
 import { Texting } from './screen/settings/Texting'
 import { People } from './screen/settings/People'
 import { ThemeProvider, useTheme } from './theme'
+import { Drawer } from './ui/Drawer'
 import { Recover } from './ui/Recover'
-import { GLASS_HEADER, navigationTheme, pushAnimation } from './ui/stack'
+import { GLASS_HEADER, navigationTheme, SCREEN_CHANGE } from './ui/stack'
 import { Button, Face, GUTTER, Label } from './ui/ui'
-import { MeProvider, type Routes } from './workspace'
+import { FrontProvider, MeProvider, type Routes } from './workspace'
 
 const Stack = createNativeStackNavigator<Routes>()
 
@@ -204,49 +206,74 @@ function Stopped({ message }: { message: string }) {
   )
 }
 
+/** What the stack hands its `layout`: its screens, where it stands, and its navigation. */
+type StackLayout = Parameters<NonNullable<ComponentProps<typeof Stack.Navigator>['layout']>>[0]
+
 /**
- * The signed-in app: one native stack. Pushing, popping and the back swipe are the platform's
- * own; nothing here animates a screen. The bar is the platform's too (`GLASS_HEADER`): its way
- * back and its buttons are the system's, liquid glass on iOS 26, with each screen's content
- * scrolling under it. A screen that has actions or a live title says so itself (`ui/Bar.tsx`);
- * one whose bar is only its name has it here. Home has no bar: its one control is Vivid's mark.
+ * The stack with the menu over it. The menu can be dragged open only while Home, the first route,
+ * is the screen in front: over any other screen the same drag is the system's way back.
+ */
+const underMenu = ({ children, state, navigation }: StackLayout) => (
+  <Drawer reachable={state.index === 0} panel={<Panel go={navigation} />}>
+    {children}
+  </Drawer>
+)
+
+/**
+ * The signed-in app: one native stack, with the menu over it.
+ *
+ * The first screen is Home, and a Thread is shown in Home's own place (`data/front.ts`), so the
+ * commonest change in the app, from the greeting to a conversation or from one Thread to another,
+ * changes no screen at all. The other places are screens over Home; one replaces another by a
+ * short cross-fade and nothing slides (`SCREEN_CHANGE`).
+ *
+ * The bar is the platform's (`GLASS_HEADER`): its way back and its buttons are the system's,
+ * liquid glass on iOS 26, with each screen's content scrolling under it. A screen that has
+ * actions or a live title says so itself (`ui/Bar.tsx`); one whose bar is only its name has it
+ * here. Home's bar starts with Vivid's mark, which opens the menu.
+ *
+ * The menu is the navigator's `layout`, so it is drawn over the stack and its bar and is handed
+ * the stack's state: it can be dragged open only while Home is the screen in front.
  *
  * Routes are flat on this one stack, never a nested navigator: one navigation controller is what
  * lets the platform carry a bar from one screen to the next (T3 Code mobile `src/Stack.tsx`, the
- * note beside `THREAD_LINKING_PREFIX`). How one screen replaces another is `pushAnimation`.
+ * note beside `THREAD_LINKING_PREFIX`).
  */
 function Shell() {
   const { colors: c, dark } = useTheme()
-  const still = useReducedMotion()
+  // What Home shows belongs to this shell, which is built again for each workspace (`Session`).
+  const [front] = useState(makeFront)
   return (
-    <NavigationContainer theme={navigationTheme(c, dark)}>
-      <Stack.Navigator
-        screenOptions={{
-          ...GLASS_HEADER,
-          // The bar's glyphs are ink, as the app's own controls are; the navigation theme's
-          // `primary` would paint the way back in the accent.
-          headerTintColor: c.foreground,
-          contentStyle: { backgroundColor: c.screen },
-          animation: pushAnimation(still),
-        }}
-      >
-        <Stack.Screen name="Home" component={Home} options={{ headerShown: false }} />
-        {/* Screens that render a `Bar` start with an empty title, so the route's name is never
-            what the bar says before the screen has spoken. */}
-        <Stack.Screen name="Chat" component={Chat} options={{ title: '' }} />
-        <Stack.Screen name="Computer" component={Computer} options={{ title: '' }} />
-        <Stack.Screen name="Routines" component={Routines} options={{ title: '' }} />
-        <Stack.Screen name="Library" component={Library} options={{ title: '' }} />
-        <Stack.Screen name="Folder" component={Folder} options={{ title: '' }} />
-        <Stack.Screen name="Projects" component={Projects} options={{ title: '' }} />
-        {/* The bar is only the way back: the Project's name is the page's own first line. */}
-        <Stack.Screen name="Project" component={Project} options={{ title: '' }} />
-        <Stack.Screen name="Settings" component={Settings} options={{ title: 'Settings' }} />
-        <Stack.Screen name="People" component={People} options={{ title: '' }} />
-        <Stack.Screen name="Memory" component={Memory} options={{ title: 'What Vivid knows' }} />
-        <Stack.Screen name="Texting" component={Texting} options={{ title: 'Text Vivid' }} />
-        <Stack.Screen name="Notifications" component={Notifications} options={{ title: '' }} />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <FrontProvider value={front}>
+      <NavigationContainer theme={navigationTheme(c, dark)}>
+        <Stack.Navigator
+          layout={underMenu}
+          screenOptions={{
+            ...GLASS_HEADER,
+            ...SCREEN_CHANGE,
+            // The bar's glyphs are ink, as the app's own controls are; the navigation theme's
+            // `primary` would paint the way back in the accent.
+            headerTintColor: c.foreground,
+            contentStyle: { backgroundColor: c.screen },
+          }}
+        >
+          {/* Screens that render a bar of their own start with an empty title, so the route's
+              name is never what the bar says before the screen has spoken. */}
+          <Stack.Screen name="Home" component={Home} options={{ title: '' }} />
+          <Stack.Screen name="Computer" component={Computer} options={{ title: '' }} />
+          <Stack.Screen name="Routines" component={Routines} options={{ title: '' }} />
+          <Stack.Screen name="Library" component={Library} options={{ title: '' }} />
+          <Stack.Screen name="Folder" component={Folder} options={{ title: '' }} />
+          <Stack.Screen name="Projects" component={Projects} options={{ title: '' }} />
+          {/* The bar is only the way back: the Project's name is the page's own first line. */}
+          <Stack.Screen name="Project" component={Project} options={{ title: '' }} />
+          <Stack.Screen name="Settings" component={Settings} options={{ title: 'Settings' }} />
+          <Stack.Screen name="People" component={People} options={{ title: '' }} />
+          <Stack.Screen name="Memory" component={Memory} options={{ title: 'What Vivid knows' }} />
+          <Stack.Screen name="Texting" component={Texting} options={{ title: 'Text Vivid' }} />
+          <Stack.Screen name="Notifications" component={Notifications} options={{ title: '' }} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </FrontProvider>
   )
 }
