@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import {
   BRIDGE_NAMESPACE,
   BRIDGE_INVOKE_CHANNEL,
+  REPORTING_ARGUMENT,
   BridgeRequest,
   BridgeResponse,
   type VividDesktopBridge,
@@ -157,6 +158,8 @@ const deviceLink = Effect.fn('DesktopPreload.deviceLink')(function* (
 
 /** Promise terminals live only at Electron's isolated context bridge. */
 const bridge: VividDesktopBridge = {
+  // Main says so by an argument on this process (`REPORTING_ARGUMENT`), read here once.
+  reporting: process.argv.includes(REPORTING_ARGUMENT),
   pages: createPagesBridge(invoke, (program) => Effect.runPromise(program)),
   device: {
     get: () => Effect.runPromise(deviceLink(BridgeRequest.cases.GetDeviceLink.make({}))),
@@ -184,6 +187,7 @@ contextBridge.exposeInMainWorld(
   chooserDocument
     ? bridge
     : {
+        reporting: bridge.reporting,
         getAppVersion: bridge.getAppVersion,
         pages: bridge.pages,
         device: bridge.device,

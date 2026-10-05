@@ -85,12 +85,11 @@ const GOOGLE_HERE = Way.$is('Browser')(GOOGLE)
 // makes here the one place that runs on that load. It does nothing on every other address.
 void send(adoptFirstArrival)
 
-/** How the welcome opens: which form, what it already has to say, and whether Google starts. */
+/** How the welcome opens: which form, and what it already has to say. */
 interface Opening {
   readonly destination: string
   readonly mode: Mode
   readonly notice: Notice | null
-  readonly starting: boolean
 }
 
 /**
@@ -101,15 +100,11 @@ interface Opening {
 const opening = (returnTo: string): Opening => {
   const { destination, standing } = readAddress(returnTo)
   return Standing.$match(standing, {
-    Plain: (): Opening => ({ destination, mode: 'create', notice: null, starting: false }),
-    // An address that asks for Google is one a phone opened in a browser. It starts by itself
-    // only there: in the desktop app nothing opens such an address.
-    Start: (): Opening => ({ destination, mode: 'create', notice: null, starting: GOOGLE_HERE }),
+    Plain: (): Opening => ({ destination, mode: 'create', notice: null }),
     Returned: ({ outcome }): Opening => ({
       destination,
       mode: outcome === 'NotLinked' ? 'enter' : 'create',
       notice: SAID[outcome],
-      starting: false,
     }),
   })
 }
@@ -144,12 +139,11 @@ function Introduction({ title, lead }: { title: string; lead: string }) {
 /**
  * The first thing anyone sees: who Vivid is, and one short form. There is nothing to configure
  * and nothing to choose; an account opens straight onto the first Thread, in the Person's own
- * space. `returnTo` is where they were going (an invitation link, a device to approve), so signing
+ * space. `returnTo` is where they were going (an invitation link, for one), so signing
  * in is a step on the way and not a detour.
  *
  * There are two ways in. The form, for an email and a password, and Google, which is one button
  * for a new Person and a returning one alike. The address can also say something about Google:
- * that it should start at once, which is how the phone hands a Person over to the browser, or
  * that it was tried and did not work, and why.
  *
  * In the desktop app Google is the same button with a different road: the form's card gives way
@@ -164,7 +158,7 @@ export function Welcome({ returnTo }: { returnTo: string }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [notice, setNotice] = useState(opened.notice)
-  const [busy, setBusy] = useState<Busy>(opened.starting ? 'google' : 'none')
+  const [busy, setBusy] = useState<Busy>('none')
   const handoff = useSyncExternalStore(googleHandoff.subscribe, googleHandoff.current)
   const copy = COPY[mode]
 
@@ -263,8 +257,6 @@ export function Welcome({ returnTo }: { returnTo: string }) {
                   {busy === 'email' ? 'One moment…' : copy.action}
                 </Button>
                 <GoogleChoice
-                  destination={destination}
-                  starting={opened.starting}
                   resting={busy !== 'none'}
                   leaving={busy === 'google'}
                   onStart={() => {

@@ -1,8 +1,13 @@
-import * as NodeProcess from 'node:process'
-import { ConfigProvider, Context, Layer, Logger } from 'effect'
-import { programHost } from './host.ts'
+import { Context, Layer, Logger } from 'effect'
 import { describe, expect, it as standalone, layer } from '@effect/vitest'
-import { ApprovalId, CodeCall, CodeFailure, CodeOutcome, ThreadId } from '@vivid/contracts'
+import {
+  ApprovalId,
+  CodeCall,
+  CodeFailure,
+  CodeOutcome,
+  PersonId,
+  ThreadId,
+} from '@vivid/contracts'
 import { Deferred, Effect, Exit, Fiber, Ref, Option, Schema, Cause } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { CallOutcome, CodeProcess, codeProcessLayer, Execution, type Dispatch } from './process.ts'
@@ -10,9 +15,13 @@ import { discoveredTool } from './signatures.ts'
 import { CodeTiming } from '@vivid/contracts/code'
 import { PipeFailure, WorkerMessage } from './protocol.ts'
 import { budgets } from './budgets.ts'
+import { CodeComputer, CodeComputerUnavailable } from './computer.ts'
+import { MachineOperationFailed } from '../computers/machine.ts'
+import { localCodeComputer, localCodeComputerLayer } from './testing.ts'
 
-const missingHost = programHost(Option.fromUndefinedOr(NodeProcess.env.XDG_RUNTIME_DIR))
-if (Option.isSome(missingHost)) console.warn(`Skipping supervised programs: ${missingHost.value}`)
+/** The supervisor with a Computer that is this machine; see `testing.ts` for what that leaves out. */
+const supervised = codeProcessLayer.pipe(Layer.provide(localCodeComputerLayer))
+const person = PersonId.make('person-test')
 
 /** Compare observable variants without constructing partial domain records in matchers. */
 function check(outcome: CodeOutcome, tag: CodeOutcome['_tag'], fields: Schema.JsonObject) {
@@ -28,14 +37,19 @@ class RunningLoops extends Context.Service<RunningLoops, RunningLoopsService>()(
   'Test/RunningLoops',
 ) {}
 
-/** Every execution here uses the production bwrap/cgroup child and published pi QuickJS interpreter. */
-describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
-  layer(codeProcessLayer)((it) => {
+/**
+ * Every execution here starts the production runner with the production start command: a shell, a
+ * Node process and a worker thread per program. A case runs up to three of them, and the gate
+ * runs this file beside every other suite, so the ceiling is the time three real processes can
+ * take on a loaded machine and not the default five seconds. Nothing here waits on a clock.
+ */
+describe('Supervised programs', { timeout: 30_000 }, () => {
+  layer(supervised)((it) => {
     const run = Effect.fn('Test.program')(function* (code: string, dispatch: Dispatch) {
       return yield* (yield* CodeProcess).run(
         {
           request: { code, summary: 'Test the program' },
-          boundary: ThreadId.make(crypto.randomUUID()),
+          boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
         },
         dispatch,
       )
@@ -150,14 +164,14 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
       }),
     )
 
-    it.effect('keeps model source line numbers after the trusted prelude', () =>
+    it.effect('keeps the line numbers of the source the model wrote', () =>
       Effect.gen(function* () {
         const outcome = yield* run(
           'const label="model";\ntry {throw new Error(label);} catch(error) {return error.stack;}',
           reply,
         )
         expect(CodeOutcome.guards.Completed(outcome)).toBe(true)
-        expect(outcome).toHaveProperty('result', expect.stringContaining('codemode.js:2'))
+        expect(outcome).toHaveProperty('result', expect.stringContaining('program.js:2'))
       }),
     )
 
@@ -259,42 +273,45 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
         }),
     )
 
-    it.effect(
-      'isolates process, filesystem, network, imports, host prototypes and persistent storage',
-      () =>
-        Effect.gen(function* () {
-          const outcome = yield* run(
-            `return {process:typeof process, require:typeof require, fetch:typeof fetch, bridge:typeof bridge,
-        host:({}).constructor.constructor("return typeof process")(), stored:load("credential")===undefined,
-        imported:await import("node:fs").then(()=>true,()=>false)};`,
-            reply,
-          )
-          check(outcome, 'Completed', {
-            result: {
-              process: 'undefined',
-              require: 'undefined',
-              fetch: 'undefined',
-              bridge: 'undefined',
-              host: 'undefined',
-              stored: true,
-              imported: false,
-            },
-          })
-        }),
+    it.effect('gives the program the Computer it runs on: its files and its Node modules', () =>
+      Effect.gen(function* () {
+        const outcome = yield* run(
+          `const files = await import("node:fs/promises");
+        await files.writeFile("note.txt", "kept");
+        return {note: await files.readFile("note.txt", "utf8"), node: typeof process.versions.node};`,
+          reply,
+        )
+        check(outcome, 'Completed', { result: { note: 'kept', node: 'string' } })
+        expect(outcome.calls).toHaveLength(0)
+      }),
     )
 
-    it.effect(
-      'starts every program with an empty store',
-      () =>
-        Effect.gen(function* () {
-          expect((yield* run('store("credential", "private"); return 1;', reply))._tag).toBe(
-            'Completed',
-          )
-          expect(yield* run('return load("credential")===undefined;', reply)).toMatchObject({
-            result: true,
-          })
-        }),
-      { timeout: 10_000 },
+    it.effect('a finished program leaves nothing of itself on the Computer', () =>
+      Effect.gen(function* () {
+        // The count includes the program that is counting, and any other test's program that is
+        // still running; what matters is that one more finished program does not raise it. A late
+        // order to stop, written after the runner removed its directory, used to put it back.
+        const count =
+          'const files = await import("node:fs/promises"); return (await files.readdir(".cache/vivid/programs")).length;'
+        const before = yield* run(count, reply)
+        expect(yield* run('await tools.find_tools({}); return 1;', reply)).toHaveProperty(
+          'result',
+          1,
+        )
+        const after = yield* run(count, reply)
+        const counted = (outcome: CodeOutcome) =>
+          CodeOutcome.guards.Completed(outcome) ? Option.some(outcome.result) : Option.none()
+        expect(Option.isSome(counted(before))).toBe(true)
+        expect(counted(after)).toEqual(counted(before))
+      }),
+    )
+
+    it.effect('ends a program that waits on something nothing can settle', () =>
+      Effect.gen(function* () {
+        const outcome = yield* run('console.log("waiting"); await new Promise(() => {});', reply)
+        check(outcome, 'Failed', { logs: ['waiting'] })
+        expect(outcome).toHaveProperty('failure.message', expect.stringContaining('never settles'))
+      }),
     )
 
     it.effect(
@@ -591,7 +608,7 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
         const process = yield* CodeProcess
         const input = {
           request: { code: 'return await tools.find_tools({});', summary: 'Read' },
-          boundary: ThreadId.make('one-thread'),
+          boundary: { person, thread: ThreadId.make('one-thread') },
         }
         const fibers: Fiber.Fiber<CodeOutcome>[] = []
         for (let index = 0; index < budgets.processes; index++) {
@@ -606,7 +623,10 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
             })
           })
           const fiber = yield* Effect.forkChild(
-            process.run({ ...input, boundary: ThreadId.make(`thread-${index}`) }, dispatch),
+            process.run(
+              { ...input, boundary: { person, thread: ThreadId.make(`thread-${index}`) } },
+              dispatch,
+            ),
           )
           fibers.push(fiber)
           yield* Effect.raceFirst(
@@ -614,9 +634,12 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
             Fiber.join(fiber).pipe(Effect.flatMap((outcome) => Effect.die(outcome))),
           )
         }
-        for (const boundary of ['thread-0', 'fifth-thread'])
+        for (const thread of ['thread-0', 'fifth-thread'])
           check(
-            yield* process.run({ ...input, boundary: ThreadId.make(boundary) }, reply),
+            yield* process.run(
+              { ...input, boundary: { person, thread: ThreadId.make(thread) } },
+              reply,
+            ),
             'Failed',
             { failure: CodeFailure.cases.Unavailable.make({}) },
           )
@@ -637,7 +660,7 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
           return yield* reply(call)
         })
         // Startup is a fixture precondition, independent of how quickly a parent deadline must stop
-        // admitted guests. Keep both real cgroups alive in the suite scope until the test advances time.
+        // admitted guests. Keep both real processes alive in the suite scope until the test advances time.
         const fibers = yield* Effect.forEach(
           ['while(true) {}', 'while(true) await Promise.resolve();'],
           (loop) => Effect.forkScoped(run(`await tools.find_tools({}); ${loop}`, dispatch)),
@@ -749,103 +772,183 @@ describe.skipIf(Option.isSome(missingHost))('Supervised programs', () => {
       }),
     )
 
-    it.effect('guest heap exhaustion reports a memory resource failure', () =>
-      Effect.gen(function* () {
-        const outcome = yield* run(
-          // Heap exhaustion is the claim, not thousands of interpreter string-allocation turns.
-          'const items=[]; while(true) items.push("x".repeat(1048576));',
-          reply,
-        )
-        expect(outcome).toHaveProperty('failure.limit', 'memory')
-      }),
-    )
-
     it.effect(
-      'host output flooding hits the cgroup memory cap while the server remains usable',
+      'a program that fills its heap is ended with a memory failure and keeps what it printed',
       () =>
         Effect.gen(function* () {
           const outcome = yield* run(
-            // Large transfers measure host output memory, without thousands of small WASM callbacks
-            // consuming the test deadline before the lean executable reaches its cgroup ceiling.
-            'const value="x".repeat(1048576); for(let i=0;i<1000;i++) text(value);',
+            // Arrays of numbers are on the heap at once; repeated strings reach the limit far later.
+            'console.log("filling"); const items=[]; while(true) items.push(new Array(1048576).fill(0));',
             reply,
           )
-          expect(outcome).toHaveProperty('failure.limit', 'memory')
+          check(outcome, 'Failed', {
+            failure: CodeFailure.cases.OverLimit.make({ limit: 'memory' }),
+            logs: ['filling'],
+          })
+        }),
+      { timeout: 20_000 },
+    )
+
+    it.effect(
+      'cuts flooded printed output to its allowance and still finishes the program',
+      () =>
+        Effect.gen(function* () {
+          const outcome = yield* run(
+            'const value="x".repeat(1048576); for(let i=0;i<200;i++) text(value); return "done";',
+            reply,
+          )
+          check(outcome, 'Completed', { result: 'done', logsTruncated: true })
+          expect(Buffer.byteLength(JSON.stringify(outcome))).toBeLessThanOrEqual(budgets.result)
           expect(yield* run('return 1;', reply)).toHaveProperty('result', 1)
         }),
       { timeout: 15_000 },
     )
 
-    it.effect(
-      'child resource death after dispatch preserves partial effects as unknown',
-      () =>
-        Effect.gen(function* () {
-          const dispatch: Dispatch = Effect.fn('Test.lostChild')(function* (call) {
-            if (call.id === 1) return yield* reply(call)
-            return yield* Effect.never
-          })
-          const outcome = yield* run(
-            'await tools.find_tools({}); tools.use_tool({}); const value="x".repeat(1048576); for(let i=0;i<1000;i++) text(value);',
-            dispatch,
-          )
-          expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
-          expect(outcome.calls.map((call) => call.end)).toEqual(['completed', 'unknown'])
-        }),
-      { timeout: 15_000 },
+    it.effect('a process that dies after dispatch leaves the call it was waiting for unknown', () =>
+      Effect.gen(function* () {
+        const dispatch: Dispatch = Effect.fn('Test.lostProcess')(function* (call) {
+          if (call.id === 2) return yield* Effect.never
+          return yield* reply(call)
+        })
+        const outcome = yield* run(
+          // The whole runner is killed, so no final message is printed: the server learns of the
+          // end only from the process having ended. The third call is answered only after the
+          // second was dispatched, so the kill cannot come before the call it must leave unknown.
+          'await tools.find_tools({}); tools.use_tool({}); await tools.find_tools({}); process.kill(process.pid, "SIGKILL");',
+          dispatch,
+        )
+        expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
+        expect(outcome.calls.map((call) => call.end)).toEqual(['completed', 'unknown', 'completed'])
+      }),
+    )
+
+    it.effect('cuts a flood of empty printed lines like any other output', () =>
+      Effect.gen(function* () {
+        const outcome = yield* run(
+          'for (let i = 0; i < 90000; i++) console.log(); return 1;',
+          reply,
+        )
+        check(outcome, 'Completed', { result: 1, logsTruncated: true })
+        expect(Buffer.byteLength(JSON.stringify(outcome))).toBeLessThanOrEqual(budgets.result)
+      }),
+    )
+
+    it.effect('finishes a program that waits for its own write to standard output', () =>
+      Effect.gen(function* () {
+        const outcome = yield* run(
+          'await new Promise((written) => process.stdout.write("straight out\\n", written)); return 1;',
+          reply,
+        )
+        check(outcome, 'Completed', { result: 1, logs: ['straight out'] })
+      }),
+    )
+
+    it.effect('ends the processes a program started when the program ends', () =>
+      Effect.gen(function* () {
+        // The first program leaves a child behind and says which. The second reads that process's
+        // record: gone, or ended and waiting to be collected (state Z), is ended.
+        const outcome = yield* run(
+          'const {spawn} = await import("node:child_process"); return spawn("sleep", ["600"]).pid;',
+          reply,
+        )
+        const started = CodeOutcome.guards.Completed(outcome)
+          ? Option.some(outcome.result)
+          : Option.none()
+        expect(Option.isSome(started)).toBe(true)
+        const after = yield* run(
+          `const files = await import("node:fs");
+        try {
+          const record = files.readFileSync("/proc/" + ${JSON.stringify(Option.getOrNull(started))} + "/stat", "utf8");
+          return record.slice(record.lastIndexOf(")") + 2).startsWith("Z") ? "ended" : "running";
+        } catch (gone) { return "ended"; }`,
+          reply,
+        )
+        check(after, 'Completed', { result: 'ended' })
+      }),
+    )
+
+    it.effect('stops a program that starts calls without waiting, at the call limit', () =>
+      Effect.gen(function* () {
+        const outcome = yield* run(
+          'for (let i = 0; i < 100000; i++) tools.find_tools({}); await new Promise(() => {});',
+          reply,
+        )
+        check(outcome, 'Failed', { failure: CodeFailure.cases.OverLimit.make({ limit: 'calls' }) })
+        expect(outcome.calls.length).toBeLessThanOrEqual(budgets.calls)
+      }),
     )
   })
 })
 
-/** A missing runtime is diagnosed once during construction, independent of how many requests arrive. */
-standalone.effect('logs absent program configuration once and refuses each request', () => {
-  const messages: string[] = []
-  const logger = Logger.make((entry) => messages.push(Logger.formatSimple.log(entry)))
-  return Effect.gen(function* () {
-    const process = yield* CodeProcess
-    for (let index = 0; index < 2; index++) {
+/** The Person has the Computer, or it did not start: the program ends before anything ran. */
+standalone.effect(
+  'refuses a program when the Computer cannot be used, and says which refusal',
+  () => {
+    const messages: string[] = []
+    const logger = Logger.make((entry) => messages.push(Logger.formatSimple.log(entry)))
+    const held = Layer.succeed(
+      CodeComputer,
+      CodeComputer.of({
+        open: () => Effect.fail(new CodeComputerUnavailable({ reason: 'ComputerHeld' })),
+      }),
+    )
+    return Effect.gen(function* () {
+      const process = yield* CodeProcess
       const result = yield* process.run(
         {
           request: { code: 'return 1;', summary: 'Read' },
-          boundary: ThreadId.make(crypto.randomUUID()),
+          boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
         },
-        () => Effect.die('Unavailable configuration must never dispatch'),
+        () => Effect.die('A program that never started must not dispatch'),
       )
-      check(result, 'Failed', { failure: CodeFailure.cases.Unavailable.make({}) })
-    }
-    expect(messages.filter((message) => message.includes('XDG_RUNTIME_DIR'))).toHaveLength(1)
-  }).pipe(
-    Effect.provide(codeProcessLayer),
-    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
-    Effect.provide(Logger.layer([logger])),
-  )
-})
+      check(result, 'Failed', { failure: CodeFailure.cases.Unavailable.make({}), calls: [] })
+      expect(messages.some((message) => message.includes('ComputerHeld'))).toBe(true)
+    }).pipe(
+      Effect.provide(codeProcessLayer.pipe(Layer.provide(held))),
+      Effect.provide(Logger.layer([logger])),
+    )
+  },
+)
 
-/** A configured but unusable host is rejected during construction, before assets or guests launch. */
-standalone.effect('logs unavailable isolation once and refuses configured program runs', () => {
-  const messages: string[] = []
-  const logger = Logger.make((entry) => messages.push(Logger.formatSimple.log(entry)))
-  return Effect.gen(function* () {
-    const process = yield* CodeProcess
-    for (let index = 0; index < 2; index++) {
-      const result = yield* process.run(
+/** The Computer takes the program and its start, but an answer cannot be written to it. */
+standalone.effect(
+  'ends a program whose answer cannot reach the Computer, and keeps the receipt of the call',
+  () =>
+    Effect.gen(function* () {
+      const process = yield* CodeProcess
+      const outcome = yield* process.run(
         {
-          request: { code: 'return 1;', summary: 'Read' },
-          boundary: ThreadId.make(crypto.randomUUID()),
+          request: { code: 'await tools.find_tools({}); return "answered";', summary: 'Read' },
+          boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
         },
-        () => Effect.die('Launch must not dispatch'),
+        (call) =>
+          Effect.succeed(
+            CallOutcome.cases.Returned.make({ value: null, summary: call.kind, end: 'completed' }),
+          ),
       )
-      check(result, 'Failed', { failure: CodeFailure.cases.Unavailable.make({}) })
-    }
-    expect(
-      messages.filter((message) => message.includes('Programs are unavailable on this host')),
-    ).toHaveLength(1)
-    expect(messages.some((message) => message.includes('CodeIsolationUnavailable'))).toBe(true)
-  }).pipe(
-    Effect.provide(codeProcessLayer),
-    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ XDG_RUNTIME_DIR: '\0' }))),
-    Effect.provide(Logger.layer([logger])),
-  )
-})
+      // The call was made and answered on the server; only the program never heard. It is told
+      // to stop and reported, and is not left waiting until the deadline.
+      check(outcome, 'Failed', {
+        failure: CodeFailure.cases.Unavailable.make({}),
+        calls: [{ kind: 'find_tools', end: 'completed' }],
+      })
+    }).pipe(
+      Effect.provide(
+        codeProcessLayer.pipe(
+          Layer.provide(
+            localCodeComputer((attachment) => ({
+              follow: attachment.follow,
+              write: (input) =>
+                input.path.includes('/in/reply-')
+                  ? Effect.fail(new MachineOperationFailed({ operation: 'write' }))
+                  : attachment.write(input),
+            })),
+          ),
+        ),
+      ),
+    ),
+  { timeout: 20_000 },
+)
 
 /** Exercise the parent deadline state with a missing final frame, without a process or server. */
 standalone.effect('marks logs incomplete when final-frame grace expires', () =>

@@ -12,6 +12,14 @@ import {
 
 /** The one renderer global exposed by the sandboxed preload. */
 export const BRIDGE_NAMESPACE = 'vivid'
+/**
+ * The argument main adds to a window's process when it is sending error reports, and preload
+ * looks for. Electron appends `webPreferences.additionalArguments` to `process.argv` of the
+ * window's process "for passing small bits of data down to renderer process preload scripts"
+ * (electron.d.ts), which is the only thing a sandboxed preload can read before the page runs
+ * without asking main and waiting.
+ */
+export const REPORTING_ARGUMENT = '--vivid-reporting'
 /** Main and preload use one invoke channel so the tagged request union is the channel allowlist. */
 export const BRIDGE_INVOKE_CHANNEL = 'vivid:desktop:invoke'
 /** Main and preload use one event channel so every event is decoded by the same closed union. */
@@ -210,6 +218,13 @@ export interface VividSignInBridge {
 
 /** The local chooser and web shell import this type without Electron or filesystem authority. */
 export interface VividDesktopBridge {
+  /**
+   * Whether this shell's main process is sending error reports (`main/telemetry.ts`). The page
+   * reads it before it starts its own half of the reporting, which only hands reports to main: in
+   * a shell that is not reporting (one run from source) there is nobody to hand them to. It is a
+   * plain value, not a call, because the page decides before it draws anything.
+   */
+  readonly reporting: boolean
   readonly pages: VividPagesBridge
   readonly device: VividDeviceBridge
   readonly server: {
@@ -251,5 +266,5 @@ export {
 /** Selected app documents get page authority; chooser-only server settings remain separate. */
 export type VividAppBridge = Pick<
   VividDesktopBridge,
-  'getAppVersion' | 'pages' | 'device' | 'signIn'
+  'getAppVersion' | 'pages' | 'device' | 'signIn' | 'reporting'
 >

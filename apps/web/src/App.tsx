@@ -261,7 +261,6 @@ function Shell({ me }: { me: MeResponse }) {
             key={workspaceKey(me.workspace)}
             me={me}
             section={section.value}
-            deviceCode={Route.$is('Device')(route) ? Option.getOrElse(route.code, () => '') : ''}
           />
         </Suspense>
       )}
@@ -284,7 +283,6 @@ const screenOf = (route: Route) =>
     New: () => 'thread',
     Thread: () => 'thread',
     Invite: () => 'thread',
-    Device: () => 'thread',
     Routines: () => 'routines',
     Library: () => 'library',
     Projects: () => 'projects',
@@ -321,7 +319,5 @@ function Place({
       />
     ),
     Invite: ({ id }) => <Invite id={id} />,
-    // A device waiting to be signed in is approved in Settings, with its code already filled in.
-    Device: () => <First me={me} />,
   })
 }

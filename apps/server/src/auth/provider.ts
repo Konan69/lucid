@@ -1,16 +1,12 @@
 import { BetterAuth } from '@alchemy.run/better-auth'
-import { bearer, deviceAuthorization, organization } from 'better-auth/plugins'
+import { bearer, organization } from 'better-auth/plugins'
 import { RuntimeContext } from 'alchemy'
 import * as Effect from 'effect/Effect'
 import * as Redacted from 'effect/Redacted'
-import * as Schema from 'effect/Schema'
 import { DatabaseFailure } from '@vivid/contracts'
-import { PairingClient } from '@vivid/contracts/auth'
 import { ServerConfig } from '../config.ts'
-import { desktopSignIn } from './desktop.ts'
+import { appSignIn } from './signin.ts'
 import { authDatabaseLayer } from './dialect.ts'
-
-const isPairingClient = Schema.is(PairingClient)
 
 /**
  * Better Auth's internal identity model is mapped once at this boundary:
@@ -37,16 +33,13 @@ const makeOptions = (config: ServerConfig['Service']) => {
       },
     },
     plugins: [
+      // The phone keeps its session's token and sends it as a bearer token; it holds no cookie.
       bearer(),
-      // A code is issued and redeemed only for Vivid's own apps that sign in with one, which is the
-      // phone (`validateClient`, checked by
-      // `deviceCode` and `deviceToken` in better-auth 1.7.5
-      // `dist/plugins/device-authorization/routes.mjs`). Without it any name is accepted, and the
-      // approval page could be shown a request it has no words for.
-      deviceAuthorization({ verificationUri: '/device', validateClient: isPairingClient }),
-      // The desktop app's Google sign-in: the system browser signs the Person in and hands the app
-      // a one-use code, which the app's window trades for a session of its own (`desktop.ts`).
-      desktopSignIn({ origin: config.PUBLIC_URL.origin }),
+      // Google sign-in for the desktop app and the phone app: a browser signs the Person in and
+      // hands the app a one-use code, which the app trades for a session of its own
+      // (`signin.ts`). There is no other way to sign an app in from somewhere else: no code a
+      // Person reads or types, and no page where one is approved.
+      appSignIn({ origin: config.PUBLIC_URL.origin }),
       organization({
         creatorRole: 'owner',
         schema: {
@@ -90,8 +83,8 @@ export const localAuthRuntimeLayer = RuntimeContext.phantom
 /**
  * The Better Auth instance over Vivid's PostgreSQL.
  *
- * Every way a session ends by being removed (signing out, revoking a paired device, revoking the
- * other sessions) is a delete on the session table. The database Layer announces the Person in
+ * Every way a session ends by being removed (signing out, signing another device out, signing
+ * out everywhere else) is a delete on the session table. The database Layer announces the Person in
  * that delete's own commit (`auth/dialect.ts`), which is what makes every open subscription of
  * theirs ask again whether its session is still one. Nothing here publishes, so this needs no
  * change bus.

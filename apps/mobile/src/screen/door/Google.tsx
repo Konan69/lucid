@@ -1,14 +1,8 @@
-import { Pairing, spellCode, type Ending } from '@vivid/state'
-import { Option } from 'effect'
-import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
+import Animated from 'react-native-reanimated'
 import Svg, { Path } from 'react-native-svg'
-import { door, useDoor } from '../../data/door'
-import { commit } from '../../data/haptics'
-import { googlePairingAtom, reopenGoogleAtom } from '../../data/signing'
 import { useTheme } from '../../theme'
-import { Button, EDGE, Label, Press } from '../../ui/ui'
-import { Spelled } from './Code'
-import { Quiet, Step, useServer } from './Frame'
+import { APPEAR, LEAVE, MORPH } from '../../ui/motion/morph'
+import { EDGE, Label, Press } from '../../ui/ui'
 
 /**
  * Google's "G" as the artwork Google publishes for its sign-in button: four parts on an 18-unit
@@ -43,13 +37,22 @@ const G = [
  * line icon and this mark has four colours of its own.
  *
  * It is 48 points tall, the same as the button above it, and dims under the finger.
+ *
+ * `busy` is a code being traded for a session, the moment after the browser hands the Person
+ * back. The button then cannot be pressed, and its words say what is happening in the quieter
+ * ink, fading in over the old ones as `Button`'s `morph` does. The mark is Google's and stays
+ * exactly as it is in both states: the words carry the change.
  */
-export function GoogleButton({ onPress }: { onPress: () => void }) {
+export function GoogleButton({ busy, onPress }: { busy: boolean; onPress: () => void }) {
   const { colors: c } = useTheme()
+  const label = busy ? 'Signing in…' : 'Continue with Google'
   return (
     <Press
       accessibilityRole="button"
+      accessibilityState={{ disabled: busy, busy }}
+      disabled={busy}
       onPress={onPress}
+      layout={MORPH}
       style={({ pressed }) => ({
         minHeight: 48,
         paddingHorizontal: 20,
@@ -69,93 +72,17 @@ export function GoogleButton({ onPress }: { onPress: () => void }) {
           <Path key={part.fill} fill={part.fill} d={part.d} />
         ))}
       </Svg>
-      <Label size="footnote" tone="ink" numberOfLines={1} style={{ fontWeight: '600' }}>
-        Continue with Google
-      </Label>
+      {/* Keyed by its words, so new words are a new view: the old fade out as these fade in. */}
+      <Animated.View key={label} entering={APPEAR} exiting={LEAVE}>
+        <Label
+          size="footnote"
+          tone={busy ? 'ink-2' : 'ink'}
+          numberOfLines={1}
+          style={{ fontWeight: '600' }}
+        >
+          {label}
+        </Label>
+      </Animated.View>
     </Press>
   )
-}
-
-/**
- * What each way the exchange can end means when the Person was signing in with Google. The
- * endings are the code step's own (`Ending`); the words differ because here nobody was asked to
- * type a code, so "this code ran out" would name a thing they never held.
- */
-const ENDINGS = {
-  unreachable: {
-    title: 'Can’t reach Vivid',
-    detail: 'Check your connection and try again.',
-  },
-  expired: {
-    title: 'This sign-in ran out',
-    detail: 'It waits a few minutes for you to approve this phone. Start again when you are ready.',
-  },
-  denied: {
-    title: 'This phone was not let in',
-    detail: 'It was not approved in the browser. Start again to approve it.',
-  },
-  refused: {
-    title: 'Vivid could not start a sign-in',
-    detail: 'Try again in a moment.',
-  },
-} as const satisfies Record<Ending, { title: string; detail: string }>
-
-/**
- * Signing in with Google. The phone cannot show Google's sign-in itself, so it hands the Person to
- * their browser and waits: reading the exchange is what runs it (`googlePairingAtom`), and the
- * exchange opens the browser as soon as it has a code. There the Person signs in with Google and
- * approves this phone; the exchange then adopts the session itself and the whole door is
- * replaced, so there is nothing to do here on success.
- *
- * The one sentence says all of that before the browser covers it. The code is shown too, as on
- * the code step: the approval page shows the same one, which is how a Person knows the phone
- * being let in is this one. The foot opens the browser again, for a Person who came back without
- * finishing.
- */
-export function Google() {
-  const server = useServer()
-  const exchange = googlePairingAtom(server)
-  const state = AsyncResult.getOrElse(useDoor(exchange), () => Pairing.Asking())
-  const again = () => {
-    commit()
-    door.refresh(exchange)
-  }
-  return Pairing.$match(state, {
-    Asking: () => (
-      <Step title="Continue with Google" lead="Opening your browser…" foot={null}>
-        <Spelled code={Option.none()} />
-      </Step>
-    ),
-    Waiting: ({ userCode }) => (
-      <Step
-        title="Continue with Google"
-        lead="Your browser opens. Sign in with Google there, approve this phone, then come back here."
-        foot={
-          <Quiet
-            label="Open the browser again"
-            onPress={() => door.set(reopenGoogleAtom, { server, userCode })}
-          />
-        }
-      >
-        <Spelled code={Option.some(spellCode(userCode))} />
-        <Label accessibilityLiveRegion="polite" size="label" tone="ink-2">
-          Waiting for you to approve this phone. The browser shows this code.
-        </Label>
-      </Step>
-    ),
-    Approved: () => (
-      <Step title="You are in" lead="Opening Vivid…" foot={null}>
-        {null}
-      </Step>
-    ),
-    Ended: ({ why }) => (
-      <Step
-        title={ENDINGS[why].title}
-        lead={ENDINGS[why].detail}
-        foot={<Button kind="primary" label="Try again" onPress={again} />}
-      >
-        {null}
-      </Step>
-    ),
-  })
 }

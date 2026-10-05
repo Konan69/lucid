@@ -1,5 +1,5 @@
 import { ComputerState } from '@vivid/contracts'
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Stream } from 'effect'
 import { Machine, MachineNotRunning, type MachineKey } from './machine.ts'
 
 /**
@@ -27,6 +27,10 @@ export const absentMachineLayer = Layer.succeed(
       Effect.fail(new MachineNotRunning({ key })),
     ),
     exec: Effect.fn('Machine.absent.exec')(({ key }: { readonly key: MachineKey }) =>
+      Effect.fail(new MachineNotRunning({ key })),
+    ),
+    follow: ({ key }: { readonly key: MachineKey }) => Stream.fail(new MachineNotRunning({ key })),
+    write: Effect.fn('Machine.absent.write')(({ key }: { readonly key: MachineKey }) =>
       Effect.fail(new MachineNotRunning({ key })),
     ),
     browse: Effect.fn('Machine.absent.browse')(({ key }: { readonly key: MachineKey }) =>

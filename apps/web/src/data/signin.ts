@@ -15,8 +15,7 @@ import { googleAddresses } from './google'
  * trade the code and the app's secret for a session on this page's own origin. The answer to the
  * trade sets the session cookie, so Chromium keeps it and the shell never holds it.
  *
- * It replaces a device-code exchange in which the window showed a code and the Person approved
- * this app on a page in the browser. Nothing is typed, compared or approved now.
+ * Nothing is typed, compared or approved.
  *
  * Nothing in the hand-off itself knows about the page or the bridge on it: what the shell
  * answers, how the trade is sent and what arriving does are passed in (`Handoff`), so the whole of
@@ -106,7 +105,7 @@ const decodeSignedIn = Schema.decodeUnknownEffect(Schema.fromJsonString(SignedIn
 
 /**
  * Trades a code and the app's secret for a session: `POST` to `SIGN_IN_PLACES.trade` on this
- * page's own origin (`apps/server/src/auth/desktop.ts`). The answer sets Better Auth's session
+ * page's own origin (`apps/server/src/auth/signin.ts`). The answer sets Better Auth's session
  * cookie, which is what makes this window signed in, and its body says whether the account was
  * just made. The browser names this page's origin on the request, which the server checks.
  *
