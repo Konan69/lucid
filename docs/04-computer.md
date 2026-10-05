@@ -252,7 +252,7 @@ Viewer issuance is proven; embedding and interactive viewing in clients are unte
 Signed-in cookies/profile retention, tab manipulation and provider recovery under concurrent
 servers are not proven by this live suite. Driver mutation receipts
 attest delivery, not the intended effect; fresh state follows every action. Client support for
-the screen union belongs to its own lane. Flue placement and external state sync remain planned.
+the screen union belongs to its own lane. Runtime placement and external state sync remain planned.
 
 ## Reaching the Computer: one SSH connection
 
@@ -275,9 +275,12 @@ Vivid should use it as a person uses theirs.
 
 ### Why SSH, and why not a daemon
 
-The final shape is Vivid's runtime running on the Computer. There the runtime is the always-on
-process, and its file and shell tools are local calls. A service of our own on the machine, built
-now, would be a second daemon that the runtime replaces.
+Flue does not run on the Computer, now or later. Nothing of Vivid runs on the machine in this
+step: the only thing that touches it is the server's SSH connection. The final shape is Vivid's
+runtime running on the Computer, and that runtime is pi Durable, which replaces Flue (decided 4
+October 2026). There the runtime is the always-on process, and its file and shell tools are local
+calls. A service of our own on the machine, built now, would be a second daemon that the runtime
+replaces.
 
 SSH needs nothing installed on the machine and gives what that service would: commands with live
 output and input, real terminals, long-running processes, file transfer, and port forwarding in
@@ -299,9 +302,12 @@ hosted: runtime --> server --SSH--> the Person's Computer
 ```
 
 - **Direction.** The server dials out to each Computer on port 22. Nothing dials in to the server.
-- **Finding the machine.** Each Computer has its own public address. The address, the host name
-  and the machine id change when a machine is stopped and resumed, so the server asks the provider
-  for the address after every wake and never stores it.
+- **Finding the machine.** The address comes from the provider's answer to the key call, after
+  every wake, and is never stored: the address, the host name and the machine id all change when a
+  machine is stopped and resumed. A machine has either a public IPv4 address of its own or only an
+  IPv6 one; the same machine had each within one hour. For an IPv6-only machine the answer also
+  carries an SSH endpoint, a host and port on IPv4. The hosted server has no IPv6 route, so the
+  rule is: use the SSH endpoint when the answer has one, else the machine's address on port 22.
 - **Keys.** One key pair for the installation. The private half is a required server setting. The
   public half is authorized on a Computer through the provider when the Computer wakes; the same
   call returns the machine's host key, which the server checks when it connects. A wrong host is a
@@ -310,8 +316,10 @@ hosted: runtime --> server --SSH--> the Person's Computer
   waking, bindings, takeover and the idle stop. It is opened on first use, kept alive, closed when
   the Computer stops, and reopened after a failure with a fresh address. Commands, files and later
   port forwards are channels on it.
-- **What the model gets.** The real machine goes in Flue's slot, and the model has Flue's six
-  built-in tools on it: `read`, `write`, `edit`, `bash`, `grep`, `glob`. Flue replaces its built-in
+- **What the model gets.** Flue stays where it runs today, beside the server, for as long as it is
+  the runtime. Its slot for a machine is pointed at the real Computer through the server's
+  connection, and the model has the six built-in tools on it: `read`, `write`, `edit`, `bash`,
+  `grep`, `glob`. The SSH part knows nothing of Flue, so it stays when Flue goes. Flue replaces its built-in
   tools when a sandbox supplies its own list, and exports the builders for the six, so the list is
   those six plus `use_desktop` and `browse`. Pictures keep working and the stand-in is deleted.
   `run_command` goes with it.
@@ -322,34 +330,56 @@ hosted: runtime --> server --SSH--> the Person's Computer
 
 ### Measured on 5 October 2026
 
-On a second machine of the same provider account, not on a Person's Computer.
+On a second machine of the same provider account, not on a Person's Computer. "Hosted server"
+means inside the production server's container.
 
-| What                                                      | Result                                          |
-| --------------------------------------------------------- | ----------------------------------------------- |
-| Authorizing a key through the provider, on the trial plan | Accepted; repeating it is harmless              |
-| What that call returns                                    | The address, the user, and one ed25519 host key |
-| From the hosted server: connection to port 22             | 20 ms                                           |
-| From the hosted server: first bytes of SSH                | 51 ms                                           |
-| From a development machine in Lagos: the same two         | 165 ms and 345 ms                               |
-| From that machine: a whole first connection               | 2.6 s                                           |
-| From that machine: a command on the open connection       | 0.35 s                                          |
-| A 5 MB stream over the connection                         | Arrived intact                                  |
-| An SSH session and a provider command                     | See the same machine and processes              |
+| What                                                                                  | Result                                                                                          |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Authorizing a key through the provider, on the trial plan                             | Accepted; repeating it is harmless                                                              |
+| What that call returns                                                                | The address, the user, one ed25519 host key, and the SSH endpoint when the machine is IPv6-only |
+| Hosted server to a machine with its own IPv4: connection to port 22                   | 20 ms, four of four                                                                             |
+| Hosted server to that machine: first bytes of SSH                                     | 51 ms, four of four                                                                             |
+| Hosted server to an IPv6 address                                                      | Refused locally: no route                                                                       |
+| Hosted server to the SSH endpoint of an IPv6-only machine: connection                 | 42 ms                                                                                           |
+| Hosted server to that endpoint: first bytes of SSH                                    | 85 ms twice, 1.1 s and 3.2 s once each                                                          |
+| A whole session from the hosted server through that endpoint: handshake and key login | 1.5 s                                                                                           |
+| In that session: the host key against the one the provider reported                   | Equal                                                                                           |
+| In that session: a command, then the next one                                         | 0.42 s, 0.68 s                                                                                  |
+| In that session: a file written, read back and removed                                | Identical; 2.6 s for the three                                                                  |
+| From a development machine in Lagos, direct IPv4: a first connection, then a command  | 2.6 s, 0.35 s                                                                                   |
+| A 5 MB stream over a connection                                                       | Arrived intact                                                                                  |
+| An SSH session and a provider command                                                 | See the same machine and processes                                                              |
+
+What the numbers say: a machine with its own IPv4 is close to the hosted server, and the path
+through the endpoint is slower and uneven. Which of the two a machine gets is the provider's
+choice at each wake. One held connection pays the handshake once; each command still pays the
+path.
+
+### What starting a conversation asks of the machine
+
+Read in the installed Flue 2.2.2 (`discoverSessionContext`). When a conversation starts and the
+slot holds a machine, the runtime asks it, at the working directory: whether `AGENTS.md`,
+`CLAUDE.md` and `.agents/skills` exist, and for the directory listing. A failed listing is
+tolerated; a failed "exists" fails the start. Today these are answered by the stand-in and never
+reach a machine, so starting a conversation does not wake the Computer. With the real machine in
+the slot they would, so the rule is: while the Computer is not running, these four questions are
+answered "nothing there" without waking it, and only a tool the model calls wakes it.
 
 ### Not verified
 
-- A whole SSH session from the hosted server. Only the port and the first bytes were measured.
-- What Flue asks of the machine when a conversation starts, and so whether starting one would wake
-  a sleeping Computer. It must not.
 - How long after a wake a machine accepts SSH. Its command endpoint refuses for 20 to 40 seconds.
+  One wake watched on 5 October had not finished starting after ten minutes.
 - The same steps on a Person's Computer. There is no test Computer: the proof on one can only be
   run on the deployed product.
+- A direct IPv4 session from the hosted server. Only the connection and first bytes were measured
+  on that path; the whole session was run through the endpoint.
 
 ## Runtime on the Computer: planned
 
 **Status: native browser and desktop backend built; runtime placement and external state sync planned.**
-The browser and desktop now share Boat’s shipped guest. Running Vivid’s Flue runtime inside that
-guest remains a separate step. The intended shape follows.
+The browser and desktop now share Boat’s shipped guest. Flue never runs on the Computer. What
+will run there is the runtime that replaces Flue, pi Durable (decided 4 October 2026); moving it
+onto the machine is a separate step. The intended shape follows.
 
 The Computer is not a harness the agent calls out to. It is the machine the agent already lives on
 — `CONTEXT.md`: "the persistent private machine Vivid operates: filesystem, processes, browser

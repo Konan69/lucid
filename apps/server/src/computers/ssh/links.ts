@@ -52,7 +52,7 @@ export const links = <Key>(identity: Identity) => {
       // are bounded by the clock as well: the caller hears "unreachable", never a hang.
       Effect.timeoutOrElse({
         duration: '75 seconds',
-        onTimeout: () => Effect.fail(new LinkUnreachable()),
+        orElse: () => Effect.fail(new LinkUnreachable()),
       }),
       Effect.onError(() => Scope.close(scope, Exit.void)),
     )

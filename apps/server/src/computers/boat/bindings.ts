@@ -126,6 +126,20 @@ export const bindings = Effect.fn('Machine.boat.bindings')(function* () {
         ),
       ),
   )
+  /**
+   * Give up a binding the machine itself refused (`holder.ts`): the machine records another
+   * holder, so this row names a machine that is not this account's. Only the row this call was
+   * refused for goes, by its key and its intent, so a binding made since is left alone.
+   */
+  const release = Effect.fn('Machine.boat.binding.release')(
+    (key: MachineKey, intent: string) =>
+      database.run(
+        database
+          .delete(machineBindings)
+          .where(and(eq(machineBindings.key, key), eq(machineBindings.intent, intent))),
+      ),
+    (effect) => effect.pipe(Effect.mapError(() => new MachinePersistenceFailed())),
+  )
   /** A transition timestamp means first observed by Vivid, not an invented provider boot time. */
   const observe = Effect.fn('Machine.boat.binding.observe')(
     function* (key: MachineKey, before: Binding, state: typeof State.Type) {
@@ -150,6 +164,6 @@ export const bindings = Effect.fn('Machine.boat.bindings')(function* () {
     },
     (effect) => effect.pipe(Effect.mapError(() => new MachinePersistenceFailed())),
   )
-  return { load, holder, intend, discard, bind, observe }
+  return { load, holder, intend, discard, bind, release, observe }
 })
 export type Bindings = Effect.Success<ReturnType<typeof bindings>>

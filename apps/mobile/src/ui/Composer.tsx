@@ -17,7 +17,8 @@ import type { ComposerEditorHandle } from '../native/composer/types'
 import { useTheme } from '../theme'
 import { BorderBeam } from '../../vendor/beam'
 import { heldAfter, isOpen, type Held, type Measured } from './composer/expansion'
-import { GlassMaterial } from './Glass'
+import { AnimatedGlassMaterial } from './Glass'
+import type { Origin } from './Presence'
 import { Press, styles, TARGET } from './ui'
 
 /**
@@ -97,9 +98,6 @@ const MORPH = MORPHS
   ? LinearTransition.duration(MORPH_MS).reduceMotion(ReduceMotion.System)
   : undefined
 
-/** The glass material as an animated view, so it follows the same transition as its outline. */
-const AnimatedMaterial = Animated.createAnimatedComponent(GlassMaterial)
-
 /**
  * The composer's shape: an outline that casts the shadow and clips, the system's glass behind,
  * and the content in front as the glass's sibling.
@@ -140,7 +138,7 @@ function Surface({
         },
       ]}
     >
-      <AnimatedMaterial
+      <AnimatedGlassMaterial
         layout={MORPH}
         style={[{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }, rounded]}
       />
@@ -173,6 +171,7 @@ function Surface({
  */
 export function Composer({
   ref,
+  origin,
   value,
   placeholder,
   autoFocus,
@@ -183,6 +182,11 @@ export function Composer({
   onStop,
 }: {
   ref?: Ref<ComposerEditorHandle>
+  /**
+   * Where a send leaves from on its way to the top of the screen (`ui/Presence.tsx`): put on the
+   * button's round, and told each time the Person sends.
+   */
+  origin: Origin
   value: string
   placeholder: string
   /**
@@ -232,8 +236,13 @@ export function Composer({
   function send() {
     if (idle) return
     commit()
-    if (working) onStop()
-    else onSend()
+    if (working) {
+      onStop()
+      return
+    }
+    // Counted in a value the UI thread reads, so the disc leaves without waiting for a render.
+    origin.sends.set((count) => count + 1)
+    onSend()
   }
 
   return (
@@ -285,7 +294,7 @@ export function Composer({
               shape is a capsule, so the views around it keep their places in the tree. */}
           {open && <View style={{ height: 4 }} />}
           <Animated.View layout={MORPH} style={state.act}>
-            <Act working={working} idle={idle} onPress={send} />
+            <Act round={origin.button} working={working} idle={idle} onPress={send} />
           </Animated.View>
         </Surface>
       </BorderBeam>
@@ -298,7 +307,18 @@ export function Composer({
  * 30-point round with a 16-point glyph, the reference's `ComposerActionButton`
  * (`src/components/ComposerToolbar.tsx`). With nothing to do it is dimmed and does not answer.
  */
-function Act({ working, idle, onPress }: { working: boolean; idle: boolean; onPress: () => void }) {
+function Act({
+  round,
+  working,
+  idle,
+  onPress,
+}: {
+  /** Where the screen finds the button's round, to fly a send from it. */
+  round: Origin['button']
+  working: boolean
+  idle: boolean
+  onPress: () => void
+}) {
   const { colors: c } = useTheme()
   return (
     <Press
@@ -315,7 +335,10 @@ function Act({ working, idle, onPress }: { working: boolean; idle: boolean; onPr
         opacity: pressed ? 0.7 : 1,
       })}
     >
-      <View
+      <Animated.View
+        ref={round}
+        // Kept as a view of its own, so there is always something to measure.
+        collapsable={false}
         style={{
           width: ROUND,
           height: ROUND,
@@ -341,7 +364,7 @@ function Act({ working, idle, onPress }: { working: boolean; idle: boolean; onPr
             color={c['primary-foreground']}
           />
         )}
-      </View>
+      </Animated.View>
     </Press>
   )
 }
