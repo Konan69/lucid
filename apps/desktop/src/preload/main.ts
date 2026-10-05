@@ -69,6 +69,9 @@ const invoke = Effect.fn('DesktopPreload.invoke')(function* (request: BridgeRequ
     ExternalOpened: answered,
     Pages: answered,
     DeviceLink: answered,
+    GoogleSignInBegun: answered,
+    GoogleSignInEnded: answered,
+    GoogleSignInCancelled: answered,
   })
 })
 
@@ -110,14 +113,34 @@ const openExternal = Effect.fn('DesktopPreload.openExternal')(function* (value: 
 })
 
 /**
- * Sends the approval page for a sign-in code to the system browser. Preload checks only that it
- * is a web address; whether it is the selected server's approval page is main's decision, made
- * against the server it has saved, which a document cannot change.
+ * Starts a Google sign-in, or opens the browser again for the one in progress. Both carry no
+ * argument and answer alike: whether the system browser opened. Main builds the address from the
+ * server it has saved, so nothing a document says can send the browser anywhere.
  */
-const openApproval = Effect.fn('DesktopPreload.openApproval')(function* (value: string) {
-  const address = yield* decodeExternal(value)
-  const response = yield* invoke(BridgeRequest.cases.OpenApproval.make({ address }))
-  if (BridgeResponse.guards.ExternalOpened(response)) return undefined
+const signInBrowser = Effect.fn('DesktopPreload.signInBrowser')(function* (
+  request:
+    | typeof BridgeRequest.cases.BeginGoogleSignIn.Type
+    | typeof BridgeRequest.cases.ReopenGoogleSignIn.Type,
+) {
+  const response = yield* invoke(request)
+  if (BridgeResponse.guards.GoogleSignInBegun(response)) return response.browser
+  return yield* new UnexpectedBridgeResponse({})
+})
+
+/**
+ * Waits for the sign-in in progress to end. The invoke stays pending for as long as the attempt
+ * does. A `Granted` ending crosses here once, as plain text, for the document to trade.
+ */
+const signInEnded = Effect.fn('DesktopPreload.signInEnded')(function* () {
+  const response = yield* invoke(BridgeRequest.cases.AwaitGoogleSignIn.make({}))
+  if (BridgeResponse.guards.GoogleSignInEnded(response)) return response.value
+  return yield* new UnexpectedBridgeResponse({})
+})
+
+/** Stops the sign-in in progress; a pending `ended` then resolves `Cancelled`. */
+const cancelSignIn = Effect.fn('DesktopPreload.cancelSignIn')(function* () {
+  const response = yield* invoke(BridgeRequest.cases.CancelGoogleSignIn.make({}))
+  if (BridgeResponse.guards.GoogleSignInCancelled(response)) return undefined
   return yield* new UnexpectedBridgeResponse({})
 })
 
@@ -146,7 +169,12 @@ const bridge: VividDesktopBridge = {
   },
   getAppVersion: () => Effect.runPromise(getAppVersion()),
   openExternal: (url) => Effect.runPromise(openExternal(url)),
-  openApproval: (address) => Effect.runPromise(openApproval(address)),
+  signIn: {
+    begin: () => Effect.runPromise(signInBrowser(BridgeRequest.cases.BeginGoogleSignIn.make({}))),
+    reopen: () => Effect.runPromise(signInBrowser(BridgeRequest.cases.ReopenGoogleSignIn.make({}))),
+    ended: () => Effect.runPromise(signInEnded()),
+    cancel: () => Effect.runPromise(cancelSignIn()),
+  },
 }
 // Preload limits the visible API; main independently checks the actual sender frame on every call.
 const chooserDocument =
@@ -159,6 +187,6 @@ contextBridge.exposeInMainWorld(
         getAppVersion: bridge.getAppVersion,
         pages: bridge.pages,
         device: bridge.device,
-        openApproval: bridge.openApproval,
+        signIn: bridge.signIn,
       },
 )

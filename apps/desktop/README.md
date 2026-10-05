@@ -51,7 +51,7 @@ owner. The shell uses the same saved origin and staged assets in development and
 
 Import bridge types from `@vivid/desktop/bridge` (`src/shared/bridge.ts`). The chooser receives
 `window.vivid` with `VividDesktopBridge`; selected-server documents receive `VividAppBridge`,
-containing `getAppVersion()`, `pages`, `device` and `openApproval()`:
+containing `getAppVersion()`, `pages`, `device` and `signIn`:
 
 ```ts
 interface VividDesktopBridge {
@@ -66,20 +66,24 @@ interface VividDesktopBridge {
   }
   getAppVersion(): Promise<string>
   openExternal(url: string): Promise<void>
-  openApproval(address: string): Promise<void>
+  readonly signIn: VividSignInBridge
+}
+
+interface VividSignInBridge {
+  begin(): Promise<'opened' | 'unopened'>
+  reopen(): Promise<'opened' | 'unopened'>
+  ended(): Promise<
+    | { _tag: 'Granted'; code: string; state: string; verifier: string }
+    | { _tag: 'Failed' }
+    | { _tag: 'Expired' }
+    | { _tag: 'Cancelled' }
+  >
+  cancel(): Promise<void>
 }
 ```
 
-`openApproval` is how the app signs in with Google. Google refuses to sign anyone in inside an
-embedded window, so the web app runs a device-code exchange (the phone's way in, shared in
-`@vivid/state`) and asks main to open the selected server's approval page for its code in the
-system browser. Main accepts exactly that address and nothing else: the saved server's origin, the
-path `/device`, one `user_code` in the shape the server issues (eight characters of Better Auth's
-alphabet), and at most `signin=google` after it (`isApprovalAddress` in
-`src/main/security.ts`). Once the code is approved the web app trades the exchange's token for a
-session cookie (`POST /api/auth/adopt-session`), so the window is a cookie session like any other.
-The web app reads the capability off the bridge before offering the button: a shell installed
-before `openApproval` existed shows "Update Vivid to sign in with Google here." instead.
+`signIn` is how the app signs in with Google; see "Signing in" below. None of its four calls
+takes an argument, so a document cannot name where the system browser goes.
 
 Invalid arguments and persistence failures reject the call. The chooser should display them and
 stay open; `Chosen` means both probe and durable save succeeded, and main replaces the document.
@@ -92,10 +96,7 @@ The app renderer receives this exact surface on `window.vivid`. Import `Tab`, `P
 The renderer owns the panel, tab row, address input, and sign-out integration.
 
 ```ts
-type VividAppBridge = Pick<
-  VividDesktopBridge,
-  'getAppVersion' | 'pages' | 'device' | 'openApproval'
->
+type VividAppBridge = Pick<VividDesktopBridge, 'getAppVersion' | 'pages' | 'device' | 'signIn'>
 
 interface VividPagesBridge {
   readonly open: (input: PageInput) => Promise<Tab>
@@ -180,9 +181,47 @@ account creation as the browser. Chromium's cookie-aware application session car
 Auth's HttpOnly session cookie through the selected-origin proxy. Main and preload do not
 handle passwords or store a separate bearer token.
 
-The server supports device authorization and the web Settings → Devices page approves codes,
-but the desktop renderer does not currently request or exchange its own device code. That is
-implemented by mobile. Adding a desktop code flow would require renderer work.
+### Google
+
+Google refuses to sign anyone in inside an embedded window, so that part happens in the Person's
+system browser. There is no code to read or type and no page to approve: press, pick the account,
+and the app is signed in.
+
+1. The window calls `window.vivid.signIn.begin()`. Main (`src/main/signin.ts`) makes a name for
+   the attempt (`state`, 16 letters and digits), a secret (`verifier`, 32 random bytes as
+   base64url) and the secret's SHA-256 digest (`challenge`, PKCE `S256`). It listens on
+   `127.0.0.1` on a port the operating system picks and opens the system browser on the saved
+   server's `/api/auth/desktop/google` with the challenge, the name and the port. The address is
+   built from the server main has saved, never from anything the document sent. `begin()` answers
+   `'opened'` or `'unopened'`; an unopened browser does not end the attempt, and `reopen()` sends
+   it to the same address again.
+2. The server takes the browser through Google and sends it back to
+   `http://127.0.0.1:<port>/?code=…&state=…`, or `?error=…&state=…`.
+3. The listener reads only a `GET` of `/` that names this attempt. It redirects the browser to
+   `/done`, so the code does not stay in the address bar, serves one small page there ("You are
+   in." or "Google sign-in did not finish."), and stops listening. Every other request gets a
+   404 and changes nothing. Every answer carries `Cache-Control: no-store` and
+   `Referrer-Policy: no-referrer`.
+4. Main brings the window to the front and resolves `window.vivid.signIn.ended()` with
+   `Granted { code, state, verifier }`. The window trades those with the server
+   (`/api/auth/desktop/session`) on its own origin, so Chromium keeps the cookie. Main never
+   holds a session.
+
+There is at most one attempt. `begin()` replaces one in progress and `cancel()` stops it; either
+resolves a pending `ended()` with `Cancelled`. An attempt ends `Expired` five minutes after it
+began, which is how long the server keeps a sign-in. A return without a code ends it `Failed`.
+An ending is handed to the window once. Choosing another server, or forgetting this one, cancels
+the attempt, and the listener closes when the app quits. With no server chosen, `begin()` answers
+`'unopened'` and nothing listens.
+
+This follows Better Auth's own desktop integration (`@better-auth/electron` 1.7.5, `requestAuth`
+and `authenticate`), with two differences. The browser returns over a loopback address (RFC 8252
+section 7.3) and not a `vivid://` link, so it shows no "Open this app?" prompt and it works in an
+app run from source. And the trade happens in the window, not in main.
+
+The page the browser ends on (`src/main/landing.ts`) is one static document with no script and
+nothing to fetch. Its colours are the page and ink of the native window, read from the design
+tokens, in the browser's light or dark.
 
 ## Vivid using this computer
 
@@ -296,7 +335,9 @@ and popup destinations open in the system browser only for HTTP(S); other scheme
 Only the main frame may invoke the schema-decoded bridge. Main checks its document URL for every
 request: the bundled chooser alone can choose or forget a server, read settings, or invoke
 external browsing. Selected-server documents can read the app version, drive the isolated
-Browser through validated page requests, and read or refresh this computer's link. No page guest has preload or bridge access.
+Browser through validated page requests, read or refresh this computer's link, and sign in with
+Google. Google sign-in is given to the selected server's own document alone: the chooser is
+refused it. No page guest has preload or bridge access.
 
 Each page uses its own main-owned `WebContentsView` in `persist:vivid-pages`, with sandbox,
 context isolation, web security and no Node integration. Only HTTP(S) page and frame navigation
