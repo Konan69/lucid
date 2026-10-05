@@ -237,33 +237,31 @@ export function ThreadRow({
         onPress: shelve,
       }}
     >
-      {() => (
-        <ControlPillMenu
-          shouldOpenOnLongPress
-          title={thread.title}
-          actions={[
-            { id: 'rename', title: 'Rename' },
-            { id: 'retitle', title: 'Regenerate title' },
-            ...filing,
-            { id: 'shelve', title: shelveLabel },
-            { id: 'remove', title: 'Delete…', attributes: { destructive: true } },
-          ]}
-          onPressAction={({ nativeEvent }) => {
-            const act = chosen.get(nativeEvent.event)
-            if (act !== undefined) act()
-          }}
-        >
-          <Press accessibilityRole="button" onPress={() => onOpen(thread)}>
-            {({ pressed }) =>
-              variant === 'card' ? (
-                <CardFace thread={thread} pressed={pressed} retitling={retitling} />
-              ) : (
-                <LineFace thread={thread} now={now} pressed={pressed} retitling={retitling} />
-              )
-            }
-          </Press>
-        </ControlPillMenu>
-      )}
+      <ControlPillMenu
+        shouldOpenOnLongPress
+        title={thread.title}
+        actions={[
+          { id: 'rename', title: 'Rename' },
+          { id: 'retitle', title: 'Regenerate title' },
+          ...filing,
+          { id: 'shelve', title: shelveLabel },
+          { id: 'remove', title: 'Delete…', attributes: { destructive: true } },
+        ]}
+        onPressAction={({ nativeEvent }) => {
+          const act = chosen.get(nativeEvent.event)
+          if (act !== undefined) act()
+        }}
+      >
+        <Press accessibilityRole="button" onPress={() => onOpen(thread)}>
+          {({ pressed }) =>
+            variant === 'card' ? (
+              <CardFace thread={thread} pressed={pressed} retitling={retitling} />
+            ) : (
+              <LineFace thread={thread} now={now} pressed={pressed} retitling={retitling} />
+            )
+          }
+        </Press>
+      </ControlPillMenu>
     </ThreadSwipeable>
   )
 }

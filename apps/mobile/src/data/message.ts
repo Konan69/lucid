@@ -201,30 +201,37 @@ const STANDING = {
 /** Mirrors the web's watchable steps, without exposing tool names to the drawn UI. */
 const ON_COMPUTER = new Set(['run_command', 'browse', 'use_desktop'])
 
-/** Each tool call as a line in the product's words, never the tool's own name or payload. */
+/**
+ * Each tool call as a line in the product's words, never the tool's own name or payload.
+ *
+ * One pass with the array's own `flatMap`: a call that is drawn elsewhere gives no step. It was
+ * `tools.values().filter().map().toArray()`, which are methods of the iterator, not of the
+ * array. Every Vivid message is drawn through here, and the phone's engine does not promise
+ * them: Hermes 250829098.0.17, the one this app is built with, lists iterator helpers as not
+ * yet done (`doc/Features.md` at that tag). Node has them, so the tests could not see it.
+ */
 export const stepsOf = (tools: ReadonlyArray<ToolPart>): ReadonlyArray<Step> =>
-  tools
-    .values()
-    .filter((tool) => !drawn(tool))
-    .map((tool) => {
-      const standing = STANDING[tool.state]
-      const described = describeToolCall(
-        tool.toolName,
-        readAsked(tool.input),
-        // A call still running has no output; it reads as an answer with nothing in it yet.
-        readAnswered(tool.state === 'output-available' ? tool.output : {}),
-        standing,
-      )
-      return {
+  tools.flatMap((tool) => {
+    if (drawn(tool)) return []
+    const standing = STANDING[tool.state]
+    const described = describeToolCall(
+      tool.toolName,
+      readAsked(tool.input),
+      // A call still running has no output; it reads as an answer with nothing in it yet.
+      readAnswered(tool.state === 'output-available' ? tool.output : {}),
+      standing,
+    )
+    return [
+      {
         id: tool.toolCallId,
         label: described.label,
         detail: Option.fromUndefinedOr(described.detail),
         // A tool that answered that it could not do it failed, even though the call returned.
         standing: described.state,
         onComputer: ON_COMPUTER.has(tool.toolName),
-      }
-    })
-    .toArray()
+      },
+    ]
+  })
 
 /**
  * The step Vivid is on: the newest one still in progress, and only while the reply is being
