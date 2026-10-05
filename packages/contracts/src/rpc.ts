@@ -42,6 +42,7 @@ import {
   SwitchWorkspaceRequest,
 } from './companies.js'
 import {
+  AllowAppsRequest,
   AnswerDeviceRequest,
   DeviceId,
   DeviceListResponse,
@@ -49,6 +50,7 @@ import {
   DeviceResponse,
   EnrolDeviceRequest,
   NoDeviceConnected,
+  ReportDeviceStopRequest,
   WatchDeviceRequestsRequest,
   BrowseOutcome,
   BrowseRequest,
@@ -65,6 +67,7 @@ import {
   ChannelListResponse,
   ConnectChannelRequest,
 } from './channels.js'
+import { UseWindowRequest, WindowOutcome } from './windows.js'
 import { DraftListResponse, DraftSaved, SaveDraftRequest } from './drafts.js'
 import {
   AddIntegrationRequest,
@@ -764,6 +767,23 @@ const RevokeDevice = Rpc.make('RevokeDevice', {
   payload: { id: DeviceId },
   success: DeviceResponse,
 })
+/** Lets Vivid into the apps of one computer, or stops letting it. Separate from `AllowDevice`. */
+const AllowApps = Rpc.make('AllowApps', {
+  ...call,
+  payload: AllowAppsRequest,
+  success: DeviceResponse,
+})
+/** The desktop app saying its Person stopped Vivid between two actions of a Run. */
+const ReportDeviceStop = Rpc.make('ReportDeviceStop', {
+  ...call,
+  payload: ReportDeviceStopRequest,
+})
+/** One action in an app on the Person's own computer; the answer is the window after it. */
+const UseWindow = Rpc.make('UseWindow', {
+  ...call,
+  payload: UseWindowRequest,
+  success: WindowOutcome,
+})
 /**
  * The desktop app listening for work. Holding this open is what makes its Device `Connected`;
  * only the installation that enrolled an allowed Device may hold it, and nothing sent while it
@@ -931,6 +951,9 @@ export const VividRpc = RpcGroup.make(
   WatchDevices,
   AllowDevice,
   RevokeDevice,
+  AllowApps,
+  ReportDeviceStop,
+  UseWindow,
   WatchDeviceRequests,
   AnswerDeviceRequestRpc,
   UseDesktop,

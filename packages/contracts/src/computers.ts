@@ -1,5 +1,13 @@
 import { Effect, Schema } from 'effect'
 import { ApprovalId, ComputerId, RunId, ThreadId } from './identity.js'
+import {
+  AppName,
+  AppsAllowance,
+  DeviceAbility,
+  WindowAction,
+  WindowRefusal,
+  WindowResult,
+} from './windows.js'
 
 /**
  * How a running Computer's screen is watched. `Relay` is a remote-framebuffer socket this server
@@ -188,8 +196,14 @@ export const DeviceAccess = Schema.TaggedUnion({
 })
 export type DeviceAccess = typeof DeviceAccess.Type
 
-/** Whether the computer's desktop app is listening right now. Never stored: it is the live link. */
-export const DevicePresence = Schema.TaggedUnion({ Connected: {}, Offline: {} })
+/**
+ * Whether the computer's desktop app is listening right now, and what that app can do. Never
+ * stored: it is the live link, and `ability` is what the app said when it started listening.
+ */
+export const DevicePresence = Schema.TaggedUnion({
+  Connected: { ability: DeviceAbility },
+  Offline: {},
+})
 export type DevicePresence = typeof DevicePresence.Type
 
 /**
@@ -202,6 +216,8 @@ export const Device = Schema.Struct({
   id: DeviceId,
   name: DeviceName,
   access: DeviceAccess,
+  /** Whether Vivid is let into this computer's apps, beyond pages in the desktop app. */
+  apps: AppsAllowance,
   presence: DevicePresence,
 }).annotate({ identifier: 'Device', title: 'Device' })
 export interface Device extends Schema.Schema.Type<typeof Device> {}
@@ -217,6 +233,8 @@ export interface EnrolDeviceRequest extends Schema.Schema.Type<typeof EnrolDevic
 export const WatchDeviceRequestsRequest = Schema.Struct({
   device: DeviceId,
   installation: InstallationId,
+  /** What this app can do right now; the server offers it no work it cannot do. */
+  ability: DeviceAbility,
 })
 export interface WatchDeviceRequestsRequest extends Schema.Schema.Type<
   typeof WatchDeviceRequestsRequest
@@ -229,26 +247,53 @@ export const DeviceRequestId = Schema.String.check(Schema.isUUID()).pipe(
 export type DeviceRequestId = typeof DeviceRequestId.Type
 
 /**
- * One action for the Person's computer. The Thread and the Run say what is driving it, so the
- * desktop app can show that and stop it; the deadline is authority to act once, not an invitation
- * to replay after a reconnect.
+ * The work a Device is asked to do: a step in a page of the desktop app's own browser, or an
+ * action in an app on the computer. `app` is the name the Person approved, so the computer can
+ * say on its notice which app Vivid is in, and refuse a window that is not that app's.
  */
-export const DeviceRequest = Schema.Struct({
-  id: DeviceRequestId,
-  threadId: ThreadId,
-  runId: RunId,
-  action: BrowserAction,
-  expiresAt: Schema.Number.check(Schema.isFinite()),
+export const DeviceWork = Schema.TaggedUnion({
+  Page: { action: BrowserAction },
+  Window: { action: WindowAction, app: Schema.OptionFromNullOr(AppName) },
 })
-export interface DeviceRequest extends Schema.Schema.Type<typeof DeviceRequest> {}
+export type DeviceWork = typeof DeviceWork.Type
+
+/**
+ * What the server says to a listening desktop app.
+ *
+ * - `Act`: one piece of work. The Thread and the Run say what is driving it, so the desktop app
+ *   can show that and stop it; the deadline is authority to act once, not an invitation to replay
+ *   after a reconnect. Work in an app belongs to a turn that lasts as long as its Run: the
+ *   desktop app begins the turn at the first `Window` work of a Run and shows its notice.
+ * - `RunEnded`: that Run is over, however it ended. The desktop app ends the turn and takes the
+ *   notice down. Without it the notice stayed until a timeout, saying Vivid was using a computer
+ *   it had finished with.
+ */
+export const DeviceRequest = Schema.TaggedUnion({
+  Act: {
+    id: DeviceRequestId,
+    threadId: ThreadId,
+    runId: RunId,
+    work: DeviceWork,
+    expiresAt: Schema.Number.check(Schema.isFinite()),
+  },
+  RunEnded: { runId: RunId },
+})
+export type DeviceRequest = typeof DeviceRequest.Type
 
 /** Why the computer would not act. Closed reasons; page and browser details stay on the computer. */
 export const DeviceRefusal = Schema.Literals(['Stopped', 'PageGone', 'NotAllowed', 'Unsupported'])
 export type DeviceRefusal = typeof DeviceRefusal.Type
 
+/**
+ * `Done` and `Refused` answer work in a page; `Did` and `Declined` answer work in an app, whose
+ * results and refusals are a different vocabulary (`WindowResult`, `WindowRefusal`). `Failed` is
+ * either kind going wrong on the computer with nothing more to say.
+ */
 export const DeviceAnswer = Schema.TaggedUnion({
   Done: { result: BrowseResult },
   Refused: { reason: DeviceRefusal },
+  Did: { result: WindowResult },
+  Declined: { reason: WindowRefusal },
   Failed: {},
 })
 export type DeviceAnswer = typeof DeviceAnswer.Type
@@ -365,3 +410,21 @@ export const DesktopOutcome = Schema.TaggedUnion({
   OutcomeUnknown: {},
 })
 export type DesktopOutcome = typeof DesktopOutcome.Type
+
+/**
+ * The Person stopped Vivid on their computer (Escape, or Stop on the notice) with nothing in
+ * flight to answer: between two actions of a Run. The desktop app says so at once, and the server
+ * stops that Run, so Vivid does not send the next action into a turn that is over.
+ */
+export const ReportDeviceStopRequest = Schema.Struct({
+  device: DeviceId,
+  installation: InstallationId,
+  runId: RunId,
+})
+export interface ReportDeviceStopRequest extends Schema.Schema.Type<
+  typeof ReportDeviceStopRequest
+> {}
+
+/** Turns Vivid's use of the apps on one computer on or off. Only that computer's Person may. */
+export const AllowAppsRequest = Schema.Struct({ id: DeviceId, allowed: Schema.Boolean })
+export interface AllowAppsRequest extends Schema.Schema.Type<typeof AllowAppsRequest> {}
