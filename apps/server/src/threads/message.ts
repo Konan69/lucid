@@ -45,7 +45,12 @@ export const flueMessage = (
       kind: 'signal',
       type: 'first-conversation',
       tagName: 'first-conversation',
-      body: "This is the Person's first Thread. Nothing has been said yet. Activate the first-conversation skill and follow it.",
+      // Every other signal is acted on without words ("do not narrate it"), and a model that
+      // reads this one the same way loads the skill and opens with a bare question card: on
+      // 5 October 2026 five of twelve first Threads did. The body therefore says who speaks and
+      // in what order, so the standing rule and the skill do not have to be weighed against
+      // each other.
+      body: "This is the Person's first Thread. Nothing has been said yet, so you speak first. Activate the first-conversation skill and follow it. Your reply must open with your own words to the Person, written as text, before you ask them anything.",
       attributes: attribution,
     }),
   })

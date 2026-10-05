@@ -7,7 +7,11 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['src/{computers,approvals,connections,routines}/thread.live.test.ts'],
+    include: [
+      'src/{computers,approvals,connections,routines}/thread.live.test.ts',
+      'src/threads/first.live.test.ts',
+      'src/memory/outage.live.test.ts',
+    ],
     maxWorkers: 1,
     fileParallelism: false,
   },

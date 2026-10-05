@@ -17,7 +17,7 @@ import { Data, Option, Schema } from 'effect'
  */
 
 /** How a Google sign-in went wrong, in the cases a Person is told different things for. */
-export type GoogleOutcome = 'Cancelled' | 'NotLinked' | 'NotSetUp' | 'Unreachable' | 'Failed'
+export type GoogleOutcome = 'Cancelled' | 'NotLinked' | 'Unreachable' | 'Failed'
 
 /**
  * Better Auth's codes for the outcomes Vivid words differently, read from the installed source
@@ -30,18 +30,14 @@ export type GoogleOutcome = 'Cancelled' | 'NotLinked' | 'NotSetUp' | 'Unreachabl
  *   (`handleOAuthUserInfo` in `dist/oauth2/link-account.mjs` answers "account not linked", which
  *   the callback joins with underscores). That refusal is what stops someone registering another
  *   Person's email first and waiting for them to arrive with Google.
- * - `oauth_provider_not_found`, on the way back, and `PROVIDER_NOT_FOUND`, the answer to the
- *   request that starts a sign-in (`dist/api/routes/sign-in.mjs`): this server was not given a
- *   Google client.
  *
+ * Every running Vivid has its Google client, so there is no "not set up" outcome to word.
  * Every other code (a state that expired, a code Google would not exchange, a profile with no
  * email) is the same thing to a Person: it did not work, try again.
  */
 const OUTCOMES: ReadonlyMap<string, GoogleOutcome> = new Map([
   ['access_denied', 'Cancelled'],
   ['account_not_linked', 'NotLinked'],
-  ['oauth_provider_not_found', 'NotSetUp'],
-  ['PROVIDER_NOT_FOUND', 'NotSetUp'],
 ])
 
 /** The outcome a Better Auth code stands for. */
@@ -57,10 +53,6 @@ export const SAID = {
   NotLinked: {
     tone: 'danger',
     message: 'An account with this email already exists. Sign in with its password.',
-  },
-  NotSetUp: {
-    tone: 'danger',
-    message: 'Google sign-in is not set up on this Vivid. Use your email and password.',
   },
   Unreachable: { tone: 'danger', message: 'Vivid could not be reached. Try again.' },
   Failed: { tone: 'danger', message: 'Could not sign in with Google. Try again.' },

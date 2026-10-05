@@ -4,7 +4,7 @@ import {
   type Channel,
   type ChannelAddress,
 } from '@vivid/contracts'
-import { Config, Effect, Filter, Layer, Option, Redacted, Schema, Stream } from 'effect'
+import { Effect, Filter, Layer, Option, Redacted, Schema, Stream } from 'effect'
 import { Spectrum, type Message, type Space } from 'spectrum-ts'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 import { imessage } from 'spectrum-ts/providers/imessage'
@@ -19,8 +19,8 @@ import {
   ChannelRecipientMissing,
   ChannelSendUnknown,
   InvalidChannelMessage,
-  unavailableChannelProviderLayer,
 } from './provider.ts'
+import { requiredSetting } from '../config.ts'
 
 /** Stable create-user returns the existing active shared user when its phone is already enrolled. */
 const Created = Schema.Struct({
@@ -232,19 +232,34 @@ const makePhoton = Effect.fn('Channels.makePhoton')(function* (config: PhotonCre
   })
 })
 
-/** No credentials acquires no SDK/network resource; a partially configured Integration is unavailable. */
-export const photonLayer = Layer.unwrap(
+/** Photon identifies a project by a name and a secret; neither may be blank or padded. */
+const credential = Schema.NonEmptyString.check(
+  Schema.makeFilter((value) => value.trim() === value || 'a value with no surrounding spaces'),
+)
+
+/**
+ * Texting is part of every running Vivid, so both Photon credentials are required while the server
+ * is composed: a missing or blank one stops launch naming the variable, and there is no provider
+ * that stands in for "this server cannot text". Nothing is dialled here; the line opens when the
+ * inbound stream is first read.
+ *
+ * Photon being down is a different fact and stays on the call that met it: `ChannelProviderFailed`
+ * for an enrolment, `ChannelRecipientMissing` or `ChannelSendUnknown` for a send, and
+ * `ChannelDisconnected` for the inbound stream, which its reader opens again.
+ */
+export const photonLayer = Layer.effect(
+  ChannelProvider,
   Effect.fn('Channels.configurePhoton')(function* () {
-    const projectId = yield* Config.option(Config.String('VIVID_PHOTON_PROJECT_ID'))
-    const projectSecret = yield* Config.option(Config.Redacted('VIVID_PHOTON_PROJECT_SECRET'))
-    if (
-      Option.isNone(projectId) ||
-      Option.isNone(projectSecret) ||
-      projectId.value.trim().length === 0 ||
-      Redacted.value(projectSecret.value).trim().length === 0
+    const projectId = yield* requiredSetting(
+      'VIVID_PHOTON_PROJECT_ID',
+      credential,
+      'the Photon project id',
     )
-      return unavailableChannelProviderLayer
-    const credentials = { projectId: projectId.value, projectSecret: projectSecret.value }
-    return Layer.effect(ChannelProvider, makePhoton(credentials))
+    const projectSecret = yield* requiredSetting(
+      'VIVID_PHOTON_PROJECT_SECRET',
+      Schema.RedactedFromValue(credential),
+      'the Photon project secret',
+    )
+    return yield* makePhoton({ projectId, projectSecret })
   })(),
 )

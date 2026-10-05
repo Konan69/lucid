@@ -11,7 +11,7 @@ import {
 import { run, send } from '../data/app'
 import { readAddress, SAID, Standing } from '../data/google'
 import { googleHandoff } from '../data/handoff'
-import { Way } from '../data/pairing'
+import { Way } from '../data/signin'
 import { Button } from '../ui/button'
 import { Face } from '../ui/Face'
 import { Field, FieldDescription, FieldLabel } from '../ui/field'
@@ -73,9 +73,9 @@ type Busy = 'none' | 'email' | 'google'
 /**
  * How Google sign-in happens in this window (`Way`). In a browser the page leaves for Google and
  * comes back signed in. In the desktop app it cannot, because Google refuses to sign anyone in
- * inside an embedded window, so the same button hands the Person to their system browser and
- * this window waits for them (`data/handoff.ts`, the phone's way in). A desktop app too old to
- * do that offers no button at all, and says what would bring it.
+ * inside an embedded window, so the same button opens their system browser on Google and this
+ * window waits for the account they choose there (`data/handoff.ts`). A desktop app whose shell
+ * cannot do that offers no button at all, and the form is the way in.
  */
 const GOOGLE = googleHandoff.way
 const GOOGLE_HERE = Way.$is('Browser')(GOOGLE)
@@ -102,8 +102,8 @@ const opening = (returnTo: string): Opening => {
   const { destination, standing } = readAddress(returnTo)
   return Standing.$match(standing, {
     Plain: (): Opening => ({ destination, mode: 'create', notice: null, starting: false }),
-    // An address that asks for Google is one a phone or the desktop app opened in a browser. It
-    // starts by itself only there: in the desktop app nothing opens such an address.
+    // An address that asks for Google is one a phone opened in a browser. It starts by itself
+    // only there: in the desktop app nothing opens such an address.
     Start: (): Opening => ({ destination, mode: 'create', notice: null, starting: GOOGLE_HERE }),
     Returned: ({ outcome }): Opening => ({
       destination,
@@ -149,11 +149,12 @@ function Introduction({ title, lead }: { title: string; lead: string }) {
  *
  * There are two ways in. The form, for an email and a password, and Google, which is one button
  * for a new Person and a returning one alike. The address can also say something about Google:
- * that it should start at once, which is how the phone and the desktop app hand a Person over to
- * the browser, or that it was tried and did not work, and why.
+ * that it should start at once, which is how the phone hands a Person over to the browser, or
+ * that it was tried and did not work, and why.
  *
  * In the desktop app Google is the same button with a different road: the form's card gives way
- * to a waiting card while the Person signs in through their browser (`welcome/Waiting.tsx`).
+ * to a waiting card while the Person chooses an account in their browser (`welcome/Waiting.tsx`).
+ * Cancelling it draws the form again, with the keyboard in its first field.
  */
 export function Welcome({ returnTo }: { returnTo: string }) {
   const opened = opening(returnTo)
@@ -222,7 +223,6 @@ export function Welcome({ returnTo }: { returnTo: string }) {
               state={handoff.value}
               onReopen={googleHandoff.reopen}
               onAgain={() => googleHandoff.start(destination)}
-              onRetry={() => googleHandoff.retry(destination)}
               onCancel={googleHandoff.cancel}
             />
           ) : (
@@ -290,17 +290,12 @@ export function Welcome({ returnTo }: { returnTo: string }) {
 }
 
 /**
- * Google, under the form: the button, or in a desktop app too old to hand the Person to a
- * browser, one line saying what would bring it. A button that cannot work is not offered.
+ * Google, under the form. A desktop app whose shell cannot hand the Person to a browser
+ * (`Way.Unable`) draws nothing here and says nothing in its place: a button that cannot work is
+ * not offered, and the form above is the way in.
  */
 function GoogleChoice(props: Parameters<typeof GoogleWay>[0]) {
-  return Way.$is('Outdated')(GOOGLE) ? (
-    <p className="text-center text-label text-pretty text-ink-3">
-      Update Vivid to sign in with Google here.
-    </p>
-  ) : (
-    <GoogleWay {...props} />
-  )
+  return Way.$is('Unable')(GOOGLE) ? null : <GoogleWay {...props} />
 }
 
 /**

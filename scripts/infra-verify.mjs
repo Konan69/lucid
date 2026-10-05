@@ -110,10 +110,21 @@ const extractEnvironmentNames = (text) =>
 const assertEnvironmentWiring = (root, stackSource) => {
   const serverConfig = source(root, 'apps/server/src/config.ts')
   const serverNames = new Set(
-    [...serverConfig.matchAll(/(?:required|optional)\(["']([A-Z][A-Z0-9_]*)["']/g)].map(
-      (match) => match[1],
-    ),
+    [
+      ...serverConfig.matchAll(
+        /(?:requiredSetting|optionalSetting)\(\s*["']([A-Z][A-Z0-9_]*)["']/g,
+      ),
+    ].map((match) => match[1]),
   )
+  // A setting the server does not start without is read by the adapter that owns it, anywhere
+  // under the server's sources. Each one must be wired as well: a required setting the deploy
+  // never sends is a server that cannot start, and before it was required it was a part of the
+  // product that was silently off in production (the Computer, until 5 October 2026).
+  for (const file of walkTypeScript(NodePath.join(root, 'apps/server/src'))) {
+    const text = NodeFS.readFileSync(file, 'utf8')
+    for (const match of text.matchAll(/requiredSetting\(\s*["']([A-Z][A-Z0-9_]*)["']/g))
+      serverNames.add(match[1])
+  }
 
   const runtimeFiles = [
     ...walkTypeScript(NodePath.join(root, 'packages/agent/runtime/src')),

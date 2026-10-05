@@ -54,13 +54,15 @@ export const deviceName = (agent: Option.Option<string>): string =>
  * approve it. It comes from the name the app gave the server when it asked for its code.
  *
  * That name is a label, not proof: anything that can reach the server can give one of Vivid's
- * names. So the words say what kind of app asked ("A Vivid desktop app"), never whose it is or
+ * names. So the words say what kind of app asked ("A Vivid phone app"), never whose it is or
  * that it is the Person's own; what proves that is the code matching the one on their device,
  * which the page says beside this. A request with a name this app has no words for, or with
  * none, is "An app".
+ *
+ * Only the phone asks for a code. The desktop app signs in with Google through the system browser
+ * and never comes to this page (`signin.ts`).
  */
 const ASKERS = {
-  'vivid-desktop': 'A Vivid desktop app',
   'vivid-mobile': 'A Vivid phone app',
 } as const satisfies Record<PairingClient, string>
 

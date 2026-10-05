@@ -8,12 +8,17 @@ import {
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
-import type { FaceMood } from '@vivid/marks'
 import { draftPlace, standingWords, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useMemo, useRef, useState } from 'react'
-import { FlatList, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
+import {
+  FlatList,
+  ScrollView,
+  View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Monitor, Share2, Users } from 'lucide-react-native'
@@ -25,17 +30,16 @@ import { LiveState, refusalOf, useLive, useLiveData } from '../data/live'
 import { isShown, isStreaming, lastWordsOf, type Around } from '../data/message'
 import { endingOf, newestRun } from '../data/outcome'
 import { conversation, say, UNDELIVERED, UNTITLED } from '../data/threads'
-import { Faces } from '../ui/Avatar'
 import { Composer } from '../ui/Composer'
-import { Header, Screen } from '../ui/Header'
-import { AboveKeyboard } from '../ui/Keyboard'
+import { Bar, BarRoom, NO_ACTIONS, StandingBar, type BarAction } from '../ui/Bar'
+import { Screen } from '../ui/Screen'
+import { AboveKeyboardBelowBar } from '../ui/Keyboard'
 import {
   Button,
   EDGE,
   Empty,
   Face,
   GUTTER,
-  IconButton,
   Label,
   Notice,
   Press,
@@ -112,26 +116,30 @@ function Gone() {
   const go = useGo()
   return (
     <Screen>
-      <Header title="Thread" onBack={go.goBack} />
-      <View style={{ paddingHorizontal: GUTTER }}>
+      <Bar title="Thread" actions={NO_ACTIONS} />
+      {/* A scroller, so the system keeps these words clear of a glass bar as it does a list. */}
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{ paddingHorizontal: GUTTER }}
+      >
         <Empty line="This thread is not here. It may have been deleted, or it is in a space you are not working in right now.">
           <Button label="Back" onPress={go.goBack} />
         </Empty>
-      </View>
+      </ScrollView>
     </Screen>
   )
 }
 
 /**
  * How Vivid is doing in a Thread, beside the words for it (`standingWords`, shared with the web):
- * the look on its face, and the ink the line under the title is said in.
+ * the ink the line under the title is said in, where the bar is the app's to colour.
  */
-const STANDING = {
-  Working: { mood: 'thinking', tone: 'status-working' },
-  NeedsYou: { mood: 'neutral', tone: 'status-attention' },
-  Unread: { mood: 'happy', tone: 'ink-3' },
-  Quiet: { mood: 'neutral', tone: 'ink-3' },
-} as const satisfies Record<Thread['attention'], { mood: FaceMood; tone: Tone }>
+const STANDING_TONE = {
+  Working: 'status-working',
+  NeedsYou: 'status-attention',
+  Unread: 'ink-3',
+  Quiet: 'ink-3',
+} as const satisfies Record<Thread['attention'], Tone>
 
 /** Who can see a Thread, in a sentence, for whoever cannot see the mark that says so. */
 const audienceWords = (thread: Thread): string =>
@@ -142,11 +150,12 @@ const audienceWords = (thread: Thread): string =>
   })
 
 /**
- * The top of a Thread. Vivid is in it, not just named by it: its face, the Thread's title, and a
- * line saying how it is doing right now (here, working, waiting for the Person). While someone
- * else is writing, the line says that instead, because it is the thing about to change the
- * Thread. On the right: who else is looking, who the Thread is shared with, and the way to
- * Vivid's computer.
+ * The top of a Thread, said to the system's bar (`ui/Bar.tsx`); nothing is drawn here: the
+ * Thread's title, and under it a line saying how Vivid is doing right now (here, working,
+ * waiting for the Person). While someone else is writing, the line says
+ * that instead, because it is the thing about to change the Thread. Beside the title: who else
+ * is looking. In the bar's own buttons: who the Thread is shared with, and the way to Vivid's
+ * computer.
  */
 function Top({
   thread,
@@ -167,42 +176,43 @@ function Top({
   const attention: Thread['attention'] = working
     ? 'Working'
     : Option.match(thread, { onNone: () => 'Quiet', onSome: (value) => value.attention })
-  const standing = STANDING[attention]
   const someoneTyping = typing.length > 0
+  const computer: BarAction = {
+    symbol: 'desktopcomputer',
+    icon: Monitor,
+    label: 'Vivid’s computer',
+    disabled: false,
+    onPress: () => go.navigate('Computer'),
+  }
+  // Who can see the Thread is a choice only inside a Company.
+  const sharing = Option.map(
+    Option.filter(thread, () => Workspace.guards.Company(me.workspace)),
+    (value): BarAction => {
+      const alone = ThreadAudience.guards.Private(value.audience)
+      return {
+        symbol: alone ? 'square.and.arrow.up' : 'person.2',
+        icon: alone ? Share2 : Users,
+        label: `${audienceWords(value)}. Choose who can see this thread`,
+        // Only its creator may change who a Thread is shared with.
+        disabled: value.createdBy.id !== me.person.id,
+        onPress: onShare,
+      }
+    },
+  )
   return (
-    <Header
-      leading={<Face size={28} mood={standing.mood} />}
+    <StandingBar
       title={Option.match(thread, { onNone: () => '', onSome: (value) => value.title })}
-      subtitle={
-        someoneTyping
+      standing={{
+        words: someoneTyping
           ? `${typing.map((seen) => seen.person.name).join(', ')} typing…`
-          : standingWords[attention]
-      }
-      subtitleTone={someoneTyping ? 'ink-3' : standing.tone}
-      onBack={go.goBack}
-      trailing={
-        <>
-          {others.length > 0 && (
-            <View style={{ marginRight: 4 }}>
-              <Faces people={others.map((seen) => seen.person)} size={20} />
-            </View>
-          )}
-          {Option.isSome(thread) && Workspace.guards.Company(me.workspace) && (
-            <IconButton
-              icon={ThreadAudience.guards.Private(thread.value.audience) ? Share2 : Users}
-              label={`${audienceWords(thread.value)}. Choose who can see this thread`}
-              // Only its creator may change who a Thread is shared with.
-              disabled={thread.value.createdBy.id !== me.person.id}
-              onPress={onShare}
-            />
-          )}
-          <IconButton
-            icon={Monitor}
-            label="Vivid’s computer"
-            onPress={() => go.navigate('Computer')}
-          />
-        </>
-      }
+          : standingWords[attention],
+        tone: someoneTyping ? 'ink-3' : STANDING_TONE[attention],
+      }}
+      present={others.map((seen) => seen.person)}
+      actions={Option.match(sharing, {
+        onNone: () => [computer],
+        onSome: (share) => [share, computer],
+      })}
     />
   )
 }
@@ -384,7 +394,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
   )
 
   return (
-    <AboveKeyboard>
+    <AboveKeyboardBelowBar>
       <Top
         thread={thread}
         present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
@@ -427,7 +437,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
           onClose={() => setSharing(false)}
         />
       )}
-    </AboveKeyboard>
+    </AboveKeyboardBelowBar>
   )
 }
 
@@ -530,6 +540,9 @@ function Transcript(props: MessagesProps) {
           styles.column,
           { paddingHorizontal: GUTTER - 4, paddingVertical: 16, gap: 22 },
         ]}
+        // The last thing in an inverted list is the first thing on screen: the room the glass
+        // bar stands over, so the oldest words are not left under it (`BarRoom`).
+        ListFooterComponent={<BarRoom />}
         // The first thing in an inverted list is the last thing on screen.
         ListHeaderComponent={
           <Tail working={working && !streaming} ended={props.ended} trouble={props.trouble} />
@@ -601,8 +614,11 @@ function LatestButton({ count, onPress }: { count: number; onPress: () => void }
 function Blank({ ready }: { ready: boolean }) {
   if (!ready) {
     return (
-      <View style={[styles.column, { paddingHorizontal: GUTTER, paddingTop: 28 }]}>
-        <Skeleton rows={4} />
+      <View>
+        <BarRoom />
+        <View style={[styles.column, { paddingHorizontal: GUTTER, paddingTop: 28 }]}>
+          <Skeleton rows={4} />
+        </View>
       </View>
     )
   }

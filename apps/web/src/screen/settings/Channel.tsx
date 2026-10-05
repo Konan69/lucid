@@ -163,12 +163,12 @@ function Line({
 }
 
 /**
- * A channel this Vivid has no way to reach yet. It is shown, not hidden, so a Person looking for
- * iMessage finds it and reads why it cannot be pressed; the button is there and plainly off.
+ * A channel Vivid does not text on yet (WhatsApp). It is shown, not hidden, so a Person looking for
+ * it finds it and reads why it cannot be pressed; the button is there and plainly off.
  */
 function Unavailable({ channel }: { channel: Channel }) {
   return (
-    <Line channel={channel} quiet detail={`This Vivid is not set up for ${channel} yet.`}>
+    <Line channel={channel} quiet detail={`Vivid cannot text on ${channel} yet.`}>
       <Button size="sm" variant="outline" disabled>
         Connect
       </Button>

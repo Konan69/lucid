@@ -74,12 +74,4 @@ export const standingOf = (computer: Computer): Standing =>
       mood: 'neutral',
       start: Option.some('Try again'),
     }),
-    Unavailable: () => ({
-      glass: 'Not set up here',
-      title: 'Not set up here',
-      detail:
-        'This installation has no machine provider configured, so Vivid works without a computer.',
-      mood: 'neutral',
-      start: Option.none(),
-    }),
   })

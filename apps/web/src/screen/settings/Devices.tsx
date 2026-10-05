@@ -18,8 +18,7 @@ import { YourComputers } from './Computers'
 import { Empty, Refusal, Row, Section } from './Parts'
 
 /**
- * Signing in a phone or the desktop app. The other device shows a short code; entering it here
- * lets that device act as this Person, on this server, without their password ever leaving this
+ * Signing in a phone. The phone shows a short code; entering it here lets that phone act as this Person, on this server, without their password ever leaving this
  * browser. Nothing is signed in until someone who is already signed in has seen what is asking
  * and said yes.
  *
@@ -63,7 +62,7 @@ export function Devices({ initialCode }: { initialCode: string }) {
       <SignedIn />
       <Section
         title="Sign in another device"
-        detail="Open Vivid on your phone or the desktop app and choose “Sign in with a code”."
+        detail="Open Vivid on your phone and choose “Sign in with a code”."
       >
         {Option.isSome(request) ? (
           <Deciding

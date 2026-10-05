@@ -190,12 +190,17 @@ export const routes = Effect.fn('RuntimeTest.routes')(function* () {
           const owned = system.toolsAdded.filter(
             (tool) => !['task', 'activate_skill', 'read_skill_resource'].includes(tool.name),
           )
-          expect(owned).toHaveLength(29)
+          // Counted with notes mounted, as every runtime has them: the three note tools are in,
+          // and the two knowledge-base tools that only a runtime without notes offered are gone.
+          // One more than main alone: the Person's computer is ours (`use_person_computer`).
+          expect(owned).toHaveLength(30)
           expect(owned.map((tool) => tool.name)).toContain('use_person_computer')
+          // Every tool says its step to the Person in `summary`. `ask_person` is the one that
+          // does not: its `question` is already that sentence (`tools/ask.ts`, 5 October 2026).
           for (const tool of owned)
             expect(tool.parameters, tool.name).toHaveProperty(
               'required',
-              expect.arrayContaining(['summary']),
+              expect.arrayContaining([tool.name === 'ask_person' ? 'question' : 'summary']),
             )
           return fauxAssistantMessage('ready')
         },

@@ -134,8 +134,10 @@ survivable, and the provider is replaceable. Self-run Firecracker is a later cos
 fleet scale, not a starting point.
 
 `Machine` is the owned `Context.Service`: ensure, status, stop, exec, browse, desktop, and the
-local provider's RFB connection. Select Boat with `VIVID_COMPUTER_PROVIDER=boat`; configure its
-Redacted API key (`VIVID_BOAT_API_KEY`), size and lifetime through Effect Config. Name the paying
+provider's screen connection. Boat is the only provider and it is required: the server does not
+start without its Redacted API key (`VIVID_BOAT_API_KEY`) and the name of the prepared template
+(`VIVID_BOAT_TEMPLATE`), and there is no selector and no "no provider" server. Size and lifetime
+have defaults. Name the paying
 organization with `VIVID_BOAT_ORG` whenever the key's account belongs to one; leave it unset for an
 account that belongs to none, and Boat bills that account. The owner chose this recommended scope:
 `sandbox.create`, `sandbox.read`, `sandbox.update`, `sandbox.stop`, `sandbox.resume`, `sandbox.fork`,

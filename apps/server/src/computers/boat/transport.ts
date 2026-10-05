@@ -1,16 +1,16 @@
-import { Config, Effect, Function, Option, Schema, type Redacted } from 'effect'
+import { Effect, Function, Option, Schema, type Redacted } from 'effect'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
 import {
   MachineAuthenticationFailed,
-  MachineConfigurationInvalid,
-  MachineOperationFailed,
   MachineRequestRejected,
   MachineResponseInvalid,
   MachineExecutionUnknown,
+  MachineUnreachable,
   type MachineKey,
 } from '../machine.ts'
+import { optionalSetting, requiredSetting, settingSecret, settingText } from '../../config.ts'
 import * as Protocol from './protocol.ts'
 
 const Request = Schema.TaggedUnion({
@@ -26,47 +26,62 @@ const decodeError = HttpClientResponse.schemaBodyJson(Protocol.ErrorReply)
 /**
  * Says who pays, and persists the immutable, credential-free create body.
  *
+ * Boat is Vivid's Computer provider and a server does not run without it: the API key and the
+ * prepared template are required here, while the server is composed, and a missing or malformed
+ * one stops launch with the variable named (`requiredSetting`). There is no "no provider" server.
+ * After launch the only way the Computer is missing is Boat itself not answering, which is a typed
+ * failure on the call that met it (`MachineUnreachable`, a 5xx `MachineRequestRejected`).
+ *
  * `VIVID_BOAT_ORG` names an organization's wallet. It is optional because a Boat account need not
  * belong to one: without it every request is billed to the account that owns the API key. Set it
  * whenever the key's account is in an organization, since Boat otherwise follows that account's
  * active wallet, which someone can change from the dashboard.
  */
-const configuration = Effect.fn('Machine.boat.configuration')(
-  function* () {
-    const key = yield* Config.Redacted('VIVID_BOAT_API_KEY')
-    const org = yield* Config.option(Config.NonEmptyString('VIVID_BOAT_ORG'))
-    const template = yield* Config.schema(Protocol.TemplateName, 'VIVID_BOAT_TEMPLATE')
-    const size = yield* Config.Literals(['small', 'default', 'large'], 'VIVID_BOAT_SIZE').pipe(
-      Config.withDefault('default'),
-    )
-    const lifetime = yield* Config.schema(
-      Schema.NumberFromString.check(
-        Schema.isInt(),
-        Schema.isBetween({ minimum: 0, maximum: 2592000 }),
-      ),
-      'VIVID_BOAT_LIFETIME_SECONDS',
-    ).pipe(Config.withDefault(3600))
-    const machine = {
-      type: size,
-      ttlSeconds: lifetime === 0 ? null : lifetime,
-      noEnv: true,
-      snapshots: true,
-      from: template,
-    } as const
-    const create = Option.match(org, {
-      onNone: () => Protocol.CreateRequest.make(machine),
-      onSome: (name) => Protocol.CreateRequest.make({ ...machine, org: name }),
-    })
-    // An installation that already has its machine names it here, and a Person's Computer is
-    // that machine instead of a new one. Boat's trial account refuses to create machines once
-    // its free hours are used, while it still resumes one that exists (seen 4 October 2026:
-    // create answered `trial_compute_limit_reached`, resume of the prepared machine answered
-    // 202). This is for one Person: the first owner keeps the machine; other accounts are refused.
-    const adopt = yield* Config.option(Config.schema(Protocol.ProviderId, 'VIVID_BOAT_MACHINE'))
-    return { key, org, create, adopt }
-  },
-  (program) => program.pipe(Effect.mapError(() => new MachineConfigurationInvalid())),
-)
+export const boatConfiguration = Effect.fn('Machine.boat.configuration')(function* () {
+  const key = yield* requiredSetting('VIVID_BOAT_API_KEY', settingSecret, 'the Boat API key')
+  const org = yield* optionalSetting('VIVID_BOAT_ORG', settingText, 'a Boat organization')
+  const template = yield* requiredSetting(
+    'VIVID_BOAT_TEMPLATE',
+    Protocol.TemplateName,
+    'the name of the prepared Boat template',
+  )
+  const size = yield* optionalSetting(
+    'VIVID_BOAT_SIZE',
+    Schema.Literals(['small', 'default', 'large']),
+    'small, default or large',
+  )
+  const lifetime = yield* optionalSetting(
+    'VIVID_BOAT_LIFETIME_SECONDS',
+    Schema.NumberFromString.check(
+      Schema.isInt(),
+      Schema.isBetween({ minimum: 0, maximum: 2592000 }),
+    ),
+    'whole seconds from 0 to 2592000',
+  )
+  const seconds = Option.getOrElse(lifetime, () => 3600)
+  const machine = {
+    type: Option.getOrElse(size, () => 'default' as const),
+    ttlSeconds: seconds === 0 ? null : seconds,
+    noEnv: true,
+    snapshots: true,
+    from: template,
+  } as const
+  const create = Option.match(org, {
+    onNone: () => Protocol.CreateRequest.make(machine),
+    onSome: (name) => Protocol.CreateRequest.make({ ...machine, org: name }),
+  })
+  // An installation that already has its machine names it here, and a Person's Computer is
+  // that machine instead of a new one. Boat's trial account refuses to create machines once
+  // its free hours are used, while it still resumes one that exists (seen 4 October 2026:
+  // create answered `trial_compute_limit_reached`, resume of the prepared machine answered
+  // 202). This is for one Person: the first owner keeps the machine; other accounts are refused.
+  const adopt = yield* optionalSetting(
+    'VIVID_BOAT_MACHINE',
+    Protocol.ProviderId,
+    'a Boat machine id',
+  )
+  return { key, org, create, adopt }
+})
 
 /** Authenticated requests have one response boundary and bounded dispatch/body deadlines. */
 const requests = (
@@ -110,8 +125,14 @@ const requests = (
             HttpClientRequest.setHeader('Connection', 'close'),
           ),
         )
-        .pipe(Effect.mapError(() => new MachineOperationFailed({ operation: 'transport' })))
+        .pipe(Effect.mapError(() => new MachineUnreachable()))
       if (response.status < 200 || response.status >= 300) {
+        // A 5xx is the provider failing, and its body is whatever an edge in front of it sent:
+        // HTML, nothing, half a document. The status alone says it is an outage, so it is
+        // classified before the body is read; decoding first turned such an answer into an
+        // invalid response, which is recorded as the machine's state where an outage is not.
+        if (response.status >= 500)
+          return yield* Effect.fail(new MachineRequestRejected({ status: response.status }))
         yield* decodeError(response).pipe(
           Effect.mapError(() => new MachineResponseInvalid({ operation: 'error' })),
         )
@@ -128,9 +149,7 @@ const requests = (
           ? '11 minutes'
           : '60 seconds',
       ),
-      Effect.catchTag('TimeoutError', () =>
-        Effect.fail(new MachineOperationFailed({ operation: 'transport-timeout' })),
-      ),
+      Effect.catchTag('TimeoutError', () => Effect.fail(new MachineUnreachable())),
     )
 }
 
@@ -138,7 +157,7 @@ const requests = (
  * No general retry: commands are non-idempotent, creates use durable explicit intents. */
 export const transport = Effect.fn('Machine.boat.transport')(function* () {
   const client = yield* HttpClient.HttpClient
-  const { key, org, create, adopt } = yield* configuration()
+  const { key, org, create, adopt } = yield* boatConfiguration()
   const request = requests(client, key, org)
   /** The command receipt is uncertain on transport loss, a malformed receipt, or Boat's direct-execution 5xx.
    * Never rerun user input automatically, including a desktop action. */
@@ -156,7 +175,7 @@ export const transport = Effect.fn('Machine.boat.transport')(function* () {
       Protocol.Command,
     ).pipe(
       Effect.catchTags({
-        MachineOperationFailed: () => Effect.fail(new MachineExecutionUnknown({ key: machine })),
+        MachineUnreachable: () => Effect.fail(new MachineExecutionUnknown({ key: machine })),
         MachineResponseInvalid: () => Effect.fail(new MachineExecutionUnknown({ key: machine })),
         MachineRequestRejected: (error) =>
           error.status >= 500

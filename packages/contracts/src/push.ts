@@ -32,17 +32,9 @@ export const PushTargetResponse = Schema.Struct({ target: PushTarget })
 export const PushTargetListResponse = Schema.Struct({ targets: Schema.Array(PushTarget) })
 export const PushKeyResponse = Schema.Struct({ publicKey })
 
-/** Missing installation configuration is an expected feature refusal, not a server startup fault. */
-export class PushUnavailable extends Schema.TaggedError<PushUnavailable>()(
-  'PushUnavailable',
-  { message: Schema.String },
-  { title: 'Push notifications unavailable' },
-) {}
-
 /** A provider's acceptance is evidence of sending, never proof that the device displayed it. */
 export const PushOutcome = Schema.TaggedUnion({
   Present: {},
-  Unavailable: {},
   NoTargets: {},
   Attempted: { accepted: Schema.Number, failed: Schema.Number, uncertain: Schema.Number },
 })

@@ -38,8 +38,6 @@ export const ComputerState = Schema.TaggedUnion({
   },
   Stopped: { since: Schema.Number },
   Failed: { since: Schema.Number, reason: Schema.String },
-  /** No machine provider is configured on this installation. */
-  Unavailable: {},
 })
 export type ComputerState = typeof ComputerState.Type
 

@@ -49,6 +49,88 @@ the build goes on and succeeds on Railway. Two consequences:
   run, and the plan caps domains per service. After each deploy, delete every server domain except
   the first one, which `PUBLIC_URL` uses. Remove this step when the provider waits for the build.
 
+### Before a production deploy
+
+On 5 October 2026 two sessions ran `pnpm infra:deploy` from the same checkout one minute apart
+(09:13 and 09:14 UTC), neither knowing of the other, and then both tried redeploys and rollbacks on
+the Executor at once. Its old container hung in `stopping` and held the data volume, and the
+Executor answered `502` for 55 minutes. No data was lost. The rules that came out of it:
+
+- **One session deploys production.** It is the integrator named for the repository at the time.
+  Every other session pushes a branch and opens a pull request; it does not run the deploy, a
+  redeploy, a rollback or a Railway mutation, even to ship its own fix quickly, and even when
+  production is down. If you find production broken, tell the Person and the integrator what
+  you see; do not start a second repair beside theirs.
+- A deploy sends everything on `main`, not only the change you came to ship. Read the plan the
+  command prints (`Plan: …` and the `[Resource] update | replace | create` lines). If it touches
+  a resource your change does not, find whose change that is (`git log -- infra/railway.ts`)
+  before going on.
+- Deploys run only from the one clean checkout that holds the Alchemy state (`.alchemy/`). A
+  second checkout has no state and would create every resource again.
+- The Railway CLI's session token lasts about an hour, and a deploy that outlives it fails with
+  `RailwayForbidden … Not Authorized` part-way. Refresh it first (`railway whoami` with the
+  personal profile) and check `user.tokenExpiresAt` in that profile's `config.json`.
+
+### When a service with a volume will not start
+
+Railway attaches a volume to one container at a time, so a deploy of Executor, Helix, PostgreSQL
+or the runtime stops the old container before the new one starts. If the old container hangs in
+`stopping`, it keeps the volume and every new deployment waits at `CREATE_CONTAINER` with no log
+line until Railway fails it (about seventeen minutes), then tries again. The public address
+answers `502` throughout. Redeploying or rolling back does not help: each attempt waits on the
+same volume, and each new attempt cancels the one before it.
+
+How to tell:
+
+1. `railway ssh` into the service answers `Your service's container is not running (status:
+stopping)`.
+2. `railway deployment list --json`: the last deployment that worked still reads `SUCCESS` while
+   newer ones sit in `DEPLOYING`. In the GraphQL API, `deploymentEvents` for a new one ends at
+   `CREATE_CONTAINER` with no `completedAt`.
+
+What to do, in this order, and only as the session that deploys:
+
+1. Copy the volume's data off first if the service can still be reached, and keep the copy out
+   of Git (it holds keys). The 5 October copy of the Executor's `/app/data` is under
+   `artifacts/backup/`, which Git ignores.
+2. Stop the old deployment by its id: GraphQL `mutation { deploymentStop(id: "<id>") }`.
+3. If a new deployment still waits at `CREATE_CONTAINER`, move the volume to another service and
+   back (`volumeInstanceUpdate`).
+4. Deploy with `serviceInstanceDeployV2`. `serviceInstanceRedeploy` reuses the image of the last
+   deployment, which after a rollback is the old one.
+
+On 5 October steps 2 and 3 were both done within a minute of each other, by two sessions, so
+which one released the container is not known; that is why both are listed. Between the two
+volume moves the Executor ran for about three minutes with no volume, so with an empty store: it
+passed `/health` and refused the server's key (`Invalid API key`). Health alone is therefore not
+proof of recovery. Make one real call with the server's key (`GET
+/api/organizations/<organization>/inventory`) and compare the answer with what it was: after the
+recovery it was `200` and 8,914 bytes, the same as before.
+
+Ruled out, so do not spend time on them again: the image (it pulled without credentials, and the
+previous image hung the same way), the volume's own state (`READY`), the domain, the target port
+and the region.
+
+### Executor's image
+
+Production's Executor is upstream Executor's source at commit `304bf60`, unchanged, built with
+upstream's own self-host Dockerfile and published as `executor-selfhost:src-304bf60`. It was a
+choice to move to current upstream source, not a requirement: adding an Integration by a
+personal key was proven on the last published tag, `2.0.0-beta.8`, as well. A copy of production
+data was started on the new image before the switch. The store schema and migrations are identical in both, the server's key is valid on both,
+and going back to the tag is safe.
+
+### Telemetry volume
+
+The server exports spans and log lines to Sentry over OTLP. Export is by allowlist, and work that
+repeats with nobody asking is not traced at all: timer passes (approvals, routines, push,
+presence), live query reloads and session watchers run under `untraced`
+(`apps/server/src/observability/quiet.ts`), and functions called once per item of a large list
+are `Effect.fnUntraced`. Before those rules, one Person produced 119,000 spans an hour: 95,000
+from three spans per Integration catalogue entry on every catalogue read, the rest from timers
+and reloads. After a deploy, check the rate in Sentry (spans grouped by `span.name`, last hour);
+a name with thousands of spans and no request behind it is a loop being traced.
+
 ## Run locally
 
 1. Install dependencies with `pnpm install` using Node 24 or newer and pnpm `12.4.2`.
@@ -79,20 +161,47 @@ Required by the stack:
 - `AUTH_SECRET` — the server requires at least 32 characters, 12 distinct characters, and 3 character classes.
 - `EXPLABS_API_KEY` — the Experiential Labs model gateway.
 - `VIVID_RUNTIME_TOKEN` — shared only between the application server and Flue runtime.
+- `VIVID_BOAT_API_KEY` — the Boat key Vivid's Computer is reached with. A secret.
+- `VIVID_BOAT_TEMPLATE` — the name of the prepared Boat template a Person's Computer is restored
+  from (`infra/computer/prepare.py` prints it).
+- `VIVID_PHOTON_PROJECT_ID`, `VIVID_PHOTON_PROJECT_SECRET` — the Photon project Vivid texts
+  through. The secret is a secret.
+- `VIVID_PUSH_VAPID_PUBLIC`, `VIVID_PUSH_VAPID_PRIVATE`, `VIVID_PUSH_SUBJECT` — the key pair and
+  contact (`https:` or `mailto:`) that notifications while away are signed with. Generate the pair
+  once for an environment and keep it; a new pair unsubscribes every browser and phone:
 
-`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` form one optional atomic
-set for account sign-in. They do not configure Google Integrations in Executor. `VIVID_MODEL`
+  ```sh
+  node -e "const c=require('node:crypto').createECDH('prime256v1');c.generateKeys();console.log('VIVID_PUSH_VAPID_PUBLIC='+c.getPublicKey().toString('base64url'));console.log('VIVID_PUSH_VAPID_PRIVATE='+c.getPrivateKey().toString('base64url'))"
+  ```
+
+- `VIVID_EXECUTOR_KEY`, `VIVID_EXECUTOR_ORGANIZATION` — the key and organization the server uses
+  on Executor, which gives Vivid its Integrations. Both are minted on the deployed Executor.
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` — the Google client a Person
+  signs in through. They do not configure Google Integrations in Executor.
+
+Every part of the product is required, here and in the server. The stack stops before it touches
+the target and names the variable it lacks, and the server does not start without the same
+settings (`requiredSetting` in `apps/server/src/config.ts`), so neither a deploy nor a running
+server can be missing the Computer, memory, Integrations, texting, away notifications or Google
+sign-in. `pnpm infra:verify` fails when a setting the server requires is not sent by this stack.
+`VIVID_BOAT_ORG`, `VIVID_BOAT_SIZE`, `VIVID_BOAT_LIFETIME_SECONDS` and `VIVID_BOAT_MACHINE` are
+forwarded to the hosted server when set (`apps/server/src/computers/README.md` says what each
+does).
+
+The runtime has one required setting of its own, `VIVID_MEMORY_DIR`, the directory of Vivid's
+notes. The hosted stack sets it to a volume and the local stack to `.state/notes` beside the
+runtime. `VIVID_MODEL`
 defaults to `explabs/glm-5.3-flash`; pi `0.87.1` and the provider at
 `packages/agent/runtime/src/providers/explabs.ts` supply model access. Vivid adds no model retry
 or fallback layer. AWS credentials are not required locally.
 
-The server also has adapters for Executor (`VIVID_EXECUTOR_URL`, `VIVID_EXECUTOR_KEY`), HelixDB
-(`VIVID_HELIX_URL` and embedding configuration), and Boat (`VIVID_COMPUTER_PROVIDER=boat` and
-Boat configuration). These services are not provisioned here, and their environment values are
-not explicitly forwarded by the stack today. Check the owning adapters for their exact contract.
-Boat was proven against the real service on 3 October 2026; that does not prove this stack
-configures the provider. With no Computer provider or HelixDB address, those capabilities report
-unavailable.
+The hosted stack runs HelixDB as a Railway service and gives the server its private address
+(`VIVID_HELIX_URL`), runs Executor and gives the server its private address
+(`VIVID_EXECUTOR_URL`), and gives the server the settings above. Boat and Photon are outside
+services the stack does not provision. The local process graph runs none of these services and
+has no stand-in for them: `Command.Dev` merges the stack's variables over the environment
+`pnpm infra:dev` was started in, so a local server reads `VIVID_HELIX_URL`, `VIVID_EXECUTOR_URL`
+and the rest from that environment, and does not start without them.
 
 Outputs contain only web, server, and runtime URLs. Database and application secrets are never
 outputs. Local Alchemy resources create no AWS bill, but real model calls and external services
@@ -154,8 +263,10 @@ and an empty value counts as unset. The code is
 Supply the server with `DATABASE_URL`, `AUTH_SECRET`, `VIVID_RUNTIME_URL`,
 `VIVID_RUNTIME_TOKEN`, and the externally reachable `PUBLIC_URL`. Supply the runtime with
 `DATABASE_URL`, `VIVID_SERVER_URL`, the matching `VIVID_RUNTIME_TOKEN`, and `EXPLABS_API_KEY`
-for model calls. Optional Google sign-in inputs remain atomic; optional provider, memory,
-Executor, and model settings keep their existing contracts. Apply the auth then product
+for model calls, and `VIVID_MEMORY_DIR` for Vivid's notes. The server also needs every setting
+under "Credentials and external services": the Computer, memory, Integrations, texting, away
+notifications and Google sign-in are required, and it does not start without them. Model
+settings keep their defaults. Apply the auth then product
 migrations before starting the server; Flue migrates its own runtime schema at startup.
 
 Programs require the existing user-systemd/cgroup/bubblewrap/prlimit isolation. Startup probes

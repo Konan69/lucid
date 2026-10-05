@@ -36,12 +36,15 @@ const dayOf = (moment: number, reader: Reader) => {
   }
 }
 
-const capitalised = (words: string, locale: string) =>
-  words.slice(0, 1).toLocaleUpperCase(locale) + words.slice(1)
-
 /**
  * Makes the sayer for one reader. The formatters are built once: this is called for every
  * message on screen, and building an `Intl` formatter is the expensive part.
+ *
+ * The order and punctuation of a date are the reader's locale's. "Yesterday" is the app's own
+ * word, like the rest of its copy. It was the locale's, asked of `Intl.RelativeTimeFormat`, and
+ * that ended the phone app as it loaded: the phone's engine (Hermes) has no such constructor, and
+ * every client loads this package. Of `Intl`, only `DateTimeFormat` and `NumberFormat` are on
+ * every client.
  */
 export function makeWhen(reader: Reader) {
   const zone = { timeZone: reader.timeZone }
@@ -65,16 +68,12 @@ export function makeWhen(reader: Reader) {
     hour: 'numeric',
     minute: '2-digit',
   })
-  const yesterday = capitalised(
-    new Intl.RelativeTimeFormat(reader.locale, { numeric: 'auto' }).format(-1, 'day'),
-    reader.locale,
-  )
   /** `moment` as it reads at `now`. Both are epoch milliseconds. */
   return (moment: number, now: number): string => {
     const then = dayOf(moment, reader)
     const today = dayOf(now, reader)
     if (then.day === today.day) return time.format(moment)
-    if (then.day === today.day - 1) return `${yesterday} ${time.format(moment)}`
+    if (then.day === today.day - 1) return `Yesterday ${time.format(moment)}`
     return then.year === today.year ? dated.format(moment) : yeared.format(moment)
   }
 }

@@ -19,7 +19,6 @@ import {
   Stream,
 } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
-import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import * as HttpServer from 'effect/unstable/http/HttpServer'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
@@ -1468,31 +1467,6 @@ describe('Executor hosted transport', () => {
     )
   }
 })
-
-it.effect('requires organization configuration when URL and key enable Executor', () =>
-  Effect.gen(function* () {
-    const result = yield* Effect.gen(function* () {
-      return (yield* Executor).configured
-    }).pipe(
-      Effect.provide(
-        executorLayer.pipe(
-          Layer.provide(FetchHttpClient.layer),
-          Layer.provide(
-            ConfigProvider.layer(
-              ConfigProvider.fromUnknown({
-                VIVID_EXECUTOR_URL: 'https://executor.example.test',
-                VIVID_EXECUTOR_KEY: 'isolated-test-key',
-              }),
-            ),
-          ),
-        ),
-      ),
-      Effect.flip,
-    )
-    expect(JSON.stringify(result)).toContain('VIVID_EXECUTOR_ORGANIZATION')
-    expect(JSON.stringify(result)).not.toContain('isolated-test-key')
-  }),
-)
 
 const Exchange = Schema.TaggedUnion({
   Received: { path: Schema.String, port: Schema.Number },

@@ -76,10 +76,6 @@ describe.skipIf(process.env['VIVID_LIVE_THREAD_COMPUTER'] !== '1')(
       'wakes Boat, types, clicks, reads and streams its scoped session receipt',
       () =>
         Effect.gen(function* () {
-          expect(
-            yield* Config.NonEmptyString('VIVID_COMPUTER_PROVIDER'),
-            'Restart the night server with the Boat provider',
-          ).toBe('boat')
           const fixture = yield* chainFixture('Computer chain proof')
           yield* cleanupComputer(fixture.personId)
           const runId = yield* fixture.send(

@@ -6,8 +6,8 @@ import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
 import { DatabaseFailure } from '@vivid/contracts'
 import { PairingClient } from '@vivid/contracts/auth'
-import { GoogleOAuthConfiguration, ServerConfig } from '../config.ts'
-import { sessionCookie } from './cookie.ts'
+import { ServerConfig } from '../config.ts'
+import { desktopSignIn } from './desktop.ts'
 import { authDatabaseLayer } from './dialect.ts'
 
 const isPairingClient = Schema.is(PairingClient)
@@ -38,14 +38,15 @@ const makeOptions = (config: ServerConfig['Service']) => {
     },
     plugins: [
       bearer(),
-      // A code is issued and redeemed only for Vivid's own apps (`validateClient`, checked by
+      // A code is issued and redeemed only for Vivid's own apps that sign in with one, which is the
+      // phone (`validateClient`, checked by
       // `deviceCode` and `deviceToken` in better-auth 1.7.5
       // `dist/plugins/device-authorization/routes.mjs`). Without it any name is accepted, and the
       // approval page could be shown a request it has no words for.
       deviceAuthorization({ verificationUri: '/device', validateClient: isPairingClient }),
-      // Trades a session's bearer token for its cookie: how the desktop window, which signs in
-      // with a device code, becomes a cookie session like every other web window (`cookie.ts`).
-      sessionCookie({ origin: config.PUBLIC_URL.origin }),
+      // The desktop app's Google sign-in: the system browser signs the Person in and hands the app
+      // a one-use code, which the app's window trades for a session of its own (`desktop.ts`).
+      desktopSignIn({ origin: config.PUBLIC_URL.origin }),
       organization({
         creatorRole: 'owner',
         schema: {
@@ -63,26 +64,24 @@ const makeOptions = (config: ServerConfig['Service']) => {
       }),
     ],
   }
-  return GoogleOAuthConfiguration.$match(config.GOOGLE_OAUTH, {
-    Disabled: () => options,
-    Enabled: (google) => ({
-      ...options,
-      socialProviders: {
-        google: {
-          clientId: google.clientId,
-          clientSecret: Redacted.value(google.clientSecret),
-          redirectURI: google.redirectUri.href,
-          // Signing in asks Google for who the Person is and nothing else. This client is also the
-          // one Integrations use for Gmail, Calendar and Drive, and Better Auth's default
-          // (`include_granted_scopes=true`) would carry those grants into a sign-in token.
-          includeGrantedScopes: false,
-          // A Person with several Google accounts chooses one each time; without this Google
-          // silently reuses whichever account the browser last used.
-          prompt: 'select_account' as const,
-        },
+  const google = config.GOOGLE_OAUTH
+  return {
+    ...options,
+    socialProviders: {
+      google: {
+        clientId: google.clientId,
+        clientSecret: Redacted.value(google.clientSecret),
+        redirectURI: google.redirectUri.href,
+        // Signing in asks Google for who the Person is and nothing else. This client is also the
+        // one Integrations use for Gmail, Calendar and Drive, and Better Auth's default
+        // (`include_granted_scopes=true`) would carry those grants into a sign-in token.
+        includeGrantedScopes: false,
+        // A Person with several Google accounts chooses one each time; without this Google
+        // silently reuses whichever account the browser last used.
+        prompt: 'select_account' as const,
       },
-    }),
-  })
+    },
+  }
 }
 
 /** Closes Better Auth's type-only Alchemy context requirement for this static Node runtime. */

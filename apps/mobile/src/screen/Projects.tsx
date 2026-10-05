@@ -12,10 +12,11 @@ import { relativeTime } from '../data/lanes'
 import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
 import { UNTITLED } from '../data/threads'
 import { Avatar } from '../ui/Avatar'
-import { Header, Screen } from '../ui/Header'
+import { Bar } from '../ui/Bar'
+import { Screen } from '../ui/Screen'
 import { Row, Section } from '../ui/List'
 import { Live } from '../ui/Live'
-import { Button, Empty, IconButton, Label, Notice, Skeleton, styles } from '../ui/ui'
+import { Button, Empty, Label, Notice, Skeleton, styles } from '../ui/ui'
 import { useGo, type Routes } from '../workspace'
 import { CreateProject } from './project/Create'
 import { Mark } from './project/Mark'
@@ -69,12 +70,22 @@ export function Projects() {
   const [creating, setCreating] = useState(false)
   return (
     <Screen>
-      <Header
+      <Bar
         title="Projects"
-        onBack={go.goBack}
-        trailing={<IconButton icon={Plus} label="New project" onPress={() => setCreating(true)} />}
+        actions={[
+          {
+            symbol: 'plus',
+            icon: Plus,
+            label: 'New project',
+            disabled: false,
+            onPress: () => setCreating(true),
+          },
+        ]}
       />
-      <ScrollView contentContainerStyle={[styles.page, styles.column]}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.page, styles.column]}
+      >
         <Live state={list} loading={<Skeleton rows={4} />}>
           {(value) => {
             const top = projects.projectsIn(value.projects, null)
@@ -120,7 +131,6 @@ export function Projects() {
  */
 export function Project({ route }: NativeStackScreenProps<Routes, 'Project'>) {
   const data = useLiveData()
-  const go = useGo()
   const list = useLive(data.live.projects)
   const { id } = route.params
   const project = LiveState.$is('Ready')(list)
@@ -129,9 +139,10 @@ export function Project({ route }: NativeStackScreenProps<Routes, 'Project'>) {
   const gone = LiveState.$is('Ready')(list) && Option.isNone(project)
   return (
     <Screen>
-      {/* The bar is only the way back: the Project's name is the page's own first line. */}
-      <Header title="" onBack={go.goBack} />
-      <ScrollView contentContainerStyle={[styles.page, styles.column]}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.page, styles.column]}
+      >
         {gone && (
           <Empty line="This project is not here. It may be in a space you are not working in right now." />
         )}

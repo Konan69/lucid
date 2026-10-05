@@ -31,6 +31,7 @@ import type * as HttpBody from 'effect/unstable/http/HttpBody'
 
 import { toolRejectionMessage, validationProblems } from './message.ts'
 import { retainCatalog } from './catalog.ts'
+import { requiredSetting, settingSecret } from '../config.ts'
 import { ConnectionSource } from './address.ts'
 import { keyedFiles, KeyedTransport } from './keyed.ts'
 import { keyedService, keyedAddress, personalKeyAuthorization } from './curation.ts'
@@ -343,8 +344,6 @@ const SignInInput = Schema.Struct({
  * account references; it never discovers an account by name or selects one from inventory.
  */
 export interface ExecutorService {
-  /** Installation absence is stable and must not start background network workers. */
-  readonly configured: boolean
   /** Inspect public service setup without issuing an account grant or starting sign-in. */
   readonly authorization: (input: {
     readonly service: ServiceId
@@ -1223,7 +1222,9 @@ function makeCatalog(http: ExecutorHttp) {
     const rejected: Option.Option<{ readonly id: ServiceId }>[] = []
     const decoded = yield* Effect.forEach(
       entries,
-      Effect.fn('Executor.catalogEntry')(
+      // Untraced: this runs once for each of about a thousand catalogue entries on every read,
+      // and a span apiece was 27,000 spans an hour with one Person. `Executor.catalog` is the span.
+      Effect.fnUntraced(
         function* (entry) {
           const { kind } = yield* decodeKind(entry)
           if (!knownKind(kind)) return []
@@ -1382,7 +1383,8 @@ const makeSetupRefusals = Effect.fn('Executor.setupRefusals')(function* (
 ) {
   const refusals = yield* Ref.make(HashMap.empty<ServiceId, typeof SetupRefusal.Type>())
   return {
-    read: Effect.fn('Executor.readSetupRefusal')(function* (service: ServiceId) {
+    // Untraced: read once per catalogue entry on every list (see `refreshAvailability`).
+    read: Effect.fnUntraced(function* (service: ServiceId) {
       const now = yield* Clock.currentTimeMillis
       const refusal = yield* Ref.get(refusals).pipe(
         Effect.map((current) => HashMap.get(current, service)),
@@ -1489,7 +1491,9 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
   const refusals = yield* makeSetupRefusals(inspections)
   const readInspection = makeInspectionReader({ inspections, refusals, publication, record })
   /** Refresh expired inspection entries in the owning scope while serving retained display facts. */
-  const refreshAvailability = Effect.fn('Executor.refreshAvailability')(function* (
+  // Untraced: one call per catalogue entry, about a thousand a read. A span each, with the
+  // refusal read beneath, was 63,000 spans an hour; `Executor.availableCatalog` is the span.
+  const refreshAvailability = Effect.fnUntraced(function* (
     entry: typeof ExecutorServiceEntry.Type,
     current: HashMap.HashMap<ServiceId, ServiceAuthorization>,
   ) {
@@ -2180,7 +2184,7 @@ function makeCall(http: ExecutorHttp, discover: ReturnType<typeof makeDiscovery>
 }
 
 /** Acquire transport once and start the scoped catalog writer; tool discovery remains keyed. */
-const makeConfigured = Effect.fn('Executor.configure')(function* (
+const makeExecutor = Effect.fn('Executor.make')(function* (
   url: string,
   key: Redacted.Redacted,
   organization: typeof ExecutorOrganizationId.Type,
@@ -2243,7 +2247,6 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
   const install = yield* makeInstall(http)
   const registration = makeBegin(http, availability, install)
   return Executor.of({
-    configured: true,
     catalog: availability.catalog,
     authorization: availability.authorization,
     begin: registration.begin,
@@ -2291,38 +2294,35 @@ const makeConfigured = Effect.fn('Executor.configure')(function* (
   })
 })
 
-/** Requires HttpClient.HttpClient (provide FetchHttpClient.layer or NodeHttpClient.layerNodeHttp).
- * Missing configuration is an expected installation state. Acquisition succeeds and every operation
- * fails with the same contract error without contacting any network dependency.
+/**
+ * Requires HttpClient.HttpClient (provide FetchHttpClient.layer or NodeHttpClient.layerNodeHttp).
+ *
+ * Integrations are part of every running Vivid, so the three Executor settings are required while
+ * the server is composed: a missing or malformed one stops launch naming the variable, and "no
+ * Integrations on this server" is not a state a Person or the model can meet. Executor being down,
+ * refusing or timing out is a different fact: it stays a typed failure on the call that met it
+ * (`ExecutorFailure`), and the next call tries Executor again.
  */
 export const executorLayer = Layer.effect(
   Executor,
   Effect.gen(function* () {
-    const url = yield* Config.option(Config.String('VIVID_EXECUTOR_URL'))
-    const key = yield* Config.option(Config.Redacted('VIVID_EXECUTOR_KEY'))
-    if (Option.isNone(url) || Option.isNone(key)) {
-      const unavailable = Effect.fail(
-        ServiceUnavailable.make({
-          service: 'connections',
-          message: 'Configure VIVID_EXECUTOR_URL and VIVID_EXECUTOR_KEY to use integrations',
-        }),
-      )
-      return Executor.of({
-        configured: false,
-        catalog: Effect.fn('Executor.catalog')(() => unavailable),
-        authorization: Effect.fn('Executor.authorization')(() => unavailable),
-        begin: Effect.fn('Executor.begin')(() => unavailable),
-        add: Effect.fn('Executor.add')(() => unavailable),
-        reauthorize: Effect.fn('Executor.reauthorize')(() => unavailable),
-        complete: Effect.fn('Executor.complete')(() => unavailable),
-        completeSignIn: Effect.fn('Executor.completeSignIn')(() => unavailable),
-        status: Effect.fn('Executor.status')(() => unavailable),
-        remove: Effect.fn('Executor.remove')(() => unavailable),
-        tools: Effect.fn('Executor.tools')(() => unavailable),
-        call: Effect.fn('Executor.call')(() => unavailable),
-      })
-    }
-    const organization = yield* Config.schema(ExecutorOrganizationId, 'VIVID_EXECUTOR_ORGANIZATION')
-    return yield* makeConfigured(url.value, key.value, organization)
+    // The address every Executor request is sent to. It is prefixed onto request paths as text, so
+    // it is checked to be an absolute URL here and kept as the string that was supplied.
+    const url = yield* requiredSetting(
+      'VIVID_EXECUTOR_URL',
+      Schema.NonEmptyString.check(
+        Schema.makeFilter((value) => URL.canParse(value) || 'an absolute URL'),
+      ),
+      "Executor's absolute URL",
+    )
+    // The bearer credential for that address; without it every Executor call is refused.
+    const key = yield* requiredSetting('VIVID_EXECUTOR_KEY', settingSecret, 'the Executor API key')
+    // Every request path is scoped to one Executor organization; there is no default one.
+    const organization = yield* requiredSetting(
+      'VIVID_EXECUTOR_ORGANIZATION',
+      ExecutorOrganizationId,
+      'the Executor organization id',
+    )
+    return yield* makeExecutor(url, key, organization)
   }),
 )

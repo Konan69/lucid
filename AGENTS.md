@@ -106,6 +106,14 @@ LLM-behavior live evaluations need real credentials, an explicit opt-in environm
 
 Use the smallest proof that demonstrates the changed behavior: focused tests first, then the narrow lint or typecheck surface. Never use sleeps or polling in tests; wait on a typed signal, an observable receipt, or a controllable clock. A test that needs a timeout to pass is wrong. The primary agent performs one integrated pass in a real client for user-visible work; subagents never launch dev servers.
 
+## Where heavy work runs
+
+The developer's PC is shared by every session at once, and it runs out of processor and memory. On 5 October 2026 its load average stood at twice its core count: a production deploy sat for an hour, gates failed on timeouts in code nobody had touched, and a build waited on all of it. So before starting heavy work, measure: `uptime` against `nproc`, `free -g` for memory in swap, and how many `node`, `tsc` and `vitest` processes are already running. Heavy work is a build, a bundle export, a full gate, a whole test suite, a browser run, or anything else that holds a core for minutes.
+
+When the load average is above the core count, or memory is in swap, do the work on the Cloudbox (the developer's Boat machine, reached over SSH) and not on the PC. Check the Cloudbox the same way first; it is a small machine, so it takes one heavy job at a time. Never add the work to a contended PC and then report the timeout as the result.
+
+Simulators, emulators and testing run on the Cloudbox, not on the developer's PC, contended or not. That covers the Android emulator, driving a browser or the app to test it, a live proof, a gate and a suite. A focused test of the file being changed is small and may run on the PC. An iOS simulator needs macOS, which neither machine has: the iPhone app is checked on the phone itself or on a macOS runner, and its JavaScript, which is all that most fixes change, is built on the Cloudbox.
+
 ## SDKs, servers, and tools
 
 Flue, Alchemy beta, Effect rc, Better Auth, Expo, and related SDKs move quickly. Never assume their APIs from memory. Read installed package source and version-matched docs first; for Flue use `pnpm exec flue docs ...`. Do not hack, reassign, or monkey-patch framework/SDK internals; use public APIs or an owned boundary and document a narrow removable workaround only when source proves a gap.

@@ -1,4 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
+import * as NodeFS from 'node:fs'
+import * as NodeOS from 'node:os'
+import * as NodePath from 'node:path'
 import * as NodeProcess from 'node:process'
 
 /**
@@ -33,3 +36,13 @@ if (supplied === undefined) {
  */
 delete NodeProcess.env.VIVID_SERVER_URL
 NodeProcess.env.VIVID_RUNTIME_TOKEN = NodeCrypto.randomUUID()
+
+/**
+ * Notes are required: `src/notes.ts` reads `VIVID_MEMORY_DIR` when it is imported and the runtime
+ * does not start without it. Each worker gets its own empty directory under the system's temporary
+ * directory, so a case never reads a developer's notes or another worker's. Nothing is written
+ * until a case writes a note.
+ */
+NodeProcess.env.VIVID_MEMORY_DIR = NodeFS.mkdtempSync(
+  NodePath.join(NodeOS.tmpdir(), 'vivid-notes-test-'),
+)

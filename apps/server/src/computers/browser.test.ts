@@ -1,8 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
-import { ComputerState } from '@vivid/contracts'
 import { Effect } from 'effect'
 import { validateAddress, validateKey } from './browser.js'
-import { Machine, MachineKey, unavailableMachineLayer } from './machine.js'
 
 describe('Computer boundary', () => {
   it.effect('refuses local and non-web navigation before invoking a provider', () =>
@@ -63,15 +61,5 @@ describe('Computer boundary', () => {
         yield* validateKey(key)
       }
     }),
-  )
-
-  it.effect('disabled installations answer Unavailable without contacting Boat', () =>
-    Effect.gen(function* () {
-      const machine = yield* Machine
-      const key = MachineKey.make('unconfigured')
-      expect(yield* machine.status(key)).toEqual(ComputerState.cases.Unavailable.make({}))
-      const failure = yield* Effect.flip(machine.ensure(key))
-      expect(failure._tag).toBe('MachineUnavailable')
-    }).pipe(Effect.provide(unavailableMachineLayer)),
   )
 })

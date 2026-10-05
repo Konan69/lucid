@@ -1,14 +1,13 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, it } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
-import { ConfigProvider, Effect, Option, Ref, Result, Schema, Stream } from 'effect'
+import { Effect, Option, Ref, Result, Schema, Stream } from 'effect'
 import { Clock } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import {
   NotificationId,
   NotifyPersonOutcome,
   PushOutcome,
-  PushUnavailable,
   RunId,
   PushPayload,
   PushDestination,
@@ -23,19 +22,13 @@ import { StoredRunOrigin } from '../threads/conversation.ts'
 import { Presence } from '../threads/presence.ts'
 import { automaticallyNotifies, RunStore, TurnReservation } from '../threads/runs.ts'
 import { threads } from '../threads/tables.ts'
-import { PushConfig, loadPushConfiguration, requirePushConfiguration } from './config.ts'
+import { PushConfig } from './config.ts'
 import { Push, pushLayer } from './delivery.ts'
 import { pushHandlers } from './handlers.ts'
 import { PushReceipt } from './receipts.ts'
 import { pushDeliveries } from './tables.ts'
 import { PushTargets } from './targets.ts'
-import {
-  fixture,
-  pushTestLayer,
-  PushProbe,
-  testPushConfig,
-  unavailableTestLayer,
-} from './testing.ts'
+import { fixture, pushTestLayer, PushProbe, testPushConfig } from './testing.ts'
 
 const encodePayload = Schema.encodeSync(Schema.fromJsonString(PushPayload))
 const encodeReceipt = Schema.encodeSync(PushReceipt)
@@ -63,29 +56,6 @@ const notice = (owner: Effect.Success<ReturnType<typeof fixture>>) => {
 
 /** Each scoped test builds a fresh presence/adapter Layer while retaining real SQL semantics. */
 describe.skipIf(!testDatabaseConfigured)('push delivery and registration handlers', () => {
-  it.effect(
-    'starts without push config and returns tagged unavailable from registration and key discovery',
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const owner = yield* fixture()
-          const registration = yield* pushHandlers
-            .RegisterPushTarget({ destination: owner.destination })
-            .pipe(Effect.provideService(AuthContext, owner.auth), Effect.result)
-          expect(Result.isFailure(registration) && registration.failure._tag).toBe(
-            'PushUnavailable',
-          )
-          const key = yield* pushHandlers
-            .GetPushKey()
-            .pipe(Effect.provideService(AuthContext, owner.auth), Effect.result)
-          expect(Result.isFailure(key) && key.failure._tag).toBe('PushUnavailable')
-          expect(pushOf(yield* recordNotice(notice(owner)))).toEqual(
-            PushOutcome.cases.Unavailable.make({}),
-          )
-          expect(yield* Ref.get((yield* PushProbe).sent)).toHaveLength(0)
-        }),
-      ).pipe(Effect.provide(unavailableTestLayer)),
-  )
   it.effect('registers idempotently, lists only the owner, removes, and cascades session end', () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -418,37 +388,16 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
   )
 })
 
-/** Optional config is validated without booting any unrelated runtime or reading ambient secrets. */
-it.effect(
-  'missing, partial or invalid push configuration is unavailable, while a valid key is advertised',
-  () =>
-    Effect.gen(function* () {
-      for (const values of [
-        {},
-        { VIVID_PUSH_VAPID_PUBLIC: testPushConfig.publicKey },
-        {
-          VIVID_PUSH_VAPID_PUBLIC: 'invalid',
-          VIVID_PUSH_VAPID_PRIVATE: 'invalid',
-          VIVID_PUSH_SUBJECT: 'invalid',
-        },
-      ]) {
-        const config = yield* loadPushConfiguration().pipe(
-          Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(values))),
-        )
-        const result = yield* requirePushConfiguration().pipe(
-          Effect.provideService(PushConfig, config),
-          Effect.result,
-        )
-        expect(Result.isFailure(result) && result.failure instanceof PushUnavailable).toBe(true)
-      }
-      const auth = AuthState.Runtime()
-      const result = yield* pushHandlers
-        .GetPushKey()
-        .pipe(
-          Effect.provideService(AuthContext, auth),
-          Effect.provideService(PushConfig, testPushConfig),
-          Effect.result,
-        )
-      expect(Result.isFailure(result) && result.failure._tag).toBe('Forbidden')
-    }),
+/** The public key is for a signed-in Person's browser; Vivid's own runtime identity has no use for it. */
+it.effect('refuses the push key to a caller that is not a Person', () =>
+  Effect.gen(function* () {
+    const result = yield* pushHandlers
+      .GetPushKey()
+      .pipe(
+        Effect.provideService(AuthContext, AuthState.Runtime()),
+        Effect.provideService(PushConfig, testPushConfig),
+        Effect.result,
+      )
+    expect(Result.isFailure(result) && result.failure._tag).toBe('Forbidden')
+  }),
 )
