@@ -191,10 +191,12 @@ export const routes = Effect.fn('RuntimeTest.routes')(function* () {
             (tool) => !['task', 'activate_skill', 'read_skill_resource'].includes(tool.name),
           )
           expect(owned).toHaveLength(28)
+          // Every tool says its step to the Person in `summary`. `ask_person` is the one that
+          // does not: its `question` is already that sentence (`tools/ask.ts`, 5 October 2026).
           for (const tool of owned)
             expect(tool.parameters, tool.name).toHaveProperty(
               'required',
-              expect.arrayContaining(['summary']),
+              expect.arrayContaining([tool.name === 'ask_person' ? 'question' : 'summary']),
             )
           return fauxAssistantMessage('ready')
         },
