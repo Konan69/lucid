@@ -2,7 +2,7 @@ import { PgClient } from '@effect/sql-pg/PgClient'
 import { describe, expect, layer } from '@effect/vitest'
 import { DraftPlace, DraftSaved, SaveDraftRequest, ThreadId } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
-import { Deferred, Effect, Fiber, Layer, Queue, Result, Stream } from 'effect'
+import { Deferred, Effect, Fiber, Layer, Queue, Result } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
@@ -111,6 +111,10 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
           yield* save(test.personal, place, 'just saved')
           const listed = (yield* current(test.personal)).drafts
           expect(listed).toHaveLength(50)
+          expect(listed.map((draft) => draft.revision)).toEqual(
+            Array.from({ length: 50 }, (_, i) => 52 - i),
+          )
+          expect(listed.every((draft) => draft.savedAt === at)).toBe(true)
           expect(listed.find((draft) => draft.text === 'just saved')).toMatchObject({ place })
           expect(listed.find((draft) => draft.text === 'archived')).toBeUndefined()
           const stored = yield* database.run(
@@ -141,8 +145,9 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
           const saved = yield* save(test.personal, place, 'written while archived')
           expect(DraftSaved.guards.Kept(saved)).toBe(true)
           expect((yield* current(test.personal)).drafts).toEqual([])
-          yield* Stream.runHead(watch.receipt)
-          yield* TestClock.adjust('20 millis')
+          // Hidden words still advance the Person's counter, so the live list must emit that
+          // generation even though its visible rows remain empty.
+          expect(yield* nextValue(watch)).toMatchObject({ generation: 2, drafts: [] })
           expect(yield* Queue.size(watch.values)).toBe(0)
           yield* store.patch(test.personal.actor.person.id, id, { archived: false })
           expect((yield* nextValue(watch)).drafts).toMatchObject([
@@ -192,6 +197,7 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
         const saved = yield* save(test.personal, newThread, '  unfinished words  ')
         expect(saved).toEqual(
           DraftSaved.cases.Kept.make({
+            generation: 1,
             draft: {
               place: newThread,
               text: '  unfinished words  ',
@@ -242,7 +248,7 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
         const watch = yield* observing(test.personal)
         expect(watch.initial.drafts).toHaveLength(1)
         expect(yield* save(test.personal, newThread, ' \t\n ')).toEqual(
-          DraftSaved.cases.Cleared.make({ place: newThread }),
+          DraftSaved.cases.Cleared.make({ place: newThread, generation: 2 }),
         )
         expect((yield* nextValue(watch)).drafts).toEqual([])
       }).pipe(Effect.scoped),
@@ -283,7 +289,7 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
           { text: 'personal', revision: 1 },
         ])
         expect((yield* current(test.member)).drafts).toMatchObject([
-          { text: 'company revision', revision: 2 },
+          { text: 'company revision', revision: 3 },
         ])
       }).pipe(Effect.scoped),
     )
@@ -309,7 +315,7 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
         yield* TestClock.setTime(at)
         yield* save(test.personal, newThread, 'oldest')
         for (let i = 1; i <= 50; i++) {
-          yield* TestClock.setTime(at + i)
+          yield* TestClock.setTime(at - i)
           const id = yield* thread(test.personal)
           yield* save(test.personal, DraftPlace.cases.InThread.make({ thread: id }), `words ${i}`)
         }
@@ -400,7 +406,7 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
             save(test.personal, kept.place, 'laptop wins'),
             save(test.second, kept.place, 'phone wins'),
           ],
-          { concurrency: 2 },
+          { concurrency: 'unbounded' },
         )
         const returnedDrafts = saved.map((answer) =>
           DraftSaved.match(answer, {
@@ -409,13 +415,14 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
           }),
         )
         expect(returnedDrafts.map((draft) => draft.revision).toSorted((a, b) => a - b)).toEqual([
-          2, 3,
+          52, 53,
         ])
-        const winner = returnedDrafts.find((draft) => draft.revision === 3)
+        expect(saved.map((answer) => answer.generation).toSorted((a, b) => a - b)).toEqual([52, 53])
+        const listed = yield* current(test.personal)
+        expect(listed.generation).toBe(53)
+        const winner = returnedDrafts.find((draft) => draft.revision === 53)
         expect(winner).toBeDefined()
-        expect(
-          (yield* current(test.personal)).drafts.find((draft) => draft.revision === 3),
-        ).toEqual(winner)
+        expect(listed.drafts.find((draft) => draft.revision === 53)).toEqual(winner)
       }).pipe(Effect.scoped),
     )
   })

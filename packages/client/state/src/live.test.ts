@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from '@effect/vitest'
 import { VividRpcClient } from '@vivid/client-runtime'
-import { Forbidden, RuntimeUnavailable, SkillReadOnly, ThreadId } from '@vivid/contracts'
+import {
+  Forbidden,
+  RuntimeUnavailable,
+  SkillReadOnly,
+  ThreadId,
+  Unauthenticated,
+} from '@vivid/contracts'
 import { Clock, Deferred, Effect, Fiber, Layer, Queue, Ref, Result, Stream } from 'effect'
 import * as Atom from 'effect/unstable/reactivity/Atom'
 import * as TestClock from 'effect/testing/TestClock'
@@ -34,6 +40,41 @@ const queuedQuery = Effect.fn('LiveTest.queuedQuery')(function* () {
     ),
   )
   return { live, query, values, received, plans }
+})
+
+describe('a session the server no longer accepts', () => {
+  it.effect(
+    'is heard from any subscription and any call, not only the one that asks who is signed in',
+    () =>
+      Effect.gen(function* () {
+        const plans = yield* Queue.unbounded<Effect.Effect<void, MarkThreadReadFailure>>()
+        const live = makeLive(yield* testClientLayer(plans))
+        let heard = 0
+        const stop = live.whenSessionGone(() => {
+          heard += 1
+        })
+        const gone = Unauthenticated.make({ message: 'Sign in again.' })
+
+        // Any list at all, refused.
+        const query = live.query<number>(() => Stream.fail(gone))
+        const unsubscribe = live.registry.subscribe(query.atom, () => {})
+        live.registry.get(query.atom)
+        yield* TestClock.adjust(0)
+        expect(heard).toBe(1)
+
+        // Any write at all, refused.
+        yield* Queue.offer(plans, Effect.fail(gone))
+        yield* live.change((client) => client.MarkThreadRead({ id: ThreadId.make('t1') }))
+        expect(heard).toBe(2)
+
+        // A refusal that is about one Thread, not about the session, is not this.
+        yield* Queue.offer(plans, Effect.fail(Forbidden.make({ message: 'No access' })))
+        yield* live.change((client) => client.MarkThreadRead({ id: ThreadId.make('t1') }))
+        expect(heard).toBe(2)
+        stop()
+        unsubscribe()
+      }),
+  )
 })
 
 describe('live state', () => {

@@ -1,9 +1,11 @@
-import type { Draft, DraftSaved, SaveDraftRequest } from '@vivid/contracts'
+import type { DraftListResponse, DraftSaved, SaveDraftRequest, ThreadId } from '@vivid/contracts'
 import { Effect, Option, Result } from 'effect'
 import {
   abandoned,
   heard,
   owed,
+  resolved,
+  sameWorkspace,
   saved,
   saveOf,
   type DraftScope,
@@ -35,8 +37,14 @@ export interface DraftSyncInput {
   readonly read: () => Option.Option<Drafts>
   /** Changes the device's drafts, from what they are at that moment. */
   readonly update: (change: (drafts: Drafts) => Drafts) => void
-  /** Who is signed in and where they are working, once the server has said. */
+  /**
+   * Who is signed in and where they are working, once the server itself has said so in this
+   * session. It is never what the device kept from its last run: until the server confirms who
+   * this is, nothing is sent on their behalf and no list is applied.
+   */
   readonly scope: () => Option.Option<DraftScope>
+  /** The Threads of where the Person is, once their list has answered (`resolved`). */
+  readonly threads: () => Option.Option<ReadonlySet<ThreadId>>
   /** One `SaveDraft` call, its refusal in the value. */
   readonly save: (
     request: SaveDraftRequest,
@@ -54,10 +62,14 @@ interface Underway {
 export function makeDraftSync(input: DraftSyncInput) {
   const underway = new Map<string, Underway>()
 
-  /** What the model does with the server's answer to one save. */
-  const settle = (sent: Owed, answer: Result.Result<DraftSaved, ProductFailure>) =>
+  /** What the model does with the server's answer to one save made in `scope`. */
+  const settle = (
+    scope: DraftScope,
+    sent: Owed,
+    answer: Result.Result<DraftSaved, ProductFailure>,
+  ) =>
     Result.match(answer, {
-      onSuccess: (outcome) => input.update((drafts) => saved(drafts, sent, outcome)),
+      onSuccess: (outcome) => input.update((drafts) => saved(drafts, scope, sent, outcome)),
       // A save that did not get through is not said while someone types: the words are on the
       // device, and the next change or the next reconnect sends them. Only a refusal that asking
       // again cannot change (the Thread is gone) stops the place owing them.
@@ -72,7 +84,7 @@ export function makeDraftSync(input: DraftSyncInput) {
    * An answer that is never read costs nothing, because the save that replaced it carries newer
    * words and brings back a newer revision.
    */
-  const send = (sent: Owed) => {
+  const send = (scope: DraftScope, sent: Owed) => {
     const before = underway.get(sent.where)
     if (before !== undefined) before.stop()
     const mine: Underway = {
@@ -84,7 +96,7 @@ export function makeDraftSync(input: DraftSyncInput) {
             Effect.sync(() => {
               // Let go of first: settling changes the store, which asks what is owed again.
               if (underway.get(sent.where) === mine) underway.delete(sent.where)
-              settle(sent, answer)
+              settle(scope, sent, answer)
             }),
           ),
         ),
@@ -95,38 +107,47 @@ export function makeDraftSync(input: DraftSyncInput) {
 
   /**
    * What `WatchDrafts` last said, while it cannot be used yet: the server has not said who is
-   * signed in and where, or the device's store has not answered. Both arrive within a moment of
-   * launch and in no fixed order, and a list dropped then would not come again until a draft
-   * changed somewhere.
+   * signed in and where, the device's store has not answered, or the list is for a workspace
+   * the Person is not in. The last happens around a change of workspace, in either order: the
+   * list for the new workspace can arrive before the word that the Person is there, and is then
+   * kept until that word comes; the list for the old one can arrive after it, and then waits
+   * here, unapplied, until a list for the right workspace replaces it.
    */
-  let waiting = Option.none<ReadonlyArray<Draft>>()
+  let waiting = Option.none<DraftListResponse>()
 
   /**
-   * Brings the device's copy and the server's together as far as is possible right now: a list
-   * that was waiting is laid over the device's drafts, and every owed place that is not already
-   * on its way with the same words is sent.
+   * Brings the device's copy and the server's together as far as is possible right now: words an
+   * earlier build kept find their place, a list that was waiting is laid over the drafts, and
+   * every owed place that is not already on its way with the same words is sent.
    */
   const reconcile = () => {
     const scope = input.scope()
     if (Option.isNone(scope) || Option.isNone(input.read())) return
-    if (Option.isSome(waiting)) {
-      const list = waiting.value
+    const threads = input.threads()
+    if (Option.isSome(threads) && Option.exists(input.read(), (held) => held.pending.length > 0)) {
+      input.update((drafts) => resolved(drafts, scope.value, threads.value))
+    }
+    const list = Option.filter(waiting, (held) =>
+      sameWorkspace(held.workspace, scope.value.workspace),
+    )
+    if (Option.isSome(list)) {
       waiting = Option.none()
-      input.update((drafts) => heard(drafts, scope.value, input.device, list))
+      input.update((drafts) => heard(drafts, scope.value, input.device, list.value))
     }
     for (const place of Option.match(input.read(), {
       onNone: () => [],
       onSome: (drafts) => owed(drafts, scope.value),
     })) {
       const before = underway.get(place.where)
-      if (before === undefined || before.text !== place.text) send(place)
+      if (before === undefined || before.text !== place.text) send(scope.value, place)
     }
   }
 
   return {
     /**
      * Something this depends on changed: the Person typed, an answer was written back, the
-     * device's store answered, or the server said who is signed in and where.
+     * device's store answered, the Thread list did, or the server said who is signed in and
+     * where.
      */
     changed: reconcile,
     /**
@@ -135,7 +156,7 @@ export function makeDraftSync(input: DraftSyncInput) {
      * server's, and every place with unsaved keystrokes is saved, including one whose last save
      * was lost with the old socket.
      */
-    heard: (list: ReadonlyArray<Draft>) => {
+    heard: (list: DraftListResponse) => {
       waiting = Option.some(list)
       reconcile()
     },
@@ -143,6 +164,7 @@ export function makeDraftSync(input: DraftSyncInput) {
     stop: () => {
       for (const save of underway.values()) save.stop()
       underway.clear()
+      waiting = Option.none()
     },
   }
 }

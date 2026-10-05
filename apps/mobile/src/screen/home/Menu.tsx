@@ -469,6 +469,12 @@ function Head({
 }
 
 /**
+ * How the drawer writes what is unread. It is the server's count of everything unread, which has
+ * no ceiling, so it is written the way the Person's own locale writes a number ("1,284").
+ */
+const count = new Intl.NumberFormat()
+
+/**
  * The way to Notifications, first among the places because it is the one that changes while the
  * Person is away. What is unread is counted at its trailing edge, in the ink and the place a
  * Project's waiting Threads are counted (`Group`), so the drawer has one way of saying "this
@@ -483,7 +489,9 @@ function NotificationsLine({ onOpen }: { onOpen: () => void }) {
     <Line
       icon={Bell}
       label="Notifications"
-      accessibilityLabel={unread > 0 ? `Notifications. ${unread} unread` : 'Notifications'}
+      accessibilityLabel={
+        unread > 0 ? `Notifications. ${count.format(unread)} unread` : 'Notifications'
+      }
       trailing={
         unread > 0 ? (
           <Label
@@ -491,7 +499,7 @@ function NotificationsLine({ onOpen }: { onOpen: () => void }) {
             tone="status-attention"
             style={{ fontWeight: '600', fontVariant: ['tabular-nums'] }}
           >
-            {unread}
+            {count.format(unread)}
           </Label>
         ) : undefined
       }

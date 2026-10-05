@@ -1,9 +1,11 @@
 import {
+  absorbed,
   draftIn,
+  draftScopeOf,
+  forgotten,
   makeDraftSync,
   readDrafts,
   withDraft,
-  workspaceKey,
   writeDrafts,
   type DraftScope,
   type Drafts,
@@ -23,33 +25,31 @@ import { engine } from './runtime'
  * and the rules of following are shared with the phone (`@vivid/state` `drafts.ts`, `sync.ts`);
  * this is where the browser keeps them and the socket they travel on.
  *
- * Two things can go wrong with a browser's store, and neither may cost the Person their words.
- * Another tab has its own copy: each change is therefore made to what the store holds now, not to
- * this tab's earlier reading of it, so typing in one Thread here does not undo a draft just
- * written in another tab. And the store can refuse a write: the drafts then live in this tab's
- * memory for as long as it is open, and sending a message is never held up by it.
+ * Each tab is a client of its own. It holds its own copy of the drafts and its own account of
+ * which keystrokes it has not saved, and signs its saves with its own name. The browser's store
+ * is where the tabs' copies meet: a tab takes in what another wrote by the same rule it applies
+ * to a list from the server (`absorbed`: never over keystrokes it has not saved), before every
+ * change of its own and whenever the store says it was written. Two tabs open on one Thread
+ * therefore never pull words out from under each other, and typing in one Thread here does not
+ * undo a draft just written in another tab.
+ *
+ * The store can also refuse a write: the drafts then live in this tab's memory for as long as it
+ * is open, and sending a message is never held up by it.
  */
 
 const KEY = 'vivid-drafts'
-const INSTALLATION = 'vivid-installation'
 
 /**
- * The name this browser signs its saves with, made once and kept, so it can tell its own save
- * coming back from a change made on another device. It is a random word and nothing more: not a
- * Device (those are the Person's computers, `data/computers.ts`), not a session, not the Person.
- * Every tab of this browser shares it, as they share the one store. A browser that will not keep
- * it gets a name for the life of the tab.
+ * The name this tab signs its saves with, so it can tell its own save coming back from a change
+ * made by another client. It is a random word, made when the page loads and held only in
+ * memory: not a Device (those are the Person's computers, `data/computers.ts`), not a session,
+ * not the Person, and not shared with the tab beside it, which is another client
+ * (`@vivid/contracts` `Draft.device`).
  */
-const installation = Option.getOrElse(kept.read(INSTALLATION), () => {
-  const made = crypto.randomUUID()
-  kept.write(INSTALLATION, made)
-  return made
-})
+const tab = crypto.randomUUID()
 
-/** This tab's copy: what the store held when last read, plus anything it would not take. */
+/** This tab's copy. A tab that opens takes over whatever the last one left owed. */
 let drafts = readDrafts(kept.read(KEY))
-/** Whether the store is taking writes. Once it refuses, this tab's memory is the truth. */
-let durable = true
 /**
  * Words that are only space, in the one place they were just typed. They are no draft and are
  * never kept, but the field must go on showing them: a Person who starts a message with a new
@@ -59,49 +59,57 @@ let blank = Option.none<{ readonly where: string; readonly text: string }>()
 
 const listeners = new Set<() => void>()
 
-/** The drafts as they stand: the store's, while it is being written to, else this tab's own. */
-const latest = () => (durable ? readDrafts(kept.read(KEY)) : drafts)
+/** This tab's copy with whatever other tabs have written since taken in (`absorbed`). */
+const current = () => absorbed(drafts, readDrafts(kept.read(KEY)))
 
 /**
  * Who is signed in and where they are working, once the server has said. It is the server's own
  * answer, never what this browser kept from its last visit (`data/snapshot.ts`): a workspace or
- * a list from then is not what the server holds now, and acting on it would clear or overwrite a
- * draft on the strength of old news.
+ * a list from then is not what the server holds now, and nothing is sent, and no list applied,
+ * on the word of a copy.
  */
 const scope = (): Option.Option<DraftScope> => {
   const me = engine.registry.get(live.me.answers)
-  return AsyncResult.isSuccess(me)
-    ? Option.some({ person: me.value.person.id, workspace: workspaceKey(me.value.workspace) })
-    : Option.none()
+  return AsyncResult.isSuccess(me) ? Option.some(draftScopeOf(me.value)) : Option.none()
 }
 
 const sync = makeDraftSync({
-  device: installation,
+  device: tab,
   read: () => Option.some(drafts),
-  update: (change) => put(change(latest())),
+  update: (change) => put(change(current())),
   scope,
+  threads: () => {
+    const threads = engine.registry.get(live.threads.answers)
+    return AsyncResult.isSuccess(threads)
+      ? Option.some(new Set(threads.value.threads.map((thread) => thread.id)))
+      : Option.none()
+  },
   save: (request) => engine.change((client) => client.SaveDraft(request)),
   launch: start,
 })
 
-/** Replaces the drafts: in this tab, in the store, on screen, and in what is owed the server. */
+/** Replaces this tab's drafts: in memory, in the store, on screen, and in what is owed. */
 function put(next: Drafts) {
   drafts = next
-  durable = kept.write(KEY, writeDrafts(next))
+  // A store that refuses is not said: this tab's memory has the words either way.
+  kept.write(KEY, writeDrafts(next))
   for (const listener of listeners) listener()
   sync.changed()
 }
 
-// Another tab wrote the store: this tab's composers show it, and nothing is sent for it (the tab
-// that was typed in owes the save; both would send the same words under the same name).
+// Another tab wrote the store. What it wrote is taken in by the same rule as a list from the
+// server, so it never replaces what is being typed here, and nothing is written back: this tab
+// has nothing new to say, and writing would only make the other tab hear its own words again.
 window.addEventListener('storage', (event) => {
-  if (event.key !== KEY || !durable) return
-  drafts = latest()
+  if (event.key !== KEY) return
+  drafts = current()
   for (const listener of listeners) listener()
 })
 
-// Who is signed in, and where, is what says which of this browser's drafts are theirs to send.
+// Who is signed in, and where, is what says which of this browser's drafts are theirs to send;
+// the Thread list is what gives words an earlier build kept their place.
 engine.registry.subscribe(live.me.answers, () => sync.changed())
+engine.registry.subscribe(live.threads.answers, () => sync.changed())
 
 // What the server holds for this Person here, each time it changes and each time the socket
 // comes back. Held open for the life of the page, so a draft from another device is already in
@@ -109,10 +117,22 @@ engine.registry.subscribe(live.me.answers, () => sync.changed())
 engine.registry.subscribe(
   live.drafts.answers,
   (result) => {
-    if (AsyncResult.isSuccess(result)) sync.heard(result.value.drafts)
+    if (AsyncResult.isSuccess(result)) sync.heard(result.value)
   },
   { immediate: true },
 )
+
+/**
+ * The session ended (`data/ending.ts`): every save on its way is called off, and everything the
+ * server has a copy of leaves this browser. Words typed here that it never took stay, named for
+ * their Person, because they are nowhere else.
+ */
+export const forgetDrafts = () => {
+  sync.stop()
+  drafts = forgotten(current())
+  kept.write(KEY, writeDrafts(drafts))
+  for (const listener of listeners) listener()
+}
 
 export const draft = {
   /** The words in a place right now, exactly as its field should show them. */
@@ -125,7 +145,7 @@ export const draft = {
   keep: (where: string, text: string) => {
     blank =
       text.length > 0 && text.trim().length === 0 ? Option.some({ where, text }) : Option.none()
-    put(withDraft(latest(), where, text, Date.now()))
+    put(withDraft(current(), where, text, Date.now()))
   },
   /** Told when any place's words change, here or because another device's draft arrived. */
   subscribe: (listener: () => void) => {

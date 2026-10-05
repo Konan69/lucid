@@ -7,10 +7,10 @@ import {
   Settings,
   ThreadListResponse,
 } from '@vivid/contracts'
-import { Data, Effect, Option, Predicate, Queue, Schema } from 'effect'
+import { Data, Effect, Option, Queue, Schema } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import type * as AtomRegistry from 'effect/unstable/reactivity/AtomRegistry'
-import { LiveState, liveStateOf, type KeptQuery } from './live.js'
+import type { KeptQuery } from './live.js'
 import { workspaceKey } from './threads.js'
 
 /**
@@ -40,8 +40,10 @@ import { workspaceKey } from './threads.js'
  *   Person's is erased, another workspace's is taken down.
  * - T3 keeps one reducer state per environment; Vivid keeps an Atom per live query, so a snapshot
  *   is a seed for each kept query (`KeptQuery`) and each is replaced by its own first answer.
- * - T3 clears an environment's cache when the environment is removed. Vivid erases on sign-out,
- *   on another Person signing in, and when the server says the session is gone.
+ * - T3 clears an environment's cache when the environment is removed. Vivid erases when the
+ *   session ends, by one path whatever ended it (`makeSnapshots` `ended`), when another Person
+ *   signs in, and at launch when the session it was written under has expired.
+ * - T3 keeps whole snapshots. Vivid bounds each list and the whole (`LIMITS`).
  *
  * What is kept, and why each is safe to leave on a device. All of it is what the signed-in Person
  * was already shown on this device, and none of it is a credential:
@@ -61,21 +63,25 @@ import { workspaceKey } from './threads.js'
 /**
  * The format's version. Changing what a kept answer holds changes this, and every device then
  * discards what it wrote under the old one (`readSnapshot`), as T3's
- * `ORCHESTRATION_CACHE_SCHEMA_VERSION` does.
+ * `ORCHESTRATION_CACHE_SCHEMA_VERSION` does. Version 2 records when the session ends.
  */
-const VERSION = 1
+const VERSION = 2
 
 /**
  * One device's snapshot. It is decoded with the same Schemas the socket uses, so text that is
  * not exactly what this build would have been sent is not a snapshot.
  *
  * Whose it is, is in it: `origin` is the server it was read from, and `me` says the Person and
- * the workspace (one source for both, not a second copy that could disagree). An answer that had
- * not arrived when the snapshot was written is absent.
+ * the workspace (one source for both, not a second copy that could disagree). `expiresAt` is
+ * when the session it was written under ends, in epoch milliseconds, as the server told this
+ * client: a snapshot does not outlive the session that was allowed to see what is in it. An
+ * answer that had not arrived when the snapshot was written, or was too long to keep whole
+ * (`LIMITS`), is absent.
  */
 export const Snapshot = Schema.Struct({
   version: Schema.Literal(VERSION),
   origin: Schema.String,
+  expiresAt: Schema.Number,
   me: MeResponse,
   threads: Schema.OptionFromOptionalKey(ThreadListResponse),
   projects: Schema.OptionFromOptionalKey(ProjectListResponse),
@@ -92,18 +98,62 @@ const encode = Schema.encodeOption(SnapshotJson)
 
 /**
  * The snapshot a store's text stands for, when it is one this device may start from: it decodes
- * as this build's format, and it was read from the server this device is talking to. Anything
- * else is none, and the caller erases it; a device's storage is input like any other.
+ * as this build's format, it was read from the server this device is talking to, and the session
+ * it was written under has not ended by this device's clock. Anything else is none, and the
+ * caller erases it, undrawn; a device's storage is input like any other. A snapshot with no
+ * recorded expiry does not decode, so it is erased like the rest.
  */
-export const readSnapshot = (stored: Option.Option<string>, origin: string) =>
-  Option.filter(Option.flatMap(stored, decode), (snapshot) => snapshot.origin === origin)
+export const readSnapshot = (stored: Option.Option<string>, origin: string, now: number) =>
+  Option.filter(
+    Option.flatMap(stored, decode),
+    (snapshot) => snapshot.origin === origin && snapshot.expiresAt > now,
+  )
 
 /**
- * The snapshot as text to store, or none for a state the format cannot say. Keeping a snapshot
- * is a convenience, so a state that will not encode is simply not written; it never stops the
- * writer.
+ * How much of each list is kept, and of everything together.
+ *
+ * A snapshot is for the first screen, which draws the top of each list, so each is bounded by
+ * what that screen can show and the whole by a size that is read and decoded at launch without
+ * being felt. A list longer than its bound is not kept at all: a cut list would be drawn as the
+ * whole list, with a Thread missing and nothing to say so, and the server's answer arrives a
+ * moment later either way. `total` is the length of the encoded text in UTF-16 units, which is
+ * what both stores hold; a Person's fifty drafts can each run to pages, and are what it is for.
  */
-export const writeSnapshot = (snapshot: Snapshot): Option.Option<string> => encode(snapshot)
+export const LIMITS = { threads: 200, projects: 200, notifications: 100, total: 400_000 } as const
+
+/** A list, when it is short enough to keep whole. */
+const within = <Value>(
+  kept: Option.Option<Value>,
+  length: (value: Value) => number,
+  limit: number,
+): Option.Option<Value> => Option.filter(kept, (value) => length(value) <= limit)
+
+/**
+ * The snapshot as text to store, or none when it should not be stored: a state the format
+ * cannot say, or one too large to keep (`LIMITS`). Keeping a snapshot is a convenience, so
+ * neither stops the writer; the caller erases what the store held, which is now older than
+ * what it could not write.
+ */
+export const writeSnapshot = (snapshot: Snapshot): Option.Option<string> =>
+  Option.filter(
+    encode({
+      version: snapshot.version,
+      origin: snapshot.origin,
+      expiresAt: snapshot.expiresAt,
+      me: snapshot.me,
+      threads: within(snapshot.threads, (list) => list.threads.length, LIMITS.threads),
+      projects: within(snapshot.projects, (list) => list.projects.length, LIMITS.projects),
+      settings: snapshot.settings,
+      appearance: snapshot.appearance,
+      notifications: within(
+        snapshot.notifications,
+        (list) => list.notifications.length,
+        LIMITS.notifications,
+      ),
+      drafts: snapshot.drafts,
+    }),
+    (text) => text.length <= LIMITS.total,
+  )
 
 /**
  * What the server's first word on who is signed in makes of the snapshot a device started from.
@@ -155,7 +205,11 @@ export const keepLatest = Effect.fn('Snapshot.keepLatest')(function* (
   }
 })
 
-/** Where a device keeps its one snapshot. Each app supplies it; a store that fails holds nothing. */
+/**
+ * Where a device keeps its one snapshot. Each app supplies it. A store that fails holds nothing
+ * and says nothing: each of these ends without a failure whatever the platform did, and a store
+ * that has failed once may refuse everything after it (the browser's does, `apps/web`).
+ */
 export interface SnapshotStore {
   readonly read: Effect.Effect<Option.Option<string>>
   readonly write: (text: string) => Effect.Effect<void>
@@ -198,6 +252,14 @@ export interface SnapshotsInput {
   readonly store: SnapshotStore
   /** The server this device is talking to: the page's origin, or the phone's chosen server. */
   readonly origin: string
+  /**
+   * When the session this client holds ends, in epoch milliseconds, as the server says; none
+   * when it cannot be learned. Asked once the server has confirmed who is signed in. Nothing is
+   * written without it.
+   */
+  readonly expiry: Effect.Effect<Option.Option<number>>
+  /** This device's clock, in epoch milliseconds. */
+  readonly now: () => number
   /** Starts a program on the app's runtime and hands back the way to stop it. */
   readonly launch: (program: Effect.Effect<void>) => () => void
 }
@@ -209,50 +271,74 @@ export interface SnapshotsInput {
 function makeHeld(origin: string, store: SnapshotStore) {
   /** Who the server says is signed in, and where. Nothing is written before it has said. */
   let me = Option.none<MeResponse>()
+  /** When their session ends. Nothing is written before that is known either. */
+  let expiresAt = Option.none<number>()
   let answers = noAnswers
   /** Counts changes, so a flush with nothing new to write writes nothing. */
   let changed = 0
   let written = 0
+  /**
+   * Counts endings. A write reads it before it starts and again when it lands: if the session
+   * ended in between, what it wrote is what was just erased, and it erases it again.
+   */
+  let epoch = 0
+  /** Set when the session ends, for good: this engine's session does not come back. */
+  let ended = false
   /** Tells the writer something changed. Until the writer is running, the change waits. */
   let wake = () => {}
 
-  /** The state as it would be written now: nothing, until the server has said whose it is. */
+  /**
+   * The state as it would be written now: nothing, until the server has said whose it is and
+   * when their session ends.
+   */
   const latest = (): Option.Option<Snapshot> =>
-    Option.map(me, (mine) => ({
-      version: VERSION,
-      origin,
-      me: mine,
-      threads: answers.threads,
-      projects: answers.projects,
-      settings: answers.settings,
-      appearance: answers.appearance,
-      notifications: answers.notifications,
-      drafts: answers.drafts,
-    }))
+    Option.flatMap(me, (mine) =>
+      Option.map(expiresAt, (until) => ({
+        version: VERSION,
+        origin,
+        expiresAt: until,
+        me: mine,
+        threads: answers.threads,
+        projects: answers.projects,
+        settings: answers.settings,
+        appearance: answers.appearance,
+        notifications: answers.notifications,
+        drafts: answers.drafts,
+      })),
+    )
 
   const note = () => {
     changed += 1
     wake()
   }
 
-  /** One write of the state as it stands, when it has changed since the last one. */
-  const persist = Effect.suspend(() => {
+  /**
+   * One write of the state as it stands, when it has changed since the last one.
+   *
+   * It yields before it encodes, so the encoding (the one piece of real work here) starts on a
+   * turn of its own and never inside the event that asked for the write; the lists are bounded
+   * (`LIMITS`), which is what bounds that work. A state that cannot be kept erases what the
+   * store held, which is older than it. Nothing is written once the session has ended, and a
+   * write that was already on its way when it ended is undone.
+   */
+  const persist = Effect.fn('Snapshot.persist')(function* () {
     const at = changed
-    if (at === written) return Effect.void
-    return Option.match(Option.flatMap(latest(), writeSnapshot), {
-      onNone: () => Effect.void,
-      onSome: (text) =>
-        Effect.map(store.write(text), () => {
-          written = at
-        }),
-    })
+    const during = epoch
+    const snapshot = latest()
+    if (ended || at === written || Option.isNone(snapshot)) return
+    yield* Effect.yieldNow
+    const text = writeSnapshot(snapshot.value)
+    if (ended) return
+    yield* Option.match(text, { onNone: () => store.erase, onSome: store.write })
+    if (epoch === during) written = at
+    else yield* store.erase
   })
 
   return {
     me: () => me,
-    persist,
-    /** The server said who is signed in and where. */
-    heardMe: (next: MeResponse) => {
+    persist: persist(),
+    /** The server said who is signed in and where. Answers whether it is someone new to this run. */
+    heardMe: (next: MeResponse): boolean => {
       // The lists held are the workspace's the Person was in. Once they are somewhere else, a
       // snapshot made of the new `me` and the old lists would be the wrong workspace's under the
       // right name, so the lists wait until each has answered again.
@@ -262,8 +348,16 @@ function makeHeld(origin: string, store: SnapshotStore) {
           before.person.id !== next.person.id ||
           workspaceKey(before.workspace) !== workspaceKey(next.workspace),
       )
+      const someoneNew = !Option.exists(me, (before) => before.person.id === next.person.id)
       if (moved) answers = noAnswers
+      if (someoneNew) expiresAt = Option.none()
       me = Option.some(next)
+      note()
+      return someoneNew
+    },
+    /** The server said when the session ends, or it could not be learned. */
+    heardExpiry: (until: Option.Option<number>) => {
+      expiresAt = until
       note()
     },
     /** One kept query answered. */
@@ -271,9 +365,12 @@ function makeHeld(origin: string, store: SnapshotStore) {
       answers = change(answers)
       note()
     },
-    /** Nothing held is anyone's to write down any more. */
-    clear: () => {
+    /** The session ended: nothing held is anyone's to write down, now or later. */
+    end: () => {
+      ended = true
+      epoch += 1
       me = Option.none()
+      expiresAt = Option.none()
       answers = noAnswers
     },
     /**
@@ -286,66 +383,99 @@ function makeHeld(origin: string, store: SnapshotStore) {
         Queue.offerUnsafe(changes, undefined)
       }
       if (changed !== written) wake()
-      yield* keepLatest(changes, persist)
+      yield* keepLatest(changes, persist())
     }),
+  }
+}
+
+/** Puts a snapshot's answers under the kept queries, or takes them out from under them. */
+function seeding(registry: AtomRegistry.AtomRegistry, queries: KeptQueries) {
+  return (snapshot: Option.Option<Snapshot>) => {
+    const from = <Value>(pick: (kept: Snapshot) => Option.Option<Value>) =>
+      Option.flatMap(snapshot, pick)
+    registry.set(
+      queries.me.seed,
+      from((kept) => Option.some(kept.me)),
+    )
+    registry.set(
+      queries.threads.seed,
+      from((kept) => kept.threads),
+    )
+    registry.set(
+      queries.projects.seed,
+      from((kept) => kept.projects),
+    )
+    registry.set(
+      queries.settings.seed,
+      from((kept) => kept.settings),
+    )
+    registry.set(
+      queries.appearance.seed,
+      from((kept) => kept.appearance),
+    )
+    registry.set(
+      queries.notifications.seed,
+      from((kept) => kept.notifications),
+    )
+    registry.set(
+      queries.drafts.seed,
+      from((kept) => kept.drafts),
+    )
   }
 }
 
 /**
  * Keeps one device's snapshot for the life of one live engine: reads it once and seeds the kept
  * queries, judges it when the server says who is signed in, writes the server's answers down as
- * they change, and erases it when it is no longer this Person's.
+ * they change, and erases it when the session ends or it turns out to be someone else's.
  *
  * Holding every kept query's subscription open is deliberate: they are the first screen's, so
  * they are asked the moment the socket opens, not when a screen first mounts.
+ *
+ * What someone at a shared computer can see, and when:
+ * - A browser profile, or a phone, that holds a session the server has not ended and whose
+ *   recorded expiry has not passed shows that session's own snapshot at launch, exactly as it
+ *   shows that session's app a moment later. Whoever can open that profile is already inside
+ *   that session; the snapshot shows them nothing the app would not.
+ * - One whose session was signed out here, or whose recorded expiry has passed by this device's
+ *   clock, shows nothing: the snapshot was erased at sign-out, or is erased at launch undrawn.
+ * - One whose session was ended elsewhere (revoked from another device) before its expiry draws
+ *   the snapshot until the server's first answer, which is `Unauthenticated`: that takes it off
+ *   the screen and erases it. A device with no network cannot hear that answer and goes on
+ *   showing it until the expiry passes. This window is the cost of drawing before the socket
+ *   opens, and is the same data the previous Person saw on this device.
+ * - Another Person signing in on the same profile: the first `WatchMe` names them, and the
+ *   snapshot is taken down and erased before any of their own lists arrive.
+ *
+ * Until that first `WatchMe`, what is drawn is only drawn. Nothing is done on its authority:
+ * nothing is written to the store from it (`KeptQuery.answers` alone is written), and nothing is
+ * sent to the server on behalf of the Person it names (draft saves wait for the server's own
+ * word, `sync.ts`).
  */
 export function makeSnapshots(input: SnapshotsInput) {
   const { registry, queries, store } = input
   const held = makeHeld(input.origin, store)
+  const seed = seeding(registry, queries)
   /** The snapshot this run started from, until the server's first word has judged it. */
   let started = Option.none<Snapshot>()
+  /** Whether the session has ended; a store that answers after that seeds nothing. */
+  let over = false
+  let stops: ReadonlyArray<() => void> = []
 
-  const seed = (snapshot: Option.Option<Snapshot>) => {
-    registry.set(
-      queries.me.seed,
-      Option.map(snapshot, (kept) => kept.me),
-    )
-    registry.set(
-      queries.threads.seed,
-      Option.flatMap(snapshot, (kept) => kept.threads),
-    )
-    registry.set(
-      queries.projects.seed,
-      Option.flatMap(snapshot, (kept) => kept.projects),
-    )
-    registry.set(
-      queries.settings.seed,
-      Option.flatMap(snapshot, (kept) => kept.settings),
-    )
-    registry.set(
-      queries.appearance.seed,
-      Option.flatMap(snapshot, (kept) => kept.appearance),
-    )
-    registry.set(
-      queries.notifications.seed,
-      Option.flatMap(snapshot, (kept) => kept.notifications),
-    )
-    registry.set(
-      queries.drafts.seed,
-      Option.flatMap(snapshot, (kept) => kept.drafts),
-    )
-  }
-
-  /** Takes down what the device kept, from the screen and from what would be written next. */
-  const takeDown = () => {
+  /**
+   * The one way a session's snapshot ends, for every reason a session does: signing out, the
+   * server refusing the session on any call, another Person signing in. What was restored comes
+   * off the screen, pending and future writes are called off, and the store is erased. It is
+   * finished only when the store is empty, so a page can wait for it before it reloads; a write
+   * that was already on its way undoes itself when it lands (`persist`).
+   */
+  const ended = Effect.suspend(() => {
+    over = true
     started = Option.none()
-    held.clear()
+    held.end()
     seed(Option.none())
-  }
-
-  /** Takes it down and erases the store, and is finished only when the store is empty. */
-  const erase = Effect.suspend(() => {
-    takeDown()
+    for (const stop of stops) stop()
+    stops = []
     return store.erase
   })
 
@@ -361,6 +491,8 @@ export function makeSnapshots(input: SnapshotsInput) {
     Verdict.$match(verdict, {
       Same: () => {},
       OtherWorkspace: () => seed(Option.none()),
+      // Someone else's: off the screen and out of the store. This session goes on, and writes
+      // its own once its lists arrive.
       OtherPerson: () => {
         seed(Option.none())
         input.launch(store.erase)
@@ -368,32 +500,31 @@ export function makeSnapshots(input: SnapshotsInput) {
     })
   }
 
-  /** Reads the store once. A snapshot that cannot be used is erased, so it is not read again. */
+  /**
+   * Reads the store once. A snapshot that cannot be used (another format, another server, a
+   * session that has expired) is erased without being drawn, so it is not read again.
+   */
   const restore = Effect.flatMap(store.read, (stored) => {
-    const snapshot = readSnapshot(stored, input.origin)
+    const snapshot = readSnapshot(stored, input.origin, input.now())
     if (Option.isNone(snapshot)) return Option.isSome(stored) ? store.erase : Effect.void
     return Effect.sync(() => {
+      if (over) return
       started = snapshot
       seed(snapshot)
       settle()
     })
   })
 
-  const stops = [
+  /** Learns when the confirmed Person's session ends, which is what lets anything be written. */
+  const learnExpiry = Effect.map(input.expiry, held.heardExpiry)
+
+  stops = [
     registry.subscribe(
       queries.me.answers,
       (result) => {
-        LiveState.$match(liveStateOf(result), {
-          Loading: () => {},
-          Ready: ({ value }) => {
-            held.heardMe(value)
-            settle()
-          },
-          // The server says the session is gone: what was kept is no longer anyone's to see here.
-          Failed: ({ failure }) => {
-            if (Predicate.isTagged(failure, 'Unauthenticated')) input.launch(erase)
-          },
-        })
+        if (!AsyncResult.isSuccess(result)) return
+        if (held.heardMe(result.value)) input.launch(learnExpiry)
+        settle()
       },
       { immediate: true },
     ),
@@ -416,14 +547,11 @@ export function makeSnapshots(input: SnapshotsInput) {
      * way when its connection drops (`flushLiveShellSnapshot`).
      */
     flush: held.persist,
-    /**
-     * Signing out: nothing of this Person stays on the device or on screen. It ends once the
-     * store is empty, so a page can wait for it before it reloads.
-     */
-    erase,
-    /** Ends the subscriptions and the writer, when the engine they belong to ends. */
+    ended,
+    /** Ends the subscriptions and the writer, when the engine they belong to is disposed. */
     stop: () => {
       for (const stop of stops) stop()
+      stops = []
     },
   }
 }
