@@ -86,6 +86,9 @@ export const respondTurn = (
       Effect.catchTag('RunMissing', () =>
         Effect.succeed(new Response('No run made these tool calls', { status: 409 })),
       ),
+      Effect.catchTag('ConversationMissing', () =>
+        Effect.succeed(new Response('Conversation not found', { status: 404 })),
+      ),
     ),
   )
 
@@ -98,11 +101,25 @@ export async function respond(
 ): Promise<Response> {
   // AI SDK HttpChatTransport.reconnectToStream sends a bodyless GET and treats 204 as idle.
   if (request.method === 'GET') {
-    const attached = await attachRun(harness, conversationId, context)
-    return attached.status === 'idle'
-      ? new Response(null, { status: 204 })
-      : createUIMessageStreamResponse({ stream: attached.stream })
+    return Effect.runPromise(
+      Core.attachRun(harness, conversationId, context).pipe(
+        Effect.flatMap((attached) =>
+          Option.match(attached, {
+            onNone: () => Effect.succeed(new Response(null, { status: 204 })),
+            onSome: (stream) =>
+              Stream.toReadableStreamEffect(stream).pipe(
+                Effect.map((readable) => createUIMessageStreamResponse({ stream: readable })),
+              ),
+          }),
+        ),
+        Effect.catchTag('ConversationMissing', () =>
+          Effect.succeed(new Response('Conversation not found', { status: 404 })),
+        ),
+      ),
+    )
   }
+  if (request.method !== 'POST')
+    return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, POST' } })
   const turn = await Effect.runPromise(
     Effect.tryPromise({
       try: () => request.text(),

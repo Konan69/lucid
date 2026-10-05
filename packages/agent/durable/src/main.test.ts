@@ -189,7 +189,7 @@ it.live('lets an AI SDK chat client answer a tool that has no server execute', (
   }),
 )
 
-/** Tagged failures survive both direct calls and HTTP ingress before a stream is returned. */
+/** Direct Promise calls preserve tagged failures; HTTP ingress maps missing conversations to 404. */
 it.live('preserves ConversationMissing as the Promise rejection', () =>
   Effect.gen(function* () {
     const owner = yield* memory(createModels(), createRegistry())
@@ -215,11 +215,28 @@ it.live('preserves ConversationMissing as the Promise rejection', () =>
         messages: [{ role: 'user', id: 'm1', parts: [{ type: 'text', text: 'Missing' }] }],
       }),
     })
-    yield* Effect.promise(() =>
-      expect(respond(empty, conversation.id, request, context)).rejects.toBeInstanceOf(
-        ConversationMissing,
-      ),
+    const post = yield* Effect.promise(() => respond(empty, conversation.id, request, context))
+    expect(post.status).toBe(404)
+    expect(yield* Effect.promise(() => post.text())).toBe('Conversation not found')
+    const get = yield* Effect.promise(() =>
+      respond(empty, conversation.id, new Request('http://durable.test/chat'), context),
     )
+    expect(get.status).toBe(404)
+    expect(yield* Effect.promise(() => get.text())).toBe('Conversation not found')
+    const turn = yield* Effect.promise(() =>
+      decodeTurn({
+        messages: [
+          {
+            role: 'user',
+            id: 'decoded-missing',
+            parts: [{ type: 'text', text: 'Missing' }],
+          },
+        ],
+      }),
+    )
+    expect(
+      (yield* Effect.promise(() => respondTurn(empty, conversation.id, turn, context))).status,
+    ).toBe(404)
   }),
 )
 
@@ -435,5 +452,19 @@ it.live('returns no active stream for an idle SDK reconnect GET', () =>
       transport.reconnectToStream({ chatId: 'idle', abortSignal: undefined }),
     )
     expect(reconnected).toBeNull()
+  }),
+)
+
+/** Unsupported methods fail before reading a body or looking up the conversation. */
+it.live('accepts only GET and POST at chat ingress', () =>
+  Effect.gen(function* () {
+    const { harness, root } = yield* server([])
+    for (const method of ['HEAD', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']) {
+      const response = yield* Effect.promise(() =>
+        respond(harness, root.id, new Request('http://durable.test/chat', { method }), context),
+      )
+      expect(response.status).toBe(405)
+      expect(response.headers.get('Allow')).toBe('GET, POST')
+    }
   }),
 )
