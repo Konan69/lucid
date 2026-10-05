@@ -9,7 +9,7 @@ import { useState } from 'react'
 import { ScrollView, View } from 'react-native'
 import { warn } from '../../data/haptics'
 import { LiveState, useLive, useLiveData } from '../../data/live'
-import { Header, Screen } from '../../ui/Header'
+import { Screen } from '../../ui/Screen'
 import { Row, Section } from '../../ui/List'
 import { Sheet } from '../../ui/Sheet'
 import {
@@ -23,7 +23,6 @@ import {
   Skeleton,
   styles,
 } from '../../ui/ui'
-import { useGo } from '../../workspace'
 
 /** The most a memory's sentence can hold, as `CorrectMemoryRequest` in the contract checks it. */
 const SENTENCE_LIMIT = 1000
@@ -70,7 +69,6 @@ const forgotten =
  */
 export function Memory() {
   const data = useLiveData()
-  const go = useGo()
   const memory = useLive(data.live.memory)
   const [open, setOpen] = useState<Option.Option<MemoryRecord>>(Option.none())
   // A memory is taken off the list the moment it is forgotten and its sheet is already closed, so
@@ -79,8 +77,10 @@ export function Memory() {
 
   return (
     <Screen>
-      <Header title="What Vivid knows" onBack={go.goBack} />
-      <ScrollView contentContainerStyle={[styles.page, styles.column]}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.page, styles.column]}
+      >
         <Shown
           state={memory}
           refused={refused}

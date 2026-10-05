@@ -400,7 +400,6 @@ const examples = [
     forCompany: false,
   }),
   toolScene('ask me', 'ask_person', {
-    summary: 'Choose a review topic',
     question: 'Which rehearsal topic should we review?',
     options: [
       { label: 'Research', detail: 'Review the sources.' },

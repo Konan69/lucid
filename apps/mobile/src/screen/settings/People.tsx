@@ -13,7 +13,8 @@ import { commit, warn } from '../../data/haptics'
 import { refusalOf, useLive, useLiveData } from '../../data/live'
 import { invitationAddress } from '../../data/server'
 import { Avatar } from '../../ui/Avatar'
-import { Header, Screen } from '../../ui/Header'
+import { Bar, NO_ACTIONS, type BarAction } from '../../ui/Bar'
+import { Screen } from '../../ui/Screen'
 import { Row, Section } from '../../ui/List'
 import { Live } from '../../ui/Live'
 import { Sheet } from '../../ui/Sheet'
@@ -23,7 +24,6 @@ import {
   Empty,
   GUTTER,
   Field,
-  IconButton,
   Label,
   Labelled,
   Notice,
@@ -60,38 +60,43 @@ const Over = Data.taggedEnum<Over>()
 export function People() {
   const me = useMe()
   const data = useLiveData()
-  const go = useGo()
   const people = useLive(data.live.people)
   const [over, setOver] = useState<Over>(Over.Nothing())
   if (!Workspace.guards.Company(me.workspace)) {
     return (
       <Screen>
-        <Header title="People" onBack={go.goBack} />
-        <View style={{ paddingHorizontal: GUTTER }}>
+        <Bar title="People" actions={NO_ACTIONS} />
+        {/* A scroller, so the system keeps this line clear of a glass bar as it does a list. */}
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          contentContainerStyle={{ paddingHorizontal: GUTTER }}
+        >
           <Empty line="You are working in your own space. Switch to a company to see who is in it." />
-        </View>
+        </ScrollView>
       </Screen>
     )
   }
   const { company, role } = me.workspace
   const admin = manages(role)
+  const invite: BarAction = {
+    symbol: 'person.badge.plus',
+    icon: UserPlus,
+    label: 'Invite someone',
+    disabled: false,
+    onPress: () => setOver(Over.Inviting()),
+  }
   return (
     <Screen>
-      <Header
-        title="People"
-        subtitle={company.name}
-        onBack={go.goBack}
-        trailing={
-          admin ? (
-            <IconButton
-              icon={UserPlus}
-              label="Invite someone"
-              onPress={() => setOver(Over.Inviting())}
-            />
-          ) : undefined
-        }
-      />
-      <ScrollView contentContainerStyle={[styles.page, styles.column]}>
+      <Bar title="People" actions={admin ? [invite] : NO_ACTIONS} />
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.page, styles.column]}
+      >
+        {/* Whose people these are, as the page's first line. It was the line under the bar's
+            title; the system's bar has no such line without a native change (`ui/Bar.tsx`). */}
+        <Label size="label" tone="ink-2">
+          {company.name}
+        </Label>
         <Live state={people} loading={<Skeleton rows={4} />}>
           {(value) => (
             <Listed

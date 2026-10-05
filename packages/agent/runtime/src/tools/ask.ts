@@ -3,7 +3,7 @@ import * as Effect from 'effect/Effect'
 import * as v from 'valibot'
 import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
-import { summary, text } from './inputs.ts'
+import { text } from './inputs.ts'
 
 /** A durable question ends this turn; the server returns the answer as a new delivery. */
 export function askTools(runTool: RunTool) {
@@ -12,8 +12,11 @@ export function askTools(runTool: RunTool) {
       name: 'ask_person',
       description:
         'Ask the person a question you cannot answer safely yourself. The turn ends immediately until they answer.',
+      // No `summary`, unlike the other tools: the question is already the sentence the Person
+      // reads for this step, and asking for it twice cost a turn. With it required, five of six
+      // first Threads on 5 October 2026 had this call refused for the missing field and made
+      // again, so the first question arrived a model round late behind a failed step.
       input: v.object({
-        summary,
         question: text('One self-contained question.', 400),
         options: v.pipe(
           v.array(
