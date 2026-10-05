@@ -645,9 +645,12 @@ const prepare = Effect.fn('ComputerStore.prepare')(
   function* (state: Effect.Success<ReturnType<typeof lifecycle>>, person: PersonId) {
     const current = yield* state.inspect(person)
     if (current.heldByPerson) return
+    // A start already under way is held here, before anything else is awaited: it forgets itself
+    // when it ends, and an action that joined it must still hear how it ended.
+    const joined = state.workers.get(person)
     if (MachineState.isAnyOf(['Absent', 'Stopped', 'Starting'])(current.state))
       yield* state.start(person)
-    const worker = state.workers.get(person)
+    const worker = state.workers.get(person) ?? joined
     if (worker === undefined) return
     const ended = yield* Fiber.await(worker)
     // The start this action waited for found no machine free. The record only says "stopped",

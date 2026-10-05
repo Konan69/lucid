@@ -74,8 +74,9 @@ const png =
 const id = 'bx_23456789'
 // The installed machine differs from the paid one so switching adoption cannot fake a collision.
 const adoptedId = 'bx_3456789a'
-/** `provisioning` is a resume Boat accepted and has no machine for; the saved disk is still there. */
-type FixtureState = 'ready' | 'archived' | 'provisioning'
+/** `provisioning` is a resume Boat accepted and has no machine for; the saved disk is still there.
+ * `archiving` is a stop on its way: the read after the one that shows it finds it `archived`. */
+type FixtureState = 'ready' | 'archived' | 'provisioning' | 'archiving'
 type Size = typeof Protocol.Size.Type
 interface EvidenceService {
   readonly state: Ref.Ref<FixtureState>
@@ -200,6 +201,7 @@ const record = (state: FixtureState, providerId: string) => ({
  * `placedAfter` reads have passed, which is Boat finding it a machine while a caller looks on. */
 const reported = Effect.fn('BoatTest.reported')(function* (evidence: EvidenceService) {
   const state = yield* Ref.get(evidence.state)
+  if (state === 'archiving') yield* Ref.set(evidence.state, 'archived')
   const left = yield* Ref.get(evidence.placedAfter)
   if (state !== 'provisioning' || Option.isNone(left)) return state
   if (left.value > 0) {
@@ -1747,6 +1749,29 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       expect((yield* Fiber.join(starting))._tag).toBe('Running')
       expect(yield* Ref.get(evidence.stops)).toBe(stops + 1)
       expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('starts a waiting resume that another caller stops while Vivid looks at it', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const evidence = yield* Evidence
+      const boat = yield* stepped()
+      yield* boat.machine.ensure(key)
+      yield* boat.machine.stop(key)
+      yield* Ref.set(evidence.state, 'provisioning')
+      yield* Ref.set(evidence.resumes, [])
+      const stops = yield* Ref.get(evidence.stops)
+      // What the binding recorded while the machine was made and stopped is not this start's.
+      yield* Queue.clear(boat.waits)
+      const starting = yield* boat.machine.ensure(key).pipe(Effect.forkChild)
+      expect(yield* Queue.take(boat.waits)).toBe('provisioning')
+      yield* Ref.set(evidence.state, 'archiving')
+      yield* TestClock.adjust('2 seconds')
+      // Vivid sent no stop of its own, waited for the other one to finish, and started the machine.
+      expect((yield* Fiber.join(starting))._tag).toBe('Running')
+      expect(yield* Ref.get(evidence.stops)).toBe(stops)
+      expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
 

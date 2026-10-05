@@ -208,8 +208,10 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
     if (row.providerId === null) row = yield* bind(api, saved, { key, intent })
     const identity = yield* bound(key)
     let record = (yield* api.get(identity.id)).sandbox
-    if (record.state === 'archiving') record = yield* wait(key, 'archived')
     if (queued(record)) record = yield* withdrawn(api, saved, wait, { key, row, record })
+    // After the withdrawal, not before: another caller may stop a waiting resume while it is
+    // looked at, and it then comes back from there on its way to `archived`.
+    if (record.state === 'archiving') record = yield* wait(key, 'archived')
     if (record.state === 'archived') {
       invalidate(key)
       yield* invalidateViewer(key)

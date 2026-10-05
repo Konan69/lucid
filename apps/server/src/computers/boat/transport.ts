@@ -176,8 +176,13 @@ const requests = (
         )
         return 'started' as const
       }
+      // Only a 503 or a 4xx can be one of those two answers. Any other 5xx is an outage by its
+      // status alone, and its body is not waited for.
+      if (response.status >= 500 && response.status !== 503) return yield* refused(response)
+      // An edge's 503 may never finish its body. The code is looked for briefly; without it the
+      // answer is the outage its status says it is, told at once and not when the start runs out.
       const code = Option.map(
-        yield* decodeError(response).pipe(Effect.option),
+        yield* decodeError(response).pipe(Effect.timeout('5 seconds'), Effect.option),
         (reply) => reply.error.code,
       )
       if (Option.contains(code, 'no_ready_machine')) return 'none-free' as const
