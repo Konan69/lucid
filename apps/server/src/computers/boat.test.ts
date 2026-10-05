@@ -3,8 +3,17 @@ import * as NodeBuffer from 'node:buffer'
 import * as NodeHttp from 'node:http'
 import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
-import { BrowserAction, ComputerState, DesktopAction } from '@vivid/contracts'
-import { eq } from 'drizzle-orm'
+import {
+  BrowserAction,
+  ComputerState,
+  DesktopAction,
+  Person,
+  PersonId,
+  SessionId,
+  Workspace,
+} from '@vivid/contracts'
+import { AuthContext, AuthState } from '@vivid/contracts/auth'
+import { eq, inArray } from 'drizzle-orm'
 import {
   ConfigProvider,
   Context,
@@ -25,9 +34,14 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from 'effect/unstable/http'
+import { Gate, GateDecision } from '../approvals/gate.ts'
+import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
+import { silentChangesLayer } from '../live/changes.ts'
 import { boatMachineLayer } from './boat.ts'
+import { deviceLayer } from './device.ts'
+import { computerHandlers } from './handlers.ts'
 import { isOutage, Machine, MachineKey } from './machine.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { machineBindings } from './tables.ts'
@@ -39,7 +53,12 @@ import { transport } from './boat/transport.ts'
 import { guestCommand } from './boat/guest.ts'
 import { bindings } from './boat/bindings.ts'
 import { lifecycle } from './boat/lifecycle.ts'
-import { machineFailureReason } from './store.ts'
+import {
+  ComputerStore,
+  computerMachineKey,
+  computerStoreLayer,
+  machineFailureReason,
+} from './store.ts'
 
 // Deliberate PNG fixture, not a claim that the guest was exercised.
 const png =
@@ -508,7 +527,11 @@ const serverLayer = Layer.effect(
           status: 'resuming',
         })
       }
-      if (path === `/api/v1/sandboxes/${id}/desktop`) {
+      // The adopted machine has a screen like the created one.
+      if (
+        path === `/api/v1/sandboxes/${id}/desktop` ||
+        path === `/api/v1/sandboxes/${adoptedId}/desktop`
+      ) {
         yield* Viewer
         yield* Ref.update(evidence.viewers, (count) => count + 1)
         const address = (yield* Ref.get(evidence.publicViewer))
@@ -597,6 +620,78 @@ const accountLayer = configured({
   VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
 })
 
+/**
+ * The account-facing stack over the real Boat adapter: the production Computer store and its RPC
+ * handlers, on one installation that has one machine. Only Boat itself is played, by the fixture
+ * server above; the binding table, the adoption rule and the store's lifecycle are the real ones.
+ */
+const accountsLayer = computerStoreLayer.pipe(
+  Layer.provideMerge(deviceLayer),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      adoptedLayer,
+      silentChangesLayer,
+      Layer.succeed(
+        Gate,
+        Gate.of({
+          check: Effect.fn('BoatTest.gate')(() =>
+            Effect.succeed(GateDecision.cases.Allowed.make({})),
+          ),
+        }),
+      ),
+    ),
+  ),
+)
+
+/** Two real accounts; their rows, Computers and bindings are removed whatever the test did. */
+const accounts = Effect.fn('BoatTest.accounts')(function* () {
+  const database = yield* Database
+  const people = [1, 2].map(() => {
+    const personId = PersonId.make(NodeCrypto.randomUUID())
+    return Person.make({
+      id: personId,
+      name: 'Holder test',
+      email: `${personId}@example.test`,
+      image: null,
+    })
+  })
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      yield* database.run(
+        database.delete(machineBindings).where(
+          inArray(
+            machineBindings.key,
+            people.map((person) => computerMachineKey(person.id)),
+          ),
+        ),
+      )
+      yield* database.run(
+        database.delete(personTable).where(
+          inArray(
+            personTable.id,
+            people.map((person) => person.id),
+          ),
+        ),
+      )
+    }).pipe(Effect.ignore),
+  )
+  yield* database.run(database.insert(personTable).values(people))
+  const [first, second] = people
+  if (first === undefined || second === undefined) return yield* Effect.die('two accounts')
+  return { first, second }
+})
+
+/** One account's own call, as its signed-in session makes it. */
+const asAccount = (person: Person) =>
+  Effect.provideService(
+    AuthContext,
+    AuthState.Person({
+      person,
+      sessionId: SessionId.make(NodeCrypto.randomUUID()),
+      workspace: Workspace.cases.Personal.make({}),
+    }),
+  )
+
 /** Register cleanup before provisioning; only this fixture's private binding is removed. */
 const fixture = Effect.fn('BoatTest.fixture')(function* () {
   const key = MachineKey.make(NodeCrypto.randomUUID())
@@ -637,6 +732,61 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       expect(yield* Ref.get(evidence.created)).toBe(0)
       expect(yield* Ref.get(evidence.intents)).toEqual([])
     }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  )
+
+  /**
+   * The rule a Person relies on: a machine is one account's. This is the whole account-facing
+   * path, not the adapter alone: each account acts through its own RPC and through the store
+   * Vivid acts through, and the refusal is checked where each of them would meet it.
+   */
+  it.effect(
+    'gives one machine to one account: a second account is refused at every layer and changes nothing',
+    () =>
+      Effect.gen(function* () {
+        const { first, second } = yield* accounts()
+        const store = yield* ComputerStore
+        const saved = yield* bindings()
+        const evidence = yield* Evidence
+        const command = { command: 'echo receipt', timeoutSeconds: 10 }
+        const held = 'Vivid’s computer on this installation is already in use by another account.'
+
+        // The first account uses its Computer: the machine becomes its own.
+        expect((yield* store.exec(first.id, command)).exitCode).toBe(0)
+        expect(
+          (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
+        ).toBe('Running')
+        expect(yield* saved.load(computerMachineKey(first.id))).toMatchObject(
+          Option.some({ providerId: adoptedId }),
+        )
+
+        // The second account asks for the same thing through its own RPC, then through Vivid.
+        yield* computerHandlers.StartComputer().pipe(asAccount(second))
+        const refused = yield* store.exec(second.id, command).pipe(Effect.flip)
+        expect(refused).toMatchObject({ reason: held })
+        const shown = (yield* computerHandlers.GetComputer().pipe(asAccount(second))).computer.state
+        expect(ComputerState.guards.Failed(shown) && shown.reason).toBe(held)
+        expect((yield* store.access(second.id))._tag).toBe('Unavailable')
+        // Nothing of the second account holds the machine, and nothing was sent to it.
+        expect(yield* saved.load(computerMachineKey(second.id))).toEqual(Option.none())
+        const holder = yield* saved.holder(Protocol.ProviderId.make(adoptedId))
+        expect(Option.map(holder, (binding) => binding.key)).toEqual(
+          Option.some(computerMachineKey(first.id)),
+        )
+        expect(
+          (yield* Ref.get(evidence.commands)).filter((sent) => sent === command.command),
+        ).toHaveLength(1)
+        // The refusal names nobody: not the holder, not the one refused.
+        expect(JSON.stringify(refused)).not.toContain(first.id)
+        expect(JSON.stringify(shown)).not.toContain(first.id)
+
+        // The first account's Computer is exactly as it was.
+        expect((yield* store.exec(first.id, command)).exitCode).toBe(0)
+        expect(
+          (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
+        ).toBe('Running')
+        expect(yield* Ref.get(evidence.created)).toBe(0)
+      }).pipe(Effect.scoped, Effect.provide(accountsLayer)),
+    30000,
   )
 
   /** Refusal creates no receipt that could expire while adoption is configured. */
