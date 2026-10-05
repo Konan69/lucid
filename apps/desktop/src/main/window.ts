@@ -4,10 +4,11 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { BrowserWindow, shell, type BrowserWindowConstructorOptions, type Session } from 'electron'
-import { ExternalUrl, type DesktopPlatform } from '../shared/bridge.ts'
+import { ExternalUrl, REPORTING_ARGUMENT, type DesktopPlatform } from '../shared/bridge.ts'
 import { isAppRequest, isTrustedDocument } from './security.ts'
 import { ServerAddress, ServerSettings } from '../shared/settings.ts'
 import { sendColorSchemeChanged } from './bridge.ts'
+import { reporting } from './telemetry.ts'
 import { WindowPlacement, type WindowPlacement as WindowPlacementValue } from './placement.ts'
 import type { ColorSchemeController } from './theme.ts'
 
@@ -185,6 +186,8 @@ export function createMainWindow(dependencies: MainWindowDependencies): BrowserW
       webSecurity: true,
       webviewTag: false,
       session: dependencies.session,
+      // The page reports its errors through this process or not at all, so it is told which.
+      additionalArguments: reporting() ? [REPORTING_ARGUMENT] : [],
     },
   })
 

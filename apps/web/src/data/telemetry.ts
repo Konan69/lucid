@@ -1,7 +1,8 @@
-import { init as startInDesktop } from '@sentry/electron/renderer'
-import { captureReactException, init, type BrowserOptions } from '@sentry/react'
+import { init as startInDesktop, makeRendererTransport } from '@sentry/electron/renderer'
+import { captureReactException, init, makeFetchTransport, type BrowserOptions } from '@sentry/react'
+import { Option } from 'effect'
 import type { ErrorInfo } from 'react'
-import { scrub, scrubBreadcrumb } from './scrub'
+import { guarded, scrub, scrubBreadcrumb } from './scrub'
 
 /**
  * Sending the web app's errors to Sentry, beside the report `fault.ts` sends to Vivid's own
@@ -16,7 +17,9 @@ import { scrub, scrubBreadcrumb } from './scrub'
  *   `@sentry/electron/renderer` instead, around the same React SDK: it hands each report to the
  *   desktop's main process, which sends it to the desktop project
  *   (`apps/desktop/src/main/telemetry.ts`). The page is given no address of its own there, so it
- *   is never started twice.
+ *   is never started twice. It starts only when the shell says its main process is reporting
+ *   (`reporting` on the bridge): a shell run from source reports nothing, and a page that started
+ *   anyway would instrument itself and call a main process that is not listening.
  */
 
 /**
@@ -72,15 +75,35 @@ const options: BrowserOptions = {
  * Starts reporting. Called once by the entry (`main.tsx`) before anything is drawn, so an error
  * while the first screen is drawn is reported too. Only a production build reports: a
  * development page and a test never start this, and without it every capture below does nothing.
+ *
+ * Each place wraps its transport in `guarded` (`scrub.ts`), so only scrubbed error reports leave
+ * whatever else the SDK tries to send: in a browser the SDK's own fetch transport, in the desktop
+ * app the one that hands a report to the main process.
+ *
+ * A start that throws is left at that. This runs before the app is drawn, so an exception here
+ * would be a blank page, and reporting errors is not worth the app. Nothing is reported for that
+ * visit and nothing else is tried: there is no second way to report that would be any safer.
  */
 export const startTelemetry = (): void => {
   if (!import.meta.env.PROD) return
   // The desktop app's preload puts its bridge on the window (`data/pages.ts`); nothing else does.
   if ('vivid' in globalThis) {
-    startInDesktop(options, init)
+    if (!globalThis.vivid.reporting) return
+    Option.liftThrowable(() =>
+      startInDesktop(
+        { ...options, transport: (given) => guarded(makeRendererTransport(given)) },
+        init,
+      ),
+    )()
     return
   }
-  init({ ...options, dsn: ADDRESS, release: __VIVID_RELEASE__, environment: 'production' })
+  Option.liftThrowable(init)({
+    ...options,
+    transport: (given) => guarded(makeFetchTransport(given)),
+    dsn: ADDRESS,
+    release: __VIVID_RELEASE__,
+    environment: 'production',
+  })
 }
 
 /**

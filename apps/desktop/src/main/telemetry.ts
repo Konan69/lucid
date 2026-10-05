@@ -1,6 +1,12 @@
-import { IPCMode, childProcessIntegration, init } from '@sentry/electron/main'
+import {
+  IPCMode,
+  childProcessIntegration,
+  init,
+  makeElectronOfflineTransport,
+} from '@sentry/electron/main'
+import * as Option from 'effect/Option'
 import { app, session } from 'electron'
-import { scrub, scrubBreadcrumb } from './scrub.ts'
+import { guarded, scrub, scrubBreadcrumb } from './scrub.ts'
 import { APP_PARTITION } from './session.ts'
 
 /**
@@ -27,6 +33,18 @@ const ADDRESS =
 declare const __VIVID_COMMIT__: string
 
 /**
+ * Whether this process started reporting. It is written once, by `startTelemetry`, before the app
+ * is ready and so before any window exists to ask.
+ */
+let started = false
+
+/**
+ * Whether this process is sending error reports. A window is told when it is made (`window.ts`),
+ * and its page starts its own half only then: that half does nothing but hand reports here.
+ */
+export const reporting = (): boolean => started
+
+/**
  * Starts reporting. Called once, as the first thing the main process does (`main.ts`): before the
  * app is ready, which the SDK requires for its scheme, and before `main.ts` registers Vivid's own
  * scheme, which would otherwise be replaced by the SDK's (Electron keeps only the last call to
@@ -34,6 +52,10 @@ declare const __VIVID_COMMIT__: string
  * `configureProtocol` in `@sentry/electron` `main/ipc.js`).
  *
  * Only a packaged app reports. A development run and a test stop at the first line.
+ *
+ * A start that throws leaves `reporting` false and is left at that. This is the first thing the
+ * app does, so an exception here would be an app that does not open, and reporting errors is not
+ * worth the app. Nothing else is tried: there is no second way to report that would be any safer.
  *
  * Each option, and why:
  * - `ipcMode: Protocol` with the app's session in `getSessions`: the window sends its reports by
@@ -52,12 +74,20 @@ declare const __VIVID_COMMIT__: string
  *   well, which it otherwise leaves to the dump) and without the dump.
  * - `MainProcessSession` is left out: a session record for each launch is volume, not an error.
  * - `sendClientReports: false`: the SDK's own counts of what it dropped are not errors either.
+ * - `transport`: the SDK's own (Electron's network stack, with a queue on disk for when it is
+ *   offline), inside `guarded` (`scrub.ts`), so only scrubbed error reports leave whatever else
+ *   is handed to it. That matters most here: a window's session records, replays and attachments
+ *   are passed to this process's client as they are (`handleEnvelope` in `main/ipc.js`), and the
+ *   guard is what stops them. It is outside the offline queue, so nothing is written to disk
+ *   that would not be sent. It is made inside the start, so a failure to make it is caught with
+ *   the rest.
  */
 export const startTelemetry = (): void => {
   if (!app.isPackaged) return
   const commit = __VIVID_COMMIT__ === '' ? '' : `+${__VIVID_COMMIT__.slice(0, 12)}`
-  init({
+  const outcome = Option.liftThrowable(init)({
     dsn: ADDRESS,
+    transport: (given) => guarded(makeElectronOfflineTransport()(given)),
     release: `vivid-desktop@${app.getVersion()}${commit}`,
     environment: 'production',
     ipcMode: IPCMode.Protocol,
@@ -89,4 +119,5 @@ export const startTelemetry = (): void => {
     beforeSend: scrub,
     beforeBreadcrumb: scrubBreadcrumb,
   })
+  started = Option.isSome(outcome)
 }
