@@ -81,15 +81,27 @@ const here = (link: DeviceLink): Option.Option<string> =>
     Revoked: ({ device }) => Option.some(device),
   })
 
+/**
+ * What an allowed computer can be used for right now. Allowing a computer is the whole
+ * permission: where its desktop app can work in apps (`ability.apps`, Windows with Vivid's
+ * helper), the row says what that now means and how to stop it. Where it cannot, nothing is
+ * added: the Person did not ask what the app lacks.
+ */
+const reach = (presence: DevicePresence): string =>
+  DevicePresence.match(presence, {
+    Offline: () => 'Allowed. Open the Vivid desktop app on it to connect.',
+    Connected: ({ ability }) =>
+      ability.apps
+        ? 'Allowed. Vivid can use the pages and the apps on this computer. A notice shows while it works, and Esc stops it.'
+        : 'Allowed. Vivid can use it now.',
+  })
+
 /** What one computer's state means, in the words its row says. */
 export const standing = (device: Device): string =>
   DeviceAccess.match(device.access, {
     Pending: () => 'Waiting for you to allow it.',
     Revoked: () => 'Not allowed.',
-    Allowed: () =>
-      DevicePresence.guards.Connected(device.presence)
-        ? 'Allowed. Vivid can use it now.'
-        : 'Allowed. Open the Vivid desktop app on it to connect.',
+    Allowed: () => reach(device.presence),
   })
 
 /** Whether Vivid may use this computer, which decides the one action its row offers. */
