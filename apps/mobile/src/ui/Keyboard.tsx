@@ -22,12 +22,17 @@ export function AboveKeyboard({ children }: { children: ReactNode }) {
 }
 
 /**
- * Whether a solid system bar pushes a screen down the window. Only iOS without glass: with glass
- * the bar is transparent and the screen starts at the top, and Android resizes the window for
- * the keyboard itself (`softwareKeyboardLayoutMode: resize`), so nothing is left to make up.
+ * Whether a solid system bar pushes a screen down the window: wherever the bar is not glass. With
+ * glass the bar is transparent and the screen starts at the top.
+ *
+ * Android used to be left out, on the reasoning that it resizes the window for the keyboard
+ * itself. It does not once the app draws edge to edge (Android 15 and later): the keyboard is
+ * then an inset over a window that keeps its size, and the padding below is all that lifts the
+ * composer. Seen on an Android 15 emulator on 5 October 2026, when the first screen got the
+ * system's bar: the composer stood under the keyboard by exactly the bar's height, with its send
+ * button out of sight.
  */
-const BAR_PUSHES_DOWN = Platform.OS === 'ios' && !GLASS_SUPPORTED
-
+const BAR_PUSHES_DOWN = !GLASS_SUPPORTED
 /**
  * The same, for a screen that has the system's bar above it (a Thread).
  *
