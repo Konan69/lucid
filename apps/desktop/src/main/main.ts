@@ -42,6 +42,7 @@ import {
 } from '../shared/bridge.ts'
 import { PageUnavailable, type Tab } from '../shared/pages.ts'
 import { DesktopSettings, settingsLayer } from './settings.ts'
+import { clearingLeft, storageLeftBehind } from './leaving.ts'
 import { registerAppProxy } from './proxy.ts'
 import { secureSession } from './session.ts'
 import { isAllowedBridgeRequest } from './security.ts'
@@ -327,13 +328,20 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
   /** A different server, or none: every page closes and the window loads what that means. */
   const serverChanged = (value: ServerSettings): void => {
     Option.map(browser, (available) => available.reset())
+    // The left server's storage is cleared (`leaving.ts`) only after the window has loaded what
+    // replaces its document: that document writes as it unloads, which would follow the clear.
+    const clearLeft = clearingLeft(storageLeftBehind(serverSettings, value), desktopSession)
     serverSettings = value
     // A link belongs to one server: drop it and start over on the new one, or on none.
     computer.restart()
     // Complete invoke before replacing the document that owns its pending Promise.
     setImmediate(() =>
-      Option.map(mainWindow, (window) =>
-        runNonFatal(loadRenderer(window, renderer()), 'desktop: renderer failed to load'),
+      runNonFatal(
+        Option.match(mainWindow, {
+          onNone: () => clearLeft,
+          onSome: (window) => Effect.ensuring(loadRenderer(window, renderer()), clearLeft),
+        }),
+        'desktop: renderer failed to load',
       ),
     )
   }
