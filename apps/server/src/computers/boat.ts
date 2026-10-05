@@ -1,20 +1,63 @@
 import { type BrowseResult } from '@vivid/contracts'
-import { Effect, Layer, Option } from 'effect'
+import { Effect, Layer, Option, Stream } from 'effect'
 import {
   Machine,
   MachineCapabilityUnavailable,
   MachineInputInvalid,
+  MachineOutput,
   MachineResponseInvalid,
   MachineOperationFailed,
+  type MachineFailure,
   type MachineKey,
 } from './machine.ts'
 import { bindings } from './boat/bindings.ts'
-import { transport } from './boat/transport.ts'
+import type { CommandFrame, ProviderId } from './boat/protocol.ts'
+import { transport, type Transport } from './boat/transport.ts'
 import type { Driver } from './boat/driver.ts'
 import { guestDriver } from './boat/guest.ts'
 import { desktopStep, look } from './boat/desktop.ts'
 import { browse } from './boat/browser.ts'
 import { lifecycle } from './boat/lifecycle.ts'
+
+/** What Boat says about a streamed command, as the machine boundary tells it. Standard error is
+ * dropped: it is never part of what a caller reads. */
+const told = (
+  frame: CommandFrame,
+): Effect.Effect<ReadonlyArray<MachineOutput>, MachineOperationFailed> => {
+  if (frame.type === 'stdout')
+    return Effect.succeed([MachineOutput.cases.Printed.make({ text: frame.data })])
+  if (frame.type === 'exit')
+    return Effect.succeed([
+      MachineOutput.cases.Exited.make({
+        exitCode: frame.exitCode,
+        timedOut: frame.timedOut,
+        memory: frame.oomKilled === true,
+      }),
+    ])
+  // Boat could not run or follow the command; it says so in place of an exit.
+  if (frame.type === 'error')
+    return Effect.fail(new MachineOperationFailed({ operation: 'command-stream' }))
+  return Effect.succeed([])
+}
+
+/** The same bounds as `exec`, checked before anything is sent. */
+const followed = (
+  api: Transport,
+  id: ProviderId,
+  input: { readonly command: string; readonly timeoutSeconds: number },
+): Stream.Stream<MachineOutput, MachineFailure> => {
+  if (
+    !Number.isInteger(input.timeoutSeconds) ||
+    input.timeoutSeconds < 1 ||
+    input.timeoutSeconds > 600 ||
+    input.command.length < 1 ||
+    input.command.length > 8000
+  )
+    return Stream.fail(new MachineInputInvalid())
+  return api
+    .follow(id, input.command, input.timeoutSeconds)
+    .pipe(Stream.mapEffect(told), Stream.flattenIterable)
+}
 
 /** Boat ships the desktop and Chrome; this Layer owns a pinned guest driver prerequisite.
  * Binding lookup is durable; only per-process serialization is cached. Viewer authority is
@@ -98,6 +141,16 @@ export const boatMachineLayer = Layer.effect(
         },
         (effect, input) => permit(input.key).withPermit(effect),
       ),
+      /** No permit: a followed command lasts minutes and the actions it asks for need the
+       * machine meanwhile. */
+      follow: (input) =>
+        Stream.unwrap(
+          running(input.key).pipe(Effect.map((identity) => followed(api, identity.id, input))),
+        ),
+      write: Effect.fn('Machine.boat.write')(function* (input) {
+        const identity = yield* running(input.key)
+        yield* api.write(identity.id, input.path, input.content)
+      }),
       desktop: Effect.fn('Machine.boat.desktop')(
         function* (input) {
           const identity = yield* running(input.key)

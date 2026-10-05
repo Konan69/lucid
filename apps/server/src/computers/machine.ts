@@ -6,7 +6,7 @@ import {
   type DesktopView,
   ComputerState,
 } from '@vivid/contracts'
-import { Context, type Effect, Schema, type Redacted } from 'effect'
+import { Context, type Effect, Schema, type Stream, type Redacted } from 'effect'
 
 /** App-owned RFB transport path; neither provider locations nor credentials belong in Running state. */
 export { computerScreenAddress } from '@vivid/contracts'
@@ -164,6 +164,23 @@ export type MachineFailure =
   | MachineCapabilityUnavailable
 
 /**
+ * What a followed command says while it runs, and how it ended.
+ *
+ * `Printed` is text in the order it was written; one piece is not one line. `Exited` is the last
+ * thing a stream carries. `memory` is the provider saying it ended the command for memory, which
+ * an exit code alone does not tell apart from any other kill.
+ */
+export const MachineOutput = Schema.TaggedUnion({
+  Printed: { text: Schema.String },
+  Exited: {
+    exitCode: Schema.NullOr(Schema.Int),
+    timedOut: Schema.Boolean,
+    memory: Schema.Boolean,
+  },
+})
+export type MachineOutput = typeof MachineOutput.Type
+
+/**
  * Whether a failure says the provider could not be asked, as opposed to what it answered: no
  * connection, no reply in time, or the provider's own 5xx. Such a failure is no evidence about the
  * machine, so callers tell it on the call that met it and never record it as the machine's state.
@@ -186,6 +203,24 @@ export interface MachineOperations {
     readonly command: string
     readonly timeoutSeconds: number
   }) => Effect.Effect<CommandResult, MachineFailure>
+  /**
+   * Starts a command and reports what it prints while it runs; the stream ends with one `Exited`.
+   * `exec` answers only when the command is over, which cannot carry a program that asks for
+   * things as it goes. A followed command does not hold the machine: the actions it asks for
+   * (a command, a browser step) run beside it.
+   */
+  readonly follow: (input: {
+    readonly key: MachineKey
+    readonly command: string
+    readonly timeoutSeconds: number
+  }) => Stream.Stream<MachineOutput, MachineFailure>
+  /** Puts a text file on the machine and creates its directories. A relative path is under the
+   * directory commands start in. */
+  readonly write: (input: {
+    readonly key: MachineKey
+    readonly path: string
+    readonly content: string
+  }) => Effect.Effect<void, MachineFailure>
   readonly browse: (input: {
     readonly key: MachineKey
     readonly action: BrowserAction
