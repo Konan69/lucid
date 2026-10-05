@@ -177,7 +177,9 @@ Required by the stack:
 - `VIVID_EXECUTOR_KEY`, `VIVID_EXECUTOR_ORGANIZATION` — the key and organization the server uses
   on Executor, which gives Vivid its Integrations. Both are minted on the deployed Executor.
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` — the Google client a Person
-  signs in through. They do not configure Google Integrations in Executor.
+  signs in through. The same client signs a Person in to a Google Integration, so it must also
+  allow `https://<server domain>/api/connections/return` (`docs/22-one-product.md`, "Google
+  Integrations").
 
 Every part of the product is required, here and in the server. The stack stops before it touches
 the target and names the variable it lacks, and the server does not start without the same

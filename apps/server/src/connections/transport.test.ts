@@ -815,13 +815,19 @@ describe('Executor hosted transport', () => {
         })
         const executor = yield* Executor
         expect(yield* executor.begin(begin).pipe(Effect.flip)).toBeInstanceOf(ExecutorSetupRequired)
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          'authorization._tag',
+          'SetupRequired',
+        )
         const reads = (yield* Ref.get(remote.requests)).filter((request) =>
           request.path.endsWith('/oauth/oauth/setup'),
         ).length
         yield* Ref.set(remote.replies, new Map())
         yield* TestClock.adjust('9 minutes')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          'authorization._tag',
+          'SetupRequired',
+        )
         expect(
           yield* executor.authorization({
             service: hostedService,
@@ -834,14 +840,20 @@ describe('Executor hosted transport', () => {
           ),
         ).toHaveLength(reads)
         yield* TestClock.adjust('1 minute')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          'authorization._tag',
+          'SetupRequired',
+        )
         expect(
           yield* executor.authorization({
             service: hostedService,
             returnAddress: hostedReturnAddress,
           }),
         ).toHaveProperty('_tag', 'SignIn')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          'authorization._tag',
+          'SignIn',
+        )
         expect(
           (yield* Ref.get(remote.requests)).filter((request) =>
             request.path.endsWith('/oauth/oauth/setup'),
@@ -865,10 +877,16 @@ describe('Executor hosted transport', () => {
           '_tag',
           'ExecutorSignInRequired',
         )
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          'authorization._tag',
+          'SetupRequired',
+        )
         yield* Ref.set(remote.replies, new Map())
         yield* TestClock.adjust('9 minutes')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          'authorization._tag',
+          'SetupRequired',
+        )
         expect(
           yield* executor.authorization({
             service: hostedService,
@@ -876,14 +894,20 @@ describe('Executor hosted transport', () => {
           }),
         ).toHaveProperty('_tag', 'SetupRequired')
         yield* TestClock.adjust('1 minute')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          'authorization._tag',
+          'SetupRequired',
+        )
         expect(
           yield* executor.authorization({
             service: hostedService,
             returnAddress: hostedReturnAddress,
           }),
         ).toHaveProperty('_tag', 'SignIn')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          'authorization._tag',
+          'SignIn',
+        )
       }),
     ),
   )
@@ -912,9 +936,15 @@ describe('Executor hosted transport', () => {
             body: storageErrorReply.make({}),
           })
           yield* TestClock.adjust('10 minutes')
-          expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+          expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+            'authorization._tag',
+            'SignIn',
+          )
           yield* Deferred.await(entered)
-          expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+          expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+            'authorization._tag',
+            'SignIn',
+          )
           yield* Deferred.succeed(release, undefined)
           yield* executor
             .authorization({ service: hostedService, returnAddress: hostedReturnAddress })
@@ -922,7 +952,10 @@ describe('Executor hosted transport', () => {
           const reads = (yield* Ref.get(remote.requests)).filter((request) =>
             request.path.endsWith('/oauth/oauth/setup'),
           ).length
-          expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+          expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+            'authorization._tag',
+            'SignIn',
+          )
           yield* TestClock.adjust('29 seconds')
           yield* executor
             .authorization({ service: hostedService, returnAddress: hostedReturnAddress })
@@ -962,7 +995,10 @@ describe('Executor hosted transport', () => {
           '_tag',
           'ExecutorSetupRequired',
         )
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          'authorization._tag',
+          'SetupRequired',
+        )
       }),
     ),
   )
@@ -1006,7 +1042,10 @@ describe('Executor hosted transport', () => {
         yield* Deferred.await(signInEntered)
         yield* Ref.set(blockSetup, true)
         yield* TestClock.adjust('1 minute')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          'authorization._tag',
+          'SignIn',
+        )
         yield* Deferred.await(setupEntered)
         const pendingInspection = yield* executor
           .authorization({ service: hostedService, returnAddress: hostedReturnAddress })
@@ -1014,10 +1053,16 @@ describe('Executor hosted transport', () => {
         // Immediate startup reaches the pending cache entry before the refusal is recorded.
         yield* Deferred.succeed(signInRelease, undefined)
         expect(yield* Fiber.join(pendingSignIn)).toHaveProperty('_tag', 'ExecutorSignInRequired')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          'authorization._tag',
+          'SetupRequired',
+        )
         yield* Deferred.succeed(setupRelease, undefined)
         expect(yield* Fiber.join(pendingInspection)).toHaveProperty('_tag', 'SetupRequired')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          'authorization._tag',
+          'SetupRequired',
+        )
       }),
     ),
   )
@@ -1061,7 +1106,10 @@ describe('Executor hosted transport', () => {
         yield* Deferred.await(signInEntered)
         yield* Ref.set(blockSetup, true)
         yield* TestClock.adjust('1 minute')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SignIn')
+        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          'authorization._tag',
+          'SignIn',
+        )
         yield* Deferred.await(setupEntered)
         yield* failRoute(remote, 'GET /providers/provider/oauth/oauth/setup', {
           status: 500,
@@ -1073,7 +1121,10 @@ describe('Executor hosted transport', () => {
         // Immediate startup reaches the pending cache entry before the refusal is recorded.
         yield* Deferred.succeed(signInRelease, undefined)
         expect(yield* Fiber.join(pendingSignIn)).toHaveProperty('_tag', 'ExecutorSignInRequired')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          'authorization._tag',
+          'SetupRequired',
+        )
         yield* Deferred.succeed(setupRelease, undefined)
         expect(yield* Fiber.join(pendingInspection)).toHaveProperty('value._tag', 'SetupRequired')
         expect(
@@ -1082,7 +1133,10 @@ describe('Executor hosted transport', () => {
             returnAddress: hostedReturnAddress,
           }),
         ).toHaveProperty('_tag', 'SetupRequired')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty('authorization._tag', 'SetupRequired')
+        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          'authorization._tag',
+          'SetupRequired',
+        )
       }),
     ),
   )

@@ -37,9 +37,9 @@ never the supplied value.
 | `VIVID_RUNTIME_TOKEN`  | Yes      | Runtime authority, kept redacted and never sent to clients.                    |
 | `PORT`                 | No       | Integer from 1 through 65535; defaults to `8787`.                              |
 | `PUBLIC_URL`           | No       | If supplied, must be an absolute URL; defaults to `http://localhost:3000`.     |
-| `GOOGLE_CLIENT_ID`     | Yes      | The Google sign-in client's id.                                                |
-| `GOOGLE_CLIENT_SECRET` | Yes      | The Google sign-in client's secret; kept redacted.                             |
-| `GOOGLE_REDIRECT_URI`  | Yes      | Must be an absolute URL: the address Google returns the Person to.             |
+| `GOOGLE_CLIENT_ID`     | Yes      | The Google client's id, for sign-in and for Google Integrations.               |
+| `GOOGLE_CLIENT_SECRET` | Yes      | That client's secret; kept redacted.                                           |
+| `GOOGLE_REDIRECT_URI`  | Yes      | Must be an absolute URL: the address Google returns a sign-in to Vivid to.     |
 
 Supply configuration in the process environment. The server's `dev` script does not load an
 `.env` file. `.env.example` lists every setting the server does not start without, these and the
@@ -85,8 +85,12 @@ is a typed failure on the call that met it, the Person or Vivid is told it is no
 now, and the next call tries again, so it is over when the service is back, with no restart. Check
 [current status](../../docs/14-product-feature-set-and-grok-bot-parity.md) for limits.
 
-Google OAuth above is for account sign-in. Google Integrations need their own operator sign-in
-client in Executor; these application credentials do not configure it.
+The Google client above is the installation's one Google client. A Person signs in to Vivid with
+it, and Executor signs a Person in to a Google Integration with it: Gmail, Calendar, Drive, Docs,
+Sheets and Tasks, which the server carries and installs on Executor itself
+(`src/connections/google.ts`). The client must allow two return addresses on the server's public
+address: `/api/auth/callback/google` and `/api/connections/return`
+([One product](../../docs/22-one-product.md), "Google Integrations").
 
 One-off Routines resolve a local date-time using the Person's saved time zone. The existing
 Routine scheduler claims the Occurrence, disables the Routine and clears its next time in one

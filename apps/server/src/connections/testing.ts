@@ -411,6 +411,16 @@ const hostedApp = Effect.fn('Executor.HostedTest.app')(function* (
   return { id: app.id, name: app.name, requirements: { accounts: yield* Ref.get(state.accounts) } }
 })
 
+/** The name a request creates an app under: install and deploy name it at the top of the body,
+ * an import names it in `source`. None for every other request. */
+const hostedAppName = Effect.fn('Executor.HostedTest.appName')(function* (request: HostedRequest) {
+  if (request.path === 'POST /apps/import')
+    return Option.some((yield* decodeHostedImport(request.body)).source.name)
+  if (request.path === 'POST /apps/install' || request.path === 'POST /apps/deploy')
+    return Option.some((yield* decodeHostedInstall(request.body)).name)
+  return Option.none<string>()
+})
+
 /** Simulate create-only app installation plus ConnectionId profile deduplication on the remote
  * side. Tests observe the real Executor Layer's requests rather than a fake Executor service.
  */
@@ -418,18 +428,13 @@ const hostedWrite = Effect.fn('Executor.HostedTest.write')(function* (
   state: HostedState,
   request: HostedRequest,
 ) {
-  // Install and deploy both name the app at the top of the body; an import names it in `source`.
-  if (
-    request.path === 'POST /apps/install' ||
-    request.path === 'POST /apps/deploy' ||
-    request.path === 'POST /apps/import'
-  ) {
-    const { name } =
-      request.path === 'POST /apps/import'
-        ? (yield* decodeHostedImport(request.body)).source
-        : yield* decodeHostedInstall(request.body)
+  const named = yield* hostedAppName(request)
+  if (Option.isSome(named)) {
     const app = yield* Ref.modify(state.apps, (apps) => {
-      const created = { id: apps.length === 0 ? 'app' : `app-${apps.length + 1}`, name }
+      const created = {
+        id: apps.length === 0 ? 'app' : `app-${apps.length + 1}`,
+        name: named.value,
+      }
       return [created, [...apps, created]]
     })
     return yield* hostedApp(state, app)

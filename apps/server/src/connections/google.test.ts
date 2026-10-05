@@ -1,5 +1,5 @@
 import { describe, expect, it, layer } from '@effect/vitest'
-import { Clock, Effect, Ref } from 'effect'
+import { Clock, Effect, Ref, Schema } from 'effect'
 import { HttpRouter, HttpServerRequest } from 'effect/unstable/http'
 import { ConnectionId, ConnectionStep, ServiceAuthorization } from '@vivid/contracts'
 import { sessionTable } from '../auth/tables.ts'
@@ -59,7 +59,7 @@ describe('Google Integrations', () => {
       yield* Ref.update(hosted.replies, (replies) =>
         new Map(replies).set(`GET ${hostedPrefix}/catalog`, {
           status: 502,
-          body: { _tag: 'CatalogUnavailable' },
+          body: Schema.TaggedStruct('CatalogUnavailable', {}).make({}),
         }),
       )
       const without = yield* Effect.flatMap(Executor, (executor) => executor.catalog()).pipe(
@@ -75,7 +75,7 @@ describe('Google Integrations', () => {
       Effect.gen(function* () {
         const hosted = yield* hostedExecutorFixture()
         const gmail = googleServices.find((service) => service.name === 'Gmail')
-        if (gmail === undefined) return expect.fail('Gmail is one of the Google services')
+        if (gmail === undefined) expect.fail('Gmail is one of the Google services')
         // What Executor reports for the deployed source: one account, signed in by OAuth.
         yield* Ref.set(hosted.accounts, {
           google: {
@@ -99,7 +99,7 @@ describe('Google Integrations', () => {
           }
         }).pipe(Effect.provide(hosted.configured))
         if (!ExecutorStep.guards.OpenSignIn(first) || !ExecutorStep.guards.OpenSignIn(second))
-          return expect.fail('A Google service begins with a sign-in')
+          expect.fail('A Google service begins with a sign-in')
         expect(ExecutorReferences.guards.GoogleSigningIn(first.references)).toBe(true)
         // The app is shared code: removing a Connection must never delete it.
         expect(first.references.appOwnership).toBe('Shared')
@@ -135,8 +135,8 @@ describe('Google Integrations', () => {
  * state at its public boundary; the store and PostgreSQL lookup are the production implementations.
  */
 describe.skipIf(!testDatabaseConfigured)('Google fixed callback', () => {
-  layer(connectionTestLayer)((it) => {
-    it.effect(
+  layer(connectionTestLayer)((test) => {
+    test.effect(
       'isolates simultaneous returns, rejects foreign/replayed state, and completes the exact Connection',
       () =>
         Effect.gen(function* () {
