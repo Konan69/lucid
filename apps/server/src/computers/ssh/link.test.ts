@@ -270,6 +270,81 @@ it.live.skipIf(!peerAvailable)(
 )
 
 it.live.skipIf(!peerAvailable)(
+  'keeps nothing from an opening whose machine stopped while it was being found',
+  () =>
+    Effect.gen(function* () {
+      const server = yield* peer()
+      const held = links<string>(server.identity)
+      yield* Effect.addFinalizer(() => held.close)
+      const located = yield* Ref.make(0)
+      const asked = yield* Deferred.make<void>()
+      const answer = yield* Deferred.make<void>()
+      const target = { ...server, identity: undefined }
+      // The first asking is held until the test answers it; later ones answer at once.
+      const locate = Ref.updateAndGet(located, (count) => count + 1).pipe(
+        Effect.tap((count) =>
+          count === 1
+            ? Deferred.succeed(asked, undefined).pipe(Effect.andThen(Deferred.await(answer)))
+            : Effect.void,
+        ),
+        Effect.as(target),
+      )
+      const opening = yield* held.get('machine', locate).pipe(Effect.flip, Effect.forkChild)
+      yield* Deferred.await(asked)
+      // The machine stops: what was being opened is for the machine as it was.
+      yield* held.forget('machine')
+      yield* Deferred.succeed(answer, undefined)
+      expect(yield* Fiber.join(opening)).toBeInstanceOf(LinkUnreachable)
+      // Nothing was kept: the next use asks where the machine is again.
+      const link = yield* held.get('machine', locate)
+      expect(yield* Ref.get(located)).toBe(2)
+      expect(link.alive()).toBe(true)
+    }).pipe(Effect.scoped),
+  40_000,
+)
+
+it.live.skipIf(!peerAvailable)(
+  'leaves a new connection open when a call hears late that the old one died',
+  () =>
+    Effect.gen(function* () {
+      const server = yield* peer()
+      const held = links<string>(server.identity)
+      yield* Effect.addFinalizer(() => held.close)
+      const located = yield* Ref.make(0)
+      const locate = Ref.update(located, (count) => count + 1).pipe(
+        Effect.as({ ...server, identity: undefined }),
+      )
+      const old = yield* held.get('machine', locate)
+      yield* hangUp(old, server.home)
+      const fresh = yield* held.get('machine', locate)
+      expect(fresh).not.toBe(old)
+      // A second call that was on the old connection reports its loss only now.
+      yield* held.discard('machine', old)
+      expect(yield* held.get('machine', locate)).toBe(fresh)
+      expect(fresh.alive()).toBe(true)
+      expect(yield* Ref.get(located)).toBe(2)
+    }).pipe(Effect.scoped),
+  40_000,
+)
+
+it.live.skipIf(!peerAvailable)(
+  'opens nothing after the owner has closed',
+  () =>
+    Effect.gen(function* () {
+      const server = yield* peer()
+      const held = links<string>(server.identity)
+      const located = yield* Ref.make(0)
+      const locate = Ref.update(located, (count) => count + 1).pipe(
+        Effect.as({ ...server, identity: undefined }),
+      )
+      yield* held.close
+      expect(yield* Effect.flip(held.get('machine', locate))).toBeInstanceOf(LinkUnreachable)
+      expect(yield* Ref.get(located)).toBe(0)
+    }).pipe(Effect.scoped),
+  20_000,
+)
+
+it.live.skipIf(!peerAvailable)(
   'says a directory may not be made where a file is in the way, instead of calling it missing',
   () =>
     Effect.gen(function* () {

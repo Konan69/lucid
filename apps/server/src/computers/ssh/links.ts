@@ -14,9 +14,14 @@ export interface LinkTarget {
  *
  * A connection is opened the first time a machine is used and reused after that. `locate` is
  * asked before every opening and never between: a machine's address and host key change when it
- * resumes, so they are facts about one connection, not about the machine. `drop` closes a
- * machine's connection (it stopped, or a call found the connection gone); the next use opens a
- * new one from a fresh `locate`.
+ * resumes, so they are facts about one connection, not about the machine.
+ *
+ * Two things end a connection, and they are different. `forget` is the machine stopping or
+ * resuming: whatever is open to it is closed and an opening under way is abandoned, because both
+ * are for the machine as it was. `discard` is one call finding its own connection gone: that
+ * connection is closed and no other, so a call that hears of the loss late cannot close the
+ * connection another call has opened since. After either, the next use opens a new one from a
+ * fresh `locate`.
  *
  * A machine that has just been woken refuses SSH for a while (its provider refuses commands for
  * 20 to 40 seconds). Opening therefore tries again every two seconds while the machine cannot be
@@ -37,32 +42,66 @@ export const links = <Key>(identity: Identity) => {
     openings.set(key, made)
     return made
   }
-  const drop = (key: Key) =>
+  /**
+   * The opening under way for each machine, as a token only that opening holds (a symbol: two
+   * openings are never the same one). `forget` and
+   * `close` take it away, and an opening that no longer finds its token keeps nothing: the
+   * machine stopped or resumed while it was being reached, or the owner has finished.
+   */
+  const pending = new Map<Key, symbol>()
+  /** Set by `close`. Nothing is opened afterwards: the owner would never close it. */
+  let closed = false
+  const forget = (key: Key) =>
     Effect.suspend(() => {
+      pending.delete(key)
       const found = open.get(key)
       if (found === undefined) return Effect.void
       open.delete(key)
       return Scope.close(found.scope, Exit.void)
     })
-  /** One try with a scope of its own, closed if the try fails: a connection that authenticated
-   * and then failed is not left open while the next try makes another. */
-  const attempt = Effect.fn('Links.attempt')(function* (target: LinkTarget) {
-    const scope = yield* Scope.make()
-    const link = yield* openLink({ ...target, identity }).pipe(
-      Scope.provide(scope),
-      Effect.onError(() => Scope.close(scope, Exit.void)),
-      Effect.onInterrupt(() => Scope.close(scope, Exit.void)),
+  const discard = (key: Key, link: Link) =>
+    Effect.suspend(() => {
+      const found = open.get(key)
+      if (found === undefined || found.link !== link) return Effect.void
+      open.delete(key)
+      return Scope.close(found.scope, Exit.void)
+    })
+  /**
+   * One try, with a scope of its own. Learning that the connection opened and handing it to the
+   * map are one uninterruptible step: a caller that gives up, or the deadline passing, at that
+   * moment cannot leave a connection open that nobody owns. Only the wait for the host can be
+   * interrupted, and a try that fails or is interrupted closes its own scope, so a connection that
+   * authenticated and then failed is not left open while the next try makes another. A try whose
+   * opening was abandoned meanwhile closes what it opened and says the machine was not reached.
+   */
+  const attempt = (key: Key, token: symbol, target: LinkTarget) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        if (pending.get(key) !== token) return yield* Effect.fail(new LinkUnreachable())
+        const scope = yield* Scope.make()
+        const link = yield* restore(
+          openLink({ ...target, identity }).pipe(Scope.provide(scope)),
+        ).pipe(
+          Effect.onExit((exit) =>
+            Exit.isSuccess(exit) ? Effect.void : Scope.close(scope, Exit.void),
+          ),
+        )
+        if (pending.get(key) !== token) {
+          yield* Scope.close(scope, Exit.void)
+          return yield* Effect.fail(new LinkUnreachable())
+        }
+        pending.delete(key)
+        open.set(key, { link, scope })
+        return link
+      }),
     )
-    return { link, scope }
-  })
-  const dial = Effect.fn('Links.dial')(function* <Failure>(
-    key: Key,
-    locate: Effect.Effect<LinkTarget, Failure>,
-  ) {
-    const target = yield* locate
-    const made = yield* attempt(target).pipe(
+  /** The tries for one opening: again every two seconds while the machine cannot be reached and
+   * the opening has not been abandoned, which waiting would not change. */
+  const tries = (key: Key, token: symbol, target: LinkTarget) =>
+    attempt(key, token, target).pipe(
       Effect.retry({
-        while: (failure: LinkFailure) => failure instanceof LinkUnreachable,
+        while: (failure: LinkFailure) =>
+          failure instanceof LinkUnreachable && pending.get(key) === token,
         schedule: Schedule.spaced('2 seconds'),
         times: 30,
       }),
@@ -73,9 +112,20 @@ export const links = <Key>(identity: Identity) => {
         orElse: () => Effect.fail(new LinkUnreachable()),
       }),
     )
-    open.set(key, made)
-    return made.link
-  })
+  const dial = <Failure>(key: Key, locate: Effect.Effect<LinkTarget, Failure>) =>
+    Effect.suspend(() => {
+      const token = Symbol('opening')
+      pending.set(key, token)
+      return locate.pipe(
+        Effect.flatMap((target) => tries(key, token, target)),
+        // An opening that ended without a connection leaves no token behind.
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (pending.get(key) === token) pending.delete(key)
+          }),
+        ),
+      )
+    })
   /** `locate` is run only when a connection has to be opened. */
   const get = <Failure>(
     key: Key,
@@ -83,15 +133,21 @@ export const links = <Key>(identity: Identity) => {
   ): Effect.Effect<Link, Failure | LinkFailure> =>
     opening(key).withPermit(
       Effect.gen(function* () {
+        if (closed) return yield* Effect.fail(new LinkUnreachable())
         const found = open.get(key)
-        if (found !== undefined && found.link.alive()) return found.link
+        if (found === undefined) return yield* dial(key, locate)
+        if (found.link.alive()) return found.link
         // A connection that closed while nobody was using it (the machine stopped, the path
         // dropped) is put away here, so a dead one is never handed out.
-        yield* drop(key)
+        yield* discard(key, found.link)
         return yield* dial(key, locate)
       }),
     )
-  /** Closes every connection: the owner's last act. */
-  const close = Effect.suspend(() => Effect.forEach([...open.keys()], drop, { discard: true }))
-  return { get, drop, close }
+  /** Closes every connection and abandons every opening: the owner's last act. */
+  const close = Effect.suspend(() => {
+    closed = true
+    pending.clear()
+    return Effect.forEach([...open.keys()], forget, { discard: true })
+  })
+  return { get, forget, discard, close }
 }
