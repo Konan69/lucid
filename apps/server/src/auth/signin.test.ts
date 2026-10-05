@@ -648,8 +648,8 @@ describe.skipIf(!testDatabaseConfigured)('the desktop app signing in with Google
       Effect.gen(function* () {
         const server = yield* local
         // The device authorization grant is gone: its routes are not there to be asked.
-        for (const path of ['device/code', 'device/token', 'device/approve']) {
-          const answer = yield* call(server, path, {
+        for (const step of ['code', 'token', 'approve']) {
+          const answer = yield* call(server, `device/${step}`, {
             method: 'POST',
             headers: { 'content-type': 'application/json', origin: server.origin },
             body: JSON.stringify({ client_id: 'vivid-mobile' }),
