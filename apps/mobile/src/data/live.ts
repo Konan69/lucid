@@ -12,7 +12,9 @@ import {
   liveStateOf,
   makeLink,
   makeLive,
+  makeSnapshots,
   workspaceKey,
+  type KeptQueries,
   type LiveFamily,
   type LiveQuery,
   type LiveResult,
@@ -32,7 +34,8 @@ import { liveAddress } from './server'
 import { dropAtom, sessionAtom } from './held'
 import { Session, type Outside, type SignedIn } from './session'
 import { bearerSocket } from './socket'
-import { start } from './app'
+import { launch, start } from './app'
+import { snapshotStore } from './snapshot'
 
 /**
  * Every screen's data, live, as Effect Atoms: the phone's half of what `apps/web/src/data/live.ts`
@@ -120,6 +123,60 @@ function makeSeenThread(
 }
 
 /**
+ * What a session keeps on the phone and carries to the Person's other devices, for as long as
+ * the session lasts: the first screen's last answers, and what is typed and not sent. Answers
+ * with the way to stop both.
+ */
+function keepOnDevice(
+  engine: ReturnType<typeof makeLive>,
+  origin: string,
+  queries: KeptQueries,
+): () => void {
+  // The first screen's answers are written down as they change and are read back now, so this
+  // session starts from what the phone last knew (`@vivid/state` `snapshot.ts`).
+  const snapshots = makeSnapshots({
+    registry: engine.registry,
+    queries,
+    store: snapshotStore,
+    origin,
+    launch,
+  })
+  // An app in the background can be ended without a word, so what has changed since the last
+  // paced write is written the moment it leaves the front.
+  const unflush = door.subscribe(inFront, (front) => {
+    if (!front) launch(snapshots.flush)
+  })
+  // What is typed on this phone follows the Person to their other devices, and what they typed
+  // there arrives here, for as long as this session has a socket (`data/drafts.ts`).
+  // Both read the server's own answers, never what the phone kept from its last run: a list or
+  // a workspace from then is not what the server holds now, and acting on it would clear or
+  // overwrite a draft on the strength of old news.
+  const unfollow = followDrafts({
+    scope: () => {
+      const me = engine.registry.get(queries.me.answers)
+      return AsyncResult.isSuccess(me)
+        ? Option.some({ person: me.value.person.id, workspace: workspaceKey(me.value.workspace) })
+        : Option.none()
+    },
+    save: (request) => engine.change((client) => client.SaveDraft(request)),
+    listen: (hear) =>
+      engine.registry.subscribe(
+        queries.drafts.answers,
+        (result) => {
+          if (AsyncResult.isSuccess(result)) hear(result.value.drafts)
+        },
+        { immediate: true },
+      ),
+    moved: (hear) => engine.registry.subscribe(queries.me.answers, hear),
+  })
+  return () => {
+    unflush()
+    snapshots.stop()
+    unfollow()
+  }
+}
+
+/**
  * Builds the live data of one session: one socket, opened as the signed-in Person, and a query
  * for every `Watch…` call the app draws from.
  */
@@ -134,21 +191,23 @@ function makeLiveData(session: SignedIn) {
     ),
   )
   const one = engine.query
+  /** A query the first screen needs: its last answer is kept on the phone (`data/snapshot.ts`). */
+  const kept = engine.kept
   const family = engine.family
 
   const live = {
-    me: one((client) => client.WatchMe()),
-    settings: one((client) => client.WatchSettings()),
+    me: kept((client) => client.WatchMe()),
+    settings: kept((client) => client.WatchSettings()),
     /** What Vivid is called and how its face is drawn where the Person is working. */
-    appearance: one((client) => client.WatchAppearance()),
+    appearance: kept((client) => client.WatchAppearance()),
     people: one((client) => client.WatchPeople()),
-    threads: one((client) => client.WatchThreads()),
+    threads: kept((client) => client.WatchThreads()),
     thread: family(
       (id: ThreadId) => id,
       (client, id) => client.WatchThread({ id }),
     ),
     routines: one((client) => client.WatchRoutines()),
-    projects: one((client) => client.WatchProjects()),
+    projects: kept((client) => client.WatchProjects()),
     library: family(
       (shelf: LibraryShelf) => shelf,
       (client, shelf) => client.WatchLibrary({ shelf }),
@@ -165,13 +224,15 @@ function makeLiveData(session: SignedIn) {
     connections: one((client) => client.WatchConnections()),
     /** The messaging apps a Person can text Vivid from, and where each stands for them. */
     channels: one((client) => client.WatchChannels()),
+    /** What finished or needs the Person while they were elsewhere, newest first. */
+    notifications: kept((client) => client.WatchNotifications()),
     memory: one((client) => client.WatchMemory()),
     /** What Vivid knows how to do: the procedures it ships with and the ones it was taught. */
     /** Where the Person's Computer stands: off, starting, running and who has the keyboard. */
     computer: one((client) => client.WatchComputer()),
     suggestions: one((client) => client.WatchSuggestions()),
     /** What the Person has typed and not sent, on any device, where they are working. */
-    drafts: one((client) => client.WatchDrafts()),
+    drafts: kept((client) => client.WatchDrafts()),
   }
 
   // Where the Person was working when a query was last asked, for the subscription below.
@@ -189,25 +250,14 @@ function makeLiveData(session: SignedIn) {
     engine.reopen()
   })
 
-  // What is typed on this phone follows the Person to their other devices, and what they typed
-  // there arrives here, for as long as this session has a socket (`data/drafts.ts`).
-  const unfollow = followDrafts({
-    scope: () => {
-      const me = engine.registry.get(live.me.atom)
-      return AsyncResult.isSuccess(me)
-        ? Option.some({ person: me.value.person.id, workspace: workspaceKey(me.value.workspace) })
-        : Option.none()
-    },
-    save: (request) => engine.change((client) => client.SaveDraft(request)),
-    listen: (hear) =>
-      engine.registry.subscribe(
-        live.drafts.atom,
-        (result) => {
-          if (AsyncResult.isSuccess(result)) hear(result.value.drafts)
-        },
-        { immediate: true },
-      ),
-    moved: (hear) => engine.registry.subscribe(live.me.atom, hear),
+  const unkeep = keepOnDevice(engine, session.server, {
+    me: live.me,
+    threads: live.threads,
+    projects: live.projects,
+    settings: live.settings,
+    appearance: live.appearance,
+    notifications: live.notifications,
+    drafts: live.drafts,
   })
 
   /** Whether this Person has something typed in a Thread's composer. The composer sets it. */
@@ -280,7 +330,7 @@ function makeLiveData(session: SignedIn) {
     session,
     /** Ends the session's live data: every subscription, the socket, and what rode on it. */
     dispose: () => {
-      unfollow()
+      unkeep()
       engine.registry.dispose()
     },
     registry: engine.registry,
@@ -332,7 +382,12 @@ export const entryAtom = Atom.keepAlive(
       // lands here. The device is then as it would be on a first launch: asked for its server.
       onFailure: () => Entry.Door({ session: Session.Unset() }),
       onSuccess: ({ value }) => {
-        if (!Session.$is('SignedIn')(value)) return Entry.Door({ session: value })
+        if (!Session.$is('SignedIn')(value)) {
+          // Nobody is signed in: signed out, expired, or never. Nothing the last Person was
+          // shown stays on the phone for whoever signs in next.
+          launch(snapshotStore.erase)
+          return Entry.Door({ session: value })
+        }
         const data = makeLiveData(value)
         get.addFinalizer(data.dispose)
         return Entry.In({ data })

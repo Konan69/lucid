@@ -6,6 +6,8 @@ import { Broken } from './screen/Broken'
 import { Recover } from './ui/Recover'
 import { TooltipProvider } from './ui/tooltip'
 import { engine } from './data/runtime'
+// Starts the app from what this browser kept of the first screen, before anything is drawn.
+import './data/snapshot'
 // The two typefaces ship with the app, so Vivid looks the same on every system.
 import '@fontsource-variable/geist'
 import '@fontsource-variable/bricolage-grotesque'

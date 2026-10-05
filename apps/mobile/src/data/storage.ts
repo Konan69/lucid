@@ -79,3 +79,18 @@ export const keepFile = Effect.fn('Storage.keepFile')(function* (name: string, v
     catch: () => new StorageUnavailable({ message: UNWRITABLE }),
   })
 })
+
+/** Removes a file of the app's own. One that is not there is already removed. */
+export const forgetFile = Effect.fn('Storage.forgetFile')(function* (name: string) {
+  yield* Effect.try({
+    try: () => {
+      if (!onDevice) {
+        localStorage.removeItem(name)
+        return
+      }
+      const file = new File(Paths.document, name)
+      if (file.exists) file.delete()
+    },
+    catch: () => new StorageUnavailable({ message: UNWRITABLE }),
+  })
+})

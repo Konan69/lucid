@@ -114,6 +114,34 @@ export interface LiveQuery<Value> {
   readonly expect: (change: (current: Value) => Value) => Settle
 }
 
+/**
+ * Where what a kept query shows came from.
+ * - `nothing`: nothing to show yet.
+ * - `device`: the last answer this device wrote down, shown until the server answers. It is
+ *   drawn exactly as a live answer is, with no spinner and no banner: it is nearly always right,
+ *   and the server's first answer replaces it within a moment of the socket opening.
+ * - `server`: the server's own answer.
+ */
+export type Origin = 'nothing' | 'device' | 'server'
+
+/**
+ * A live query whose last answer a device keeps between launches (`snapshot.ts`), so the first
+ * screen draws at once from what was last known and is then corrected by the server.
+ *
+ * The mechanism is T3 Code's (`refs/t3code/packages/client-runtime/src/state/shell.ts`,
+ * `makeEnvironmentShellState`): state starts from the cached snapshot, marked `cached`, and the
+ * first live result replaces it. Vivid's live cache is an Atom per query, not one reducer, so
+ * the cached value is a `seed` atom beside the subscription: `atom` shows the seed only while the
+ * subscription has not answered, and anything the server says, a refusal included, wins.
+ */
+export interface KeptQuery<Value> extends LiveQuery<Value> {
+  /** What the server itself has said, never the seed. Only this is ever written down. */
+  readonly answers: Atom.Atom<LiveResult<Value>>
+  /** The answer this device kept from its last run, set once its store has been read. */
+  readonly seed: Atom.Writable<Option.Option<Value>>
+  readonly origin: Atom.Atom<Origin>
+}
+
 /** What `useLive` returns for a query, for code that names that type. */
 export type LiveStateOf<Query> = Query extends LiveQuery<infer Value> ? LiveState<Value> : never
 
@@ -201,6 +229,51 @@ function expecting<Value>(
 }
 
 /**
+ * A kept query over one subscription: the seed stands in only while the subscription is still
+ * `Initial`.
+ *
+ * A dropped connection never reaches the atom (`resilient`), so a device that launches with no
+ * network goes on showing what it kept; a final refusal does reach it and has no earlier success
+ * of its own, so a session that is gone stops showing the last Person's data at once.
+ */
+function keeping<Value>(
+  registry: AtomRegistry.AtomRegistry,
+  answers: Atom.Atom<LiveResult<Value>>,
+): KeptQuery<Value> {
+  // Kept alive: a seed is written once, at launch, and must still be there when the first
+  // screen that reads its query mounts.
+  const seed = Atom.keepAlive(Atom.make(Option.none<Value>()))
+  const source = Atom.make((get): LiveResult<Value> => {
+    const result = get(answers)
+    if (!AsyncResult.isInitial(result)) return result
+    return Option.match(get(seed), {
+      onNone: () => result,
+      onSome: (value) => AsyncResult.success(value, { waiting: true }),
+    })
+  })
+  const made = expecting(registry, source)
+  const origin = Atom.make((get): Origin => {
+    if (AsyncResult.isSuccess(get(answers))) return 'server'
+    return AsyncResult.isSuccess(get(source)) ? 'device' : 'nothing'
+  })
+  return { atom: made.atom, expect: made.expect, answers, seed, origin }
+}
+
+/**
+ * Asks every ended query again. A query ends when the server says it is not this Person's to
+ * see, and that answer is about where they were: after they switch workspace or sign in again
+ * the same question can have a different answer, and nothing else would ever ask it.
+ */
+function reopenEnded(registry: AtomRegistry.AtomRegistry, sources: WeakMap<object, object>) {
+  // Only a query something is reading, and only one that ended: an atom nobody has mounted
+  // would be started just by being asked how it is.
+  for (const atom of registry.getNodes().keys()) {
+    if (Predicate.isString(atom) || !sources.has(atom)) continue
+    if (AsyncResult.isFailure(registry.get(atom))) registry.refresh(atom)
+  }
+}
+
+/**
  * How long a query stays subscribed after the last screen reading it has gone: five minutes, so
  * moving between Threads, Routines and the Library in the course of a piece of work is instant
  * and current. It costs the server an open subscription, not a refetch.
@@ -228,10 +301,9 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
   // does not make a second, cold one. Once the atom is let go, both can be collected.
   const sources = new WeakMap<object, object>()
 
-  const query = <Value>(
-    watch: (client: Client) => Stream.Stream<Value, ProductFailure>,
-  ): LiveQuery<Value> => {
-    const source = runtime.atom(
+  /** One `Watch…` subscription on the app's socket, reopened when the connection drops. */
+  const subscription = <Value>(watch: (client: Client) => Stream.Stream<Value, ProductFailure>) =>
+    runtime.atom(
       resilient(() =>
         Stream.unwrap(
           Effect.gen(function* () {
@@ -240,8 +312,19 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
         ),
       ),
     )
+
+  const query = <Value>(watch: (client: Client) => Stream.Stream<Value, ProductFailure>) => {
+    const source = subscription(watch)
     const made = expecting(registry, source)
     sources.set(source, made)
+    return made
+  }
+
+  /** A live query that can start from what the device kept (`keeping`). */
+  const kept = <Value>(watch: (client: Client) => Stream.Stream<Value, ProductFailure>) => {
+    const made = keeping(registry, subscription(watch))
+    // `reopen` asks the subscription again, not the view over it.
+    sources.set(made.answers, made)
     return made
   }
 
@@ -380,19 +463,7 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
       )
     })
 
-  /**
-   * Asks every ended query again. A query ends when the server says it is not this Person's to
-   * see, and that answer is about where they were: after they switch workspace or sign in again
-   * the same question can have a different answer, and nothing else would ever ask it.
-   */
-  const reopen = () => {
-    // Only a query something is reading, and only one that ended: an atom nobody has mounted
-    // would be started just by being asked how it is.
-    for (const atom of registry.getNodes().keys()) {
-      if (Predicate.isString(atom) || !sources.has(atom)) continue
-      if (AsyncResult.isFailure(registry.get(atom))) registry.refresh(atom)
-    }
-  }
+  const reopen = () => reopenEnded(registry, sources)
 
-  return { registry, query, family, ask, beat, run, change, reopen }
+  return { registry, query, kept, family, ask, beat, run, change, reopen }
 }

@@ -62,9 +62,14 @@ const listeners = new Set<() => void>()
 /** The drafts as they stand: the store's, while it is being written to, else this tab's own. */
 const latest = () => (durable ? readDrafts(kept.read(KEY)) : drafts)
 
-/** Who is signed in and where they are working, once the server has said. */
+/**
+ * Who is signed in and where they are working, once the server has said. It is the server's own
+ * answer, never what this browser kept from its last visit (`data/snapshot.ts`): a workspace or
+ * a list from then is not what the server holds now, and acting on it would clear or overwrite a
+ * draft on the strength of old news.
+ */
 const scope = (): Option.Option<DraftScope> => {
-  const me = engine.registry.get(live.me.atom)
+  const me = engine.registry.get(live.me.answers)
   return AsyncResult.isSuccess(me)
     ? Option.some({ person: me.value.person.id, workspace: workspaceKey(me.value.workspace) })
     : Option.none()
@@ -96,13 +101,13 @@ window.addEventListener('storage', (event) => {
 })
 
 // Who is signed in, and where, is what says which of this browser's drafts are theirs to send.
-engine.registry.subscribe(live.me.atom, () => sync.changed())
+engine.registry.subscribe(live.me.answers, () => sync.changed())
 
 // What the server holds for this Person here, each time it changes and each time the socket
 // comes back. Held open for the life of the page, so a draft from another device is already in
 // its place when the Person opens that Thread.
 engine.registry.subscribe(
-  live.drafts.atom,
+  live.drafts.answers,
   (result) => {
     if (AsyncResult.isSuccess(result)) sync.heard(result.value.drafts)
   },
