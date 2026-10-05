@@ -1,5 +1,5 @@
+import { standingWords } from '@vivid/state'
 import { nativeMetrics as m } from '@vivid/tokens/native'
-import { Data } from 'effect'
 import type { ReactNode } from 'react'
 import { StyleSheet, View } from 'react-native'
 import Animated, {
@@ -19,6 +19,7 @@ import Animated, {
 } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ThinkingOrb } from '../../vendor/orb'
+import { Stand } from '../data/stand'
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 import { AnimatedGlassMaterial } from './Glass'
@@ -36,20 +37,6 @@ import { Face, Label, TARGET, type Tone } from './ui'
  * owner's reference, the ChatGPT iPhone app, has a round glass button at each end of the bar and
  * a glass capsule in the middle, each floating on its own.
  */
-
-/**
- * How Vivid stands at the top of a screen. One of three things, never a mix: there is no state in
- * which it is both thinking and saying something else.
- */
-export type Stand = Data.TaggedEnum<{
-  /** Nothing to report: its face, in the mood of the moment, and its name. */
-  Resting: { readonly mood: 'happy' | 'thinking' }
-  /** At work on what this screen shows: the orb, and the word for it. */
-  Thinking: {}
-  /** Something for the Person to read: that Vivid is waiting for them, or who is typing. */
-  Saying: { readonly words: string; readonly tone: Tone }
-}>
-export const Stand = Data.taggedEnum<Stand>()
 
 /** The word beside the orb. The web says the same beside its own (`apps/web/src/screen/Thread.tsx`). */
 const THINKING = 'Thinking…'
@@ -75,13 +62,29 @@ const ORB = 20
  */
 const BAR = 44
 
-/** What a screen reader says for the capsule: Vivid's name, then how it stands. */
-const spokenOf = (name: string, stand: Stand): string =>
+/**
+ * The capsule's words for each way of standing. Waiting for the Person is said as the web says
+ * it (`standingWords`), because nothing else on a Thread does.
+ */
+const wordsOf = (name: string, stand: Stand): string =>
   Stand.$match(stand, {
     Resting: () => name,
-    Thinking: () => `${name}. ${THINKING}`,
-    Saying: ({ words }) => `${name}. ${words}`,
+    Thinking: () => THINKING,
+    Waiting: () => standingWords.NeedsYou,
+    Typing: ({ names }) => `${names.join(', ')} typing…`,
   })
+
+/** The ink those words are in: the state's own where it asks something of the Person. */
+const TONE = {
+  Resting: 'ink',
+  Thinking: 'ink',
+  Waiting: 'status-attention',
+  Typing: 'ink-2',
+} as const satisfies Record<Stand['_tag'], Tone>
+
+/** What a screen reader says for the capsule: Vivid's name, then how it stands. */
+const spokenOf = (name: string, stand: Stand): string =>
+  Stand.$is('Resting')(stand) ? name : `${name}. ${wordsOf(name, stand)}`
 
 /**
  * One piece of the capsule that replaces another: the face for the orb, a name for a sentence.
@@ -151,12 +154,7 @@ export function Capsule({
   const vivid = useAppearance()
   const layout = morphs ? MORPH : undefined
   const thinking = Stand.$is('Thinking')(stand)
-  const words = Stand.$match(stand, {
-    Resting: () => vivid.name,
-    Thinking: () => THINKING,
-    Saying: (saying) => saying.words,
-  })
-  const tone: Tone = Stand.$is('Saying')(stand) ? stand.tone : 'ink'
+  const words = wordsOf(vivid.name, stand)
   const mood = Stand.$is('Resting')(stand) ? stand.mood : 'neutral'
   return (
     <Animated.View
@@ -229,7 +227,7 @@ export function Capsule({
               // The capsule is as tall as a bar button whatever the text size, as the system's own
               // bar is, so its words grow with the Person's setting only as far as they fit.
               maxFontSizeMultiplier={1.3}
-              tone={tone}
+              tone={TONE[stand._tag]}
               style={{ fontWeight: m['weight-strong'], lineHeight: SLOT }}
             >
               {words}

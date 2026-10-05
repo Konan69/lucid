@@ -12,9 +12,10 @@ import { useLayoutEffect, useRef } from 'react'
 import { Animated, Platform, useWindowDimensions, View } from 'react-native'
 import { openDrawer } from '../data/drawer'
 import type { Lead } from '../data/lead'
+import type { Stand } from '../data/stand'
 import { Faces } from './Avatar'
 import { GLASS_SUPPORTED } from './Glass'
-import { Capsule, Floating, type Origin, type Stand } from './Presence'
+import { Capsule, Floating, type Origin } from './Presence'
 import { IconButton, Label, TARGET, type Tone } from './ui'
 
 /**

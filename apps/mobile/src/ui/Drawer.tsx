@@ -6,6 +6,7 @@ import { scheduleOnRN } from 'react-native-worklets'
 import {
   closeDrawer,
   DRAWER_SPRING,
+  drawerLifetime,
   hideKeyboard,
   settleDrawer,
   travel,
@@ -116,7 +117,7 @@ export function Drawer({
   }))
 
   return (
-    <View style={{ flex: 1 }}>
+    <View ref={drawerLifetime} style={{ flex: 1 }}>
       <GestureDetector gesture={opening}>
         <View
           style={{ flex: 1 }}

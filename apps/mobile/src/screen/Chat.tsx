@@ -8,7 +8,7 @@ import {
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
-import { draftPlace, standingWords, titleFromMessage, workspaceKey } from '@vivid/state'
+import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useMemo, useRef, useState } from 'react'
@@ -29,12 +29,13 @@ import { inFront, onForeground } from '../data/foreground'
 import { LiveState, refusalOf, useLive, useLiveData } from '../data/live'
 import { isShown, lastWordsOf, type Around } from '../data/message'
 import { endingOf, newestRun } from '../data/outcome'
+import { standIn } from '../data/stand'
 import { conversation, say, UNDELIVERED, UNTITLED } from '../data/threads'
 import { Composer } from '../ui/Composer'
 import { Bar, BarRoom, NO_ACTIONS, VividBar, type BarAction } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
-import { Stand, useOrigin, type Origin } from '../ui/Presence'
+import { useOrigin, type Origin } from '../ui/Presence'
 import {
   Button,
   EDGE,
@@ -129,19 +130,6 @@ function Gone() {
   )
 }
 
-/**
- * How Vivid stands at the top of a Thread for each thing the Thread can be waiting on
- * (`ui/Presence.tsx`). At work it is the orb. Waiting for the Person it says so, in the words the
- * web uses (`standingWords`) and in that state's ink, because nothing else on a Thread does.
- * Otherwise it is simply there, under its own name.
- */
-const STAND = {
-  Working: Stand.Thinking(),
-  NeedsYou: Stand.Saying({ words: standingWords.NeedsYou, tone: 'status-attention' }),
-  Unread: Stand.Resting({ mood: 'happy' }),
-  Quiet: Stand.Resting({ mood: 'happy' }),
-} as const satisfies Record<Thread['attention'], Stand>
-
 /** Who can see a Thread, in a sentence, for whoever cannot see the mark that says so. */
 const audienceWords = (thread: Thread): string =>
   ThreadAudience.match(thread.audience, {
@@ -152,9 +140,9 @@ const audienceWords = (thread: Thread): string =>
 
 /**
  * The top of a Thread (`VividBar`): Vivid in the middle, saying how it is doing right now
- * (thinking, waiting for the Person, or simply there). While someone else is writing, it says
- * that instead, because it is the thing about to change the Thread. At the end of the bar: who
- * else is looking, who the Thread is shared with, and the way to Vivid's computer.
+ * (thinking, waiting for the Person, or simply there), or who else is writing (`standIn`). At
+ * the end of the bar: who else is looking, who the Thread is shared with, and the way to Vivid's
+ * computer.
  *
  * The Thread's title is not here. The bar's middle is Vivid's, as the owner asked, and the title
  * is where the Person chose the Thread: its row in the drawer.
@@ -181,7 +169,6 @@ function Top({
   const attention: Thread['attention'] = working
     ? 'Working'
     : Option.match(thread, { onNone: () => 'Quiet', onSome: (value) => value.attention })
-  const someoneTyping = typing.length > 0
   // Who can see the Thread is a choice only inside a Company.
   const sharing = Option.map(
     Option.filter(thread, () => Workspace.guards.Company(me.workspace)),
@@ -199,14 +186,10 @@ function Top({
   )
   return (
     <VividBar
-      stand={
-        someoneTyping
-          ? Stand.Saying({
-              words: `${typing.map((seen) => seen.person.name).join(', ')} typing…`,
-              tone: 'ink-2',
-            })
-          : STAND[attention]
-      }
+      stand={standIn(
+        attention,
+        typing.map((seen) => seen.person.name),
+      )}
       origin={origin}
       present={others.map((seen) => seen.person)}
       actions={Option.match(sharing, {

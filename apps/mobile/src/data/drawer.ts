@@ -68,6 +68,19 @@ export function hideKeyboard() {
   Keyboard.dismiss()
 }
 
+/**
+ * A ref for the drawer's own view (`ui/Drawer.tsx`). The drawer's state is the app's, not a
+ * component's, so by itself it would outlive the signed-in app: a Person who signed out with the
+ * drawer open would leave it open, still answering Android's back button on the front door, and
+ * the stack of the next workspace would be drawn under it with its own back listener the newer
+ * of the two. React calls the returned cleanup when the view goes away, and the drawer is closed
+ * with it, at once: there is nothing left on screen for it to slide off.
+ */
+export const drawerLifetime = (): (() => void) => () => {
+  travel.value = 0
+  settleDrawer(false)
+}
+
 export function openDrawer() {
   hideKeyboard()
   travel.value = withSpring(1, DRAWER_SPRING)
