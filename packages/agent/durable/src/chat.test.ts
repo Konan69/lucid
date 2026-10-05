@@ -6,31 +6,26 @@ import {
   fauxProvider,
   fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux'
-import { createRegistry, Harness, MemoryStorage } from '@earendil-works/pi-durable'
-import {
-  DefaultChatTransport,
-  lastAssistantMessageIsCompleteWithApprovalResponses,
-  lastAssistantMessageIsCompleteWithToolCalls,
-  tool,
-  type UIMessage,
-} from 'ai'
-import { expect, it } from 'vitest'
+import { createRegistry } from '@earendil-works/pi-durable'
+import { tool } from 'ai'
+import { expect, it } from '@effect/vitest'
+import { Array as Arr, Effect, Option, Predicate } from 'effect'
 import { z } from 'zod'
 
-import { PlainChat } from './fixtures/chat.ts'
-import { respond } from './main.ts'
-import { toolsExtension } from './main.ts'
+import { ChatTurn, respond, toolsExtension } from './core.ts'
+import { memory } from './fixtures/harness.ts'
+import { consume } from './fixtures/reading.ts'
 
 const context = BACKGROUND_CONTEXT
 
 /** A harness with one approval tool and one person-answered tool, behind the HTTP handler. */
-async function server(paid: unknown[]) {
+const server = Effect.fn('Test.chatServer')(function* (paid: { amount: number }[]) {
   const faux = fauxProvider()
   const models = createModels()
   models.setProvider(faux.provider)
   const registry = createRegistry()
   registry.install(
-    await toolsExtension(
+    yield* toolsExtension(
       'shop',
       {
         pay: tool({
@@ -49,111 +44,106 @@ async function server(paid: unknown[]) {
       { approval: { pay: true } },
     ),
   )
-  const harness = await Harness.open(new MemoryStorage(), { models, registry }, context)
-  const root = await harness.root(context, {
-    agent: { model: { provider: 'faux', modelId: 'faux-1' } },
-  })
-  // The unmodified transport `useChat` uses by default, with fetch routed to the handler.
-  const transport = new DefaultChatTransport<UIMessage>({
-    api: 'http://durable.test/chat',
-    fetch: async (url, init) => respond(harness, root.id, new Request(url, init), context),
-  })
-  return { faux, harness, transport }
-}
-
-/** A client whose `finished()` resolves at the end of the next response it receives. */
-function client(
-  transport: DefaultChatTransport<UIMessage>,
-  sendAutomaticallyWhen: (options: { messages: UIMessage[] }) => boolean,
-) {
-  const waiters: (() => void)[] = []
-  const chat = new PlainChat({
-    transport,
-    sendAutomaticallyWhen,
-    onFinish: () => {
-      waiters.shift()?.()
-    },
-  })
-  const finished = () => new Promise<void>((resolve) => waiters.push(resolve))
-  return { chat, finished }
-}
+  const harness = yield* memory(models, registry)
+  const root = yield* Effect.promise(() =>
+    harness.root(context, {
+      agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+    }),
+  )
+  return { faux, harness, root }
+})
 
 const lastText = (messages: readonly Message[]) => {
-  const last = messages.at(-1)
-  if (last === undefined) return ''
-  return typeof last.content === 'string'
+  const last = Option.getOrThrow(Arr.last(messages))
+  return Predicate.isString(last.content)
     ? last.content
     : last.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('')
 }
 
-it('lets an AI SDK chat client approve a call and continues the same message', async () => {
-  const paid: unknown[] = []
-  const { faux, harness, transport } = await server(paid)
-  faux.setResponses([
-    fauxAssistantMessage([fauxToolCall('pay', { amount: 500 }, { id: 'call-pay' })], {
-      stopReason: 'toolUse',
-    }),
-    fauxAssistantMessage('Paid.'),
-  ])
-  const { chat, finished } = client(transport, lastAssistantMessageIsCompleteWithApprovalResponses)
-
-  await chat.sendMessage({ text: 'Pay the invoice' })
-  expect(chat.status).toBe('ready')
-  expect(chat.messages.at(-1)?.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
-    state: 'approval-requested',
-  })
-  expect(paid).toEqual([])
-
-  // What an Approve button does. The client resubmits by itself and reads the continuation.
-  const continued = finished()
-  await chat.addToolApprovalResponse({ id: 'call-pay', approved: true })
-  await continued
-
-  expect(paid).toEqual([{ amount: 500 }])
-  expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
-  const parts = chat.messages.at(-1)?.parts ?? []
-  expect(parts.find((part) => part.type === 'tool-pay')).toMatchObject({
-    state: 'output-available',
-    output: { receipt: 'paid 500' },
-  })
-  expect(parts.filter((part) => part.type === 'text')).toEqual([
-    expect.objectContaining({ text: 'Paid.' }),
-  ])
-  await harness.close(context)
-})
-
-it('lets an AI SDK chat client answer a tool that has no server execute', async () => {
-  const { faux, harness, transport } = await server([])
-  faux.setResponses([
-    fauxAssistantMessage(
-      [fauxToolCall('ask_person', { question: 'Which account?' }, { id: 'call-ask' })],
-      {
+/** Approval continuation keeps the same assistant message while the durable call runs exactly once. */
+it.live('approves a call and continues the same message', () =>
+  Effect.gen(function* () {
+    const paid: { amount: number }[] = []
+    const { faux, harness, root } = yield* server(paid)
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('pay', { amount: 500 }, { id: 'call-pay' })], {
         stopReason: 'toolUse',
-      },
-    ),
-    (request) => fauxAssistantMessage(`Using ${lastText(request.messages)}.`),
-  ])
-  const { chat, finished } = client(transport, lastAssistantMessageIsCompleteWithToolCalls)
+      }),
+      fauxAssistantMessage('Paid.'),
+    ])
+    const initial = yield* respond(
+      harness,
+      root.id,
+      ChatTurn.cases.Input.make({ messageId: 'pay', text: 'Pay the invoice' }),
+      context,
+    )
+    const before = yield* consume(initial, Option.none())
+    expect(before.message.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
+      state: 'approval-requested',
+    })
+    expect(paid).toEqual([])
+    const continued = yield* respond(
+      harness,
+      root.id,
+      ChatTurn.cases.Resume.make({
+        known: ['call-pay'],
+        decisions: [{ callId: 'call-pay', approved: true }],
+        outputs: [],
+      }),
+      context,
+    )
+    const after = yield* consume(continued, Option.some(before.message))
+    expect(paid).toEqual([{ amount: 500 }])
+    expect(after.message.id).toBe(before.message.id)
+    expect(after.message.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
+      state: 'output-available',
+      output: { receipt: 'paid 500' },
+    })
+    expect(after.message.parts.filter((part) => part.type === 'text')).toEqual([
+      expect.objectContaining({ text: 'Paid.' }),
+    ])
+  }),
+)
 
-  await chat.sendMessage({ text: 'Pay the invoice' })
-  expect(chat.messages.at(-1)?.parts.find((part) => part.type === 'tool-ask_person')).toMatchObject(
-    {
+/** A supplied answer reaches the model inside the existing run, instead of creating a user input. */
+it.live('answers a tool that has no server execute', () =>
+  Effect.gen(function* () {
+    const { faux, harness, root } = yield* server([])
+    faux.setResponses([
+      fauxAssistantMessage(
+        [fauxToolCall('ask_person', { question: 'Which account?' }, { id: 'call-ask' })],
+        { stopReason: 'toolUse' },
+      ),
+      (request) => fauxAssistantMessage(`Using ${lastText(request.messages)}.`),
+    ])
+    const initial = yield* respond(
+      harness,
+      root.id,
+      ChatTurn.cases.Input.make({ messageId: 'ask', text: 'Pay the invoice' }),
+      context,
+    )
+    const before = yield* consume(initial, Option.none())
+    expect(before.message.parts.find((part) => part.type === 'tool-ask_person')).toMatchObject({
       state: 'input-available',
       input: { question: 'Which account?' },
-    },
-  )
-
-  const continued = finished()
-  await chat.addToolOutput({ tool: 'ask_person', toolCallId: 'call-ask', output: 'savings' })
-  await continued
-
-  const parts = chat.messages.at(-1)?.parts ?? []
-  expect(parts.find((part) => part.type === 'tool-ask_person')).toMatchObject({
-    state: 'output-available',
-    output: 'savings',
-  })
-  expect(parts.filter((part) => part.type === 'text')).toEqual([
-    expect.objectContaining({ text: 'Using savings.' }),
-  ])
-  await harness.close(context)
-})
+    })
+    const continued = yield* respond(
+      harness,
+      root.id,
+      ChatTurn.cases.Resume.make({
+        known: ['call-ask'],
+        decisions: [],
+        outputs: [{ callId: 'call-ask', output: 'savings' }],
+      }),
+      context,
+    )
+    const after = yield* consume(continued, Option.some(before.message))
+    expect(after.message.parts.find((part) => part.type === 'tool-ask_person')).toMatchObject({
+      state: 'output-available',
+      output: 'savings',
+    })
+    expect(after.message.parts.filter((part) => part.type === 'text')).toEqual([
+      expect.objectContaining({ text: 'Using savings.' }),
+    ])
+  }),
+)

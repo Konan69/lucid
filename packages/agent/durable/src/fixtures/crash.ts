@@ -1,3 +1,5 @@
+import { Effect } from 'effect'
+import { runForPi } from '../pi.ts'
 // Child process of recovery.test.ts. It starts a run whose tool never returns, reports that the tool
 // is running, and is then killed by the test. Nothing here closes the harness: the point is an
 // unclean death with a tool call in flight.
@@ -33,10 +35,13 @@ registry.install(
         description: 'Build the report',
         parameters: Type.Object({}),
         replay: 'safe',
-        execute: () => {
-          process.stdout.write('tool-running\n')
-          return new Promise(() => {})
-        },
+        execute: (_args, _api, callbackContext) =>
+          runForPi(
+            Effect.sync(() => {
+              process.stdout.write('tool-running\n')
+            }).pipe(Effect.andThen(Effect.never)),
+            callbackContext.abortSignal,
+          ),
       }),
     ],
   }),

@@ -5,7 +5,7 @@ import { AbstractChat, type ChatInit, type ChatState, type ChatStatus, type UIMe
 
 class PlainState implements ChatState<UIMessage> {
   status: ChatStatus = 'ready'
-  error: Error | undefined = undefined
+  error: ChatState<UIMessage>['error'] = undefined
   messages: UIMessage[] = []
   pushMessage = (message: UIMessage) => {
     this.messages = [...this.messages, message]

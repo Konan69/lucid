@@ -1,9 +1,8 @@
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
-import type { UIMessageChunk } from 'ai'
-import { Array as Arr, Effect, Option, Schema, SchemaGetter, SchemaIssue, Stream } from 'effect'
+import { Array as Arr, Effect, Option, Schema, SchemaGetter, SchemaIssue } from 'effect'
 
-import { TurnInvalid, type PiFailed, type ConversationMissing, type RunMissing } from './errors.ts'
+import { TurnInvalid } from './errors.ts'
 import { answer, decide } from './holds.ts'
 import { continueRun, prepareRun } from './stream.ts'
 import { waiting } from './waiting.ts'
@@ -129,12 +128,7 @@ export const respond = Effect.fn('Durable.respond')(function* (
   context: Context,
 ) {
   return yield* ChatTurn.match(turn, {
-    Input: (
-      input,
-    ): Effect.Effect<
-      Stream.Stream<UIMessageChunk, ConversationMissing | PiFailed>,
-      ConversationMissing | PiFailed | RunMissing
-    > =>
+    Input: (input) =>
       prepareRun(
         harness,
         { conversationId, content: input.text, requestId: input.messageId },
