@@ -55,6 +55,17 @@ describe('a step, in words', () => {
     ).toMatchObject({ label: 'Did something' })
   })
 
+  it('says a built-in way of working like a saved one, and never by its runtime name', () => {
+    expect(
+      describeToolCall(
+        'activate_skill',
+        readAsked({ name: 'first-conversation' }),
+        readAnswered('loaded'),
+        'done',
+      ),
+    ).toEqual({ state: 'done', label: 'Read how it does this' })
+  })
+
   it('leads every step with what Vivid said it was for', () => {
     expect(
       describeToolCall(

@@ -71,6 +71,7 @@ const ICON = new Map<string, LucideIcon>([
   ['remember', Brain],
   ['forget', Brain],
   ['correct', Brain],
+  ['activate_skill', ListChecks],
   ['read_skill', ListChecks],
   ['save_skill', ListChecks],
   ['create_routine', Repeat2],
