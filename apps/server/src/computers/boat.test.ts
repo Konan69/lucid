@@ -956,7 +956,8 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         yield* Ref.set(evidence.free, new Set<Size>())
         // Vivid needs the Computer for a Run; Boat has no machine of any size.
         const refused = yield* store.exec(first.id, command).pipe(Effect.flip)
-        expect(refused).toMatchObject({ reason: machineFailureReason(new MachineNoCapacity()) })
+        // The provider's own reason, not "the Computer is stopped": the start handed it on.
+        expect(refused).toBeInstanceOf(MachineNoCapacity)
         expect(
           (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
         ).toBe('Stopped')
