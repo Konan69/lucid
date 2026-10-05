@@ -103,18 +103,17 @@ namespace Vivid.Windows
         internal static Failure Gone()
         { return new WindowGone(); }
         // The inspected notes expose activation but do not specify native focus internals.
-        // Round-three design: attach input queues only while the Person is idle, restore,
+        // Round-three design: attach input queues, restore,
         // bring forward and detach in finally; never synthesize an Alt/key gesture.
         // Microsoft AttachThreadInput requires message queues and distinct thread ids.
         internal static void Activate(Window window, Budget budget)
         {
             for (int attempt = 0; attempt < 3; attempt++)
             {
-                budget.Check(); Activity.RequireIdle();
+                budget.Check();
                 if (IsForeground(window) && !Native.IsIconic(window.Handle)) return;
                 Focus(window);
                 Receipt(window, budget);
-                Activity.RequireIdle();
                 if (IsForeground(window)) return;
             }
             Foreground(window);
@@ -144,9 +143,7 @@ namespace Vivid.Windows
                 // the frame HWND's thread. Attach that actual foreground input queue too.
                 if (focused != 0 && focused != current && focused != foreground && focused != target)
                     attachedFocus = Native.AttachThreadInput(current, focused, true);
-                Activity.RequireIdle();
                 if (Native.IsIconic(window.Handle)) Native.ShowWindowAsync(window.Handle, 9);
-                Activity.RequireIdle();
                 bool brought = Native.BringWindowToTop(window.Handle);
                 bool accepted = Native.SetForegroundWindow(window.Handle);
                 if (!accepted || !IsForeground(window))

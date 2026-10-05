@@ -62,7 +62,6 @@ namespace Vivid.Windows
             turn.Check();
             Window window = windows.Resolve(request.Parameters.Object("window"));
             var guard = new InputGuard(turn, budget, window);
-            Shells.Verify(window);
             Integrity.Verify(window);
             try
             {
@@ -108,7 +107,6 @@ namespace Vivid.Windows
             bool includePicture = parameters.Flag("include_screenshot", true);
             if (!includeText && !includePicture)
                 throw Fields.Invalid("request");
-            Shells.Verify(window);
             var result = new Dictionary<string, object> { { "window", window } };
             TextSnapshot textSnapshot = null;
             PictureSnapshot pictureSnapshot = null;

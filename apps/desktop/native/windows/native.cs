@@ -98,7 +98,7 @@ namespace Vivid.Windows
         [DllImport("user32.dll")] internal static extern IntPtr WindowFromPoint(Point point);
         [DllImport("user32.dll")] internal static extern IntPtr GetAncestor(IntPtr window, uint flags);
         [DllImport("user32.dll")] internal static extern int GetSystemMetrics(int index);
-        [DllImport("user32.dll")] internal static extern short GetAsyncKeyState(int key);
+        [DllImport("user32.dll")] internal static extern bool GetWindowDisplayAffinity(IntPtr window, out uint affinity);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern short VkKeyScanEx(char character, IntPtr layout);
         [DllImport("user32.dll")] internal static extern IntPtr GetKeyboardLayout(uint thread);
         [DllImport("user32.dll", SetLastError = true)] internal static extern uint SendInput(uint count, Input[] inputs, int size);

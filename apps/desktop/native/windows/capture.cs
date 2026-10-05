@@ -106,6 +106,10 @@ namespace Vivid.Windows
                 if (handle == window.Handle) return false;
                 Native.Rect other;
                 if (!Native.IsWindowVisible(handle) || Native.IsIconic(handle) || !Native.GetWindowRect(handle, out other)) return true;
+                // A window Windows itself leaves out of captures (WDA_EXCLUDEFROMCAPTURE, 0x11)
+                // is not in the copied pixels, so it does not occlude: Vivid's own notice is one.
+                uint affinity;
+                if (Native.GetWindowDisplayAffinity(handle, out affinity) && affinity == 0x11) return true;
                 if (other.Left < target.Right && other.Right > target.Left && other.Top < target.Bottom && other.Bottom > target.Top)
                 { blocked = true; return false; }
                 return true;
