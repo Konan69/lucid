@@ -282,11 +282,19 @@ const manifestSections = (manifest) => [
   { section: 'optionalDependencies', dependencies: manifest.optionalDependencies },
 ]
 
+/** Flue's Pi line and Pi Durable's line coexist until Vivid leaves Flue; no other manifest is exempt. */
+export function expectedDependencyVersion(relativePath, name) {
+  if (relativePath === 'packages/agent/durable/package.json' && name === '@earendil-works/pi-ai')
+    return '1.0.4'
+  return versions[name]
+}
+
 /** Report version drift in one dependency section. */
 function dependencySectionErrors(relativePath, section, dependencies, catalog) {
   if (dependencies === undefined) return []
   const errors = []
-  for (const [name, expected] of Object.entries(versions)) {
+  for (const name of Object.keys(versions)) {
+    const expected = expectedDependencyVersion(relativePath, name)
     const declared = dependencies[name]
     const actual = resolveWorkspaceVersion(name, declared, catalog)
     if (declared !== undefined && actual !== expected) {
