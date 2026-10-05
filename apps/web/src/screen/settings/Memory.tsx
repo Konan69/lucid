@@ -25,8 +25,8 @@ export function Memory() {
     return (
       <Section title="What Vivid knows">
         <Empty>
-          Memory is not available on this installation right now. Vivid still works; it just does
-          not carry things between threads.
+          Vivid’s memory is not answering right now. Nothing is lost: what Vivid knows is kept, and
+          it will be here again as soon as memory answers.
         </Empty>
       </Section>
     )

@@ -18,8 +18,9 @@ import {
   type WriteBatch,
 } from '@helix-db/helix-db'
 import { Memory, MemoryBrief, MemoryId, PersonId, ServiceUnavailable } from '@vivid/contracts'
-import { Config, Context, type Duration, Effect, Layer, Option, Schedule, Schema } from 'effect'
+import { Context, Duration, Effect, Exit, Layer, Option, Schedule, Schema } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
+import { requiredSetting } from '../config.ts'
 import { embeddingDimensions, embeddingModel, MemoryRateLimited } from './embeddings.js'
 
 /** Partition and readable scope keys are separate authorities; no query derives additional scopes. */
@@ -601,7 +602,7 @@ const receiptedOutcome = Effect.fn('HelixMemory.receiptedOutcome')(function* (
   session: HelixSession,
   query: QueryRequest,
 ) {
-  const response = yield* resendHelix(session.client, session.url, query)
+  const response = yield* session.resend(query)
   const rows = yield* decodeReceiptedWrite(response).pipe(
     Effect.mapError(() => HelixMalformed.make({})),
   )
@@ -616,9 +617,7 @@ function receipted(session: HelixSession) {
   return {
     /** A historical receipt is independent of the recorded memory's present lifecycle. */
     receipt: Effect.fn('HelixMemory.receipt')(function* (input: ReceiptIdentity) {
-      const response = yield* requestHelix(
-        session.client,
-        session.url,
+      const response = yield* session.request(
         readBatch()
           .varAs('receipts', receiptNode(input).project(receiptProjection))
           .returning(['receipts'])
@@ -679,8 +678,17 @@ const decodeCreation = HttpClientResponse.schemaBodyJson(
 )
 
 interface HelixSession {
-  readonly client: HttpClient.HttpClient
-  readonly url: string
+  /**
+   * One attempt, made only once the indexes are known to be active. Operations never hold the raw
+   * client or address, so none of them can reach Helix around the readiness.
+   */
+  readonly request: (
+    query: QueryRequest,
+  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HelixFailure>
+  /** The same, sent again after a transaction conflict; only for a write whose second application converges. */
+  readonly resend: (
+    query: QueryRequest,
+  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HelixFailure>
   readonly records: (
     query: QueryRequest,
   ) => Effect.Effect<ReadonlyArray<MemoryRecord>, HelixFailure>
@@ -691,7 +699,7 @@ interface HelixSession {
 
 /** Reads share one decoded session and constrain candidates before ranking or traversing. */
 function readers(session: HelixSession) {
-  const { client, url, records } = session
+  const { request, records } = session
   return {
     /** Enumerate only scope metadata; the policy authorizes Threads before reading their content. */
     scopes: Effect.fn('HelixMemory.scopes')(function* (partition: MemoryPartition) {
@@ -705,7 +713,7 @@ function readers(session: HelixSession) {
         )
         .returning(['scopes'])
         .toQueryRequest()
-      const response = yield* requestHelix(client, url, query)
+      const response = yield* request(query)
       const rows = yield* decodeScopes(response).pipe(
         Effect.mapError(() => HelixMalformed.make({})),
       )
@@ -759,7 +767,7 @@ function readers(session: HelixSession) {
           embedding: [...input.embedding],
           limit: BigInt(input.limit),
         })
-      const response = yield* requestHelix(client, url, query)
+      const response = yield* request(query)
       return yield* decodeSearch(response).pipe(Effect.mapError(() => HelixMalformed.make({})))
     }),
     /** One graph hop rechecks edge tenancy and neighbor scope before limiting context. */
@@ -797,11 +805,9 @@ function readers(session: HelixSession) {
 
 /** Rebuild lazily only when an explicitly readable scope changed after the page, including superseded or deleted records. No other Person page is deleted. */
 function readingBrief(session: HelixSession) {
-  const { client, url } = session
+  const { request } = session
   return Effect.fn('HelixMemory.briefGet')(function* (input: BriefIdentity & ReadScope) {
-    const response = yield* requestHelix(
-      client,
-      url,
+    const response = yield* request(
       readBatch()
         .varAs('briefs', briefNode(input).project([Projection.property('payload', 'brief')]))
         .varAs(
@@ -924,7 +930,7 @@ function writers(session: HelixSession) {
 
 /** Creation, UPDATES edge, and old-version invalidation commit in one write request. */
 function superseding(session: HelixSession) {
-  const { client, url } = session
+  const { request } = session
   return Effect.fn('HelixMemory.supersede')(function* (input: {
     readonly partition: MemoryPartition
     readonly oldId: MemoryId
@@ -992,7 +998,7 @@ function superseding(session: HelixSession) {
       )
       .returning(['receipt'])
       .toQueryRequest(insertionParams, values)
-    const response = yield* requestHelix(client, url, query)
+    const response = yield* request(query)
     const created = yield* decodeCreation(response).pipe(
       Effect.mapError(() => HelixMalformed.make({})),
     )
@@ -1217,44 +1223,88 @@ const readyIndexes = Effect.fn('HelixMemory.readyIndexes')(function* (
   )
 })
 
-/** Acquisition bootstraps indexes before accepting writes. No SDK Promise or raw fetch crosses this boundary. */
+/**
+ * Declare every index, check the stored embedding space and record it. Nothing here is specific to
+ * one call, and all of it converges when run again (`IfNotExists`, a guarded declaration), so it
+ * is safe to repeat until it has succeeded once.
+ */
+const bootstrap = Effect.fn('HelixMemory.bootstrap')(function* (
+  session: { readonly client: HttpClient.HttpClient; readonly url: string },
+  expected: { readonly model: string; readonly dimensions: number },
+) {
+  // The declaration index first: `checkIndex` reads through it before anything else is built.
+  yield* readyIndexes(session, [
+    {
+      name: 'MemoryIndex.indexId',
+      spec: IndexSpec.nodeUniqueEquality('MemoryIndex', 'indexId'),
+    },
+  ])
+  yield* checkIndex(session, expected)
+  yield* readyIndexes(session, requiredIndexes(expected.dimensions))
+  yield* resendHelix(session.client, session.url, declareIndex(expected.model, expected.dimensions))
+  yield* checkIndex(session, expected)
+})
+
+const isIndexMismatch = Schema.is(MemoryIndexMismatch)
+
+/**
+ * No SDK Promise or raw fetch crosses this boundary.
+ *
+ * Memory is part of every Vivid, so `VIVID_HELIX_URL` is required while the server is composed and
+ * its absence stops launch naming it. There is no server that runs "without memory".
+ *
+ * Helix itself not answering, or an index still building, is a different thing: an infrastructure
+ * failure, which can begin and end while the server runs. It is never a state the Layer settles
+ * into. The bootstrap is a readiness every operation waits for: it runs until it has succeeded
+ * once and is then remembered for the life of the process, while a failed attempt is forgotten at
+ * once, so the next call tries again and memory is back as soon as Helix answers, with no restart.
+ * Callers that arrive while an attempt is running share it rather than starting their own
+ * (`Effect.cachedWithTTL` with a time to live taken from the `Exit`, effect `Effect.ts`).
+ *
+ * Before this, a failed bootstrap at start either stopped the whole server (Helix unreachable) or
+ * switched memory off until the next restart (an index not yet active).
+ *
+ * The first attempt is made here, so a healthy start serves its first call warm. Its failure
+ * stops launch only when it is a setting that is wrong: stored vectors made by another embedding
+ * model or size (`MemoryIndexMismatch`) cannot be fixed by waiting. Any other failure is logged
+ * and left to the next call.
+ */
 export const helixMemoryLayer = Layer.effect(
   HelixMemory,
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient
-    const url = yield* Config.String('VIVID_HELIX_URL').pipe(
-      Effect.mapError(() =>
-        ServiceUnavailable.make({ service: 'memory', message: 'VIVID_HELIX_URL is unconfigured' }),
+    const url = yield* requiredSetting(
+      'VIVID_HELIX_URL',
+      Schema.NonEmptyString,
+      'the address of the Helix memory service',
+    )
+    const dimensions = yield* embeddingDimensions
+    const model = yield* embeddingModel
+    const ready = yield* Effect.cachedWithTTL(
+      bootstrap({ client, url }, { model, dimensions }),
+      (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+    )
+    yield* ready.pipe(
+      Effect.catchIf(
+        (failure) => !isIndexMismatch(failure),
+        (failure) =>
+          Effect.logWarning('Memory is not answering yet; the next memory call tries again', {
+            tag: failure._tag,
+          }),
       ),
     )
-    const dimensions = yield* embeddingDimensions.pipe(
-      Effect.mapError(() =>
-        ServiceUnavailable.make({
-          service: 'memory',
-          message: 'VIVID_EMBEDDING_DIMENSIONS is invalid',
-        }),
-      ),
-    )
-    const model = yield* embeddingModel.pipe(
-      Effect.mapError(() =>
-        ServiceUnavailable.make({ service: 'memory', message: 'VIVID_EMBEDDING_MODEL is invalid' }),
-      ),
-    )
-    const session = { client, url }
-    // The declaration index first: `checkIndex` reads through it before anything else is built.
-    yield* readyIndexes(session, [
-      {
-        name: 'MemoryIndex.indexId',
-        spec: IndexSpec.nodeUniqueEquality('MemoryIndex', 'indexId'),
-      },
-    ])
-    yield* checkIndex(session, { model, dimensions })
-    yield* readyIndexes(session, requiredIndexes(dimensions))
-    yield* resendHelix(client, url, declareIndex(model, dimensions))
-    yield* checkIndex(session, { model, dimensions })
+    /** Every operation's request waits for readiness first; a failed readiness fails that call, typed. */
+    const request = Effect.fn('HelixMemory.send')(function* (query: QueryRequest) {
+      yield* ready
+      return yield* requestHelix(client, url, query)
+    })
+    const resend = Effect.fn('HelixMemory.sendAgain')(function* (query: QueryRequest) {
+      yield* ready
+      return yield* resendHelix(client, url, query)
+    })
     /** Typed projection decoding is shared by list, exact lookups, and bounded graph expansion. */
     const records = Effect.fn('HelixMemory.records')(function* (query: QueryRequest) {
-      const response = yield* requestHelix(client, url, query)
+      const response = yield* request(query)
       const decoded = yield* decodeRows(response).pipe(
         Effect.mapError(() => HelixMalformed.make({})),
       )
@@ -1262,18 +1312,19 @@ export const helixMemoryLayer = Layer.effect(
     })
     /** Mutation results are deliberately void; authoritative state is read through typed projections. */
     const write = Effect.fn('HelixMemory.write')(function* (query: QueryRequest) {
-      yield* requestHelix(client, url, query)
+      yield* request(query)
     })
     const rewrite = Effect.fn('HelixMemory.rewrite')(function* (query: QueryRequest) {
-      yield* resendHelix(client, url, query)
+      yield* resend(query)
     })
+    const session: HelixSession = { request, resend, records, write, rewrite }
     return HelixMemory.of({
-      ...readers({ client, url, records, write, rewrite }),
-      ...writers({ client, url, records, write, rewrite }),
-      ...receipted({ client, url, records, write, rewrite }),
-      link: linking({ client, url, records, write, rewrite }),
-      briefGet: readingBrief({ client, url, records, write, rewrite }),
-      supersede: superseding({ client, url, records, write, rewrite }),
+      ...readers(session),
+      ...writers(session),
+      ...receipted(session),
+      link: linking(session),
+      briefGet: readingBrief(session),
+      supersede: superseding(session),
     })
   }),
 )

@@ -48,7 +48,7 @@ import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { silentChangesLayer } from '../live/changes.ts'
-import { silentLearningLayer } from '../memory/learn.ts'
+import { silentLearningLayer } from '../memory/testing.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import {
   Admission,
