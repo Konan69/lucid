@@ -5,7 +5,6 @@ import { draftPlace, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
 import { createRef, useCallback, useState, useSyncExternalStore } from 'react'
 import { ScrollView, View } from 'react-native'
-import Animated, { useAnimatedRef } from 'react-native-reanimated'
 import { arrivalOf, homeShows, Showing, type HomeScreen } from '../data/arrival'
 import { draft, useDraft } from '../data/drafts'
 import { LiveState, useLive, useLiveData } from '../data/live'
@@ -14,7 +13,7 @@ import type { ComposerEditorHandle } from '../native/composer/types'
 import { BarRoom, NO_ACTIONS, NOBODY, VividBar } from '../ui/Bar'
 import { Composer } from '../ui/Composer'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
-import { Stand, type Origin } from '../ui/Presence'
+import { Stand, useOrigin, type Origin } from '../ui/Presence'
 import { Label, Notice, styles } from '../ui/ui'
 import { useGo, useMe } from '../workspace'
 import { First, Waiting } from './home/First'
@@ -47,7 +46,7 @@ export function Home() {
   const me = useMe()
   const data = useLiveData()
   const threads = useLive(data.live.threads)
-  const origin = useAnimatedRef<Animated.View>()
+  const origin = useOrigin()
   const start = useStart()
   const showing = homeShows(useArrival(), threads)
   const working =

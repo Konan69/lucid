@@ -340,7 +340,7 @@ const roomBeside = (end: BarEnd): number => {
  * first inside the screen. Where the bar is solid the screen starts below it and nothing can
  * float over it, so the capsule goes in the bar's own title slot and changes at once.
  *
- * `origin` is the composer's button on the same screen, where "thinking" leaves from.
+ * `origin` is the composer on the same screen, where a send leaves from.
  */
 export function VividBar({
   stand,

@@ -15,6 +15,7 @@ import Animated, {
   useSharedValue,
   withTiming,
   type AnimatedRef,
+  type SharedValue,
 } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ThinkingOrb } from '../../vendor/orb'
@@ -27,8 +28,8 @@ import { Face, Label, TARGET, type Tone } from './ui'
 /**
  * Vivid at the top centre of a screen: a capsule of the system's glass holding its face and its
  * name, between the bar's own buttons. It is where a Person looks to see how Vivid is doing, so
- * while Vivid works the capsule widens to the orb and the word for it, and the orb arrives there
- * from the composer the Person just sent from.
+ * while Vivid works the capsule widens to the orb and the word for it, and what the Person sends
+ * rises to it from the composer.
  *
  * The buttons either side are the system's bar items (`ui/Bar.tsx`). The capsule is the same
  * material the composer is (`AnimatedGlassMaterial`), placed where the bar's title would be: the
@@ -111,7 +112,7 @@ function Piece({
 }
 
 /**
- * The orb arrives after the disc that carries it from the composer has (`Floating`), so the two
+ * The orb comes in as the disc that rose from the composer reaches it (`Floating`), so the two
  * are never both at the capsule at full strength. With reduced motion there is no disc and the
  * orb is drawn at once.
  */
@@ -219,6 +220,9 @@ export function Capsule({
           <Piece key={words} morphs={morphs} entering={APPEAR} shrinks>
             <Label
               numberOfLines={1}
+              // The capsule is as tall as a bar button whatever the text size, as the system's own
+              // bar is, so its words grow with the Person's setting only as far as they fit.
+              maxFontSizeMultiplier={1.3}
               tone={tone}
               style={{ fontWeight: m['weight-strong'], lineHeight: SLOT }}
             >
@@ -232,50 +236,69 @@ export function Capsule({
 }
 
 /**
- * The composer's button, as the place "thinking" leaves from. A screen makes one with
- * `useAnimatedRef` and hands it to its composer, which puts it on the button, and to its bar.
+ * Where "thinking" leaves from: the composer's button, and each time the Person sends with it.
+ * A screen makes one (`useOrigin`) and hands it to its composer, which puts `button` on the
+ * button's round and counts a send in `sends`, and to its bar, which flies the disc.
+ *
+ * It is the send that starts the flight, not Vivid's state. A Thread that opens with Vivid
+ * already at work, or that Vivid starts on by itself, has had nothing leave its composer; and the
+ * Person's press is felt at once, before any server has said that Vivid is working.
  */
-export type Origin = AnimatedRef<Animated.View>
+export interface Origin {
+  readonly button: AnimatedRef<Animated.View>
+  readonly sends: SharedValue<number>
+}
+
+/** One screen's origin. Both parts keep their identity for as long as the screen is mounted. */
+export function useOrigin(): Origin {
+  const button = useAnimatedRef<Animated.View>()
+  const sends = useSharedValue(0)
+  return { button, sends }
+}
 
 /** The round the composer's button is drawn as (`ui/Composer.tsx`), which is what leaves it. */
 const DISC = 30
 
 /**
- * How the disc travels: one timed movement that starts fast and settles, in under a third of a
- * second. Nothing threw it, so it is not on a spring, and it never starts slowly: the Person has
- * just pressed send and is watching. The curve is the strong ease-out the design stack names for
- * anything that arrives.
+ * How the disc travels: one timed movement that starts fast and settles, in three tenths of a
+ * second, which is the most the design stack gives anything in the interface. Nothing threw it,
+ * so it is not on a spring, and it never starts slowly: the Person has just pressed send and is
+ * watching. The curve is the strong ease-out the stack names for anything that arrives.
  */
 const FLIGHT = {
-  duration: 320,
+  duration: 300,
   easing: Easing.bezier(0.23, 1, 0.32, 1),
   reduceMotion: ReduceMotion.System,
 } as const
 
-/** A point in the layer the disc flies in. */
+/** A point in the window. */
 interface Point {
   readonly x: number
   readonly y: number
 }
 const NOWHERE: Point = { x: 0, y: 0 }
 
+/** The disc when it is not flying: not there. */
+const LANDED = { opacity: 0, transform: [{ translateX: 0 }, { translateY: 0 }, { scale: 1 }] }
+
 /**
  * The capsule floating over a screen, under the system's transparent bar, and the disc that
- * carries "thinking" up to it.
+ * carries a send up to it.
  *
- * When Vivid starts thinking on a screen the Person is on, a disc in the send button's colour
- * leaves that button, rises to the capsule and lands where the orb stands, shrinking from the
- * button's size to the orb's. That is the whole morph: what the Person pressed becomes what is
- * now thinking, and it ends at the top centre, where the state stays for the rest of the Run.
+ * When the Person sends, a disc in the send button's colour leaves that button, rises to the
+ * capsule and lands where the face stands, shrinking from the button's size to the orb's, which
+ * is what is there by the time it lands. That is the whole morph: what the Person pressed becomes
+ * what is now thinking, and it ends at the top centre, where the state stays for the rest of the
+ * Run.
  *
  * - It runs on the UI thread and moves by transform and opacity alone; React renders nothing.
- * - Both ends are measured where they are at that moment (the composer rides the keyboard), in
- *   the frame the layout already has, so the disc lands where the capsule will be once it has
- *   finished widening.
+ * - It leaves from where the button is at that moment: the composer rides the keyboard.
+ * - It lands where the capsule's slot is in the layout of that frame. The capsule widens as
+ *   Vivid starts thinking, which moves the slot, and the layout knows the slot's new place as
+ *   soon as React has committed it, before the capsule has finished widening. So the place is
+ *   read every frame of the flight (about twenty of them) and the disc ends on the orb.
  * - Its sideways travel lags its rise (the square of the progress), so the path curves in toward
  *   the capsule instead of cutting a straight diagonal across the conversation.
- * - A screen that opens with Vivid already thinking flies nothing: nothing left the composer.
- * - If Vivid stops before the disc lands, the disc is gone at once.
  * - With reduced motion nothing travels; the capsule simply shows the orb.
  *
  * The layer takes no touches. `zIndex` puts it over the conversation and the composer, which are
@@ -295,47 +318,41 @@ export function Floating({
   const layer = useAnimatedRef<Animated.View>()
   const slot = useAnimatedRef<Animated.View>()
   const flight = useSharedValue(0)
+  // Where the flight began, and where the layer itself is, both in the window's own points.
   const from = useSharedValue(NOWHERE)
-  const to = useSharedValue(NOWHERE)
-  const thinking = Stand.$is('Thinking')(stand)
+  const ground = useSharedValue(NOWHERE)
 
   useAnimatedReaction(
-    () => thinking,
+    () => origin.sends.get(),
     (now, before) => {
-      if (!now) {
-        flight.set(0)
-        return
-      }
-      // `before` is null the first time: the screen was drawn already thinking.
-      if (before !== false) return
-      const start = measure(origin)
-      const end = measure(slot)
+      // `before` is null when the screen is first drawn: nothing has been sent from it yet.
+      if (before === null || now === before) return
+      const button = measure(origin.button)
       const frame = measure(layer)
-      if (start === null || end === null || frame === null) return
-      from.set({
-        x: start.pageX - frame.pageX + start.width / 2,
-        y: start.pageY - frame.pageY + start.height / 2,
-      })
-      to.set({
-        x: end.pageX - frame.pageX + end.width / 2,
-        y: end.pageY - frame.pageY + end.height / 2,
-      })
+      if (button === null || frame === null) return
+      from.set({ x: button.pageX + button.width / 2, y: button.pageY + button.height / 2 })
+      ground.set({ x: frame.pageX, y: frame.pageY })
       flight.set(0)
       flight.set(withTiming(1, FLIGHT))
     },
-    [thinking],
   )
 
   const flying = useAnimatedStyle(() => {
     const progress = flight.get()
+    // At rest, and the one time this runs outside the UI thread, nothing is measured.
+    if (progress <= 0 || progress >= 1) return LANDED
+    const landing = measure(slot)
+    if (landing === null) return LANDED
     const start = from.get()
-    const end = to.get()
+    const base = ground.get()
+    const endX = landing.pageX + landing.width / 2
+    const endY = landing.pageY + landing.height / 2
     return {
       // There for the journey only: in over the first steps, and out as it reaches the orb.
       opacity: interpolate(progress, [0, 0.05, 0.92, 1], [0, 1, 1, 0]),
       transform: [
-        { translateX: start.x + (end.x - start.x) * progress * progress - DISC / 2 },
-        { translateY: start.y + (end.y - start.y) * progress - DISC / 2 },
+        { translateX: start.x + (endX - start.x) * progress * progress - base.x - DISC / 2 },
+        { translateY: start.y + (endY - start.y) * progress - base.y - DISC / 2 },
         { scale: interpolate(progress, [0, 1], [1, ORB / DISC]) },
       ],
     }

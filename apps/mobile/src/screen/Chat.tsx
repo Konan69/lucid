@@ -22,7 +22,6 @@ import {
 import { useIsFocused } from '@react-navigation/native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { Monitor, Share2, Users } from 'lucide-react-native'
-import Animated, { useAnimatedRef } from 'react-native-reanimated'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { commit } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
@@ -35,7 +34,7 @@ import { Composer } from '../ui/Composer'
 import { Bar, BarRoom, NO_ACTIONS, VividBar, type BarAction } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
-import { Stand, type Origin } from '../ui/Presence'
+import { Stand, useOrigin, type Origin } from '../ui/Presence'
 import {
   Button,
   EDGE,
@@ -170,7 +169,7 @@ function Top({
   present: ThreadDetail['present']
   /** Vivid is answering on this phone right now, which the Thread's record may not say yet. */
   working: boolean
-  /** The composer's button, where "thinking" leaves from on its way to the top. */
+  /** The composer on this screen, where a send leaves from on its way to the top. */
   origin: Origin
   onShare: () => void
 }) {
@@ -336,7 +335,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
   const typed = useDraft(place)
   const setTyping = useAtomSet(data.typingIn(id))
   const [sharing, setSharing] = useState(false)
-  const origin = useAnimatedRef<Animated.View>()
+  const origin = useOrigin()
   const thread = Option.map(detail, (value) => value.thread)
   const sending = useSend(id, thread, agent, place)
   const { shared } = sending

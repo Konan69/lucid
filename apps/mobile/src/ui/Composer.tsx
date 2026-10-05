@@ -182,8 +182,8 @@ export function Composer({
 }: {
   ref?: Ref<ComposerEditorHandle>
   /**
-   * Put on the button's round, so the screen's bar can find where "thinking" leaves from
-   * (`ui/Presence.tsx`).
+   * Where a send leaves from on its way to the top of the screen (`ui/Presence.tsx`): put on the
+   * button's round, and told each time the Person sends.
    */
   origin: Origin
   value: string
@@ -230,8 +230,13 @@ export function Composer({
   function send() {
     if (idle) return
     commit()
-    if (working) onStop()
-    else onSend()
+    if (working) {
+      onStop()
+      return
+    }
+    // Counted on the UI thread's own value, so the disc leaves in the frame of the press.
+    origin.sends.set((count) => count + 1)
+    onSend()
   }
 
   return (
@@ -282,7 +287,7 @@ export function Composer({
               shape is a capsule, so the views around it keep their places in the tree. */}
           {open && <View style={{ height: 4 }} />}
           <Animated.View layout={MORPH} style={state.act}>
-            <Act origin={origin} working={working} idle={idle} onPress={send} />
+            <Act round={origin.button} working={working} idle={idle} onPress={send} />
           </Animated.View>
         </Surface>
       </BorderBeam>
@@ -296,12 +301,13 @@ export function Composer({
  * (`src/components/ComposerToolbar.tsx`). With nothing to do it is dimmed and does not answer.
  */
 function Act({
-  origin,
+  round,
   working,
   idle,
   onPress,
 }: {
-  origin: Origin
+  /** Where the screen finds the button's round, to fly a send from it. */
+  round: Origin['button']
   working: boolean
   idle: boolean
   onPress: () => void
@@ -323,7 +329,7 @@ function Act({
       })}
     >
       <Animated.View
-        ref={origin}
+        ref={round}
         // Kept as a view of its own, so there is always something to measure.
         collapsable={false}
         style={{
