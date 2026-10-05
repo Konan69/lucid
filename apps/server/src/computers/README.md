@@ -44,6 +44,19 @@ the record names a binding and a copied table has the same binding.
 So `VIVID_BOAT_MACHINE` belongs in one environment only. A local or test stack must not name a
 machine another server's account holds: it would be refused at the first wake, having woken it.
 
+A start never waits for Boat to find a machine. Boat accepts a resume when it has no machine of
+that size and lets it wait, with no error to read: on 5 October 2026 the installation's machine sat
+in `provisioning` for two hours that way. So every start is a resume that may not wait (`failFast`,
+`boat/transport.ts`): Boat answers in about two seconds, and when it has no machine of the
+configured size (`VIVID_BOAT_SIZE`) the start asks for each larger size in turn and logs the move.
+The next start asks for the configured size first again, so a machine moved up comes back down
+when Boat has one. A resume that another caller left waiting (an SSH wake, the dashboard) is
+stopped back to its saved disk once Vivid has seen it wait ten seconds, and started the same way
+(`boat/lifecycle.ts`, `withdrawn`). When no size has a machine, nothing was started: the Computer
+stays stopped, the call says the provider has no machine free, and the next need asks again
+without anyone pressing Start. The creation of a Person's first machine is not covered: it still
+waits for Boat.
+
 Boat itself not answering is not a state the server is in. A connection that fails, a reply that
 does not come in time, or Boat's own 5xx is an outage: the call that met it is refused with
 "Vivid’s computer is not answering right now", nothing about it is written to the Computer's
