@@ -196,7 +196,7 @@ const arrivalOf = (
     Waiting: () =>
       Option.match(
         Option.filter(
-          pathname === '/' ? readSignInReturn(searchParams) : Option.none(),
+          pathname === '/' ? readSignInReturn(Object.fromEntries(searchParams)) : Option.none(),
           (back) => back.state === state,
         ),
         { onNone: () => stray, onSome: (back): Arrival => Arrival.cases.Return.make({ back }) },
@@ -482,16 +482,29 @@ export const googleSignIn = Effect.fn('DesktopSignIn.make')(function* (
   })
 
   /**
-   * Waits for the attempt to end and hands its ending over, once: the attempt is forgotten as
-   * it is handed over, unless another has replaced it in the meantime.
+   * Waits for the attempt to end and hands its ending over, once: whoever is first to come back
+   * from the wait takes it and the attempt is forgotten. Anyone else who was waiting on the same
+   * attempt, or who waited on one that has since been cancelled or replaced, is told
+   * `Cancelled`.
+   *
+   * The reference does the same thing in the same order: `authenticate` deletes the secret from
+   * its map before it sends the trade, so the secret is used once however many times it is
+   * asked for. The check and the forgetting below are one step with nothing awaited between
+   * them, so two waiters cannot both pass.
    */
   const ended = Effect.fn('DesktopSignIn.ended')(function* () {
     const attempt = current
     if (Option.isNone(attempt)) return SignInEnding.cases.Cancelled.make({})
     const ending = yield* Deferred.await(attempt.value.ended)
-    if (Option.exists(current, (now) => now === attempt.value)) current = Option.none()
+    if (!Option.exists(current, (now) => now === attempt.value))
+      return SignInEnding.cases.Cancelled.make({})
+    current = Option.none()
     return ending
   })
+
+  // When the app quits, a window still waiting is told the attempt is over instead of being
+  // left with a promise that never settles. `stop` says so before it interrupts the listening.
+  yield* Effect.addFinalizer(() => stop())
 
   const signIn: GoogleSignIn = {
     begin: Semaphore.withPermit(turn, begin()),

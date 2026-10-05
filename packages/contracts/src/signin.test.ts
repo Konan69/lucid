@@ -24,30 +24,36 @@ const code = SignInCode.make('a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6')
 const port = LoopbackPort.make(49_321)
 const decodeStart = Schema.decodeUnknownOption(SignInStart)
 
+/** The names and values after the `?` of an address, as a listener reads them off a request. */
+const queryOf = (address: string): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    address
+      .slice(address.indexOf('?') + 1)
+      .split('&')
+      .map((pair) => pair.split('=').map(decodeURIComponent)),
+  )
+
 /** What the shell's listener is handed for an address the server sent a browser to. */
-const arrivingAt = (address: string) => readSignInReturn(new URL(address).searchParams)
+const arrivingAt = (address: string) => readSignInReturn(queryOf(address))
 
 describe('the desktop sign-in addresses', () => {
   it('starts on the server the shell saved, with exactly what the server reads back', () => {
-    const address = new URL(signInStartAddress('https://vivid.example', { challenge, state, port }))
-    expect(address.origin).toBe('https://vivid.example')
-    expect(address.pathname).toBe('/api/auth/desktop/google')
-    expect(decodeStart(Object.fromEntries(address.searchParams))).toEqual(
-      Option.some({ challenge, state, port }),
-    )
+    const address = signInStartAddress('https://vivid.example', { challenge, state, port })
+    expect(address.startsWith('https://vivid.example/api/auth/desktop/google?')).toBe(true)
+    expect(decodeStart(queryOf(address))).toEqual(Option.some({ challenge, state, port }))
   })
 
   it('returns a code to the loopback address and to no name that could resolve elsewhere', () => {
     const granted = SignInReturn.cases.Granted.make({ code, state })
     const address = signInReturnAddress(port, granted)
-    expect(new URL(address).origin).toBe('http://127.0.0.1:49321')
+    expect(address.startsWith('http://127.0.0.1:49321/?')).toBe(true)
     expect(arrivingAt(address)).toEqual(Option.some(granted))
   })
 
   it('returns a failure without a code', () => {
     const failed = SignInReturn.cases.Failed.make({ state })
     const address = signInReturnAddress(port, failed)
-    expect(new URL(address).searchParams.has('code')).toBe(false)
+    expect(Object.keys(queryOf(address))).not.toContain('code')
     expect(arrivingAt(address)).toEqual(Option.some(failed))
   })
 

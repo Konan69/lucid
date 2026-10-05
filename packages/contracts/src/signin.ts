@@ -92,15 +92,22 @@ export type SignInStart = typeof SignInStart.Type
 const encodeStart = Schema.encodeSync(SignInStart)
 
 /**
- * The address the shell opens in the system browser to start an attempt on a server. The origin
- * is the shell's saved server and never something a document supplied.
+ * A query written out: each value percent-encoded, joined in the order given. Addresses are
+ * built as text here because this package is read by the server, the desktop shell and the web
+ * app alike and assumes none of their platforms.
  */
-export const signInStartAddress = (origin: string, start: SignInStart): string => {
-  const address = new URL(SIGN_IN_PLACES.start, origin)
-  const fields = encodeStart(start)
-  for (const [name, value] of Object.entries(fields)) address.searchParams.set(name, value)
-  return address.href
-}
+const queryOf = (fields: Readonly<Record<string, string>>): string =>
+  Object.entries(fields)
+    .map(([name, value]) => `${name}=${encodeURIComponent(value)}`)
+    .join('&')
+
+/**
+ * The address the shell opens in the system browser to start an attempt on a server. The origin
+ * is the shell's saved server (scheme, host and port, with no path) and never something a
+ * document supplied.
+ */
+export const signInStartAddress = (origin: string, start: SignInStart): string =>
+  `${origin}${SIGN_IN_PLACES.start}?${queryOf(encodeStart(start))}`
 
 /**
  * How an attempt comes back to the shell: with a code, or with the news that there is none. A
@@ -129,22 +136,22 @@ const decodeReturnFields = Schema.decodeUnknownOption(ReturnFields)
  * elsewhere.
  */
 export const signInReturnAddress = (port: LoopbackPort, back: SignInReturn): string => {
-  const address = new URL(`http://127.0.0.1:${port}/`)
-  address.searchParams.set('state', back.state)
-  const [name, value] = SignInReturn.match<readonly [name: string, value: string]>(back, {
-    Granted: ({ code }) => ['code', code],
-    Failed: () => ['error', 'sign_in_failed'],
+  const fields = SignInReturn.match<Readonly<Record<string, string>>>(back, {
+    Granted: ({ code, state }) => ({ state, code }),
+    Failed: ({ state }) => ({ state, error: 'sign_in_failed' }),
   })
-  address.searchParams.set(name, value)
-  return address.href
+  return `http://127.0.0.1:${port}/?${queryOf(fields)}`
 }
 
 /**
- * Reads a return off the query of a request to the loopback address. Anything that is not one
- * (another program probing the port, a browser asking for an icon) is nothing.
+ * Reads a return off the query of a request to the loopback address, given as its names and
+ * values. Anything that is not one (another program probing the port, a browser asking for an
+ * icon) is nothing.
  */
-export const readSignInReturn = (query: URLSearchParams): Option.Option<SignInReturn> =>
-  Option.map(decodeReturnFields(Object.fromEntries(query)), (fields) =>
+export const readSignInReturn = (
+  query: Readonly<Record<string, string>>,
+): Option.Option<SignInReturn> =>
+  Option.map(decodeReturnFields(query), (fields) =>
     'code' in fields
       ? SignInReturn.cases.Granted.make(fields)
       : SignInReturn.cases.Failed.make({ state: fields.state }),

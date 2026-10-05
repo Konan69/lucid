@@ -362,6 +362,34 @@ describe('desktop Google sign-in', () => {
     }),
   )
 
+  it.effect('two that wait on one attempt do not both get its code and secret', () =>
+    Effect.gen(function* () {
+      const { signIn, seen } = yield* fixture(chosen)
+      yield* signIn.begin
+      const start = yield* onlyOpened(seen.opened)
+      const first = yield* Effect.forkChild(signIn.ended)
+      const second = yield* Effect.forkChild(signIn.ended)
+      yield* get(start.granted)
+
+      const endings = [yield* Fiber.join(first), yield* Fiber.join(second)]
+      expect(endings.filter(SignInEnding.guards.Granted)).toHaveLength(1)
+      expect(endings.filter(SignInEnding.guards.Cancelled)).toHaveLength(1)
+      // And it is gone for anyone who asks afterwards.
+      expect(yield* signIn.ended).toEqual(cancelled)
+    }),
+  )
+
+  it.effect('a window still waiting when the app quits is told the attempt is over', () =>
+    Effect.gen(function* () {
+      const untilQuit = yield* Scope.make()
+      const { signIn } = yield* fixture(chosen).pipe(Scope.provide(untilQuit))
+      yield* signIn.begin
+      const waiting = yield* Effect.forkChild(signIn.ended)
+      yield* Scope.close(untilQuit, Exit.void)
+      expect(yield* Fiber.join(waiting)).toEqual(cancelled)
+    }),
+  )
+
   it.effect(
     'the listener closes with the scope the sign-in was made in, as when the app quits',
     () =>
