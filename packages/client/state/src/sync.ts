@@ -124,7 +124,18 @@ export function makeDraftSync(input: DraftSyncInput) {
     const scope = input.scope()
     if (Option.isNone(scope) || Option.isNone(input.read())) return
     const threads = input.threads()
-    if (Option.isSome(threads) && Option.exists(input.read(), (held) => held.pending.length > 0)) {
+    // Only when a waiting draft finds its Thread is anything written. Words kept for a Thread of
+    // another workspace, or by another Person on this device, stay waiting; writing the same
+    // drafts back for them told the store it had changed, the store called this again, and the
+    // page went round until it stopped drawing (a blank Home, live proof of 5 October 2026).
+    // `resolved` answers the very drafts it was given when nothing was found.
+    if (
+      Option.isSome(threads) &&
+      Option.exists(
+        input.read(),
+        (drafts) => resolved(drafts, scope.value, threads.value) !== drafts,
+      )
+    ) {
       input.update((drafts) => resolved(drafts, scope.value, threads.value))
     }
     const list = Option.filter(waiting, (held) =>
