@@ -156,7 +156,10 @@ const localStack = () =>
 const railwayStack = () =>
   Alchemy.Stack(
     deployTarget.stackName,
-    { providers: Layer.mergeAll(Railway.providers(), GitHub.providers()), state: Alchemy.localState() },
+    {
+      providers: Layer.mergeAll(Railway.providers(), GitHub.providers()),
+      state: Alchemy.localState(),
+    },
     Effect.gen(function* () {
       const target = yield* requireRunnableTarget(deployTarget)
       const hosted = yield* railwayResources(target, yield* loadInfrastructureEnvironment)
