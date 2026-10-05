@@ -22,6 +22,8 @@ import {
 } from './executor.ts'
 
 const settings = {
+  GOOGLE_CLIENT_ID: 'isolated-test-client',
+  GOOGLE_CLIENT_SECRET: 'isolated-test-secret',
   VIVID_EXECUTOR_URL: 'https://executor.example.test',
   VIVID_EXECUTOR_KEY: 'isolated-test-key',
   VIVID_EXECUTOR_ORGANIZATION: 'isolated-test-organization',
@@ -51,6 +53,17 @@ describe('Executor settings', () => {
       { ...settings, VIVID_EXECUTOR_ORGANIZATION: undefined },
       'VIVID_EXECUTOR_ORGANIZATION',
     ],
+    // Google Integrations sign in with the installation's Google client, so it is required here too.
+    [
+      'the Google client id is missing',
+      { ...settings, GOOGLE_CLIENT_ID: undefined },
+      'GOOGLE_CLIENT_ID',
+    ],
+    [
+      'the Google client secret is blank',
+      { ...settings, GOOGLE_CLIENT_SECRET: '' },
+      'GOOGLE_CLIENT_SECRET',
+    ],
   ] as const) {
     it.effect(`does not build when ${name}`, () =>
       Effect.gen(function* () {
@@ -63,6 +76,7 @@ describe('Executor settings', () => {
         expect(failure).toBeInstanceOf(ConfigurationError)
         expect(failure).toMatchObject({ variable })
         expect(JSON.stringify(failure)).not.toContain(settings.VIVID_EXECUTOR_KEY)
+        expect(JSON.stringify(failure)).not.toContain(settings.GOOGLE_CLIENT_SECRET)
       }),
     )
   }
