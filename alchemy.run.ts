@@ -1,9 +1,11 @@
 import * as Alchemy from 'alchemy'
 import * as Command from 'alchemy/Command'
 import * as Docker from 'alchemy/Docker'
+import * as GitHub from 'alchemy/GitHub'
 import * as Railway from 'alchemy/Railway'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import { computerBinariesRelease } from './infra/github.ts'
 import { databaseUrlFor } from './infra/database.ts'
 import { loadInfrastructureEnvironment } from './infra/env.ts'
 import { railwayResources } from './infra/railway.ts'
@@ -27,13 +29,16 @@ const localStack = () =>
        * Command owns the local processes and Docker the PostgreSQL resources; no cloud provider is loaded, so
        * `alchemy dev` never starts an emulator. See `alchemy/lib/Docker/Providers.d.ts`.
        */
-      providers: Layer.mergeAll(Command.providers(), Docker.providers()),
+      providers: Layer.mergeAll(Command.providers(), Docker.providers(), GitHub.providers()),
       state: Alchemy.localState(),
     },
     Effect.gen(function* () {
       const target = yield* requireRunnableTarget(deployTarget)
       const databaseUrl = yield* databaseUrlFor(target)
       const environment = yield* loadInfrastructureEnvironment
+
+      /** The Computer binaries' release: the desktop app's fetch source, reconciled here. */
+      yield* computerBinariesRelease()
 
       /**
        * Migrations finish before any long-lived process starts. `Command.Exec`
@@ -151,10 +156,12 @@ const localStack = () =>
 const railwayStack = () =>
   Alchemy.Stack(
     deployTarget.stackName,
-    { providers: Railway.providers(), state: Alchemy.localState() },
+    { providers: Layer.mergeAll(Railway.providers(), GitHub.providers()), state: Alchemy.localState() },
     Effect.gen(function* () {
       const target = yield* requireRunnableTarget(deployTarget)
       const hosted = yield* railwayResources(target, yield* loadInfrastructureEnvironment)
+      /** The Computer binaries' release: the same resource on every target. */
+      yield* computerBinariesRelease()
       return { webUrl: hosted.serverUrl, serverUrl: hosted.serverUrl }
     }).pipe(Effect.orDie),
   )

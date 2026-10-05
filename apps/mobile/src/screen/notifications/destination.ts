@@ -4,12 +4,12 @@ import { Data, Option } from 'effect'
 
 /**
  * Where pressing a row of the Notifications screen takes the Person. It is worked out here, away
- * from React, because a row is drawn differently for each answer (a button, a link that leaves
+ * from React, because a row is drawn differently for each answer (a button, an invitation that opens
  * the app, or plain text) and a press must never do nothing.
  *
  * - `Thread`: the row is about a Thread the Person can open.
- * - `Invitation`: the row is an invitation to a Company. The phone has no screen that accepts
- *   one, so it opens the web's own invitation page in the phone's browser.
+ * - `Invitation`: the row is an invitation to a Company. It opens over the list as a sheet that
+ *   says who invited the Person and to what, and joins there (`Invitation.tsx`).
  * - `Gone`: the row is about a Thread the server has said is not there for this Person (deleted,
  *   or no longer theirs to see). It says so and does not open a screen that could only say the
  *   same.
@@ -45,9 +45,10 @@ export const destinationOf = (row: NoticeRow, gone: ReadonlySet<ThreadId>): Dest
       gone.has(threadId) ? Destination.Gone() : Destination.Thread({ id: threadId }),
   })
 
-/** Whether pressing the row goes somewhere, in the app or out of it. */
+/** Whether pressing the row opens a Thread. */
 export const opens = Destination.$is('Thread')
-export const leaves = Destination.$is('Invitation')
+/** Whether pressing the row opens an invitation, in its sheet over the list. */
+export const invites = Destination.$is('Invitation')
 
 /**
  * Whether a row answers a press at all. One that leads somewhere always does. One that leads
@@ -55,4 +56,4 @@ export const leaves = Destination.$is('Invitation')
  * read it is text, and is drawn as text.
  */
 export const answers = (leads: Destination, unread: number): boolean =>
-  opens(leads) || leaves(leads) || unread > 0
+  opens(leads) || invites(leads) || unread > 0

@@ -24,10 +24,9 @@ import type { LiveData } from './live'
  *   reloaded when its session changes; an app outlives its sessions (`data/live.ts`).
  * - The web reads where the Person is from its own router. Here that is the native stack, which
  *   only a screen can reach, so Home hands itself over when it starts listening (`attend`).
- * - The web replaces Home with the Thread in its history. Here Home is the root of the stack and
- *   holds the drawer, and a Thread's Back is `goBack`: with Home gone the Person could not leave
- *   the Thread. So the Thread is opened over Home, and Home stays as it was (`Asking`) until the
- *   Thread has covered it. Back then lands on the ordinary Home, never on the waiting one.
+ * - The web replaces Home with the Thread in its history. Here a Thread is not a screen: it is
+ *   put in the first screen's own place (`data/front.ts`), so there is nothing to replace and
+ *   nothing to wait for. The asking is over the moment the Thread is put there.
  */
 export type Arrival = Data.TaggedEnum<{
   Unasked: {}
@@ -95,7 +94,7 @@ export const destination = (
  * What Home draws for where the first arrival stands and what is known of the Thread list.
  *
  * While asking it is the face whatever the list says: the new Thread reaches the list before the
- * Thread's screen has finished covering Home, and a greeting drawn then would flash under it.
+ * server's answer says which Thread to show, and a greeting drawn then would flash before it.
  * Before asking, a list that has not arrived draws nothing (the greeting used to show for that
  * moment and then be taken away from a new Person), and an empty one is already waiting, because
  * it is asked about at once. A list that could not be read is no reason to keep someone from
@@ -114,23 +113,20 @@ export const homeShows = (standing: Arrival, threads: LiveState<Listed>): Showin
   })
 
 /**
- * Home, as the first arrival needs it: whether the Person is looking at it, how to open a Thread
- * over it, and when it comes back to the front or has been covered. `screen/Home.tsx` builds it
- * from its navigator; each `on…` answers with the way to stop listening.
+ * The first screen, as the first arrival needs it: whether the Person is looking at it, how to
+ * put a Thread in its place, and when it comes back to the front. `screen/Home.tsx` builds it
+ * from its navigator; `onFocus` answers with the way to stop listening.
  */
 export interface HomeScreen {
   readonly isFocused: () => boolean
   readonly open: (thread: ThreadId) => void
   readonly onFocus: (heard: () => void) => () => void
-  readonly onCovered: (heard: () => void) => () => void
 }
 
 /** The first arrival of one session. */
 function makeArrival(data: LiveData) {
   let standing: Arrival = UNASKED
   let home = Option.none<HomeScreen>()
-  // What is being listened to while Home is covered by the first Thread.
-  let leaving: ReadonlyArray<() => void> = []
   const watchers = new Set<() => void>()
   const tell = () => {
     for (const watcher of watchers) watcher()
@@ -146,32 +142,18 @@ function makeArrival(data: LiveData) {
 
   /** Ends the asking: Home is the ordinary one from here on. */
   const finish = () => {
-    for (const stop of leaving) stop()
-    leaving = []
     standing = SETTLED
     tell()
   }
 
   /**
-   * Opens the first Thread over Home. Home is not told it is over until the Thread has covered
-   * it, so the face is what slides away and no frame of the greeting is drawn on the way out.
-   * Home coming back to the front ends it too: if the platform never says the screen was
-   * covered, the Person still finds the ordinary Home behind the Thread and not a face with
-   * nowhere to type.
-   */
-  const leave = (screen: HomeScreen, thread: ThreadId) => {
-    leaving = [screen.onCovered(finish), screen.onFocus(finish)]
-    screen.open(thread)
-  }
-
-  /**
-   * Acts on the server's answer. With a Thread to go to, and the Person still on Home, they are
-   * taken to it; one who has gone somewhere else meanwhile is left where they are. With none,
-   * Home becomes the ordinary one and they can simply type.
+   * Acts on the server's answer. With a Thread to show, and the Person still on the first screen,
+   * it is put there; one who has gone somewhere else meanwhile is left where they are. Either way
+   * the asking is over: without a Thread the screen is the ordinary one and they can simply type.
    */
   const settle = (thread: Option.Option<ThreadId>) => {
     const screen = Option.filter(home, (at) => at.isFocused())
-    if (Option.isSome(thread) && Option.isSome(screen)) return leave(screen.value, thread.value)
+    if (Option.isSome(thread) && Option.isSome(screen)) screen.value.open(thread.value)
     finish()
   }
 
