@@ -197,8 +197,20 @@ const files = (sftp: SFTPWrapper) => {
   return { read, put }
 }
 
-/** One command on its own channel. Interrupting the caller closes the channel, which ends the
- * command's session on the machine. */
+/** How long after its deadline a command that ignores the polite signal is killed. */
+const GRACE_SECONDS = 2
+
+/**
+ * One command on its own channel.
+ *
+ * Ending it is the machine's work, because closing an SSH channel does not end a command that has
+ * no terminal (seen with OpenSSH 9: the command ran on). So the command runs under coreutils
+ * `timeout`, which makes it a process group of its own: at the deadline `timeout` signals the
+ * whole group, and kills it `GRACE_SECONDS` later. A caller that stops waiting (the model
+ * cancelled, the request ended) sends that same `timeout` a TERM over the channel, which it
+ * passes to the group in the same way. This side also stops waiting a little after the deadline,
+ * so a machine that never answers cannot hold the caller.
+ */
 const runner =
   (client: Client): Link['run'] =>
   ({ command, directory, timeoutSeconds }) =>
@@ -206,40 +218,57 @@ const runner =
       const stdout = tail()
       const stderr = tail()
       let channel: ClientChannel | undefined
-      let timedOut = false
+      const started = Date.now()
+      const finish = (code: number | null, timedOut: boolean) => {
+        clearTimeout(timer)
+        const out = stdout.text()
+        const err = stderr.text()
+        resume(
+          Effect.succeed({
+            stdout: out.text,
+            stderr: err.text,
+            exitCode: timedOut ? null : code,
+            timedOut,
+            truncated: out.cut || err.cut,
+          }),
+        )
+      }
+      const stop = () => {
+        channel?.signal('TERM')
+        channel?.close()
+      }
       // A login shell, as a person at the machine has: their PATH and their profile.
       const script = `cd -- ${shellWord(directory)} || exit 1\n${command}`
-      const timer = setTimeout(() => {
-        timedOut = true
-        channel?.close()
-      }, timeoutSeconds * 1000)
-      client.exec(`exec bash -lc ${shellWord(script)}`, (error, opened) => {
-        if (error !== undefined && error !== null) {
-          clearTimeout(timer)
-          return resume(Effect.fail(new LinkUnreachable()))
-        }
-        channel = opened
-        opened.on('data', stdout.add)
-        opened.stderr.on('data', stderr.add)
-        opened.on('close', (code: number | null) => {
-          clearTimeout(timer)
-          const out = stdout.text()
-          const err = stderr.text()
-          resume(
-            Effect.succeed({
-              stdout: out.text,
-              stderr: err.text,
-              exitCode: timedOut || typeof code !== 'number' ? null : code,
-              timedOut,
-              truncated: out.cut || err.cut,
-            }),
-          )
-        })
-        return undefined
-      })
+      const timer = setTimeout(
+        () => {
+          stop()
+          finish(null, true)
+        },
+        (timeoutSeconds + GRACE_SECONDS + 3) * 1000,
+      )
+      client.exec(
+        `exec timeout -k ${GRACE_SECONDS} ${timeoutSeconds} bash -lc ${shellWord(script)}`,
+        (error, opened) => {
+          if (error !== undefined && error !== null) {
+            clearTimeout(timer)
+            return resume(Effect.fail(new LinkUnreachable()))
+          }
+          channel = opened
+          opened.on('data', stdout.add)
+          opened.stderr.on('data', stderr.add)
+          opened.on('close', (code: number | null) => {
+            // `timeout` answers 124 when it ended the command, 137 when it had to kill it. A
+            // command may exit with those codes itself, so the clock decides which it was.
+            const expired =
+              (code === 124 || code === 137) && Date.now() - started >= timeoutSeconds * 1000
+            finish(typeof code === 'number' ? code : null, expired)
+          })
+          return undefined
+        },
+      )
       return Effect.sync(() => {
         clearTimeout(timer)
-        channel?.close()
+        stop()
       })
     })
 
