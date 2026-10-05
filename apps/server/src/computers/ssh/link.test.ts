@@ -1,7 +1,7 @@
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import { expect, it } from '@effect/vitest'
-import { Effect, Fiber, Ref } from 'effect'
+import { Deferred, Effect, Fiber, Ref } from 'effect'
 import {
   FILE_BYTES,
   LinkFileRefused,
@@ -230,6 +230,41 @@ it.live.skipIf(!peerAvailable)(
       expect(yield* Ref.get(located)).toBe(2)
       const run = yield* two.run({ command: 'pwd', directory: second.home, timeoutSeconds: 10 })
       expect(run.stdout.trim()).toBe(second.home)
+    }).pipe(Effect.scoped),
+  40_000,
+)
+
+it.live.skipIf(!peerAvailable)(
+  'opens one machine while another is still being found',
+  () =>
+    Effect.gen(function* () {
+      const server = yield* peer()
+      const held = links<string>(server.identity)
+      yield* Effect.addFinalizer(() => held.close)
+      // The first machine's provider has been asked where it is and has not answered: a machine
+      // that is still waking. `asked` says the opening is under way, so nothing here waits on time.
+      const asked = yield* Deferred.make<void>()
+      const answer = yield* Deferred.make<void>()
+      const target = { ...server, identity: undefined }
+      const waking = yield* held
+        .get(
+          'waking',
+          Deferred.succeed(asked, undefined).pipe(
+            Effect.andThen(Deferred.await(answer)),
+            Effect.as(target),
+          ),
+        )
+        .pipe(Effect.forkChild)
+      yield* Deferred.await(asked)
+      const awake = yield* held.get('awake', Effect.succeed(target))
+      const run = yield* awake.run({
+        command: 'echo here',
+        directory: server.home,
+        timeoutSeconds: 10,
+      })
+      expect(run.stdout.trim()).toBe('here')
+      yield* Deferred.succeed(answer, undefined)
+      expect((yield* Fiber.join(waking)).alive()).toBe(true)
     }).pipe(Effect.scoped),
   40_000,
 )

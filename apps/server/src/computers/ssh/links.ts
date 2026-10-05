@@ -25,9 +25,18 @@ export interface LinkTarget {
  */
 export const links = <Key>(identity: Identity) => {
   const open = new Map<Key, { readonly link: Link; readonly scope: Scope.Closeable }>()
-  // One opening at a time: two first uses of one machine must not make two connections, and
-  // openings are rare enough that different machines can wait for each other.
-  const opening = Semaphore.makeUnsafe(1)
+  // One opening at a time for each machine: two first uses of one machine must not make two
+  // connections. Machines do not wait for each other. An opening asks the provider where the
+  // machine is and may wait on a machine that has just woken (seen 5 October 2026: minutes), and
+  // one lock for all would hold every other machine's calls, open connection or not, for that long.
+  const openings = new Map<Key, Semaphore.Semaphore>()
+  const opening = (key: Key) => {
+    const found = openings.get(key)
+    if (found !== undefined) return found
+    const made = Semaphore.makeUnsafe(1)
+    openings.set(key, made)
+    return made
+  }
   const drop = (key: Key) =>
     Effect.suspend(() => {
       const found = open.get(key)
@@ -72,7 +81,7 @@ export const links = <Key>(identity: Identity) => {
     key: Key,
     locate: Effect.Effect<LinkTarget, Failure>,
   ): Effect.Effect<Link, Failure | LinkFailure> =>
-    opening.withPermit(
+    opening(key).withPermit(
       Effect.gen(function* () {
         const found = open.get(key)
         if (found !== undefined && found.link.alive()) return found.link
