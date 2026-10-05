@@ -72,7 +72,7 @@ it.effect(
               Effect.promise(() =>
                 Promise.resolve(
                   tool.run({
-                    data: message,
+                    data: { summary: 'Overdue reply', title: message.title, body: message.body },
                     toolCallId: 'call',
                     signal: new AbortController().signal,
                     log: { info: () => void 0, warn: () => void 0, error: () => void 0 },

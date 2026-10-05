@@ -7,6 +7,7 @@ import {
   isAllowedBridgeRequest,
   isAllowedRedirect,
   isAllowedResponse,
+  isApprovalAddress,
   isAppRequest,
   isTrustedDocument,
 } from './security.ts'
@@ -132,6 +133,89 @@ describe('desktop bridge sender authority', () => {
       ])
         expect(isAllowedBridgeRequest(url, server, chooser, request)).toBe(false)
     }
+  })
+
+  it('sends only the selected server’s approval page for a sign-in code to the system browser', () => {
+    const app = 'https://vivid.example/'
+    const ask = (address: string) =>
+      isAllowedBridgeRequest(
+        app,
+        server,
+        chooser,
+        BridgeRequest.cases.OpenApproval.make({ address }),
+      )
+    for (const address of [
+      'https://vivid.example/device?user_code=ABCD2345&signin=google',
+      'https://vivid.example/device?user_code=ABCD2345',
+    ]) {
+      expect(isApprovalAddress(address, server)).toBe(true)
+      expect(ask(address)).toBe(true)
+    }
+    for (const address of [
+      // Another origin: a foreign site, a look-alike, another port, another scheme.
+      'https://other.example/device?user_code=ABCD2345&signin=google',
+      'https://vivid.example.evil.test/device?user_code=ABCD2345',
+      'https://vivid.example:8443/device?user_code=ABCD2345',
+      'http://vivid.example/device?user_code=ABCD2345',
+      // Another path on the right origin.
+      'https://vivid.example/?user_code=ABCD2345',
+      'https://vivid.example/device/?user_code=ABCD2345',
+      'https://vivid.example/device/approve?user_code=ABCD2345',
+      'https://vivid.example/api/auth/device?user_code=ABCD2345',
+      'https://vivid.example/invite/1?user_code=ABCD2345',
+      // No code, an empty one, or two.
+      'https://vivid.example/device',
+      'https://vivid.example/device?signin=google',
+      'https://vivid.example/device?user_code=',
+      'https://vivid.example/device?user_code=ABCD2345&user_code=WXYZ6789',
+      // A code the server would never issue: too short, too long, the dashed form a Person
+      // reads, lower case, a look-alike the alphabet leaves out (I, O, 0, 1), or other marks.
+      'https://vivid.example/device?user_code=ABCD234',
+      'https://vivid.example/device?user_code=ABCD23456',
+      'https://vivid.example/device?user_code=ABCD-2345',
+      'https://vivid.example/device?user_code=abcd2345',
+      'https://vivid.example/device?user_code=ABCD234I',
+      'https://vivid.example/device?user_code=ABCD234O',
+      'https://vivid.example/device?user_code=ABCD2340',
+      'https://vivid.example/device?user_code=ABCD2341',
+      'https://vivid.example/device?user_code=AB%26signin%3Dx',
+      'https://vivid.example/device?user_code=ABCD2345%0A',
+      'https://vivid.example/device?user_code=%20ABCD2345',
+      // Anything riding along, in any place.
+      'https://vivid.example/device?user_code=ABCD2345&signin=returned',
+      'https://vivid.example/device?user_code=ABCD2345&signin=',
+      'https://vivid.example/device?user_code=ABCD2345&signin=google&signin=google',
+      'https://vivid.example/device?signin=google&user_code=ABCD2345',
+      'https://vivid.example/device?user_code=ABCD2345&next=https://other.example',
+      'https://vivid.example/device?user_code=ABCD2345&signin=google&next=x',
+      'https://vivid.example/device?next=x&user_code=ABCD2345',
+      'https://vivid.example/device?user_code=ABCD2345#fragment',
+    ]) {
+      expect(isApprovalAddress(address, server)).toBe(false)
+      expect(ask(address)).toBe(false)
+    }
+  })
+
+  it('refuses an approval address with sign-in details in it, or on the socket scheme', () => {
+    // The request schema already refuses to carry either; this is the check behind it.
+    for (const address of [
+      'https://person:secret@vivid.example/device?user_code=ABCD2345',
+      'wss://vivid.example/device?user_code=ABCD2345',
+    ])
+      expect(isApprovalAddress(address, server)).toBe(false)
+  })
+
+  it('lets nothing but the selected server’s own document open its approval page', () => {
+    const request = BridgeRequest.cases.OpenApproval.make({
+      address: 'https://vivid.example/device?user_code=ABCD2345&signin=google',
+    })
+    expect(isAllowedBridgeRequest('https://vivid.example/', server, chooser, request)).toBe(true)
+    for (const url of ['https://other.example', 'file:///application/other.html', 'malformed'])
+      expect(isAllowedBridgeRequest(url, server, chooser, request)).toBe(false)
+    // With no server chosen there is no approval page, for the app address and the chooser alike.
+    expect(isAllowedBridgeRequest('https://vivid.example/', absent, chooser, request)).toBe(false)
+    expect(isAllowedBridgeRequest(chooser, absent, chooser, request)).toBe(false)
+    expect(isAllowedBridgeRequest(chooser, server, chooser, request)).toBe(false)
   })
 
   it('gives version metadata only to the chooser and chosen server documents', () => {

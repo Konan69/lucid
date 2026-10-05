@@ -2,6 +2,7 @@ import { ComputerState } from '@vivid/contracts'
 import { Clock, Effect, Match, Option, Semaphore } from 'effect'
 import {
   MachineCreationUnresolved,
+  MachineHeld,
   MachineState,
   MachineOperationFailed,
   type MachineKey,
@@ -10,7 +11,8 @@ import {
 import { active, observations } from './state.ts'
 import type { Transport } from './transport.ts'
 import type { Bindings } from './bindings.ts'
-import type { MachineRecord } from './protocol.ts'
+import type { MachineRecord, ProviderId } from './protocol.ts'
+import type { Binding } from './bindings.ts'
 
 /** Provider observations have one exhaustive projection; readiness shares the `active` guard. */
 const observedState = (record: MachineRecord, since: number) =>
@@ -41,6 +43,41 @@ const observedState = (record: MachineRecord, since: number) =>
     Match.exhaustive,
   )
 
+/** Adoption grants one Person ownership; the unique constraint arbitrates cross-server races.
+ * Both refusals preserve the unbound row exactly: it may be a paid-create receipt whose response
+ * was lost before binding. Adoption has no 23-hour expiry check, so later ensures re-check the
+ * holder and fail MachineHeld again. Removing adoption replays the original request and
+ * idempotency key within the paid-create window; expired receipts still require reconciliation
+ * rather than issuing a second paid create. */
+const adopt = Effect.fn('Machine.boat.adopt')(function* (
+  saved: Bindings,
+  input: { readonly key: MachineKey; readonly binding: Binding; readonly id: ProviderId },
+) {
+  const held = yield* saved.holder(input.id)
+  if (Option.isSome(held) && held.value.key !== input.key)
+    return yield* Effect.fail(new MachineHeld())
+  return yield* saved.bind(input.key, input.binding.intent, input.id)
+})
+
+/** Only paid creates have an expiring provider idempotency receipt; adoption creates nothing. */
+const bind = Effect.fn('Machine.boat.reconcileBinding')(function* (
+  api: Transport,
+  saved: Bindings,
+  input: { readonly key: MachineKey; readonly binding: Binding },
+) {
+  return yield* Option.match(api.adopt, {
+    onSome: (id) => adopt(saved, { key: input.key, binding: input.binding, id }),
+    onNone: () =>
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis
+        if (now - input.binding.requestedAt > 23 * 60 * 60_000)
+          return yield* Effect.fail(new MachineCreationUnresolved({ key: input.key }))
+        const receipt = yield* api.createMachine(input.binding.request, input.binding.intent)
+        return yield* saved.bind(input.key, input.binding.intent, receipt.sandbox.id)
+      }),
+  })
+})
+
 /** Persist before provisioning, replay only the original intent, and wait for snapshot archival. */
 export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
   api: Transport,
@@ -62,13 +99,7 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
     key: MachineKey,
   ): Effect.fn.Return<typeof MachineState.cases.Running.Type, MachineFailure> {
     let row = yield* saved.intend(key, api.create)
-    if (row.providerId === null) {
-      const now = yield* Clock.currentTimeMillis
-      if (now - row.requestedAt > 23 * 60 * 60_000)
-        return yield* Effect.fail(new MachineCreationUnresolved({ key }))
-      const receipt = yield* api.createMachine(row.request, row.intent)
-      row = yield* saved.bind(key, row.intent, receipt.sandbox.id)
-    }
+    if (row.providerId === null) row = yield* bind(api, saved, { key, binding: row })
     const identity = yield* bound(key)
     let record = (yield* api.get(identity.id)).sandbox
     if (record.state === 'archiving') record = yield* wait(key, 'archived')

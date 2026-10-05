@@ -1,6 +1,6 @@
-import { Result } from 'effect'
+import { Option, Result } from 'effect'
 import { Check } from 'lucide-react'
-import { useId, useState, type FormEvent } from 'react'
+import { useId, useState, useSyncExternalStore, type FormEvent } from 'react'
 import {
   adoptFirstArrival,
   continueWithGoogle,
@@ -10,12 +10,14 @@ import {
 } from '../data/account'
 import { run, send } from '../data/app'
 import { readAddress, SAID, Standing } from '../data/google'
-import { pages } from '../data/pages'
+import { googleHandoff } from '../data/handoff'
+import { Way } from '../data/pairing'
 import { Button } from '../ui/button'
 import { Face } from '../ui/Face'
 import { Field, FieldDescription, FieldLabel } from '../ui/field'
 import { Input } from '../ui/input'
 import { GoogleWay } from './welcome/Google'
+import { Waiting } from './welcome/Waiting'
 
 type Mode = 'create' | 'enter'
 
@@ -69,12 +71,14 @@ function Said({ notice }: { notice: Notice }) {
 type Busy = 'none' | 'email' | 'google'
 
 /**
- * Whether Google sign-in is offered in this window. In the desktop app it is not: Google refuses
- * to sign anyone in inside an embedded window, so the shell sends its address to the system
- * browser, whose cookies never reach the app, and the Person would be left waiting on a button
- * that cannot finish. `pages.available` is how the web app knows it is inside that shell.
+ * How Google sign-in happens in this window (`Way`). In a browser the page leaves for Google and
+ * comes back signed in. In the desktop app it cannot, because Google refuses to sign anyone in
+ * inside an embedded window, so the same button hands the Person to their system browser and
+ * this window waits for them (`data/handoff.ts`, the phone's way in). A desktop app too old to
+ * do that offers no button at all, and says what would bring it.
  */
-const GOOGLE_OFFERED = !pages.available
+const GOOGLE = googleHandoff.way
+const GOOGLE_HERE = Way.$is('Browser')(GOOGLE)
 
 // The landing of a first sign-in with Google is a page load like any other, and by then somebody
 // is signed in, so no welcome is drawn to notice it. This module is loaded with the app, which
@@ -98,7 +102,9 @@ const opening = (returnTo: string): Opening => {
   const { destination, standing } = readAddress(returnTo)
   return Standing.$match(standing, {
     Plain: (): Opening => ({ destination, mode: 'create', notice: null, starting: false }),
-    Start: (): Opening => ({ destination, mode: 'create', notice: null, starting: GOOGLE_OFFERED }),
+    // An address that asks for Google is one a phone or the desktop app opened in a browser. It
+    // starts by itself only there: in the desktop app nothing opens such an address.
+    Start: (): Opening => ({ destination, mode: 'create', notice: null, starting: GOOGLE_HERE }),
     Returned: ({ outcome }): Opening => ({
       destination,
       mode: outcome === 'NotLinked' ? 'enter' : 'create',
@@ -143,8 +149,11 @@ function Introduction({ title, lead }: { title: string; lead: string }) {
  *
  * There are two ways in. The form, for an email and a password, and Google, which is one button
  * for a new Person and a returning one alike. The address can also say something about Google:
- * that it should start at once, which is how the phone hands a Person over to the browser, or
- * that it was tried and did not work, and why.
+ * that it should start at once, which is how the phone and the desktop app hand a Person over to
+ * the browser, or that it was tried and did not work, and why.
+ *
+ * In the desktop app Google is the same button with a different road: the form's card gives way
+ * to a waiting card while the Person signs in through their browser (`welcome/Waiting.tsx`).
  */
 export function Welcome({ returnTo }: { returnTo: string }) {
   const opened = opening(returnTo)
@@ -155,6 +164,7 @@ export function Welcome({ returnTo }: { returnTo: string }) {
   const [password, setPassword] = useState('')
   const [notice, setNotice] = useState(opened.notice)
   const [busy, setBusy] = useState<Busy>(opened.starting ? 'google' : 'none')
+  const handoff = useSyncExternalStore(googleHandoff.subscribe, googleHandoff.current)
   const copy = COPY[mode]
 
   async function submit(event: FormEvent) {
@@ -176,20 +186,18 @@ export function Welcome({ returnTo }: { returnTo: string }) {
 
   /**
    * Leaves for Google. When this works the page is already on its way out, so the button stays
-   * at rest and says so; only a refusal brings it back. A browser that keeps this page whole and
-   * shows it again on Back would show that resting button for ever, so such a return loads the
-   * page afresh.
+   * at rest and says so; only a refusal brings it back (and see `reloadOnReturn`).
+   *
+   * In the desktop app nothing leaves: the hand-off starts and its card takes the form's place.
    */
   async function google() {
-    setBusy('google')
     setNotice(null)
-    addEventListener(
-      'pageshow',
-      (event) => {
-        if (event.persisted) location.reload()
-      },
-      { once: true },
-    )
+    if (!GOOGLE_HERE) {
+      googleHandoff.start(destination)
+      return
+    }
+    setBusy('google')
+    reloadOnReturn()
     const result = await run(continueWithGoogle(destination))
     if (Result.isFailure(result)) {
       setNotice(SAID[result.failure.outcome])
@@ -209,71 +217,129 @@ export function Welcome({ returnTo }: { returnTo: string }) {
         <Introduction title={copy.title} lead={copy.lead} />
 
         <div className="w-full max-w-sm justify-self-center md:justify-self-end">
-          <form
-            onSubmit={(event) => {
-              void submit(event)
-            }}
-            className="flex flex-col gap-3 rounded-panel bg-surface-3 p-6 edge"
-          >
-            {mode === 'create' && (
-              <Entry
-                label="Your name"
-                value={name}
-                onChange={setName}
-                autoComplete="name"
-                autoFocus
-              />
-            )}
-            <Entry
-              label="Email"
-              type="email"
-              value={email}
-              onChange={setEmail}
-              autoComplete="email"
-              autoFocus={mode === 'enter'}
+          {Option.isSome(handoff) ? (
+            <Waiting
+              state={handoff.value}
+              onReopen={googleHandoff.reopen}
+              onAgain={() => googleHandoff.start(destination)}
+              onRetry={() => googleHandoff.retry(destination)}
+              onCancel={googleHandoff.cancel}
             />
-            <Entry
-              label="Password"
-              type="password"
-              value={password}
-              onChange={setPassword}
-              autoComplete={mode === 'create' ? 'new-password' : 'current-password'}
-              hint={mode === 'create' ? 'At least 8 characters.' : undefined}
-            />
-            {notice !== null && <Said notice={notice} />}
-            <Button type="submit" disabled={busy !== 'none'} className="mt-1 w-full">
-              {busy === 'email' ? 'One moment…' : copy.action}
-            </Button>
-            {GOOGLE_OFFERED && (
-              <GoogleWay
-                destination={destination}
-                starting={opened.starting}
+          ) : (
+            <>
+              <form
+                onSubmit={(event) => {
+                  void submit(event)
+                }}
+                className="flex flex-col gap-3 rounded-panel bg-surface-3 p-6 edge"
+              >
+                {mode === 'create' && (
+                  <Entry
+                    label="Your name"
+                    value={name}
+                    onChange={setName}
+                    autoComplete="name"
+                    autoFocus
+                  />
+                )}
+                <Entry
+                  label="Email"
+                  type="email"
+                  value={email}
+                  onChange={setEmail}
+                  autoComplete="email"
+                  autoFocus={mode === 'enter'}
+                />
+                <Entry
+                  label="Password"
+                  type="password"
+                  value={password}
+                  onChange={setPassword}
+                  autoComplete={mode === 'create' ? 'new-password' : 'current-password'}
+                  hint={mode === 'create' ? 'At least 8 characters.' : undefined}
+                />
+                {notice !== null && <Said notice={notice} />}
+                <Button type="submit" disabled={busy !== 'none'} className="mt-1 w-full">
+                  {busy === 'email' ? 'One moment…' : copy.action}
+                </Button>
+                <GoogleChoice
+                  destination={destination}
+                  starting={opened.starting}
+                  resting={busy !== 'none'}
+                  leaving={busy === 'google'}
+                  onStart={() => {
+                    void google()
+                  }}
+                />
+              </form>
+
+              <Other
+                label={copy.other}
                 resting={busy !== 'none'}
-                leaving={busy === 'google'}
-                onStart={() => {
-                  void google()
+                onPress={() => {
+                  setMode(mode === 'create' ? 'enter' : 'create')
+                  setNotice(null)
                 }}
               />
-            )}
-          </form>
-
-          {/* The other way in, said quietly under the form: a ghost button, centred. */}
-          <Button
-            variant="ghost"
-            size="sm"
-            // Not while a request is on its way: the form it answers must still be the one shown.
-            disabled={busy !== 'none'}
-            onClick={() => {
-              setMode(mode === 'create' ? 'enter' : 'create')
-              setNotice(null)
-            }}
-            className="mx-auto mt-4 flex w-fit"
-          >
-            {copy.other}
-          </Button>
+            </>
+          )}
         </div>
       </div>
     </main>
+  )
+}
+
+/**
+ * Google, under the form: the button, or in a desktop app too old to hand the Person to a
+ * browser, one line saying what would bring it. A button that cannot work is not offered.
+ */
+function GoogleChoice(props: Parameters<typeof GoogleWay>[0]) {
+  return Way.$is('Outdated')(GOOGLE) ? (
+    <p className="text-center text-label text-pretty text-ink-3">
+      Update Vivid to sign in with Google here.
+    </p>
+  ) : (
+    <GoogleWay {...props} />
+  )
+}
+
+/**
+ * A browser that keeps a page whole and shows it again on Back would show the welcome as it was
+ * left for Google: its button at rest for ever, saying it is opening Google. Such a return loads
+ * the page afresh instead.
+ */
+const reloadOnReturn = () =>
+  addEventListener(
+    'pageshow',
+    (event) => {
+      if (event.persisted) location.reload()
+    },
+    { once: true },
+  )
+
+/**
+ * The other way in, said quietly under the form: a ghost button, centred. It rests while a
+ * request is on its way, because the form it answers must still be the one shown.
+ */
+function Other({
+  label,
+  resting,
+  onPress,
+}: {
+  label: string
+  resting: boolean
+  onPress: () => void
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      disabled={resting}
+      onClick={onPress}
+      className="mx-auto mt-4 flex w-fit"
+    >
+      {label}
+    </Button>
   )
 }
 

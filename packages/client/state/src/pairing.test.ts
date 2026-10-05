@@ -1,7 +1,15 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Fiber, Redacted, Ref, Stream } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
-import { Pairing, pairing, spellCode, Wire, type PairingTransport } from './device.ts'
+import {
+  approvalPlace,
+  googlePlace,
+  Pairing,
+  pairing,
+  spellCode,
+  Wire,
+  type PairingTransport,
+} from './pairing.js'
 
 /** The body Better Auth's `/device/code` answers with, for a code good for `lifetime` seconds. */
 const issued = (lifetime: number) =>
@@ -177,5 +185,31 @@ describe('a code as it is read aloud', () => {
   it('is left alone when it has no middle', () => {
     expect(spellCode('ABCDE')).toBe('ABCDE')
     expect(spellCode('AB')).toBe('AB')
+  })
+})
+
+describe('where a waiting device is let in', () => {
+  /** A stand-in for the origin an app puts in front of the place. */
+  const at = (place: string) => new URL(place, 'https://vivid.example.com')
+
+  it('is the approval page with the code filled in', () => {
+    const page = at(approvalPlace('ABCD2345'))
+    expect(page.pathname).toBe('/device')
+    expect(Object.fromEntries(page.searchParams)).toEqual({ user_code: 'ABCD2345' })
+  })
+
+  it('asks the web to start Google when that is how the Person is signing in', () => {
+    const page = at(googlePlace('ABCD2345'))
+    expect(page.pathname).toBe('/device')
+    expect(Object.fromEntries(page.searchParams)).toEqual({
+      user_code: 'ABCD2345',
+      signin: 'google',
+    })
+  })
+
+  it('keeps a code with characters an address would otherwise read as its own', () => {
+    const page = at(googlePlace('AB&signin=x'))
+    expect(page.searchParams.get('user_code')).toBe('AB&signin=x')
+    expect(page.searchParams.getAll('signin')).toEqual(['google'])
   })
 })

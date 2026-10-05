@@ -27,8 +27,11 @@ const G = [
   },
 ] as const
 
-/** The mark. It is decoration to a screen reader: the button's words already say "Google". */
-function GoogleMark() {
+/**
+ * The mark. It is decoration to a screen reader: the words beside it already say "Google". The
+ * desktop app's waiting card (`Waiting.tsx`) draws it too, beside the same words.
+ */
+export function GoogleMark() {
   return (
     <svg viewBox="0 0 18 18" aria-hidden focusable="false" className="size-4">
       {G.map((part) => (

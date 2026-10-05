@@ -3,16 +3,7 @@ import { Option } from 'effect'
 import { Bell, Check, Hand, Share2, UserPlus } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { change, live, LiveState, useLive, useLiveValue } from '../data/live'
-import {
-  everyNoticeRead,
-  noticeRows,
-  NoticeRow,
-  noticesRead,
-  noticeTrialNames,
-  noticeTrials,
-  type NoticeTrial,
-  type NoticeTrialName,
-} from '../data/notices'
+import { everyNoticeRead, noticeRows, NoticeRow, noticesRead } from '../data/notices'
 import { Route, router } from '../data/route'
 import { Button, IconButton } from '../ui/button'
 import { cn } from '../ui/cn'
@@ -90,9 +81,6 @@ const QUIET = {
  */
 export function Notifications({ unread }: { unread: number }) {
   const [open, setOpen] = useState(false)
-  // Which worst-case list stands in for the live one. It is kept here, above the panel, so it
-  // outlasts closing and reopening the bell; a production build has no way to set it.
-  const [trial, setTrial] = useState<Option.Option<NoticeTrialName>>(Option.none())
   return (
     <Popover open={open} onOpenChange={setOpen}>
       {/* `relative` places the unread dot on the bell's own corner. */}
@@ -113,47 +101,9 @@ export function Notifications({ unread }: { unread: number }) {
         aria-label="Notifications"
         className="max-h-128 w-88 max-w-(--available-width)"
       >
-        <Panel onClose={() => setOpen(false)} trial={trial} />
-        {import.meta.env.DEV && <Trials trial={trial} onTry={setTrial} />}
+        <Panel onClose={() => setOpen(false)} />
       </PopoverContent>
     </Popover>
-  )
-}
-
-/**
- * The switch between the live list and each worst-case one, in a development build only. It is
- * inside the panel because a press anywhere outside closes the panel it is there to test, and it
- * is plain on purpose: it is a tool beside the design, not part of it.
- */
-function Trials({
-  trial,
-  onTry,
-}: {
-  trial: Option.Option<NoticeTrialName>
-  onTry: (next: Option.Option<NoticeTrialName>) => void
-}) {
-  return (
-    <footer className="flex shrink-0 flex-wrap gap-1 p-2 hairline-t" aria-label="Trial data">
-      <Button
-        size="xs"
-        variant="ghost"
-        aria-pressed={Option.isNone(trial)}
-        onClick={() => onTry(Option.none())}
-      >
-        Live
-      </Button>
-      {noticeTrialNames.map((name) => (
-        <Button
-          key={name}
-          size="xs"
-          variant="ghost"
-          aria-pressed={Option.contains(trial, name)}
-          onClick={() => onTry(Option.some(name))}
-        >
-          {name}
-        </Button>
-      ))}
-    </footer>
   )
 }
 
@@ -198,28 +148,19 @@ const visit = NoticeRow.$match({
 
 /**
  * The open panel: the count, the way to clear it, and a row for each place to go, newest first.
- *
- * A trial replaces both live lists at the point they are read, so a worst-case list is drawn by
- * exactly the code the live one is. Its rows and "Mark all read" do nothing when pressed: its
- * notices do not exist on the server, and a trial must never write.
  */
-function Panel({ onClose, trial }: { onClose: () => void; trial: Option.Option<NoticeTrialName> }) {
+function Panel({ onClose }: { onClose: () => void }) {
   const state = useLive(live.notifications)
   const threads = useLiveValue(live.threads)
   // "3h" is counted from the moment the panel opened, read once: a render must not read the clock.
   const [opened] = useState(() => Date.now())
-  // The condition is on the build, so a production bundle drops the trials and their data.
-  const tried = import.meta.env.DEV
-    ? Option.map(trial, (name): NoticeTrial => noticeTrials[name](opened))
-    : Option.none<NoticeTrial>()
-  const shown = Option.getOrElse(tried, (): NoticeTrial => ({
-    notices: LiveState.$is('Ready')(state) ? state.value.notifications : [],
+  const notices = LiveState.$is('Ready')(state) ? state.value.notifications : []
+  const rows = noticeRows(
+    notices,
     // Until the Thread list has answered, a row leads with its notice's own title.
-    threads: Option.match(threads, { onNone: () => [], onSome: (list) => list.threads }),
-  }))
-  const rows = noticeRows(shown.notices, shown.threads)
-  const unread = shown.notices.filter((notice) => notice.readAt === null).length
-  const trying = Option.isSome(tried)
+    Option.match(threads, { onNone: () => [], onSome: (list) => list.threads }),
+  )
+  const unread = notices.filter((notice) => notice.readAt === null).length
 
   return (
     <>
@@ -232,7 +173,7 @@ function Panel({ onClose, trial }: { onClose: () => void; trial: Option.Option<N
         )}
         <span className="flex-1" />
         {unread > 0 && (
-          <Button size="sm" variant="ghost" onClick={trying ? undefined : readAll}>
+          <Button size="sm" variant="ghost" onClick={readAll}>
             Mark all read
           </Button>
         )}
@@ -243,7 +184,7 @@ function Panel({ onClose, trial }: { onClose: () => void; trial: Option.Option<N
             <Bell />
           </Emblem>
           <p className="max-w-56 text-label text-pretty text-ink-3" aria-live="polite">
-            {trying ? QUIET.Ready : QUIET[state._tag]}
+            {QUIET[state._tag]}
           </p>
         </div>
       ) : (
@@ -256,7 +197,6 @@ function Panel({ onClose, trial }: { onClose: () => void; trial: Option.Option<N
                   face={face}
                   now={opened}
                   onOpen={() => {
-                    if (trying) return
                     onClose()
                     visit(row)
                   }}

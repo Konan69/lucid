@@ -119,6 +119,13 @@ export class MachineRequestRejected extends Schema.TaggedError<MachineRequestRej
   { title: 'MachineRequestRejected' },
 ) {}
 
+/** An installation's adopted Computer has one owner; refusal never reveals that Person's identity. */
+export class MachineHeld extends Schema.TaggedError<MachineHeld>()(
+  'MachineHeld',
+  {},
+  { title: 'MachineHeld' },
+) {}
+
 /** File persistence is required before provisioning and cannot be replaced by an in-memory binding. */
 export class MachinePersistenceFailed extends Schema.TaggedError<MachinePersistenceFailed>()(
   'MachinePersistenceFailed',
@@ -148,6 +155,7 @@ export type MachineFailure =
   | MachineCreationUnresolved
   | MachineRequestRejected
   | MachinePersistenceFailed
+  | MachineHeld
   | MachineCapabilityUnavailable
 
 /** One machine boundary; ownership, approvals, receipts, and RPC remain application concerns. */

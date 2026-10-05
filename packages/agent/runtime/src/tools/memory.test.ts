@@ -80,13 +80,17 @@ const fixture = Effect.fn('MemoryToolsTest.fixture')(function* () {
     requests,
     reply,
     forget: (what: string) =>
-      Effect.promise(() => Promise.resolve(forget.run({ ...context, data: { what } }))).pipe(
-        Effect.flatMap(decodeOutput),
-      ),
+      Effect.promise(() =>
+        Promise.resolve(
+          forget.run({ ...context, data: { summary: 'Remove the remembered fact', what } }),
+        ),
+      ).pipe(Effect.flatMap(decodeOutput)),
     correct: (was: string, now: string) =>
-      Effect.promise(() => Promise.resolve(correct.run({ ...context, data: { was, now } }))).pipe(
-        Effect.flatMap(decodeOutput),
-      ),
+      Effect.promise(() =>
+        Promise.resolve(
+          correct.run({ ...context, data: { summary: 'Correct the remembered fact', was, now } }),
+        ),
+      ).pipe(Effect.flatMap(decodeOutput)),
   }
 })
 

@@ -60,9 +60,11 @@ const fixture = Effect.fn('RoutineToolsTest.fixture')(function* () {
         Effect.flatMap(decodeOutput),
       ),
     find: (account: string) =>
-      Effect.promise(() => Promise.resolve(find.run({ ...context, data: { account } }))).pipe(
-        Effect.flatMap(decodeOutput),
-      ),
+      Effect.promise(() =>
+        Promise.resolve(
+          find.run({ ...context, data: { summary: 'Available mail events', account } }),
+        ),
+      ).pipe(Effect.flatMap(decodeOutput)),
     reply,
   }
 })
@@ -123,6 +125,7 @@ describe('Integration Routine tools', () => {
           const [result] = yield* Effect.all(
             [
               tools.create({
+                summary: 'Future work',
                 name,
                 prompt,
                 trigger: {
@@ -169,7 +172,12 @@ describe('Integration Routine tools', () => {
         })
         const [result] = yield* Effect.all(
           [
-            tools.create({ name, prompt, trigger: { kind: 'Once', localAt: '2026-10-04T09:00' } }),
+            tools.create({
+              summary: 'Future work',
+              name,
+              prompt,
+              trigger: { kind: 'Once', localAt: '2026-10-04T09:00' },
+            }),
             tools.reply(
               'CreateOnceRoutine',
               { name, prompt, localAt: '2026-10-04T09:00' },
@@ -212,6 +220,7 @@ describe('Integration Routine tools', () => {
         const [result] = yield* Effect.all(
           [
             tools.create({
+              summary: 'Future work',
               name,
               prompt,
               trigger: { kind: 'Schedule', cron: trigger.cron, timezone: trigger.timezone },

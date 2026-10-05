@@ -1,8 +1,12 @@
 import { defineTool } from '@flue/runtime'
-import { ReadDocumentOutcome, type WriteDocumentOutcome } from '@vivid/contracts'
+import {
+  ReadDocumentOutcome,
+  WriteDocumentRequest,
+  type WriteDocumentOutcome,
+} from '@vivid/contracts'
 import { Effect, Schema } from 'effect'
 import * as v from 'valibot'
-import { text } from './inputs.ts'
+import { summary, text } from './inputs.ts'
 import { Scope, type RunTool } from './scope.ts'
 import { modelText } from './views.ts'
 
@@ -50,14 +54,21 @@ export function documentTools(runTool: RunTool) {
       description:
         'Write a Markdown document the Person will keep, come back to or edit: a report, plan, proposal, meeting notes or long draft. Do not use it for an answer read once. Writing the same title again revises that document; send the whole revised body.',
       input: v.strictObject({
+        summary,
         title: text('The document title, unique within this Thread.', 120),
         body: text('The whole document as Markdown.', 200_000),
         note: v.optional(text('One sentence saying what changed.', 200)),
       }),
+      /** Display words stay in the call input; only document content crosses the product boundary. */
       run({ data, signal }) {
+        const request: Schema.Struct.Mutable<WriteDocumentRequest> = {
+          title: data.title,
+          body: data.body,
+        }
+        if (data.note !== undefined) request.note = data.note
         return runTool(
           Effect.gen(function* () {
-            const outcome = yield* (yield* Scope).client.WriteDocument(data)
+            const outcome = yield* (yield* Scope).client.WriteDocument(request)
             return { output: written(outcome) }
           }),
           { signal, tool: 'write_document' },
@@ -68,11 +79,13 @@ export function documentTools(runTool: RunTool) {
       name: 'read_document',
       description:
         'Read a Markdown document of this Thread by title to work on it in a later turn. A missing title returns the titles available here.',
-      input: v.strictObject({ title: text('The title of the document to read.', 120) }),
+      input: v.strictObject({ summary, title: text('The title of the document to read.', 120) }),
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {
-            return { output: read(yield* (yield* Scope).client.ReadDocument(data)) }
+            return {
+              output: read(yield* (yield* Scope).client.ReadDocument({ title: data.title })),
+            }
           }),
           { signal, tool: 'read_document' },
         )
