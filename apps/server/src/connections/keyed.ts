@@ -23,7 +23,9 @@ export const KeyedApp = Schema.Struct({ name: Schema.NonEmptyString, ...KeyedTra
  * prevent supplied names, URLs, hosts and header policies from becoming executable syntax. */
 /** JSON.stringify leaves U+2028/U+2029 raw; older parsers end a line there, so escape them. */
 function literal(value: string) {
-  return JSON.stringify(value).replace(/\u2028/gu, '\\u2028').replace(/\u2029/gu, '\\u2029')
+  return JSON.stringify(value)
+    .replace(/\u2028/gu, '\\u2028')
+    .replace(/\u2029/gu, '\\u2029')
 }
 
 export function keyedFiles(input: typeof KeyedApp.Type) {
