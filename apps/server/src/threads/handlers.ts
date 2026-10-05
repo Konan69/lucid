@@ -1,3 +1,4 @@
+import { abortThread } from './stop.ts'
 import { ThreadTitles } from './generation.ts'
 import * as Effect from 'effect/Effect'
 import {
@@ -17,7 +18,6 @@ import { InputStore } from '../inputs/store.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { live } from '../live/query.ts'
 import { Notifier } from '../notifications/notifier.ts'
-import { Runtime } from '../runtime/client.ts'
 import { requireThread } from './access.ts'
 import { Presence } from './presence.ts'
 import { RunStore } from './runs.ts'
@@ -167,7 +167,7 @@ export const threadHandlers = {
   StopThread: Effect.fn('Rpc.StopThread')(function* ({ id }: { readonly id: ThreadId }) {
     const auth = yield* requirePerson()
     yield* requireThread(id, auth.person.id)
-    yield* (yield* Runtime).stop(id)
+    yield* abortThread(id)
   }),
   ReportPresence: Effect.fn('Rpc.ReportPresence')(function* (request: PresenceRequest) {
     const auth = yield* requirePerson()

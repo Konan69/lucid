@@ -1,4 +1,5 @@
 import { silentChannelRepliesLayer } from '../channels/replies.ts'
+import { DeviceRegistry } from '../computers/device.ts'
 import { ThreadTitles } from './generation.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeBuffer from 'node:buffer'
@@ -7,6 +8,12 @@ import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
 import {
   CompanyId,
+  InstallationId,
+  SessionId,
+  DeviceRequest,
+  DeviceAnswer,
+  WindowAction,
+  WindowResult,
   Conflict,
   PersonId,
   Company,
@@ -30,6 +37,7 @@ import {
   Option,
   Predicate,
   Schema,
+  Stream,
 } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
@@ -267,12 +275,13 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
     conversationLayer.pipe(Layer.provide(silentChannelRepliesLayer), Layer.provide(services)),
   )
   const conversation = yield* Conversation.pipe(Effect.provideContext(context))
+  const devices = yield* DeviceRegistry.pipe(Effect.provideContext(context))
   /** Completion is observed through the real conditional SQL settlement before another Person sends. */
   const finish = Effect.fn('Delivery.test.settle')(function* (id: RunId) {
     yield* runtime.finish(id)
     expect(yield* Queue.take(recorded.ended)).toBe(id)
   })
-  return { ...rows, ...runtime, ...recorded, conversation, finish, services }
+  return { ...rows, ...runtime, ...recorded, conversation, devices, finish, services }
 })
 
 type Harness = Effect.Success<ReturnType<typeof harness>>
@@ -1160,6 +1169,66 @@ describe.skipIf(!testDatabaseConfigured)('Pictures through the gateway', () => {
         'This attachment is not a supported picture.',
       )
       expect(response.headers['content-disposition']).toBeUndefined()
+    }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
+  )
+})
+
+/** The production settlement observer offers RunEnded on the actual shared Device registry. */
+describe.skipIf(!testDatabaseConfigured)('Device Run settlement', () => {
+  it.effect('ends window work once on settlement and never announces a Run without it', () =>
+    Effect.gen(function* () {
+      const test = yield* harness()
+      const registry = test.devices
+      const installation = InstallationId.make(NodeCrypto.randomUUID())
+      const device = yield* registry.enrol(test.ada, { installation, name: 'Windows test' })
+      yield* registry.allow(test.ada, device.id)
+      const acts = yield* Queue.unbounded<typeof DeviceRequest.cases.Act.Type>()
+      const ends = yield* Queue.unbounded<RunId>()
+      const sessionId = SessionId.make(NodeCrypto.randomUUID())
+      const stream = yield* registry.watch({
+        personId: test.ada,
+        sessionId,
+        device: device.id,
+        installation,
+        ability: { pages: true, apps: true },
+      })
+      yield* stream.pipe(
+        Stream.runForEach((request) =>
+          DeviceRequest.match(request, {
+            Act: (act) => Queue.offer(acts, act),
+            RunEnded: ({ runId }) => Queue.offer(ends, runId),
+          }),
+        ),
+        Effect.forkScoped,
+      )
+      const admitted = yield* test.conversation.admit(said(test.threadId, test.ada))
+      const running = yield* registry
+        .window({
+          personId: test.ada,
+          threadId: test.threadId,
+          runId: admitted.runId,
+          action: WindowAction.cases.ListWindows.make({}),
+        })
+        .pipe(Effect.forkScoped)
+      const request = yield* Queue.take(acts)
+      yield* registry
+        .answer(test.ada, sessionId, {
+          device: device.id,
+          id: request.id,
+          answer: DeviceAnswer.cases.Did.make({
+            result: WindowResult.cases.Windows.make({ windows: [] }),
+          }),
+        })
+        .pipe(Effect.provideService(Runtime, test.runtime))
+      yield* Fiber.join(running)
+      yield* test.finish(admitted.runId)
+      expect(yield* Queue.take(ends)).toBe(admitted.runId)
+      yield* registry.ended(admitted.runId)
+      expect(yield* Queue.size(ends)).toBe(0)
+      const quiet = yield* test.conversation.admit(said(test.threadId, test.ada))
+      yield* test.finish(quiet.runId)
+      yield* registry.ended(quiet.runId)
+      expect(yield* Queue.size(ends)).toBe(0)
     }).pipe(Effect.scoped, Effect.provide(databaseLayer)),
   )
 })
