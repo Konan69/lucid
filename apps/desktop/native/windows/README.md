@@ -41,23 +41,23 @@ Every method requires `begin_turn`, except `begin_turn`, `end_turn`, `close`, an
 installed-app inventory. `status` captures nothing and returns phase
 `Idle`, `Active` or `Stopped`, `hooksLive`, `cooldownRemainingMs`, and `diagnosticsDropped`.
 
-| Method | Params | Result |
-| --- | --- | --- |
-| `begin_turn` | `{}` plus envelope `turn` | `{active:true}`; start that authorized turn |
-| `end_turn` | `{}` | `{active:false}`; clear caches; preserve stop latch |
-| `status` | `{}` | `{phase,hooksLive,cooldownRemainingMs,diagnosticsDropped}`; no capture |
-| `list_apps` | `{}` | `{apps:[{name,id,source,launchable,reason}],skipped}` |
-| `launch_app` | `{app: name,id?: inventoryId}` | `{pid,app,id}` |
-| `list_windows` | `{}` | `[{app,id,pid,title,inputAccess}]` |
-| `activate_window` | `{window}` | `{}` |
-| `get_window_state` | `{window,include_text?,include_screenshot?}` | `{window,text?,truncated?,screenshot?,origin?}` |
-| `click` | `{window,element_index,click_count?,mouse_button?}` | `{}` |
-| `click` | `{window,x,y,screenshotId,click_count?,mouse_button?}` | `{}` |
-| `type_text` | `{window,text,element_index?}` | `{}`; at most 4000 UTF-16 units |
-| `press_key` | `{window,key}` | `{}`; exact Alt+F4 returns `{outcome:"closed"}` or `{outcome:"closePending",dialogClass}` |
-| `scroll` | `{window,x,y,screenshotId,scrollX,scrollY}` | `{}` |
-| `close` | `{}` | `{}`, then exit 0 |
-| `simulate_escape` | `{}` | `{stopped:true}`; test mode only |
+| Method             | Params                                                 | Result                                                                                    |
+| ------------------ | ------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `begin_turn`       | `{}` plus envelope `turn`                              | `{active:true}`; start that authorized turn                                               |
+| `end_turn`         | `{}`                                                   | `{active:false}`; clear caches; preserve stop latch                                       |
+| `status`           | `{}`                                                   | `{phase,hooksLive,cooldownRemainingMs,diagnosticsDropped}`; no capture                    |
+| `list_apps`        | `{}`                                                   | `{apps:[{name,id,source,launchable,reason}],skipped}`                                     |
+| `launch_app`       | `{app: name,id?: inventoryId}`                         | `{pid,app,id}`                                                                            |
+| `list_windows`     | `{}`                                                   | `[{app,id,pid,title,inputAccess}]`                                                        |
+| `activate_window`  | `{window}`                                             | `{}`                                                                                      |
+| `get_window_state` | `{window,include_text?,include_screenshot?}`           | `{window,text?,truncated?,screenshot?,origin?}`                                           |
+| `click`            | `{window,element_index,click_count?,mouse_button?}`    | `{}`                                                                                      |
+| `click`            | `{window,x,y,screenshotId,click_count?,mouse_button?}` | `{}`                                                                                      |
+| `type_text`        | `{window,text,element_index?}`                         | `{}`; at most 4000 UTF-16 units                                                           |
+| `press_key`        | `{window,key}`                                         | `{}`; exact Alt+F4 returns `{outcome:"closed"}` or `{outcome:"closePending",dialogClass}` |
+| `scroll`           | `{window,x,y,screenshotId,scrollX,scrollY}`            | `{}`                                                                                      |
+| `close`            | `{}`                                                   | `{}`, then exit 0                                                                         |
+| `simulate_escape`  | `{}`                                                   | `{stopped:true}`; test mode only                                                          |
 
 `launch_app` requires a successful `list_apps` in the current turn; beginning or
 ending a turn clears catalog authority. It matches an installed name exactly, case-insensitively. It rejects
