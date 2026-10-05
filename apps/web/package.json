@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b --checkers 1 --builders 1 && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --checkers 1 --builders 1",
+    "typecheck": "node ../../scripts/types.mjs",
     "lint": "node ../../scripts/lint.mjs",
     "test": "vitest run"
   },

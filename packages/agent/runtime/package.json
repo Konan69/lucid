@@ -13,11 +13,11 @@
     "docs": "flue docs",
     "start": "node dist/server.mjs",
     "test": "vitest run",
-    "typecheck": "tsc -b --checkers 1 --builders 1",
+    "typecheck": "node ../../../scripts/types.mjs tsconfig.tests.json",
     "lint": "node ../../../scripts/lint.mjs",
     "db:generate": "echo 'Flue owns runtime schema migrations'",
     "db:migrate": "echo 'Flue owns runtime schema migrations'",
-    "types": "tsc -b tsconfig.types.json --checkers 1 --builders 1"
+    "types": "node ../../../scripts/types.mjs tsconfig.types.json"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "catalog:",

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
-    "typecheck": "tsc -b --checkers 1 --builders 1",
+    "typecheck": "node ../../scripts/types.mjs",
     "lint": "node ../../scripts/lint.mjs",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",

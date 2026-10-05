@@ -11,7 +11,7 @@
     "build": "node ./scripts/build.mjs",
     "dev": "pnpm build && electron .",
     "start": "pnpm build && electron .",
-    "typecheck": "tsc -b tsconfig.main.json tsconfig.preload.json --checkers 1 --builders 1",
+    "typecheck": "node ../../scripts/types.mjs tsconfig.main.json tsconfig.preload.json",
     "lint": "node ../../scripts/lint.mjs",
     "test": "vitest run",
     "package": "pnpm dist",

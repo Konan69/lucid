@@ -9,7 +9,11 @@
     },
     "typecheck": {
       "dependsOn": ["types", "^types", "checkinputs"],
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/tsconfig.base.json"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/types.mjs"
+      ],
       "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
       "outputs": [".cache/typescript/**", "*.tsbuildinfo"]
     },
@@ -88,7 +92,11 @@
     },
     "types": {
       "dependsOn": ["^types", "checkinputs"],
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/tsconfig.base.json"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/types.mjs"
+      ],
       "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
       "outputs": [".cache/typescript/types/**", ".cache/typescript/types.tsbuildinfo"]
     },

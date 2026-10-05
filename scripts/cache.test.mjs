@@ -88,6 +88,7 @@ function fixture(t) {
   }
   for (const file of [
     'scripts/lint.mjs',
+    'scripts/types.mjs',
     'scripts/oxlint-plugin-vivid.mjs',
     'tools/oxlint/probe.ts',
     'apps/web/src/styles/probe.css',
@@ -127,6 +128,7 @@ console.log('typescript(no-explicit-any): probe diagnostic')
 function hashes(root) {
   const result = runTurbo(root, [
     'build',
+    'types',
     'format:root',
     'lint',
     'lint:root',
@@ -154,6 +156,13 @@ void test('shared lint and TypeScript inputs invalidate the correct cached tasks
   const plugin = hashes(root)
   assert.notEqual(compiler.get('@vivid/web#lint').hash, plugin.get('@vivid/web#lint').hash)
   assert.equal(compiler.get('@vivid/web#typecheck').hash, plugin.get('@vivid/web#typecheck').hash)
+  NodeFS.appendFileSync(NodePath.join(root, 'scripts/types.mjs'), '// compiler runner change\n')
+  const runner = hashes(root)
+  assert.notEqual(
+    plugin.get('@vivid/contracts#types').hash,
+    runner.get('@vivid/contracts#types').hash,
+  )
+  assert.notEqual(plugin.get('@vivid/web#typecheck').hash, runner.get('@vivid/web#typecheck').hash)
 })
 
 /** Contracts still invalidate consumers when their declarations are generated separately. */
