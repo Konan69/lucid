@@ -39,8 +39,7 @@ import * as Schema from 'effect/Schema'
  * app both sign in this way.
  *
  * An app's own window cannot run Google's sign-in (Google refuses an embedded window), so a
- * browser does: the system browser for the desktop app, the platform's sign-in sheet for the
- * phone. The mechanism is Better Auth's own desktop integration, `@better-auth/electron`
+ * browser does, the system's own for both apps. The mechanism is Better Auth's own desktop integration, `@better-auth/electron`
  * 1.7.5 (`dist/index.mjs`), with Vivid's names: the app sends the digest of a secret it keeps;
  * when a sign-in succeeds, a hook after it stores that digest beside the Person as a one-use
  * verification value good for 300 seconds (`handleTransfer`, run from the `hooks.after` entry
@@ -61,10 +60,11 @@ import * as Schema from 'effect/Schema'
  *   page of the web app read it and leave again. Here no page loads between Google and the app.
  *
  * The phone differs from the desktop app in how the browser hands back and in what the trade
- * answers with, and in nothing else (`Back` below). Its browser is the sign-in sheet Better
- * Auth's phone integration opens (`@better-auth/expo` 1.7.5, `Browser.openAuthSessionAsync` in
- * `dist/client.js`), which closes itself when it reaches a link in the app's scheme, so the code
- * goes back on that link. And the phone keeps a bearer token and no cookie, so its trade answers
+ * answers with, and in nothing else (`Back` below). A phone app listens on no port; the system
+ * opens it for a link in the scheme it registered, which is how Better Auth's phone integration
+ * comes back (`@better-auth/expo` 1.7.5, the `callbackURL` given to
+ * `Browser.openAuthSessionAsync` in `dist/client.js`), so the code goes back on that link. And
+ * the phone keeps a bearer token and no cookie, so its trade answers
  * with the session's token. That integration is not followed in what it puts on the link: the
  * session cookie itself (`hooks.after` in its `dist/index.js`). A link in a custom scheme can be
  * claimed by another app on the phone (RFC 8252 section 8.1); a one-use code that needs the
@@ -230,12 +230,12 @@ const started = (origin: string) =>
   )
 
 /**
- * `GET /api/auth/phone/google`: where the phone app opens the sign-in sheet.
+ * `GET /api/auth/phone/google`: where the phone app opens the browser.
  *
  * The integration it follows has the app ask for Google's address itself and then open a second
- * route that copies the app's state cookie into the sheet (`expoAuthorizationProxy` in
- * `@better-auth/expo` 1.7.5 `dist/index.js`). Here the sheet makes the first request, so the
- * state cookie is the sheet's own from the start and there is nothing to copy.
+ * route that copies the app's state cookie into the browser (`expoAuthorizationProxy` in
+ * `@better-auth/expo` 1.7.5 `dist/index.js`). Here the browser makes the first request, so the
+ * state cookie is the browser's own from the start and there is nothing to copy.
  *
  * Anything may open this address too, and that grants nothing, as above. Where the code goes is
  * not the caller's to say: it is the phone app's one link (`PHONE_SIGN_IN_RETURN`).

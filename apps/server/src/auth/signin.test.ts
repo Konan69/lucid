@@ -260,12 +260,12 @@ const granted = Effect.fn('SignInTest.granted')(function* (server: Server, who: 
   return { mine, app, code, browser: cookiesOf(callback) }
 })
 
-/** The address the phone app opens in the sign-in sheet. */
+/** The address the phone app opens in the browser. */
 const startOnPhone = (mine: Attempt) =>
   `phone/google?${new URLSearchParams({ challenge: mine.challenge, state: mine.state }).toString()}`
 
 /**
- * What the sign-in sheet hands the phone app: the link a redirect names, read the way the app
+ * What the browser hands the phone app: the link a redirect names, read the way the app
  * reads it (`readPhoneSignInReturn`). A response that is not a redirect to the app's own link
  * fails the test.
  */
@@ -274,12 +274,12 @@ const handedBack = (response: Answer) => {
   const link = response.headers['location']
   if (link === undefined) return expect.fail('The redirect names no link')
   return Option.match(readPhoneSignInReturn(link), {
-    onNone: () => expect.fail(`The sheet was not sent to the phone app's link: ${link}`),
+    onNone: () => expect.fail(`The browser was not sent to the phone app's link: ${link}`),
     onSome: (back) => back,
   })
 }
 
-/** The sheet at Google for one phone attempt, then back at the callback with what Google sent. */
+/** The browser at Google for one phone attempt, then back at the callback with what Google sent. */
 const roundOnPhone = Effect.fn('SignInTest.roundOnPhone')(function* (
   server: Server,
   held: string,
@@ -300,7 +300,7 @@ const grantedOnPhone = Effect.fn('SignInTest.grantedOnPhone')(function* (
 ) {
   const { mine, back, callback } = yield* roundOnPhone(server, '', { code: codeFor(who) })
   if (!SignInReturn.guards.Granted(back)) return expect.fail('The phone app was sent no code')
-  return { mine, code: back.code, state: back.state, sheet: cookiesOf(callback) }
+  return { mine, code: back.code, state: back.state, browser: cookiesOf(callback) }
 })
 
 /** The trade the phone app makes: no page, so no origin, and no cookie. */
@@ -670,7 +670,7 @@ describe.skipIf(!testDatabaseConfigured)('the phone app signing in with Google',
   })
 
   layer(testLayer)((it) => {
-    it.effect('sends the sign-in sheet to Google, where the Person chooses the account', () =>
+    it.effect('sends the browser to Google, where the Person chooses the account', () =>
       Effect.gen(function* () {
         const server = yield* local
         const response = yield* call(server, startOnPhone(attempt()), {
@@ -691,7 +691,7 @@ describe.skipIf(!testDatabaseConfigured)('the phone app signing in with Google',
       Effect.gen(function* () {
         const server = yield* local
         const who = yield* account()
-        const { mine, code, state, sheet } = yield* grantedOnPhone(server, who)
+        const { mine, code, state, browser } = yield* grantedOnPhone(server, who)
         // The link names the attempt the app started, so the app answers only its own.
         expect(state).toBe(mine.state)
 
@@ -706,22 +706,22 @@ describe.skipIf(!testDatabaseConfigured)('the phone app signing in with Google',
         const { token } = yield* bodyOf(answer, PhoneSignedIn)
 
         const onPhone = yield* whoHolds(server, token)
-        const inSheet = yield* whoIs(server, sheet)
-        // The same Person, in a session that is not the sheet's: signing out of one leaves the
+        const inBrowser = yield* whoIs(server, browser)
+        // The same Person, in a session that is not the browser's: signing out of one leaves the
         // other signed in.
         expect(onPhone.user.email).toBe(who.email)
-        expect(inSheet.user.email).toBe(who.email)
-        expect(onPhone.session.id).not.toBe(inSheet.session.id)
+        expect(inBrowser.user.email).toBe(who.email)
+        expect(onPhone.session.id).not.toBe(inBrowser.session.id)
       }).pipe(Effect.scoped),
     )
 
-    it.effect('signs the phone in as the account chosen, not the one the sheet held', () =>
+    it.effect('signs the phone in as the account chosen, not the one the browser held', () =>
       Effect.gen(function* () {
         const server = yield* local
         const held = yield* account()
         const chosen = yield* account()
         const before = yield* grantedOnPhone(server, held)
-        const { mine, back } = yield* roundOnPhone(server, before.sheet, {
+        const { mine, back } = yield* roundOnPhone(server, before.browser, {
           code: codeFor(chosen),
         })
         if (!SignInReturn.guards.Granted(back)) return expect.fail('The phone app was sent no code')
@@ -737,13 +737,13 @@ describe.skipIf(!testDatabaseConfigured)('the phone app signing in with Google',
       }).pipe(Effect.scoped),
     )
 
-    it.effect('issues no code to a signed-in sheet that did not come from Google', () =>
+    it.effect('issues no code to a signed-in browser that did not come from Google', () =>
       Effect.gen(function* () {
         const server = yield* local
         // A browser signed in as someone, and a program that started a phone attempt of its own
         // and sends that browser to the callback with nothing from Google.
-        const { sheet } = yield* grantedOnPhone(server, yield* account())
-        const { mine, back } = yield* roundOnPhone(server, sheet, {})
+        const { browser } = yield* grantedOnPhone(server, yield* account())
+        const { mine, back } = yield* roundOnPhone(server, browser, {})
 
         expect(back).toEqual(SignInReturn.cases.Failed.make({ state: mine.state }))
       }).pipe(Effect.scoped),

@@ -19,9 +19,9 @@ made, and the app trades the code and the secret for a session of its own.
 - The desktop shell opens the system browser on `GET /api/auth/desktop/google`. The code comes
   back on a loopback address the shell listens on, and the window trades it at
   `POST /api/auth/desktop/session` for a cookie.
-- The phone app opens the platform's sign-in sheet on `GET /api/auth/phone/google`. The code
-  comes back on the app's own link (`vivid://signin`), which closes the sheet, and the app trades
-  it at `POST /api/auth/phone/session` for the session's token.
+- The phone app opens the system browser on `GET /api/auth/phone/google`. The code comes back
+  on the app's own link (`vivid://signin`), which opens the app again, and the app trades it at
+  `POST /api/auth/phone/session` for the session's token.
 
 ## Configuration
 

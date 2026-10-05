@@ -188,12 +188,11 @@ export type SignedIn = typeof SignedIn.Type
  * secret the app keeps, its digest through Google, a one-use code traded with the secret), and
  * differs in the two places a phone differs from a computer.
  *
- * The browser is the platform's own sign-in sheet, opened over the app and closed by the system
- * when it reaches the app's link (`ASWebAuthenticationSession` on iOS, a Custom Tab on Android).
- * That is how Better Auth's own phone integration does it (`@better-auth/expo` 1.7.5,
- * `Browser.openAuthSessionAsync` in `dist/client.js`). So the return is a link in the app's
- * scheme and not a loopback address: the sheet is told that link, and hands it to the app that
- * opened it. No port is involved.
+ * The return is a link in the app's own scheme and not a loopback address: a phone app listens
+ * on no port, and the system opens the app that registered the scheme. That is how Better Auth's
+ * own phone integration comes back (`@better-auth/expo` 1.7.5, the `callbackURL` it gives
+ * `Browser.openAuthSessionAsync` in `dist/client.js`). Which browser the phone opens is the
+ * phone app's own matter (`apps/mobile/src/data/google.ts`) and nothing here depends on it.
  *
  * And the phone holds no cookie. It keeps the session's token and sends it as a bearer token, so
  * the trade answers with the token itself.
@@ -206,31 +205,31 @@ export type SignedIn = typeof SignedIn.Type
 
 /** Where each step of the phone's sign-in is served, under the server's own origin. */
 export const PHONE_SIGN_IN_PLACES = {
-  /** The sign-in sheet is opened here; it leaves for Google at once. */
+  /** The browser is opened here; it leaves for Google at once. */
   start: '/api/auth/phone/google',
   /** The app trades the code here. */
   trade: '/api/auth/phone/session',
 } as const
 
 /**
- * The link the server sends the sign-in sheet to when Google is done. Its scheme is the one the
- * phone app registers (`scheme` in `apps/mobile/app.json`); the server never sends a sheet to a
+ * The link the server sends the browser to when Google is done. Its scheme is the one the
+ * phone app registers (`scheme` in `apps/mobile/app.json`); the server never sends a browser to a
  * link an app supplied.
  */
 export const PHONE_SIGN_IN_RETURN = 'vivid://signin'
 
-/** What the phone puts on the address it opens the sign-in sheet on. */
+/** What the phone puts on the address it opens the browser on. */
 export const PhoneSignInStart = Schema.Struct({
   challenge: SignInChallenge,
   state: SignInAttempt,
 })
 export type PhoneSignInStart = typeof PhoneSignInStart.Type
 
-/** The address the phone opens in the sign-in sheet to start an attempt on its server. */
+/** The address the phone opens in the browser to start an attempt on its server. */
 export const phoneSignInStartAddress = (origin: string, start: PhoneSignInStart): string =>
   `${origin}${PHONE_SIGN_IN_PLACES.start}?${queryOf(start)}`
 
-/** The link the server sends the sign-in sheet back to, with what came of the attempt. */
+/** The link the server sends the browser back to, with what came of the attempt. */
 export const phoneSignInReturnAddress = (back: SignInReturn): string =>
   `${PHONE_SIGN_IN_RETURN}?${queryOf(returnFields(back))}`
 
@@ -245,7 +244,7 @@ const fieldOf = (pair: string): Option.Option<readonly [string, string]> => {
 }
 
 /**
- * Reads a return off the link the sign-in sheet handed the app. The link is read as text, because
+ * Reads a return off the link the browser handed the app. The link is read as text, because
  * this package assumes no platform and a phone's `URL` does not parse a custom scheme the way a
  * browser's does. A link that is not the return link, or carries no return, is nothing.
  */
