@@ -3,7 +3,7 @@ import { standingWords } from '@vivid/state'
 import { nativeMetrics as m } from '@vivid/tokens/native'
 import { Option } from 'effect'
 import { ChevronDown } from 'lucide-react-native'
-import { useSyncExternalStore } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { Platform, StyleSheet, View } from 'react-native'
 import Animated, {
   Easing,
@@ -109,15 +109,24 @@ const spokenOf = (name: string, stand: Stand): string =>
  * Person's press is felt at once, before any server has said that Vivid is working.
  */
 export interface Origin {
+  /** Which composer this is, as a number a worklet can compare. */
+  readonly id: number
   readonly button: AnimatedRef<Animated.View>
   readonly sends: SharedValue<number>
 }
 
-/** One screen's origin. Both parts keep their identity for as long as the screen is mounted. */
+/** How many origins have been made, which is where the next one's `id` comes from. */
+let made = 0
+
+/** One screen's origin. Every part keeps its identity for as long as the screen is mounted. */
 export function useOrigin(): Origin {
+  const [id] = useState(() => {
+    made += 1
+    return made
+  })
   const button = useAnimatedRef<Animated.View>()
   const sends = useSharedValue(0)
-  return { button, sends }
+  return { id, button, sends }
 }
 
 /** What the screen in front says about Vivid, for the one capsule over the stack to show. */
@@ -376,14 +385,18 @@ function Floating({ said, onGo }: { said: Front; onGo: (place: Place) => void })
   // Where the flight began, and where the layer itself is, both in the window's own points.
   const from = useSharedValue(NOWHERE)
   const ground = useSharedValue(NOWHERE)
-  const { button, sends } = said.origin
+  const { id, button, sends } = said.origin
 
   useAnimatedReaction(
-    () => sends.get(),
+    () => ({ id, count: sends.get() }),
     (now, before) => {
-      // `before` is null when this composer is first listened to: the screen in front has just
-      // changed, and nothing has been sent from it since.
-      if (before === null || now === before) return
+      // The count is only comparable with the same composer's. This one capsule outlives the
+      // screens under it, and the library keeps the last value it saw when the screen in front
+      // changes (`useAnimatedReaction` makes `previous` once), so without the `id` a Thread
+      // opened after a send from Home would compare its 0 with Home's 1 and fly a disc nobody
+      // sent. A new composer only sets the count to compare the next send with. A disc already
+      // in the air is left to land: it is going to this same capsule.
+      if (before === null || before.id !== now.id || now.count === before.count) return
       const leaving = measure(button)
       const frame = measure(layer)
       if (leaving === null || frame === null) return
@@ -392,7 +405,7 @@ function Floating({ said, onGo }: { said: Front; onGo: (place: Place) => void })
       flight.set(0)
       flight.set(withTiming(1, FLIGHT))
     },
-    [sends, button],
+    [id, sends, button],
   )
 
   const flying = useAnimatedStyle(() => {

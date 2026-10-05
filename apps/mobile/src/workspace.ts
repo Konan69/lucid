@@ -19,7 +19,8 @@ import { createContext, useContext } from 'react'
  * - `Chat`: one Thread. Only its id travels; its title and everything else are read live. Opened
  *   from Home it stands beside Home, with Home's bar and the drawer (`data/lead.ts`); opened from
  *   anywhere else it is pushed, and the back swipe returns there.
- * - `Computer`: Vivid's computer, reached from a Thread's bar: where it stands and its controls.
+ * - `Computer`: Vivid's computer, reached from Vivid's own menu at the top of Home and of a
+ *   Thread (`ui/Presence.tsx`): where it stands and its controls.
  * - `Routines`, `Library`: the places beside Threads, in the drawer. `Projects` is reached from
  *   the quiet group under the Threads.
  * - `Folder`, `Project`: one level down inside the Library or a Project. Each level is its own
