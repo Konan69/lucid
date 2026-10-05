@@ -159,7 +159,7 @@ const audienceWords = (thread: Thread): string =>
  * (thinking, waiting for the Person, or simply there), or who else is writing (`standIn`). At
  * the end of the bar: who else is looking, who the Thread is shared with, and the way to call
  * Vivid. The way to a new Thread and to Vivid's computer are in Vivid's own menu, under its
- * capsule (`ui/Presence.tsx`), and in the menu the bar starts with.
+ * capsule (`ui/Presence.tsx`); a new Thread is also in the menu the bar starts with.
  *
  * The Thread's title is not here. The bar's middle is Vivid's, as the owner asked, and the title
  * is where the Person chose the Thread: its row in the menu.
@@ -258,6 +258,11 @@ function useSend(
 ) {
   const data = useLiveData()
   const [unsent, setUnsent] = useState<Option.Option<Unsent>>(Option.none())
+  // A delivery is on its way and has not been answered. In a private Thread the stream says so
+  // itself the moment it is sent. In a shared one the message goes to the server first, and
+  // nothing on this phone says Vivid has it until the Thread's record comes back; for that
+  // moment this is what the top of the screen goes by.
+  const [pending, setPending] = useState(false)
   const shared = Option.exists(thread, (value) => !ThreadAudience.guards.Private(value.audience))
 
   /**
@@ -276,6 +281,7 @@ function useSend(
 
   function send(delivery: Delivery) {
     setUnsent(Option.none())
+    setPending(true)
     // A Thread started without a name takes its first message as one. A refusal is not said: the
     // Person did not ask for this, the Thread keeps the title it had, and the next message tries
     // again because the title is still the unnamed one.
@@ -285,6 +291,7 @@ function useSend(
       )
     }
     return deliver(delivery).then((why) => {
+      setPending(false)
       if (Option.isNone(why)) return true
       setUnsent(Option.some({ ...delivery, why: why.value }))
       // Nothing in a shared Thread shows words that did not arrive, so they go back into the
@@ -297,6 +304,7 @@ function useSend(
 
   return {
     shared,
+    pending,
     unsent,
     /**
      * Sends words: as the delivery still in doubt when they are its words, else as a new one.
@@ -408,7 +416,10 @@ function Conversation({
       <Top
         thread={thread}
         present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
-        working={working}
+        // What was just sent is being thought about from the moment it leaves, which the
+        // capsule shows as the disc from the composer reaches it; the composer's own button
+        // waits for Vivid to have really started before it becomes the way to stop.
+        working={working || sending.pending}
         origin={origin}
         onShare={() => setSharing(true)}
       />

@@ -375,10 +375,10 @@ const LANDED = { opacity: 0, transform: [{ translateX: 0 }, { translateY: 0 }, {
  * The capsule in its place over the stack, and the disc that carries a send up to it.
  *
  * When the Person sends, a disc in the send button's colour leaves that button, rises to the
- * capsule and lands where the face stands, shrinking from the button's size to the orb's, which
- * is what is there by the time it lands. That is the whole morph: what the Person pressed becomes
- * what is now thinking, and it ends at the top centre, where the state stays for the rest of the
- * Run.
+ * capsule and lands where the face stands, shrinking from the button's size to the orb's. The
+ * screen that sent says Vivid is thinking from the moment of the send, so the orb is what is
+ * there as the disc lands. That is the whole morph: what the Person pressed becomes what is now
+ * thinking, and it ends at the top centre, where the state stays for the rest of the Run.
  *
  * - It runs on the UI thread and moves by transform and opacity alone; React renders nothing.
  * - It leaves from where the button is at that moment: the composer rides the keyboard.
