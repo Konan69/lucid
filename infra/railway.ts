@@ -89,6 +89,38 @@ const observabilityAccess = (environment: InfrastructureEnvironment) =>
     }),
   })
 
+/** A setting the server has its own default for is sent only when the deploy sets it. */
+const whenSet = (name: string, value: Option.Option<string>) =>
+  Option.match(value, { onNone: () => ({}), onSome: (set) => ({ [name]: set }) })
+
+/**
+ * Vivid's Computer on Boat. The key and the template are always sent: `infra/env.ts` refuses a
+ * deploy without them, so the hosted server never runs without its Computer provider. Boat itself
+ * is not a resource of this graph; the server reaches it over the public internet with the key.
+ */
+const computerAccess = ({ computer }: InfrastructureEnvironment) => ({
+  VIVID_COMPUTER_PROVIDER: 'boat',
+  VIVID_BOAT_API_KEY: computer.key,
+  VIVID_BOAT_TEMPLATE: computer.template,
+  ...whenSet('VIVID_BOAT_ORG', computer.organization),
+  ...whenSet('VIVID_BOAT_SIZE', computer.size),
+  ...whenSet('VIVID_BOAT_LIFETIME_SECONDS', computer.lifetimeSeconds),
+  ...whenSet('VIVID_BOAT_MACHINE', computer.machine),
+})
+
+/** Texting Vivid over iMessage; `infra/env.ts` refuses a deploy without the Photon project. */
+const textingAccess = ({ texting }: InfrastructureEnvironment) => ({
+  VIVID_PHOTON_PROJECT_ID: texting.projectId,
+  VIVID_PHOTON_PROJECT_SECRET: texting.projectSecret,
+})
+
+/** Notifications while a Person is away; `infra/env.ts` refuses a deploy without the key pair. */
+const pushAccess = ({ push }: InfrastructureEnvironment) => ({
+  VIVID_PUSH_VAPID_PUBLIC: push.publicKey,
+  VIVID_PUSH_VAPID_PRIVATE: push.privateKey,
+  VIVID_PUSH_SUBJECT: push.subject,
+})
+
 /**
  * The hosted product on Railway: PostgreSQL, the Flue runtime on the private mesh, and the
  * application server as the only public service. The server serves the built web app itself
@@ -268,6 +300,9 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
       EXPLABS_API_KEY: environment.modelGatewayKey,
       VIVID_HELIX_URL: privateUrl(serviceNames.helix, ports.helix),
+      ...computerAccess(environment),
+      ...textingAccess(environment),
+      ...pushAccess(environment),
       ...executorAccess(environment),
       ...decisionAccess,
       ...observabilityAccess(environment),
