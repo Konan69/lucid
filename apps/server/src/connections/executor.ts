@@ -2233,7 +2233,7 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
     ExecutorServiceEntry.make({
       id: service.service,
       name: service.name,
-      description: service.name,
+      description: service.description,
       domain: service.domain,
       authorization: ServiceAuthorization.cases.SignIn.make({}),
     }),

@@ -28,6 +28,9 @@ const googleMethod = 'googleOAuth2'
 const GoogleService = Schema.Struct({
   service: ServiceId,
   name: Schema.NonEmptyString,
+  /** What a Person or Vivid can do with it, in the catalogue. A search matches these words too,
+   * and each names Google, so "google" finds Gmail as well. */
+  description: Schema.NonEmptyString,
   /** The product's own site, which is what its icon is found by. The API host has none. */
   domain: Schema.NonEmptyString,
   /** Google's API as an OpenAPI definition. Executor's catalogue lists these six under this
@@ -47,6 +50,7 @@ export const googleServices: readonly GoogleService[] = [
   GoogleService.make({
     service: ServiceId.make('google/gmail'),
     name: 'Gmail',
+    description: "Read, search, send and organise email in Gmail, Google's mail.",
     domain: 'gmail.com',
     definition: definition('gmail'),
     origin: 'https://gmail.googleapis.com',
@@ -59,6 +63,7 @@ export const googleServices: readonly GoogleService[] = [
   GoogleService.make({
     service: ServiceId.make('google/calendar'),
     name: 'Google Calendar',
+    description: 'See, create and change events and calendars in Google Calendar.',
     domain: 'calendar.google.com',
     definition: definition('calendar'),
     origin: 'https://www.googleapis.com',
@@ -67,6 +72,7 @@ export const googleServices: readonly GoogleService[] = [
   GoogleService.make({
     service: ServiceId.make('google/drive'),
     name: 'Google Drive',
+    description: 'Find, read, organise and share files and folders in Google Drive.',
     domain: 'drive.google.com',
     definition: definition('drive'),
     origin: 'https://www.googleapis.com',
@@ -75,6 +81,7 @@ export const googleServices: readonly GoogleService[] = [
   GoogleService.make({
     service: ServiceId.make('google/docs'),
     name: 'Google Docs',
+    description: 'Read, create and edit documents in Google Docs.',
     domain: 'docs.google.com',
     definition: definition('docs'),
     origin: 'https://docs.googleapis.com',
@@ -83,6 +90,7 @@ export const googleServices: readonly GoogleService[] = [
   GoogleService.make({
     service: ServiceId.make('google/sheets'),
     name: 'Google Sheets',
+    description: 'Read, create and edit spreadsheets in Google Sheets.',
     domain: 'sheets.google.com',
     definition: definition('sheets'),
     origin: 'https://sheets.googleapis.com',
@@ -95,6 +103,7 @@ export const googleServices: readonly GoogleService[] = [
   GoogleService.make({
     service: ServiceId.make('google/tasks'),
     name: 'Google Tasks',
+    description: 'See, add and complete to-dos and task lists in Google Tasks.',
     domain: 'tasks.google.com',
     definition: definition('tasks'),
     origin: 'https://tasks.googleapis.com',
