@@ -44,7 +44,11 @@ describe.skipIf(process.env['VIVID_LIVE_MACHINE_HELD'] !== '1')('A held machine,
         const record = api.command(machine, key, 'cat "$HOME/.vivid/holder"', 10)
         const before = yield* record
         expect(before.exitCode, 'The machine must already record its holder').toBe(0)
-        expect(before.stdout.startsWith(`${machine} `)).toBe(true)
+        // A whole record for this machine, and so some other server's binding: this stack's
+        // table is new and holds none.
+        expect(before.stdout).toMatch(
+          new RegExp(`^${machine} [0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}\\n$`, 'u'),
+        )
 
         // A start answers at once with Starting and a worker does the rest (`store.ts`, `begin`),
         // so the outcome is read where the Person's own screen reads it: the live Computer.

@@ -2,8 +2,11 @@ import { Schema } from 'effect'
 
 /** Boat v1 wire vocabulary, from https://docs.boat.dev/openapi/boat-v1.yaml.
  * Deliberately project out machine addresses, provider error messages and inherited credentials. */
+/** The characters Boat makes a machine id from, after `bx_`, and how many of them there are. */
+export const providerAlphabet = '23456789abcdefghjkmnpqrstuvwxyz'
+export const providerLength = 8
 export const ProviderId = Schema.String.check(
-  Schema.isPattern(/^bx_[23456789abcdefghjkmnpqrstuvwxyz]{8}$/),
+  Schema.isPattern(new RegExp(`^bx_[${providerAlphabet}]{${providerLength}}$`, 'u')),
 ).pipe(Schema.brand('BoatMachineId'))
 export type ProviderId = typeof ProviderId.Type
 export const Size = Schema.Literals(['small', 'default', 'large'])

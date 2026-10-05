@@ -75,6 +75,14 @@ describe.each(['sh', 'bash'])('the machine’s holder record under %s', (shell) 
       `${machine} ${first.slice(1)}\n`,
       `machine ${first}\n`,
       `bx_ABCDEFGH ${first}\n`,
+      // Outside the characters Boat makes an id from.
+      `bx_0000000a ${first}\n`,
+      // The right length and the right characters, and not an intent.
+      `${machine} ${'-'.repeat(36)}\n`,
+      `${machine} AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA\n`,
+      // A whole record with something after it: reading it must not tidy that away.
+      `${machine} ${first}\n\n`,
+      `${machine} ${first}\0\n`,
     ]
     for (const content of damaged) {
       const directory = seeded(content)

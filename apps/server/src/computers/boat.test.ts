@@ -214,14 +214,19 @@ const settled = Effect.fn('BoatTest.holder')(function* (
   const [, claim, machine] = mine
   const held = (yield* Ref.get(evidence.holders)).get(machine)
   // A record that is not one machine id and one intent is damage: nothing is settled on it.
-  if (held !== undefined && !/^bx_[a-z0-9]+ [0-9a-f-]{36}$/u.test(held))
-    return commandExit(UNSETTLED)
+  if (held !== undefined && !recorded.test(held)) return commandExit(UNSETTLED)
   if (held !== undefined && held !== claim && held.startsWith(`${machine} `))
     return commandExit(HELD)
   yield* Ref.update(evidence.holders, (holders) => new Map(holders).set(machine, claim))
   if (command.endsWith(launcher)) yield* Ref.update(evidence.launches, (count) => count + 1)
   return commandReply('')
 })
+
+/** What the machine believes a record to be: a Boat machine id, a space, a UUID. */
+const recorded = new RegExp(
+  `^bx_[${Protocol.providerAlphabet}]{${Protocol.providerLength}} [0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$`,
+  'u',
+)
 
 /** Another table's row for the same machine: an account of its own and an intent of its own. */
 const rebound = (row: typeof machineBindings.$inferSelect, key: MachineKey) => ({
@@ -899,7 +904,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       // A machine made from a template carries the template machine's own record.
       yield* Ref.set(
         evidence.holders,
-        new Map([[adoptedId, 'bx_0000000a 99999999-9999-4999-8999-999999999999']]),
+        new Map([[adoptedId, 'bx_2222222a 99999999-9999-4999-8999-999999999999']]),
       )
       expect((yield* machine.ensure(key))._tag).toBe('Running')
       const rows = yield* database.run(
@@ -932,6 +937,13 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       expect(Option.isSome(before)).toBe(true)
       expect(yield* Ref.get(evidence.launches)).toBe(launched)
       expect((yield* Ref.get(evidence.holders)).get(adoptedId)).toBe('not a record')
+      // The machine once said yes to this process. It is asked again all the same, and until it
+      // can answer nothing of this binding's reaches it.
+      const refused = yield* machine
+        .exec({ key, command: 'echo receipt', timeoutSeconds: 10 })
+        .pipe(Effect.flip)
+      expect(refused).toEqual(new MachineOperationFailed({ operation: 'holder' }))
+      expect((yield* Ref.get(evidence.commands)).includes('echo receipt')).toBe(false)
     }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
   )
 

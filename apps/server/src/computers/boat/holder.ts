@@ -6,7 +6,7 @@ import {
   type MachineKey,
 } from '../machine.ts'
 import type { Bindings } from './bindings.ts'
-import type { ProviderId } from './protocol.ts'
+import { providerAlphabet, providerLength, type ProviderId } from './protocol.ts'
 import type { Identity } from './state.ts'
 import type { Transport } from './transport.ts'
 
@@ -34,7 +34,7 @@ import type { Transport } from './transport.ts'
  * - another machine's id: the disk came from a template or a copy of that machine, and the record
  *   is that machine's. It says nothing about this one and is replaced.
  * - anything else (a record that cannot be read, is empty, or is not exactly one machine id and
- *   one intent): the command stops with `UNSETTLED`. Damage is never read as a free machine, and
+ *   one intent, byte for byte): the command stops with `UNSETTLED`. Damage is never read as a free machine, and
  *   never as someone else's claim either, so it costs no server its binding. An operator looks.
  *
  * The whole read, decision and write happens under a lock on the machine (`flock`, which the
@@ -66,15 +66,28 @@ export const HELD = 73
 /** The exit status when the holder could not be settled: no lock, or a record that is damage. */
 export const UNSETTLED = 74
 
+/** A UUID's groups of hexadecimal digits. */
+const GROUPS = [8, 4, 4, 4, 12] as const
+
 /**
  * A binding's intent is a UUID this server made (`bindings.ts`, `intend`). It is written into a
  * shell command, so anything else is refused here: a row that did not come from this code must
  * not become shell text.
  */
-const INTENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
+const INTENT = new RegExp(`^${GROUPS.map((digits) => `[0-9a-f]{${digits}}`).join('-')}$`, 'u')
 
 /** Whether an intent may be named on a machine. */
 export const holdable = (intent: string): boolean => INTENT.test(intent)
+
+/**
+ * The same two shapes as shell patterns, for the machine to hold a record against. Every
+ * character is spelled out: a range such as `a-f` means different things in different locales.
+ */
+const intentForm = GROUPS.map((digits) => '[0123456789abcdef]'.repeat(digits)).join('-')
+const machineForm = `bx_${`[${providerAlphabet}]`.repeat(providerLength)}`
+
+/** A record is one line: a machine id, a space, an intent, a line feed. This many bytes. */
+const RECORD_BYTES = 'bx_'.length + providerLength + 1 + 36 + 1
 
 /** Put this binding's record in place whole: written beside the record, then moved over it. */
 const publish = `printf '%s\\n' "$mine" > "$record.new" && mv -f "$record.new" "$record" || exit ${UNSETTLED}`
@@ -86,29 +99,35 @@ const publish = `printf '%s\\n' "$mine" > "$record.new" && mv -f "$record.new" "
  *
  * It is POSIX shell (`sh` is the least a machine has; Boat runs commands with `bash`). Descriptor
  * 9 holds the lock from `flock` until it is closed on the last line: whatever the caller runs
- * next (the desktop launcher lives for the whole session) must not inherit it.
+ * next (the desktop launcher lives for the whole session) must not inherit it. The lock file is
+ * touched first because `sh` ends at once, with its own status, when `exec` cannot open a file.
+ *
+ * A record is believed only when it is exact: the right number of bytes, and one of the two
+ * shapes. `HELD` costs the caller its binding (`settle`), so it is said only of a record that
+ * names this machine and a whole, well-formed intent that is not the caller's.
  */
 export const holderClaim = (input: { readonly id: ProviderId; readonly intent: string }): string =>
   [
     `mine='${input.id} ${input.intent}'`,
-    'directory="${HOME:?}/.vivid"; record="$directory/holder"',
-    `mkdir -p "$directory" || exit ${UNSETTLED}`,
+    `intent='${intentForm}'`,
+    `machine='${machineForm}'`,
+    `[ -n "\${HOME-}" ] || exit ${UNSETTLED}`,
+    'directory="$HOME/.vivid"; record="$directory/holder"',
+    `mkdir -p "$directory" && touch "$directory/holder.lock" || exit ${UNSETTLED}`,
     `exec 9>"$directory/holder.lock" || exit ${UNSETTLED}`,
     `flock -w 20 9 || exit ${UNSETTLED}`,
     'if [ -e "$record" ] || [ -L "$record" ]; then',
+    `  [ "$(wc -c < "$record")" -eq ${RECORD_BYTES} ] || exit ${UNSETTLED}`,
     `  held="$(cat "$record")" || exit ${UNSETTLED}`,
-    '  if [ "$held" != "$mine" ]; then',
-    // A record is exactly "<machine> <intent>". Each test below turns one kind of damage away.
-    '    machine="${held%% *}"; intent="${held#* }"',
-    `    [ "$machine $intent" = "$held" ] || exit ${UNSETTLED}`,
-    `    case "$machine" in bx_*) ;; *) exit ${UNSETTLED} ;; esac`,
-    `    case "\${machine#bx_}" in ''|*[!a-z0-9]*) exit ${UNSETTLED} ;; esac`,
-    `    case "$intent" in *[!0-9a-f-]*) exit ${UNSETTLED} ;; esac`,
-    `    [ "\${#intent}" -eq 36 ] || exit ${UNSETTLED}`,
-    `    [ "$machine" != '${input.id}' ] || exit ${HELD}`,
+    '  case "$held" in',
+    '    "$mine") ;;',
+    // This machine, and a whole intent that is not the caller's: it is someone else's.
+    `    '${input.id} '$intent) exit ${HELD} ;;`,
     // Another machine's record: it came with a copied disk and is not about this machine.
-    `    ${publish}`,
-    '  fi',
+    `    $machine' '$intent) ${publish} ;;`,
+    // Anything else is damage.
+    `    *) exit ${UNSETTLED} ;;`,
+    '  esac',
     'else',
     `  ${publish}`,
     'fi',
@@ -152,6 +171,9 @@ export const holding = (api: Transport, saved: Bindings, forget: (key: MachineKe
   ) {
     const intent = identity.binding.intent
     if (!holdable(intent)) return yield* Effect.fail(new MachinePersistenceFailed())
+    // The machine is being asked again, so what it said before no longer stands: a call that
+    // fails here must not leave this process still passing on an old answer.
+    admitted.delete(key)
     const receipt = yield* api.command(
       identity.id,
       key,
@@ -159,7 +181,6 @@ export const holding = (api: Transport, saved: Bindings, forget: (key: MachineKe
       30,
     )
     if (receipt.exitCode === HELD) {
-      admitted.delete(key)
       yield* saved.release(key, intent)
       forget(key)
       return yield* Effect.fail(new MachineHeld())
