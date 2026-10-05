@@ -9,14 +9,17 @@ const decodeRecord = HttpClientResponse.schemaBodyJson(Record)
 const CLOCKS_APART = 120_000
 
 /**
- * Whether a live proof itself made a Boat machine: Boat's own record says it was created after
- * the proof began. This is the only ground on which a proof may delete a machine.
+ * Whether Boat's own record says a machine was created after a live proof began.
  *
- * Until 5 October 2026 the proofs deleted whatever machine their Person was bound to. An
- * installation that names its existing machine (`VIVID_BOAT_MACHINE`) binds the Person to that
- * one, so the proof would have deleted the only machine there is; and the proof's own settings
- * cannot be trusted to say which case it is in, because the server it talks to has its own.
- * Anything that cannot be read or understood answers `false`: when in doubt nothing is deleted.
+ * It is evidence, not authority. Until 5 October 2026 the proofs deleted whatever machine their
+ * Person was bound to; an installation that names its existing machine (`VIVID_BOAT_MACHINE`)
+ * binds the Person to that one, so a proof would have deleted the only machine there is. A date
+ * cannot say who created a machine, so it never decides a deletion by itself:
+ * - `boat.live.test.ts` builds the provider in its own process, so it knows whether it was set
+ *   to take an existing machine; it deletes only when it was not, and this agrees.
+ * - `thread.live.test.ts` talks to a server with settings of its own and cannot know. It deletes
+ *   nothing, and uses this to say that a machine was made and has to be removed by hand.
+ * Anything that cannot be read or understood answers `false`.
  */
 export const createdSince = Effect.fn('BoatLive.createdSince')(
   function* (id: string, began: number) {

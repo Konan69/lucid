@@ -60,16 +60,23 @@ const localAttachment = (home: string): ComputerAttachment => ({
     }),
 })
 
-/** Every Person gets the same local home; programs keep apart by their own directories. */
-export const localCodeComputerLayer = Layer.effect(
-  CodeComputer,
-  Effect.gen(function* () {
-    const runner = yield* loadRunner
-    const home = yield* Effect.acquireRelease(
-      Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-computer-'))),
-      (path) => Effect.sync(() => NodeFS.rmSync(path, { recursive: true, force: true })),
-    )
-    const attachment = localAttachment(home)
-    return CodeComputer.of({ open: () => openGuest(attachment, runner) })
-  }),
-)
+/**
+ * Every Person gets the same local home; programs keep apart by their own directories. `alter`
+ * lets a test put a fault into the Computer (a write that fails) and nowhere else.
+ */
+export const localCodeComputer = (alter: (attachment: ComputerAttachment) => ComputerAttachment) =>
+  Layer.effect(
+    CodeComputer,
+    Effect.gen(function* () {
+      const runner = yield* loadRunner
+      const home = yield* Effect.acquireRelease(
+        Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-computer-'))),
+        (path) => Effect.sync(() => NodeFS.rmSync(path, { recursive: true, force: true })),
+      )
+      const attachment = alter(localAttachment(home))
+      const background = yield* Effect.scope
+      return CodeComputer.of({ open: () => openGuest(attachment, runner, background) })
+    }),
+  )
+
+export const localCodeComputerLayer = localCodeComputer((attachment) => attachment)

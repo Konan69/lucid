@@ -44,8 +44,10 @@ const cleanup = Effect.fn('BoatLive.cleanup')(function* (key: MachineKey) {
   const client = yield* HttpClient.HttpClient
   const apiKey = yield* Config.Redacted('VIVID_BOAT_API_KEY')
   const org = yield* Config.option(Config.NonEmptyString('VIVID_BOAT_ORG'))
-  // A machine is deleted only when Boat's own record says this proof made it (`createdSince`):
-  // one the installation already had (`VIVID_BOAT_MACHINE`) was taken, not created, by this test.
+  // The provider is built in this process, so this process's own setting says whether the key
+  // took an existing machine (`VIVID_BOAT_MACHINE`) or had one created. Only a created one is
+  // deleted, and only when Boat's record agrees that it was made after this proof began.
+  const adopted = yield* Config.option(Config.String('VIVID_BOAT_MACHINE'))
   const began = yield* Clock.currentTimeMillis
   const billed = Option.match(org, {
     onNone: () => Function.identity<HttpClientRequest.HttpClientRequest>,
@@ -57,6 +59,7 @@ const cleanup = Effect.fn('BoatLive.cleanup')(function* (key: MachineKey) {
       Effect.gen(function* () {
         const binding = yield* saved.load(key)
         if (
+          Option.isNone(adopted) &&
           Option.isSome(binding) &&
           binding.value.providerId !== null &&
           (yield* createdSince(binding.value.providerId, began))

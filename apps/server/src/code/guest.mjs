@@ -117,7 +117,21 @@ function program() {
     const json = JSON.stringify(value)
     return json === undefined ? String(value) : json
   }
-  const text = (value) => port.postMessage({ type: 'log', text: shown(value) })
+  // The allowance is applied here, before a line is sent to the runner: what the runner would
+  // drop is not sent at all, so a program that prints without end cannot fill the runner, whose
+  // memory the program's heap limit does not cover. A line that passes the allowance is sent a
+  // little over it and no further, and the runner cuts it on a whole character.
+  let room = limits.logs
+  const text = (value) => {
+    if (room <= 0) {
+      if (room === 0) port.postMessage({ type: 'cut' })
+      room = -1
+      return
+    }
+    const line = shown(value)
+    port.postMessage({ type: 'log', text: line.length > room + 2 ? line.slice(0, room + 2) : line })
+    room = Math.max(0, room - line.length - 1)
+  }
   const line = (...values) => text(values.map(shown).join(' '))
   for (const name of ['log', 'info', 'warn', 'error', 'debug']) console[name] = line
   // The opening stays on the program's first line, so a stack trace names the line the model
@@ -152,11 +166,15 @@ function said(error) {
 }
 
 /**
- * Ends every process the program started, and theirs. Ending the worker thread ends only the
- * thread: a child the program spawned would otherwise run on after the program was reported
- * finished, where no later order to stop could reach it. They are found by their recorded parent
- * (`/proc/<pid>/stat`), starting from this process, never by a name. A process that detached
- * itself from this one on purpose is not found, and is not looked for.
+ * Ends the processes the program started and left attached to it, and theirs. Ending the worker
+ * thread ends only the thread: a child the program spawned would otherwise run on after the
+ * program was reported finished, where no later order to stop could reach it. They are found by
+ * their recorded parent (`/proc/<pid>/stat`), starting from this process, never by a name.
+ *
+ * What is not ended: a process whose starter has gone, so that the system has adopted it. That is
+ * what putting something in the background does (`nohup … &`), and such a process keeps running
+ * after a program as it does after a command. The same happens, unasked, to the children of a
+ * process that crashed. Returns the processes it signalled.
  */
 function endChildren() {
   const parents = new Map()
@@ -187,6 +205,24 @@ function endChildren() {
       // Already gone.
     }
   }
+  return started.slice(1)
+}
+
+/** Whether a process is over: gone, or ended and waiting for its parent to collect it. */
+function over(pid) {
+  try {
+    const stat = NodeFS.readFileSync(`/proc/${pid}/stat`, 'utf8')
+    return stat.slice(stat.lastIndexOf(')') + 2).startsWith('Z')
+  } catch {
+    return true
+  }
+}
+
+/** Calls `then` once every one of them is over, or after a second: an ended process is not
+ * waited on for ever, and the system collects it when this process exits. */
+function whenOver(pids, then, tries = 50) {
+  if (tries === 0 || pids.every(over)) then()
+  else setTimeout(() => whenOver(pids, then, tries - 1), 20)
 }
 
 /** What the program printed, kept within its allowance of characters. */
@@ -232,7 +268,11 @@ function printedLines(allowance) {
       if (rest !== '') keep(rest)
     })
   }
-  return { keep, from, read: () => ({ logs, logsTruncated }) }
+  /** The program printed more than is kept, and did not send the rest. */
+  const cut = () => {
+    logsTruncated = true
+  }
+  return { keep, from, cut, read: () => ({ logs, logsTruncated }) }
 }
 
 /** The runner's side: the messages, the files that answer them, and the end of the program. */
@@ -261,23 +301,25 @@ function runner() {
     finished = true
     clearTimeout(unstarted)
     watcher.close()
-    const over = worker === undefined ? Promise.resolve() : worker.terminate()
-    over.then(() => {
-      endChildren()
-      NodeFS.rmSync(directory, { recursive: true, force: true })
-      process.stdout.write(`${JSON.stringify({ ...message, ...output.read() })}\n`, () =>
-        process.exit(0),
-      )
-    })
+    const ended = worker === undefined ? Promise.resolve() : worker.terminate()
+    ended.then(() =>
+      whenOver(endChildren(), () => {
+        NodeFS.rmSync(directory, { recursive: true, force: true })
+        process.stdout.write(`${JSON.stringify({ ...message, ...output.read() })}\n`, () =>
+          process.exit(0),
+        )
+      }),
+    )
   }
   const failed = (failure) => finish({ _tag: 'Failed', failure })
   const start = (code) => {
+    if (finished) return
     clearTimeout(unstarted)
     worker = new NodeWorkerThreads.Worker(new URL(import.meta.url), {
       workerData: {
         code,
         kinds: ['find_tools', 'use_tool', 'run_command', 'browse', 'read_page'],
-        limits: { calls: limits.calls, frame: limits.frame },
+        limits: { calls: limits.calls, frame: limits.frame, logs: limits.logs },
       },
       resourceLimits: { maxOldGenerationSizeMb: limits.heap },
       // What the program writes to its own output is not a message and must not become one.
@@ -289,6 +331,7 @@ function runner() {
     worker.on('message', (message) => {
       if (finished) return
       if (message.type === 'log') output.keep(message.text)
+      else if (message.type === 'cut') output.cut()
       // The input is already JSON text; it is placed in the line as it is, never parsed here.
       else if (message.type === 'call')
         process.stdout.write(
@@ -334,11 +377,22 @@ function runner() {
       return
     }
     for (const name of names) {
+      // An order to stop ends the reading: a program is never started after it.
+      if (finished) return
       if (taken.has(name)) continue
-      const text = NodeFS.readFileSync(NodePath.join(inbox, name), 'utf8')
-      if (!text.endsWith('\n')) continue
+      let message
+      try {
+        const text = NodeFS.readFileSync(NodePath.join(inbox, name), 'utf8')
+        if (!text.endsWith('\n')) continue
+        message = JSON.parse(text)
+      } catch {
+        // The file went away under the reading, or is not a message. Either way the program
+        // ends the ordinary way, so what it started is ended and what it printed is sent.
+        failed({ _tag: 'Unavailable' })
+        return
+      }
       taken.add(name)
-      receive(JSON.parse(text))
+      receive(message)
     }
   }
   NodeFS.mkdirSync(inbox, { recursive: true })

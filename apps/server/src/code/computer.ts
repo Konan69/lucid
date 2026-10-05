@@ -111,6 +111,8 @@ const endedBecause = (exit: Option.Option<typeof MachineOutput.cases.Exited.Type
 export const openGuest = Effect.fn('Code.openGuest')(function* (
   attachment: ComputerAttachment,
   runner: Runner,
+  /** Where work that outlives the program is done: the removal of its directory. */
+  background: Scope.Scope,
 ) {
   const directory = `.cache/vivid/programs/${NodeCrypto.randomUUID()}`
   // Every word is the server's own: a path from a hash, a fresh identifier, five numbers.
@@ -126,10 +128,9 @@ export const openGuest = Effect.fn('Code.openGuest')(function* (
    * needs no order to stop: it printed its final message, it was given the order, or the provider
    * reported its exit. A stream that broke, or a line that was not a message, proves none of them.
    * `draining`: the server has given the program up, and reads on only to reach its end.
-   * `stale`: a file was written when the runner may already have removed its directory, which
-   * puts the directory back with nobody to read it.
+   * `waited`: word of its end has been waited for once; that wait is not repeated.
    */
-  const known = { final: false, told: false, exited: false, draining: false, stale: false }
+  const known = { final: false, told: false, exited: false, draining: false, waited: false }
 
   const accept = Effect.fn('Code.guestLine')(function* (text: string) {
     if (!boundedNesting(text)) return yield* Effect.fail(new PipeFailure({ reason: 'size' }))
@@ -211,51 +212,62 @@ export const openGuest = Effect.fn('Code.openGuest')(function* (
     const text = encodeParent(message)
     if (bytes(text) > budgets.wire || !boundedNesting(text))
       return yield* Effect.fail(new PipeFailure({ reason: 'size' }))
-    if (ParentMessage.guards.Cancel(message)) known.told = true
     // The newline is how the runner knows the file is whole and not still being written.
     yield* attachment
       .write({ path: `${directory}/in/${name}.json`, content: `${text}\n` })
       .pipe(Effect.mapError(() => new PipeFailure({ reason: 'closed' })))
-    // The program may have finished while this was on its way, or nobody may be reading any
-    // more: the runner removes its directory when it finishes, and this file then put it back.
-    if (known.final || known.exited || (yield* Deferred.isDone(ended))) known.stale = true
+    // Told only once the order is on the Computer: one that failed or was cut off is sent again.
+    if (ParentMessage.guards.Cancel(message)) known.told = true
     return yield* Effect.void
   })
 
   /**
-   * The order to stop, for a program not known to be over. Bounded: if it cannot be delivered,
-   * the provider ends the program at its own deadline.
+   * Ends a program that is not known to be over: the order to stop, then a wait for word of its
+   * end, so the runner has ended what the program started and removed its directory before the
+   * followed command is let go. Both are bounded by the shared timing contract; a Computer that
+   * does not answer is not waited on, and its provider ends the program at the command's own
+   * deadline.
    */
-  const order = Effect.suspend(() =>
-    known.final || known.told || known.exited
-      ? Effect.void
-      : send(ParentMessage.cases.Cancel.make({})).pipe(Effect.timeout('10 seconds'), Effect.ignore),
-  )
-
-  /** Takes away a directory that a late file put back. A runner that is still there and finds
-   * its directory gone ends itself, so this is safe to send after an order nobody confirmed. */
-  const remove = Effect.suspend(() =>
-    known.stale
-      ? attachment
-          .follow({ command: `rm -rf -- '${directory}'`, timeoutSeconds: 30 })
-          .pipe(Stream.runDrain, Effect.timeout('20 seconds'), Effect.ignore)
-      : Effect.void,
-  )
-
-  const stop = Effect.fn('Code.stopGuest')(function* () {
+  const settle = Effect.fn('Code.settleGuest')(function* () {
+    // What it still prints is read only to reach its end; a reader waiting on a full queue is
+    // let through, because nothing in the queue will be answered now.
     known.draining = true
-    // The reading may be waiting on a full queue; nothing in it will be answered now.
     yield* Queue.clear(messages).pipe(Effect.ignore)
-    yield* order
-    return yield* Deferred.await(ended).pipe(
-      Effect.timeoutOption('5 seconds'),
-      Effect.map(Option.getOrElse(() => CodeFailure.cases.Unavailable.make({}))),
-    )
+    // Sent again by a later caller for as long as it has not been delivered.
+    if (!(known.final || known.told || known.exited))
+      yield* send(ParentMessage.cases.Cancel.make({})).pipe(
+        Effect.timeout(CodeTiming.stopMs),
+        Effect.ignore,
+      )
+    // A program that said its last had finished its own cleanup before it said so.
+    if (known.final || known.exited || known.waited) return yield* Effect.void
+    known.waited = true
+    return yield* Deferred.await(ended).pipe(Effect.timeout(CodeTiming.endMs), Effect.ignore)
   })
 
-  // Added after the fork, so it runs before the reading is interrupted: a program nobody waits for
-  // any more is told to stop, and a directory a late file put back is taken away.
-  yield* Effect.addFinalizer(() => order.pipe(Effect.andThen(remove)))
+  const stop = Effect.fn('Code.stopGuest')(function* () {
+    yield* settle()
+    // Known when the reading has ended; otherwise nothing more can be said about the program.
+    if (yield* Deferred.isDone(ended)) return yield* Deferred.await(ended)
+    return CodeFailure.cases.Unavailable.make({})
+  })
+
+  /**
+   * Takes the program's directory away, whatever became of the program. The runner removes it
+   * when it finishes, but a file of the server's that lands after that puts it back, and which
+   * of the two came first cannot be known from here: an answer can be written while the final
+   * line is still on its way. A runner that is still there and finds its directory gone ends
+   * itself. This runs after the outcome is decided and is not waited for, so it costs the
+   * program's caller nothing.
+   */
+  const remove = attachment
+    .follow({ command: `rm -rf -- '${directory}'`, timeoutSeconds: 30 })
+    .pipe(Stream.runDrain, Effect.timeout('30 seconds'), Effect.ignore)
+
+  // Added after the fork, so it runs before the reading is interrupted.
+  yield* Effect.addFinalizer(() =>
+    settle().pipe(Effect.andThen(Effect.forkIn(remove, background)), Effect.asVoid),
+  )
 
   const guest: Guest = { read: Queue.take(messages), send, stopped: stop() }
   return guest
@@ -267,12 +279,13 @@ export const codeComputerLayer = Layer.effect(
   Effect.gen(function* () {
     const store = yield* ComputerStore
     const runner = yield* loadRunner
+    const background = yield* Effect.scope
     return CodeComputer.of({
       open: Effect.fn('Code.openComputer')(function* (person) {
         const attachment = yield* store
           .attach(person)
           .pipe(Effect.mapError((failure) => new CodeComputerUnavailable({ reason: failure._tag })))
-        return yield* openGuest(attachment, runner)
+        return yield* openGuest(attachment, runner, background)
       }),
     })
   }),

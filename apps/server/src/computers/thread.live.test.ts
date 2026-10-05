@@ -2,7 +2,6 @@ import { describe, expect, it } from '@effect/vitest'
 import { ComputerSession, computerScreenAddress } from '@vivid/contracts'
 import { Clock, Config, Effect, Option, Schema } from 'effect'
 import { eq } from 'drizzle-orm'
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http'
 import { Database } from '../database/client.ts'
 import {
   chainFixture,
@@ -34,8 +33,12 @@ const decodeInput = Schema.decodeUnknownEffect(Input)
 const decodeOutput = Schema.decodeUnknownEffect(Output)
 const typedInput = Schema.decodeUnknownOption(Typed)
 
-/** Only this fixture's captured Machine key grants cleanup authority; no resource inventory or
- * process pattern is used. Cleanup is registered before the first Computer tool can create it.
+/**
+ * Releases the proof Person's binding, and deletes no machine. The server this proof talks to has
+ * its own settings: on an installation that names its existing machine the Person is bound to
+ * that one, and this proof cannot tell that case from a machine the server created for it. Until
+ * 5 October 2026 this finalizer deleted whatever was bound. If Boat's record says the machine was
+ * created during the proof, the proof fails naming it, so that a person removes it.
  */
 const cleanupComputer = Effect.fn('ThreadProof.cleanupComputer')(function* (
   person: Parameters<typeof computerMachineKey>[0],
@@ -43,30 +46,15 @@ const cleanupComputer = Effect.fn('ThreadProof.cleanupComputer')(function* (
   const key = computerMachineKey(person)
   const saved = yield* bindings()
   const database = yield* Database
-  const http = yield* HttpClient.HttpClient
-  const apiKey = yield* Config.Redacted('VIVID_BOAT_API_KEY')
-  // A machine is deleted only when Boat's own record says this proof made it (`createdSince`).
-  // The Person of an installation that names its existing machine is bound to that one, and
-  // until 5 October 2026 this finalizer deleted whatever was bound.
   const began = yield* Clock.currentTimeMillis
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
       const binding = yield* saved.load(key)
-      if (
-        Option.isSome(binding) &&
-        binding.value.providerId !== null &&
-        (yield* createdSince(binding.value.providerId, began))
-      ) {
-        const id = binding.value.providerId
-        const response = yield* http.execute(
-          HttpClientRequest.delete(`https://boat.dev/api/v1/sandboxes/${id}`).pipe(
-            HttpClientRequest.bearerToken(apiKey),
-            HttpClientRequest.setHeader('X-Ascii-Confirm-Delete', id),
-          ),
-        )
-        expect(response.status >= 200 && response.status < 300).toBe(true)
-      }
       yield* database.run(database.delete(machineBindings).where(eq(machineBindings.key, key)))
+      if (Option.isNone(binding) || binding.value.providerId === null) return
+      const id = binding.value.providerId
+      if (yield* createdSince(id, began))
+        expect.fail(`This proof made the Boat machine ${id}. It is not deleted here: remove it.`)
     }).pipe(
       Effect.catch(() =>
         Effect.sync(() => expect.fail('Boat fixture cleanup failed; reconcile the test machine')),

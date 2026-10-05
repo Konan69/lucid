@@ -34,11 +34,14 @@ outlives its deadline.
 
 ## What is left on the Computer
 
-Nothing of the program. When it ends, the runner ends the processes the program started, removes
-its directory and only then prints its final line. A program the server gives up on (a decision,
-the deadline, a broken connection) is told to stop; if a file of the server's arrives after the
-runner has gone, the server removes the directory that file put back. What the program wrote
-elsewhere on the Computer stays: that is the Person's machine and the program's to use.
+Nothing of the program. When it ends, the runner ends the processes the program started and
+left attached to it, removes its directory and only then prints its final line. A process the
+program put in the background on purpose keeps running, as it does after a command. A program the
+server gives up on (a decision, the deadline, a broken connection) is told to stop and its end is
+waited for briefly. The server then removes the program's directory itself, in the background,
+whatever happened: a file of the server's that arrives after the runner has gone puts the
+directory back, and which came first cannot be known. What the program wrote elsewhere on the
+Computer stays: that is the Person's machine and the program's to use.
 
 ## Tests
 

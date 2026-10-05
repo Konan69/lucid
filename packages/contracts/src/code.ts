@@ -1,18 +1,26 @@
 import * as Schema from 'effect/Schema'
 import { ApprovalId } from './identity.js'
 
-/** One timing contract keeps the server deadline, log grace and client timeouts ordered. */
+/**
+ * One timing contract keeps the server deadline, the waits that follow it and the client timeout
+ * in order. After the deadline the server waits `graceMs` for what the program printed, then at
+ * most `stopMs` for its order to stop to reach the Computer and `endMs` for word that the program
+ * is over. Nothing else may be waited for before the outcome is returned.
+ */
 export const CodeTiming = {
   seconds: 300,
   graceMs: 1_000,
+  stopMs: 4_000,
+  endMs: 3_000,
 } as const
 /**
- * The program tool's own timeout, above the server deadline plus the log grace plus the time the
- * server needs to stop the child. It is the only client-side bound: the runtime's HTTP client already
- * waits an hour for headers and has no body timeout (`@effect/platform-node` `NodeHttpClient.ts`,
- * `makeUndici`), so the transport never gives up before this does.
+ * The program tool's own timeout: the server deadline, every wait that can follow it, and a
+ * margin for the answer's way back. It is the only client-side bound: the runtime's HTTP client
+ * already waits an hour for headers and has no body timeout (`@effect/platform-node`
+ * `NodeHttpClient.ts`, `makeUndici`), so the transport never gives up before this does.
  */
-export const CodeToolTimeout = CodeTiming.seconds * 1_000 + CodeTiming.graceMs + 10_000
+export const CodeToolTimeout =
+  CodeTiming.seconds * 1_000 + CodeTiming.graceMs + CodeTiming.stopMs + CodeTiming.endMs + 3_000
 
 /** Discovery and guest dispatch accept exactly the same account/tool vocabulary. */
 export const CodeToolNames = Schema.Struct({

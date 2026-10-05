@@ -16,7 +16,8 @@ import { CodeTiming } from '@vivid/contracts/code'
 import { PipeFailure, WorkerMessage } from './protocol.ts'
 import { budgets } from './budgets.ts'
 import { CodeComputer, CodeComputerUnavailable } from './computer.ts'
-import { localCodeComputerLayer } from './testing.ts'
+import { MachineOperationFailed } from '../computers/machine.ts'
+import { localCodeComputer, localCodeComputerLayer } from './testing.ts'
 
 /** The supervisor with a Computer that is this machine; see `testing.ts` for what that leaves out. */
 const supervised = codeProcessLayer.pipe(Layer.provide(localCodeComputerLayer))
@@ -907,6 +908,46 @@ standalone.effect(
       Effect.provide(Logger.layer([logger])),
     )
   },
+)
+
+/** The Computer takes the program and its start, but an answer cannot be written to it. */
+standalone.effect(
+  'ends a program whose answer cannot reach the Computer, and keeps the receipt of the call',
+  () =>
+    Effect.gen(function* () {
+      const process = yield* CodeProcess
+      const outcome = yield* process.run(
+        {
+          request: { code: 'await tools.find_tools({}); return "answered";', summary: 'Read' },
+          boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
+        },
+        (call) =>
+          Effect.succeed(
+            CallOutcome.cases.Returned.make({ value: null, summary: call.kind, end: 'completed' }),
+          ),
+      )
+      // The call was made and answered on the server; only the program never heard. It is told
+      // to stop and reported, and is not left waiting until the deadline.
+      check(outcome, 'Failed', {
+        failure: CodeFailure.cases.Unavailable.make({}),
+        calls: [{ kind: 'find_tools', end: 'completed' }],
+      })
+    }).pipe(
+      Effect.provide(
+        codeProcessLayer.pipe(
+          Layer.provide(
+            localCodeComputer((attachment) => ({
+              follow: attachment.follow,
+              write: (input) =>
+                input.path.includes('/in/reply-')
+                  ? Effect.fail(new MachineOperationFailed({ operation: 'write' }))
+                  : attachment.write(input),
+            })),
+          ),
+        ),
+      ),
+    ),
+  { timeout: 20_000 },
 )
 
 /** Exercise the parent deadline state with a missing final frame, without a process or server. */

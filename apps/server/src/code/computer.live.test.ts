@@ -37,6 +37,7 @@ const onBoat = Layer.effect(
     const machine = yield* Machine
     const runner = yield* loadRunner
     yield* machine.ensure(key)
+    const background = yield* Effect.scope
     return CodeComputer.of({
       open: () =>
         openGuest(
@@ -45,6 +46,7 @@ const onBoat = Layer.effect(
             write: (input) => machine.write({ key, ...input }),
           },
           runner,
+          background,
         ),
     })
   }),
