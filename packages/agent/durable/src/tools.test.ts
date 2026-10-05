@@ -11,7 +11,7 @@ import { expect, it } from '@effect/vitest'
 import { Effect, Option } from 'effect'
 import { z } from 'zod'
 
-import { streamRun, toolsExtension } from './core.ts'
+import { streamRun, toolsExtension, ToolSchemaFailed } from './core.ts'
 import { memory } from './fixtures/harness.ts'
 import { consume } from './fixtures/reading.ts'
 
@@ -88,6 +88,85 @@ it.live('rejects arguments that do not match the schema before the tool runs', (
 
     expect(seen).toEqual([])
     expect(message.parts.find((part) => part.type === 'tool-price')).toMatchObject({
+      state: 'output-error',
+    })
+  }),
+)
+
+/** Registration identifies the exact tool whose schema cannot be represented as JSON Schema. */
+it.live('names a tool whose SDK schema cannot be built', () =>
+  Effect.gen(function* () {
+    const failed = yield* Effect.flip(
+      toolsExtension(
+        'unsupported',
+        {
+          symbolic: tool({
+            description: 'Requires a symbol',
+            inputSchema: z.object({ value: z.symbol() }),
+          }),
+        },
+        {},
+      ),
+    )
+    expect(failed).toBeInstanceOf(ToolSchemaFailed)
+    expect(failed.toolName).toBe('symbolic')
+  }),
+)
+
+/** Rejected SDK execution and invalid durable output are separate failures, both reported as tool errors. */
+it.live('presents SDK rejection and serialization failure as tool output errors', () =>
+  Effect.gen(function* () {
+    const faux = fauxProvider()
+    const models = createModels()
+    models.setProvider(faux.provider)
+    faux.setResponses([
+      fauxAssistantMessage(
+        [
+          fauxToolCall('broken', {}, { id: 'reject' }),
+          fauxToolCall('unserializable', {}, { id: 'json' }),
+        ],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('The tools failed.'),
+    ])
+    const registry = createRegistry()
+    registry.install(
+      yield* toolsExtension(
+        'failures',
+        {
+          broken: tool({
+            description: 'Rejects execution',
+            inputSchema: z.object({}),
+            execute: async (): Promise<string> => {
+              throw new Error('ledger offline')
+            },
+          }),
+          unserializable: tool({
+            description: 'Returns a non JSON number',
+            inputSchema: z.object({}),
+            execute: async () => ({ amount: 1n }),
+          }),
+        },
+        {},
+      ),
+    )
+    const harness = yield* memory(models, registry)
+    const root = yield* Effect.promise(() =>
+      harness.root(context, { agent: { model: { provider: 'faux', modelId: 'faux-1' } } }),
+    )
+    const { message } = yield* consume(
+      streamRun(
+        harness,
+        { conversationId: root.id, content: 'Try both', requestId: 'failures' },
+        context,
+      ),
+      Option.none(),
+    )
+    expect(message.parts.find((part) => part.type === 'tool-broken')).toMatchObject({
+      state: 'output-error',
+      errorText: expect.stringContaining('ledger offline'),
+    })
+    expect(message.parts.find((part) => part.type === 'tool-unserializable')).toMatchObject({
       state: 'output-error',
     })
   }),

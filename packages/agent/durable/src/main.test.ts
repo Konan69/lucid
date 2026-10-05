@@ -302,3 +302,36 @@ it.live('maps invalid turns to 400 and missing resumes to 409', () =>
     )
   }),
 )
+
+/** Ingress rejects unusable latest messages rather than admitting a run or trusting prior history. */
+it.live.each([
+  { label: 'missing messages', body: '{}' },
+  { label: 'empty transcript', body: '{"messages":[]}' },
+  {
+    label: 'empty input',
+    body: '{"messages":[{"role":"user","id":"m1","parts":[{"type":"text","text":""}]}]}',
+  },
+  {
+    label: 'missing input identity',
+    body: '{"messages":[{"role":"user","parts":[{"type":"text","text":"Hello"}]}]}',
+  },
+  {
+    label: 'assistant without calls',
+    body: '{"messages":[{"role":"assistant","parts":[{"type":"text","text":"Hello"}]}]}',
+  },
+])('rejects $label as an invalid HTTP turn', ({ body }) =>
+  Effect.gen(function* () {
+    const { harness, root } = yield* server([])
+    const response = yield* Effect.promise(() =>
+      respond(
+        harness,
+        root.id,
+        new Request('http://durable.test/chat', { method: 'POST', body }),
+        context,
+      ),
+    )
+    expect(response.status).toBe(400)
+    const entries = yield* Effect.promise(() => root.entries({}, 10, undefined, context))
+    expect([...entries.items].some((entry) => entry.kind === 'pi.user')).toBe(false)
+  }),
+)

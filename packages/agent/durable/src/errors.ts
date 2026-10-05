@@ -69,7 +69,7 @@ export class ToolFailed extends Schema.TaggedError<ToolFailed>()(
 ) {
   /** Keep the provider's diagnostic visible to Pi's tool-result error formatting. */
   override get message() {
-    return String(this.cause)
+    return Predicate.isError(this.cause) ? this.cause.message : String(this.cause)
   }
 }
 
@@ -81,4 +81,9 @@ export class ToolOutputFailed extends Schema.TaggedError<ToolOutputFailed>()(
     cause: Schema.Defect(),
   },
   { title: 'ToolOutputFailed' },
-) {}
+) {
+  /** Preserve the host serialization diagnostic in Pi's output-error chunk. */
+  override get message() {
+    return Predicate.isError(this.cause) ? this.cause.message : String(this.cause)
+  }
+}

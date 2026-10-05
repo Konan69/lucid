@@ -42,16 +42,47 @@
   {
     "file": "packages/agent/durable/src/pi.ts",
     "classification": "third-party-adapter",
-    "symbols": ["conversation", "snapshot", "commit", "change", "submit", "agent", "view"]
+    "symbols": [
+      "conversation",
+      "snapshot",
+      "commit",
+      "doc",
+      "submit",
+      "agent",
+      "view",
+      "runForPi",
+      "openWatch",
+      "stop",
+      "closed"
+    ]
+  },
+  {
+    "file": "packages/agent/durable/src/tools.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["validate", "invoke", "registration", "try"]
   },
   {
     "file": "packages/agent/durable/src/main.ts",
     "classification": "promise-api-entrypoint",
-    "symbols": ["decide", "answer", "waiting"]
+    "symbols": [
+      "toolsExtension",
+      "decide",
+      "answer",
+      "waiting",
+      "streamRun",
+      "attachRun",
+      "continueRun",
+      "respond"
+    ]
   },
   {
-    "file": "packages/agent/durable/src/main.ts",
+    "file": "packages/agent/durable/src/fixtures/crash.ts",
+    "classification": "test-process-entrypoint",
+    "symbols": ["harness", "root", "<module>"]
+  },
+  {
+    "file": "packages/agent/durable/src/fixtures/harness.ts",
     "classification": "third-party-adapter",
-    "symbols": ["settlement"]
+    "symbols": ["memory"]
   }
 ]

@@ -1,4 +1,4 @@
-import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
+import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context'
 import { Type } from '@earendil-works/pi-ai'
 import { createModels } from '@earendil-works/pi-ai/models'
 import {
@@ -16,6 +16,7 @@ import { attachRun, streamRun } from './core.ts'
 import { memory } from './fixtures/harness.ts'
 import { consume } from './fixtures/reading.ts'
 import { runForPi } from './pi.ts'
+import * as Pi from './pi.ts'
 
 const context = BACKGROUND_CONTEXT
 
@@ -201,5 +202,19 @@ it.live('detaches a stopped consumer while the durable tool finishes', () =>
       role: 'assistant',
       content: [expect.objectContaining({ type: 'text', text: 'Finished after detachment.' })],
     })
+  }),
+)
+
+/** Pi's cancelled watch ends the stream even when no further run event can wake its queue. */
+it.live('ends an attachment when its observation context is cancelled', () =>
+  Effect.gen(function* () {
+    const { harness, root } = yield* openHarness()
+    const controller = new AbortController()
+    const observerContext = withAbortSignal(controller.signal, context)
+    const watched = yield* Pi.watch(harness, root.id, observerContext)
+    controller.abort()
+    expect(yield* Stream.runCollect(watched.stream)).toEqual([])
+    // The conversation remains available: cancelling the observer does not cancel the harness.
+    expect((yield* Pi.conversation(harness, root.id, context)).id).toBe(root.id)
   }),
 )

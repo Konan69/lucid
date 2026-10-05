@@ -25,7 +25,10 @@ it.live('answers a decoded chat turn and retains the user input', () =>
       }),
     )
     const turn = yield* decodeTurn({
-      messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'Capital of France?' }] }],
+      messages: [
+        null,
+        { id: 'm1', role: 'user', parts: [{ type: 'text', text: 'Capital of France?' }] },
+      ],
     }).pipe(Effect.mapError(() => new TurnInvalid({})))
     const stream = yield* respond(harness, root.id, turn, context)
     const { message } = yield* consume(stream, Option.none())

@@ -19,7 +19,7 @@ import {
   type Step,
   translate,
 } from './chunks.ts'
-import { RunMissing } from './errors.ts'
+import { RunMissing, type PiFailed } from './errors.ts'
 import { Holds, planOf } from './holds.ts'
 import * as Pi from './pi.ts'
 
@@ -80,7 +80,7 @@ const apply = Effect.fn('Durable.streamEvent')(function* (
 })
 
 /** Accumulate translator and tool-round state, including the terminal event's chunks before stopping. */
-function follow(reader: Reader, events: Stream.Stream<AgentEvent>, initial: State) {
+function follow(reader: Reader, events: Stream.Stream<AgentEvent, PiFailed>, initial: State) {
   return events.pipe(
     Stream.mapAccumEffect(
       () => initial,
@@ -93,7 +93,7 @@ function follow(reader: Reader, events: Stream.Stream<AgentEvent>, initial: Stat
 }
 
 /** Skip earlier busy runs until Pi starts the run containing our admitted submission. */
-function matching(events: Stream.Stream<AgentEvent>, submissionId: SubmissionId) {
+function matching(events: Stream.Stream<AgentEvent, PiFailed>, submissionId: SubmissionId) {
   return events.pipe(
     Stream.dropWhile((event) => event.type !== 'run_start' || !event.inputs.includes(submissionId)),
   )
@@ -177,7 +177,7 @@ const reconnect = Effect.fn('Durable.reconnect')(function* (
     const prefix = yield* select(watched.snapshot)
     if (Option.isNone(prefix)) {
       yield* Scope.close(scope, Exit.void)
-      return Option.none<Stream.Stream<UIMessageChunk, import('./errors.ts').PiFailed>>()
+      return Option.none<Stream.Stream<UIMessageChunk, PiFailed>>()
     }
     const stream = yield* resume({ harness, conversation, context }, watched, prefix.value)
     return Option.some(stream.pipe(Stream.ensuring(Scope.close(scope, Exit.void))))

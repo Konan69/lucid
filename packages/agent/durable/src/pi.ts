@@ -11,7 +11,7 @@ import type {
   AgentEventStream,
 } from '@earendil-works/pi-durable'
 import { watchEvents } from '@earendil-works/pi-durable'
-import { Effect, Option, Queue, Stream } from 'effect'
+import { Cause, Effect, Option, Queue, Stream } from 'effect'
 
 import { ConversationMissing, PiFailed } from './errors.ts'
 
@@ -129,10 +129,25 @@ const openWatch = (harness: Harness, conversationId: ConversationId, context: Co
 const stop = (events: AgentEventStream) => Effect.promise(() => events.stop())
 
 /** Awaiting the bounded offer is Pi's delivery backpressure, not a fire-and-forget notification. */
-function batchForPi(queue: Queue.Queue<AgentEvent>) {
-  return (batch: readonly AgentEvent[], context: Context) =>
-    runForPi(Queue.offerAll(queue, batch).pipe(Effect.asVoid), context.abortSignal)
+function batchForPi(queue: Queue.Queue<AgentEvent, PiFailed | Cause.Done>) {
+  return function deliver(batch: readonly AgentEvent[], context: Context) {
+    return runForPi(Queue.offerAll(queue, batch).pipe(Effect.asVoid), context.abortSignal)
+  }
 }
+
+/** Pi settles closed even on cancellation; listener failures retain their watch operation context. */
+const closed = (events: AgentEventStream) => Effect.promise(() => events.closed)
+
+/** End the queue when Pi closes observation so a consumer never waits for an event that cannot arrive. */
+const finishWatch = Effect.fn('Durable.finishWatch')(function* (
+  events: AgentEventStream,
+  queue: Queue.Queue<AgentEvent, PiFailed | Cause.Done>,
+) {
+  const end = yield* closed(events)
+  if (end.reason === 'listener_error')
+    yield* Queue.fail(queue, new PiFailed({ operation: 'watch', cause: end.error }))
+  else yield* Queue.end(queue)
+})
 
 /**
  * Own one observation in the consumer's scope. Pi already limits pending delivery to 100 frames
@@ -144,11 +159,12 @@ export const watch = Effect.fn('Durable.watch')(function* (
   conversationId: ConversationId,
   context: Context,
 ) {
-  const queue = yield* Queue.bounded<AgentEvent>(100)
+  const queue = yield* Queue.bounded<AgentEvent, PiFailed | Cause.Done>(100)
   const events = yield* Effect.acquireRelease(
     openWatch(harness, conversationId, context),
     (opened) => Queue.shutdown(queue).pipe(Effect.andThen(stop(opened))),
   )
   yield* Effect.sync(() => events.start(batchForPi(queue)))
+  yield* finishWatch(events, queue).pipe(Effect.forkScoped)
   return { snapshot: events.snapshot, stream: Stream.fromQueue(queue) }
 })

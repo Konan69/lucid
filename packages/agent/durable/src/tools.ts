@@ -77,18 +77,16 @@ type Server = {
 const validate = (server: Server, args: Parameters<Execute>[0]) => {
   const schema = server.schema
   if (schema.validate === undefined) return Effect.succeed({ success: true as const, value: args })
+  const validateArgs = schema.validate.bind(schema)
   return Effect.tryPromise({
-    try: async () =>
-      schema.validate === undefined
-        ? { success: true as const, value: args }
-        : schema.validate(args),
+    try: async () => validateArgs(args),
     catch: (cause) => new ToolFailed({ toolName: server.name, cause }),
   })
 }
 
 /**
  * The SDK's execute result is untyped at this third-party ingress. Serialize here, then decode the
- * actual persisted JSON once. Void returns retain the existing null output representation.
+ * actual persisted JSON once. Pi requires text content, so unserializable output is a typed failure.
  */
 const invoke = Effect.fn('Durable.invokeTool')(function* (
   server: Server,
@@ -231,6 +229,20 @@ const before = Effect.fn('Durable.beforeTool')(function* (
     : Option.none<{ block: string }>()
 })
 
+/** Pi's named hook adapter forwards cancellation into the sole settlement program. */
+function beforeForPi(plans: ReadonlyMap<string, Plan>) {
+  return function beforeTool(
+    call: Parameters<import('@earendil-works/pi-durable').ToolHooks['beforeTool']>[0],
+    api: Parameters<import('@earendil-works/pi-durable').ToolHooks['beforeTool']>[1],
+    context: Context,
+  ) {
+    return Pi.runForPi(
+      before(plans, call, api, context).pipe(Effect.map(Option.getOrUndefined)),
+      context.abortSignal,
+    )
+  }
+}
+
 /** AI SDK tools and the wait hook share one plan per tool; neither snapshots nor streams duplicate it. */
 export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* (
   name: string,
@@ -253,12 +265,6 @@ export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* (
     { concurrency: 'unbounded' },
   )
   const plans = new Map(bridged.map((each) => [each.toolName, each.bridged.plan]))
-  const waits = hook(ToolTask, {
-    beforeTool: (call, api, context) =>
-      Pi.runForPi(
-        before(plans, call, api, context).pipe(Effect.map(Option.getOrUndefined)),
-        context.abortSignal,
-      ),
-  })
+  const waits = hook(ToolTask, { beforeTool: beforeForPi(plans) })
   return defineExtension({ name, tools: registrations, hooks: [waits] })
 })
