@@ -3,7 +3,6 @@ import * as NodePath from 'node:path'
 import { MemoryKind, type PersonId } from '@vivid/contracts'
 import type { AgentFS } from 'agentfs-sdk'
 import * as Arr from 'effect/Array'
-import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Order from 'effect/Order'
@@ -20,23 +19,6 @@ import * as Schema from 'effect/Schema'
  * The folder of notes is the filesystem root and holds nothing else. In the first live run of the
  * design a model given room outside the folder wrote its index to the wrong place.
  */
-
-/**
- * Where the SQLite files are kept. Notes are Vivid's own memory and part of every Vivid, so
- * `VIVID_MEMORY_DIR` is required: a runtime without it does not start, and the failure names the
- * variable. There is no runtime that runs "without notes". Before, an unset directory silently
- * mounted no note tools and gave the model other instructions, while Vivid went on telling every
- * Person that it remembers.
- *
- * A directory that cannot be read or written later is a different thing, an infrastructure
- * failure: it is a typed failure on the note call that met it (`NotesUnavailable`), told to the
- * model for that response, and over as soon as the directory answers again.
- */
-// Flue renders an agent synchronously and the note tools are mounted in that render, so the
-// setting is read synchronously here, once, when the module loads. A missing value throws here,
-// which stops the runtime process before it serves anything.
-// oxlint-disable-next-line vivid/no-runpromise-in-library
-export const notesDirectory = Effect.runSync(Config.NonEmptyString('VIVID_MEMORY_DIR'))
 
 /** A note's file name: short, lower-case, hyphenated, flat. Subfolders would hide a note from the index. */
 export const NoteFile = Schema.String.check(

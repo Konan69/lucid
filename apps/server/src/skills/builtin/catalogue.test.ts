@@ -16,6 +16,7 @@ import { libraryTools } from '../../../../../packages/agent/runtime/src/tools/li
 import { connectionTools } from '../../../../../packages/agent/runtime/src/tools/connections.ts'
 import { askTools } from '../../../../../packages/agent/runtime/src/tools/ask.ts'
 import { memoryTools } from '../../../../../packages/agent/runtime/src/tools/memory.ts'
+import { noteTools } from '../../../../../packages/agent/runtime/src/tools/notes.ts'
 import { skillTools } from '../../../../../packages/agent/runtime/src/tools/skills.ts'
 import { routineTools } from '../../../../../packages/agent/runtime/src/tools/routines.ts'
 import {
@@ -42,6 +43,8 @@ const registered = new Set(
     ...connectionTools(runner),
     ...askTools(runner),
     ...memoryTools(runner),
+    // The directory is never opened here: only the tools' names are read.
+    ...noteTools(runner, 'unused'),
     ...skillTools(runner),
     ...routineTools(runner),
     commandDefinition(runner),

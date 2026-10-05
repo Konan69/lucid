@@ -11,7 +11,8 @@ import {
 import { asActing, type Acting } from './client.ts'
 import * as views from './tools/views.ts'
 import { boundOutput } from './tools/result.ts'
-import { noteIndex, notesDirectory, type NoteIndex } from './notes.ts'
+import { noteIndex, type NoteIndex } from './notes.ts'
+import { notesDirectory } from './settings.ts'
 import { ContextSkill, contextSnapshots, Remembered, VividContext } from './tools/snapshots.ts'
 
 export type { VividContext } from './tools/snapshots.ts'
