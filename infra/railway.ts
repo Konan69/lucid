@@ -30,6 +30,9 @@ const privateUrl = (name: string, port: number) => `http://${name}.railway.inter
  */
 const listenHost = '::'
 
+/** Where the runtime's volume is mounted; each Person's notes are one SQLite file in it. */
+const memoryPath = '/var/lib/vivid/memory'
+
 /**
  * Google sign-in is one atomic set: the client's id and secret and the address Google sends a
  * Person back to. `infra/env.ts` already refuses a partial set, so here it is all three or none,
@@ -120,8 +123,9 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
    * volume at `/app/data` holding its database, app source, builds and generated keys, a public
    * domain because a Person's browser returns from a provider's sign-in through it, `/health` with
    * a 120-second start, and exactly one instance per volume. The image derives its own origin from
-   * `RAILWAY_PUBLIC_DOMAIN`. The tag is the published build the pilot ran; it moves to an image
-   * built from our fork when the fork carries changes.
+   * `RAILWAY_PUBLIC_DOMAIN`. The image is upstream's source at commit `304bf60`, unchanged, built
+   * with upstream's own self-host Dockerfile: the last published tag (`2.0.0-beta.8`) is older and
+   * the store schema and migrations are the same in both, so the tag can go back to it.
    *
    * Every sign-in returns to Vivid, not to Executor's own page, which needs an Executor browser
    * session no Person has. Railway resolves the server's domain in the reference at deploy time.
@@ -129,7 +133,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
   const executor = yield* Railway.Service('Executor', {
     project,
     name: serviceNames.executor,
-    image: 'ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.8',
+    image: 'ghcr.io/konan69/executor-selfhost:src-304bf60',
     port: ports.executor,
     publicDomain: true,
     healthcheckPath: '/health',
@@ -190,8 +194,17 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     }),
   })
 
-  /** Flue keeps its durable state in PostgreSQL, so the runtime needs no volume of its own. */
-  yield* Railway.Service('Runtime', {
+  /**
+   * Flue keeps its durable state in PostgreSQL. The one thing the runtime keeps on disk is a
+   * Person's notes: one SQLite file each (`packages/agent/runtime/src/notes.ts`), which sits beside
+   * the runtime because that is the part of Vivid that later runs on the Person's own device. The
+   * volume below holds them across deployments, and `VIVID_MEMORY_DIR` is what turns notes on.
+   *
+   * The image runs as `node` and a fresh Railway volume is owned by root, so `RAILWAY_RUN_UID`
+   * makes the directory writable without changing the image, as it does for Helix. One volume
+   * means exactly one runtime instance.
+   */
+  const runtime = yield* Railway.Service('Runtime', {
     project,
     name: serviceNames.runtime,
     context: '.',
@@ -211,8 +224,11 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
       VIVID_SERVER_URL: privateUrl(serviceNames.server, ports.server),
       VIVID_MODEL: environment.model,
+      VIVID_MEMORY_DIR: memoryPath,
+      RAILWAY_RUN_UID: '0',
     },
   })
+  yield* Railway.Volume('RuntimeMemory', { project, service: runtime, mountPath: memoryPath })
 
   /**
    * Server and Runtime are independent graph nodes. Resource.ts:Resource registers them;
