@@ -1,5 +1,17 @@
 import { and, eq, isNull } from 'drizzle-orm'
-import { Clock, Context, Effect, Layer, Redacted, Schema, Option, Semaphore, Match } from 'effect'
+import {
+  Cause,
+  Clock,
+  Context,
+  Effect,
+  Exit,
+  Layer,
+  Redacted,
+  Schema,
+  Option,
+  Semaphore,
+  Match,
+} from 'effect'
 import {
   AddIntegrationRequest,
   ServiceId,
@@ -16,6 +28,7 @@ import {
   Service,
   ServiceCatalog,
   ServiceAuthorization,
+  ServiceUnavailable,
   Workspace,
 } from '@vivid/contracts'
 import { requireAdmin, type Actor } from '../auth/access.ts'
@@ -331,7 +344,6 @@ const loadTools = Effect.fn('Connections.tools')(function* (actor: Actor, row: C
   )
 })
 
-/** Capture authority once; the adapter owns discovery and catalog cache lifetimes. */
 /**
  * Gives each catalog Connection the catalog's icon for its service. A Connection that already
  * names an icon (an added server) keeps it; one whose service the catalog does not list keeps
@@ -358,6 +370,22 @@ const withCatalogMarks = (
   )
 }
 
+/** Pace unavailable icon lookups at the adapter's thirty-second retry interval. Successful
+ * lists see its current snapshot; other failures and interruptions are never retained.
+ */
+function listCatalogLifetime(
+  exit: Exit.Exit<ReadonlyArray<Service>, ReturnType<typeof executorFailure>>,
+) {
+  if (Exit.isSuccess(exit)) return 0
+  return Option.exists(
+    Cause.findErrorOption(exit.cause),
+    (error) => error instanceof ServiceUnavailable,
+  )
+    ? '30 seconds'
+    : 0
+}
+
+/** Capture authority once; the adapter owns discovery and catalog cache lifetimes. */
 const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const executor: ExecutorService = yield* Executor
   const database = yield* Database
@@ -376,6 +404,10 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const catalogServices = Effect.fn('Connections.catalog')(function* () {
     return (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).map(catalogService)
   })
+  /** Explicit search/management never inherit list failures. rc.116 cachedWithTTL retains the
+   * exit and deduplicates pending readers using the caller's Clock.
+   */
+  const listCatalog = yield* Effect.cachedWithTTL(catalogServices(), listCatalogLifetime)
   /** Inspect the selected candidate without retaining any account or credential. */
   const inspectService = Effect.fn('Connections.inspectService')(function* (service: Service) {
     const authorization = yield* executor
@@ -437,7 +469,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     list: Effect.fn('Connections.list')(function* (actor: Actor) {
       const rows = yield* provide(listRecords(actor))
       const items = yield* Effect.forEach(rows, (row) => provide(publicConnection(actor, row)))
-      const catalog = yield* catalogServices().pipe(
+      const catalog = yield* listCatalog.pipe(
         Effect.catchTag('ServiceUnavailable', () => Effect.succeed<ReadonlyArray<Service>>([])),
       )
       return { connections: withCatalogMarks(items, catalog) }

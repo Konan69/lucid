@@ -409,16 +409,75 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           const listed = yield* offlineStore.list(ownerActor)
           expect(Object.keys(listed)).toEqual(['connections'])
           expect(listed.connections.map((row) => row.id)).toContain(step.connection.id)
-          const afterBackground = yield* Ref.get(probe.catalogs)
+          const afterList = yield* Ref.get(probe.catalogs)
           yield* offlineStore.list(ownerActor)
-          expect(yield* Ref.get(probe.catalogs)).toBe(afterBackground)
+          expect(yield* Ref.get(probe.catalogs)).toBe(afterList)
           expect(yield* offlineStore.find('Records')).toEqual(
             ServiceCatalog.cases.Unavailable.make({}),
           )
-          expect(yield* Ref.get(probe.catalogs)).toBe(afterBackground + 1)
+          expect(yield* Ref.get(probe.catalogs)).toBe(afterList + 1)
         }).pipe(
           Effect.provide(connectionStoreLayer, { local: true }),
           Effect.provideService(Executor, unavailable),
+        )
+      }),
+    )
+    /** List failures are paced like catalog downloads; successful reads must still see refreshed sites. */
+    it.effect('recovers catalog icons after backoff and observes subsequent catalog changes', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const step = yield* (yield* ConnectionStore).begin(ownerActor, {
+          service: serviceId,
+          label: 'Catalog recovery',
+          shared: false,
+        })
+        const executor = yield* Executor
+        const site = yield* Ref.make<Option.Option<string>>(Option.none())
+        const calls = yield* Ref.make(0)
+        const controlled = Executor.of({
+          ...executor,
+          catalog: Effect.fn('Executor.Test.recoveringCatalog')(function* () {
+            yield* Ref.update(calls, (count) => count + 1)
+            const domain = yield* Ref.get(site)
+            if (Option.isNone(domain))
+              return yield* Effect.fail(
+                ServiceUnavailable.make({ service: 'connections', message: 'Unavailable' }),
+              )
+            return (yield* executor.catalog()).map((entry) =>
+              ExecutorServiceEntry.make({ ...entry, domain: domain.value }),
+            )
+          }),
+        })
+        yield* Effect.gen(function* () {
+          const store = yield* ConnectionStore
+          expect((yield* store.list(ownerActor)).connections).toMatchObject([
+            { id: step.connection.id, mark: null },
+          ])
+          yield* Ref.set(site, Option.some('workspace.google.com'))
+          yield* TestClock.adjust('29 seconds')
+          expect((yield* store.list(ownerActor)).connections).toMatchObject([
+            { id: step.connection.id, mark: null },
+          ])
+          expect(yield* Ref.get(calls)).toBe(1)
+          yield* TestClock.adjust('1 second')
+          expect((yield* store.list(ownerActor)).connections).toMatchObject([
+            {
+              id: step.connection.id,
+              mark: 'https://www.google.com/s2/favicons?domain=google.com',
+            },
+          ])
+          expect(yield* Ref.get(calls)).toBe(2)
+          yield* Ref.set(site, Option.some('deepwiki.com'))
+          expect((yield* store.list(ownerActor)).connections).toMatchObject([
+            {
+              id: step.connection.id,
+              mark: 'https://www.google.com/s2/favicons?domain=deepwiki.com',
+            },
+          ])
+          expect(yield* Ref.get(calls)).toBe(3)
+        }).pipe(
+          Effect.provide(connectionStoreLayer, { local: true }),
+          Effect.provideService(Executor, controlled),
         )
       }),
     )
