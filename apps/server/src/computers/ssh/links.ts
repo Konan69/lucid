@@ -1,5 +1,5 @@
 import { Effect, Exit, Schedule, Scope, Semaphore } from 'effect'
-import { type Identity, type Link, type LinkFailure, openLink } from './link.ts'
+import { type Identity, type Link, type LinkFailure, LinkUnreachable, openLink } from './link.ts'
 
 /** Where a machine is now and which key it presents, as its provider reports them. */
 export interface LinkTarget {
@@ -20,7 +20,7 @@ export interface LinkTarget {
  *
  * A machine that has just been woken refuses SSH for a while (its provider refuses commands for
  * 20 to 40 seconds). Opening therefore tries again every two seconds while the machine cannot be
- * reached, for at most a minute. A wrong host key or a refused key is not retried: waiting does
+ * reached, for at most 75 seconds. A wrong host key or a refused key is not retried: waiting does
  * not change either.
  */
 export const links = <Key>(identity: Identity) => {
@@ -47,6 +47,12 @@ export const links = <Key>(identity: Identity) => {
         while: (failure: LinkFailure) => failure._tag === 'LinkUnreachable',
         schedule: Schedule.spaced('2 seconds'),
         times: 30,
+      }),
+      // Each try may itself wait fifteen seconds for a host that does not answer, so the tries
+      // are bounded by the clock as well: the caller hears "unreachable", never a hang.
+      Effect.timeoutOrElse({
+        duration: '75 seconds',
+        onTimeout: () => Effect.fail(new LinkUnreachable()),
       }),
       Effect.onError(() => Scope.close(scope, Exit.void)),
     )

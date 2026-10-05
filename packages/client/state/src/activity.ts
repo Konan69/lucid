@@ -19,6 +19,9 @@ const list = Schema.OptionFromOptionalKey(Schema.Array(Schema.Unknown))
 const Asked = Schema.Struct({
   query: text,
   address: text,
+  command: text,
+  path: text,
+  pattern: text,
   summary: text,
   account: text,
   tool: text,
@@ -211,6 +214,54 @@ const STEPS = {
     },
     detail: (_asked, answered) => [counted(answered.routines, 'routine', 'routines')],
   },
+  bash: {
+    said: {
+      running: 'Working on its computer',
+      done: 'Worked on its computer',
+      failed: 'The computer did not do it',
+    },
+    detail: (asked) => [said(asked.command)],
+  },
+  read: {
+    said: {
+      running: 'Reading a file on its computer',
+      done: 'Read a file on its computer',
+      failed: 'Could not read the file',
+    },
+    detail: (asked) => [said(asked.path)],
+  },
+  write: {
+    said: {
+      running: 'Writing a file on its computer',
+      done: 'Wrote a file on its computer',
+      failed: 'Could not write the file',
+    },
+    detail: (asked) => [said(asked.path)],
+  },
+  edit: {
+    said: {
+      running: 'Changing a file on its computer',
+      done: 'Changed a file on its computer',
+      failed: 'Could not change the file',
+    },
+    detail: (asked) => [said(asked.path)],
+  },
+  grep: {
+    said: {
+      running: 'Searching its files',
+      done: 'Searched its files',
+      failed: 'Could not search the files',
+    },
+    detail: (asked) => [said(asked.pattern)],
+  },
+  glob: {
+    said: {
+      running: 'Looking for files',
+      done: 'Looked for files',
+      failed: 'Could not look for files',
+    },
+    detail: (asked) => [said(asked.pattern)],
+  },
   run_command: {
     said: {
       running: 'Working on its computer',
@@ -373,6 +424,9 @@ const STEP_OF = new Map<string, Step>(Object.entries(STEPS))
 const NOTHING_ASKED: Asked = {
   query: Option.none(),
   address: Option.none(),
+  command: Option.none(),
+  path: Option.none(),
+  pattern: Option.none(),
   summary: Option.none(),
   account: Option.none(),
   tool: Option.none(),

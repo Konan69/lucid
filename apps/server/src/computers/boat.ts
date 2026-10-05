@@ -71,10 +71,17 @@ const followed = (
     .pipe(Stream.mapEffect(told), Stream.flattenIterable)
 }
 
-/** "host:port", as Boat names a machine that has no public address of its own. */
+/**
+ * "host:port", as Boat names the way in to a machine that has only an IPv6 address (seen 5 October
+ * 2026: one machine had its own IPv4 on one wake and none on the next, and the hosted server has
+ * no IPv6 route). A host written in brackets is taken out of them.
+ */
 const endpoint = (value: string) => {
   const cut = value.lastIndexOf(':')
-  return { host: value.slice(0, cut), port: Number(value.slice(cut + 1)) }
+  return {
+    host: value.slice(0, cut).replace(/^\[|\]$/g, ''),
+    port: Number(value.slice(cut + 1)),
+  }
 }
 
 /**
