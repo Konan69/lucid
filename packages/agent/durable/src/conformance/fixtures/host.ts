@@ -15,6 +15,7 @@ import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite
 import {
   DefaultChatTransport,
   readUIMessageStream,
+  uiMessageChunkSchema,
   tool,
   type ToolSet,
   type UIMessage,
@@ -48,12 +49,22 @@ export function call(name: string, input: Record<string, string | number>, id: s
   return fauxAssistantMessage([fauxToolCall(name, input, { id })], { stopReason: 'toolUse' })
 }
 
-/** Collect chunks and fold them using the unmodified AI SDK consumer, including continuations. */
+/**
+ * Collect and fold using the unmodified AI SDK consumer, including continuations.
+ * AI SDK packages/ai/src/ui-message-stream/ui-message-chunks.test.ts: returns UI message chunks.
+ * Validate every emitted chunk with the SDK's public schema; type annotations are no wire proof.
+ */
 export async function consume(stream: ReadableStream<UIMessageChunk>, from?: UIMessage) {
   const [raw, folded] = stream.tee()
   const chunks: UIMessageChunk[] = []
   const collecting = (async () => {
-    for await (const chunk of raw) chunks.push(chunk)
+    const schema = uiMessageChunkSchema()
+    if (schema.validate === undefined) throw new Error('Expected the SDK chunk validator')
+    for await (const chunk of raw) {
+      const checked = await schema.validate(chunk)
+      if (!checked.success) throw checked.error
+      chunks.push(checked.value)
+    }
   })()
   let message = from
   const reading = from === undefined ? { stream: folded } : { stream: folded, message: from }
