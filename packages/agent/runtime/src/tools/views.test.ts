@@ -35,7 +35,7 @@ import { NoteFile, NoteIndex, NoteLine } from '../notes.ts'
 import { Remembered, SavedProcedures, VividContext } from './snapshots.ts'
 import * as views from './views.ts'
 import { askTools } from './ask.ts'
-import { commandDefinition, desktopToolFactory } from './computer.ts'
+import { commandDefinition, pictureTools } from './computer.ts'
 import { connectionTools } from './connections.ts'
 import { libraryTools } from './library.ts'
 import { memoryTools } from './memory.ts'
@@ -350,7 +350,7 @@ it('has no identifier key or UUID validator in any model tool input', () => {
     skillTools,
   ]
   inspectSchema(schemaDocument(JSON.stringify(commandDefinition(inspectionOnly).input)))
-  for (const native of desktopToolFactory(inspectionOnly).tools())
+  for (const native of pictureTools(inspectionOnly))
     inspectSchema(schemaDocument(JSON.stringify(native.parameters)))
   for (const factory of groups)
     for (const definition of factory(inspectionOnly))

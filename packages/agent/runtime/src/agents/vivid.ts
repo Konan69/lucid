@@ -28,7 +28,7 @@ import { routineTools } from '../tools/routines.ts'
 import { projectTools } from '../tools/projects.ts'
 import { skillTools } from '../tools/skills.ts'
 import { showTools } from '../tools/show.ts'
-import { scopeLayer, toolRunner, type RunTool } from '../tools/scope.ts'
+import { scopeLayer, scopedRunner, toolRunner, type RunTool } from '../tools/scope.ts'
 
 import { nativeSkillsInOrder } from '@vivid/skills/native'
 
@@ -105,7 +105,7 @@ const TOOLS = [
   'Write a program by default when the work is more than one step: several calls that depend on each other, or results that need filtering, joining, sorting or counting before you answer. Use run_code with a short JavaScript program; it calls the same integration, page and computer tools under the same rules, and returns only what the person needs. Use a single tool directly for a single step. If a program stops for an approval or an uncertain action, do not run it again.',
   'To do anything in an outside service, call find_tools with what you need, then use_tool with the exact account and tool names it returned. Never invent a tool name, an account or a parameter. The context for this response lists the integrations this person has connected. When they name one of those, or one of those can do the job, call find_tools first: do not read its website, open a browser or add it again.',
   'Use use_person_computer for apps on the person’s own Windows PC through their Vivid desktop app. Start by listing windows or apps, then look before acting. The person already allowed this computer, including terminals; nothing more is asked. Stop when they stop Vivid.',
-  'Read a public page with read_page; it needs no computer. Use your computer when the work needs a real machine. browse works a page by what it says and is right for signed-in sites and forms. use_desktop looks at the screen and uses the pointer and keys, for anything a page outline cannot describe or any other app. run_command is a shell for scripts, files and calculations. Pick the narrowest one that does the job, and say in the summary what each step is for. If the person has taken the keyboard, wait for them.',
+  'Read a public page with read_page; it needs no computer. Use your computer when the work needs a real machine. browse works a page by what it says and is right for signed-in sites and forms. use_desktop looks at the screen and uses the pointer and keys, for anything a page outline cannot describe or any other app. Your computer is a real machine of your own with a home directory that stays between conversations: read, write and edit work on its files, grep and glob search them, and bash runs any command there, with no one asked. Keep the person’s files and your own work in its home directory. Pick the narrowest tool that does the job, and say in the summary, where a tool has one, what the step is for. If the person has taken the keyboard, wait for them.',
   'Some actions need the person to say yes first. When a tool reports that approval was requested, stop: tell them in one sentence what you asked to do and why, and end your turn. You will be woken with the outcome. When a rule blocks an action, say which rule and do not look for a way around it.',
 ]
 
@@ -152,7 +152,8 @@ export function Vivid({ id }: { id: string }) {
   // while a Run is working in the Thread (`apps/server/src/threads`), so whoever joins is the
   // Person already being answered. Flue itself has no queue-only dispatch to rely on.
   const acting = actingFor(id, delivery, threadOriginOf(useInitialData()))
-  const runTool = toolRunner(scopeLayer(id, delivery, threadOriginOf(useInitialData())))
+  const scope = scopeLayer(id, delivery, threadOriginOf(useInitialData()))
+  const runTool = toolRunner(scope)
   const context = useVividContext(acting)
   // A person's own time zone decides what "tomorrow at 9" means. Without one, say so in UTC.
   const timezone = context.timezone.length > 0 ? context.timezone : 'UTC'
@@ -172,7 +173,7 @@ export function Vivid({ id }: { id: string }) {
     skillTools(runTool),
     routineTools(runTool),
     projectTools(runTool),
-    computerTools(runTool),
+    computerTools(runTool, scopedRunner(scope)),
     codeTools(runTool),
     documentTools(runTool),
     showTools(),

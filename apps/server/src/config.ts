@@ -80,7 +80,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigServ
   'vivid/ServerConfig',
 ) {}
 
-const configError = (variable: string, expected: string) =>
+export const configError = (variable: string, expected: string) =>
   new ConfigurationError({
     variable,
     expected,

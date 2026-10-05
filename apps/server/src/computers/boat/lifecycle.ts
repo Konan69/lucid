@@ -185,7 +185,7 @@ const withdrawn = Effect.fn('Machine.boat.withdrawn')(function* (
 export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
   api: Transport,
   saved: Bindings,
-  invalidate: (key: MachineKey) => void,
+  invalidate: (key: MachineKey) => Effect.Effect<void>,
   admit: (key: MachineKey, identity: Identity) => Effect.Effect<Identity, MachineFailure>,
 ) {
   const { bound, running, permission, wait, invalidateViewer } = yield* observations(api, saved)
@@ -213,7 +213,7 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
     // looked at, and it then comes back from there on its way to `archived`.
     if (record.state === 'archiving') record = yield* wait(key, 'archived')
     if (record.state === 'archived') {
-      invalidate(key)
+      yield* invalidate(key)
       yield* invalidateViewer(key)
       if (!record.snapshotAvailable)
         return yield* Effect.fail(new MachineOperationFailed({ operation: 'snapshot-missing' }))
@@ -275,7 +275,7 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
       // A running machine is stopped only by its holder. One between states takes no command, so
       // it cannot be asked; the stop is sent as it always was.
       if (active(record.state)) yield* admit(key, identity)
-      invalidate(key)
+      yield* invalidate(key)
       yield* invalidateViewer(key)
       yield* api.stop(identity.id)
       const archived = yield* wait(key, 'archived')

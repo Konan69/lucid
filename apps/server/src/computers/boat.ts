@@ -18,6 +18,7 @@ import { guestDriver } from './boat/guest.ts'
 import { desktopStep, look } from './boat/desktop.ts'
 import { browse } from './boat/browser.ts'
 import { lifecycle } from './boat/lifecycle.ts'
+import { machineLinks } from './boat/shell.ts'
 import { holding, wake } from './boat/holder.ts'
 
 /** What Boat says about a streamed command, as the machine boundary tells it. Standard error is
@@ -75,10 +76,18 @@ export const boatMachineLayer = Layer.effect(
       drivers.delete(key)
     }
     const { settle, admit } = holding(api, saved, forget)
+    // The lifecycle tells this Layer when a machine stops or resumes; what was cached about the
+    // machine it was is forgotten then, and the SSH connection to it is closed.
+    const connections = machineLinks(api)
+    yield* Effect.addFinalizer(() => connections.close)
     const { ensure, status, inspect, stop, running, permit } = yield* lifecycle(
       api,
       saved,
-      forget,
+      (key) =>
+        Effect.suspend(() => {
+          forget(key)
+          return connections.drop(key)
+        }),
       admit,
     )
     /** A running machine that has accepted this binding. Everything here that reaches a machine
@@ -156,6 +165,7 @@ export const boatMachineLayer = Layer.effect(
         const identity = yield* accepted(input.key)
         yield* api.write(identity.id, input.path, input.content)
       }),
+      ...connections.operations(accepted),
       desktop: Effect.fn('Machine.boat.desktop')(
         function* (input) {
           const identity = yield* accepted(input.key)

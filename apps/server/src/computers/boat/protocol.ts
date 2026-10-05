@@ -142,3 +142,19 @@ export const ReadFile = Schema.Struct({
   size: Schema.Int,
   content: Schema.String.check(Schema.isNonEmpty()),
 })
+
+/**
+ * What Boat answers when a public key is authorized on a running machine (`POST
+ * /sandboxes/{id}/sshkey`, body `{ key }`). Seen on 5 October 2026 on the trial plan: 200, and 200
+ * again for a key already there. `hostKey` is one OpenSSH public key line, the key of the machine
+ * as it runs now; it changes with every resume, as the address does, so none of this is stored.
+ * `sshEndpoint` ("host:port") is set only when the machine has no public address of its own.
+ */
+export const Authorized = Schema.Struct({
+  ok: Schema.Literal(true),
+  machineIp: Schema.String.check(Schema.isNonEmpty()),
+  sshEndpoint: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  sshUser: Schema.String.check(Schema.isNonEmpty()),
+  hostKey: Schema.String.check(Schema.isPattern(/^\S+ \S+/)),
+})
+export type Authorized = typeof Authorized.Type

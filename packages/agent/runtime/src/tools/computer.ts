@@ -1,10 +1,4 @@
-import {
-  defineTool,
-  useSandbox,
-  SandboxOperationUnsupportedError,
-  type Sandbox,
-  type SandboxFactory,
-} from '@flue/runtime'
+import { defineTool, useSandbox, type SandboxFactory } from '@flue/runtime'
 import { Type } from '@earendil-works/pi-ai'
 import {
   BrowserAction,
@@ -25,7 +19,8 @@ import { pictureResult } from './picture.ts'
 import { personComputerModelTool } from './windows.ts'
 import { warnFailure } from './result.ts'
 import * as v from 'valibot'
-import { Scope, type RunTool } from './scope.ts'
+import { Scope, type RunScoped, type RunTool } from './scope.ts'
+import { COMPUTER_HOME, computerSandbox, machineTools } from './sandbox.ts'
 import { summary, text } from './inputs.ts'
 import { browseOutcome, commandOutcome, desktopOutcome } from './outcomes.ts'
 
@@ -153,8 +148,8 @@ function browserAction(input: typeof browseInput.Type.action): BrowserAction {
 }
 
 /** Computer tools propose actions only; availability, takeover and approvals belong to the server. */
-export function computerTools(runTool: RunTool) {
-  useSandbox(desktopToolFactory(runTool))
+export function computerTools(runTool: RunTool, run: RunScoped) {
+  useSandbox(computerSandboxFactory(runTool, run))
   return [commandDefinition(runTool)]
 }
 
@@ -293,44 +288,21 @@ export function desktopModelTool(runTool: RunTool) {
   }
 }
 
-/** Flue exposes image content through SandboxFactory.tools. This factory supplies a tool-only,
- * empty virtual namespace, not the guest filesystem: raw FS/shell cannot bypass Vivid's RPC Gate.
- * Flue resolves it once per submission; the acting Person stays fixed while deliveries join
- * that response (agents/vivid.ts). A later submission gets a newly attributed factory. */
-export function desktopToolFactory(runTool: RunTool) {
+/**
+ * Flue's one machine slot holds the acting Person's real Computer (`sandbox.ts`). A factory's
+ * `tools` replaces Flue's default six, so the list is those six built on that Computer, plus the
+ * tools that return pictures: Flue passes image content to the model only from this list
+ * (reference/sandbox-api, "SandboxToolFactory"). Flue resolves the factory once per submission;
+ * the acting Person stays fixed while deliveries join that response (agents/vivid.ts).
+ */
+export function computerSandboxFactory(runTool: RunTool, run: RunScoped) {
   return {
-    createSandbox: () => Promise.resolve(toolNamespace()),
-    tools: () => [
-      desktopModelTool(runTool),
-      browseModelTool(runTool),
-      personComputerModelTool(runTool),
-    ],
+    createSandbox: () => Promise.resolve(computerSandbox(run, COMPUTER_HOME)),
+    tools: (sandbox) => [...machineTools(sandbox), ...pictureTools(runTool)],
   } satisfies SandboxFactory
 }
 
-/** The namespace contains only its root; it makes no claim about guest files or provider identity.
- * Writes and raw execution are explicitly unsupported. Existing run_command remains gated RPC. */
-function toolNamespace(): Sandbox {
-  const unsupported = (operation: string) =>
-    Promise.reject(
-      new SandboxOperationUnsupportedError({
-        operation,
-        provider: 'Vivid Computer tools',
-        options: ['raw filesystem or shell access'],
-      }),
-    )
-  return {
-    cwd: '/',
-    resolvePath: (path) => (path.startsWith('/') ? path : `/${path}`),
-    exists: (path) => Promise.resolve(path === '/'),
-    readdir: (path) => (path === '/' ? Promise.resolve([]) : unsupported('readdir')),
-    stat: (path) =>
-      path === '/' ? Promise.resolve({ isDirectory: true, isFile: false }) : unsupported('stat'),
-    exec: () => unsupported('exec'),
-    readFile: () => unsupported('readFile'),
-    readFileBuffer: () => unsupported('readFileBuffer'),
-    writeFile: () => unsupported('writeFile'),
-    mkdir: () => unsupported('mkdir'),
-    rm: () => unsupported('rm'),
-  }
+/** The tools whose results carry a picture. */
+export function pictureTools(runTool: RunTool) {
+  return [desktopModelTool(runTool), browseModelTool(runTool), personComputerModelTool(runTool)]
 }

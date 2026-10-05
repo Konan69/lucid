@@ -8,7 +8,7 @@ import * as v from 'valibot'
 import { askTools } from '../../tools/ask.ts'
 import { documentTools } from '../../tools/documents.ts'
 import { codeTools } from '../../tools/code.ts'
-import { commandDefinition, desktopToolFactory } from '../../tools/computer.ts'
+import { commandDefinition, pictureTools } from '../../tools/computer.ts'
 import { connectionTools } from '../../tools/connections.ts'
 import { memoryTools } from '../../tools/memory.ts'
 import { routineTools } from '../../tools/routines.ts'
@@ -30,7 +30,7 @@ const tools = [
   ...showTools(),
 ]
 const decodeShown = Schema.decodeUnknownSync(Shown)
-const nativeTools = desktopToolFactory(unavailable).tools()
+const nativeTools = pictureTools(unavailable)
 const decodeDesktop = Schema.decodeUnknownSync(UseDesktopRequest)
 const timestamp = Date.parse('2026-10-03T14:00:00Z')
 

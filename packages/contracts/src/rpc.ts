@@ -57,6 +57,12 @@ import {
   CommandOutcome,
   ComputerResponse,
   RunCommandRequest,
+  ComputerShellRequest,
+  ComputerShellOutcome,
+  ComputerFileReadRequest,
+  ComputerFileReadOutcome,
+  ComputerFileWriteRequest,
+  ComputerFileWriteOutcome,
 } from './computers.js'
 import {
   Channel,
@@ -705,6 +711,22 @@ const RunCommand = Rpc.make('RunCommand', {
   payload: RunCommandRequest,
   success: CommandOutcome,
 })
+/** Vivid's own shell and files on the acting Person's Computer; runtime-only at the handler. */
+const ComputerShell = Rpc.make('ComputerShell', {
+  ...call,
+  payload: ComputerShellRequest,
+  success: ComputerShellOutcome,
+})
+const ComputerFileRead = Rpc.make('ComputerFileRead', {
+  ...call,
+  payload: ComputerFileReadRequest,
+  success: ComputerFileReadOutcome,
+})
+const ComputerFileWrite = Rpc.make('ComputerFileWrite', {
+  ...call,
+  payload: ComputerFileWriteRequest,
+  success: ComputerFileWriteOutcome,
+})
 const Browse = Rpc.make('Browse', {
   ...call,
   payload: BrowseRequest,
@@ -931,6 +953,9 @@ export const VividRpc = RpcGroup.make(
   StopComputer,
   HoldComputer,
   RunCommand,
+  ComputerShell,
+  ComputerFileRead,
+  ComputerFileWrite,
   Browse,
   WatchChannels,
   WatchDrafts,

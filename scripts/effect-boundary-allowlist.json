@@ -22,7 +22,7 @@
   {
     "file": "packages/agent/runtime/src/tools/scope.ts",
     "classification": "third-party-adapter",
-    "symbols": ["runTool"]
+    "symbols": ["runTool", "runScoped"]
   },
   {
     "file": "packages/agent/runtime/src/notes.ts",

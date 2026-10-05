@@ -199,7 +199,17 @@ const STANDING = {
 } as const satisfies Record<ToolPart['state'], Step['standing']>
 
 /** Mirrors the web's watchable steps, without exposing tool names to the drawn UI. */
-const ON_COMPUTER = new Set(['run_command', 'browse', 'use_desktop'])
+const ON_COMPUTER = new Set([
+  'run_command',
+  'bash',
+  'read',
+  'write',
+  'edit',
+  'grep',
+  'glob',
+  'browse',
+  'use_desktop',
+])
 
 /**
  * Each tool call as a line in the product's words, never the tool's own name or payload.

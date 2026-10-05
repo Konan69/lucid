@@ -21,7 +21,7 @@ import { skillTools } from '../../../../../packages/agent/runtime/src/tools/skil
 import { routineTools } from '../../../../../packages/agent/runtime/src/tools/routines.ts'
 import {
   commandDefinition,
-  desktopToolFactory,
+  pictureTools,
 } from '../../../../../packages/agent/runtime/src/tools/computer.ts'
 import { documentTools } from '../../../../../packages/agent/runtime/src/tools/documents.ts'
 import { showTools } from '../../../../../packages/agent/runtime/src/tools/show.ts'
@@ -48,7 +48,7 @@ const registered = new Set(
     ...skillTools(runner),
     ...routineTools(runner),
     commandDefinition(runner),
-    ...desktopToolFactory(runner).tools(),
+    ...pictureTools(runner),
     ...codeTools(runner),
     ...documentTools(runner),
     ...showTools(),

@@ -64,6 +64,8 @@ export interface ComputerAccess {
   readonly key: Redacted.Redacted
   /** The named Boat snapshot a Person's Computer is restored from (`infra/computer/prepare.py`). */
   readonly template: string
+  /** Base64 of the installation's SSH private key; the server dials each Computer with it. */
+  readonly sshKey: Redacted.Redacted
   /** The paying organization, when the key's account belongs to one. */
   readonly organization: Option.Option<string>
   /** `small`, `default` or `large`; the server validates it and defaults to `default`. */
@@ -180,6 +182,7 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
     const computer: ComputerAccess = {
       key: yield* requiredSecret('VIVID_BOAT_API_KEY'),
       template: yield* requiredString('VIVID_BOAT_TEMPLATE'),
+      sshKey: yield* requiredSecret('VIVID_COMPUTER_SSH_KEY'),
       organization: yield* optionalString('VIVID_BOAT_ORG'),
       size: yield* optionalString('VIVID_BOAT_SIZE'),
       lifetimeSeconds: yield* optionalString('VIVID_BOAT_LIFETIME_SECONDS'),
