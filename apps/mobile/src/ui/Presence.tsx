@@ -164,6 +164,14 @@ const spoken = () => front
 /** The orb comes in as the disc that rose from the composer reaches it, never before it. */
 const LAND = FadeIn.duration(180).delay(140).reduceMotion(ReduceMotion.System)
 
+/**
+ * New words come in as the old ones have nearly gone. Both start at the same place in the
+ * capsule, and fading one in while the other was still strong drew two sentences through each
+ * other for a moment (seen frame by frame on a device). The old words leave in 150 ms (`LEAVE`);
+ * these wait 90 and take 180, so the change is over in 270.
+ */
+const SPEAK = FadeIn.duration(180).delay(90).reduceMotion(ReduceMotion.System)
+
 /** What Vivid's menu holds: the places that are Vivid's own. */
 export type Place = 'Computer' | 'Memory'
 
@@ -287,7 +295,7 @@ function Capsule({
             </Animated.View>
             <Animated.View
               key={words}
-              entering={APPEAR}
+              entering={SPEAK}
               exiting={LEAVE}
               // The words give way when the capsule has less room than they need.
               style={{ flexShrink: 1, minWidth: 0 }}
