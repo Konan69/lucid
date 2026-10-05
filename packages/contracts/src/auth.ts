@@ -45,5 +45,5 @@ export const runtimeHeaders = {
  * A name is a label, not proof. Anything that can reach the server can send one of these, so it
  * decides only the words a Person reads, never whether a request is trusted.
  */
-export const PairingClient = Schema.Literals(['vivid-desktop', 'vivid-mobile'])
+export const PairingClient = Schema.Literals(['vivid-mobile'])
 export type PairingClient = typeof PairingClient.Type

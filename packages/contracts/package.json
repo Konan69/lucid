@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./auth": "./src/auth.ts",
     "./code": "./src/code.ts",
-    "./rpc": "./src/rpc.ts"
+    "./rpc": "./src/rpc.ts",
+    "./signin": "./src/signin.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -41,14 +41,13 @@ describe('what a signed-in device is called', () => {
 
 describe('what the app behind a sign-in request is called', () => {
   it('names the kind of Vivid app that asked', () => {
-    expect(askerName(Option.some('vivid-desktop'))).toBe('A Vivid desktop app')
     expect(askerName(Option.some('vivid-mobile'))).toBe('A Vivid phone app')
   })
 
   it('calls anything else an app, and never guesses', () => {
     expect(askerName(Option.none())).toBe('An app')
     expect(askerName(Option.some('someone-else'))).toBe('An app')
-    expect(askerName(Option.some('Vivid-Desktop'))).toBe('An app')
+    expect(askerName(Option.some('Vivid-Mobile'))).toBe('An app')
     expect(askerName(Option.some(''))).toBe('An app')
   })
 })

@@ -1,3 +1,4 @@
+import * as NodeCrypto from 'node:crypto'
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
@@ -5,8 +6,10 @@ import * as NodeProcess from 'node:process'
 import * as NodeOS from 'node:os'
 import { DeviceName } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
+import * as Exit from 'effect/Exit'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
+import * as Scope from 'effect/Scope'
 import { app, net, protocol, screen, session, type BrowserWindow, type Session } from 'electron'
 import { registerBridge } from './bridge.ts'
 import { Browser } from './browser.ts'
@@ -21,7 +24,7 @@ import {
   vividUrlsFromArguments,
   type VividDeepLink,
 } from './links.ts'
-import { focusMainWindow, installApplicationMenu } from './menu.ts'
+import { focusMainWindow, installApplicationMenu, raiseMainWindow } from './menu.ts'
 import {
   DisplayWorkArea,
   clampWindowPlacement,
@@ -31,7 +34,7 @@ import {
   type WindowPlacement,
 } from './placement.ts'
 import { ColorSchemeController } from './theme.ts'
-import { loadThemeSurfaces } from './tokens.ts'
+import { loadThemeSurfaces, type ThemeSurfaces } from './tokens.ts'
 import { RendererSource, createMainWindow, loadRenderer, openExternalUrl } from './window.ts'
 import {
   AppInfo,
@@ -46,6 +49,7 @@ import { clearingLeft, storageLeftBehind } from './leaving.ts'
 import { registerAppProxy } from './proxy.ts'
 import { secureSession } from './session.ts'
 import { isAllowedBridgeRequest } from './security.ts'
+import { googleSignIn } from './signin.ts'
 import { ServerAddress, ServerSettings } from '../shared/settings.ts'
 
 const PLACEMENT_FILE = 'window-placement.json'
@@ -244,6 +248,45 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
   return { computer, control }
 })
 
+/**
+ * Where the window opens: where it was last, when that was saved and still lies on a display
+ * that is connected now, and the default otherwise. Placement is a convenience, so a file that
+ * cannot be read is the default too, never a startup that fails.
+ */
+const startingPlacement = Effect.fn('DesktopMain.startingPlacement')(function* (path: string) {
+  const stored = Option.getOrElse(
+    yield* readWindowPlacement(path).pipe(Effect.option),
+    () => defaultWindowPlacement,
+  )
+  const workAreas = screen.getAllDisplays().map((display) => DisplayWorkArea.make(display.workArea))
+  return Option.getOrElse(clampWindowPlacement(stored, workAreas), () => defaultWindowPlacement)
+})
+
+/**
+ * Google sign-in through the system browser (`signin.ts`). Its listener on the loopback address
+ * lives in a scope the app closes as it quits, so no port outlives the app that opened it. The
+ * server is the saved one, read when an attempt begins: never an address a document sent.
+ *
+ * An attempt belongs to the server it began on: its code could only be traded there, and the
+ * document waiting for it is replaced when the server changes. So `serverChanged` cancels it.
+ */
+const signInThroughBrowser = Effect.fn('DesktopMain.signIn')(function* (input: {
+  readonly server: () => ServerSettings
+  readonly surfaces: ThemeSurfaces
+}) {
+  const untilQuit = yield* Scope.make()
+  app.once('will-quit', () => {
+    Effect.runFork(Scope.close(untilQuit, Exit.void))
+  })
+  return yield* googleSignIn({
+    server: input.server,
+    open: openExternalUrl,
+    random: (size) => NodeCrypto.randomBytes(size),
+    focus: () => raiseMainWindow(mainWindow),
+    surfaces: input.surfaces,
+  }).pipe(Scope.provide(untilQuit))
+})
+
 const ShippedManifest = Schema.fromJsonString(
   Schema.Struct({ vividHome: Schema.OptionFromOptionalKey(ServerAddress) }),
 )
@@ -306,15 +349,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
   })
   const information = yield* appInfo()
   const placementPath = NodePath.join(app.getPath('userData'), PLACEMENT_FILE)
-  const storedPlacement = Option.getOrElse(
-    yield* readWindowPlacement(placementPath).pipe(Effect.option),
-    () => defaultWindowPlacement,
-  )
-  const workAreas = screen.getAllDisplays().map((display) => DisplayWorkArea.make(display.workArea))
-  let placement = Option.getOrElse(
-    clampWindowPlacement(storedPlacement, workAreas),
-    () => defaultWindowPlacement,
-  )
+  let placement = yield* startingPlacement(placementPath)
   const colorScheme = new ColorSchemeController(surfaces)
   let browser = Option.none<Browser>()
   const pagesSession = session.fromPartition('persist:vivid-pages')
@@ -325,9 +360,11 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
     browser: () => browser,
   })
 
+  const signIn = yield* signInThroughBrowser({ server: () => serverSettings, surfaces })
   /** A different server, or none: every page closes and the window loads what that means. */
   const serverChanged = (value: ServerSettings): void => {
     Option.map(browser, (available) => available.reset())
+    Effect.runFork(signIn.cancel) // a sign-in belongs to the server it began on
     // The left server's storage is cleared (`leaving.ts`) only after the window has loaded what
     // replaces its document: that document writes as it unloads, which would follow the clear.
     const clearLeft = clearingLeft(storageLeftBehind(serverSettings, value), desktopSession)
@@ -366,6 +403,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
       device: computer,
       settings,
       openExternal: openExternalUrl,
+      signIn,
       onServerChanged: serverChanged,
     },
     runtime: { run: (program) => Effect.runPromise(program) },

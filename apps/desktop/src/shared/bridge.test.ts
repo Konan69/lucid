@@ -6,6 +6,7 @@ import {
   BridgeRequest,
   BridgeEvent,
   InvalidBridgeMessage,
+  SignInEnding,
   decodeBridgeRequest,
   decodeBridgeResponse,
   encodeBridgeResponse,
@@ -38,9 +39,11 @@ describe('desktop bridge ingress', () => {
         ['OpenExternal', 'url', 'javascript:alert(1)'],
         ['OpenExternal', 'url', 'https://person:secret@example.test'],
         ['OpenExternal', 'url', null],
-        ['OpenApproval', 'address', 'file:///secret'],
-        ['OpenApproval', 'address', 'https://person:secret@vivid.example/device?user_code=A'],
-        ['OpenApproval', 'address', null],
+        // Google sign-in takes no argument, so a document cannot name where the browser goes.
+        ['BeginGoogleSignIn', 'address', 'https://other.example/'],
+        ['ReopenGoogleSignIn', 'address', 'https://other.example/'],
+        ['AwaitGoogleSignIn', 'state', 'abcdefghijklmnop'],
+        ['CancelGoogleSignIn', 'state', 'abcdefghijklmnop'],
       ] as const
       for (const [tag, field, value] of payloads) {
         const payload = Object.fromEntries([
@@ -71,6 +74,59 @@ describe('desktop bridge ingress', () => {
           InvalidBridgeMessage,
         )
       }
+    }),
+  )
+
+  it.effect('carries a Google sign-in ending whole, and refuses one with a part missing', () =>
+    Effect.gen(function* () {
+      const granted = BridgeResponse.cases.GoogleSignInEnded.make({
+        value: SignInEnding.cases.Granted.make({
+          code: 'code',
+          state: 'state',
+          verifier: 'verifier',
+        }),
+      })
+      const wire = structuredClone(yield* encodeBridgeResponse(granted))
+      expect(yield* decodeBridgeResponse(wire)).toEqual(granted)
+      // A code without the secret it is traded with is not an ending the window can use; nor
+      // is an ending the shell has no name for, or an answer that is not one of the two words.
+      for (const [response, field, entries] of [
+        [
+          'GoogleSignInEnded',
+          'value',
+          [
+            ['_tag', 'Granted'],
+            ['code', 'code'],
+            ['state', 'state'],
+          ],
+        ],
+        [
+          'GoogleSignInEnded',
+          'value',
+          [
+            ['_tag', 'Granted'],
+            ['code', 'code'],
+            ['state', 'state'],
+            ['verifier', ''],
+          ],
+        ],
+        ['GoogleSignInEnded', 'value', [['_tag', 'Approved']]],
+      ] as const) {
+        const payload = Object.fromEntries([
+          ['_tag', response],
+          [field, Object.fromEntries(entries)],
+        ])
+        expect(yield* Effect.flip(decodeBridgeResponse(payload))).toBeInstanceOf(
+          InvalidBridgeMessage,
+        )
+      }
+      const elsewhere = Object.fromEntries([
+        ['_tag', 'GoogleSignInBegun'],
+        ['browser', 'https://other.example/'],
+      ])
+      expect(yield* Effect.flip(decodeBridgeResponse(elsewhere))).toBeInstanceOf(
+        InvalidBridgeMessage,
+      )
     }),
   )
 
