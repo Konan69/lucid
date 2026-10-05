@@ -3,6 +3,7 @@ import * as NodeHttps from 'node:https'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import manifest from './package.json' with { type: 'json' }
 
 /**
  * The longest an idle connection to the application server may wait for its next request.
@@ -73,7 +74,17 @@ export default defineConfig(({ mode }) => {
     '/health': { target: server, xfwd: true, agent },
   }
 
+  // Which build an error report names (`src/data/telemetry.ts`): the app's version, then the
+  // commit when the build is given one. `VIVID_COMMIT` is the name the server already reads its
+  // own commit from (`apps/server/src/config.ts`); a build without it reports the version alone.
+  const commit = environment.VIVID_COMMIT
+  const release =
+    commit === undefined || commit === ''
+      ? `vivid-web@${manifest.version}`
+      : `vivid-web@${manifest.version}+${commit.slice(0, 12)}`
+
   return {
+    define: { __VIVID_RELEASE__: JSON.stringify(release) },
     plugins: [react(), tailwindcss(), releaseUpstream(agent)],
     // The design-system components import each other as `@/ui/...` (the alias `components.json`
     // gives the shadcn CLI), so Vite resolves the same `paths` the type checker reads.
