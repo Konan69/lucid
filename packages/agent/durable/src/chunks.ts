@@ -1,5 +1,10 @@
 import type { AssistantMessage, ToolResultMessage } from '@earendil-works/pi-ai'
-import type { AgentEvent, EntryRecord, MessageChange, SnapshotEvent } from '@earendil-works/pi-durable'
+import type {
+  AgentEvent,
+  EntryRecord,
+  MessageChange,
+  SnapshotEvent,
+} from '@earendil-works/pi-durable'
 import type { UIMessageChunk } from 'ai'
 
 /**
@@ -50,12 +55,18 @@ function openBlock(state: RunState, contentIndex: number, block: Block): readonl
     case 'thinking':
       return [{ type: 'reasoning-start', id }]
     case 'toolCall':
-      return [{ type: 'tool-input-start', toolCallId: block.id, toolName: block.name, dynamic: true }]
+      return [
+        { type: 'tool-input-start', toolCallId: block.id, toolName: block.name, dynamic: true },
+      ]
   }
 }
 
 /** Chunks that close a block whose final value is `block`. */
-function closeBlock(state: RunState, contentIndex: number, block: Block): readonly UIMessageChunk[] {
+function closeBlock(
+  state: RunState,
+  contentIndex: number,
+  block: Block,
+): readonly UIMessageChunk[] {
   const id = partId(state, contentIndex)
   switch (block.type) {
     case 'text':
@@ -78,7 +89,8 @@ function closeBlock(state: RunState, contentIndex: number, block: Block): readon
 /** The text a block holds now, as one delta. Empty text gives no chunk; a tool call has none. */
 function blockBody(state: RunState, contentIndex: number, block: Block): readonly UIMessageChunk[] {
   const id = partId(state, contentIndex)
-  if (block.type === 'text' && block.text !== '') return [{ type: 'text-delta', id, delta: block.text }]
+  if (block.type === 'text' && block.text !== '')
+    return [{ type: 'text-delta', id, delta: block.text }]
   if (block.type === 'thinking' && block.thinking !== '') {
     return [{ type: 'reasoning-delta', id, delta: block.thinking }]
   }
@@ -86,7 +98,11 @@ function blockBody(state: RunState, contentIndex: number, block: Block): readonl
 }
 
 /** The whole content of a block that was never streamed, as one delta between its start and end. */
-function wholeBlock(state: RunState, contentIndex: number, block: Block): readonly UIMessageChunk[] {
+function wholeBlock(
+  state: RunState,
+  contentIndex: number,
+  block: Block,
+): readonly UIMessageChunk[] {
   return [
     ...openBlock(state, contentIndex, block),
     ...blockBody(state, contentIndex, block),
@@ -130,7 +146,9 @@ function finishBlock(state: RunState, contentIndex: number, block: Block): Step 
   const reported = state.blocks.get(contentIndex)
   if (reported === 'closed') return { state, chunks: [] }
   const chunks =
-    reported === 'open' ? closeBlock(state, contentIndex, block) : wholeBlock(state, contentIndex, block)
+    reported === 'open'
+      ? closeBlock(state, contentIndex, block)
+      : wholeBlock(state, contentIndex, block)
   return { state: mark(state, contentIndex, 'closed'), chunks }
 }
 
@@ -152,12 +170,16 @@ function applyChange(state: RunState, change: MessageChange): Step {
     case 'text_delta':
       return {
         state,
-        chunks: [{ type: 'text-delta', id: partId(state, change.contentIndex), delta: change.delta }],
+        chunks: [
+          { type: 'text-delta', id: partId(state, change.contentIndex), delta: change.delta },
+        ],
       }
     case 'thinking_delta':
       return {
         state,
-        chunks: [{ type: 'reasoning-delta', id: partId(state, change.contentIndex), delta: change.delta }],
+        chunks: [
+          { type: 'reasoning-delta', id: partId(state, change.contentIndex), delta: change.delta },
+        ],
       }
     // Argument text arrives as appends at a path inside the arguments object, not as raw JSON text,
     // so it cannot feed `tool-input-delta`. The finished arguments are sent when the block closes.
@@ -198,7 +220,14 @@ function toolResult(entry: EntryRecord): ToolResultMessage | undefined {
 function toolEnd(toolCallId: string, entry: EntryRecord | undefined): readonly UIMessageChunk[] {
   const result = entry === undefined ? undefined : toolResult(entry)
   if (result === undefined) {
-    return [{ type: 'tool-output-error', toolCallId, errorText: 'The tool did not finish', dynamic: true }]
+    return [
+      {
+        type: 'tool-output-error',
+        toolCallId,
+        errorText: 'The tool did not finish',
+        dynamic: true,
+      },
+    ]
   }
   if (result.isError) {
     return [{ type: 'tool-output-error', toolCallId, errorText: resultText(result), dynamic: true }]
@@ -222,7 +251,9 @@ function toolEnd(toolCallId: string, entry: EntryRecord | undefined): readonly U
 function bridgedOutput(details: unknown): { readonly output: unknown } | undefined {
   if (typeof details !== 'object' || details === null || Array.isArray(details)) return undefined
   const keys = Object.keys(details)
-  return keys.length === 1 && keys[0] === 'output' ? (details as { readonly output: unknown }) : undefined
+  return keys.length === 1 && keys[0] === 'output'
+    ? (details as { readonly output: unknown })
+    : undefined
 }
 
 /**
@@ -235,7 +266,8 @@ function assistantEnd(state: RunState, message: AssistantMessage): Step {
     const failure = [message.errorMessage ?? 'The model request failed']
     return { state: { ...finished.state, failure }, chunks: finished.chunks }
   }
-  const ending: readonly UIMessageChunk[] = message.stopReason === 'aborted' ? [{ type: 'abort' }] : []
+  const ending: readonly UIMessageChunk[] =
+    message.stopReason === 'aborted' ? [{ type: 'abort' }] : []
   return { state: finished.state, chunks: [...finished.chunks, ...ending] }
 }
 
@@ -249,16 +281,24 @@ function assistantEnd(state: RunState, message: AssistantMessage): Step {
 export function translate(state: RunState, event: AgentEvent): Step {
   switch (event.type) {
     case 'run_start':
-      return { state: initialRunState, chunks: [{ type: 'start', messageId: `run:${event.inputs.join('+')}` }] }
+      return {
+        state: initialRunState,
+        chunks: [{ type: 'start', messageId: `run:${event.inputs.join('+')}` }],
+      }
     case 'run_end':
       return {
         state,
-        chunks: [...state.failure.map((errorText) => ({ type: 'error' as const, errorText })), { type: 'finish' }],
+        chunks: [
+          ...state.failure.map((errorText) => ({ type: 'error' as const, errorText })),
+          { type: 'finish' },
+        ],
       }
     case 'turn_start':
       return startTurn(state)
     case 'message_start':
-      return event.message.role === 'assistant' ? startResponse(state, event.message) : { state, chunks: [] }
+      return event.message.role === 'assistant'
+        ? startResponse(state, event.message)
+        : { state, chunks: [] }
     case 'turn_end':
       return { state, chunks: [{ type: 'finish-step' }] }
     case 'message_update':
@@ -378,5 +418,8 @@ export function replayAfter(
     { state: initialRunState, chunks: [{ type: 'start' }] },
   )
   const partial = live ? snapshot.generation?.message : undefined
-  return { step: partial === undefined ? stored : join(stored, replayPartial(stored.state, partial)), live }
+  return {
+    step: partial === undefined ? stored : join(stored, replayPartial(stored.state, partial)),
+    live,
+  }
 }

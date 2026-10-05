@@ -20,9 +20,13 @@ const context = BACKGROUND_CONTEXT
 
 /** Run the fixture until its tool is executing, then kill the process without any cleanup. */
 async function crashMidTool(file: string) {
-  const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/crash.ts', import.meta.url)), file], {
-    stdio: ['ignore', 'pipe', 'inherit'],
-  })
+  const child = spawn(
+    process.execPath,
+    [fileURLToPath(new URL('./fixtures/crash.ts', import.meta.url)), file],
+    {
+      stdio: ['ignore', 'pipe', 'inherit'],
+    },
+  )
   const [line] = (await once(child.stdout, 'data')) as [Buffer]
   expect(line.toString()).toContain('tool-running')
   const exited = once(child, 'exit')
@@ -56,7 +60,11 @@ it('a client that attaches after a crash mid-tool gets the finished run', async 
         ],
       }),
     )
-    const harness = await Harness.open(await openNodeSqliteStorage(file), { models, registry }, context)
+    const harness = await Harness.open(
+      await openNodeSqliteStorage(file),
+      { models, registry },
+      context,
+    )
     const root = await harness.root(context)
 
     // Attach before the scheduler starts, so the stream holds the recovered state and then the rest.
@@ -72,9 +80,14 @@ it('a client that attaches after a crash mid-tool gets the finished run', async 
       state: 'output-available',
       output: { content: [{ type: 'text', text: '12 pages' }] },
     })
-    expect(message?.parts.at(-1)).toMatchObject({ type: 'text', text: 'The report is ready.', state: 'done' })
+    expect(message?.parts.at(-1)).toMatchObject({
+      type: 'text',
+      text: 'The report is ready.',
+      state: 'done',
+    })
     await harness.close(context)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
-})
+  // The crash needs a second Node process, and its start alone takes seconds on a busy machine.
+}, 30_000)

@@ -37,7 +37,8 @@ export type ToolsOptions = {
 }
 
 /** What the model reads as the tool's result. A string stays as written; anything else is JSON. */
-const resultText = (output: unknown) => (typeof output === 'string' ? output : JSON.stringify(output))
+const resultText = (output: unknown) =>
+  typeof output === 'string' ? output : JSON.stringify(output)
 
 /**
  * A tool's output as the JSON Pi Durable stores. `undefined` (a tool that returns nothing) and
@@ -57,7 +58,10 @@ const result = (output: unknown): ToolExecutionResult => ({
   details: { output: toJson(output) },
 })
 
-const failure = (text: string): ToolExecutionResult => ({ isError: true, content: [{ type: 'text', text }] })
+const failure = (text: string): ToolExecutionResult => ({
+  isError: true,
+  content: [{ type: 'text', text }],
+})
 
 type Execute = ToolRegistration['execute']
 
@@ -71,7 +75,10 @@ type Execute = ToolRegistration['execute']
 function serverExecute(tool: Tool, execute: NonNullable<Tool['execute']>): Execute {
   const schema = asSchema(tool.inputSchema)
   return async (args, api, context) => {
-    const checked = schema.validate === undefined ? { success: true as const, value: args } : await schema.validate(args)
+    const checked =
+      schema.validate === undefined
+        ? { success: true as const, value: args }
+        : await schema.validate(args)
     if (!checked.success) return failure(checked.error.message)
     // Gap: the tool does not receive the transcript as `messages`.
     const output: unknown = await execute(checked.value, {
@@ -89,7 +96,9 @@ const waitExecute =
   (name: string): Execute =>
   async (_args, api, context) => {
     const settled = (await api.snapshot(Holds, api.conversationId, context))?.settled[api.callId]
-    return settled?.kind === 'answered' ? result(settled.output) : failure(`Tool ${name} was not answered`)
+    return settled?.kind === 'answered'
+      ? result(settled.output)
+      : failure(`Tool ${name} was not answered`)
   }
 
 /**
@@ -102,7 +111,10 @@ const laterExecute =
     await api.commit(async (tx) => {
       ;(await tx.doc(Holds, api.conversationId)).asked[api.callId] = name
     }, context)
-    return result({ status: 'asked', note: 'The answer will arrive later as a new message. Continue with other work.' })
+    return result({
+      status: 'asked',
+      note: 'The answer will arrive later as a new message. Continue with other work.',
+    })
   }
 
 /** How one tool is bridged: its plan, its replay policy, and the `execute` Pi Durable calls. */
@@ -113,7 +125,11 @@ function bridge(name: string, tool: Tool, options: ToolsOptions): Bridged {
   const approval = typeof rule === 'function' ? rule : () => rule
   if (tool.execute !== undefined) {
     const plan = { approval, source: 'server' as Source }
-    return { plan, replay: options.replay?.[name] ?? 'unsafe', execute: serverExecute(tool, tool.execute) }
+    return {
+      plan,
+      replay: options.replay?.[name] ?? 'unsafe',
+      execute: serverExecute(tool, tool.execute),
+    }
   }
   // Both person-answered forms only read or write the hold document, so rerunning them is safe.
   const source = options.answers?.[name] ?? 'wait'
@@ -151,13 +167,19 @@ async function registration(name: string, tool: Tool, bridged: Bridged): Promise
  *
  * Async because a schema library may build its JSON Schema lazily.
  */
-export async function toolsExtension(name: string, tools: ToolSet, options: ToolsOptions = {}): Promise<Extension> {
+export async function toolsExtension(
+  name: string,
+  tools: ToolSet,
+  options: ToolsOptions = {},
+): Promise<Extension> {
   const bridged = Object.entries(tools).map(([toolName, tool]) => ({
     toolName,
     tool,
     bridged: bridge(toolName, tool, options),
   }))
-  const registrations = await Promise.all(bridged.map((each) => registration(each.toolName, each.tool, each.bridged)))
+  const registrations = await Promise.all(
+    bridged.map((each) => registration(each.toolName, each.tool, each.bridged)),
+  )
   const plans = new Map(bridged.map((each) => [each.toolName, each.bridged.plan]))
   const waits = hook(ToolTask, {
     beforeTool: async (call, api, context) => {

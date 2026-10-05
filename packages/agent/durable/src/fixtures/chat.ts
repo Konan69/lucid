@@ -14,7 +14,11 @@ class PlainState implements ChatState<UIMessage> {
     this.messages = this.messages.slice(0, -1)
   }
   replaceMessage = (index: number, message: UIMessage) => {
-    this.messages = [...this.messages.slice(0, index), structuredClone(message), ...this.messages.slice(index + 1)]
+    this.messages = [
+      ...this.messages.slice(0, index),
+      structuredClone(message),
+      ...this.messages.slice(index + 1),
+    ]
   }
   snapshot = <T>(thing: T): T => structuredClone(thing)
 }

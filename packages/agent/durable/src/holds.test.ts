@@ -5,7 +5,11 @@ import { join } from 'node:path'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import type { Message } from '@earendil-works/pi-ai'
 import { createModels } from '@earendil-works/pi-ai/models'
-import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
+import {
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+} from '@earendil-works/pi-ai/providers/faux'
 import { createRegistry, Harness } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { readUIMessageStream, tool, type UIMessage, type UIMessageChunk } from 'ai'
@@ -21,7 +25,8 @@ const context = BACKGROUND_CONTEXT
 
 const directories: string[] = []
 afterEach(async () => {
-  for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true })
+  for (const directory of directories.splice(0))
+    await rm(directory, { recursive: true, force: true })
 })
 
 /** A SQLite file that survives a harness being closed and opened again, as a process restart does. */
@@ -52,15 +57,30 @@ async function host(paid: unknown[]) {
             return { receipt: `paid ${input.amount}` }
           },
         }),
-        ask_person: tool({ description: 'Ask the person a question', inputSchema: z.object({ question: z.string() }) }),
-        ask_later: tool({ description: 'Ask the person, without waiting', inputSchema: z.object({ question: z.string() }) }),
+        ask_person: tool({
+          description: 'Ask the person a question',
+          inputSchema: z.object({ question: z.string() }),
+        }),
+        ask_later: tool({
+          description: 'Ask the person, without waiting',
+          inputSchema: z.object({ question: z.string() }),
+        }),
       },
-      { approval: { pay: (input) => (input as { amount: number }).amount > 100 }, answers: { ask_later: 'later' } },
+      {
+        approval: { pay: (input) => (input as { amount: number }).amount > 100 },
+        answers: { ask_later: 'later' },
+      },
     ),
   )
   const open = async (file: string) => {
-    const harness = await Harness.open(await openNodeSqliteStorage(file), { models, registry }, context)
-    const root = await harness.root(context, { agent: { model: { provider: 'faux', modelId: 'faux-1' } } })
+    const harness = await Harness.open(
+      await openNodeSqliteStorage(file),
+      { models, registry },
+      context,
+    )
+    const root = await harness.root(context, {
+      agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+    })
     return { harness, root }
   }
   return { faux, open }
@@ -74,7 +94,8 @@ async function consume(stream: ReadableStream<UIMessageChunk>, from?: UIMessage)
     for await (const chunk of forTypes) types.push(chunk.type)
   })()
   let message = from
-  const reading = from === undefined ? { stream: forMessage } : { stream: forMessage, message: from }
+  const reading =
+    from === undefined ? { stream: forMessage } : { stream: forMessage, message: from }
   for await (const next of readUIMessageStream(reading)) message = next
   await collecting
   return { types, message }
@@ -151,11 +172,17 @@ it('does not hold a call the approval test lets through', async () => {
   const { harness, root } = await open(await storageFile())
 
   const { message } = await consume(
-    await streamRun(harness, { conversationId: root.id, content: 'Pay it', requestId: 'm1' }, context),
+    await streamRun(
+      harness,
+      { conversationId: root.id, content: 'Pay it', requestId: 'm1' },
+      context,
+    ),
   )
 
   expect(paid).toEqual([{ amount: 20 }])
-  expect(message?.parts.find((part) => part.type === 'tool-pay')).toMatchObject({ state: 'output-available' })
+  expect(message?.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
+    state: 'output-available',
+  })
   await harness.close(context)
 })
 
@@ -173,16 +200,27 @@ it('never runs a denied call and tells the model why', async () => {
   const { harness, root } = await open(await storageFile())
 
   const parkedRun = await consume(
-    await streamRun(harness, { conversationId: root.id, content: 'Pay it', requestId: 'm1' }, context),
+    await streamRun(
+      harness,
+      { conversationId: root.id, content: 'Pay it', requestId: 'm1' },
+      context,
+    ),
   )
-  await decide(harness, root.id, { callId: 'call-deny', approved: false, reason: 'Too much' }, context)
+  await decide(
+    harness,
+    root.id,
+    { callId: 'call-deny', approved: false, reason: 'Too much' },
+    context,
+  )
   const stream = await continueRun(harness, root.id, new Set(['call-deny']), context)
   if (stream === undefined) throw new Error('expected a run to continue')
   const finished = await consume(stream, parkedRun.message)
 
   expect(paid).toEqual([])
   expect(told).toContain('Too much')
-  expect(finished.message?.parts.find((part) => part.type === 'tool-pay')).toMatchObject({ state: 'output-denied' })
+  expect(finished.message?.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
+    state: 'output-denied',
+  })
   await harness.close(context)
 })
 
@@ -195,12 +233,18 @@ it('keeps the model inside a call until a person answers it', async () => {
   const { harness, root } = await open(await storageFile())
 
   const parkedRun = await consume(
-    await streamRun(harness, { conversationId: root.id, content: 'Pay it', requestId: 'm1' }, context),
+    await streamRun(
+      harness,
+      { conversationId: root.id, content: 'Pay it', requestId: 'm1' },
+      context,
+    ),
   )
   expect(parkedRun.message?.parts.find((part) => part.type === 'tool-ask_person')).toMatchObject({
     state: 'input-available',
   })
-  expect(await waiting(harness, root.id, context)).toMatchObject([{ kind: 'answer', callId: 'call-ask' }])
+  expect(await waiting(harness, root.id, context)).toMatchObject([
+    { kind: 'answer', callId: 'call-ask' },
+  ])
 
   await answer(harness, root.id, { callId: 'call-ask', output: 'savings' }, context)
   const stream = await continueRun(harness, root.id, new Set(['call-ask']), context)
@@ -232,7 +276,11 @@ it('lets the model finish its answer and delivers a late answer as a new run', a
 
   // The run ends by itself: the model did not wait for the answer.
   const first = await consume(
-    await streamRun(harness, { conversationId: root.id, content: 'Pay it', requestId: 'm1' }, context),
+    await streamRun(
+      harness,
+      { conversationId: root.id, content: 'Pay it', requestId: 'm1' },
+      context,
+    ),
   )
   expect(first.message?.parts.filter((part) => part.type === 'text')).toEqual([
     expect.objectContaining({ text: 'I asked. I will carry on with the rest.' }),

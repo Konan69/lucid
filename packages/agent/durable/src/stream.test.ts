@@ -8,7 +8,13 @@ import {
   fauxThinking,
   fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux'
-import { createRegistry, defineExtension, defineTool, Harness, MemoryStorage } from '@earendil-works/pi-durable'
+import {
+  createRegistry,
+  defineExtension,
+  defineTool,
+  Harness,
+  MemoryStorage,
+} from '@earendil-works/pi-durable'
 import { readUIMessageStream, type UIMessage, type UIMessageChunk } from 'ai'
 import { describe, expect, it } from 'vitest'
 
@@ -44,7 +50,9 @@ async function openHarness() {
     }),
   )
   const harness = await Harness.open(new MemoryStorage(), { models, registry }, context)
-  const root = await harness.root(context, { agent: { model: { provider: 'faux', modelId: 'faux-1' } } })
+  const root = await harness.root(context, {
+    agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+  })
   return { faux, harness, root }
 }
 
@@ -86,7 +94,10 @@ describe('streamRun', () => {
     const { faux, harness, root } = await openHarness()
     faux.setResponses([
       fauxAssistantMessage(
-        [fauxThinking('Need the weather.'), fauxToolCall('weather', { city: 'Lagos' }, { id: 'call-1' })],
+        [
+          fauxThinking('Need the weather.'),
+          fauxToolCall('weather', { city: 'Lagos' }, { id: 'call-1' }),
+        ],
         { stopReason: 'toolUse' },
       ),
       fauxAssistantMessage([fauxText('It is sunny in Lagos.')]),
@@ -120,7 +131,9 @@ describe('streamRun', () => {
   it('reports a thrown tool as an output error', async () => {
     const { faux, harness, root } = await openHarness()
     faux.setResponses([
-      fauxAssistantMessage([fauxToolCall('broken', {}, { id: 'call-2' })], { stopReason: 'toolUse' }),
+      fauxAssistantMessage([fauxToolCall('broken', {}, { id: 'call-2' })], {
+        stopReason: 'toolUse',
+      }),
       fauxAssistantMessage('That failed.'),
     ])
 

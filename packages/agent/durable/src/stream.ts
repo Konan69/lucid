@@ -11,7 +11,14 @@ import {
 import type { UIMessageChunk } from 'ai'
 
 import { type Desk, emptyRound, needsDesk, parked, present, type Round } from './calls.ts'
-import { initialRunState, replay, replayAfter, type RunState, type Step, translate } from './chunks.ts'
+import {
+  initialRunState,
+  replay,
+  replayAfter,
+  type RunState,
+  type Step,
+  translate,
+} from './chunks.ts'
 import { Holds, planOf } from './holds.ts'
 
 /** What a caller hands to a conversation: user input, with the id that makes a retry idempotent. */
@@ -28,7 +35,11 @@ type Controller = ReadableStreamDefaultController<UIMessageChunk>
 const noDesk: Desk = { plan: () => undefined, settled: {} }
 
 /** Read the conversation's current tools and settlements. Tools can change between turns. */
-async function readDesk(harness: Harness, conversation: Conversation, context: Context): Promise<Desk> {
+async function readDesk(
+  harness: Harness,
+  conversation: Conversation,
+  context: Context,
+): Promise<Desk> {
   const agent = await conversation.agent(context)
   const plans = new Map(
     agent.tools.flatMap((tool) => {
@@ -149,7 +160,8 @@ export async function streamRun(
       // Batches that arrive before `submit()` returns the submission id cannot be matched yet.
       const early: AgentEvent[] = []
       const apply = async (event: AgentEvent, mine: SubmissionId) => {
-        if (phase === 'before' && event.type === 'run_start' && event.inputs.includes(mine)) phase = 'inside'
+        if (phase === 'before' && event.type === 'run_start' && event.inputs.includes(mine))
+          phase = 'inside'
         if (phase !== 'inside') return
         if ((await write.event(event)) === 'ended') phase = 'after'
       }

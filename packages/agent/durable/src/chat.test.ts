@@ -1,7 +1,11 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import type { Message } from '@earendil-works/pi-ai'
 import { createModels } from '@earendil-works/pi-ai/models'
-import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
+import {
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+} from '@earendil-works/pi-ai/providers/faux'
 import { createRegistry, Harness, MemoryStorage } from '@earendil-works/pi-durable'
 import {
   DefaultChatTransport,
@@ -37,13 +41,18 @@ async function server(paid: unknown[]) {
             return { receipt: `paid ${input.amount}` }
           },
         }),
-        ask_person: tool({ description: 'Ask the person', inputSchema: z.object({ question: z.string() }) }),
+        ask_person: tool({
+          description: 'Ask the person',
+          inputSchema: z.object({ question: z.string() }),
+        }),
       },
       { approval: { pay: true } },
     ),
   )
   const harness = await Harness.open(new MemoryStorage(), { models, registry }, context)
-  const root = await harness.root(context, { agent: { model: { provider: 'faux', modelId: 'faux-1' } } })
+  const root = await harness.root(context, {
+    agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+  })
   // The unmodified transport `useChat` uses by default, with fetch routed to the handler.
   const transport = new DefaultChatTransport<UIMessage>({
     api: 'http://durable.test/chat',
@@ -81,7 +90,9 @@ it('lets an AI SDK chat client approve a call and continues the same message', a
   const paid: unknown[] = []
   const { faux, harness, transport } = await server(paid)
   faux.setResponses([
-    fauxAssistantMessage([fauxToolCall('pay', { amount: 500 }, { id: 'call-pay' })], { stopReason: 'toolUse' }),
+    fauxAssistantMessage([fauxToolCall('pay', { amount: 500 }, { id: 'call-pay' })], {
+      stopReason: 'toolUse',
+    }),
     fauxAssistantMessage('Paid.'),
   ])
   const { chat, finished } = client(transport, lastAssistantMessageIsCompleteWithApprovalResponses)
@@ -105,25 +116,32 @@ it('lets an AI SDK chat client approve a call and continues the same message', a
     state: 'output-available',
     output: { receipt: 'paid 500' },
   })
-  expect(parts.filter((part) => part.type === 'text')).toEqual([expect.objectContaining({ text: 'Paid.' })])
+  expect(parts.filter((part) => part.type === 'text')).toEqual([
+    expect.objectContaining({ text: 'Paid.' }),
+  ])
   await harness.close(context)
 })
 
 it('lets an AI SDK chat client answer a tool that has no server execute', async () => {
   const { faux, harness, transport } = await server([])
   faux.setResponses([
-    fauxAssistantMessage([fauxToolCall('ask_person', { question: 'Which account?' }, { id: 'call-ask' })], {
-      stopReason: 'toolUse',
-    }),
+    fauxAssistantMessage(
+      [fauxToolCall('ask_person', { question: 'Which account?' }, { id: 'call-ask' })],
+      {
+        stopReason: 'toolUse',
+      },
+    ),
     (request) => fauxAssistantMessage(`Using ${lastText(request.messages)}.`),
   ])
   const { chat, finished } = client(transport, lastAssistantMessageIsCompleteWithToolCalls)
 
   await chat.sendMessage({ text: 'Pay the invoice' })
-  expect(chat.messages.at(-1)?.parts.find((part) => part.type === 'tool-ask_person')).toMatchObject({
-    state: 'input-available',
-    input: { question: 'Which account?' },
-  })
+  expect(chat.messages.at(-1)?.parts.find((part) => part.type === 'tool-ask_person')).toMatchObject(
+    {
+      state: 'input-available',
+      input: { question: 'Which account?' },
+    },
+  )
 
   const continued = finished()
   await chat.addToolOutput({ tool: 'ask_person', toolCallId: 'call-ask', output: 'savings' })
@@ -134,6 +152,8 @@ it('lets an AI SDK chat client answer a tool that has no server execute', async 
     state: 'output-available',
     output: 'savings',
   })
-  expect(parts.filter((part) => part.type === 'text')).toEqual([expect.objectContaining({ text: 'Using savings.' })])
+  expect(parts.filter((part) => part.type === 'text')).toEqual([
+    expect.objectContaining({ text: 'Using savings.' }),
+  ])
   await harness.close(context)
 })

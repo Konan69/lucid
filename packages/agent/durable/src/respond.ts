@@ -28,7 +28,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 /** Text of one UI message part, when it is a text part. */
 const partText = (part: unknown) =>
-  isRecord(part) && part['type'] === 'text' && typeof part['text'] === 'string' ? [part['text']] : []
+  isRecord(part) && part['type'] === 'text' && typeof part['text'] === 'string'
+    ? [part['text']]
+    : []
 
 /** One tool part of a UI message: a typed tool (`tool-<name>`) or a dynamic one. */
 type ToolPart = Record<string, unknown> & { readonly toolCallId: string }
@@ -54,9 +56,14 @@ function decisionOf(part: ToolPart): readonly Decision[] {
 
 /** The output on a tool part, as the JSON it arrived in. */
 const outputOf = (part: ToolPart): readonly Answer[] =>
-  part['state'] === 'output-available' ? [{ callId: part.toolCallId, output: part['output'] as JsonValue }] : []
+  part['state'] === 'output-available'
+    ? [{ callId: part.toolCallId, output: part['output'] as JsonValue }]
+    : []
 
-function userTurn(message: Record<string, unknown>, parts: readonly unknown[]): ChatTurn | undefined {
+function userTurn(
+  message: Record<string, unknown>,
+  parts: readonly unknown[],
+): ChatTurn | undefined {
   if (typeof message['id'] !== 'string') return undefined
   const text = parts.flatMap(partText).join('\n')
   return text === '' ? undefined : { kind: 'input', messageId: message['id'], text }
@@ -101,7 +108,9 @@ async function settleHolds(
 ) {
   for (const decision of turn.decisions) await decide(harness, conversationId, decision, context)
   const answerable = new Set(
-    (await waiting(harness, conversationId, context)).flatMap((each) => (each.kind === 'answer' ? [each.callId] : [])),
+    (await waiting(harness, conversationId, context)).flatMap((each) =>
+      each.kind === 'answer' ? [each.callId] : [],
+    ),
   )
   for (const output of turn.outputs) {
     if (answerable.has(output.callId)) await answer(harness, conversationId, output, context)
@@ -125,7 +134,8 @@ export async function respond(
   context: Context,
 ): Promise<Response> {
   const turn = chatTurn(await request.json())
-  if (turn === undefined) return new Response('Expected a user message or a message with tool calls', { status: 400 })
+  if (turn === undefined)
+    return new Response('Expected a user message or a message with tool calls', { status: 400 })
   if (turn.kind === 'input') {
     const stream = await streamRun(
       harness,

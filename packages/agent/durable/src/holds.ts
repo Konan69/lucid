@@ -26,7 +26,10 @@ export type Settlement =
  * returned to the model and still expect an answer, with the tool's name for the message that
  * delivers it. Latest-only: a hold belongs to a run in progress, never to a rewound transcript.
  */
-export const Holds = defineDoc<{ settled: Record<string, Settlement>; asked: Record<string, string> }>({
+export const Holds = defineDoc<{
+  settled: Record<string, Settlement>
+  asked: Record<string, string>
+}>({
   kind: 'durable.holds',
   version: 1,
   scope: 'conversation',
@@ -120,7 +123,11 @@ function wake(key: string) {
  * The wake-up is registered before the read. Registering after would lose a settlement committed
  * between the read and the registration.
  */
-export async function settlement(api: HookApi, callId: string, context: Context): Promise<Settlement> {
+export async function settlement(
+  api: HookApi,
+  callId: string,
+  context: Context,
+): Promise<Settlement> {
   const key = wakeKey(api.conversationId, callId)
   for (;;) {
     const woken = nextWake(key, context.abortSignal)
@@ -208,7 +215,13 @@ export async function answer(
   const holds = await harness.snapshot(Holds, conversationId, context)
   const toolName = holds?.asked[given.callId]
   if (toolName === undefined) {
-    await settle(harness, conversationId, given.callId, { kind: 'answered', output: given.output }, context)
+    await settle(
+      harness,
+      conversationId,
+      given.callId,
+      { kind: 'answered', output: given.output },
+      context,
+    )
     return
   }
   await conversation.submit(

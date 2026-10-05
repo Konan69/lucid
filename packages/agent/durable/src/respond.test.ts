@@ -14,8 +14,14 @@ it('answers the AI SDK default chat transport over SSE', async () => {
   const models = createModels()
   models.setProvider(faux.provider)
   faux.setResponses([fauxAssistantMessage('Paris.')])
-  const harness = await Harness.open(new MemoryStorage(), { models, registry: createRegistry() }, context)
-  const root = await harness.root(context, { agent: { model: { provider: 'faux', modelId: 'faux-1' } } })
+  const harness = await Harness.open(
+    new MemoryStorage(),
+    { models, registry: createRegistry() },
+    context,
+  )
+  const root = await harness.root(context, {
+    agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+  })
 
   // The unmodified transport `useChat` uses by default, with fetch routed to the handler.
   const transport = new DefaultChatTransport<UIMessage>({

@@ -37,9 +37,11 @@ export async function waiting(
   const conversation = await harness.conversation(conversationId, context)
   if (conversation === undefined) throw new Error(`Conversation ${conversationId} does not exist`)
   const holds = await harness.snapshot(Holds, conversationId, context)
-  const later = Object.entries(holds?.asked ?? {}).map(
-    ([callId, toolName]): Waiting => ({ kind: 'later', callId, toolName }),
-  )
+  const later = Object.entries(holds?.asked ?? {}).map(([callId, toolName]): Waiting => ({
+    kind: 'later',
+    callId,
+    toolName,
+  }))
   const live = await harness.snapshot(LiveDoc, conversationId, context)
   const pending = (live?.tools ?? []).filter((slot) => slot.status === 'pending')
   if (pending.length === 0) return later
@@ -50,16 +52,21 @@ export async function waiting(
     view.entries.flatMap((entry) => {
       const message = entry.model?.[0]
       if (message?.role !== 'assistant') return []
-      return message.content.flatMap((block) => (block.type === 'toolCall' ? [[block.id, block] as const] : []))
+      return message.content.flatMap((block) =>
+        block.type === 'toolCall' ? [[block.id, block] as const] : [],
+      )
     }),
   )
   const held = pending.flatMap((slot): Waiting[] => {
     const tool = agent.tools.find((each) => each.name === slot.name)
     const plan = tool === undefined ? undefined : planOf(tool)
     const call: ToolCall | undefined = calls.get(slot.callId)
-    if (plan === undefined || call === undefined || holds?.settled[slot.callId] !== undefined) return []
+    if (plan === undefined || call === undefined || holds?.settled[slot.callId] !== undefined)
+      return []
     const kind = holdKind(plan, call.arguments)
-    return kind === undefined ? [] : [{ kind, callId: slot.callId, toolName: slot.name, input: call.arguments }]
+    return kind === undefined
+      ? []
+      : [{ kind, callId: slot.callId, toolName: slot.name, input: call.arguments }]
   })
   return [...held, ...later]
 }

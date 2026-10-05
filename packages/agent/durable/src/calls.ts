@@ -13,7 +13,10 @@ export type Desk = {
 /**
  * The tool calls of the stream so far that have no result yet: `awaiting` a person, or `running`.
  */
-export type Round = { readonly awaiting: ReadonlySet<string>; readonly running: ReadonlySet<string> }
+export type Round = {
+  readonly awaiting: ReadonlySet<string>
+  readonly running: ReadonlySet<string>
+}
 
 export const emptyRound: Round = { awaiting: new Set(), running: new Set() }
 
@@ -26,7 +29,8 @@ export const parked = (round: Round) => round.awaiting.size > 0 && round.running
 
 type Shown = { readonly round: Round; readonly chunks: readonly UIMessageChunk[] }
 
-const without = (set: ReadonlySet<string>, id: string) => new Set([...set].filter((each) => each !== id))
+const without = (set: ReadonlySet<string>, id: string) =>
+  new Set([...set].filter((each) => each !== id))
 
 const close = (round: Round, id: string): Round => ({
   awaiting: without(round.awaiting, id),
@@ -43,18 +47,33 @@ type InputAvailable = Extract<UIMessageChunk, { type: 'tool-input-available' }>
 function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown {
   const plan = desk.plan(chunk.toolName)
   if (plan === undefined) {
-    return { round: { ...round, running: new Set([...round.running, chunk.toolCallId]) }, chunks: [chunk] }
+    return {
+      round: { ...round, running: new Set([...round.running, chunk.toolCallId]) },
+      chunks: [chunk],
+    }
   }
   const { dynamic: _dynamic, ...typed } = chunk
   const kind = holdKind(plan, chunk.input)
   const settled = desk.settled[chunk.toolCallId]
   const request: readonly UIMessageChunk[] =
     kind === 'approval'
-      ? [{ type: 'tool-approval-request', approvalId: chunk.toolCallId, toolCallId: chunk.toolCallId }]
+      ? [
+          {
+            type: 'tool-approval-request',
+            approvalId: chunk.toolCallId,
+            toolCallId: chunk.toolCallId,
+          },
+        ]
       : []
   const response: readonly UIMessageChunk[] =
     kind === 'approval' && settled !== undefined
-      ? [{ type: 'tool-approval-response', approvalId: chunk.toolCallId, approved: settled.kind !== 'denied' }]
+      ? [
+          {
+            type: 'tool-approval-response',
+            approvalId: chunk.toolCallId,
+            approved: settled.kind !== 'denied',
+          },
+        ]
       : []
   const waits = kind !== undefined && settled === undefined
   return {

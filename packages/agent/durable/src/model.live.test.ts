@@ -2,7 +2,13 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { createProvider, envApiKeyAuth, Type } from '@earendil-works/pi-ai'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 import { createModels } from '@earendil-works/pi-ai/models'
-import { createRegistry, defineExtension, defineTool, Harness, MemoryStorage } from '@earendil-works/pi-durable'
+import {
+  createRegistry,
+  defineExtension,
+  defineTool,
+  Harness,
+  MemoryStorage,
+} from '@earendil-works/pi-durable'
 import { readUIMessageStream, type UIMessage } from 'ai'
 import { expect, it } from 'vitest'
 
@@ -79,13 +85,18 @@ it.skipIf(process.env['DURABLE_LIVE'] !== '1')(
     for await (const next of readUIMessageStream({ stream: read })) message = next
     await counting
     console.log('chunk counts', Object.fromEntries(types))
-    console.log('parts', message?.parts.map((part) => part.type))
+    console.log(
+      'parts',
+      message?.parts.map((part) => part.type),
+    )
 
     expect(message?.parts.find((part) => part.type === 'dynamic-tool')).toMatchObject({
       toolName: 'stock_count',
       state: 'output-available',
     })
-    const text = message?.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('')
+    const text = message?.parts
+      .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+      .join('')
     expect(text?.replaceAll(',', '')).toContain('4127')
     await harness.close(context)
   },
