@@ -49,6 +49,67 @@ the build goes on and succeeds on Railway. Two consequences:
   run, and the plan caps domains per service. After each deploy, delete every server domain except
   the first one, which `PUBLIC_URL` uses. Remove this step when the provider waits for the build.
 
+### Before a production deploy
+
+A deploy sends everything on `main`, not only the change you came to ship. On 5 October 2026 a
+deploy made for a telemetry fix also carried another session's change of the Executor image, and
+the Executor was down for 52 minutes. So, every time:
+
+- Read the plan the command prints (`Plan: …` and the `[Resource] update | replace | create`
+  lines) before trusting it. If it touches a resource your change does not, find out whose change
+  that is (`git log -- infra/railway.ts`) and agree with that session first.
+- One session deploys at a time. Deploys run only from the one clean checkout that holds the
+  Alchemy state (`.alchemy/`); a second checkout has no state and would create every resource
+  again.
+- The Railway CLI's session token lasts about an hour and a deploy that outlives it fails with
+  `RailwayForbidden … Not Authorized` part-way. Refresh it first (`railway whoami` with the
+  personal profile) and check `user.tokenExpiresAt` in that profile's `config.json`.
+
+### When a service with a volume will not start
+
+Railway attaches a volume to one container at a time, so a deploy of Executor, Helix, PostgreSQL
+or the runtime stops the old container before the new one starts. If the old container hangs in
+`stopping`, it keeps the volume and every new deployment waits at `CREATE_CONTAINER` with no log
+line until Railway fails it (about seventeen minutes), then tries again. The public address
+answers `502` throughout. Redeploying or rolling back does not help: each attempt waits on the
+same volume.
+
+How to tell, and what to do:
+
+1. `railway ssh` into the service. `Your service's container is not running (status: stopping)`
+   is this fault.
+2. `railway deployment list --json`: the last deployment that worked still reads `SUCCESS` while
+   newer ones sit in `DEPLOYING`. In the GraphQL API, `deploymentEvents` for a new one ends at
+   `CREATE_CONTAINER` with no `completedAt`.
+3. Stop the old deployment by its id: GraphQL `mutation { deploymentStop(id: "<id>") }`. Railway
+   then starts a fresh deployment by itself. Watch `/health`.
+4. Check which image that fresh deployment runs (`meta.image`). If a rollback was tried along the
+   way, it is the rolled-back image, and production now differs from `main` and from the Alchemy
+   state until the next deliberate deploy.
+
+Ruled out on 5 October, so do not spend time on them again: the image (it pulled without
+credentials, and the previous image hung the same way), the volume's own state (`READY`), the
+domain, the target port and the region.
+
+### Executor's image
+
+Production's Executor is upstream Executor's source at commit `304bf60`, unchanged, built with
+upstream's own self-host Dockerfile and published as `executor-selfhost:src-304bf60`. The last
+tag upstream published, `2.0.0-beta.8`, is older than the source the keyed Integration work was
+proven against. The store schema and migrations are the same in both, which is why going back to
+the tag is safe and why the 5 October recovery could run on it.
+
+### Telemetry volume
+
+The server exports spans and log lines to Sentry over OTLP. Export is by allowlist, and work that
+repeats with nobody asking is not traced at all: timer passes (approvals, routines, push,
+presence), live query reloads and session watchers run under `untraced`
+(`apps/server/src/observability/quiet.ts`), and functions called once per item of a large list
+are `Effect.fnUntraced`. Before those rules, one Person produced 119,000 spans an hour: 95,000
+from three spans per Integration catalogue entry on every catalogue read, the rest from timers
+and reloads. After a deploy, check the rate in Sentry (spans grouped by `span.name`, last hour);
+a name with thousands of spans and no request behind it is a loop being traced.
+
 ## Run locally
 
 1. Install dependencies with `pnpm install` using Node 24 or newer and pnpm `12.4.2`.
