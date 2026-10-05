@@ -252,7 +252,7 @@ Viewer issuance is proven; embedding and interactive viewing in clients are unte
 Signed-in cookies/profile retention, tab manipulation and provider recovery under concurrent
 servers are not proven by this live suite. Driver mutation receipts
 attest delivery, not the intended effect; fresh state follows every action. Client support for
-the screen union belongs to its own lane. Flue placement and external state sync remain planned.
+the screen union belongs to its own lane. Runtime placement and external state sync remain planned.
 
 ## Reaching the Computer: one SSH connection
 
@@ -275,9 +275,12 @@ Vivid should use it as a person uses theirs.
 
 ### Why SSH, and why not a daemon
 
-The final shape is Vivid's runtime running on the Computer. There the runtime is the always-on
-process, and its file and shell tools are local calls. A service of our own on the machine, built
-now, would be a second daemon that the runtime replaces.
+Flue does not run on the Computer, now or later. Nothing of Vivid runs on the machine in this
+step: the only thing that touches it is the server's SSH connection. The final shape is Vivid's
+runtime running on the Computer, and that runtime is pi Durable, which replaces Flue (decided 4
+October 2026). There the runtime is the always-on process, and its file and shell tools are local
+calls. A service of our own on the machine, built now, would be a second daemon that the runtime
+replaces.
 
 SSH needs nothing installed on the machine and gives what that service would: commands with live
 output and input, real terminals, long-running processes, file transfer, and port forwarding in
@@ -310,8 +313,10 @@ hosted: runtime --> server --SSH--> the Person's Computer
   waking, bindings, takeover and the idle stop. It is opened on first use, kept alive, closed when
   the Computer stops, and reopened after a failure with a fresh address. Commands, files and later
   port forwards are channels on it.
-- **What the model gets.** The real machine goes in Flue's slot, and the model has Flue's six
-  built-in tools on it: `read`, `write`, `edit`, `bash`, `grep`, `glob`. Flue replaces its built-in
+- **What the model gets.** Flue stays where it runs today, beside the server, for as long as it is
+  the runtime. Its slot for a machine is pointed at the real Computer through the server's
+  connection, and the model has the six built-in tools on it: `read`, `write`, `edit`, `bash`,
+  `grep`, `glob`. The SSH part knows nothing of Flue, so it stays when Flue goes. Flue replaces its built-in
   tools when a sandbox supplies its own list, and exports the builders for the six, so the list is
   those six plus `use_desktop` and `browse`. Pictures keep working and the stand-in is deleted.
   `run_command` goes with it.
@@ -339,8 +344,8 @@ On a second machine of the same provider account, not on a Person's Computer.
 ### Not verified
 
 - A whole SSH session from the hosted server. Only the port and the first bytes were measured.
-- What Flue asks of the machine when a conversation starts, and so whether starting one would wake
-  a sleeping Computer. It must not.
+- What the runtime, beside the server, requests over the connection when a conversation starts,
+  and so whether starting one would wake a sleeping Computer. It must not.
 - How long after a wake a machine accepts SSH. Its command endpoint refuses for 20 to 40 seconds.
 - The same steps on a Person's Computer. There is no test Computer: the proof on one can only be
   run on the deployed product.
@@ -348,8 +353,9 @@ On a second machine of the same provider account, not on a Person's Computer.
 ## Runtime on the Computer: planned
 
 **Status: native browser and desktop backend built; runtime placement and external state sync planned.**
-The browser and desktop now share Boat’s shipped guest. Running Vivid’s Flue runtime inside that
-guest remains a separate step. The intended shape follows.
+The browser and desktop now share Boat’s shipped guest. Flue never runs on the Computer. What
+will run there is the runtime that replaces Flue, pi Durable (decided 4 October 2026); moving it
+onto the machine is a separate step. The intended shape follows.
 
 The Computer is not a harness the agent calls out to. It is the machine the agent already lives on
 — `CONTEXT.md`: "the persistent private machine Vivid operates: filesystem, processes, browser
