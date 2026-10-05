@@ -44,6 +44,7 @@ import { Gate, GateDecision, ActionOutcome, ActionOrigin, actionOrigin } from '.
 import { Changes, Topic } from '../live/changes.ts'
 import {
   isOutage,
+  MachineNoCapacity,
   Machine,
   MachineKey,
   MachineState,
@@ -102,6 +103,8 @@ export const machineFailureReason = (failure: MachineFailure): string =>
       MachineRequestRejected: ({ status }) =>
         status >= 500 ? notAnswering : 'The Computer provider refused the operation.',
       MachinePersistenceFailed: () => 'The Computer provider binding could not be saved or read.',
+      MachineNoCapacity: () =>
+        'Vivid’s computer could not start: its provider has no machine free right now. Try again in a few minutes.',
       MachineHeld: () => 'Vivid’s computer is already in use by another account.',
       MachineCapabilityUnavailable: ({ capability }) =>
         `The configured Computer provider does not support ${capability}.`,
@@ -347,6 +350,11 @@ const startMachine = Effect.fn('ComputerStore.boot')(function* (
             reason: 'The Computer did not become ready within 90 seconds.',
           })
         if (isOutage(failure)) return ComputerState.cases.Stopped.make({ since: before.since })
+        // No machine was free on any size: the Computer is stopped and whole, which is what the
+        // record says. A failed record would stop Vivid waking it until a Person pressed Start,
+        // and this ends by itself, so the next need simply asks the provider again.
+        if (failure instanceof MachineNoCapacity)
+          return ComputerState.cases.Stopped.make({ since: before.since })
         return ComputerState.cases.Failed.make({
           since: before.since,
           reason: machineFailureReason(failure),
@@ -1002,6 +1010,7 @@ const executionRefusals = <A>(
     MachineAuthenticationFailed: handle,
     MachineCreationUnresolved: handle,
     MachineRequestRejected: handle,
+    MachineNoCapacity: handle,
     MachinePersistenceFailed: handle,
     MachineHeld: handle,
     MachineCapabilityUnavailable: handle,

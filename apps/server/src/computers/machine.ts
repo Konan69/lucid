@@ -118,6 +118,18 @@ export class MachineRequestRejected extends Schema.TaggedError<MachineRequestRej
   { title: 'MachineRequestRejected' },
 ) {}
 
+/**
+ * The provider answered that it has no machine free to start this Computer on, for every size the
+ * start may use. Nothing was started and the Computer is as it was: stopped, with its disk saved.
+ * It is not an outage (the provider answered) and not a fault of the machine, and it ends when the
+ * provider has a machine again, so the next start is simply tried afresh.
+ */
+export class MachineNoCapacity extends Schema.TaggedError<MachineNoCapacity>()(
+  'MachineNoCapacity',
+  {},
+  { title: 'MachineNoCapacity' },
+) {}
+
 /** An installation's adopted Computer has one owner; refusal never reveals that Person's identity. */
 export class MachineHeld extends Schema.TaggedError<MachineHeld>()(
   'MachineHeld',
@@ -159,6 +171,7 @@ export type MachineFailure =
   | MachineAuthenticationFailed
   | MachineCreationUnresolved
   | MachineRequestRejected
+  | MachineNoCapacity
   | MachinePersistenceFailed
   | MachineHeld
   | MachineCapabilityUnavailable

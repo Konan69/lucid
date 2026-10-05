@@ -67,8 +67,20 @@ const png =
 const id = 'bx_23456789'
 // The installed machine differs from the paid one so switching adoption cannot fake a collision.
 const adoptedId = 'bx_3456789a'
+/** `provisioning` is a resume Boat accepted and has no machine for; the saved disk is still there. */
+type FixtureState = 'ready' | 'archived' | 'provisioning'
+type Size = typeof Protocol.Size.Type
 interface EvidenceService {
-  readonly state: Ref.Ref<'ready' | 'archived'>
+  readonly state: Ref.Ref<FixtureState>
+  /** The sizes Boat has a machine free for; a resume on any other is answered `no_ready_machine`. */
+  readonly free: Ref.Ref<ReadonlySet<Size>>
+  /** Every size a resume asked for, in order, refused ones included. */
+  readonly resumes: Ref.Ref<ReadonlyArray<Size>>
+  readonly stops: Ref.Ref<number>
+  /** A waiting resume is given its machine once this many more reads have found it waiting. */
+  readonly placedAfter: Ref.Ref<Option.Option<number>>
+  /** While true Boat fails a resume with a 503 that is not its own "no machine" answer. */
+  readonly breakResume: Ref.Ref<boolean>
   readonly created: Ref.Ref<number>
   readonly intents: Ref.Ref<ReadonlyArray<string>>
   readonly commands: Ref.Ref<ReadonlyArray<string>>
@@ -104,7 +116,12 @@ const evidenceLayer = Layer.effect(
   Evidence,
   Effect.gen(function* () {
     return Evidence.of({
-      state: yield* Ref.make<'ready' | 'archived'>('ready'),
+      state: yield* Ref.make<FixtureState>('ready'),
+      free: yield* Ref.make<ReadonlySet<Size>>(new Set(Protocol.Size.literals)),
+      resumes: yield* Ref.make<ReadonlyArray<Size>>([]),
+      stops: yield* Ref.make(0),
+      placedAfter: yield* Ref.make(Option.none<number>()),
+      breakResume: yield* Ref.make(false),
       created: yield* Ref.make(0),
       intents: yield* Ref.make<ReadonlyArray<string>>([]),
       commands: yield* Ref.make<ReadonlyArray<string>>([]),
@@ -150,20 +167,51 @@ const Viewer = HttpServerRequest.schemaBodyJson(
 )
 const Stop = HttpServerRequest.schemaBodyJson(Schema.Struct({ force: Schema.Literal(false) }))
 const Resume = HttpServerRequest.schemaBodyJson(
-  Schema.Struct({ ttlSeconds: Schema.NullOr(Protocol.Lifetime), noEnv: Schema.Literal(true) }),
+  Schema.Struct({
+    ttlSeconds: Schema.NullOr(Protocol.Lifetime),
+    noEnv: Schema.Literal(true),
+    failFast: Schema.Literal(true),
+    type: Protocol.Size,
+  }),
 )
 const decodeSession = Schema.decodeUnknownEffect(Schema.String.check(Schema.isStartsWith('Vivid-')))
 const decodeAddress = Schema.decodeUnknownEffect(Schema.String)
 const decodeArgs = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
 )
-const record = (state: 'ready' | 'archived', providerId: string) => ({
+const record = (state: FixtureState, providerId: string) => ({
   id: providerId,
   name: 'Fixture',
   state,
   desktopAvailable: state === 'ready',
-  snapshotAvailable: state === 'archived',
+  snapshotAvailable: state !== 'ready',
 })
+/** What Boat reports on this read. A waiting resume turns into a running machine by itself once
+ * `placedAfter` reads have passed, which is Boat finding it a machine while a caller looks on. */
+const reported = Effect.fn('BoatTest.reported')(function* (evidence: EvidenceService) {
+  const state = yield* Ref.get(evidence.state)
+  const left = yield* Ref.get(evidence.placedAfter)
+  if (state !== 'provisioning' || Option.isNone(left)) return state
+  if (left.value > 0) {
+    yield* Ref.set(evidence.placedAfter, Option.some(left.value - 1))
+    return state
+  }
+  yield* Ref.set(evidence.state, 'ready')
+  return 'ready' as const
+})
+/** Boat's own answer to a `failFast` start it has no machine for (body seen 5 October 2026). */
+const noReadyMachine = HttpServerResponse.jsonUnsafe(
+  {
+    ok: false,
+    type: 'sandbox.error',
+    status: 503,
+    code: 'no_ready_machine',
+    message: 'No default machine is ready right now. Nothing was started or counted.',
+    requestId: 'fixture',
+    error: { code: 'no_ready_machine', message: 'fixture', status: 503 },
+  },
+  { status: 503 },
+)
 const rejected = (status: number) =>
   HttpServerResponse.jsonUnsafe(
     {
@@ -564,13 +612,14 @@ const serverLayer = Layer.effect(
         return HttpServerResponse.jsonUnsafe({
           ok: true,
           type: 'sandbox.info',
-          sandbox: Object.assign({}, record(yield* Ref.get(evidence.state), requestedId), {
+          sandbox: Object.assign({}, record(yield* reported(evidence), requestedId), {
             id: (yield* Ref.get(evidence.wrongIdentity)) ? 'bx_abcdefgh' : requestedId,
           }),
         })
       }
       if (path === `/api/v1/sandboxes/${id}/stop`) {
         yield* Stop
+        yield* Ref.update(evidence.stops, (count) => count + 1)
         yield* Ref.set(evidence.state, 'archived')
         return HttpServerResponse.jsonUnsafe({
           ok: true,
@@ -580,7 +629,11 @@ const serverLayer = Layer.effect(
         })
       }
       if (path === `/api/v1/sandboxes/${id}/resume`) {
-        yield* Resume
+        const asked = yield* Resume
+        if (yield* Ref.get(evidence.breakResume)) return rejected(503)
+        yield* Ref.update(evidence.resumes, (sizes) => [...sizes, asked.type])
+        // A refused start leaves the machine as it was: stopped.
+        if (!(yield* Ref.get(evidence.free)).has(asked.type)) return noReadyMachine
         yield* Ref.set(evidence.state, 'ready')
         return HttpServerResponse.jsonUnsafe({
           ok: true,
@@ -1450,6 +1503,108 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       yield* machine.stop(key)
       expect(yield* Ref.get(evidence.state)).toBe('archived')
     }).pipe(Effect.scoped, Effect.provide(accountLayer)),
+  )
+
+  it.effect('starts a stopped Computer on the next size when Boat has no machine of its own', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const evidence = yield* Evidence
+      yield* machine.ensure(key)
+      yield* machine.stop(key)
+      yield* Ref.set(evidence.resumes, [])
+      yield* Ref.set(evidence.free, new Set<Size>(['large']))
+      expect((yield* machine.ensure(key))._tag).toBe('Running')
+      expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
+      // The next start asks for its own size first again, and gets it once Boat has one.
+      yield* machine.stop(key)
+      yield* Ref.set(evidence.resumes, [])
+      yield* Ref.set(evidence.free, new Set<Size>(['default', 'large']))
+      expect((yield* machine.ensure(key))._tag).toBe('Running')
+      expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect(
+    'leaves the Computer stopped when Boat has no machine of any size, then starts it',
+    () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* machine.ensure(key)
+        yield* machine.stop(key)
+        yield* Ref.set(evidence.resumes, [])
+        yield* Ref.set(evidence.free, new Set<Size>())
+        expect((yield* machine.ensure(key).pipe(Effect.flip))._tag).toBe('MachineNoCapacity')
+        // Never a smaller size than its own: Boat refuses one the disk does not fit.
+        expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
+        expect(yield* Ref.get(evidence.state)).toBe('archived')
+        expect((yield* machine.status(key))._tag).toBe('Stopped')
+        yield* Ref.set(evidence.free, new Set<Size>(['default']))
+        expect((yield* machine.ensure(key))._tag).toBe('Running')
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('keeps a failing provider apart from one that has no machine free', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const evidence = yield* Evidence
+      yield* machine.ensure(key)
+      yield* machine.stop(key)
+      yield* Ref.set(evidence.resumes, [])
+      yield* Ref.set(evidence.breakResume, true)
+      const failure = yield* machine.ensure(key).pipe(Effect.flip)
+      // A 503 without Boat's own code is an outage: no other size is tried on its account.
+      expect(failure._tag).toBe('MachineRequestRejected')
+      expect(isOutage(failure)).toBe(true)
+      expect(yield* Ref.get(evidence.resumes)).toEqual([])
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect(
+    'withdraws a start that Boat left waiting for a machine and starts it on a free one',
+    () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* machine.ensure(key)
+        yield* machine.stop(key)
+        // Another caller resumed it without `failFast` and Boat has no machine of its size.
+        yield* Ref.set(evidence.state, 'provisioning')
+        yield* Ref.set(evidence.free, new Set<Size>(['large']))
+        yield* Ref.set(evidence.resumes, [])
+        const stops = yield* Ref.get(evidence.stops)
+        // The status read is where Vivid first sees the wait; it changes nothing at Boat.
+        expect((yield* machine.status(key))._tag).toBe('Starting')
+        expect(yield* Ref.get(evidence.stops)).toBe(stops)
+        yield* TestClock.adjust('10 seconds')
+        expect((yield* machine.ensure(key))._tag).toBe('Running')
+        expect(yield* Ref.get(evidence.stops)).toBe(stops + 1)
+        expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('does not withdraw a start that has only just been asked for', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const evidence = yield* Evidence
+      yield* machine.ensure(key)
+      yield* machine.stop(key)
+      yield* Ref.set(evidence.state, 'provisioning')
+      // Two reads find it waiting, the status read and the start's own; Boat places it by the third.
+      yield* Ref.set(evidence.placedAfter, Option.some(2))
+      yield* Ref.set(evidence.resumes, [])
+      const stops = yield* Ref.get(evidence.stops)
+      expect((yield* machine.status(key))._tag).toBe('Starting')
+      yield* TestClock.adjust('9 seconds')
+      expect((yield* machine.ensure(key))._tag).toBe('Running')
+      expect(yield* Ref.get(evidence.stops)).toBe(stops)
+      expect(yield* Ref.get(evidence.resumes)).toEqual([])
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
 
   it.effect('status never reconciles an unresolved create or resumes a stopped machine', () =>
