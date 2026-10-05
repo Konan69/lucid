@@ -33,7 +33,9 @@
     "react-dom": "catalog:",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "thinking-orbs": "^0.3.2"
+    "thinking-orbs": "^0.3.2",
+    "@sentry/electron": "catalog:",
+    "@sentry/react": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

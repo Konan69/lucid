@@ -21,6 +21,7 @@
     "./bridge": "./src/shared/bridge.ts"
   },
   "dependencies": {
+    "@sentry/electron": "catalog:",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
     "effect": "catalog:"

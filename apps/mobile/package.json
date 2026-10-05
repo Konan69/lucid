@@ -56,7 +56,8 @@
     "react-native-svg": "15.15.4",
     "react-native-web": "catalog:",
     "react-native-worklets": "catalog:",
-    "thinking-orbs": "^0.3.2"
+    "thinking-orbs": "^0.3.2",
+    "@sentry/react-native": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
