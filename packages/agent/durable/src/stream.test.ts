@@ -8,11 +8,17 @@ import {
   fauxThinking,
   fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux'
-import { createRegistry, defineExtension, defineTool } from '@earendil-works/pi-durable'
+import {
+  createRegistry,
+  defineExtension,
+  defineTool,
+  watchEvents,
+  type AgentEvent,
+} from '@earendil-works/pi-durable'
 import { describe, expect, it } from '@effect/vitest'
 import { Deferred, Effect, Option, Stream } from 'effect'
 
-import { attachRun, streamRun } from './core.ts'
+import { attachRun, streamRun, WatchClosed, WatchOverflowed } from './core.ts'
 import { memory } from './fixtures/harness.ts'
 import { consume } from './fixtures/reading.ts'
 import { runForPi } from './pi.ts'
@@ -205,16 +211,73 @@ it.live('detaches a stopped consumer while the durable tool finishes', () =>
   }),
 )
 
-/** Pi's cancelled watch ends the stream even when no further run event can wake its queue. */
-it.live('ends an attachment when its observation context is cancelled', () =>
+/** A cancelled observation fails explicitly without cancelling the durable conversation. */
+it.live('fails an attachment when its observation context is cancelled', () =>
   Effect.gen(function* () {
     const { harness, root } = yield* openHarness()
     const controller = new AbortController()
     const observerContext = withAbortSignal(controller.signal, context)
     const watched = yield* Pi.watch(harness, root.id, observerContext)
     controller.abort()
-    expect(yield* Stream.runCollect(watched.stream)).toEqual([])
+    const failed = yield* Effect.flip(Stream.runCollect(watched.stream))
+    expect(failed).toBeInstanceOf(WatchClosed)
+    expect(failed).toMatchObject({ conversationId: root.id, reason: 'cancelled' })
     // The conversation remains available: cancelling the observer does not cancel the harness.
     expect((yield* Pi.conversation(harness, root.id, context)).id).toBe(root.id)
+  }),
+)
+
+/** Force Pi's real MAX_PENDING_WATCH_FRAMES replacement, as harness-events.test.ts does. */
+it.live('rejects a replacement snapshot instead of silently losing watch frames', () =>
+  Effect.gen(function* () {
+    const { harness, root } = yield* openHarness()
+    const raw = yield* Effect.acquireRelease(
+      Effect.promise(() => watchEvents(harness, root.id, context)),
+      (events) => Effect.promise(() => events.stop()),
+    )
+    for (let index = 0; index < 101; index++) {
+      yield* Effect.promise(() =>
+        root.commit((tx) => tx.appendEntry(root.id, { kind: 'note' }), context),
+      )
+    }
+    const delivered = yield* Deferred.make<readonly AgentEvent[]>()
+    raw.start((batch, callbackContext) =>
+      runForPi(Deferred.succeed(delivered, batch).pipe(Effect.asVoid), callbackContext.abortSignal),
+    )
+    const batch = yield* Deferred.await(delivered)
+    expect(batch).toMatchObject([{ type: 'snapshot', entries: expect.any(Array) }])
+    const failed = yield* Effect.flip(
+      Stream.runCollect(Pi.observed(root.id, Stream.fromIterable(batch))),
+    )
+    expect(failed).toBeInstanceOf(WatchOverflowed)
+    expect(failed.conversationId).toBe(root.id)
+  }),
+)
+
+/** Closing the harness makes an unfinished observation fail, rather than report a completed run. */
+it.live('fails an observation when Pi closes its session', () =>
+  Effect.gen(function* () {
+    const { harness, root } = yield* openHarness()
+    const watched = yield* Pi.watch(harness, root.id, context)
+    yield* Effect.promise(() => harness.close(context))
+    const failed = yield* Effect.flip(Stream.runCollect(watched.stream))
+    expect(failed).toBeInstanceOf(WatchClosed)
+    expect(failed).toMatchObject({ conversationId: root.id, reason: 'session_closed' })
+  }),
+)
+
+/** Pi delivery continues while the HTTP reader is idle; every incremental entry remains buffered. */
+it.live('buffers more than Pi pending-frame capacity without waiting on a reader', () =>
+  Effect.gen(function* () {
+    const { harness, root } = yield* openHarness()
+    const watched = yield* Pi.watch(harness, root.id, context)
+    for (let index = 0; index < 101; index++) {
+      yield* Effect.promise(() =>
+        root.commit((tx) => tx.appendEntry(root.id, { kind: 'note' }), context),
+      )
+    }
+    const events = yield* Stream.runCollect(watched.stream.pipe(Stream.take(101)))
+    expect(events).toHaveLength(101)
+    expect(events.every((event) => event.type === 'entry_appended')).toBe(true)
   }),
 )

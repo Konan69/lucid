@@ -22,6 +22,9 @@ import { z } from 'zod'
 import { PlainChat } from './fixtures/chat.ts'
 import { respond } from './main.ts'
 import {
+  decodeTurn,
+  respondTurn,
+  TurnInvalid,
   toolsExtension,
   ConversationMissing,
   decide,
@@ -354,5 +357,72 @@ it.live('maps a failed request body read to an invalid HTTP turn', () =>
     )
     const entries = yield* Effect.promise(() => root.entries({}, 10, undefined, context))
     expect([...entries.items].some((entry) => entry.kind === 'pi.user')).toBe(false)
+  }),
+)
+
+/** The Promise decoder ignores malformed parts and serves the decoded turn through the same core. */
+it.live('ignores malformed parts while preserving a valid input turn', () =>
+  Effect.gen(function* () {
+    const { faux, harness, root } = yield* server([])
+    faux.setResponses([fauxAssistantMessage('Decoded.')])
+    const turn = yield* Effect.promise(() =>
+      decodeTurn({
+        messages: [
+          {
+            role: 'user',
+            id: 'decode',
+            parts: [null, 7, {}, { type: 4 }, { type: 'text', text: 'Hello' }],
+          },
+        ],
+      }),
+    )
+    expect(turn).toMatchObject({ text: 'Hello' })
+    const response = yield* Effect.promise(() => respondTurn(harness, root.id, turn, context))
+    expect(response.status).toBe(200)
+    expect(yield* Effect.promise(() => response.text())).toContain('Decoded.')
+    yield* Effect.promise(() =>
+      expect(decodeTurn({ messages: [] })).rejects.toBeInstanceOf(TurnInvalid),
+    )
+  }),
+)
+
+/** Dropping an invalid reason must preserve the approval and unblock the real waiting tool. */
+it.live('keeps an approval decision whose reason is not a string', () =>
+  Effect.gen(function* () {
+    const paid: { amount: number }[] = []
+    const { faux, harness, root, transport } = yield* server(paid)
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('pay', { amount: 42 }, { id: 'reason' })], {
+        stopReason: 'toolUse',
+      }),
+      fauxAssistantMessage('Paid.'),
+    ])
+    const { chat } = client(transport, () => false)
+    yield* Effect.promise(() => chat.sendMessage({ text: 'Pay' }))
+    const turn = yield* Effect.promise(() =>
+      decodeTurn({
+        messages: [
+          {
+            role: 'assistant',
+            parts: [
+              false,
+              {
+                type: 'tool-pay',
+                toolCallId: 'reason',
+                state: 'approval-responded',
+                approval: { approved: true, reason: 9 },
+              },
+            ],
+          },
+        ],
+      }),
+    )
+    expect(turn).toMatchObject({
+      decisions: [{ callId: 'reason', approved: true }],
+    })
+    expect('decisions' in turn && turn.decisions[0]).not.toHaveProperty('reason')
+    const response = yield* Effect.promise(() => respondTurn(harness, root.id, turn, context))
+    yield* Effect.promise(() => response.text())
+    expect(paid).toEqual([{ amount: 42 }])
   }),
 )

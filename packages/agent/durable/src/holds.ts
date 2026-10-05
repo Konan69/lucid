@@ -96,9 +96,13 @@ const wakeKey = (conversationId: ConversationId, callId: string) => `${conversat
 
 /** Complete every local waiter; each one rereads Pi's document rather than trusting the notification. */
 const wake = (key: string) =>
-  Effect.forEach(wakers.get(key) ?? [], (deferred) => Deferred.succeed(deferred, undefined), {
-    discard: true,
-  })
+  Effect.forEach(
+    Array.from(wakers.get(key) ?? []),
+    (deferred) => Deferred.succeed(deferred, undefined),
+    {
+      discard: true,
+    },
+  )
 
 /** Remove only this waiter's registration, including on interruption or snapshot failure. */
 function unregister(key: string, deferred: Deferred.Deferred<void>) {

@@ -171,3 +171,56 @@ it.live('presents SDK rejection and serialization failure as tool output errors'
     })
   }),
 )
+
+/** A void SDK execute is a successful null result, with explicit text for the model. */
+it.live('persists null for a void tool and gives the model explicit null text', () =>
+  Effect.gen(function* () {
+    const faux = fauxProvider()
+    const models = createModels()
+    models.setProvider(faux.provider)
+    const registry = createRegistry()
+    let executions = 0
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('notify', {}, { id: 'void' })], { stopReason: 'toolUse' }),
+      (request) => {
+        expect(request.messages.at(-1)).toMatchObject({
+          role: 'toolResult',
+          content: [{ type: 'text', text: 'null' }],
+        })
+        return fauxAssistantMessage('Notified.')
+      },
+    ])
+    registry.install(
+      yield* toolsExtension(
+        'void',
+        {
+          notify: tool({
+            inputSchema: z.object({}),
+            execute: async () => {
+              executions++
+            },
+          }),
+        },
+        {},
+      ),
+    )
+    const harness = yield* memory(models, registry)
+    const root = yield* Effect.promise(() =>
+      harness.root(context, { agent: { model: { provider: 'faux', modelId: 'faux-1' } } }),
+    )
+    const { message } = yield* consume(
+      streamRun(
+        harness,
+        { conversationId: root.id, content: 'Notify', requestId: 'void' },
+        context,
+      ),
+      Option.none(),
+    )
+    expect(executions).toBe(1)
+    expect(message.parts.find((part) => part.type === 'tool-notify')).toMatchObject({
+      state: 'output-available',
+      output: null,
+    })
+    expect(message.parts.at(-1)).toMatchObject({ type: 'text', text: 'Notified.' })
+  }),
+)

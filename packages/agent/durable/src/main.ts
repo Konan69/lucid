@@ -1,7 +1,7 @@
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
 import { createUIMessageStreamResponse, type UIMessageChunk } from 'ai'
-import { Effect, Option, Schema, Stream } from 'effect'
+import { Effect, Function, Option, Schema, Stream } from 'effect'
 
 import * as Core from './core.ts'
 import { TurnInvalid } from './errors.ts'
@@ -11,6 +11,13 @@ import type { ToolsOptions } from './tools.ts'
 
 /** Like runtime/client.test.ts decodeIncoming, parse JSON text and validate through one compiled codec. */
 const decodeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(TurnBody))
+
+/** Compile the object ingress once; reject the original tagged class at the Promise boundary. */
+export const decodeTurn = Function.flow(
+  Core.decodeTurn,
+  Effect.mapError(() => new TurnInvalid({})),
+  (effect) => Effect.runPromise(effect),
+)
 
 /** Promise facade; tool registration has one Effect implementation. */
 export const toolsExtension = (
@@ -65,35 +72,48 @@ export const continueRun = (...args: Parameters<typeof Core.continueRun>) =>
     ),
   )
 
-/** HTTP ingress reads body text once, parses and decodes the latest turn, and maps only the two chat protocol failures. */
-export const respond = (
+/** A decoded turn shares the core implementation and maps only the chat protocol failures. */
+export const respondTurn = (
   harness: Harness,
   conversationId: ConversationId,
-  request: Request,
+  turn: Core.ChatTurn,
   context: Context,
 ): Promise<Response> =>
   Effect.runPromise(
-    Effect.tryPromise({
-      try: () => request.text(),
-      catch: () => new TurnInvalid({}),
-    }).pipe(
-      Effect.flatMap(decodeRequest),
-      Effect.mapError(() => new TurnInvalid({})),
-      Effect.flatMap((turn) => Core.respond(harness, conversationId, turn, context)),
+    Core.respond(harness, conversationId, turn, context).pipe(
       Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream)),
       Effect.map((stream) => createUIMessageStreamResponse({ stream })),
-      Effect.catchTag('TurnInvalid', () =>
-        Effect.succeed(
-          new Response('Expected a user message or a message with tool calls', { status: 400 }),
-        ),
-      ),
       Effect.catchTag('RunMissing', () =>
         Effect.succeed(new Response('No run made these tool calls', { status: 409 })),
       ),
     ),
   )
 
+/** Read JSON text through the compiled schema; a failed read or decode is an invalid turn. */
+export async function respond(
+  harness: Harness,
+  conversationId: ConversationId,
+  request: Request,
+  context: Context,
+): Promise<Response> {
+  const turn = await Effect.runPromise(
+    Effect.tryPromise({
+      try: () => request.text(),
+      catch: () => new TurnInvalid({}),
+    }).pipe(
+      Effect.flatMap(decodeRequest),
+      Effect.mapError(() => new TurnInvalid({})),
+      Effect.option,
+    ),
+  )
+  if (Option.isNone(turn))
+    return new Response('Expected a user message or a message with tool calls', { status: 400 })
+  return respondTurn(harness, conversationId, turn.value, context)
+}
+
 export {
+  WatchClosed,
+  WatchOverflowed,
   ConversationMissing,
   PiFailed,
   TurnInvalid,

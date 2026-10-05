@@ -42,7 +42,6 @@ type Program = (
   ToolFailed | ToolOutputFailed | import('./errors.ts').PiFailed
 >
 
-const decodeText = Schema.decodeUnknownEffect(Schema.String)
 const decodeJsonText = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.MutableJson))
 
 /** The SDK result's serialized text and JSON envelope are validated at its unsafe boundary. */
@@ -79,7 +78,9 @@ const validate = (server: Server, args: Parameters<Execute>[0]) => {
   if (schema.validate === undefined) return Effect.succeed({ success: true as const, value: args })
   const validateArgs = schema.validate.bind(schema)
   return Effect.tryPromise({
-    try: async () => validateArgs(args),
+    try: async function validateForSdk() {
+      return validateArgs(args)
+    },
     catch: (cause) => new ToolFailed({ toolName: server.name, cause }),
   })
 }
@@ -97,13 +98,14 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
   const checked = yield* validate(server, input)
   if (!checked.success) return failure(checked.error.message)
   const output = yield* Effect.tryPromise({
-    try: async () =>
-      server.execute(checked.value, {
+    try: async function executeForSdk() {
+      return server.execute(checked.value, {
         toolCallId: api.callId,
         messages: [],
         abortSignal: context.abortSignal,
         context: undefined,
-      }),
+      })
+    },
     catch: (cause) => new ToolFailed({ toolName: server.name, cause }),
   })
   const serialized = yield* Effect.try({
@@ -119,10 +121,8 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
       : yield* decodeJsonText(serialized.json).pipe(
           Effect.mapError((cause) => new ToolOutputFailed({ toolName: server.name, cause })),
         )
-  // Pi requires text content; non-serializable SDK results become a typed tool-output failure.
-  const text = yield* decodeText(serialized.text).pipe(
-    Effect.mapError((cause) => new ToolOutputFailed({ toolName: server.name, cause })),
-  )
+  // Void tools have no JSON value; expose explicit null in both the durable result and model text.
+  const text = serialized.text === undefined ? 'null' : serialized.text
   return result({ text, output: json })
 })
 
@@ -197,7 +197,9 @@ const registration = Effect.fn('Durable.registerTool')(function* (
   bridged: Bridged,
 ) {
   const parameters = yield* Effect.tryPromise({
-    try: async () => asSchema(tool.inputSchema).jsonSchema,
+    try: async function schemaForSdk() {
+      return asSchema(tool.inputSchema).jsonSchema
+    },
     catch: (cause) => new ToolSchemaFailed({ toolName: name, cause }),
   })
   // TypeBox 1.3.27 TSchema is structural (an empty interface), so the SDK's schema needs no cast.

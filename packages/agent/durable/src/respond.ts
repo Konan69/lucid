@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
-import { Array as Arr, Effect, Option, Schema, SchemaGetter, SchemaIssue } from 'effect'
+import { Array as Arr, Effect, Option, Predicate, Schema, SchemaGetter, SchemaIssue } from 'effect'
 
 import { TurnInvalid } from './errors.ts'
 import { answer, decide } from './holds.ts'
@@ -25,10 +25,24 @@ export const ChatTurn = Schema.TaggedUnion({
 export type ChatTurn = typeof ChatTurn.Type
 
 const ToolName = Schema.String.check(Schema.isPattern(/^(?:tool-|dynamic-tool$)/u))
-const Approval = Schema.Struct({
+const ApprovalValue = Schema.Struct({
   approved: Schema.Boolean,
   reason: Schema.optionalKey(Schema.String),
 })
+/** An invalid reason does not undo a valid decision; only string reasons have protocol meaning. */
+const Approval = Schema.Struct({
+  approved: Schema.Boolean,
+  reason: Schema.optionalKey(Schema.Unknown),
+}).pipe(
+  Schema.decodeTo(ApprovalValue, {
+    decode: SchemaGetter.transform((approval) =>
+      Predicate.isString(approval.reason)
+        ? { approved: approval.approved, reason: approval.reason }
+        : { approved: approval.approved },
+    ),
+    encode: SchemaGetter.passthroughSupertype(),
+  }),
+)
 const Part = Schema.Union([
   Schema.Struct({ type: Schema.Literal('text'), text: Schema.String }),
   Schema.Struct({
@@ -47,9 +61,21 @@ const Part = Schema.Union([
   // Unknown part types carry no input/settlement semantics and are intentionally discarded.
   Schema.Struct({ type: Schema.String }),
 ])
+const decodePart = Schema.decodeUnknownOption(Part)
+/** Malformed and unsupported parts carry no turn semantics; decode meaningful parts independently. */
+const Parts = Schema.Array(Schema.Unknown).pipe(
+  Schema.decodeTo(Schema.Array(Schema.toType(Part)), {
+    decode: SchemaGetter.transform((parts) =>
+      parts.flatMap((part) =>
+        Option.match(decodePart(part), { onNone: () => [], onSome: (decoded) => [decoded] }),
+      ),
+    ),
+    encode: SchemaGetter.passthroughSupertype(),
+  }),
+)
 const Message = Schema.Union([
-  Schema.Struct({ role: Schema.Literal('user'), id: Schema.String, parts: Schema.Array(Part) }),
-  Schema.Struct({ role: Schema.Literal('assistant'), parts: Schema.Array(Part) }),
+  Schema.Struct({ role: Schema.Literal('user'), id: Schema.String, parts: Parts }),
+  Schema.Struct({ role: Schema.Literal('assistant'), parts: Parts }),
 ])
 const Body = Schema.Struct({ messages: Schema.Array(Schema.Unknown) })
 const decodeMessage = Schema.decodeUnknownEffect(Message)

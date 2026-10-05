@@ -13,7 +13,7 @@ import type {
 import { watchEvents } from '@earendil-works/pi-durable'
 import { Cause, Effect, Option, Queue, Stream } from 'effect'
 
-import { ConversationMissing, PiFailed } from './errors.ts'
+import { ConversationMissing, PiFailed, WatchClosed, WatchOverflowed } from './errors.ts'
 
 /** Absence is a domain failure, distinct from rejection of Harness.conversation itself. */
 export const conversation = Effect.fn('Durable.conversation')(function* (
@@ -128,10 +128,15 @@ const openWatch = (harness: Harness, conversationId: ConversationId, context: Co
 /** Pi's session/observation.ts CommittedWatch.stop always resolves WatchEnd; rejection is a defect. */
 const stop = (events: AgentEventStream) => Effect.promise(() => events.stop())
 
-/** Awaiting the bounded offer is Pi's delivery backpressure, not a fire-and-forget notification. */
-function batchForPi(queue: Queue.Queue<AgentEvent, PiFailed | Cause.Done>) {
+/** Never suspend Pi delivery on an HTTP reader: its bounded pending frames otherwise overflow. */
+function batchForPi(queue: Queue.Queue<AgentEvent, PiFailed | WatchClosed | Cause.Done>) {
   return function deliver(batch: readonly AgentEvent[], context: Context) {
-    return runForPi(Queue.offerAll(queue, batch).pipe(Effect.asVoid), context.abortSignal)
+    return runForPi(
+      Effect.sync(() => {
+        Queue.offerAllUnsafe(queue, batch)
+      }),
+      context.abortSignal,
+    )
   }
 }
 
@@ -141,30 +146,44 @@ const closed = (events: AgentEventStream) => Effect.promise(() => events.closed)
 /** End the queue when Pi closes observation so a consumer never waits for an event that cannot arrive. */
 const finishWatch = Effect.fn('Durable.finishWatch')(function* (
   events: AgentEventStream,
-  queue: Queue.Queue<AgentEvent, PiFailed | Cause.Done>,
+  queue: Queue.Queue<AgentEvent, PiFailed | WatchClosed | Cause.Done>,
+  conversationId: ConversationId,
 ) {
   const end = yield* closed(events)
   if (end.reason === 'listener_error')
     yield* Queue.fail(queue, new PiFailed({ operation: 'watch', cause: end.error }))
+  else if (end.reason === 'cancelled' || end.reason === 'session_closed')
+    yield* Queue.fail(queue, new WatchClosed({ conversationId, reason: end.reason }))
   else yield* Queue.end(queue)
 })
 
 /**
- * Own one observation in the consumer's scope. Pi already limits pending delivery to 100 frames
- * (session/observation.ts MAX_PENDING_WATCH_FRAMES); this queue also bounds local event buffering.
- * Closing the queue releases an in-flight offer before stopping observation. Nothing aborts the run.
+ * Own one observation in the consumer's scope. Buffer independently of consumption, matching the
+ * former controller.enqueue behavior. A replacement snapshot signals lost incremental frames;
+ * reconnect rather than translate an incomplete history. Detaching never aborts the durable run.
  */
 export const watch = Effect.fn('Durable.watch')(function* (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,
 ) {
-  const queue = yield* Queue.bounded<AgentEvent, PiFailed | Cause.Done>(100)
+  const queue = yield* Queue.unbounded<AgentEvent, PiFailed | WatchClosed | Cause.Done>()
   const events = yield* Effect.acquireRelease(
     openWatch(harness, conversationId, context),
     (opened) => Queue.shutdown(queue).pipe(Effect.andThen(stop(opened))),
   )
   yield* Effect.sync(() => events.start(batchForPi(queue)))
-  yield* finishWatch(events, queue).pipe(Effect.forkScoped)
-  return { snapshot: events.snapshot, stream: Stream.fromQueue(queue) }
+  yield* finishWatch(events, queue, conversationId).pipe(Effect.forkScoped)
+  return { snapshot: events.snapshot, stream: observed(conversationId, Stream.fromQueue(queue)) }
 })
+
+/** Pi harness-events.test.ts replaces overflowed delivery with a snapshot, not incremental events. */
+export function observed<E>(conversationId: ConversationId, events: Stream.Stream<AgentEvent, E>) {
+  return events.pipe(
+    Stream.mapEffect((event) =>
+      event.type === 'snapshot'
+        ? Effect.fail(new WatchOverflowed({ conversationId }))
+        : Effect.succeed(event),
+    ),
+  )
+}

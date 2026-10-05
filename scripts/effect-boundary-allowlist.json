@@ -59,12 +59,20 @@
   {
     "file": "packages/agent/durable/src/tools.ts",
     "classification": "third-party-adapter",
-    "symbols": ["validate", "invoke", "registration", "try"]
+    "symbols": [
+      "validate",
+      "validateForSdk",
+      "invoke",
+      "executeForSdk",
+      "registration",
+      "schemaForSdk"
+    ]
   },
   {
     "file": "packages/agent/durable/src/main.ts",
     "classification": "promise-api-entrypoint",
     "symbols": [
+      "decodeTurn",
       "toolsExtension",
       "decide",
       "answer",
@@ -72,7 +80,8 @@
       "streamRun",
       "attachRun",
       "continueRun",
-      "respond"
+      "respond",
+      "respondTurn"
     ]
   },
   {
@@ -84,5 +93,15 @@
     "file": "packages/agent/durable/src/fixtures/harness.ts",
     "classification": "third-party-adapter",
     "symbols": ["memory"]
+  },
+  {
+    "file": "packages/agent/durable/src/conformance/fixtures/crash.ts",
+    "classification": "test-process-entrypoint",
+    "symbols": ["<module>", "harness", "root"]
+  },
+  {
+    "file": "packages/agent/durable/src/conformance/fixtures/host.ts",
+    "classification": "test-fixture-entrypoint",
+    "symbols": ["consume", "host", "open", "fetch", "close", "shop", "execute"]
   }
 ]

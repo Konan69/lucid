@@ -1,5 +1,3 @@
-import { Effect } from 'effect'
-import { runForPi } from '../pi.ts'
 // Child process of recovery.test.ts. It starts a run whose tool never returns, reports that the tool
 // is running, and is then killed by the test. Nothing here closes the harness: the point is an
 // unclean death with a tool call in flight.
@@ -13,6 +11,9 @@ import {
 } from '@earendil-works/pi-ai/providers/faux'
 import { createRegistry, defineExtension, defineTool, Harness } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
+
+import { Effect } from 'effect'
+import { runForPi } from '../pi.ts'
 
 const context = BACKGROUND_CONTEXT
 const [, , file] = process.argv
