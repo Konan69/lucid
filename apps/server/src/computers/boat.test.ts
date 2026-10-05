@@ -42,7 +42,7 @@ import { silentChangesLayer } from '../live/changes.ts'
 import { boatMachineLayer } from './boat.ts'
 import { deviceLayer } from './device.ts'
 import { computerHandlers } from './handlers.ts'
-import { isOutage, Machine, MachineKey } from './machine.ts'
+import { isOutage, Machine, MachineKey, MachineOperationFailed } from './machine.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { machineBindings } from './tables.ts'
 import * as Protocol from './boat/protocol.ts'
@@ -53,7 +53,7 @@ import { transport } from './boat/transport.ts'
 import { guestCommand } from './boat/guest.ts'
 import { bindings } from './boat/bindings.ts'
 import { lifecycle } from './boat/lifecycle.ts'
-import { HELD } from './boat/holder.ts'
+import { HELD, UNSETTLED } from './boat/holder.ts'
 import {
   ComputerStore,
   computerMachineKey,
@@ -210,9 +210,12 @@ const settled = Effect.fn('BoatTest.holder')(function* (
   command: string,
 ) {
   const mine = /^mine='((bx_[a-z0-9]+) [0-9a-f-]+)'$/mu.exec(command)
-  if (mine === null || mine[1] === undefined || mine[2] === undefined) return commandExit(74)
+  if (mine === null || mine[1] === undefined || mine[2] === undefined) return commandExit(UNSETTLED)
   const [, claim, machine] = mine
   const held = (yield* Ref.get(evidence.holders)).get(machine)
+  // A record that is not one machine id and one intent is damage: nothing is settled on it.
+  if (held !== undefined && !/^bx_[a-z0-9]+ [0-9a-f-]{36}$/u.test(held))
+    return commandExit(UNSETTLED)
   if (held !== undefined && held !== claim && held.startsWith(`${machine} `))
     return commandExit(HELD)
   yield* Ref.update(evidence.holders, (holders) => new Map(holders).set(machine, claim))
@@ -905,6 +908,30 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       expect(rows.map((row) => `${adoptedId} ${row.intent}`)).toEqual([
         (yield* Ref.get(evidence.holders)).get(adoptedId),
       ])
+    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  )
+
+  /**
+   * Damage is not a claim. A server that meets a record it cannot read learns nothing about
+   * whose machine it is, so it fails the call and keeps its binding: giving the binding up on
+   * damage would cut the rightful holder off for good.
+   */
+  it.effect('a damaged record fails the call and costs the server no binding', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const saved = yield* bindings()
+      const evidence = yield* Evidence
+      expect((yield* machine.ensure(key))._tag).toBe('Running')
+      const before = yield* saved.load(key)
+      const launched = yield* Ref.get(evidence.launches)
+      yield* Ref.set(evidence.holders, new Map([[adoptedId, 'not a record']]))
+      const failed = yield* machine.ensure(key).pipe(Effect.flip)
+      expect(failed).toEqual(new MachineOperationFailed({ operation: 'holder' }))
+      expect(yield* saved.load(key)).toEqual(before)
+      expect(Option.isSome(before)).toBe(true)
+      expect(yield* Ref.get(evidence.launches)).toBe(launched)
+      expect((yield* Ref.get(evidence.holders)).get(adoptedId)).toBe('not a record')
     }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
   )
 

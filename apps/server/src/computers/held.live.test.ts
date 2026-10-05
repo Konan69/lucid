@@ -16,8 +16,9 @@ import { computerMachineKey } from './store.ts'
  * stack's table has never heard of. Before the record existed that stack bound the machine and
  * shared its desktop, files and signed-in browser with the other account.
  *
- * Nothing is made, stopped or deleted to stage it, and the proof refuses to go on unless the
- * machine is already running, so it wakes nothing. The claim is that the Person on this server
+ * Nothing is made, stopped or deleted to stage it. The proof refuses to go on unless the machine
+ * is running, so that it wakes nothing; a machine that archives in the instant after that check
+ * would be woken by the start, which is what a start does and all it would cost. The claim is that the Person on this server
  * is told the computer is another account's, that this server keeps no binding to it, and that
  * the machine's record is exactly what it was.
  */
@@ -27,11 +28,13 @@ describe.skipIf(process.env['VIVID_LIVE_MACHINE_HELD'] !== '1')('A held machine,
     () =>
       Effect.gen(function* () {
         const api = yield* transport()
-        if (Option.isNone(api.adopt))
-          return yield* Effect.sync(() =>
-            expect.fail('The stack must name the held machine in VIVID_BOAT_MACHINE'),
-          )
-        const machine = api.adopt.value
+        const machine = yield* Option.match(api.adopt, {
+          onNone: () =>
+            Effect.sync(() =>
+              expect.fail('The stack must name the held machine in VIVID_BOAT_MACHINE'),
+            ),
+          onSome: (id) => Effect.succeed(id),
+        })
         const fixture = yield* chainFixture('Held machine proof')
         const key = computerMachineKey(fixture.personId)
         expect(

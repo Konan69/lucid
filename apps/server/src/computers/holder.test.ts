@@ -4,12 +4,17 @@ import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import * as NodeProcess from 'node:process'
 import { describe, expect, it } from '@effect/vitest'
-import { HELD, holdable, holderClaim } from './boat/holder.ts'
+import { HELD, holdable, holderClaim, UNSETTLED } from './boat/holder.ts'
 import * as Protocol from './boat/protocol.ts'
 
 const machine = Protocol.ProviderId.make('bx_23456789')
 const first = '11111111-1111-4111-8111-111111111111'
 const second = '22222222-2222-4222-8222-222222222222'
+/** Sixteen bindings that all want the machine at once. */
+const rivals = Array.from({ length: 16 }, (_, index) => {
+  const digit = index.toString(16)
+  return `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`
+})
 
 /**
  * The claim is shell that runs on the machine, so it is run here by real shells against a home
@@ -40,14 +45,94 @@ describe.each(['sh', 'bash'])('the machine’s holder record under %s', (shell) 
     expect(record(directory)).toBe(`${machine} ${first}\n`)
   })
 
-  it('replaces a record that is another machine’s, or cannot be read as one', () => {
-    for (const stale of [`bx_abcdefgh ${second}\n`, '']) {
-      const directory = home()
-      NodeFS.mkdirSync(NodePath.join(directory, '.vivid'))
-      NodeFS.writeFileSync(NodePath.join(directory, '.vivid', 'holder'), stale)
-      expect(claim(directory, first)).toBe(0)
-      expect(record(directory)).toBe(`${machine} ${first}\n`)
+  const seeded = (content: string) => {
+    const directory = home()
+    NodeFS.mkdirSync(NodePath.join(directory, '.vivid'))
+    NodeFS.writeFileSync(NodePath.join(directory, '.vivid', 'holder'), content)
+    return directory
+  }
+
+  it('replaces a record that is another machine’s', () => {
+    const directory = seeded(`bx_abcdefgh ${second}\n`)
+    expect(claim(directory, first)).toBe(0)
+    expect(record(directory)).toBe(`${machine} ${first}\n`)
+  })
+
+  /**
+   * A record that is not exactly one machine id and one intent is damage. It is not a free
+   * machine, so nobody takes it, and it is not another account's claim, so the status is not
+   * `HELD` and no server gives its binding up over it. The file is left as it was found.
+   */
+  it('settles nothing on a damaged record and leaves it as it was', () => {
+    const damaged = [
+      '',
+      '\n',
+      `${machine}\n`,
+      `${machine} ${first} \n`,
+      `${machine} ${first}\r\n`,
+      `${machine}  ${first}\n`,
+      `${machine} ${first}\n${machine} ${second}\n`,
+      `${machine} ${first.slice(1)}\n`,
+      `machine ${first}\n`,
+      `bx_ABCDEFGH ${first}\n`,
+    ]
+    for (const content of damaged) {
+      const directory = seeded(content)
+      expect([content, claim(directory, second)]).toEqual([content, UNSETTLED])
+      expect(record(directory)).toBe(content)
     }
+  })
+
+  it('settles nothing when the record cannot be read', () => {
+    const directory = home()
+    // A directory where the record should be: the read fails for every user, root included.
+    NodeFS.mkdirSync(NodePath.join(directory, '.vivid', 'holder'), { recursive: true })
+    expect(claim(directory, first)).toBe(UNSETTLED)
+    expect(NodeFS.statSync(NodePath.join(directory, '.vivid', 'holder')).isDirectory()).toBe(true)
+  })
+
+  /**
+   * Two servers can reach a machine in the same instant. All the claims here are started
+   * together by one shell and run as separate processes against the same home, first on a
+   * machine with no record and then on one whose record came with a copied disk. Exactly one
+   * may win, and the record must name that one.
+   */
+  it('gives the machine to exactly one of many bindings that claim it at once', () => {
+    for (const before of ['', `bx_abcdefgh ${second}\n`]) {
+      for (let round = 0; round < 5; round++) {
+        const directory = before === '' ? home() : seeded(before)
+        const together = rivals
+          .map(
+            (intent, index) =>
+              `( ( ${holderClaim({ id: machine, intent })}\n ); echo "$?" > "$HOME/exit.${index}" ) &`,
+          )
+          .join('\n')
+        NodeChildProcess.spawnSync(shell, ['-c', `${together}\nwait`], {
+          env: { HOME: directory, PATH: NodeProcess.env['PATH'] },
+        })
+        const exits = rivals.map((_, index) =>
+          Number(NodeFS.readFileSync(NodePath.join(directory, `exit.${index}`), 'utf8')),
+        )
+        const winners = rivals.filter((_, index) => exits[index] === 0)
+        expect(winners).toHaveLength(1)
+        expect(exits.filter((status) => status === HELD)).toHaveLength(rivals.length - 1)
+        expect(winners.map((intent) => `${machine} ${intent}\n`)).toEqual([record(directory)])
+      }
+    }
+  })
+
+  it('leaves the lock free for whatever runs after it', () => {
+    const directory = home()
+    // What follows the claim in a wake lives for the whole session; it must not hold the lock.
+    const after = NodeChildProcess.spawnSync(
+      shell,
+      [
+        '-c',
+        `${holderClaim({ id: machine, intent: first })}\nflock -n "$HOME/.vivid/holder.lock" true`,
+      ],
+      { env: { HOME: directory, PATH: NodeProcess.env['PATH'] } },
+    )
+    expect(after.status).toBe(0)
   })
 })
 

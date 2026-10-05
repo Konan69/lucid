@@ -27,11 +27,16 @@ another, is refused with "already in use by another account" before anything is 
 process that meets a machine already running that it did not wake itself (after a restart, or
 with a row no wake made) asks the same question once before it runs a command, takes a desktop or
 browser step, shows the screen or stops the machine. A refused server gives its binding up. The
+whole question is asked under a lock on the machine, so two servers that reach it in the same
+instant cannot both become its holder. A record that is damaged or cannot be read settles nothing:
+the call fails, nobody takes the machine and nobody loses a binding, and an operator looks. The
 record is kept across archive and resume. Giving a machine to another account is an operator's
-act: remove that file on the machine and the old binding in the table that holds it.
+act, in this order: stop the machine, remove the old binding in the table that holds it, remove
+the file on the machine.
 
 Three limits. An archived machine cannot be asked, so a server it then refuses has already woken
-it, and leaves it running for Boat's own archive timer. A machine between states takes no command,
+it, and leaves it running for Boat's own archive timer (or, with `VIVID_BOAT_LIFETIME_SECONDS=0`,
+until its holder stops it). A machine between states takes no command,
 so a stop sent to one is not checked. And a copy of the holder's database is the holder, because
 the record names a binding and a copied table has the same binding.
 `held.live.test.ts` (`VIVID_LIVE_MACHINE_HELD=1`) runs the refusal against a real machine.
