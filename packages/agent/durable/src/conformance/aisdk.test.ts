@@ -27,7 +27,7 @@ function client(
   transport: DefaultChatTransport<UIMessage>,
   predicate: ChatInit<UIMessage>['sendAutomaticallyWhen'],
 ) {
-  let completion = Promise.withResolvers<void>()
+  let completion = signal()
   const chat = new PlainChat({
     transport,
     sendAutomaticallyWhen: predicate,
@@ -36,7 +36,7 @@ function client(
   })
   /** Await the next response without relying on stream timing or status polling. */
   const next = () => {
-    completion = Promise.withResolvers<void>()
+    completion = signal()
     return completion.promise
   }
   return { chat, next }
@@ -125,15 +125,17 @@ it('addToolApprovalResponse automatically resumes one assistant message', async 
   )
   await chat.sendMessage({ text: 'Pay' })
   expect(chat.status).toBe('ready')
-  const id = chat.lastMessage?.id
+  const parked = chat.lastMessage
+  if (parked === undefined) throw new Error('Expected the held message')
+  const id = parked.id
   expect(fixture.paid).toEqual([])
   const finished = next()
   await chat.addToolApprovalResponse({ id: 'pay', approved: true })
   await finished
   expect(chat.status).toBe('ready')
   expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
-  expect(chat.lastMessage?.id).toBe(id)
   if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')
+  expect(chat.lastMessage.id).toBe(id)
   expect(texts(chat.lastMessage)).toEqual(['Checking.', 'Paid.'])
   expect(chat.lastMessage.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
     state: 'output-available',
@@ -152,18 +154,20 @@ it('addToolOutput automatically resumes one assistant message', async () => {
   ])
   const { chat, next } = client(opened.transport, lastAssistantMessageIsCompleteWithToolCalls)
   await chat.sendMessage({ text: 'Ask' })
-  expect(chat.lastMessage?.parts.find((part) => part.type === 'tool-ask')).toMatchObject({
+  const parked = chat.lastMessage
+  if (parked === undefined) throw new Error('Expected the held message')
+  expect(parked.parts.find((part) => part.type === 'tool-ask')).toMatchObject({
     state: 'input-available',
     input: { question: 'Which account?' },
   })
-  const id = chat.lastMessage?.id
+  const id = parked.id
   const finished = next()
   await chat.addToolOutput({ tool: 'ask', toolCallId: 'ask', output: 'savings' })
   await finished
   expect(chat.status).toBe('ready')
   expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
-  expect(chat.lastMessage?.id).toBe(id)
   if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')
+  expect(chat.lastMessage.id).toBe(id)
   expect(texts(chat.lastMessage)).toEqual(['Using savings.'])
   expect(chat.lastMessage.parts.find((part) => part.type === 'tool-ask')).toMatchObject({
     state: 'output-available',
@@ -198,8 +202,9 @@ it('the stock approval predicate waits for both decisions before posting', async
   await chat.addToolApprovalResponse({ id: 'two', approved: false, reason: 'Budget' })
   await finished
   expect(fixture.paid).toEqual([100])
+  if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')
   expect(
-    chat.lastMessage?.parts.find((part) => 'toolCallId' in part && part.toolCallId === 'two'),
+    chat.lastMessage.parts.find((part) => 'toolCallId' in part && part.toolCallId === 'two'),
   ).toMatchObject({ state: 'output-denied' })
   expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
 })

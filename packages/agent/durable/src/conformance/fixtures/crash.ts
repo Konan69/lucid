@@ -1,3 +1,5 @@
+import * as NodeEvents from 'node:events'
+
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { createModels } from '@earendil-works/pi-ai/models'
 import {
@@ -38,7 +40,8 @@ registry.install(
         inputSchema: z.object({}),
         execute: () => {
           process.stdout.write('executing\n')
-          return new Promise(() => {})
+          // SIGKILL bypasses signal handlers; this real process wait stays in flight at the crash.
+          return NodeEvents.EventEmitter.once(process, 'SIGTERM')
         },
       }),
     },

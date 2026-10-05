@@ -1,6 +1,7 @@
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import * as NodeEvents from 'node:events'
+import * as NodeFSP from 'node:fs/promises'
+import * as NodeOS from 'node:os'
+import * as NodePath from 'node:path'
 
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import type { Message } from '@earendil-works/pi-ai'
@@ -28,18 +29,28 @@ import { respond, toolsExtension, type ToolsOptions } from '../../index.ts'
 
 export const context = BACKGROUND_CONTEXT
 
-/** Return a typed signal so tests coordinate on observable work instead of elapsed time. */
+/** Return a typed signal on the package's ES2023 baseline, without clock-based coordination. */
 export function signal() {
-  return Promise.withResolvers<void>()
+  const events = new NodeEvents.EventEmitter<{ settled: []; error: [Error] }>()
+  const promise = NodeEvents.EventEmitter.once(events, 'settled').then(() => {})
+  return {
+    promise,
+    resolve: () => {
+      events.emit('settled')
+    },
+    reject: (error: Error) => {
+      events.emit('error', error)
+    },
+  }
 }
 
 /** The actual Pi messages presented to the faux model, without reading bridge internals. */
 export function modelText(messages: readonly Message[]) {
   return messages
     .flatMap((message) =>
-      typeof message.content === 'string'
-        ? [message.content]
-        : message.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])),
+      Array.isArray(message.content)
+        ? message.content.flatMap((part) => (part.type === 'text' ? [part.text] : []))
+        : [message.content],
     )
     .join('\n')
 }
@@ -85,14 +96,14 @@ export function texts(message: UIMessage) {
  * Reopening builds fresh volatile models and registries, preserving only Pi's database.
  */
 export async function host(tools: ToolSet, options: ToolsOptions) {
-  const directory = await mkdtemp(join(tmpdir(), 'vivid-conformance-'))
-  const file = join(directory, 'session.sqlite')
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'vivid-conformance-'))
+  const file = NodePath.join(directory, 'session.sqlite')
   const opened = new Set<Harness>()
   onTestFinished(async () => {
     try {
       for (const harness of opened) await harness.close(context)
     } finally {
-      await rm(directory, { recursive: true, force: true })
+      await NodeFSP.rm(directory, { recursive: true, force: true })
     }
   })
   /** Open a fresh process-equivalent host on the same durable transcript. */

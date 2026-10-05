@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process'
-import { once } from 'node:events'
-import { fileURLToPath } from 'node:url'
+import * as NodeChildProcess from 'node:child_process'
+import * as NodeEvents from 'node:events'
+import * as NodeURL from 'node:url'
 
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
@@ -148,21 +148,21 @@ it('retries a failed partial response without duplicate parts', async () => {
 
 /** Kill only the child spawned here, after its execution signal proves the durable intent exists. */
 async function crash(file: string, policy: 'safe' | 'unsafe') {
-  const child = spawn(
+  const child = NodeChildProcess.spawn(
     process.execPath,
-    [fileURLToPath(new URL('./fixtures/crash.ts', import.meta.url)), file, policy],
+    [NodeURL.fileURLToPath(new URL('./fixtures/crash.ts', import.meta.url)), file, policy],
     { stdio: ['ignore', 'pipe', 'inherit'] },
   )
   onTestFinished(async () => {
     if (child.exitCode !== null || child.signalCode !== null) return
-    const exited = once(child, 'exit')
+    const exited = NodeEvents.EventEmitter.once(child, 'exit')
     child.kill('SIGKILL')
     await exited
   })
-  const [data] = await once(child.stdout, 'data')
+  const [data] = await NodeEvents.EventEmitter.once(child.stdout, 'data')
   if (!Buffer.isBuffer(data)) throw new Error('Expected an execution signal')
   expect(data.toString()).toContain('executing')
-  const exited = once(child, 'exit')
+  const exited = NodeEvents.EventEmitter.once(child, 'exit')
   child.kill('SIGKILL')
   await exited
 }
@@ -199,7 +199,7 @@ it.each(['unsafe', 'safe'] as const)(
     if (stream === undefined) throw new Error('Expected the interrupted run')
     harness.resume()
     const result = await consume(stream)
-    const part = result.message.parts.find((part) => part.type === 'tool-work')
+    const part = result.message.parts.find((candidate) => candidate.type === 'tool-work')
     if (policy === 'safe') {
       expect(executions).toBe(1)
       expect(part).toMatchObject({ state: 'output-available', output: '12 pages' })
