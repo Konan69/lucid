@@ -174,22 +174,34 @@ Required by the stack:
   node -e "const c=require('node:crypto').createECDH('prime256v1');c.generateKeys();console.log('VIVID_PUSH_VAPID_PUBLIC='+c.getPublicKey().toString('base64url'));console.log('VIVID_PUSH_VAPID_PRIVATE='+c.getPrivateKey().toString('base64url'))"
   ```
 
-The Computer, texting and away notifications are part of the product, so these are required like
-the first three: the stack stops before it touches the target and names the variable it lacks. `VIVID_BOAT_ORG`,
-`VIVID_BOAT_SIZE`, `VIVID_BOAT_LIFETIME_SECONDS` and `VIVID_BOAT_MACHINE` are forwarded to the
-hosted server when set (`apps/server/src/computers/README.md` says what each does).
+- `VIVID_EXECUTOR_KEY`, `VIVID_EXECUTOR_ORGANIZATION` — the key and organization the server uses
+  on Executor, which gives Vivid its Integrations. Both are minted on the deployed Executor.
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` — the Google client a Person
+  signs in through. They do not configure Google Integrations in Executor.
 
-`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` form one optional atomic
-set for account sign-in. They do not configure Google Integrations in Executor. `VIVID_MODEL`
+Every part of the product is required, here and in the server. The stack stops before it touches
+the target and names the variable it lacks, and the server does not start without the same
+settings (`requiredSetting` in `apps/server/src/config.ts`), so neither a deploy nor a running
+server can be missing the Computer, memory, Integrations, texting, away notifications or Google
+sign-in. `pnpm infra:verify` fails when a setting the server requires is not sent by this stack.
+`VIVID_BOAT_ORG`, `VIVID_BOAT_SIZE`, `VIVID_BOAT_LIFETIME_SECONDS` and `VIVID_BOAT_MACHINE` are
+forwarded to the hosted server when set (`apps/server/src/computers/README.md` says what each
+does).
+
+The runtime has one required setting of its own, `VIVID_MEMORY_DIR`, the directory of Vivid's
+notes. The hosted stack sets it to a volume and the local stack to `.state/notes` beside the
+runtime. `VIVID_MODEL`
 defaults to `explabs/glm-5.3-flash`; pi `0.87.1` and the provider at
 `packages/agent/runtime/src/providers/explabs.ts` supply model access. Vivid adds no model retry
 or fallback layer. AWS credentials are not required locally.
 
 The hosted stack runs HelixDB as a Railway service and gives the server its private address
-(`VIVID_HELIX_URL`), and it gives the server the Boat settings above. Boat itself is an outside
-service the stack does not provision. The local process graph forwards neither: `Command.Dev`
-merges the stack's variables over the environment `pnpm infra:dev` was started in, so a local
-server reads `VIVID_HELIX_URL` and the Boat settings from that environment.
+(`VIVID_HELIX_URL`), runs Executor and gives the server its private address
+(`VIVID_EXECUTOR_URL`), and gives the server the settings above. Boat and Photon are outside
+services the stack does not provision. The local process graph runs none of these services and
+has no stand-in for them: `Command.Dev` merges the stack's variables over the environment
+`pnpm infra:dev` was started in, so a local server reads `VIVID_HELIX_URL`, `VIVID_EXECUTOR_URL`
+and the rest from that environment, and does not start without them.
 
 Outputs contain only web, server, and runtime URLs. Database and application secrets are never
 outputs. Local Alchemy resources create no AWS bill, but real model calls and external services
@@ -251,14 +263,18 @@ and an empty value counts as unset. The code is
 Supply the server with `DATABASE_URL`, `AUTH_SECRET`, `VIVID_RUNTIME_URL`,
 `VIVID_RUNTIME_TOKEN`, and the externally reachable `PUBLIC_URL`. Supply the runtime with
 `DATABASE_URL`, `VIVID_SERVER_URL`, the matching `VIVID_RUNTIME_TOKEN`, and `EXPLABS_API_KEY`
-for model calls. Optional Google sign-in inputs remain atomic; optional provider, memory,
-Executor, and model settings keep their existing contracts. Apply the auth then product
+for model calls, and `VIVID_MEMORY_DIR` for Vivid's notes. The server also needs every setting
+under "Credentials and external services": the Computer, memory, Integrations, texting, away
+notifications and Google sign-in are required, and it does not start without them. Model
+settings keep their defaults. Apply the auth then product
 migrations before starting the server; Flue migrates its own runtime schema at startup.
 
-Programs require the existing user-systemd/cgroup/bubblewrap/prlimit isolation. Startup probes
-those prerequisites once. An ordinary container lacks them, so program runs return the existing
-typed `CodeFailure.Unavailable`, and startup logs the precise `CodeIsolationUnavailable`
-prerequisite. The server still starts; no alternate sandbox or unisolated program path exists.
+Programs (`run_code`) need nothing from the server's host. A program runs on the Person's
+Computer: the server starts its runner there through the Computer's provider, follows what it
+prints, and answers its calls. Until 5 October 2026 a program ran on the server's own host inside
+user-systemd, a cgroup and bubblewrap, which an ordinary container does not have, so production
+refused every program. The server image therefore carries no isolation tools, and the only
+requirement is the one every Vivid already has: a Computer provider.
 
 These recipes provide packaging, not deployment resources. Alchemy remains the resource owner;
 building an image neither calls Railway nor changes the local development graph.

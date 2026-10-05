@@ -89,37 +89,34 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         expect((yield* (yield* ConnectionStore).list(ownerActor)).connections).toEqual([])
       }),
     )
-    for (const configured of [false, true]) {
-      it.effect(`starts no setup sweep with Executor configured ${configured}`, () =>
-        Effect.gen(function* () {
-          const executor = yield* Executor
-          const calls = yield* Ref.make(0)
-          const controlled = Executor.of({
-            ...executor,
-            configured,
-            catalog: () =>
-              Ref.update(calls, (count) => count + 1).pipe(Effect.andThen(executor.catalog())),
-            authorization: () =>
-              Ref.update(calls, (count) => count + 1).pipe(
-                Effect.andThen(
-                  executor.authorization({
-                    service: serviceId,
-                    returnAddress: 'https://example.test/return',
-                  }),
-                ),
+    it.effect('starts no setup sweep of its own', () =>
+      Effect.gen(function* () {
+        const executor = yield* Executor
+        const calls = yield* Ref.make(0)
+        const controlled = Executor.of({
+          ...executor,
+          catalog: () =>
+            Ref.update(calls, (count) => count + 1).pipe(Effect.andThen(executor.catalog())),
+          authorization: () =>
+            Ref.update(calls, (count) => count + 1).pipe(
+              Effect.andThen(
+                executor.authorization({
+                  service: serviceId,
+                  returnAddress: 'https://example.test/return',
+                }),
               ),
-          })
-          yield* Effect.gen(function* () {
-            yield* ConnectionStore
-            yield* TestClock.adjust('1 hour')
-            expect(yield* Ref.get(calls)).toBe(0)
-          }).pipe(
-            Effect.provide(connectionStoreLayer, { local: true }),
-            Effect.provideService(Executor, controlled),
-          )
-        }),
-      )
-    }
+            ),
+        })
+        yield* Effect.gen(function* () {
+          yield* ConnectionStore
+          yield* TestClock.adjust('1 hour')
+          expect(yield* Ref.get(calls)).toBe(0)
+        }).pipe(
+          Effect.provide(connectionStoreLayer, { local: true }),
+          Effect.provideService(Executor, controlled),
+        )
+      }),
+    )
 
     it.effect('preserves the insert failure when provider compensation also fails', () =>
       Effect.gen(function* () {

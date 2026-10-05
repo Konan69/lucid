@@ -11,10 +11,8 @@ export const codeHandlers = {
     const auth = yield* requireVivid()
     const calls = yield* CodeCalls
     const process = yield* CodeProcess
-    return yield* process.run(
-      { request, boundary: auth.threadId },
-      calls.bind({ person: auth.person.id, thread: auth.threadId }),
-    )
+    const boundary = { person: auth.person.id, thread: auth.threadId }
+    return yield* process.run({ request, boundary }, calls.bind(boundary))
   }),
   ReadPage: Effect.fn('Rpc.ReadPage')(function* (request: ReadPageRequest) {
     yield* requireVivid()

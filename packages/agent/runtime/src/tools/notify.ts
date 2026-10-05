@@ -25,14 +25,6 @@ const resultOf = (outcome: NotifyPersonOutcome) =>
             message: 'The notification is in the app. The Person is present, so no push was sent.',
           },
         }),
-        Unavailable: () => ({
-          output: {
-            ok: true,
-            status: 'unavailable',
-            acceptedTargets: 0,
-            message: 'The notification is in the app. Push is unavailable.',
-          },
-        }),
         NoTargets: () => ({
           output: {
             ok: true,

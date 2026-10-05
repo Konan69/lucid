@@ -27,7 +27,7 @@ const anyResolution = (_resolution: Resolution) => undefined
  * around Vivid is showing the screen larger (`closeup`), the picture rests, so one window does not
  * hold two connections to one screen.
  *
- * It shows only a computer that is running or starting. One that is off, absent or not set up
+ * It shows only a computer that is running or starting. One that is off or absent
  * has nothing to watch, and the step's own line already says what happened.
  */
 export function Peek() {

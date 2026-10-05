@@ -1,6 +1,4 @@
 import { deviceLayer } from '../computers/device.ts'
-import * as NodeProcess from 'node:process'
-import { programHost } from './host.ts'
 import { describe, expect, it as standalone, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import {
@@ -15,7 +13,7 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { Deferred, Effect, Fiber, Layer, Ref, Result, Option, Schema } from 'effect'
+import { Deferred, Effect, Fiber, Layer, Ref, Result, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { refusalLogs } from '../observability/testlogger.ts'
 import type { Actor } from '../auth/access.ts'
@@ -23,7 +21,7 @@ import { membershipTable } from '../companies/tables.ts'
 import { threads } from '../threads/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
-import { unavailableMachineLayer } from '../computers/machine.ts'
+import { absentMachineLayer } from '../computers/testing.ts'
 import {
   ComputerAccess,
   ComputerNotReady,
@@ -43,13 +41,11 @@ import { codeHandlers } from './handlers.ts'
 import { publicPageLayer } from './page.ts'
 import { CallOutcome, codeProcessLayer } from './process.ts'
 import { WorkerMessage } from './protocol.ts'
+import { localCodeComputerLayer } from './testing.ts'
 
 const isRepositoryInput = Schema.is(Schema.Struct({ repoName: Schema.String }))
 
-const missingHost = programHost(Option.fromUndefinedOr(NodeProcess.env.XDG_RUNTIME_DIR))
-if (Option.isSome(missingHost)) console.warn(`Skipping supervised programs: ${missingHost.value}`)
-
-const accounts = Layer.mergeAll(connectionTestLayer, trustTestLayer, unavailableMachineLayer)
+const accounts = Layer.mergeAll(connectionTestLayer, trustTestLayer, absentMachineLayer)
 const computers = computerStoreLayer.pipe(
   Layer.provideMerge(deviceLayer),
   Layer.provideMerge(accounts),
@@ -74,12 +70,14 @@ const run = Effect.fn('Test.RunCode')((actor: Actor, thread: ThreadId, code: str
 )
 
 /** Connection credentials are replaced at their external adapter; all tenancy, Gate and Approval SQL is real. */
-describe.skipIf(!testDatabaseConfigured || Option.isSome(missingHost))(
+describe.skipIf(!testDatabaseConfigured)(
   'Programs under live authority',
+  { timeout: 30_000 },
   () => {
-    // The production supervisor prepares assets once for its lifetime; each test still owns
-    // fresh tenancy, Gate and provider fixtures, and each program owns a fresh VM/cgroup.
-    layer(codeProcessLayer)((it) => {
+    // The program runs on a Computer that is this machine (`testing.ts`); each test still owns
+    // fresh tenancy, Gate and provider fixtures, and each program its own process. The ceiling is
+    // for those real processes on a loaded machine; nothing here waits on a clock.
+    layer(codeProcessLayer.pipe(Layer.provide(localCodeComputerLayer)))((it) => {
       it.effect(
         'composes real named Connection calls and a gated Computer command with only selected results returned',
         () =>
