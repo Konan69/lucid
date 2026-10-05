@@ -1,3 +1,4 @@
+import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import { MemoryKind, type PersonId } from '@vivid/contracts'
 import type { AgentFS } from 'agentfs-sdk'
@@ -140,6 +141,10 @@ const open = new Map<string, Promise<AgentFS>>()
  */
 async function openStore(path: string) {
   const { AgentFS: store } = await import('agentfs-sdk')
+  // AgentFS makes directories only for its own default location, not for a path it is given. The
+  // notes directory is required but need not exist yet (a fresh checkout, a new volume), and
+  // without this every note call would fail until someone made it by hand.
+  await NodeFS.promises.mkdir(NodePath.dirname(path), { recursive: true })
   return store.open({ path })
 }
 

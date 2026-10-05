@@ -9,6 +9,7 @@ import {
   Match,
   Option,
   Result,
+  Schedule,
   Schema,
   Semaphore,
   Scope,
@@ -315,6 +316,11 @@ type Persistence = Effect.Success<ReturnType<typeof persistence>>
  * The scope owns the worker; a failed start is persisted, and stale generations cannot be
  * resurrected. A start that only met a provider outage is not a failed start: the Computer goes
  * back to stopped, so the next action or the next Start wakes it once the provider answers.
+ *
+ * One case is left to the provider's own rule. When the outage met the creation of a Person's
+ * first machine, Boat's adapter keeps the unanswered creation as an unresolved intent and reports
+ * it as needing an explicit Start (`boat/lifecycle.ts`, `inspect`): a machine may have been
+ * created and paid for, so it is reconciled by a Person's decision, never by a retry on its own.
  */
 const startMachine = Effect.fn('ComputerStore.boot')(function* (
   machine: typeof Machine.Service,
@@ -655,16 +661,23 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
     timers.delete(person)
     if (timer !== undefined) yield* Fiber.interrupt(timer)
   })
-  /** Recheck stored activity under the action permit before stopping, so an old deadline cannot win a race. */
+  /**
+   * Recheck stored activity under the action permit before stopping, so an old deadline cannot win
+   * a race. Answers whether the deadline is settled: true when the Computer was stopped, had moved
+   * on, or the stop failed for a reason that is recorded; false only when the provider could not
+   * be asked, so that whether the machine stopped is not known and nothing is recorded.
+   */
   const expire = Effect.fn('ComputerStore.expire')(function* (before: Stored) {
     timers.delete(before.personId)
-    yield* state.lock(before.personId).withPermit(
+    return yield* state.lock(before.personId).withPermit(
       Effect.gen(function* () {
         const current = yield* state.rows.load(before.personId)
-        if (Option.isNone(current) || current.value.held || watchers.has(before.personId)) return
-        if (!Stored.isAnyOf(['starting', 'running'])(current.value)) return
-        if (current.value.lastActivityAt !== before.lastActivityAt) return
+        if (Option.isNone(current) || current.value.held || watchers.has(before.personId))
+          return true
+        if (!Stored.isAnyOf(['starting', 'running'])(current.value)) return true
+        if (current.value.lastActivityAt !== before.lastActivityAt) return true
         const result = yield* state.machine.stop(current.value.machine).pipe(Effect.result)
+        if (Result.isFailure(result) && isOutage(result.failure)) return false
         const since = yield* Clock.currentTimeMillis
         const next = Result.match(result, {
           onSuccess: () => ComputerState.cases.Stopped.make({ since }),
@@ -672,10 +685,19 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
             ComputerState.cases.Failed.make({ since, reason: machineFailureReason(failure) }),
         })
         yield* state.rows.update(before.personId, current.value, next)
+        return true
       }),
     )
   })
-  /** Timers use the stored epoch deadline, including immediately overdue Computers after a restart. */
+  /**
+   * Timers use the stored epoch deadline, including immediately overdue Computers after a restart.
+   *
+   * An idle stop the provider could not answer is tried again every minute until it can be, so an
+   * outage at the deadline neither leaves the machine running for good nor records a failure that
+   * would outlive it. A retry is no longer in `timers` (`expire` removes itself before it writes,
+   * or its own write would interrupt it), so it is ended by what `expire` rechecks each time:
+   * activity since, a Person holding the Computer, a watcher, or a state that is no longer running.
+   */
   const arm = Effect.fn('ComputerStore.armIdle')(function* (person: PersonId) {
     yield* cancel(person)
     const row = yield* state.rows.load(person)
@@ -683,8 +705,12 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
     if (!Stored.isAnyOf(['starting', 'running'])(row.value)) return
     const now = yield* Clock.currentTimeMillis
     const delay = Math.max(0, row.value.lastActivityAt + 20 * 60_000 - now)
+    const settle = expire(row.value).pipe(
+      Effect.repeat({ until: (settled) => settled, schedule: Schedule.spaced('1 minute') }),
+    )
     const timer = yield* Effect.sleep(delay).pipe(
-      Effect.andThen(expire(row.value)),
+      Effect.andThen(settle),
+      Effect.asVoid,
       Effect.catch(() => Effect.logError('Computer idle stop could not be persisted.')),
       Effect.forkIn(scope, { startImmediately: false }),
     )

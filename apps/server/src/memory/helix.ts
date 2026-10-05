@@ -1247,6 +1247,15 @@ const bootstrap = Effect.fn('HelixMemory.bootstrap')(function* (
 
 const isIndexMismatch = Schema.is(MemoryIndexMismatch)
 
+/** An absolute `http:` or `https:` address; request paths are appended to it as text. */
+const helixAddress = Schema.String.check(
+  Schema.makeFilter(
+    (value) =>
+      (URL.canParse(value) && /^https?:$/u.test(new URL(value).protocol)) ||
+      'an absolute http or https address',
+  ),
+)
+
 /**
  * No SDK Promise or raw fetch crosses this boundary.
  *
@@ -1273,11 +1282,14 @@ export const helixMemoryLayer = Layer.effect(
   HelixMemory,
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient
-    const url = yield* requiredSetting(
+    // Checked to be an address a request can be sent to. A word that is not one (`helix`) would
+    // pass as text, fail every bootstrap as "unreachable", and leave a server that runs for its
+    // whole life with memory that can never answer: the quiet state this Layer exists to rule out.
+    const url = (yield* requiredSetting(
       'VIVID_HELIX_URL',
-      Schema.NonEmptyString,
-      'the address of the Helix memory service',
-    )
+      helixAddress,
+      'the absolute http or https address of the Helix memory service',
+    )).replace(/\/+$/u, '')
     const dimensions = yield* embeddingDimensions
     const model = yield* embeddingModel
     const ready = yield* Effect.cachedWithTTL(

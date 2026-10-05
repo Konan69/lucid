@@ -14,7 +14,7 @@ import {
   type SkillSummary,
 } from '@vivid/contracts'
 import { SavedProcedures, type ContextSkill } from './snapshots.ts'
-import { catalog, inventory, savedInventory } from './names.ts'
+import { catalog, distinct, inventory, savedInventory } from './names.ts'
 
 /** Dates cross the model boundary in ISO units; null remains genuine domain absence. */
 const date = (value: number | null) => (value === null ? null : new Date(value).toISOString())
@@ -92,6 +92,28 @@ export function memories(items: readonly Memory[]) {
 /** A saved fact needs confirmation, not a reference the model can mutate later. */
 export function remembered(item: Memory) {
   return { ok: true, remembered: modelText(item.content) }
+}
+
+/** Ambiguity exposes distinct statement names, never references, rankings or a selected target. */
+export function memoryChoices(items: readonly Memory[]) {
+  return {
+    ok: false,
+    matches: distinct(items.map((item) => modelText(item.content))),
+    message:
+      items.length === 0
+        ? 'No matching memory was found.'
+        : 'No unique exact match was found. Choose one of these memories; nothing has changed.',
+  }
+}
+
+/** A successful forgetting confirms only the words removed, after the RPC completed. */
+export function forgotten(item: Memory) {
+  return { ok: true, forgot: modelText(item.content) }
+}
+
+/** Version identities stay inside the tool; the model reports the before and after wording. */
+export function corrected(was: Memory, now: Memory) {
+  return { ok: true, corrected: { was: modelText(was.content), now: modelText(now.content) } }
 }
 
 /** Citations are source filenames and page numbers rather than storage references. */

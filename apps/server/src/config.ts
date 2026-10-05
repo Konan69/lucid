@@ -88,6 +88,20 @@ const configError = (variable: string, expected: string) =>
   })
 
 /**
+ * The text of a setting: not empty and with no surrounding spaces. A blank line in an env file, or
+ * a value pasted with a space or a newline, is not a setting: a padded key authenticates nowhere
+ * and a blank model name would be written into stored state before anyone noticed.
+ */
+export const settingText = Schema.String.check(
+  Schema.makeFilter(
+    (value) => (value.length > 0 && value.trim() === value) || 'text with no surrounding spaces',
+  ),
+)
+
+/** A credential read as a setting: the same rule, and never rendered. */
+export const settingSecret = Schema.RedactedFromValue(settingText)
+
+/**
  * A setting the server cannot run without. It is read once, while the server is composed, and its
  * absence or a malformed value stops launch with the variable named. The supplied value is never
  * carried: it may be a credential pasted into the wrong variable.
@@ -133,10 +147,10 @@ const loadDatabaseUrl = Effect.fn('ServerConfig.loadDatabaseUrl')(function* () {
 /** Each of the three is read on its own, so a missing one stops launch under its own name. */
 const loadGoogleOAuth = Effect.fn('ServerConfig.loadGoogleOAuth')(function* () {
   const configuration: GoogleOAuthConfiguration = {
-    clientId: yield* requiredSetting('GOOGLE_CLIENT_ID', nonEmptyString, 'the Google client id'),
+    clientId: yield* requiredSetting('GOOGLE_CLIENT_ID', settingText, 'the Google client id'),
     clientSecret: yield* requiredSetting(
       'GOOGLE_CLIENT_SECRET',
-      Schema.RedactedFromValue(nonEmptyString),
+      settingSecret,
       'the Google client secret',
     ),
     // Google sends the Person back here; it must be the address registered with the client.

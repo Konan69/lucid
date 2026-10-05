@@ -97,6 +97,8 @@ interface EvidenceService {
   readonly states: Ref.Ref<ReadonlyMap<MachineKey, ComputerState>>
   readonly started: Queue.Queue<MachineKey>
   readonly stopped: Queue.Queue<MachineKey>
+  /** Every stop the store asked for, including one the provider could not answer. */
+  readonly stopAttempts: Queue.Queue<MachineKey>
   readonly ensures: Ref.Ref<ReadonlyArray<MachineKey>>
   readonly calls: Ref.Ref<ReadonlyArray<MachineKey>>
   readonly decisions: Ref.Ref<GateDecision>
@@ -122,6 +124,7 @@ const evidenceLayer = Layer.effect(
       commandResult: yield* Ref.make({ exitCode: 0, output: 'hello', truncated: false }),
       started: yield* Queue.unbounded<MachineKey>(),
       stopped: yield* Queue.unbounded<MachineKey>(),
+      stopAttempts: yield* Queue.unbounded<MachineKey>(),
       ensures: yield* Ref.make<ReadonlyArray<MachineKey>>([]),
       states: yield* Ref.make<ReadonlyMap<MachineKey, ComputerState>>(new Map()),
       calls: yield* Ref.make<ReadonlyArray<MachineKey>>([]),
@@ -176,6 +179,7 @@ const providerLayer = Layer.effect(
       return state
     })
     const stop = Effect.fn('Computer.test.stop')(function* (key: MachineKey) {
+      yield* Queue.offer(evidence.stopAttempts, key)
       yield* answering()
       yield* Queue.offer(evidence.stopped, key)
       yield* Ref.update(evidence.states, (states) =>
@@ -1808,6 +1812,31 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         expect((yield* store.exec(first.id, request)).exitCode).toBe(0)
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     15000,
+  )
+  it.effect('an idle stop that met an outage records nothing and is tried again', () =>
+    Effect.gen(function* () {
+      const { first } = yield* fixture()
+      const database = yield* Database
+      const store = yield* ComputerStore
+      const evidence = yield* ProviderEvidence
+      const key = computerMachineKey(first.id)
+      const status = database
+        .run(database.select().from(computers).where(eq(computers.personId, first.id)))
+        .pipe(Effect.map((rows) => rows.map((row) => [row.status, row.reason])))
+      expect((yield* store.exec(first.id, request)).exitCode).toBe(0)
+      // The provider is down at the moment the idle deadline passes.
+      yield* Ref.set(evidence.outage, true)
+      yield* TestClock.adjust('20 minutes')
+      // The stop was asked for and the provider could not answer: nothing is written.
+      expect(yield* Queue.take(evidence.stopAttempts)).toBe(key)
+      expect(yield* status).toEqual([['running', null]])
+      // The provider answers again, and the stop is tried a minute later without anyone
+      // touching the Computer.
+      yield* Ref.set(evidence.outage, false)
+      yield* TestClock.adjust('1 minute')
+      expect(yield* Queue.take(evidence.stopped)).toBe(key)
+      expect((yield* store.get(first.id)).state._tag).toBe('Stopped')
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
   it.effect(
     'a start that met an outage leaves the Computer stopped, so the next action wakes it',

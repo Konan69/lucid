@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
-import { optionalSetting } from '../config.ts'
+import { optionalSetting, settingText } from '../config.ts'
 import {
   modelGatewayKey,
   ProviderMalformed,
@@ -138,7 +138,7 @@ export const memoryModelLayer = Layer.effect(
     const client = yield* HttpClient.HttpClient
     const key = yield* modelGatewayKey
     const model = Option.getOrElse(
-      yield* optionalSetting('VIVID_MEMORY_MODEL', Schema.NonEmptyString, 'a model name'),
+      yield* optionalSetting('VIVID_MEMORY_MODEL', settingText, 'a model name'),
       () => 'glm-5.3-flash',
     )
     return MemoryModel.of({

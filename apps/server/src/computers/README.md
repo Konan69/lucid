@@ -38,11 +38,6 @@ response context; absent machines and failed probes make no installed-app claim.
 
 Opt-in live proofs use `VIVID_TEST_BOAT_LIVE=1` and `VIVID_LIVE_THREAD_COMPUTER=1`, respectively.
 Database authority must come from `VIVID_TEST_DATABASE_URL` for an isolated disposable database.
-
-The Thread proof (`thread.live.test.ts`) never creates or deletes a machine. It signs in as the
-standing proof account (`VIVID_PROOF_EMAIL`, `VIVID_PROOF_PASSWORD`, read from the environment at
-run time), whose durable binding resolves to a machine that already exists, refuses to run when
-that account has no binding, and turns the Computer off again through `StopComputer`. The adapter
-proof (`boat.live.test.ts`) does create a fixture machine: it registers cleanup before creation and
-deletes only its captured provider id using Boat's exact-id confirmation header. Owner machines are
-never fixtures.
+Fixture cleanup registers before creation and deletes only its captured provider id using Boat's
+exact-id confirmation header. Owner machines are never fixtures: do not run either proof with
+`VIVID_BOAT_MACHINE` set, because the bound machine would then be the adopted one.

@@ -25,14 +25,15 @@ const Receipt = Schema.Struct({ submissionId: RunId })
 const cleanupFailed = () => Effect.sync(() => expect.fail('Thread proof cleanup failed'))
 export const chainLayer = Layer.mergeAll(testDatabaseLayer, NodeHttpClient.layerUndici)
 
-/**
- * Where a proof runs. A mismatched server and database is rejected before any account is touched
- * or any model request is sent: this is an equality guard only, never a fallback connection, so
- * the running stack cannot write a fixture into a different night database.
+/** One real signup and its cookie-authenticated product client. Cleanup is registered before
+ * signup and uses only the supplied night test database. A mismatched server/database is rejected
+ * before sending any model request. Cookies and network diagnostics never enter logs.
  */
-const chainStack = Effect.fn('ThreadProof.stack')(function* () {
+const chainPerson = Effect.fn('ThreadProof.person')(function* () {
   const target = new URL(Redacted.value(yield* Config.Redacted('VIVID_TEST_DATABASE_URL')))
   expect(target.port, 'Proofs require the disposable night PostgreSQL port').toBe('55440')
+  // This is an equality guard only, never a fallback connection. Check before creating a
+  // Person so the running stack cannot write a fixture into a different night database.
   const configured = new URL(Redacted.value(yield* Config.Redacted('DATABASE_URL')))
   expect(
     configured.host === target.host && configured.pathname === target.pathname,
@@ -43,50 +44,6 @@ const chainStack = Effect.fn('ThreadProof.stack')(function* () {
   const model = yield* Config.NonEmptyString('VIVID_MODEL')
   expect(model.startsWith('rehearsal/'), 'A real model is required').toBe(false)
   yield* Config.Redacted('EXPLABS_API_KEY')
-  return { server, origin }
-})
-
-/**
- * The cookie-authenticated product client of whoever the auth answer names. The answer is Better
- * Auth's for both sign-up and sign-in; cookies and network diagnostics never enter logs.
- */
-const chainClient = Effect.fn('ThreadProof.client')(function* (
-  stack: Effect.Success<ReturnType<typeof chainStack>>,
-  input: { readonly path: string; readonly body: Schema.Json },
-) {
-  const http = yield* HttpClient.HttpClient
-  const request = yield* HttpClientRequest.bodyJson(
-    HttpClientRequest.post(new URL(input.path, stack.server)).pipe(
-      HttpClientRequest.setHeader('origin', stack.origin.origin),
-    ),
-    input.body,
-  )
-  const response = yield* http
-    .execute(request)
-    .pipe(
-      Effect.mapError(() =>
-        RuntimeUnavailable.make({ message: 'Proof account could not be reached' }),
-      ),
-    )
-  expect(response.status).toBe(200)
-  const { user } = yield* HttpClientResponse.schemaBodyJson(Account)(response)
-  const cookie = Object.values(response.cookies.cookies)
-    .map((entry) => `${entry.name}=${entry.valueEncoded}`)
-    .join('; ')
-  expect(cookie.length).toBeGreaterThan(0)
-  const rpcContext = yield* Layer.build(
-    VividRpcClient.layer({
-      url: new URL('/api/rpc', stack.server).href,
-      headers: { cookie, origin: stack.origin.origin },
-    }).pipe(Layer.provide(NodeHttpClient.layerUndici)),
-  )
-  const rpc = yield* VividRpcClient.pipe(Effect.provideContext(rpcContext))
-  return { personId: user.id, rpc, server: stack.server, origin: stack.origin, cookie }
-})
-
-/** One real signup. Cleanup is registered before signup and uses only the supplied night test database. */
-const chainPerson = Effect.fn('ThreadProof.person')(function* () {
-  const stack = yield* chainStack()
   const database = yield* Database
   const email = `${NodeCrypto.randomUUID()}@example.test`
   yield* Effect.addFinalizer(() =>
@@ -94,34 +51,41 @@ const chainPerson = Effect.fn('ThreadProof.person')(function* () {
       .run(database.delete(personTable).where(eq(personTable.email, email)))
       .pipe(Effect.asVoid, Effect.catch(cleanupFailed)),
   )
-  const person = yield* chainClient(stack, {
-    path: '/api/auth/sign-up/email',
-    body: { email, name: 'Thread proof', password: `Proof!${NodeCrypto.randomUUID()}` },
-  })
+  const http = yield* HttpClient.HttpClient
+  const request = yield* HttpClientRequest.bodyJson(
+    HttpClientRequest.post(new URL('/api/auth/sign-up/email', server)).pipe(
+      HttpClientRequest.setHeader('origin', origin.origin),
+    ),
+    { email, name: 'Thread proof', password: `Proof!${NodeCrypto.randomUUID()}` },
+  )
+  const response = yield* http
+    .execute(request)
+    .pipe(
+      Effect.mapError(() =>
+        RuntimeUnavailable.make({ message: 'Proof signup could not be reached' }),
+      ),
+    )
+  expect(response.status).toBe(200)
+  const { user } = yield* HttpClientResponse.schemaBodyJson(Account)(response)
   const saved = yield* database.run(
     database.select({ id: personTable.id }).from(personTable).where(eq(personTable.email, email)),
   )
   expect(
     saved.map((row) => row.id),
     'The server must use the supplied test database',
-  ).toEqual([person.personId])
-  return person
-})
-
-/**
- * The standing proof account, signed in and never created or removed here. A Computer proof must
- * use it: a new Person has no Computer, so a signup would have a new machine made for it, while
- * this account's durable binding resolves to the machine that already exists. Its email and
- * password are read from the environment at run time and are never written into a file.
- */
-const chainAccount = Effect.fn('ThreadProof.account')(function* () {
-  const stack = yield* chainStack()
-  const email = yield* Config.NonEmptyString('VIVID_PROOF_EMAIL')
-  const password = yield* Config.Redacted('VIVID_PROOF_PASSWORD')
-  return yield* chainClient(stack, {
-    path: '/api/auth/sign-in/email',
-    body: { email, password: Redacted.value(password) },
-  })
+  ).toEqual([user.id])
+  const cookie = Object.values(response.cookies.cookies)
+    .map((entry) => `${entry.name}=${entry.valueEncoded}`)
+    .join('; ')
+  expect(cookie.length).toBeGreaterThan(0)
+  const rpcContext = yield* Layer.build(
+    VividRpcClient.layer({
+      url: new URL('/api/rpc', server).href,
+      headers: { cookie, origin: origin.origin },
+    }).pipe(Layer.provide(NodeHttpClient.layerUndici)),
+  )
+  const rpc = yield* VividRpcClient.pipe(Effect.provideContext(rpcContext))
+  return { personId: user.id, rpc, server, origin, cookie }
 })
 type ChainPerson = Effect.Success<ReturnType<typeof chainPerson>>
 
@@ -165,20 +129,6 @@ export const chainFixture = Effect.fn('ThreadProof.fixture')(function* (title: s
   return yield* chainThread(person, threadId)
 })
 export type ChainFixture = Effect.Success<ReturnType<typeof chainFixture>>
-
-/**
- * The standing proof account with one new private Thread. The account stays; only the Thread is
- * this proof's, and it is removed afterwards through the product's own `DeleteThread`.
- */
-export const chainStanding = Effect.fn('ThreadProof.standing')(function* (title: string) {
-  const person = yield* chainAccount()
-  const threadId = ThreadId.make(NodeCrypto.randomUUID())
-  yield* Effect.addFinalizer(() =>
-    person.rpc.DeleteThread({ id: threadId }).pipe(Effect.asVoid, Effect.catch(cleanupFailed)),
-  )
-  yield* person.rpc.CreateThread({ id: threadId, title, projectId: null })
-  return yield* chainThread(person, threadId)
-})
 
 /**
  * A Person who has just arrived. They start nothing: the server opens their first Thread and

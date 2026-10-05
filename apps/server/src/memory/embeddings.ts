@@ -12,7 +12,7 @@ import {
   Schema,
 } from 'effect'
 import { HttpClient, HttpClientRequest, HttpClientResponse, Headers } from 'effect/unstable/http'
-import { optionalSetting, requiredSetting } from '../config.ts'
+import { optionalSetting, requiredSetting, settingSecret, settingText } from '../config.ts'
 
 /**
  * The model gateway's key. Memory embeds through the gateway and the background model (Thread
@@ -21,7 +21,7 @@ import { optionalSetting, requiredSetting } from '../config.ts'
  */
 export const modelGatewayKey = requiredSetting(
   'EXPLABS_API_KEY',
-  Schema.RedactedFromValue(Schema.NonEmptyString),
+  settingSecret,
   'the model gateway key',
 )
 
@@ -36,7 +36,7 @@ export const embeddingDimensions = optionalSetting(
 ).pipe(Effect.map(Option.getOrElse(() => 1536)))
 export const embeddingModel = optionalSetting(
   'VIVID_EMBEDDING_MODEL',
-  Schema.NonEmptyString,
+  settingText,
   'a model name',
 ).pipe(Effect.map(Option.getOrElse(() => 'text-embedding-3-small')))
 

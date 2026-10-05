@@ -75,6 +75,19 @@ describe('Memory readiness', () => {
     ),
   )
 
+  it.effect.each(['helix', 'vivid-helix.railway.internal:8080', 'ftp://helix.invalid', ' '])(
+    'refuses to compose with an address no request can be sent to (%s)',
+    (address) =>
+      Effect.gen(function* () {
+        const failure = yield* Layer.build(helixMemoryLayer).pipe(Effect.scoped, Effect.flip)
+        expect(failure).toMatchObject({ _tag: 'ConfigurationError', variable: 'VIVID_HELIX_URL' })
+      }).pipe(
+        Effect.provide(helixClient),
+        Effect.provide(standInLayer),
+        Effect.provide(settings({ VIVID_HELIX_URL: address })),
+      ),
+  )
+
   it.effect(
     'fails the call while Helix is down and works on the next call once it answers, with nothing rebuilt',
     () =>

@@ -10,7 +10,7 @@ import {
   MachineUnreachable,
   type MachineKey,
 } from '../machine.ts'
-import { optionalSetting, requiredSetting } from '../../config.ts'
+import { optionalSetting, requiredSetting, settingSecret, settingText } from '../../config.ts'
 import * as Protocol from './protocol.ts'
 
 const Request = Schema.TaggedUnion({
@@ -40,10 +40,10 @@ const decodeError = HttpClientResponse.schemaBodyJson(Protocol.ErrorReply)
 export const boatConfiguration = Effect.fn('Machine.boat.configuration')(function* () {
   const key = yield* requiredSetting(
     'VIVID_BOAT_API_KEY',
-    Schema.RedactedFromValue(Schema.NonEmptyString),
+    settingSecret,
     'the Boat API key',
   )
-  const org = yield* optionalSetting('VIVID_BOAT_ORG', Schema.NonEmptyString, 'a Boat organization')
+  const org = yield* optionalSetting('VIVID_BOAT_ORG', settingText, 'a Boat organization')
   const template = yield* requiredSetting(
     'VIVID_BOAT_TEMPLATE',
     Protocol.TemplateName,
@@ -131,6 +131,12 @@ const requests = (
         )
         .pipe(Effect.mapError(() => new MachineUnreachable()))
       if (response.status < 200 || response.status >= 300) {
+        // A 5xx is the provider failing, and its body is whatever an edge in front of it sent:
+        // HTML, nothing, half a document. The status alone says it is an outage, so it is
+        // classified before the body is read; decoding first turned such an answer into an
+        // invalid response, which is recorded as the machine's state where an outage is not.
+        if (response.status >= 500)
+          return yield* Effect.fail(new MachineRequestRejected({ status: response.status }))
         yield* decodeError(response).pipe(
           Effect.mapError(() => new MachineResponseInvalid({ operation: 'error' })),
         )

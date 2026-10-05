@@ -27,10 +27,11 @@ describe('Computer provider settings', () => {
         const failure = yield* reading(rest).pipe(Effect.flip)
         expect(failure).toBeInstanceOf(ConfigurationError)
         expect(failure.variable).toBe(missing)
-        // A blank line in an env file is not a setting either.
-        expect((yield* reading({ ...complete, [missing]: '' }).pipe(Effect.flip)).variable).toBe(
-          missing,
-        )
+        // A blank line in an env file is not a setting either, and neither is a padded paste.
+        for (const value of ['', '   ', ` ${complete[missing]}\n`])
+          expect(
+            (yield* reading({ ...complete, [missing]: value }).pipe(Effect.flip)).variable,
+          ).toBe(missing)
       }),
   )
 

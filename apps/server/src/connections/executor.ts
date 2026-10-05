@@ -31,7 +31,7 @@ import type * as HttpBody from 'effect/unstable/http/HttpBody'
 
 import { toolRejectionMessage, validationProblems } from './message.ts'
 import { retainCatalog } from './catalog.ts'
-import { requiredSetting } from '../config.ts'
+import { requiredSetting, settingSecret } from '../config.ts'
 import { ConnectionSource } from './address.ts'
 import { keyedFiles, KeyedTransport } from './keyed.ts'
 import { keyedService, keyedAddress, personalKeyAuthorization } from './curation.ts'
@@ -2318,7 +2318,7 @@ export const executorLayer = Layer.effect(
     // The bearer credential for that address; without it every Executor call is refused.
     const key = yield* requiredSetting(
       'VIVID_EXECUTOR_KEY',
-      Schema.RedactedFromValue(Schema.NonEmptyString),
+      settingSecret,
       'the Executor API key',
     )
     // Every request path is scoped to one Executor organization; there is no default one.
