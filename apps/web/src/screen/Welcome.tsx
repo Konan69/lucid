@@ -74,8 +74,8 @@ type Busy = 'none' | 'email' | 'google'
  * How Google sign-in happens in this window (`Way`). In a browser the page leaves for Google and
  * comes back signed in. In the desktop app it cannot, because Google refuses to sign anyone in
  * inside an embedded window, so the same button opens their system browser on Google and this
- * window waits for the account they choose there (`data/handoff.ts`). A desktop app too old to
- * do that offers no button at all, and says what would bring it.
+ * window waits for the account they choose there (`data/handoff.ts`). A desktop app whose shell
+ * cannot do that offers no button at all, and the form is the way in.
  */
 const GOOGLE = googleHandoff.way
 const GOOGLE_HERE = Way.$is('Browser')(GOOGLE)
@@ -290,17 +290,12 @@ export function Welcome({ returnTo }: { returnTo: string }) {
 }
 
 /**
- * Google, under the form: the button, or in a desktop app too old to hand the Person to a
- * browser, one line saying what would bring it. A button that cannot work is not offered.
+ * Google, under the form. A desktop app whose shell cannot hand the Person to a browser
+ * (`Way.Unable`) draws nothing here and says nothing in its place: a button that cannot work is
+ * not offered, and the form above is the way in.
  */
 function GoogleChoice(props: Parameters<typeof GoogleWay>[0]) {
-  return Way.$is('Outdated')(GOOGLE) ? (
-    <p className="text-center text-label text-pretty text-ink-3">
-      Update Vivid to sign in with Google here.
-    </p>
-  ) : (
-    <GoogleWay {...props} />
-  )
+  return Way.$is('Unable')(GOOGLE) ? null : <GoogleWay {...props} />
 }
 
 /**

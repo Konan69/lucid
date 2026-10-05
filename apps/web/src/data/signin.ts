@@ -28,14 +28,15 @@ import { googleAddresses } from './google'
  *
  * - `Browser`: an ordinary browser tab. Google sign-in is a redirect, and none of this runs.
  * - `Shell`: the desktop app, with the capability to sign in through the system browser.
- * - `Outdated`: a desktop app installed before that capability existed. Its window still cannot
+ * - `Unable`: a desktop app whose shell does not have that capability. Its window still cannot
  *   run Google's sign-in and has no way to hand the Person to a browser, so Google is not offered
- *   there at all: a button that cannot work is worse than a line that says to update.
+ *   there and nothing is said in its place: a button that cannot work is not drawn, and the email
+ *   form is the way in.
  */
 export type Way = Data.TaggedEnum<{
   Browser: {}
   Shell: { readonly signIn: VividSignInBridge }
-  Outdated: {}
+  Unable: {}
 }>
 export const Way = Data.taggedEnum<Way>()
 
@@ -71,7 +72,7 @@ export const wayIn = (bridge: Option.Option<unknown>): Way =>
     onNone: () => Way.Browser(),
     onSome: (shell) =>
       Option.match(decodeCapability(shell), {
-        onNone: () => Way.Outdated(),
+        onNone: () => Way.Unable(),
         onSome: ({ signIn }) => Way.Shell({ signIn }),
       }),
   })
@@ -151,7 +152,7 @@ export type Why = 'failed' | 'expired' | 'refused' | 'unreachable'
  *
  * - `Opening`: the shell has been asked to begin and has not answered yet.
  * - `Waiting`: the shell is listening for the browser. `browser` says whether the system browser
- *   opened, so one that did not is seen and can be opened again.
+ *   opened, so one that did not is seen and the card offers to open it.
  * - `Finishing`: the browser came back with a code, and it is being traded for a session.
  * - `Ended`: it will not complete. A code is good once, so there is no step to try again; the
  *   only way forward is a new attempt.
@@ -275,9 +276,10 @@ export const handOff = (way: Handoff): Effect.Effect<void> =>
   }).pipe(Effect.catch(() => way.show(Handing.Ended({ why: 'refused' }))))
 
 /**
- * Asks the shell to open the browser again for the attempt in progress, and answers whether it
- * did. An answer that cannot be read counts as a browser that did not open: the attempt is still
- * running in the shell, and the card's next step for the Person is the same, to open it again.
+ * Asks the shell to open the browser for the attempt in progress, after it did not open, and
+ * answers whether it did this time. An answer that cannot be read counts as a browser that did
+ * not open: the attempt is still running in the shell, and the card's next step for the Person
+ * is the same, to open it.
  */
 export const reopening = (
   reopen: Effect.Effect<SignInBrowser, ShellUnreadable>,
@@ -300,7 +302,7 @@ export const waitingOn = (shown: Shown, attempt: number): boolean =>
   Handing.$is('Waiting')(shown.state.value)
 
 /**
- * The screen after the shell answered a request to open the browser again. It changes only a card
+ * The screen after the shell answered a request to reopen the browser. It changes only a card
  * still waiting on the attempt the request was made under. A code that arrived while the browser
  * was opening has already moved the card on, and "the browser opened" must not be painted over
  * that; nor over the form after a cancel, or over a later attempt. Otherwise it is handed back as
