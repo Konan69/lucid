@@ -26,6 +26,11 @@ const load = Effect.fn('Computer.load')(function* (actor: Actor) {
   return ComputerResponse.make({ computer: yield* store.get(actor.person.id) })
 })
 
+/** One-shot and live callers receive the same Person-owned list, including current presence. */
+const loadDevices = Effect.fn('Computer.loadDevices')(function* (actor: Pick<Actor, 'person'>) {
+  return DeviceListResponse.make({ devices: yield* (yield* DeviceRegistry).list(actor.person.id) })
+})
+
 /** The calling Person's computers, wrapped for the wire. */
 const one = (device: Device) => DeviceResponse.make({ device })
 
@@ -46,11 +51,10 @@ export const computerHandlers = {
     return one(device)
   }),
   ListDevices: Effect.fn('Rpc.ListDevices')(function* () {
-    const auth = yield* requirePerson()
-    return DeviceListResponse.make({
-      devices: yield* (yield* DeviceRegistry).list(auth.person.id),
-    })
+    return yield* loadDevices(yield* requirePerson())
   }),
+  /** Resolve session authority again on every change, as for the other live product lists. */
+  WatchDevices: () => live(loadDevices),
   AllowDevice: Effect.fn('Rpc.AllowDevice')(function* ({ id }: { readonly id: DeviceId }) {
     const auth = yield* requirePerson()
     const device = yield* (yield* DeviceRegistry).allow(auth.person.id, id)
@@ -72,12 +76,16 @@ export const computerHandlers = {
     Stream.unwrap(
       Effect.gen(function* () {
         const auth = yield* requirePerson()
+        // Registered before registry.watch, so its LIFO release removes presence before the
+        // offline announcement. This also covers expiry, sign-out, revocation and replacement.
+        yield* Effect.addFinalizer(() => changed(auth))
         const requests = yield* (yield* DeviceRegistry).watch({
           personId: auth.person.id,
           sessionId: auth.sessionId,
           device: request.device,
           installation: request.installation,
         })
+        yield* changed(auth)
         return requests.pipe(Stream.interruptWhen(sessionEnded(auth.person.id, auth.sessionId)))
       }),
     ),

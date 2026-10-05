@@ -751,6 +751,8 @@ const EnrolDevice = Rpc.make('EnrolDevice', {
   success: DeviceResponse,
 })
 const ListDevices = Rpc.make('ListDevices', { ...call, success: DeviceListResponse })
+/** The same owned list, kept current as access and desktop presence change on any device. */
+const WatchDevices = Rpc.make('WatchDevices', { ...live, success: DeviceListResponse })
 /** Lets Vivid use this computer and, in the same step, no other computer of this Person. */
 const AllowDevice = Rpc.make('AllowDevice', {
   ...call,
@@ -926,6 +928,7 @@ export const VividRpc = RpcGroup.make(
   DisconnectChannel,
   EnrolDevice,
   ListDevices,
+  WatchDevices,
   AllowDevice,
   RevokeDevice,
   WatchDeviceRequests,
