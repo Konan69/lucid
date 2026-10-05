@@ -207,7 +207,7 @@ describe('what the shell hands over is not trusted', () => {
             ended: Effect.succeed(SignInEnding.cases.Granted.make(values)),
             trade: Effect.succeed({ arrival: 'returning' }),
           })
-          // Never "You are in": the card goes from waiting straight to the refusal.
+          // Never "Signing you in…": the card goes from waiting straight to the refusal.
           expect(yield* did).toEqual([...opened, 'show Ended refused'])
         }
       }),

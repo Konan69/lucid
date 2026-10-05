@@ -160,6 +160,7 @@ describe('desktop Google sign-in', () => {
       expect(page.headers.get('referrer-policy')).toBe('no-referrer')
       expect(page.body).toContain('<h1>You are in.</h1>')
       expect(page.body).toContain('<p>Go back to Vivid. You can close this tab.</p>')
+      expect(page.body).toContain('transform:rotate(4deg)')
       expect(page.body).not.toContain(code)
       // Self-contained: no script, and nothing it would have to fetch.
       expect(page.body).not.toMatch(/<script|<link|<img|url\(|@import|https?:/u)
@@ -251,11 +252,14 @@ describe('desktop Google sign-in', () => {
       const page = yield* get(`${start.loopback}/done`)
       expect(page.body).toContain('<h1>Google sign-in did not finish.</h1>')
       expect(page.body).toContain('<p>Go back to Vivid and try again.</p>')
+      // The same face, level: it leans only when the Person is in.
+      expect(page.body).toContain('<svg class="face"')
+      expect(page.body).toContain('transform:rotate(0deg)')
       expect(yield* Effect.flip(get(start.loopback))).toBeInstanceOf(NothingListening)
     }),
   )
 
-  it.effect('the page is the app’s own page and ink, in the browser’s light and dark', () =>
+  it.effect('the page is the app’s own page, ink and face, in the browser’s light and dark', () =>
     Effect.gen(function* () {
       const { signIn, seen } = yield* fixture(chosen)
       const surfaces = yield* loadThemeSurfaces(shipped)
@@ -266,6 +270,17 @@ describe('desktop Google sign-in', () => {
       const [light, dark] = body.split('@media (prefers-color-scheme:dark)')
       expect(light).toContain(`--page:${surfaces.light};--ink:${surfaces.inkBase.light}`)
       expect(dark).toContain(`--page:${surfaces.dark};--ink:${surfaces.inkBase.dark}`)
+      // Vivid's face is on the page, drawn in the page itself and painted in the app's accent for
+      // each scheme. The scheme's own block is what sets the fill, so neither borrows the other's.
+      expect(light).toContain(`--face:${surfaces.face.light};--eye:${surfaces.face.eye}`)
+      expect(dark).toContain(`--face:${surfaces.face.dark}`)
+      expect(surfaces.face.dark).not.toBe(surfaces.face.light)
+      expect(body).toContain('.face{')
+      expect(body).toContain('background:var(--face)')
+      expect(body).toContain('fill:var(--eye)')
+      // It comes before the heading and is decoration to a screen reader.
+      expect(body).toMatch(/<main><svg class="face" aria-hidden="true"[^>]*>.*<\/svg><h1>/u)
+      expect(body).toContain('<title>Vivid</title>')
     }),
   )
 

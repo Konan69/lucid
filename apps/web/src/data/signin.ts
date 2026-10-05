@@ -183,7 +183,7 @@ export interface Handoff {
 /**
  * How long the trade may take. It is one small request to the server this window was loaded
  * from, so a quarter of a minute without an answer means it is not coming; the card then says so
- * instead of resting on "You are in" over a window that is not.
+ * instead of resting on "Signing you in…" over a window that never is.
  */
 export const TRADE_WITHIN = Duration.seconds(15)
 
@@ -224,8 +224,8 @@ export const endingSaid = (ask: Asking): Effect.Effect<SignInEnding, ShellUnread
  *
  * The three values are text the shell passed across the bridge, known so far only not to be
  * empty, so they are decoded with the contract's own schema before anything is sent or shown.
- * Values that do not decode never reach the server, and the card never says "You are in" for
- * them.
+ * Values that do not decode never reach the server, and the card never says it is signing the
+ * Person in for them.
  */
 const finishing = (way: Handoff, handed: typeof SignInEnding.cases.Granted.Type) =>
   decodeTrade(handed).pipe(
