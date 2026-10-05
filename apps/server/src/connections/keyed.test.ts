@@ -13,9 +13,9 @@ it('generates keyed source that runs with public metadata as data, never as code
   const source = files.find((file) => file.path === 'index.ts')
   if (source === undefined) return expect.fail('Missing MCP source')
   expect(source.content).not.toMatch(/[\u2028\u2029]/u)
-  const seen: Array<unknown> = []
+  const seen: Array<{ readonly name: string; readonly hosts: ReadonlyArray<string> }> = []
   const context = NodeVM.createContext({
-    defineProvider: (provider: unknown) => seen.push(provider),
+    defineProvider: (provider: (typeof seen)[number]) => seen.push(provider),
     defineApp: () => undefined,
     secrets: () => undefined,
     object: () => undefined,
