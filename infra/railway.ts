@@ -56,6 +56,40 @@ const googleAccess = (environment: InfrastructureEnvironment) =>
   )
 
 /**
+ * The server reaches Executor over the private mesh with a key minted on that Executor. Until
+ * the key exists the three settings are absent together and Integrations are off; a URL without
+ * its key and organization would stop the server at launch.
+ */
+const executorAccess = (environment: InfrastructureEnvironment) =>
+  Option.match(environment.executor, {
+    onNone: () => ({}),
+    onSome: ({ key, organization }) => ({
+      VIVID_EXECUTOR_URL: privateUrl(serviceNames.executor, ports.executor),
+      VIVID_EXECUTOR_KEY: key,
+      VIVID_EXECUTOR_ORGANIZATION: organization,
+      /** Lets a Person add an Integration by address; true only with the Executor settings above. */
+      VIVID_EXECUTOR_PUBLIC_ONLY: 'true',
+    }),
+  })
+
+/**
+ * Telemetry export is one atomic pair, absent until a backend exists. With it go the two names
+ * the exported resource carries. Railway resolves both references at deploy time; it sets
+ * `RAILWAY_GIT_COMMIT_SHA` only for a deployment built from a commit, and the server reads an
+ * empty value as absent.
+ */
+const observabilityAccess = (environment: InfrastructureEnvironment) =>
+  Option.match(environment.observability, {
+    onNone: () => ({}),
+    onSome: ({ url, headers }) => ({
+      VIVID_OTLP_URL: url,
+      VIVID_OTLP_HEADERS: headers,
+      VIVID_ENVIRONMENT: '${{RAILWAY_ENVIRONMENT_NAME}}',
+      VIVID_COMMIT: '${{RAILWAY_GIT_COMMIT_SHA}}',
+    }),
+  })
+
+/**
  * The hosted product on Railway: PostgreSQL, the Flue runtime on the private mesh, and the
  * application server as the only public service. The server serves the built web app itself
  * (`VIVID_WEB_DIST`, set in `apps/server/Dockerfile`), so web, `/api` and WebSockets share one
@@ -156,42 +190,10 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
   })
   yield* Railway.Volume('ExecutorData', { project, service: executor, mountPath: '/app/data' })
 
-  /**
-   * The server reaches Executor over the private mesh with a key minted on that Executor. Until
-   * the key exists the three settings are absent together and Integrations are off; a URL without
-   * its key and organization would stop the server at launch.
-   */
-  const executorAccess = Option.match(environment.executor, {
-    onNone: () => ({}),
-    onSome: ({ key, organization }) => ({
-      VIVID_EXECUTOR_URL: privateUrl(serviceNames.executor, ports.executor),
-      VIVID_EXECUTOR_KEY: key,
-      VIVID_EXECUTOR_ORGANIZATION: organization,
-      /** Lets a Person add an Integration by address; true only with the Executor settings above. */
-      VIVID_EXECUTOR_PUBLIC_ONLY: 'true',
-    }),
-  })
-
   /** Sent only when the deploy sets it; otherwise the server keeps its default (off). */
   const decisionAccess = Option.match(environment.decisions, {
     onNone: () => ({}),
     onSome: (value) => ({ VIVID_DECISIONS: value }),
-  })
-
-  /**
-   * Telemetry export is one atomic pair, absent until a backend exists. With it go the two names
-   * the exported resource carries. Railway resolves both references at deploy time; it sets
-   * `RAILWAY_GIT_COMMIT_SHA` only for a deployment built from a commit, and the server reads an
-   * empty value as absent.
-   */
-  const observabilityAccess = Option.match(environment.observability, {
-    onNone: () => ({}),
-    onSome: ({ url, headers }) => ({
-      VIVID_OTLP_URL: url,
-      VIVID_OTLP_HEADERS: headers,
-      VIVID_ENVIRONMENT: '${{RAILWAY_ENVIRONMENT_NAME}}',
-      VIVID_COMMIT: '${{RAILWAY_GIT_COMMIT_SHA}}',
-    }),
   })
 
   /**
@@ -266,9 +268,9 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
       EXPLABS_API_KEY: environment.modelGatewayKey,
       VIVID_HELIX_URL: privateUrl(serviceNames.helix, ports.helix),
-      ...executorAccess,
+      ...executorAccess(environment),
       ...decisionAccess,
-      ...observabilityAccess,
+      ...observabilityAccess(environment),
       ...googleAccess(environment),
       /** Where `apps/server/Dockerfile` leaves the built web app; the server serves it itself. */
       VIVID_WEB_DIST: '/app/apps/web/dist',
