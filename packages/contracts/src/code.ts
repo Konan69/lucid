@@ -26,10 +26,10 @@ export const CodeToolNames = Schema.Struct({
  * Asking for one tool at a time costs a round trip through the model for every step, and every
  * intermediate result passes through its context. A program calls the same tools Vivid already
  * has (the Person's Connections, their Computer), keeps what it reads to itself, and answers with
- * only what it chose to return. It is JavaScript run in an isolated interpreter that holds no
+ * only what it chose to return. It is JavaScript run on the Person's Computer. It holds no
  * credentials and names nothing by identifier: each call it makes is checked on the server, as the
- * Person the Run is for, exactly as if Vivid had asked for it alone. The design follows the code
- * mode of the pi coding agent and of Executor.
+ * Person the Run is for, exactly as if Vivid had asked for it alone. What a program sees (`tools`,
+ * `accounts`, an async function body) follows the code mode of the pi coding agent and of Executor.
  */
 export const RunCodeRequest = Schema.Struct({
   code: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(16_384)),
@@ -67,12 +67,13 @@ export interface CodeCall extends Schema.Schema.Type<typeof CodeCall> {}
 
 /** Why a program did not run to its end. Each is handled differently, so each has its own tag. */
 export const CodeFailure = Schema.TaggedUnion({
-  /** The program is not valid JavaScript, or threw. `message` is the interpreter's, bounded. */
+  /** The program is not valid JavaScript, or threw. `message` is the error's own, bounded. */
   Threw: { message: Schema.String },
   TimedOut: { seconds: Schema.Number },
   /** It used more memory, made more calls or returned more than a program may. */
   OverLimit: { limit: Schema.Literals(['memory', 'calls', 'data', 'result'] as const) },
-  /** Programs cannot be run on this installation right now. */
+  /** The Person's Computer could not run the program right now: it did not start, the Person is
+   * using it, or its provider is not answering. Nothing of the program ran. */
   Unavailable: {},
 })
 export type CodeFailure = typeof CodeFailure.Type

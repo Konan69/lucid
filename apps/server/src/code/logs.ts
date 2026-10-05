@@ -1,6 +1,5 @@
-import type { CodemodeOutputItem } from '@earendil-works/pi-codemode'
 import { CodeLogs } from '@vivid/contracts/code'
-import { budgets, bytes } from './budgets.ts'
+import { bytes } from './budgets.ts'
 
 /** Keep a UTF-8 prefix on code-point boundaries, including JSON escaping in the printed-line budget. */
 export function encodedPrefix(line: string, maximum: number) {
@@ -13,16 +12,6 @@ export function encodedPrefix(line: string, maximum: number) {
     prefix += character
   }
   return prefix
-}
-
-/**
- * Pi README/Results and runtime/host.js/Execution preserve ordered text on failures as well.
- * Bound the encoded array to 8 KiB (including empty lines/escaping) before it enters IPC; the
- * enclosing result still counts these bytes within its independent 32 KiB aggregate budget.
- */
-export function printed(output: readonly CodemodeOutputItem[]): CodeLogs {
-  const lines = output.flatMap((item) => (item.type === 'text' ? [item.text] : []))
-  return boundedLogs(lines, budgets.logs, false)
 }
 
 /** Keep ordered lines within both their own budget and the final outcome's remaining space. */

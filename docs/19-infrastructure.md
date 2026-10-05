@@ -231,10 +231,12 @@ for model calls. Optional Google sign-in inputs remain atomic; optional provider
 Executor, and model settings keep their existing contracts. Apply the auth then product
 migrations before starting the server; Flue migrates its own runtime schema at startup.
 
-Programs require the existing user-systemd/cgroup/bubblewrap/prlimit isolation. Startup probes
-those prerequisites once. An ordinary container lacks them, so program runs return the existing
-typed `CodeFailure.Unavailable`, and startup logs the precise `CodeIsolationUnavailable`
-prerequisite. The server still starts; no alternate sandbox or unisolated program path exists.
+Programs (`run_code`) need nothing from the server's host. A program runs on the Person's
+Computer: the server starts its runner there through the Computer's provider, follows what it
+prints, and answers its calls. Until 5 October 2026 a program ran on the server's own host inside
+user-systemd, a cgroup and bubblewrap, which an ordinary container does not have, so production
+refused every program. The server image therefore carries no isolation tools, and the only
+requirement is the one every Vivid already has: a Computer provider.
 
 These recipes provide packaging, not deployment resources. Alchemy remains the resource owner;
 building an image neither calls Railway nor changes the local development graph.
