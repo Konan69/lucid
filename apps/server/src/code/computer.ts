@@ -130,7 +130,14 @@ export const openGuest = Effect.fn('Code.openGuest')(function* (
    * `draining`: the server has given the program up, and reads on only to reach its end.
    * `waited`: word of its end has been waited for once; that wait is not repeated.
    */
-  const known = { final: false, told: false, exited: false, draining: false, waited: false }
+  const known = {
+    final: false,
+    told: false,
+    exited: false,
+    draining: false,
+    waited: false,
+    said: Option.none<CodeFailure>(),
+  }
 
   const accept = Effect.fn('Code.guestLine')(function* (text: string) {
     if (!boundedNesting(text)) return yield* Effect.fail(new PipeFailure({ reason: 'size' }))
@@ -138,6 +145,10 @@ export const openGuest = Effect.fn('Code.openGuest')(function* (
       Effect.mapError(() => new PipeFailure({ reason: 'invalid' })),
     )
     if (WorkerMessage.isAnyOf(['Done', 'Failed'])(message)) known.final = true
+    // The program's own word on why it has no result is kept even when nobody takes the message
+    // any more: a server that gave the program up because an answer could not be written still
+    // reports the limit or the error the program ended on, which is the truer reason.
+    if (WorkerMessage.guards.Failed(message)) known.said = Option.some(message.failure)
     if (known.draining) return false
     return yield* Queue.offer(messages, message)
   })
@@ -184,7 +195,12 @@ export const openGuest = Effect.fn('Code.openGuest')(function* (
   const close = (reason: CodeFailure, failure: PipeFailure) =>
     Deferred.succeed(ended, reason).pipe(Effect.andThen(Queue.fail(messages, failure)))
   yield* installed().pipe(
-    Effect.flatMap((exit) => close(endedBecause(exit), new PipeFailure({ reason: 'closed' }))),
+    Effect.flatMap((exit) =>
+      close(
+        Option.getOrElse(known.said, () => endedBecause(exit)),
+        new PipeFailure({ reason: 'closed' }),
+      ),
+    ),
     // A line that was too long or was not a message: the reader is told which.
     Effect.catchTag('CodePipeFailure', (failure) =>
       close(CodeFailure.cases.Unavailable.make({}), failure),

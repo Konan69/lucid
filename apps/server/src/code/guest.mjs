@@ -304,7 +304,16 @@ function runner() {
     const ended = worker === undefined ? Promise.resolve() : worker.terminate()
     ended.then(() =>
       whenOver(endChildren(), () => {
-        NodeFS.rmSync(directory, { recursive: true, force: true })
+        // An answer can land in the directory while it is being removed, and the removal then
+        // fails on a directory that is no longer empty. Seen 5 October 2026: the throw ended
+        // this process before its final line, and a program that had ended on its call limit was
+        // reported as lost. The final line matters more than the directory, which the server
+        // removes again itself.
+        try {
+          NodeFS.rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+        } catch {
+          // Left to the server's own removal.
+        }
         process.stdout.write(`${JSON.stringify({ ...message, ...output.read() })}\n`, () =>
           process.exit(0),
         )
