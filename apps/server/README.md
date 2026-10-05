@@ -32,12 +32,13 @@ never the supplied value.
 | `VIVID_RUNTIME_TOKEN`  | Yes      | Runtime authority, kept redacted and never sent to clients.                    |
 | `PORT`                 | No       | Integer from 1 through 65535; defaults to `8787`.                              |
 | `PUBLIC_URL`           | No       | If supplied, must be an absolute URL; defaults to `http://localhost:3000`.     |
-| `GOOGLE_CLIENT_ID`     | No       | All three Google OAuth variables must be supplied together or omitted.         |
-| `GOOGLE_CLIENT_SECRET` | No       | Part of the atomic Google OAuth set; kept redacted.                            |
-| `GOOGLE_REDIRECT_URI`  | No       | Required when Google OAuth is enabled and must be an absolute URL.             |
+| `GOOGLE_CLIENT_ID`     | Yes      | The Google sign-in client's id.                                                |
+| `GOOGLE_CLIENT_SECRET` | Yes      | The Google sign-in client's secret; kept redacted.                             |
+| `GOOGLE_REDIRECT_URI`  | Yes      | Must be an absolute URL: the address Google returns the Person to.             |
 
 Supply configuration in the process environment. The server's `dev` script does not load an
-`.env` file. `.env.example` illustrates values but omits the required runtime URL and token. Local PostgreSQL is
+`.env` file. `.env.example` lists every setting the server does not start without, these and the
+ones under "External capabilities" below. Local PostgreSQL is
 `postgres://vivid:vivid@127.0.0.1:55433/vivid`. Do not put secret values in logs, traces, health
 responses, or error messages.
 
