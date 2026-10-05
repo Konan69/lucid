@@ -192,7 +192,9 @@ export const routes = Effect.fn('RuntimeTest.routes')(function* () {
           )
           expect(owned).toHaveLength(29)
           expect(owned.map((tool) => tool.name)).toContain('use_person_computer')
-          for (const tool of owned)
+          // `ask_person` carries no summary on purpose (tools/ask.ts): its question is already
+          // the sentence the Person reads, and a second one about it was shown beside it.
+          for (const tool of owned.filter((each) => each.name !== 'ask_person'))
             expect(tool.parameters, tool.name).toHaveProperty(
               'required',
               expect.arrayContaining(['summary']),
