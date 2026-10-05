@@ -88,15 +88,24 @@ stopping)`.
    newer ones sit in `DEPLOYING`. In the GraphQL API, `deploymentEvents` for a new one ends at
    `CREATE_CONTAINER` with no `completedAt`.
 
-What cleared it on 5 October: the integrator copied the volume's data off, moved the volume to a
-throwaway service and back to the Executor, and deployed again. Between the two moves the
-Executor ran for about three minutes with no volume, so with an empty store: it passed `/health`
-and refused the server's key (`Invalid API key`). Health alone is therefore not proof of
-recovery; make one real call with the server's key and compare the answer with what it was.
+What to do, in this order, and only as the session that deploys:
 
-Not proven: a second session sent `deploymentStop` for the stuck deployment in the same minute as
-the first volume move. Which of the two released the container is unknown, so do not rely on
-`deploymentStop` alone.
+1. Copy the volume's data off first if the service can still be reached, and keep the copy out
+   of Git (it holds keys). The 5 October copy of the Executor's `/app/data` is under
+   `artifacts/backup/`, which Git ignores.
+2. Stop the old deployment by its id: GraphQL `mutation { deploymentStop(id: "<id>") }`.
+3. If a new deployment still waits at `CREATE_CONTAINER`, move the volume to another service and
+   back (`volumeInstanceUpdate`).
+4. Deploy with `serviceInstanceDeployV2`. `serviceInstanceRedeploy` reuses the image of the last
+   deployment, which after a rollback is the old one.
+
+On 5 October steps 2 and 3 were both done within a minute of each other, by two sessions, so
+which one released the container is not known; that is why both are listed. Between the two
+volume moves the Executor ran for about three minutes with no volume, so with an empty store: it
+passed `/health` and refused the server's key (`Invalid API key`). Health alone is therefore not
+proof of recovery. Make one real call with the server's key (`GET
+/api/organizations/<organization>/inventory`) and compare the answer with what it was: after the
+recovery it was `200` and 8,914 bytes, the same as before.
 
 Ruled out, so do not spend time on them again: the image (it pulled without credentials, and the
 previous image hung the same way), the volume's own state (`READY`), the domain, the target port
@@ -105,10 +114,10 @@ and the region.
 ### Executor's image
 
 Production's Executor is upstream Executor's source at commit `304bf60`, unchanged, built with
-upstream's own self-host Dockerfile and published as `executor-selfhost:src-304bf60`. No feature
-requires it: adding an Integration by a personal key was proven on the last published tag,
-`2.0.0-beta.8`, as well. The source build is simply newer upstream code that passed the same
-tests. The store schema and migrations are identical in both, the server's key is valid on both,
+upstream's own self-host Dockerfile and published as `executor-selfhost:src-304bf60`. It was a
+choice to move to current upstream source, not a requirement: adding an Integration by a
+personal key was proven on the last published tag, `2.0.0-beta.8`, as well. A copy of production
+data was started on the new image before the switch. The store schema and migrations are identical in both, the server's key is valid on both,
 and going back to the tag is safe.
 
 ### Telemetry volume
