@@ -33,8 +33,30 @@ const HEADER_TITLE = { fontSize: 18, fontWeight: '800' } as const
  * platform and version (its note: forcing `soft` made the bar read as a local overlay instead of
  * sampling the content edge to edge), so the value is written out here instead of computed.
  */
-const SCROLL_EDGES = {
+export const SCROLL_EDGES = {
   top: 'automatic',
+  bottom: 'hidden',
+  left: 'hidden',
+  right: 'hidden',
+} as const
+
+/**
+ * No edge effect at all, for a screen whose scroller is upside down: a Thread's inverted list.
+ *
+ * The system gives the effect to the scroll view's own top edge. An inverted list is the same
+ * scroll view turned over, so its own top is at the foot of the screen, beside the composer, and
+ * the edge under the bar is its own bottom. The system then measures "from the top edge to the
+ * bar" across the whole list, and frosts and dims all of it whenever the list is not resting at
+ * its newest words: the owner's iPhone showed a Thread's whole conversation blurred between a
+ * sharp bar and a sharp composer while Vivid was thinking (5 October 2026, iOS 26, app 0.2.0).
+ * The reference has no such screen to copy from: T3 Code mobile's thread feed is not inverted.
+ *
+ * Not reproduced: there is no iOS 26 device or simulator to run it on from here. The reading is
+ * from the screenshot and from where react-native-screens applies the effect
+ * (`RNSScrollEdgeEffectApplicator`, to the first scroll view under the screen).
+ */
+export const NO_SCROLL_EDGES = {
+  top: 'hidden',
   bottom: 'hidden',
   left: 'hidden',
   right: 'hidden',

@@ -15,6 +15,7 @@ import { openDrawer } from '../data/drawer'
 import { Faces } from './Avatar'
 import { Face } from './Face'
 import { GLASS_SUPPORTED } from './Glass'
+import { NO_SCROLL_EDGES, SCROLL_EDGES } from './stack'
 import { IconButton, Label, Press, TARGET, type Tone } from './ui'
 
 /**
@@ -241,6 +242,9 @@ export function MenuBar({ mood }: { mood: FaceMood }) {
   useBar(JSON.stringify(['menu', mood]), NO_ACTIONS, (press) => ({
     title: '',
     ...PLAIN,
+    // The greeting's scroller is the right way up; a Thread on this same route turns the effect
+    // off (`MenuStandingBar`), so it is named here to come back on.
+    scrollEdgeEffects: GLASS_SUPPORTED ? SCROLL_EDGES : undefined,
     ...menuOptions(mood),
     ...endOptions({ present: NOBODY, actions: NO_ACTIONS }, press),
   }))
@@ -321,6 +325,9 @@ export function MenuStandingBar({
   useBar(signature, actions, (press) => ({
     title,
     ...standingOptions(title, standing),
+    // A Thread's list is inverted, and the system's edge effect frosts all of an inverted list
+    // (`NO_SCROLL_EDGES`).
+    scrollEdgeEffects: GLASS_SUPPORTED ? NO_SCROLL_EDGES : undefined,
     ...menuOptions(mood),
     ...endOptions({ present, actions }, press),
   }))
