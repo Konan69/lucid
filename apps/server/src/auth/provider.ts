@@ -3,10 +3,14 @@ import { bearer, deviceAuthorization, organization } from 'better-auth/plugins'
 import { RuntimeContext } from 'alchemy'
 import * as Effect from 'effect/Effect'
 import * as Redacted from 'effect/Redacted'
+import * as Schema from 'effect/Schema'
 import { DatabaseFailure } from '@vivid/contracts'
+import { PairingClient } from '@vivid/contracts/auth'
 import { GoogleOAuthConfiguration, ServerConfig } from '../config.ts'
 import { sessionCookie } from './cookie.ts'
 import { authDatabaseLayer } from './dialect.ts'
+
+const isPairingClient = Schema.is(PairingClient)
 
 /**
  * Better Auth's internal identity model is mapped once at this boundary:
@@ -34,10 +38,14 @@ const makeOptions = (config: ServerConfig['Service']) => {
     },
     plugins: [
       bearer(),
-      deviceAuthorization({ verificationUri: '/device' }),
+      // A code is issued and redeemed only for Vivid's own apps (`validateClient`, checked by
+      // `deviceCode` and `deviceToken` in better-auth 1.7.5
+      // `dist/plugins/device-authorization/routes.mjs`). Without it any name is accepted, and the
+      // approval page could be shown a request it has no words for.
+      deviceAuthorization({ verificationUri: '/device', validateClient: isPairingClient }),
       // Trades a session's bearer token for its cookie: how the desktop window, which signs in
       // with a device code, becomes a cookie session like every other web window (`cookie.ts`).
-      sessionCookie(),
+      sessionCookie({ origin: config.PUBLIC_URL.origin }),
       organization({
         creatorRole: 'owner',
         schema: {

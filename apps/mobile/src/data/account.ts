@@ -1,3 +1,4 @@
+import type { PairingClient } from '@vivid/contracts/auth'
 import { DEVICE_GRANT, Wire, type PairingTransport } from '@vivid/state'
 import { Effect, Option, Redacted, Schema } from 'effect'
 import { AccountRefused, AccountUnreachable, type RefusalReason } from './refusal'
@@ -147,8 +148,11 @@ export const signOut = (session: SignedIn) => asPerson(session, 'sign-out', {})
 export const approveDevice = (session: SignedIn, userCode: string) =>
   Effect.andThen(claimDevice(session, userCode), asPerson(session, 'device/approve', { userCode }))
 
-/** Names this app to the server. The server records it with the code and checks it on exchange. */
-const CLIENT_ID = 'vivid-mobile'
+/**
+ * Names this app to the server, which issues a code to Vivid's own apps only and tells the Person
+ * approving it which one asked (`PairingClient`).
+ */
+const CLIENT_ID: PairingClient = 'vivid-mobile'
 
 /** One request of the code exchange, with "no answer" kept apart from "an answer that says no". */
 const wire = (posting: Omit<Posting, 'headers'>) =>
