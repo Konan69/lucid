@@ -47,12 +47,12 @@ export const relativeTime = (updatedAt: number, now: number): string => {
 }
 
 /**
- * One group of Threads under a heading. The first two are cards because they are few and they
- * matter; the rest are single lines. Only the attention lanes say how many they hold.
+ * One group of Threads under a heading. Every Thread in it is one line, its title: the heading
+ * already says what the lane is, so a row does not say it again, and the drawer is where a
+ * Thread is found, not where it is read. Only the attention lanes say how many they hold.
  */
 export interface Lane {
   readonly label: 'Needs you' | 'Working' | Band
-  readonly variant: 'card' | 'line'
   readonly counted: boolean
   readonly threads: ReadonlyArray<Thread>
 }
@@ -73,19 +73,16 @@ export function arrange(threads: ReadonlyArray<Thread>, now: number): Arrangemen
   const lanes: ReadonlyArray<Lane> = [
     {
       label: 'Needs you',
-      variant: 'card',
       counted: true,
       threads: current.filter((thread) => thread.attention === 'NeedsYou'),
     },
     {
       label: 'Working',
-      variant: 'card',
       counted: true,
       threads: current.filter((thread) => thread.attention === 'Working'),
     },
     ...BANDS.map((band): Lane => ({
       label: band,
-      variant: 'line',
       counted: false,
       threads: quiet.filter((thread) => bandOf(thread.updatedAt, now) === band),
     })),
@@ -105,22 +102,36 @@ export const matching = (threads: ReadonlyArray<Thread>, query: string): Readonl
   )
 }
 
-/** One row of the list: a lane's heading, or a Thread drawn as that lane draws them. */
+/** One row of the list: a lane's heading, which says whether the lane is folded, or a Thread. */
 export type Row = Data.TaggedEnum<{
-  Heading: { readonly label: Lane['label']; readonly count: Option.Option<number> }
-  Entry: { readonly thread: Thread; readonly variant: Lane['variant'] }
+  Heading: {
+    readonly label: Lane['label']
+    readonly count: Option.Option<number>
+    readonly folded: boolean
+  }
+  Entry: { readonly thread: Thread }
 }>
 export const Row = Data.taggedEnum<Row>()
 
-/** The lanes as the flat list a native list view scrolls: each heading, then its Threads. */
-export const rowsOf = (lanes: ReadonlyArray<Lane>): ReadonlyArray<Row> =>
-  lanes.flatMap((lane) => [
-    Row.Heading({
-      label: lane.label,
-      count: lane.counted ? Option.some(lane.threads.length) : Option.none(),
-    }),
-    ...lane.threads.map((thread) => Row.Entry({ thread, variant: lane.variant })),
-  ])
+/**
+ * The lanes as the flat list a native list view scrolls: each heading, then its Threads. A lane
+ * the Person folded keeps its heading, which is what unfolds it, and lists none of its Threads.
+ */
+export const rowsOf = (
+  lanes: ReadonlyArray<Lane>,
+  folded: ReadonlySet<Lane['label']>,
+): ReadonlyArray<Row> =>
+  lanes.flatMap((lane) => {
+    const shut = folded.has(lane.label)
+    return [
+      Row.Heading({
+        label: lane.label,
+        count: lane.counted ? Option.some(lane.threads.length) : Option.none(),
+        folded: shut,
+      }),
+      ...(shut ? [] : lane.threads.map((thread) => Row.Entry({ thread }))),
+    ]
+  })
 
 /** A row's key. Headings are named for their lane, which appears at most once. */
 export const rowKey = (row: Row): string =>
