@@ -51,17 +51,23 @@ the build goes on and succeeds on Railway. Two consequences:
 
 ### Before a production deploy
 
-A deploy sends everything on `main`, not only the change you came to ship. On 5 October 2026 a
-deploy made for a telemetry fix also carried another session's change of the Executor image, and
-the Executor was down for 52 minutes. So, every time:
+On 5 October 2026 two sessions ran `pnpm infra:deploy` from the same checkout one minute apart
+(09:13 and 09:14 UTC), neither knowing of the other, and then both tried redeploys and rollbacks on
+the Executor at once. Its old container hung in `stopping` and held the data volume, and the
+Executor answered `502` for 55 minutes. No data was lost. The rules that came out of it:
 
-- Read the plan the command prints (`Plan: …` and the `[Resource] update | replace | create`
-  lines) before trusting it. If it touches a resource your change does not, find out whose change
-  that is (`git log -- infra/railway.ts`) and agree with that session first.
-- One session deploys at a time. Deploys run only from the one clean checkout that holds the
-  Alchemy state (`.alchemy/`); a second checkout has no state and would create every resource
-  again.
-- The Railway CLI's session token lasts about an hour and a deploy that outlives it fails with
+- **One session deploys production.** It is the integrator named for the repository at the time.
+  Every other session pushes a branch and opens a pull request; it does not run the deploy, a
+  redeploy, a rollback or a Railway mutation, even to ship its own fix quickly, and even when
+  production is down. If you find production broken, tell the Person and the integrator what
+  you see; do not start a second repair beside theirs.
+- A deploy sends everything on `main`, not only the change you came to ship. Read the plan the
+  command prints (`Plan: …` and the `[Resource] update | replace | create` lines). If it touches
+  a resource your change does not, find whose change that is (`git log -- infra/railway.ts`)
+  before going on.
+- Deploys run only from the one clean checkout that holds the Alchemy state (`.alchemy/`). A
+  second checkout has no state and would create every resource again.
+- The Railway CLI's session token lasts about an hour, and a deploy that outlives it fails with
   `RailwayForbidden … Not Authorized` part-way. Refresh it first (`railway whoami` with the
   personal profile) and check `user.tokenExpiresAt` in that profile's `config.json`.
 
@@ -72,32 +78,38 @@ or the runtime stops the old container before the new one starts. If the old con
 `stopping`, it keeps the volume and every new deployment waits at `CREATE_CONTAINER` with no log
 line until Railway fails it (about seventeen minutes), then tries again. The public address
 answers `502` throughout. Redeploying or rolling back does not help: each attempt waits on the
-same volume.
+same volume, and each new attempt cancels the one before it.
 
-How to tell, and what to do:
+How to tell:
 
-1. `railway ssh` into the service. `Your service's container is not running (status: stopping)`
-   is this fault.
+1. `railway ssh` into the service answers `Your service's container is not running (status:
+stopping)`.
 2. `railway deployment list --json`: the last deployment that worked still reads `SUCCESS` while
    newer ones sit in `DEPLOYING`. In the GraphQL API, `deploymentEvents` for a new one ends at
    `CREATE_CONTAINER` with no `completedAt`.
-3. Stop the old deployment by its id: GraphQL `mutation { deploymentStop(id: "<id>") }`. Railway
-   then starts a fresh deployment by itself. Watch `/health`.
-4. Check which image that fresh deployment runs (`meta.image`). If a rollback was tried along the
-   way, it is the rolled-back image, and production now differs from `main` and from the Alchemy
-   state until the next deliberate deploy.
 
-Ruled out on 5 October, so do not spend time on them again: the image (it pulled without
-credentials, and the previous image hung the same way), the volume's own state (`READY`), the
-domain, the target port and the region.
+What cleared it on 5 October: the integrator copied the volume's data off, moved the volume to a
+throwaway service and back to the Executor, and deployed again. Between the two moves the
+Executor ran for about three minutes with no volume, so with an empty store: it passed `/health`
+and refused the server's key (`Invalid API key`). Health alone is therefore not proof of
+recovery; make one real call with the server's key and compare the answer with what it was.
+
+Not proven: a second session sent `deploymentStop` for the stuck deployment in the same minute as
+the first volume move. Which of the two released the container is unknown, so do not rely on
+`deploymentStop` alone.
+
+Ruled out, so do not spend time on them again: the image (it pulled without credentials, and the
+previous image hung the same way), the volume's own state (`READY`), the domain, the target port
+and the region.
 
 ### Executor's image
 
 Production's Executor is upstream Executor's source at commit `304bf60`, unchanged, built with
-upstream's own self-host Dockerfile and published as `executor-selfhost:src-304bf60`. The last
-tag upstream published, `2.0.0-beta.8`, is older than the source the keyed Integration work was
-proven against. The store schema and migrations are the same in both, which is why going back to
-the tag is safe and why the 5 October recovery could run on it.
+upstream's own self-host Dockerfile and published as `executor-selfhost:src-304bf60`. No feature
+requires it: adding an Integration by a personal key was proven on the last published tag,
+`2.0.0-beta.8`, as well. The source build is simply newer upstream code that passed the same
+tests. The store schema and migrations are identical in both, the server's key is valid on both,
+and going back to the tag is safe.
 
 ### Telemetry volume
 
