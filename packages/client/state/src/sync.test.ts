@@ -155,3 +155,34 @@ describe('saving drafts as they are typed', () => {
     }),
   )
 })
+
+describe('words an earlier build kept', () => {
+  it('are left waiting, and nothing is written, when their Thread is not this Person’s here', () => {
+    // A device that another Person used before: their old words wait for a Thread this Person
+    // does not have. Writing the same drafts back made the store announce a change, which called
+    // this again without end, and Home stopped drawing.
+    let drafts: Drafts = {
+      version: 3,
+      entries: [],
+      marks: [],
+      pending: [{ person: 'grace', thread: ThreadId.make('t9'), text: 'Not Ada’s', at: 1 }],
+    }
+    let writes = 0
+    const sync = makeDraftSync({
+      device: 'laptop',
+      read: () => Option.some(drafts),
+      update: (change) => {
+        writes += 1
+        drafts = change(drafts)
+        sync.changed()
+      },
+      scope: () => Option.some(scope),
+      threads: () => Option.some(new Set([ThreadId.make('t1')])),
+      save: () => Effect.never,
+      launch: () => () => undefined,
+    })
+    sync.changed()
+    expect(writes).toBe(0)
+    expect(drafts.pending).toHaveLength(1)
+  })
+})
