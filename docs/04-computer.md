@@ -252,13 +252,110 @@ Viewer issuance is proven; embedding and interactive viewing in clients are unte
 Signed-in cookies/profile retention, tab manipulation and provider recovery under concurrent
 servers are not proven by this live suite. Driver mutation receipts
 attest delivery, not the intended effect; fresh state follows every action. Client support for
-the screen union belongs to its own lane. Flue placement and external state sync remain planned.
+the screen union belongs to its own lane. Runtime placement and external state sync remain planned.
+
+## Reaching the Computer: one SSH connection
+
+**Status: decided 5 October 2026; being built on `feat/native-computer`; none of it is on `main`
+yet.** This is the step between today and "Runtime on the Computer" below. It is deliberately thin,
+because it is deleted when the runtime moves onto the machine.
+
+### What is wrong today
+
+Vivid cannot read or write one file on its own Computer. Its runtime runs beside the server, and
+reaches the machine through one custom tool, `run_command`: the model asks the server, the server
+checks the Approval rules, and the server calls the provider's "run one command" endpoint. The slot
+Flue gives a model for a machine (`useSandbox`) holds an empty stand-in whose file and shell
+operations all refuse; it is there only because Flue lets pictures reach the model through that
+slot, which `use_desktop` and `browse` need. Programs (`run_code`) exist for the same reason: a
+script on the Computer has no other way to an Integration.
+
+That is the opposite of the thesis at the top of this document. The Computer is one machine, and
+Vivid should use it as a person uses theirs.
+
+### Why SSH, and why not a daemon
+
+Flue does not run on the Computer, now or later. Nothing of Vivid runs on the machine in this
+step: the only thing that touches it is the server's SSH connection. The final shape is Vivid's
+runtime running on the Computer, and that runtime is pi Durable, which replaces Flue (decided 4
+October 2026). There the runtime is the always-on process, and its file and shell tools are local
+calls. A service of our own on the machine, built now, would be a second daemon that the runtime
+replaces.
+
+SSH needs nothing installed on the machine and gives what that service would: commands with live
+output and input, real terminals, long-running processes, file transfer, and port forwarding in
+both directions. The provider's own command endpoint cannot send input to a running command, and
+each call through it took 0.3 to 1.9 seconds.
+
+Grok Bot's box, for comparison, runs the process that owns the conversations plus an exec service
+of its own, and the desktop app attaches to the box (`docs/18-grok-bot-machine-and-product-surface.md`).
+That is the final shape here too; SSH is how we get the machine's files and shell before it.
+
+### The design
+
+```
+phone / web / desktop
+        |  unchanged
+hosted: runtime --> server --SSH--> the Person's Computer
+                      |                 one open connection per awake machine
+                      +-- provider API: wake, authorize the key, read the address
+```
+
+- **Direction.** The server dials out to each Computer on port 22. Nothing dials in to the server.
+- **Finding the machine.** Each Computer has its own public address. The address, the host name
+  and the machine id change when a machine is stopped and resumed, so the server asks the provider
+  for the address after every wake and never stores it.
+- **Keys.** One key pair for the installation. The private half is a required server setting. The
+  public half is authorized on a Computer through the provider when the Computer wakes; the same
+  call returns the machine's host key, which the server checks when it connects. A wrong host is a
+  wrong machine, so this is correctness, not hardening.
+- **One connection per awake Computer,** held by the server, because the server already owns
+  waking, bindings, takeover and the idle stop. It is opened on first use, kept alive, closed when
+  the Computer stops, and reopened after a failure with a fresh address. Commands, files and later
+  port forwards are channels on it.
+- **What the model gets.** Flue stays where it runs today, beside the server, for as long as it is
+  the runtime. Its slot for a machine is pointed at the real Computer through the server's
+  connection, and the model has the six built-in tools on it: `read`, `write`, `edit`, `bash`,
+  `grep`, `glob`. The SSH part knows nothing of Flue, so it stays when Flue goes. Flue replaces its built-in
+  tools when a sandbox supplies its own list, and exports the builders for the six, so the list is
+  those six plus `use_desktop` and `browse`. Pictures keep working and the stand-in is deleted.
+  `run_command` goes with it.
+- **Every Person.** The server already knows which machine is whose. There is no per-machine
+  network setup.
+- **Later, on the same connection.** A port forwarded from the Computer back to the server is how a
+  script on the Computer will call Integrations. `run_code` can be deleted then.
+
+### Measured on 5 October 2026
+
+On a second machine of the same provider account, not on a Person's Computer.
+
+| What                                                      | Result                                          |
+| --------------------------------------------------------- | ----------------------------------------------- |
+| Authorizing a key through the provider, on the trial plan | Accepted; repeating it is harmless              |
+| What that call returns                                    | The address, the user, and one ed25519 host key |
+| From the hosted server: connection to port 22             | 20 ms                                           |
+| From the hosted server: first bytes of SSH                | 51 ms                                           |
+| From a development machine in Lagos: the same two         | 165 ms and 345 ms                               |
+| From that machine: a whole first connection               | 2.6 s                                           |
+| From that machine: a command on the open connection       | 0.35 s                                          |
+| A 5 MB stream over the connection                         | Arrived intact                                  |
+| An SSH session and a provider command                     | See the same machine and processes              |
+
+### Not verified
+
+- A whole SSH session from the hosted server. Only the port and the first bytes were measured.
+- What the runtime, beside the server, requests over the connection when a conversation starts,
+  and so whether starting one would wake a sleeping Computer. It must not.
+- How long after a wake a machine accepts SSH. Its command endpoint refuses for 20 to 40 seconds.
+- The same steps on a Person's Computer. There is no test Computer: the proof on one can only be
+  run on the deployed product.
 
 ## Runtime on the Computer: planned
 
 **Status: native browser and desktop backend built; runtime placement and external state sync planned.**
-The browser and desktop now share Boat’s shipped guest. Running Vivid’s Flue runtime inside that
-guest remains a separate step. The intended shape follows.
+The browser and desktop now share Boat’s shipped guest. Flue never runs on the Computer. What
+will run there is the runtime that replaces Flue, pi Durable (decided 4 October 2026); moving it
+onto the machine is a separate step. The intended shape follows.
 
 The Computer is not a harness the agent calls out to. It is the machine the agent already lives on
 — `CONTEXT.md`: "the persistent private machine Vivid operates: filesystem, processes, browser
