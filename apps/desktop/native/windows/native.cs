@@ -85,7 +85,16 @@ namespace Vivid.Windows
         [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] internal static extern bool SetForegroundWindow(IntPtr window);
         [DllImport("user32.dll", SetLastError = true)] internal static extern IntPtr SendMessageTimeout(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam, uint flags, uint timeout, out UIntPtr result);
-        [DllImport("user32.dll")] internal static extern bool ShowWindow(IntPtr window, int command);
+        [DllImport("user32.dll")] internal static extern bool ShowWindowAsync(IntPtr window, int command);
+        [DllImport("user32.dll", SetLastError = true)] internal static extern bool PostMessage(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll")] internal static extern IntPtr GetDlgItem(IntPtr window, int id);
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)] internal static extern IntPtr CommandLineToArgvW(string command, out int count);
+        [DllImport("kernel32.dll")] internal static extern IntPtr LocalFree(IntPtr memory);
+        internal delegate void EventCallback(IntPtr hook, uint kind, IntPtr window, int objectId, int childId, uint thread, uint time);
+        [DllImport("user32.dll")] internal static extern IntPtr SetWinEventHook(uint first, uint last, IntPtr module, EventCallback callback, uint process, uint thread, uint flags);
+        [DllImport("user32.dll")] internal static extern bool UnhookWinEvent(IntPtr hook);
+        [DllImport("user32.dll")] internal static extern uint MsgWaitForMultipleObjectsEx(uint count, IntPtr handles, uint timeout, uint mask, uint flags);
+        [DllImport("user32.dll")] internal static extern bool GetCursorPos(out Point point);
         [DllImport("user32.dll")] internal static extern IntPtr WindowFromPoint(Point point);
         [DllImport("user32.dll")] internal static extern IntPtr GetAncestor(IntPtr window, uint flags);
         [DllImport("user32.dll")] internal static extern int GetSystemMetrics(int index);

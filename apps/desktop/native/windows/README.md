@@ -3,7 +3,9 @@
 Vivid's native console helper speaks JSON lines over stdio and draws no window.
 `Notice.Show()`/`Hide()` stay empty; desktop main draws and owns the notice. Run
 unelevated in the Person's own interactive Windows session. Elevated helper startup
-fails; elevated or unverifiable targets are refused before activation or input.
+fails; elevated or unverifiable targets are refused before activation or input. Element actions also verify the UIA element
+process image and integrity; a hosted child never inherits its HWND host
+process's permission.
 
 ## Build and ownership
 
@@ -37,13 +39,13 @@ escape. Stderr contains short diagnostics, never window titles, text or images.
 Every method requires `begin_turn`, except `begin_turn`, `end_turn`, `close`, and
 `status`. This includes **observation** (`list_windows`, `get_window_state`) and
 installed-app inventory. `status` captures nothing and returns phase
-`Idle`, `Active` or `Stopped`.
+`Idle`, `Active` or `Stopped`, `hooksLive`, `cooldownRemainingMs`, and `diagnosticsDropped`.
 
 | Method | Params | Result |
 | --- | --- | --- |
 | `begin_turn` | `{}` plus envelope `turn` | `{active:true}`; start that authorized turn |
 | `end_turn` | `{}` | `{active:false}`; clear caches; preserve stop latch |
-| `status` | `{}` | `{phase}`; no capture |
+| `status` | `{}` | `{phase,hooksLive,cooldownRemainingMs,diagnosticsDropped}`; no capture |
 | `list_apps` | `{}` | `{apps:[{name,id,source,launchable,reason}],skipped}` |
 | `launch_app` | `{app: name,id?: inventoryId}` | `{pid,app,id}` |
 | `list_windows` | `{}` | `[{app,id,pid,title,inputAccess}]` |
@@ -52,7 +54,7 @@ installed-app inventory. `status` captures nothing and returns phase
 | `click` | `{window,element_index,click_count?,mouse_button?}` | `{}` |
 | `click` | `{window,x,y,screenshotId,click_count?,mouse_button?}` | `{}` |
 | `type_text` | `{window,text,element_index?}` | `{}`; at most 4000 UTF-16 units |
-| `press_key` | `{window,key}` | `{}`; named key or `+` chord |
+| `press_key` | `{window,key}` | `{}`; exact Alt+F4 returns `{outcome:"closed"}` or `{outcome:"closePending",dialogClass}` |
 | `scroll` | `{window,x,y,screenshotId,scrollX,scrollY}` | `{}` |
 | `close` | `{}` | `{}`, then exit 0 |
 | `simulate_escape` | `{}` | `{stopped:true}`; test mode only |
@@ -87,7 +89,10 @@ ControlView preorder with indexes, roles, names, values, enabled state and physi
 bounds. Virtual controls retain UIA `Name`, including buttons, menu/list items,
 tabs, checkboxes and links. For Document/Edit/Text controls with TextPattern, use
 `DocumentRange.GetText(201)` instead of an unbounded document-sized name. Every
-name/value caps at 200 UTF-16 units with an ellipsis. ValuePattern has no bounded
+name/value caps at 200 UTF-16 units with an ellipsis. UIA current/cached `Name`
+is an indivisible BSTR property with no length-only or maximum-length getter.
+Caching cannot bound that allocation; non-document labels are fetched whole and
+capped immediately. A malicious provider can still allocate a huge label. ValuePattern has no bounded
 read or length property, so its unbounded values remain explicitly skipped.
 The `truncated` flag covers text/structural limits and value omissions. Traversal
 stops globally at 500 elements or depth 32. Password text stays hidden; absent
@@ -117,16 +122,21 @@ clicks that element and types under the usual guard. It requires fresh text inde
 Pointer input checks
 that the named window owns the point. Held physical modifiers cause refusal.
 
-Pointer/keyboard methods and explicit activation require **2000 ms (2 seconds)**
+All state-changing input (Invoke, Toggle, Select, SetValue, pointer/keyboard,
+targeted close) and explicit activation require **2000 ms (2 seconds)**
 without Person input (`Activity.PersonQuietMilliseconds`). Recent input gives
 `PersonActive` before activation or any global input batch. The helper reads
 session `GetLastInputInfo`, stamps/tracks its own SendInput batches, and observes
-noninjected keyboard/mouse hooks so its own typing is excluded and simultaneous
-physical input is retained. Accessibility Invoke/Toggle/Select/SetValue remain allowed
-while the Person is active. Targeted Alt+F4 is an HWND message without activation, but still requires Person idle.
+keyboard/mouse hooks. Every helper SendInput carries the private random
+per-process `Activity.OwnInputTag` in `dwExtraInfo`. ONLY that tag is excluded;
+EVERY other event counts as the Person, including injected events from an
+on-screen keyboard, remote control, remapper or UIA provider. Simultaneous Person
+input is retained. Foreign hook events use receipt time because an injector can
+supply an old/future event timestamp. Reading list/status/get_window_state remains allowed while
+the Person is active; accessibility mutations return `PersonActive` too. Targeted Alt+F4 is an HWND message without activation, but still requires Person idle.
 Activity observation failure refuses input; dispatched input cannot be recalled.
 
-Activation restores minimized targets, temporarily attaches the current thread to
+Activation restores minimized targets with nonblocking `ShowWindowAsync`, temporarily attaches the current thread to
 foreground/target input queues and, for UWP frames, the focused client queue from
 GetGUIThreadInfo. It calls BringWindowToTop/SetForegroundWindow and
 always detaches. At most three attempts, each ordered by a bounded WM_NULL receipt;
@@ -135,8 +145,8 @@ An honest `ForegroundRefused` reports foreground class and process name, never
 window title. The inspected reconstruction notes expose activation vocabulary but
 do not document these native internals; this follows the round-three design and
 [Microsoft's queue attachment contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-attachthreadinput).
-`--test-mode` also exposes `diagnostics`: physical age/event count, own injection
-batch and injected-hook counts, and foreground class/process. It captures no window text or image.
+`--test-mode` also exposes `diagnostics`: Person age/event count, own injection
+batch and own-hook counts, and foreground class/process. It captures no window text or image.
 
 Typing uses the target keyboard layout where mapping needs at most Shift, otherwise
 balanced Unicode packets. `TypingInterrupted.delivered` counts UTF-16 units whose
@@ -148,25 +158,42 @@ unsent; inspect state and never blindly retry. There is no clipboard use or retr
 `press_key` refuses anything containing a Windows key, Alt+Tab, Alt+Esc, Ctrl+Esc
 (including Ctrl+Shift+Esc), and Ctrl+Alt+Del/Delete, including added modifiers.
 **Alt+F4 is allowed because it closes the named window.** The exact two-key chord
-sends SC_CLOSE directly to that validated HWND, avoiding a global focus race; an
-application may still ask to save. Other keys use guarded SendInput. See `input.cs`
+posts SC_CLOSE to that validated HWND, avoiding a global focus race. An
+out-of-context event observer pumps native receipts for at most 350 ms, returning
+`closed` if the HWND disappeared or `closePending` otherwise. `dialogClass`
+contains only the class of a visible root-owned popup, never title/text; it is
+null when no native popup is observed (including some virtual WinUI dialogs).
+A pending result does not authorize replaying close; observe the app and handle
+its save prompt through fresh accessibility state. Other keys use guarded SendInput. See `input.cs`
 for the closed key names. Scroll is Windows wheel units (120/notch): positive Y
 is down, positive X right, each axis capped at ±2400.
 
-Physical Escape **anywhere**, including Vivid's own window, stops an active turn.
-Injected application Escape is ignored by the stop hook. Stop hides the notice
-seam, latches `Stopped`, and immediately publishes the unsolicited stdout line
-`{"event":"stopped"}`. Desktop main must handle it independently of request replies
-and tell the server immediately. There is no polling requirement for notification;
-the next protected request also returns `PersonStopped`. `end_turn` does not reset
-it. `begin_turn` requires a nonempty caller-supplied envelope `turn` id (≤128 units).
-A stopped id is permanently refused as `PersonStopped` for this helper session;
-a new id may begin a new authorized turn. Every protected request, `end_turn`,
-and any `status`/`close` during Active or Stopped carries the same envelope `turn`;
-a mismatch gives `TurnMismatch` before observation or input. Retrying the active
-`begin_turn` with the same id is idempotent and retains its stop authority. The hook consumes no keys. The hook queues the event without waiting on stdout. A dedicated writer preserves
-line order and request receipts, so notification can wait behind an in-progress response write;
-desktop main must continuously drain stdout and handle backpressure.
+Escape **anywhere**, including injected Escape from another process, stops an
+active turn; only our private tagged events are excluded. Stop removes both
+hooks, hides the notice seam, and latches `Stopped`. It queues
+`{"event":"stopped","turn":"the-ended-id","cooldown_ms":5000}` without pipe I/O.
+`Turn.StopCooldownMilliseconds` is **5000 ms**: `begin_turn` returns `PersonStopped`
+throughout that cooldown even with a new id. A stopped id is permanently refused
+for this helper process. After cooldown a newly authorized, new id may begin.
+`end_turn` preserves the stop latch and cooldown. Every protected request and
+`status`/`close` during Active/Stopped carries the same envelope `turn`; mismatch
+gives `TurnMismatch`. Retrying an active id is idempotent. Turn ids must be
+nonempty and at most 128 UTF-16 units.
+
+Hooks install at `begin_turn` and are removed at `end_turn`/stop; Idle has none.
+Before every mutation and on active `status`, tagged F24-key-up and same-position
+mouse-move probes must reach and be consumed by both hooks. This detects
+Windows' silent timeout removal, rather than trusting stale handles. Input
+returns `HookUnavailable` on a missing receipt, and `status.hooksLive` is false.
+If a hook is missing, those harmless probes can reach the application; they
+neither type a character nor click. If the mouse hook is absent, the
+probe can race a concurrent cursor move; live probes are consumed. Reads remain available for diagnosis.
+Hook callbacks consume no Person events; Escape still reaches the application.
+The hooks never wait on pipe writes. A dedicated stdout writer preserves line
+order; stopped notification may wait behind a response if stdout is not drained.
+Diagnostics use a 256-line queue (1024 characters each), a separate background
+stderr writer, and drop on saturation. `status.diagnosticsDropped` counts drops;
+no diagnostics are emitted from the activation code while input queues are attached.
 
 Request lines cap at **1 MiB UTF-8** before decoding. Oversized lines are drained to
 LF, refused as `LineTooLong`, and the process keeps serving. Responses exceeding
@@ -191,17 +218,25 @@ with `ShellRefused`; both shortcut targets and packaged AUMID manifest executabl
 are resolved and inspected as PE files. `list_apps` keeps refused entries with
 `launchable:false,reason:"ShellRefused"`. Unreadable/unresolved targets fail closed
 with `AppTargetUnverified`. All input methods (including activation and targeted
-close) and `get_window_state` text capture enforce the same policy again.
+close) and every `get_window_state` capture (screenshots included) enforce the same policy again.
 
 The named policy includes Command Prompt (`cmd.exe`), PowerShell (`powershell.exe`,
 `pwsh.exe`), Windows Terminal (`WindowsTerminal.exe`, `wt.exe`), `conhost.exe`,
 `OpenConsole.exe`, `wsl.exe`, `wslhost.exe`, Bash, Mintty/Git Bash, Ubuntu and other
 known WSL distribution launchers, Alacritty, WezTerm, Hyper, Tabby, SSH and bare
 Python/py/node REPLs. See `shells.cs` for the complete list/prefixes; all console
-PE targets are refused regardless of name or arguments. ALL `ConsoleWindowClass`
+PE targets are refused regardless of name or arguments. GUI script/shell hosts
+are refused by resolved image name too: powershell_ise, wscript, cscript, mshta,
+rundll32, regsvr32, msiexec, regedit, mmc, control. Shortcut targets AND native-
+parsed arguments are checked for those hosts and script extensions cmd/bat/ps1/
+psm1/psd1/vbs/vbe/js/jse/wsf/wsh/hta/reg/msi/msp/msc (including taskschd.msc).
+Nested .lnk targets/arguments are resolved read-only with an eight-link/cycle
+bound; scripts/hosts give `ShellRefused`, unverifiable links fail closed. ALL `ConsoleWindowClass`
 windows are refused, regardless of host/client ownership, so attached shell
 clients cannot bypass the guard. Existing terminal windows need not be activated.
-The Explorer `#32770` dialog titled `Run` is refused too; File Explorer address
+The Explorer `#32770` Run dialog is identified without its translated title: a
+child `ComboBox` with shell resource control ID **12298** (`IDC_RUNDLG_EDITPATH`,
+[resource definition](https://github.com/reactos/reactos/blob/master/dll/win32/shell32/shresdef.h)) is refused; File Explorer address
 bars remain allowed. System chords, including Win+R, remain refused.
 
 **Known limit:** editors with integrated terminals (VS Code and similar) are NOT
@@ -215,6 +250,30 @@ Any same-user process can write a per-user shortcut: it is NOT proof of an insta
 or trusted app. The product layer must show this source. Corrupt/dangling shortcuts,
 unreadable folders and package entries are skipped individually; `skipped` counts
 entries/folders omitted, including unsupported shortcuts and directory reparse points.
+
+## What the desktop app must do
+
+- Ask the Person before the first turn and show its notice for the whole turn.
+- Drain BOTH stdout and stderr continuously; serialize requests and validate replies.
+- Never run the helper elevated; keep its private stdio away from renderer/network clients.
+- Treat exit **70** as an unknown outcome: restart, observe, and never blindly replay input.
+- Honour the stopped event immediately, cancel queued work, and tell the server at once.
+- Require the Person's **Approval before input to ANY app**. File Explorer's address
+  bar, Start search, an editor's integrated terminal, and saved scripts can execute
+  commands; the helper cannot tell. Shell refusals do not remove this requirement.
+- Keep **one turn per Run**; a new id is not permission to bypass a stop. End it on
+  Run end, authority revocation, or connection loss; show inventory source provenance.
+
+Known limits: integrated terminals and GUI apps executing saved scripts are NOT
+detected. A renamed GUI host can evade the named list; image/PE checks are not a
+sandbox, and mutable apps/shortcuts can race checks. Accessibility Invoke on a
+Close/Delete-like control name gets NO special treatment. The product layer must
+assess consequential actions and obtain Approval; labels are not a safety boundary.
+Person activity and hook receipts cannot make foreground-check-and-SendInput
+atomic or recall a dispatched native/provider action. UIA Name fetch allocation
+is unbounded as described above; some save dialogs are virtual, so a pending
+close may have no native dialog class. Windows silent hook loss is detected only
+at the next self-test; an Escape during that gap cannot be recovered.
 
 ## Unsupported and unproved
 

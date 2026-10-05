@@ -1,25 +1,37 @@
 using System;
 using System.Collections.Generic;
+using System.Security.Cryptography;
 
 namespace Vivid.Windows
 {
     // Session last-input time includes SendInput. Explicit batch timestamps identify
-    // our injections; physical hooks preserve Person input even in the same millisecond.
+    // our injections; person hooks preserve Person input even in the same millisecond.
     // Microsoft GetLastInputInfo documents nonmonotonic, caller-supplied timestamps.
     internal static class Activity
     {
         internal const uint PersonQuietMilliseconds = 2000;
+        // Private process nonce identifies only our batches, including probes/recovery.
+        // Injected events from every other process remain Person input. Keep the nonce
+        // DWORD-sized inside ULONG_PTR: the live mouse path lost a full 64-bit tag,
+        // while keyboard and mouse hook receipts both preserve this value. Never log it.
+        internal static readonly UIntPtr OwnInputTag = CreateTag();
+        private static UIntPtr CreateTag()
+        {
+            var bytes = new byte[4];
+            using (var random = RandomNumberGenerator.Create()) random.GetBytes(bytes);
+            return new UIntPtr(BitConverter.ToUInt32(bytes, 0) | 1U);
+        }
         private static readonly object gate = new object();
         private static readonly HashSet<uint> injected = new HashSet<uint>();
         private static readonly Queue<uint> stamps = new Queue<uint>();
-        private static uint physical, observed;
-        private static long physicalEvents, batches, injectedEvents;
+        private static uint person, observed;
+        private static long personEvents, batches, injectedEvents;
         private static uint latestStamp;
-        // Seed the physical clock before installing hooks; later OS changes close the startup gap.
+        // Seed the person clock before installing hooks; later OS changes close the startup gap.
         internal static void Initialize()
         {
             uint time = LastInput();
-            lock (gate) { physical = time; observed = time; }
+            lock (gate) { person = time; observed = time; }
         }
         // Failed activity observation refuses global input rather than assuming idle.
         private static uint LastInput()
@@ -28,18 +40,20 @@ namespace Vivid.Windows
             if (!Native.GetLastInputInfo(ref input)) throw new NativeInputFailed("session input activity could not be verified", 0);
             return input.Time;
         }
-        // Both low-level hooks call this only for noninjected events; no key/mouse data is retained.
-        internal static void Physical(uint time)
+        // Both hooks count all events except those carrying our private nonce; no key/mouse data is retained.
+        internal static void Person()
         {
-            lock (gate) { Newest(time); physicalEvents++; }
+            // An injector controls its event timestamp. Receipt time is authoritative
+            // for foreign input, so an old/future Time cannot bypass PersonActive.
+            lock (gate) { person = Native.GetTickCount(); personEvents++; }
         }
-        // Preserve the most recent physical observation across delayed hook deliveries.
+        // Preserve the most recent person observation across delayed hook deliveries.
         private static void Newest(uint time)
         {
             uint now = Native.GetTickCount();
-            if (unchecked(now - time) < unchecked(now - physical)) physical = time;
+            if (unchecked(now - time) < unchecked(now - person)) person = time;
         }
-        // Reconcile session time with injections while keeping the newest physical hook event.
+        // Reconcile session time with injections while keeping the newest person hook event.
         internal static uint Age()
         {
             uint last = LastInput();
@@ -47,7 +61,7 @@ namespace Vivid.Windows
             {
                 if (last != observed && !injected.Contains(last)) Newest(last);
                 observed = last;
-                return unchecked(Native.GetTickCount() - physical);
+                return unchecked(Native.GetTickCount() - person);
             }
         }
         // One policy constant governs activation and every pointer/keyboard input batch.
@@ -56,9 +70,9 @@ namespace Vivid.Windows
             uint age = Age();
             if (age < PersonQuietMilliseconds) throw new PersonActive(age);
         }
-        // Low-level injected timestamps also identify provider-generated UIA input and
-        // Windows-normalized event times. They never erase a physical hook observation.
-        internal static void Injected(uint time)
+        // Only nonce-verified helper events reach this path. Provider/remote injections
+        // take the Person path, even when Windows sets their injected flags.
+        internal static void Own(uint time)
         {
             lock (gate) { Remember(time); Remember(Native.GetTickCount()); injectedEvents++; }
         }
@@ -68,20 +82,20 @@ namespace Vivid.Windows
             if (injected.Add(time)) stamps.Enqueue(time);
             while (stamps.Count > 256) injected.Remove(stamps.Dequeue());
         }
-        // Windows can normalize a supplied timestamp. Bracket dispatch with physical
+        // Windows can normalize a supplied timestamp. Bracket dispatch with person
         // hook counters and remember its actual last-input receipt when no Person event
-        // intervened. The physical hook's timestamp always remains authoritative.
+        // intervened. The person hook's timestamp always remains authoritative.
         internal static uint Dispatch(Native.Input[] inputs)
         {
             long before;
-            lock (gate) before = physicalEvents;
+            lock (gate) before = personEvents;
             Stamp(inputs);
             uint sent = Native.SendInput((uint)inputs.Length, inputs,
                 System.Runtime.InteropServices.Marshal.SizeOf(typeof(Native.Input)));
             uint received;
             try { received = LastInput(); }
             catch (NativeInputFailed) { throw new NativeInputFailed("input activity receipt failed after dispatch; do not retry automatically", sent); }
-            lock (gate) if (sent > 0 && before == physicalEvents) Remember(received);
+            lock (gate) if (sent > 0 && before == personEvents) Remember(received);
             return sent;
         }
         // Record before dispatch because the hook can run before SendInput returns.
@@ -96,15 +110,15 @@ namespace Vivid.Windows
                 batches++; latestStamp = time;
             }
             for (int i = 0; i < inputs.Length; i++)
-                if (inputs[i].Type == 1) inputs[i].Data.Keyboard.Time = time;
-                else inputs[i].Data.Mouse.Time = time;
+                if (inputs[i].Type == 1) { inputs[i].Data.Keyboard.Time = time; inputs[i].Data.Keyboard.Extra = OwnInputTag; }
+                else { inputs[i].Data.Mouse.Time = time; inputs[i].Data.Mouse.Extra = OwnInputTag; }
         }
         // Test-only observation proves idle/injection classification without producing input.
         internal static object Observe()
         {
             uint age = Age();
-            lock (gate) return new { physicalAgeMs = age, personActive = age < PersonQuietMilliseconds,
-                physicalEvents = physicalEvents, injectedEvents = injectedEvents, ownInputBatches = batches, lastInputTick = LastInput(), latestStampTick = latestStamp };
+            lock (gate) return new { personAgeMs = age, personActive = age < PersonQuietMilliseconds,
+                personEvents = personEvents, injectedEvents = injectedEvents, ownInputBatches = batches, lastInputTick = LastInput(), latestStampTick = latestStamp };
         }
     }
 }

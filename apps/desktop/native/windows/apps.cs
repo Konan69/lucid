@@ -43,10 +43,10 @@ namespace Vivid.Windows
         internal readonly string Arguments, Directory;
         internal ShortcutApp(string name, string id, string source, string target, string arguments, string directory) : base(name, id, source, target)
         {
-            Arguments = arguments; Directory = directory;
+            Arguments = arguments; Directory = directory; reason = Shells.ShortcutReason(target, arguments);
             // Unresolved Explorer arguments may invoke another executable through
             // the shell. Only an explicitly resolved packaged shortcut bypasses this.
-            if (String.Equals(Path.GetFileName(target), "explorer.exe", StringComparison.OrdinalIgnoreCase) && !String.IsNullOrWhiteSpace(arguments))
+            if (reason != "ShellRefused" && String.Equals(Path.GetFileName(target), "explorer.exe", StringComparison.OrdinalIgnoreCase) && !String.IsNullOrWhiteSpace(arguments))
                 reason = "AppTargetUnverified";
         }
         internal override uint Launch() { return Apps.Start(this); }
@@ -179,11 +179,11 @@ namespace Vivid.Windows
                 if (link == null) { skipped++; return; }
                 string target = Environment.ExpandEnvironmentVariables((string)link.TargetPath);
                 string arguments = (string)link.Arguments;
-                if (!target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || !File.Exists(target)) { skipped++; return; }
+                if (!File.Exists(target) && Shells.ShortcutReason(target, arguments) != "ShellRefused") { skipped++; return; }
                 // Explorer command-line activation is indirect and cannot prove a GUI
                 // target. Resolve a known AppsFolder AUMID or refuse this launcher.
                 string prefix = "shell:AppsFolder\\";
-                if (String.Equals(Path.GetFileName(target), "explorer.exe", StringComparison.OrdinalIgnoreCase) && arguments.IndexOf(prefix, StringComparison.OrdinalIgnoreCase) >= 0)
+                if (String.Equals(Path.GetFileName(target), "explorer.exe", StringComparison.OrdinalIgnoreCase) && arguments.IndexOf(prefix, StringComparison.OrdinalIgnoreCase) >= 0 && Shells.ShortcutReason(target, arguments) != "ShellRefused")
                 {
                     string aumid = arguments.Substring(arguments.IndexOf(prefix, StringComparison.OrdinalIgnoreCase) + prefix.Length).Trim(' ', '"');
                     InstalledApp package;
@@ -223,6 +223,8 @@ namespace Vivid.Windows
             if (selected == null) throw new AppNotInstalled();
             Shells.Require(selected.reason);
             Shells.Require(Shells.Reason(selected.ResolveTarget()));
+            var shortcut = selected as ShortcutApp;
+            if (shortcut != null) Shells.Require(Shells.ShortcutReason(shortcut.Target, shortcut.Arguments));
             budget.Check();
             uint pid;
             try { pid = selected.Launch(); }

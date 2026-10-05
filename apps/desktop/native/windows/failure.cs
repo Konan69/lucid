@@ -13,7 +13,8 @@ namespace Vivid.Windows
     internal sealed class InvalidRequest : Failure { internal readonly string Field; internal InvalidRequest(string field) : base("invalid or missing field: " + field) { Field = field; } }
     internal sealed class UnknownMethod : Failure { internal UnknownMethod() : base("method is not supported") { } }
     internal sealed class WindowGone : Failure { internal WindowGone() : base("the named window is no longer available") { } }
-    internal sealed class PersonActive : Failure { internal PersonActive(uint age) : base("physical input within the last " + Activity.PersonQuietMilliseconds + " ms; ageMs=" + age + "; no activation or input sent") { } }
+    internal sealed class PersonActive : Failure { internal PersonActive(uint age) : base("Person input within the last " + Activity.PersonQuietMilliseconds + " ms; ageMs=" + age + "; no activation or input sent") { } }
+    internal sealed class HookUnavailable : Failure { internal HookUnavailable() : base("input hook self-test failed; no action sent; end this turn") { } }
     internal sealed class ForegroundRefused : Failure { internal ForegroundRefused(string message) : base(message) { } }
     internal sealed class ScreenshotRequired : Failure { internal ScreenshotRequired() : base("call get_window_state with include_screenshot before issuing coordinate input") { } }
     internal sealed class ScreenshotIdRequired : Failure { internal ScreenshotIdRequired() : base("coordinate input requires screenshotId from the latest screenshot of this window") { } }
@@ -22,8 +23,8 @@ namespace Vivid.Windows
     internal sealed class ElementGone : Failure { internal ElementGone(string message) : base(message) { } }
     internal sealed class InvalidClickCount : Failure { internal InvalidClickCount() : base("click_count must be between 1 and 3") { } }
     internal sealed class RequestBudgetExhausted : Failure { internal RequestBudgetExhausted(string message) : base(message) { } }
-    internal sealed class PersonStopped : Failure { internal PersonStopped() : base("stopped by the Person; begin a newly authorized turn with a new turn id") { } }
-    internal sealed class ShellRefused : Failure { internal ShellRefused() : base("shell, terminal or Run dialog refused; no launch, input or text capture") { } }
+    internal sealed class PersonStopped : Failure { internal PersonStopped() : base("stopped by the Person; wait for the " + Turn.StopCooldownMilliseconds + " ms cooldown and use a newly authorized turn id") { } }
+    internal sealed class ShellRefused : Failure { internal ShellRefused() : base("shell, terminal or Run dialog refused; no launch, input or capture") { } }
     internal sealed class AppTargetUnverified : Failure { internal AppTargetUnverified() : base("application executable target could not be verified") { } }
     internal sealed class TurnMismatch : Failure { internal TurnMismatch() : base("request turn does not match the current turn") { } }
     internal sealed class NoActiveTurn : Failure { internal NoActiveTurn() : base("send begin_turn before observation or input") { } }

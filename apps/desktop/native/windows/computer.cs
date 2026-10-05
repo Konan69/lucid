@@ -26,7 +26,7 @@ namespace Vivid.Windows
             { turn.Begin(request.Turn); pictures.Clear(); texts.Clear(); apps.Clear(); return new { active = true }; }
             if (request.Method == "end_turn")
             { pictures.Clear(); texts.Clear(); apps.Clear(); turn.End(); return new { active = false }; }
-            if (request.Method == "status") return new { phase = turn.Status };
+            if (request.Method == "status") return turn.Observe(budget);
             turn.Check();
             budget.Check();
             switch (request.Method)
@@ -35,6 +35,13 @@ namespace Vivid.Windows
                 case "list_apps": return apps.List(budget);
                 case "launch_app": return apps.Launch(request.Parameters, budget);
                 case "get_window_state": return State(windows.Resolve(request.Parameters.Object("window")), request.Parameters, budget);
+                case "simulate_hook_loss":
+                    if (!testMode) throw new UnknownMethod();
+                    turn.LoseHookForProof(); return new { };
+                case "diagnostic_flood":
+                    if (!testMode) throw new UnknownMethod();
+                    for (int i = 0; i < 10000; i++) Diagnostics.Write("VividProofDiagnostic");
+                    return new { };
                 case "diagnostics":
                     if (!testMode) throw new UnknownMethod();
                     return new { activity = Activity.Observe(), foreground = Windows.Diagnostic() };
@@ -59,7 +66,7 @@ namespace Vivid.Windows
             Integrity.Verify(window);
             try
             {
-                if (request.Method == "press_key") Press(window, request.Parameters, guard, budget);
+                if (request.Method == "press_key") return Press(request.Parameters, guard);
                 else ActInput(request, window, guard);
             }
             finally
@@ -71,11 +78,11 @@ namespace Vivid.Windows
         }
         // Chords are parsed before activation. The exact closing chord addresses only
         // its HWND; every keyboard stroke still requires verified foreground authority.
-        private static void Press(Window window, Fields parameters, InputGuard guard, Budget budget)
+        private static object Press(Fields parameters, InputGuard guard)
         {
             Native.Input[] chord = Input.Chord(parameters.Text("key"));
             if (!Input.ClosesWindow(chord)) guard.Prepare();
-            Input.Press(chord, guard);
+            return Input.Press(chord, guard);
         }
         // Keep mutation routing in one place; typing reports its accepted prefix to the watchdog.
         private void ActInput(Request request, Window window, InputGuard guard)
@@ -101,12 +108,12 @@ namespace Vivid.Windows
             bool includePicture = parameters.Flag("include_screenshot", true);
             if (!includeText && !includePicture)
                 throw Fields.Invalid("request");
+            Shells.Verify(window);
             var result = new Dictionary<string, object> { { "window", window } };
             TextSnapshot textSnapshot = null;
             PictureSnapshot pictureSnapshot = null;
             if (includeText)
             {
-                Shells.Verify(window);
                 TextSnapshot snapshot = Outline.Read(window, budget);
                 textSnapshot = snapshot;
                 result.Add("text", snapshot.Text);
