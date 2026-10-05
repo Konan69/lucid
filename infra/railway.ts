@@ -115,8 +115,8 @@ const computerAccess = ({ computer }: InfrastructureEnvironment) => ({
  * origin exactly as they do behind the Vite proxy locally.
  *
  * Helix gives Vivid its memory and Executor its Integrations (`docs/24-executor-scale.md`).
- * Program isolation is not part of this graph yet: the server reports that capability as
- * unavailable (`docs/19-infrastructure.md`).
+ * Programs Vivid writes need nothing in this graph: they run on the Person's Computer, which the
+ * server reaches through its Computer provider (`docs/19-infrastructure.md`).
  */
 export const railwayResources = Effect.fn('railwayResources')(function* (
   target: DeploymentTarget,

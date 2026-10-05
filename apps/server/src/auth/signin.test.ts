@@ -1,9 +1,14 @@
 import * as NodeCrypto from 'node:crypto'
 import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
-import { SignedIn } from '@vivid/contracts/signin'
+import {
+  PhoneSignedIn,
+  readPhoneSignInReturn,
+  SignedIn,
+  SignInReturn,
+} from '@vivid/contracts/signin'
 import { eq } from 'drizzle-orm'
-import { Context, Effect, Layer, Redacted, Schema } from 'effect'
+import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
@@ -18,8 +23,8 @@ import { changesLayer } from '../live/changes.ts'
 import { personTable, verificationTable } from './tables.ts'
 
 /**
- * The desktop app's Google sign-in, through the production auth routes over real PostgreSQL
- * (`desktop.ts`). Every request is a real one, over a socket, to the route the HTTP router mounts
+ * The desktop app's and the phone app's Google sign-in, through the production auth routes over
+ * real PostgreSQL (`signin.ts`). Every request is a real one, over a socket, to the route the HTTP router mounts
  * at `/api/auth/*`, and the callback that issues a code is Better Auth's own, run whole.
  *
  * One thing stands in for something real: Google's token endpoint, the single address that
@@ -90,7 +95,7 @@ interface Server {
  * public address is `origin`. Google is set up with a client that does not exist: nothing here
  * reaches Google.
  */
-const served = Effect.fn('DesktopSignInTest.served')(function* (origin: string) {
+const served = Effect.fn('SignInTest.served')(function* (origin: string) {
   const config = yield* ServerConfig
   const server = yield* Layer.build(NodeHttpServer.layerTest)
   yield* Layer.build(HttpRouter.serve(authRoute, { disableLogger: true })).pipe(
@@ -203,7 +208,7 @@ const startOf = (mine: Attempt) =>
  * A Google account no test has used, whose Person is removed again when the test's scope closes.
  * The removal is registered here, before anything can have signed the account in.
  */
-const account = Effect.fn('DesktopSignInTest.account')(function* () {
+const account = Effect.fn('SignInTest.account')(function* () {
   const database = yield* Database
   const sub = NodeCrypto.randomUUID()
   const email = `${sub}@example.test`
@@ -217,7 +222,7 @@ const account = Effect.fn('DesktopSignInTest.account')(function* () {
 })
 
 /** The browser at Google for one attempt: where it was sent, and the cookies it was given. */
-const begun = Effect.fn('DesktopSignInTest.begun')(function* (server: Server, mine: Attempt) {
+const begun = Effect.fn('SignInTest.begun')(function* (server: Server, mine: Attempt) {
   const response = yield* call(server, startOf(mine), { method: 'GET', headers: {} })
   const google = sentTo(server, response)
   return { google, cookie: cookiesOf(response) }
@@ -243,7 +248,7 @@ const cameBack = (
   )
 
 /** An attempt carried as far as the code arriving at the app, for an account chosen at Google. */
-const granted = Effect.fn('DesktopSignInTest.granted')(function* (server: Server, who: Account) {
+const granted = Effect.fn('SignInTest.granted')(function* (server: Server, who: Account) {
   const mine = attempt()
   const round = yield* begun(server, mine)
   const callback = yield* cameBack(server, round, { code: codeFor(who) })
@@ -252,6 +257,64 @@ const granted = Effect.fn('DesktopSignInTest.granted')(function* (server: Server
   if (code === null) return expect.fail('The app was sent no code')
   return { mine, app, code, browser: cookiesOf(callback) }
 })
+
+/** The address the phone app opens in the browser. */
+const startOnPhone = (mine: Attempt) =>
+  `phone/google?${new URLSearchParams({ challenge: mine.challenge, state: mine.state }).toString()}`
+
+/**
+ * What the browser hands the phone app: the link a redirect names, read the way the app
+ * reads it (`readPhoneSignInReturn`). A response that is not a redirect to the app's own link
+ * fails the test.
+ */
+const handedBack = (response: Answer) => {
+  expect(response.status).toBe(302)
+  const link = response.headers['location']
+  if (link === undefined) return expect.fail('The redirect names no link')
+  return Option.match(readPhoneSignInReturn(link), {
+    onNone: () => expect.fail(`The browser was not sent to the phone app's link: ${link}`),
+    onSome: (back) => back,
+  })
+}
+
+/** The browser at Google for one phone attempt, then back at the callback with what Google sent. */
+const roundOnPhone = Effect.fn('SignInTest.roundOnPhone')(function* (
+  server: Server,
+  held: string,
+  fromGoogle: Readonly<Record<string, string>>,
+) {
+  const mine = attempt()
+  const response = yield* call(server, startOnPhone(mine), { method: 'GET', headers: {} })
+  const google = sentTo(server, response)
+  const cookie = [cookiesOf(response), held].filter((part) => part !== '').join('; ')
+  const callback = yield* cameBack(server, { google, cookie }, fromGoogle)
+  return { mine, google, callback, back: handedBack(callback) }
+})
+
+/** A phone attempt carried as far as the code arriving at the app, for an account chosen at Google. */
+const grantedOnPhone = Effect.fn('SignInTest.grantedOnPhone')(function* (
+  server: Server,
+  who: Account,
+) {
+  const { mine, back, callback } = yield* roundOnPhone(server, '', { code: codeFor(who) })
+  if (!SignInReturn.guards.Granted(back)) return expect.fail('The phone app was sent no code')
+  return { mine, code: back.code, state: back.state, browser: cookiesOf(callback) }
+})
+
+/** The trade the phone app makes: no page, so no origin, and no cookie. */
+const tradeOnPhone = (server: Server, fields: Traded) =>
+  call(server, 'phone/session', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(fields),
+  })
+
+/** Who a bearer token is signed in as, and in which session. */
+const whoHolds = (server: Server, token: Redacted.Redacted) =>
+  call(server, 'get-session', {
+    method: 'GET',
+    headers: { authorization: `Bearer ${Redacted.value(token)}` },
+  }).pipe(Effect.flatMap((response) => bodyOf(response, Here)))
 
 interface Traded {
   readonly code: string
@@ -571,18 +634,206 @@ describe.skipIf(!testDatabaseConfigured)('the desktop app signing in with Google
       }).pipe(Effect.scoped),
     )
 
-    it.effect('issues a pairing code to the phone and no longer to the desktop app', () =>
+    it.effect('issues no code for a Person to read or type, to any app', () =>
       Effect.gen(function* () {
         const server = yield* local
-        const ask = (client: string) =>
-          call(server, 'device/code', {
+        // The device authorization grant is gone: its routes are not there to be asked.
+        for (const step of ['code', 'token', 'approve']) {
+          const answer = yield* call(server, `device/${step}`, {
             method: 'POST',
             headers: { 'content-type': 'application/json', origin: server.origin },
-            body: JSON.stringify({ client_id: client }),
+            body: JSON.stringify({ client_id: 'vivid-mobile' }),
           })
+          expect(answer.status).toBe(404)
+        }
+      }).pipe(Effect.scoped),
+    )
+  })
+})
 
-        expect((yield* ask('vivid-mobile')).status).toBe(200)
-        expect((yield* ask('vivid-desktop')).status).toBe(400)
+describe.skipIf(!testDatabaseConfigured)('the phone app signing in with Google', () => {
+  beforeAll(() => {
+    vi.stubGlobal('fetch', asGoogle(globalThis.fetch))
+  })
+  afterAll(() => {
+    vi.unstubAllGlobals()
+  })
+
+  layer(testLayer)((it) => {
+    it.effect('sends the browser to Google, where the Person chooses the account', () =>
+      Effect.gen(function* () {
+        const server = yield* local
+        const response = yield* call(server, startOnPhone(attempt()), {
+          method: 'GET',
+          headers: {},
+        })
+        const google = sentTo(server, response)
+
+        expect(google.origin).toBe('https://accounts.google.com')
+        expect(google.searchParams.get('redirect_uri')).toBe(
+          `${server.origin}/api/auth/callback/google`,
+        )
+        expect(google.searchParams.get('prompt')).toBe('select_account')
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('gives the phone a token of its own for the account chosen at Google', () =>
+      Effect.gen(function* () {
+        const server = yield* local
+        const who = yield* account()
+        const { mine, code, state, browser } = yield* grantedOnPhone(server, who)
+        // The link names the attempt the app started, so the app answers only its own.
+        expect(state).toBe(mine.state)
+
+        const answer = yield* tradeOnPhone(server, {
+          code,
+          state: mine.state,
+          verifier: mine.verifier,
+        })
+        expect(answer.status).toBe(200)
+        // The phone keeps a token. Nothing is left as a cookie for a browser to hold.
+        expect(sessionCookieOf(answer)).toBeUndefined()
+        // And nothing on the way may keep a copy of the answer.
+        expect(answer.headers['cache-control']).toContain('no-store')
+        const { token } = yield* bodyOf(answer, PhoneSignedIn)
+
+        const onPhone = yield* whoHolds(server, token)
+        const inBrowser = yield* whoIs(server, browser)
+        // The same Person, in a session that is not the browser's: signing out of one leaves the
+        // other signed in.
+        expect(onPhone.user.email).toBe(who.email)
+        expect(inBrowser.user.email).toBe(who.email)
+        expect(onPhone.session.id).not.toBe(inBrowser.session.id)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('signs the phone in as the account chosen, not the one the browser held', () =>
+      Effect.gen(function* () {
+        const server = yield* local
+        const held = yield* account()
+        const chosen = yield* account()
+        const before = yield* grantedOnPhone(server, held)
+        const { mine, back } = yield* roundOnPhone(server, before.browser, {
+          code: codeFor(chosen),
+        })
+        if (!SignInReturn.guards.Granted(back)) return expect.fail('The phone app was sent no code')
+
+        const answer = yield* tradeOnPhone(server, {
+          code: back.code,
+          state: mine.state,
+          verifier: mine.verifier,
+        })
+        const { token } = yield* bodyOf(answer, PhoneSignedIn)
+        expect((yield* whoHolds(server, token)).user.email).toBe(chosen.email)
+        return undefined
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('issues no code to a signed-in browser that did not come from Google', () =>
+      Effect.gen(function* () {
+        const server = yield* local
+        // A browser signed in as someone, and a program that started a phone attempt of its own
+        // and sends that browser to the callback with nothing from Google.
+        const { browser } = yield* grantedOnPhone(server, yield* account())
+        const { mine, back } = yield* roundOnPhone(server, browser, {})
+
+        expect(SignInReturn.guards.Failed(back)).toBe(true)
+        expect(back.state).toBe(mine.state)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('tells the phone when Google did not sign the Person in', () =>
+      Effect.gen(function* () {
+        const server = yield* local
+        // What Google sends when the Person closes its page.
+        const { mine, back } = yield* roundOnPhone(server, '', { error: 'access_denied' })
+
+        expect(SignInReturn.guards.Failed(back)).toBe(true)
+        expect(back.state).toBe(mine.state)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('refuses a code without the secret its attempt was started with', () =>
+      Effect.gen(function* () {
+        const server = yield* local
+        const { mine, code } = yield* grantedOnPhone(server, yield* account())
+        // Whoever read the code off the link does not have the secret, and the try spends it.
+        const stolen = yield* tradeOnPhone(server, {
+          code,
+          state: mine.state,
+          verifier: attempt().verifier,
+        })
+        expect(stolen.status).toBe(401)
+        const late = yield* tradeOnPhone(server, {
+          code,
+          state: mine.state,
+          verifier: mine.verifier,
+        })
+        expect(late.status).toBe(401)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('honours a code once, also when it is traded twice at the same moment', () =>
+      Effect.gen(function* () {
+        const server = yield* local
+        const { mine, code } = yield* grantedOnPhone(server, yield* account())
+        const fields = { code, state: mine.state, verifier: mine.verifier }
+
+        const both = yield* Effect.all(
+          [tradeOnPhone(server, fields), tradeOnPhone(server, fields)],
+          { concurrency: 2 },
+        )
+        expect(both.map((answer) => answer.status).toSorted((a, b) => a - b)).toEqual([200, 401])
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('refuses a code traded under another attempt', () =>
+      Effect.gen(function* () {
+        const server = yield* local
+        const { mine, code } = yield* grantedOnPhone(server, yield* account())
+
+        const answer = yield* tradeOnPhone(server, {
+          code,
+          state: attempt().state,
+          verifier: mine.verifier,
+        })
+        expect(answer.status).toBe(401)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('keeps each app’s code to that app’s own trade', () =>
+      Effect.gen(function* () {
+        const server = yield* local
+        const who = yield* account()
+        // A desktop code would sign a phone in without the origin check the window's trade
+        // makes, and a phone code would set a cookie; neither is found at the other's trade.
+        const desktop = yield* granted(server, who)
+        const atPhone = yield* tradeOnPhone(server, {
+          code: desktop.code,
+          state: desktop.mine.state,
+          verifier: desktop.mine.verifier,
+        })
+        expect(atPhone.status).toBe(401)
+
+        const phone = yield* grantedOnPhone(server, who)
+        const atWindow = yield* trade(server, server.origin, {
+          code: phone.code,
+          state: phone.mine.state,
+          verifier: phone.mine.verifier,
+        })
+        expect(atWindow.status).toBe(401)
+        expect(sessionCookieOf(atWindow)).toBeUndefined()
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('refuses a start with a malformed digest', () =>
+      Effect.gen(function* () {
+        const server = yield* local
+        const malformed = yield* call(server, startOnPhone({ ...attempt(), challenge: 'short' }), {
+          method: 'GET',
+          headers: {},
+        })
+        expect(malformed.status).toBe(400)
       }).pipe(Effect.scoped),
     )
   })

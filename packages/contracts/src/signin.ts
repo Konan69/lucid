@@ -2,6 +2,10 @@ import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 
 /**
+ * An app signing in with Google through a browser it does not own, as the parties of it agree on
+ * the wire. The desktop app comes first, and the phone app, which differs in how the browser
+ * hands back, is at the end of this file.
+ *
  * The desktop app signing in with Google, as the three parties of it agree on the wire: the
  * desktop shell that starts it, the server that carries it through Google, and the app's window
  * that ends it.
@@ -130,18 +134,20 @@ const ReturnFields = Schema.Union([
 ])
 const decodeReturnFields = Schema.decodeUnknownOption(ReturnFields)
 
+/** A return as the names and values an address carries it in. */
+const returnFields = (back: SignInReturn): Readonly<Record<string, string>> =>
+  SignInReturn.match<Readonly<Record<string, string>>>(back, {
+    Granted: ({ code, state }) => ({ state, code }),
+    Failed: ({ state }) => ({ state, error: 'sign_in_failed' }),
+  })
+
 /**
  * The loopback address the server sends the browser back to. Only the port varies: the host is
  * the IPv4 loopback literal, as RFC 8252 section 8.3 asks, never a name that could resolve
  * elsewhere.
  */
-export const signInReturnAddress = (port: LoopbackPort, back: SignInReturn): string => {
-  const fields = SignInReturn.match<Readonly<Record<string, string>>>(back, {
-    Granted: ({ code, state }) => ({ state, code }),
-    Failed: ({ state }) => ({ state, error: 'sign_in_failed' }),
-  })
-  return `http://127.0.0.1:${port}/?${queryOf(fields)}`
-}
+export const signInReturnAddress = (port: LoopbackPort, back: SignInReturn): string =>
+  `http://127.0.0.1:${port}/?${queryOf(returnFields(back))}`
 
 /**
  * Reads a return off the query of a request to the loopback address, given as its names and
@@ -176,3 +182,85 @@ export type SignInArrival = typeof SignInArrival.Type
 /** The answer to a trade. The session itself is the cookie the answer sets, never a field here. */
 export const SignedIn = Schema.Struct({ arrival: SignInArrival })
 export type SignedIn = typeof SignedIn.Type
+
+/**
+ * The phone app signing in with Google. It is the same exchange as the desktop app's above (a
+ * secret the app keeps, its digest through Google, a one-use code traded with the secret), and
+ * differs in the two places a phone differs from a computer.
+ *
+ * The return is a link in the app's own scheme and not a loopback address: a phone app listens
+ * on no port, and the system opens the app that registered the scheme. That is how Better Auth's
+ * own phone integration comes back (`@better-auth/expo` 1.7.5, the `callbackURL` it gives
+ * `Browser.openAuthSessionAsync` in `dist/client.js`). Which browser the phone opens is the
+ * phone app's own matter (`apps/mobile/src/data/google.ts`) and nothing here depends on it.
+ *
+ * And the phone holds no cookie. It keeps the session's token and sends it as a bearer token, so
+ * the trade answers with the token itself.
+ *
+ * One thing is not taken from that integration: it puts the session cookie on the link
+ * (`hooks.after` in its `dist/index.js`). A link in a custom scheme can be claimed by another app
+ * on the phone (RFC 8252 section 8.1), and whatever reads it would then hold the session. Here
+ * the link carries only the one-use code, which is worth nothing without the secret.
+ */
+
+/** Where each step of the phone's sign-in is served, under the server's own origin. */
+export const PHONE_SIGN_IN_PLACES = {
+  /** The browser is opened here; it leaves for Google at once. */
+  start: '/api/auth/phone/google',
+  /** The app trades the code here. */
+  trade: '/api/auth/phone/session',
+} as const
+
+/**
+ * The link the server sends the browser to when Google is done. Its scheme is the one the
+ * phone app registers (`scheme` in `apps/mobile/app.json`); the server never sends a browser to a
+ * link an app supplied.
+ */
+export const PHONE_SIGN_IN_RETURN = 'vivid://signin'
+
+/** What the phone puts on the address it opens the browser on. */
+export const PhoneSignInStart = Schema.Struct({
+  challenge: SignInChallenge,
+  state: SignInAttempt,
+})
+export type PhoneSignInStart = typeof PhoneSignInStart.Type
+
+/** The address the phone opens in the browser to start an attempt on its server. */
+export const phoneSignInStartAddress = (origin: string, start: PhoneSignInStart): string =>
+  `${origin}${PHONE_SIGN_IN_PLACES.start}?${queryOf(start)}`
+
+/** The link the server sends the browser back to, with what came of the attempt. */
+export const phoneSignInReturnAddress = (back: SignInReturn): string =>
+  `${PHONE_SIGN_IN_RETURN}?${queryOf(returnFields(back))}`
+
+/** One `name=value` of a query, decoded. A value that is not valid percent-encoding is nothing. */
+const fieldOf = (pair: string): Option.Option<readonly [string, string]> => {
+  const at = pair.indexOf('=')
+  if (at < 1) return Option.none()
+  return Option.map(
+    Option.liftThrowable(decodeURIComponent)(pair.slice(at + 1)),
+    (value) => [pair.slice(0, at), value] as const,
+  )
+}
+
+/**
+ * Reads a return off the link the browser handed the app. The link is read as text, because
+ * this package assumes no platform and a phone's `URL` does not parse a custom scheme the way a
+ * browser's does. A link that is not the return link, or carries no return, is nothing.
+ */
+export const readPhoneSignInReturn = (link: string): Option.Option<SignInReturn> => {
+  const [place, query] = link.split('?')
+  if (place !== PHONE_SIGN_IN_RETURN || query === undefined) return Option.none()
+  const fields = query.split('&').map(fieldOf)
+  return Option.flatMap(Option.all(fields), (pairs) => readSignInReturn(Object.fromEntries(pairs)))
+}
+
+/**
+ * The answer to the phone's trade: the session's token, which the phone keeps and sends as a
+ * bearer token. It is `Redacted` wherever it is held. Which arrival it was is not said: the phone
+ * does nothing differently on a first one.
+ */
+export const PhoneSignedIn = Schema.Struct({
+  token: Schema.RedactedFromValue(Schema.NonEmptyString),
+})
+export type PhoneSignedIn = typeof PhoneSignedIn.Type

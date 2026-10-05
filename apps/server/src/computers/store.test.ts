@@ -235,7 +235,23 @@ const providerLayer = Layer.effect(
         window: 'Example',
       }
     })
-    return Machine.of({ status, inspect, ensure, stop, exec, browse, screen, desktop })
+    // No test here follows a command or writes a file; a program's use of both has its own tests.
+    const follow = () => Stream.fail(new MachineOperationFailed({ operation: 'follow' }))
+    const write = Effect.fn('Test.Machine.write')(() =>
+      Effect.fail(new MachineOperationFailed({ operation: 'write' })),
+    )
+    return Machine.of({
+      status,
+      inspect,
+      ensure,
+      stop,
+      exec,
+      follow,
+      write,
+      browse,
+      screen,
+      desktop,
+    })
   }),
 ).pipe(Layer.provide(evidenceLayer))
 

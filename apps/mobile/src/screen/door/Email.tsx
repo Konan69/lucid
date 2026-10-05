@@ -2,7 +2,7 @@ import { Option } from 'effect'
 import { useState } from 'react'
 import { commit } from '../../data/haptics'
 import { Button, Field } from '../../ui/ui'
-import { Asked, Quiet, Step, useDoorGo } from './Frame'
+import { Asked, Step, useDoorGo } from './Frame'
 
 /** A shape an address can plausibly have; Vivid is the one that decides whether it is real. */
 const ADDRESS = /^\S+@\S+\.\S+$/
@@ -11,9 +11,6 @@ const ADDRESS = /^\S+@\S+\.\S+$/
  * Asks for the Person's email and nothing else. The keyboard's own "next" goes on, as the button
  * does; an address that cannot be one is said under the field once they try to go on, never
  * while they are still typing it.
- *
- * Signing in with a code from another device is one quiet line here: it is the way in for a
- * Person with no password to type, and it is its own step.
  */
 export function Email() {
   const go = useDoorGo()
@@ -34,12 +31,7 @@ export function Email() {
   return (
     <Step
       title="What’s your email?"
-      foot={
-        <>
-          <Button kind="primary" label="Continue" onPress={proceed} />
-          <Quiet label="Use a code from another device" onPress={() => go.navigate('Code')} />
-        </>
-      }
+      foot={<Button kind="primary" label="Continue" onPress={proceed} />}
     >
       <Asked
         problem={

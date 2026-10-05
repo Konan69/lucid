@@ -1,5 +1,4 @@
 import type { InvitationId, ThreadId } from '@vivid/contracts'
-import { approvalPlace } from '@vivid/state'
 import { Result, Schema } from 'effect'
 
 /**
@@ -52,7 +51,7 @@ export const parseServer = (text: string): Result.Result<ServerAddress, ServerAd
 /** The address as a Person reads it: without the scheme, which is noise on a small screen. */
 export const serverName = (server: ServerAddress): string => server.replace(/^https?:\/\//u, '')
 
-/** Better Auth's routes: signing in, signing out and the device code exchange. */
+/** Better Auth's routes: signing in, signing out and reading the session. */
 export const accountAddress = (server: ServerAddress, path: string): string =>
   `${server}/api/auth/${path}`
 
@@ -70,14 +69,6 @@ export const threadAddress = (server: ServerAddress, id: ThreadId): string =>
 /** Library bytes, which travel over plain HTTP beside the socket. */
 export const libraryAddress = (server: ServerAddress, path: string): string =>
   `${server}/api/library${path}`
-
-/**
- * The page a signed-in browser opens to let this phone in: Settings → Devices with the code
- * already filled in. The server serves the web app, so the address is on the same origin. The
- * place itself is `approvalPlace`, shared with the desktop app, which signs in the same way.
- */
-export const approvalAddress = (server: ServerAddress, userCode: string): string =>
-  `${server}${approvalPlace(userCode)}`
 
 /** The link an invited Person opens to see who invited them, and to what, before accepting. */
 export const invitationAddress = (server: ServerAddress, id: InvitationId): string =>

@@ -13,6 +13,7 @@ import {
   Schema,
   Semaphore,
   Scope,
+  type Stream,
 } from 'effect'
 import {
   ActionTarget,
@@ -49,6 +50,7 @@ import {
   MachineResponseInvalid,
   type MachineFailure,
   type MachineScreen,
+  type MachineOutput,
 } from './machine.ts'
 import { BrowseAuthority, DeviceRegistry } from './device.ts'
 import { requireThread } from '../threads/access.ts'
@@ -381,6 +383,32 @@ export interface ComputerStoreService {
     person: PersonId,
     action: BrowserAction,
   ) => Effect.Effect<BrowseResult, StoreError | MachineFailure | ReadinessFailure>
+  /**
+   * The Person's Computer for work of Vivid's own that lasts: a program. It is woken and checked
+   * like any action, and it stays awake until the scope closes. Unlike an action it does not hold
+   * the Computer: a program asks for commands and browser steps while it runs, and each of those
+   * takes the Computer in the ordinary way. A Person who takes the Computer over after this is
+   * not interrupted by it; the program's later steps are refused as theirs always are.
+   */
+  readonly attach: (
+    person: PersonId,
+  ) => Effect.Effect<
+    ComputerAttachment,
+    StoreError | MachineFailure | ReadinessFailure,
+    Scope.Scope
+  >
+}
+
+/** A running Computer with its machine already chosen; no caller of this names a machine. */
+export interface ComputerAttachment {
+  readonly follow: (input: {
+    readonly command: string
+    readonly timeoutSeconds: number
+  }) => Stream.Stream<MachineOutput, MachineFailure>
+  readonly write: (input: {
+    readonly path: string
+    readonly content: string
+  }) => Effect.Effect<void, MachineFailure>
 }
 
 /** A bounded wake wait is distinct from takeover, provider absence and failed startup. */
@@ -754,6 +782,34 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
   return { activity, arm, watching, cancel }
 })
 
+/**
+ * Presence, not the action permit, is what a program holds: it keeps the idle stop away as a
+ * watching Person does, and the permit is taken only for the final takeover check. Waking that
+ * fails puts the idle deadline back, as it does for an action.
+ */
+const attached = Effect.fn('ComputerStore.attach')(function* (
+  state: Effect.Success<ReturnType<typeof lifecycle>>,
+  person: PersonId,
+) {
+  const inactivity = state.rows.inactivity
+  yield* inactivity.activity(person)
+  yield* prepare(state, person).pipe(
+    Effect.onError(() =>
+      inactivity
+        .arm(person)
+        .pipe(Effect.catch(() => Effect.logError('Computer idle deadline could not be restored.'))),
+    ),
+  )
+  yield* inactivity.watching(person)
+  const key = yield* state.lock(person).withPermit(requireReady(state, person))
+  const attachment: ComputerAttachment = {
+    follow: (input) =>
+      state.machine.follow({ key, command: input.command, timeoutSeconds: input.timeoutSeconds }),
+    write: (input) => state.machine.write({ key, path: input.path, content: input.content }),
+  }
+  return attachment
+})
+
 const decodeBrowserPicture = Schema.decodeUnknownEffect(BrowserPicture)
 
 /** The provider’s browser operation returns an outline only. Cloud Screenshot therefore captures
@@ -873,6 +929,7 @@ export const computerStoreLayer = Layer.effect(
     const desktop = Effect.fn('ComputerStore.desktop')((person: PersonId, action: DesktopAction) =>
       execute(person, (key) => state.machine.desktop({ key, action })),
     )
+    const attach = (person: PersonId) => attached(state, person)
     /** Manual lifecycle activity updates the same durable deadline as Vivid's actions. */
     const start = Effect.fn('ComputerStore.startActive')(function* (person: PersonId) {
       const computer = yield* state.start(person)
@@ -908,6 +965,7 @@ export const computerStoreLayer = Layer.effect(
       probe,
       browse,
       desktop,
+      attach,
     })
   }),
 )
