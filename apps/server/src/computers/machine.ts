@@ -6,7 +6,7 @@ import {
   type DesktopView,
   ComputerState,
 } from '@vivid/contracts'
-import { Context, Effect, Layer, Schema, type Redacted } from 'effect'
+import { Context, Effect, Layer, Schema, Stream, type Redacted } from 'effect'
 
 /** App-owned RFB transport path; neither provider locations nor credentials belong in Running state. */
 export { computerScreenAddress } from '@vivid/contracts'
@@ -158,6 +158,23 @@ export type MachineFailure =
   | MachineHeld
   | MachineCapabilityUnavailable
 
+/**
+ * What a followed command says while it runs, and how it ended.
+ *
+ * `Printed` is text in the order it was written; one piece is not one line. `Exited` is the last
+ * thing a stream carries. `memory` is the provider saying it ended the command for memory, which
+ * an exit code alone does not tell apart from any other kill.
+ */
+export const MachineOutput = Schema.TaggedUnion({
+  Printed: { text: Schema.String },
+  Exited: {
+    exitCode: Schema.NullOr(Schema.Int),
+    timedOut: Schema.Boolean,
+    memory: Schema.Boolean,
+  },
+})
+export type MachineOutput = typeof MachineOutput.Type
+
 /** One machine boundary; ownership, approvals, receipts, and RPC remain application concerns. */
 export interface MachineOperations {
   readonly ensure: (
@@ -172,6 +189,24 @@ export interface MachineOperations {
     readonly command: string
     readonly timeoutSeconds: number
   }) => Effect.Effect<CommandResult, MachineFailure>
+  /**
+   * Starts a command and reports what it prints while it runs; the stream ends with one `Exited`.
+   * `exec` answers only when the command is over, which cannot carry a program that asks for
+   * things as it goes. A followed command does not hold the machine: the actions it asks for
+   * (a command, a browser step) run beside it.
+   */
+  readonly follow: (input: {
+    readonly key: MachineKey
+    readonly command: string
+    readonly timeoutSeconds: number
+  }) => Stream.Stream<MachineOutput, MachineFailure>
+  /** Puts a text file on the machine and creates its directories. A relative path is under the
+   * directory commands start in. */
+  readonly write: (input: {
+    readonly key: MachineKey
+    readonly path: string
+    readonly content: string
+  }) => Effect.Effect<void, MachineFailure>
   readonly browse: (input: {
     readonly key: MachineKey
     readonly action: BrowserAction
@@ -200,6 +235,8 @@ export const unavailableMachineLayer = Layer.effect(
       ),
       screen: Effect.fn('Machine.unavailable.screen')(() => Effect.fail(new MachineUnavailable())),
       exec: Effect.fn('Machine.unavailable.exec')(() => Effect.fail(new MachineUnavailable())),
+      follow: () => Stream.fail(new MachineUnavailable()),
+      write: Effect.fn('Machine.unavailable.write')(() => Effect.fail(new MachineUnavailable())),
       browse: Effect.fn('Machine.unavailable.browse')(() => Effect.fail(new MachineUnavailable())),
       desktop: Effect.fn('Machine.unavailable.desktop')(() =>
         Effect.fail(new MachineUnavailable()),
