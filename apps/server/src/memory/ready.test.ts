@@ -10,10 +10,11 @@ import { HelixMemory, helixMemoryLayer, MemoryPartition } from './helix.js'
  * The stand-in Helix: whether it answers, and how many requests reached it. The test flips
  * `answering`; nothing is restarted and no Layer is rebuilt, which is the claim.
  */
-class StandIn extends Context.Service<
-  StandIn,
-  { readonly answering: Ref.Ref<boolean>; readonly requests: Ref.Ref<number> }
->()('vivid/test/HelixStandIn') {}
+interface StandInService {
+  readonly answering: Ref.Ref<boolean>
+  readonly requests: Ref.Ref<number>
+}
+class StandIn extends Context.Service<StandIn, StandInService>()('vivid/test/HelixStandIn') {}
 
 const standInLayer = Layer.effect(
   StandIn,
@@ -67,7 +68,7 @@ describe('Memory readiness', () => {
     Effect.gen(function* () {
       const failure = yield* Layer.build(helixMemoryLayer).pipe(Effect.scoped, Effect.flip)
       expect(failure).toBeInstanceOf(ConfigurationError)
-      expect(failure).toMatchObject({ variable: 'VIVID_HELIX_URL' })
+      expect(failure).toHaveProperty('variable', 'VIVID_HELIX_URL')
     }).pipe(
       Effect.provide(helixClient),
       Effect.provide(standInLayer),
@@ -80,7 +81,8 @@ describe('Memory readiness', () => {
     (address) =>
       Effect.gen(function* () {
         const failure = yield* Layer.build(helixMemoryLayer).pipe(Effect.scoped, Effect.flip)
-        expect(failure).toMatchObject({ _tag: 'ConfigurationError', variable: 'VIVID_HELIX_URL' })
+        expect(failure).toBeInstanceOf(ConfigurationError)
+        expect(failure).toHaveProperty('variable', 'VIVID_HELIX_URL')
       }).pipe(
         Effect.provide(helixClient),
         Effect.provide(standInLayer),

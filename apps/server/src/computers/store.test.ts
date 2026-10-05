@@ -1786,10 +1786,9 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
 
         // The provider stops answering while the Computer is running.
         yield* Ref.set(evidence.outage, true)
-        expect((yield* store.get(first.id)).state).toMatchObject({
-          _tag: 'Failed',
-          reason: notAnswering,
-        })
+        expect((yield* store.get(first.id)).state).toEqual(
+          ComputerState.cases.Failed.make({ since: 100, reason: notAnswering }),
+        )
         expect(yield* store.access(first.id)).toEqual(
           ComputerAccess.cases.Unavailable.make({ reason: notAnswering }),
         )
@@ -1800,10 +1799,8 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         )
         expect(yield* Ref.get(evidence.calls)).toEqual(calls)
         // Stopping could not be asked either: nothing is claimed and nothing is written.
-        expect((yield* store.stop(first.id)).state).toMatchObject({
-          _tag: 'Failed',
-          reason: notAnswering,
-        })
+        const unstopped = (yield* store.stop(first.id)).state
+        expect(ComputerState.guards.Failed(unstopped) && unstopped.reason).toBe(notAnswering)
         expect(yield* recorded).toEqual([['running', null]])
 
         // The provider answers again. Nobody pressed Start and nothing was restarted.
