@@ -33,20 +33,16 @@ export class ConfigurationError extends Schema.TaggedError<ConfigurationError>()
 ) {}
 
 /**
- * Google sign-in is either fully configured or off. The three variables are one atomic set, so
- * "partly configured" is a startup error, never a third state.
+ * The Google client a Person signs in through. Signing in with Google is part of every running
+ * Vivid, so all three settings are required while the server is composed; there is no "Google
+ * sign-in is off". Google refusing, or a Person closing its screen, is a failure of that one
+ * sign-in and is answered there.
  */
-export type GoogleOAuthConfiguration = Data.TaggedEnum<{
-  Disabled: {}
-  Enabled: {
-    readonly clientId: string
-    readonly clientSecret: Redacted.Redacted
-    readonly redirectUri: URL
-  }
-}>
-
-/** Constructors and the exhaustive `$match`; a `Redacted` secret and a `URL` rule out a Schema. */
-export const GoogleOAuthConfiguration = Data.taggedEnum<GoogleOAuthConfiguration>()
+export interface GoogleOAuthConfiguration {
+  readonly clientId: string
+  readonly clientSecret: Redacted.Redacted
+  readonly redirectUri: URL
+}
 
 /**
  * Telemetry export is either fully configured or off. The endpoint and its credential are one
@@ -88,13 +84,25 @@ const configError = (variable: string, expected: string) =>
   new ConfigurationError({
     variable,
     expected,
-    message: `${variable} is invalid: expected ${expected}`,
+    message: `${variable} is missing or invalid: expected ${expected}`,
   })
 
-const required = <A>(name: string, schema: Schema.ConstraintCodec<A, unknown>) =>
-  Config.schema(schema, name).pipe(Effect.mapError(() => configError(name, 'a valid value')))
+/**
+ * A setting the server cannot run without. It is read once, while the server is composed, and its
+ * absence or a malformed value stops launch with the variable named. The supplied value is never
+ * carried: it may be a credential pasted into the wrong variable.
+ *
+ * Adapters that own a required setting (the Computer provider, memory) read it through this, so
+ * "not configured" is a server that did not start and never a state a running server is in.
+ */
+export const requiredSetting = <A>(
+  name: string,
+  schema: Schema.ConstraintCodec<A, unknown>,
+  expected = 'a valid value',
+) => Config.schema(schema, name).pipe(Effect.mapError(() => configError(name, expected)))
 
-const optional = <A>(
+/** A setting whose absence is a real choice; a malformed value still stops launch. */
+export const optionalSetting = <A>(
   name: string,
   schema: Schema.ConstraintCodec<A, unknown>,
   expected = 'a valid value',
@@ -104,7 +112,7 @@ const optional = <A>(
   )
 
 const loadDatabaseUrl = Effect.fn('ServerConfig.loadDatabaseUrl')(function* () {
-  const value = yield* required('DATABASE_URL', databaseUrl).pipe(
+  const value = yield* requiredSetting('DATABASE_URL', databaseUrl).pipe(
     Effect.mapError(() => configError('DATABASE_URL', 'a PostgreSQL connection URL')),
   )
   const parsed = yield* Effect.try({
@@ -122,37 +130,23 @@ const loadDatabaseUrl = Effect.fn('ServerConfig.loadDatabaseUrl')(function* () {
   return value
 })
 
+/** Each of the three is read on its own, so a missing one stops launch under its own name. */
 const loadGoogleOAuth = Effect.fn('ServerConfig.loadGoogleOAuth')(function* () {
-  const clientId = yield* optional('GOOGLE_CLIENT_ID', nonEmptyString, 'a non-empty string')
-  const clientSecret = yield* optional('GOOGLE_CLIENT_SECRET', secret, 'a non-empty secret')
-  const redirectUri = yield* optional(
-    'GOOGLE_REDIRECT_URI',
-    Schema.URLFromString,
-    'an absolute URL',
-  )
-  if (Option.isNone(clientId) && Option.isNone(clientSecret) && Option.isNone(redirectUri)) {
-    return GoogleOAuthConfiguration.Disabled()
+  const configuration: GoogleOAuthConfiguration = {
+    clientId: yield* requiredSetting('GOOGLE_CLIENT_ID', nonEmptyString, 'the Google client id'),
+    clientSecret: yield* requiredSetting(
+      'GOOGLE_CLIENT_SECRET',
+      Schema.RedactedFromValue(nonEmptyString),
+      'the Google client secret',
+    ),
+    // Google sends the Person back here; it must be the address registered with the client.
+    redirectUri: yield* requiredSetting(
+      'GOOGLE_REDIRECT_URI',
+      Schema.URLFromString,
+      'the absolute URL Google returns a sign-in to',
+    ),
   }
-  if (Option.isNone(clientId)) {
-    return yield* Effect.fail(
-      configError('GOOGLE_CLIENT_ID', 'present when Google OAuth is enabled'),
-    )
-  }
-  if (Option.isNone(clientSecret)) {
-    return yield* Effect.fail(
-      configError('GOOGLE_CLIENT_SECRET', 'present when Google OAuth is enabled'),
-    )
-  }
-  if (Option.isNone(redirectUri)) {
-    return yield* Effect.fail(
-      configError('GOOGLE_REDIRECT_URI', 'an absolute URL when Google OAuth is enabled'),
-    )
-  }
-  return GoogleOAuthConfiguration.Enabled({
-    clientId: clientId.value,
-    clientSecret: clientSecret.value,
-    redirectUri: redirectUri.value,
-  })
+  return configuration
 })
 
 /**
@@ -174,8 +168,8 @@ const parseHeaders = (text: string): Option.Option<Readonly<Record<string, strin
 }
 
 const loadObservability = Effect.fn('ServerConfig.loadObservability')(function* () {
-  const url = yield* optional('VIVID_OTLP_URL', Schema.URLFromString, 'an absolute URL')
-  const headers = yield* optional('VIVID_OTLP_HEADERS', secret, 'name=value pairs')
+  const url = yield* optionalSetting('VIVID_OTLP_URL', Schema.URLFromString, 'an absolute URL')
+  const headers = yield* optionalSetting('VIVID_OTLP_HEADERS', secret, 'name=value pairs')
   if (Option.isNone(url) && Option.isNone(headers)) return ObservabilityConfiguration.Disabled()
   if (Option.isNone(url)) {
     return yield* Effect.fail(
@@ -200,8 +194,8 @@ const loadObservability = Effect.fn('ServerConfig.loadObservability')(function* 
   return ObservabilityConfiguration.Enabled({
     url: url.value,
     headers: Redacted.make(parsed.value),
-    environment: named(yield* optional('VIVID_ENVIRONMENT', Schema.String)),
-    commit: named(yield* optional('VIVID_COMMIT', Schema.String)),
+    environment: named(yield* optionalSetting('VIVID_ENVIRONMENT', Schema.String)),
+    commit: named(yield* optionalSetting('VIVID_COMMIT', Schema.String)),
   })
 })
 
@@ -214,7 +208,7 @@ const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
   },
   ConfigurationError
 > {
-  const loadedAuthSecret = yield* required('AUTH_SECRET', authSecret).pipe(
+  const loadedAuthSecret = yield* requiredSetting('AUTH_SECRET', authSecret).pipe(
     Effect.mapError(() =>
       configError(
         'AUTH_SECRET',
@@ -229,20 +223,20 @@ const loadConfig = Effect.fn('loadServerConfig')(function* (): Effect.fn.Return<
     () => 8787,
   )
   const publicUrl = Option.getOrElse(
-    yield* optional('PUBLIC_URL', Schema.URLFromString, 'an absolute URL'),
+    yield* optionalSetting('PUBLIC_URL', Schema.URLFromString, 'an absolute URL'),
     () => new URL('http://localhost:3000'),
   )
   return {
     DATABASE_URL: yield* loadDatabaseUrl(),
     AUTH_SECRET: loadedAuthSecret,
-    RUNTIME_URL: yield* required('VIVID_RUNTIME_URL', Schema.URLFromString),
-    RUNTIME_TOKEN: yield* required('VIVID_RUNTIME_TOKEN', secret),
+    RUNTIME_URL: yield* requiredSetting('VIVID_RUNTIME_URL', Schema.URLFromString),
+    RUNTIME_TOKEN: yield* requiredSetting('VIVID_RUNTIME_TOKEN', secret),
     PORT: port,
     // Listener and static-root inputs belong to launch; domain test Layers need no HTTP host.
-    HOST: Option.getOrElse(yield* optional('HOST', nonEmptyString), () => '127.0.0.1'),
-    VIVID_WEB_DIST: yield* optional('VIVID_WEB_DIST', nonEmptyString),
+    HOST: Option.getOrElse(yield* optionalSetting('HOST', nonEmptyString), () => '127.0.0.1'),
+    VIVID_WEB_DIST: yield* optionalSetting('VIVID_WEB_DIST', nonEmptyString),
     // Where `apps/mobile/scripts/publish.mjs` left the mobile app's over-the-air updates.
-    VIVID_MOBILE_UPDATES: yield* optional('VIVID_MOBILE_UPDATES', nonEmptyString),
+    VIVID_MOBILE_UPDATES: yield* optionalSetting('VIVID_MOBILE_UPDATES', nonEmptyString),
     // Telemetry export is installed at launch only; domain test Layers never export.
     OBSERVABILITY: yield* loadObservability(),
     PUBLIC_URL: publicUrl,
