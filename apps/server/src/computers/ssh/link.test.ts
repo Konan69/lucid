@@ -392,8 +392,13 @@ it.live.skipIf(!peerAvailable)(
       // and a comment, and the line of the one key an installation used to have.
       const persons = `no-pty ${machine.stranger.split(' ').slice(0, 2).join(' ')} ada@laptop`
       const retired = `${other.stranger.split(' ').slice(0, 2).join(' ')} vivid`
+      // Lines that are not key records, though they end in Vivid's words.
+      const notes = ['# managed by vivid', '# unrelated vivid-connection']
       machine.authorize(persons)
       machine.authorize(retired)
+      for (const note of notes) machine.authorize(note)
+      // A mode that is not the temporary file's default, to show the file keeps its own.
+      NodeFS.chmodSync(machine.authorizedFile, 0o640)
       const presented: Array<string> = []
       /** What a provider does when asked: makes nothing, lets the given key in, says where. */
       const locate = (server: typeof machine) =>
@@ -434,7 +439,16 @@ it.live.skipIf(!peerAvailable)(
       expect(lines).not.toContain(one)
       expect(lines).not.toContain(retired)
       // The fixture's own first key carried Vivid's tag too, and went with the rest.
-      expect(lines).toHaveLength(2)
+      for (const note of notes) expect(lines).toContain(note)
+      expect(lines).toHaveLength(4)
+      expect(NodeFS.statSync(machine.authorizedFile).mode & 0o777).toBe(0o640)
+      // A session's home is the fixture's own, so a path under the home is never the developer's.
+      const home = yield* second.run({
+        command: 'echo "$HOME"',
+        directory: '/',
+        timeoutSeconds: 10,
+      })
+      expect(home.stdout.trim()).toBe(machine.home)
       // The other machine never saw the first machine's keys.
       expect(other.authorizedLines()).toContain(three)
       expect(other.authorizedLines()).not.toContain(two)

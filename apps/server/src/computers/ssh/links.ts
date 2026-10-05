@@ -89,6 +89,18 @@ export const links = <Key>(authorizedKeys: string) => {
     )
   const discard = (key: Key, link: Link) => shut(key, (held) => held === link)
   /**
+   * The first act on a new connection: the key lines of this machine's earlier connections go
+   * (`pruneKeys`). A prune that did not work is logged, without any key, and the connection is
+   * used all the same: the caller's command does not depend on it, and the next opening prunes
+   * again.
+   */
+  const pruned = (link: Link, identity: Identity) =>
+    pruneKeys(link, identity, authorizedKeys).pipe(
+      Effect.flatMap((done) =>
+        done ? Effect.void : Effect.logWarning('Old SSH key lines could not be removed.'),
+      ),
+    )
+  /**
    * One try, with a scope of its own. Learning that the connection opened and handing it to the
    * map are one uninterruptible step: a caller that gives up, or the deadline passing, at that
    * moment cannot leave a connection open that nobody owns. Only the wait for the host can be
@@ -106,6 +118,13 @@ export const links = <Key>(authorizedKeys: string) => {
             Exit.isSuccess(exit) ? Effect.void : Scope.close(scope, Exit.void),
           ),
         )
+        // The first act on the new connection, before anyone else can be handed it: the key
+        // lines of this machine's earlier connections go. A caller that gives up meanwhile
+        // closes the connection, so one that was never cleaned is never kept.
+        yield* restore(pruned(link, target.identity)).pipe(
+          Effect.onInterrupt(() => Scope.close(scope, Exit.void)),
+        )
+        // Asked after the cleaning as well: the machine may have stopped during it.
         if (pending.get(key) !== token) {
           yield* Scope.close(scope, Exit.void)
           return yield* Effect.fail(new LinkUnreachable())
@@ -132,21 +151,6 @@ export const links = <Key>(authorizedKeys: string) => {
         orElse: () => Effect.fail(new LinkUnreachable()),
       }),
     )
-  /**
-   * The first act on a new connection: the key lines of this machine's earlier connections go
-   * (`pruneKeys`). A prune that did not work is logged, without any key, and the connection is
-   * used all the same: the caller's command does not depend on it, and the next opening prunes
-   * again.
-   */
-  const pruned = (link: Link, identity: Identity) =>
-    pruneKeys(link, identity, authorizedKeys).pipe(
-      Effect.flatMap((done) =>
-        done ? Effect.void : Effect.logWarning('Old SSH key lines could not be removed.'),
-      ),
-    )
-  /** A connection for this opening, with the earlier openings' key lines removed. */
-  const opened = (key: Key, token: symbol, target: LinkTarget) =>
-    tries(key, token, target).pipe(Effect.tap((link) => pruned(link, target.identity)))
   /** An opening that ended without a connection leaves no token behind. */
   const settled = (key: Key, token: symbol) =>
     Effect.sync(() => {
@@ -168,7 +172,7 @@ export const links = <Key>(authorizedKeys: string) => {
         if (closed) return Effect.fail(new LinkUnreachable())
         const token = Symbol('opening')
         pending.set(key, token)
-        return restore(locate.pipe(Effect.flatMap((target) => opened(key, token, target)))).pipe(
+        return restore(locate.pipe(Effect.flatMap((target) => tries(key, token, target)))).pipe(
           Effect.ensuring(settled(key, token)),
         )
       }),

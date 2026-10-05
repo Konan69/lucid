@@ -143,8 +143,8 @@ export const connectionIdentity: Effect.Effect<Identity, LinkKeyRefused> = Effec
  *
  * A line is Vivid's only when it is exactly "type key comment" with one of Vivid's two comments;
  * a line with options or any other comment is someone else's and is copied as it is. The file is
- * rewritten through a temporary file beside it (mode 600) and moved into place, never truncated
- * where it is. `file` is absolute or relative to the user's home.
+ * rewritten through a temporary file beside it, given the file's own mode, and moved into place;
+ * it is never truncated where it is, and not touched at all when there is nothing to remove. `file` is absolute or relative to the user's home.
  *
  * This relies on one server holding a machine's connection at a time: two servers opening the
  * same machine would each remove the other's line. A connection that is already open is not
@@ -159,15 +159,27 @@ export const pruneKeys = Effect.fn('Link.pruneKeys')(function* (
   file: string,
 ) {
   const [, current] = identity.publicKey.split(' ')
+  // Vivid's line is exactly "type key comment": a real key type first, so a comment line that
+  // happens to end in the tag is not taken for one.
+  const mine =
+    'NF == 3 && $1 ~ /^(ssh-|ecdsa-|sk-)/ && ($3 == tag || $3 == old) && $2 != keep { next } { print }'
   const script = [
     'cd "$HOME" || exit 1',
     `file=${shellWord(file)}`,
     '[ -f "$file" ] || exit 0',
+    'seen=$(cksum < "$file") || exit 1',
     'next=$(mktemp "$(dirname "$file")/.keys.XXXXXX") || exit 1',
-    'chmod 600 "$next" || { rm -f "$next"; exit 1; }',
-    `awk -v keep=${shellWord(String(current))} -v tag=${shellWord(KEY_TAG)} -v old=${shellWord(RETIRED_KEY_TAG)} ` +
-      `'NF == 3 && ($3 == tag || $3 == old) && $2 != keep { next } { print }' "$file" > "$next" ` +
-      '&& mv "$next" "$file" || { rm -f "$next"; exit 1; }',
+    `awk -v keep=${shellWord(String(current))} -v tag=${shellWord(KEY_TAG)} -v old=${shellWord(RETIRED_KEY_TAG)} '${mine}' "$file" > "$next" || { rm -f "$next"; exit 1; }`,
+    // Nothing of Vivid's to remove: the file is left exactly as it is, mode and all.
+    'if cmp -s "$file" "$next"; then rm -f "$next"; exit 0; fi',
+    // The file keeps the mode it had; a new file would otherwise take the temporary one's.
+    'chmod --reference="$file" "$next" || { rm -f "$next"; exit 1; }',
+    // Someone else (the provider letting a key in, the Person) wrote the file since it was read:
+    // their line is not in the copy, so the copy is dropped and the next opening tries again.
+    // What is left is the instant between this check and the move; nothing here can lock the
+    // provider's writer out.
+    'if [ "$(cksum < "$file")" != "$seen" ]; then rm -f "$next"; exit 0; fi',
+    'mv "$next" "$file" || { rm -f "$next"; exit 1; }',
   ].join('\n')
   const run = yield* Effect.result(
     link.run({ command: script, directory: '/', timeoutSeconds: 20 }),
