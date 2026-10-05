@@ -18,6 +18,18 @@ organization when the key's account belongs to one), `VIVID_BOAT_SIZE` (`default
 names one existing machine for the installation to use instead of creating one for each Person:
 the first Person to start a Computer keeps it and other accounts are refused.
 
+A machine is one account's, and the machine itself says whose. The binding table allows one
+account for a machine, but a table belongs to one server, and two servers could each bind the same
+existing machine without seeing the other. So every wake first settles the holder on the machine's
+own disk (`~/.vivid/holder`, `boat/holder.ts`), in the same command that opens the desktop: the
+first binding to wake a machine becomes its holder, and any other binding, from this server or
+another, is refused with "already in use by another account" before anything is opened. The record
+is kept across archive and resume. Giving a machine to another account is an operator's act: remove
+that file on the machine and the old binding in the table that holds it.
+
+So `VIVID_BOAT_MACHINE` belongs in one environment only. A local or test stack must not name a
+machine another server's account holds: it would be refused at the first wake, having woken it.
+
 Boat itself not answering is not a state the server is in. A connection that fails, a reply that
 does not come in time, or Boat's own 5xx is an outage: the call that met it is refused with
 "Vivid’s computer is not answering right now", nothing about it is written to the Computer's

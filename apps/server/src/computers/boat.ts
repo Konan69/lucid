@@ -3,7 +3,9 @@ import { Effect, Layer, Option } from 'effect'
 import {
   Machine,
   MachineCapabilityUnavailable,
+  MachineHeld,
   MachineInputInvalid,
+  MachinePersistenceFailed,
   MachineResponseInvalid,
   MachineOperationFailed,
   type MachineKey,
@@ -15,6 +17,7 @@ import { guestDriver } from './boat/guest.ts'
 import { desktopStep, look } from './boat/desktop.ts'
 import { browse } from './boat/browser.ts'
 import { lifecycle } from './boat/lifecycle.ts'
+import { HELD, holdable, wakeCommand } from './boat/holder.ts'
 
 /** Boat ships the desktop and Chrome; this Layer owns a pinned guest driver prerequisite.
  * Binding lookup is durable; only per-process serialization is cached. Viewer authority is
@@ -47,16 +50,30 @@ export const boatMachineLayer = Layer.effect(
     })
     return Machine.of({
       /** The prepared payload opens the native launcher once per desktop session. This is
-       * presentation setup only; expensive installation happened before template capture. */
+       * presentation setup only; expensive installation happened before template capture.
+       *
+       * The same command first settles whose machine this is (`boat/holder.ts`): the machine
+       * records its one holder on its own disk, and a binding it does not name is refused
+       * before anything is opened. The table cannot do this alone, because another server has
+       * another table. A refused binding is given up here, so this server's table does not go
+       * on saying the account holds a machine that says otherwise. */
       ensure: Effect.fn('Machine.boat.ensure')(function* (key) {
         const state = yield* ensure(key)
         const identity = yield* running(key)
+        if (!holdable(identity.binding.intent))
+          return yield* Effect.fail(new MachinePersistenceFailed())
         const receipt = yield* api.command(
           identity.id,
           key,
-          '/opt/vivid/python/bin/python3 /opt/vivid/computer/desktop.py start',
+          wakeCommand({ id: identity.id, intent: identity.binding.intent }),
           30,
         )
+        if (receipt.exitCode === HELD) {
+          yield* saved.release(key, identity.binding.intent)
+          tabs.delete(key)
+          drivers.delete(key)
+          return yield* Effect.fail(new MachineHeld())
+        }
         if (receipt.exitCode !== 0 || receipt.timedOut)
           return yield* Effect.fail(new MachineOperationFailed({ operation: 'desktop-launcher' }))
         return state
