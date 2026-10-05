@@ -36,6 +36,7 @@
     "mime": "4.1.0",
     "pg": "catalog:",
     "spectrum-ts": "12.10.1",
+    "ssh2": "1.17.0",
     "tldts": "7.4.13",
     "unpdf": "^1.8.1",
     "web-push": "^3.6.7"
@@ -45,6 +46,7 @@
     "@types/html-to-text": "9.0.4",
     "@types/node": "catalog:",
     "@types/pg": "catalog:",
+    "@types/ssh2": "1.15.6",
     "@types/web-push": "^3.6.4",
     "@typescript/native": "catalog:",
     "@vivid/client-runtime": "workspace:*",

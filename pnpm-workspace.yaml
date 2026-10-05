@@ -131,6 +131,9 @@ allowBuilds:
   protobufjs: false
   # Its install step lays down the prebuilt Skia libraries the native mobile build links.
   '@shopify/react-native-skia': true
+  # ssh2 runs on its JavaScript ciphers; its optional native accelerators are not built.
+  cpu-features: false
+  ssh2: false
 
 patchedDependencies:
   '@react-native-menu/menu@2.0.0': patches/@react-native-menu__menu@2.0.0.patch
