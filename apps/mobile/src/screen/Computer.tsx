@@ -3,14 +3,30 @@ import type { FaceMood } from '@vivid/marks'
 import { Option, Result } from 'effect'
 import { useState } from 'react'
 import { ScrollView, View } from 'react-native'
-import { Hand, MonitorPlay, Power } from 'lucide-react-native'
+import { Hand, Monitor, MonitorPlay, Power } from 'lucide-react-native'
 import { standingOf } from '../data/computer'
 import { commit } from '../data/haptics'
 import { LiveState, useLive, useLiveData, type LiveData } from '../data/live'
 import { useTheme } from '../theme'
-import { NO_ACTIONS, StandingBar } from '../ui/Bar'
+import { NO_ACTIONS, StandingBar, type BarAction } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
 import { Button, Dot, EDGE, Face, Label, Notice, radius, styles } from '../ui/ui'
+import { useGo } from '../workspace'
+
+/**
+ * The way to this screen, as the action it is at the end of a bar. The computer is Vivid's, not
+ * one Thread's, so Home and a Thread offer the same way to it, in the same place.
+ */
+export function useComputerAction(): BarAction {
+  const go = useGo()
+  return {
+    symbol: 'desktopcomputer',
+    icon: Monitor,
+    label: 'Vivid’s computer',
+    disabled: false,
+    onPress: () => go.navigate('Computer'),
+  }
+}
 
 /**
  * Turning the computer on. The screen shows it starting at once, and puts it back with the reason

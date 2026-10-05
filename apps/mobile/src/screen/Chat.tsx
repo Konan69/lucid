@@ -21,7 +21,7 @@ import {
 } from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import { Monitor, Share2, Users } from 'lucide-react-native'
+import { Share2, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { commit } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
@@ -51,6 +51,7 @@ import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 import { useGo, useMe, type Routes } from '../workspace'
 import { Message } from './chat/Message'
+import { useComputerAction } from './Computer'
 import { Share } from './chat/Share'
 
 /**
@@ -174,20 +175,13 @@ function Top({
   onShare: () => void
 }) {
   const me = useMe()
-  const go = useGo()
+  const computer = useComputerAction()
   const others = present.filter((seen) => seen.person.id !== me.person.id)
   const typing = others.filter((seen) => seen.typing)
   const attention: Thread['attention'] = working
     ? 'Working'
     : Option.match(thread, { onNone: () => 'Quiet', onSome: (value) => value.attention })
   const someoneTyping = typing.length > 0
-  const computer: BarAction = {
-    symbol: 'desktopcomputer',
-    icon: Monitor,
-    label: 'Vivid’s computer',
-    disabled: false,
-    onPress: () => go.navigate('Computer'),
-  }
   // Who can see the Thread is a choice only inside a Company.
   const sharing = Option.map(
     Option.filter(thread, () => Workspace.guards.Company(me.workspace)),

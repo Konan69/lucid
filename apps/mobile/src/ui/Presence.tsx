@@ -195,6 +195,8 @@ export function Capsule({
         <LayoutAnimationConfig skipEntering>
           <Animated.View
             ref={slot}
+            // Kept as a view of its own, so there is always something to measure.
+            collapsable={false}
             style={{ width: SLOT, height: SLOT, alignItems: 'center', justifyContent: 'center' }}
           >
             {thinking ? (
@@ -361,6 +363,7 @@ export function Floating({
   return (
     <Animated.View
       ref={layer}
+      collapsable={false}
       pointerEvents="none"
       style={[StyleSheet.absoluteFill, { zIndex: 1 }]}
     >

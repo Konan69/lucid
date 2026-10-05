@@ -10,12 +10,13 @@ import { draft, useDraft } from '../data/drafts'
 import { LiveState, useLive, useLiveData } from '../data/live'
 import { Start, startThread } from '../data/threads'
 import type { ComposerEditorHandle } from '../native/composer/types'
-import { BarRoom, NO_ACTIONS, NOBODY, VividBar } from '../ui/Bar'
+import { BarRoom, NOBODY, VividBar } from '../ui/Bar'
 import { Composer } from '../ui/Composer'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
 import { Stand, useOrigin, type Origin } from '../ui/Presence'
 import { Label, Notice, styles } from '../ui/ui'
 import { useGo, useMe } from '../workspace'
+import { useComputerAction } from './Computer'
 import { First, Waiting } from './home/First'
 import { useScope } from './project/scope'
 
@@ -47,6 +48,7 @@ export function Home() {
   const data = useLiveData()
   const threads = useLive(data.live.threads)
   const origin = useOrigin()
+  const computer = useComputerAction()
   const start = useStart()
   const showing = homeShows(useArrival(), threads)
   const working =
@@ -62,7 +64,9 @@ export function Home() {
         stand={start.sending ? Stand.Thinking() : Stand.Resting({ mood: elsewhere })}
         origin={origin}
         present={NOBODY}
-        actions={NO_ACTIONS}
+        // The same end as a Thread's bar: the two screens are beside each other under one bar,
+        // and the way to Vivid's computer does not belong to either.
+        actions={[computer]}
       />
       <BarRoom />
       <Reconnecting />
