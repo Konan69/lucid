@@ -63,8 +63,9 @@ Vivid has no model retry or fallback layer of its own; the gateway fails over up
 Flue handles transient retries.
 
 PostgreSQL stores product records and Flue state. Memory uses HelixDB; Integrations use Executor;
-the Computer uses Boat, proven against real Boat on 3 October 2026. These external adapters
-require their own configuration; Alchemy does not provision those services today. Code and
+the Computer uses Boat, proven against real Boat on 3 October 2026. All of them are required: the
+server does not start without their settings (`apps/server/README.md`, "External capabilities").
+The hosted stack runs HelixDB and Executor itself; Boat is an outside service. Code and
 contracts call an authorized service relationship a `Connection`; every Person-facing string
 calls it an **Integration**.
 

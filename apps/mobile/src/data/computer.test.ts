@@ -39,8 +39,7 @@ describe('where Vivid’s computer stands, in words', () => {
     expect(offered(ComputerState.cases.Stopped.make({ since: 1 }))).toEqual(
       Option.some('Turn it on'),
     )
-    // Already on its way, or no machine provider here at all: nothing to press.
+    // Already on its way: nothing to press.
     expect(offered(ComputerState.cases.Starting.make({ since: 1 }))).toEqual(Option.none())
-    expect(offered(ComputerState.cases.Unavailable.make({}))).toEqual(Option.none())
   })
 })

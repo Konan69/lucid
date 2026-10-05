@@ -109,11 +109,3 @@ export const learningLayer = Layer.effect(
     })
   }),
 )
-
-/** An unconfigured installation can settle Runs without acquiring Helix, credentials, or a model client. */
-export const silentLearningLayer = Layer.succeed(
-  Learning,
-  Learning.of({
-    afterRun: Effect.fn('Learning.silent')((_input: LearningInput) => Effect.void),
-  }),
-)

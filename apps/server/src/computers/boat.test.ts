@@ -28,7 +28,7 @@ import {
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { boatMachineLayer } from './boat.ts'
-import { Machine, MachineKey } from './machine.ts'
+import { isOutage, Machine, MachineKey } from './machine.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { machineBindings } from './tables.ts'
 import * as Protocol from './boat/protocol.ts'
@@ -69,6 +69,8 @@ interface EvidenceService {
   readonly viewers: Ref.Ref<number>
   readonly publicViewer: Ref.Ref<boolean>
   readonly malformed: Ref.Ref<boolean>
+  /** While true an edge in front of Boat answers every read with an HTML 502. */
+  readonly edgeDown: Ref.Ref<boolean>
   readonly wrongIdentity: Ref.Ref<boolean>
   /** The organization every request must name as the payer; none when the key's own account pays. */
   readonly org: Ref.Ref<Option.Option<string>>
@@ -99,6 +101,7 @@ const evidenceLayer = Layer.effect(
       viewers: yield* Ref.make(0),
       publicViewer: yield* Ref.make(false),
       malformed: yield* Ref.make(false),
+      edgeDown: yield* Ref.make(false),
       wrongIdentity: yield* Ref.make(false),
       org: yield* Ref.make(Option.some('personal')),
     })
@@ -470,6 +473,11 @@ const serverLayer = Layer.effect(
         request.method === 'GET'
       ) {
         const requestedId = path === `/api/v1/sandboxes/${adoptedId}` ? adoptedId : id
+        if (yield* Ref.get(evidence.edgeDown))
+          return HttpServerResponse.text('<html><body>502 Bad Gateway</body></html>', {
+            status: 502,
+            contentType: 'text/html',
+          })
         if (yield* Ref.get(evidence.malformed))
           return HttpServerResponse.jsonUnsafe({ ok: true, sandbox: {} })
         return HttpServerResponse.jsonUnsafe({
@@ -1137,6 +1145,26 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         yield* Ref.set(evidence.malformed, false)
         yield* Ref.set(evidence.wrongIdentity, true)
         expect((yield* Effect.flip(machine.status(key)))._tag).toBe('MachineResponseInvalid')
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    15000,
+  )
+
+  it.effect(
+    'reads a 5xx whose body is not Boat’s as the provider failing, not as an invalid answer',
+    () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* machine.ensure(key)
+        yield* Ref.set(evidence.edgeDown, true)
+        // An invalid answer is recorded as the machine's state; an outage never is. An edge's
+        // HTML page must land on the outage side although nothing in it can be decoded.
+        const failure = yield* Effect.flip(machine.inspect(key))
+        expect(failure._tag).toBe('MachineRequestRejected')
+        expect(isOutage(failure)).toBe(true)
+        yield* Ref.set(evidence.edgeDown, false)
+        expect((yield* machine.inspect(key))._tag).toBe('Running')
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     15000,
   )

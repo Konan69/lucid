@@ -1,6 +1,6 @@
 import { Schema } from 'effect'
 
-/** The product vocabulary is closed even while only iMessage has an installed provider. */
+/** The product vocabulary is closed even while Vivid texts on iMessage only. */
 export const Channel = Schema.Literals(['iMessage', 'WhatsApp'])
 export type Channel = typeof Channel.Type
 
@@ -10,7 +10,7 @@ export const ChannelAddress = Schema.String.check(
 ).pipe(Schema.brand('ChannelAddress'))
 export type ChannelAddress = typeof ChannelAddress.Type
 
-/** An absent Integration is an expected installation state, never a startup failure. */
+/** Vivid does not text on this channel yet (WhatsApp today). Every running Vivid has iMessage. */
 export class ChannelUnavailable extends Schema.TaggedError<ChannelUnavailable>()(
   'ChannelUnavailable',
   { channel: Channel },
@@ -21,7 +21,8 @@ export class ChannelUnavailable extends Schema.TaggedError<ChannelUnavailable>()
  * Where one channel stands for the signed-in Person. A Person has at most one address on a
  * channel.
  *
- * - `Unavailable`: this installation has no provider for the channel.
+ * - `Unavailable`: Vivid does not text on this channel yet (WhatsApp today). Every running Vivid
+ *   has iMessage, so iMessage never stands here.
  * - `NotConnected`: nothing has been started.
  * - `Confirming`: the Person gave their number and it is enrolled with the provider, but it is
  *   not theirs to us until a message carrying `code` arrives FROM that number at `textTo`.

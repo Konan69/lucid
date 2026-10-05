@@ -11,7 +11,6 @@ import {
   ThreadId,
   InvalidRequest,
   NotFound,
-  ServiceUnavailable,
   Workspace,
   type Person,
   type RememberRequest,
@@ -1370,24 +1369,3 @@ const makeAccess = Effect.fn('MemoryAccess.make')(function* () {
 })
 
 export const memoryAccessLayer = Layer.effect(MemoryAccess, makeAccess())
-
-const unconfiguredMemory = Effect.fail(
-  ServiceUnavailable.make({ service: 'memory', message: 'Memory is unconfigured' }),
-)
-
-/** Unconfigured installations retain callable handlers with a precise availability error instead of failing server startup. */
-export const unavailableMemoryAccessLayer = Layer.succeed(
-  MemoryAccess,
-  MemoryAccess.of({
-    list: Effect.fn('MemoryAccess.unconfigured.list')(() => unconfiguredMemory),
-    brief: Effect.fn('MemoryAccess.unconfigured.brief')(() => unconfiguredMemory),
-    destination: Effect.fn('MemoryAccess.unconfigured.destination')(() => unconfiguredMemory),
-    learnOnce: Effect.fn('MemoryAccess.unconfigured.learnOnce')(() => unconfiguredMemory),
-    recall: Effect.fn('MemoryAccess.unconfigured.recall')(() => unconfiguredMemory),
-    remember: Effect.fn('MemoryAccess.unconfigured.remember')(() => unconfiguredMemory),
-    correct: Effect.fn('MemoryAccess.unconfigured.correct')(() => unconfiguredMemory),
-    forget: Effect.fn('MemoryAccess.unconfigured.forget')(() => unconfiguredMemory),
-    learn: Effect.fn('MemoryAccess.unconfigured.learn')(() => unconfiguredMemory),
-    actorFor: Effect.fn('MemoryAccess.unconfigured.actorFor')(() => unconfiguredMemory),
-  }),
-)

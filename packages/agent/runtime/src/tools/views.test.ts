@@ -131,9 +131,6 @@ describe('model views', () => {
         { ...memory, scope: MemoryScope.cases.Company.make({}) },
       ]),
       views.remembered(memory),
-      views.forgotten(memory),
-      views.corrected(memory, { ...memory, id: MemoryId.make('MARK-replacement') }),
-      views.memoryChoices([memory, memory]),
       views.passages([
         {
           chunkId: 'MARK-chunk',

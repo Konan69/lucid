@@ -10,12 +10,12 @@ import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts
 import { Changes } from '../live/changes.ts'
 import { settingsTable } from '../settings/tables.ts'
 import { Notifier, notifierLayer } from './notifier.ts'
-import { unavailablePushLayer } from '../push/delivery.ts'
+import { silentPushLayer } from '../push/testing.ts'
 import { NotificationStore, notificationStoreLayer } from './store.ts'
 
 /** PostgreSQL remains the seam under test; publication has no clients in this fixture. */
 const testLayer = Layer.mergeAll(notifierLayer, notificationStoreLayer).pipe(
-  Layer.provide(unavailablePushLayer),
+  Layer.provide(silentPushLayer),
   Layer.provideMerge(testDatabaseLayer),
   Layer.provide(
     Layer.succeed(

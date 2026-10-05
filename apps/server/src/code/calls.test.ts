@@ -21,7 +21,7 @@ import { membershipTable } from '../companies/tables.ts'
 import { threads } from '../threads/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
-import { unavailableMachineLayer } from '../computers/machine.ts'
+import { absentMachineLayer } from '../computers/testing.ts'
 import {
   ComputerAccess,
   ComputerNotReady,
@@ -45,7 +45,7 @@ import { localCodeComputerLayer } from './testing.ts'
 
 const isRepositoryInput = Schema.is(Schema.Struct({ repoName: Schema.String }))
 
-const accounts = Layer.mergeAll(connectionTestLayer, trustTestLayer, unavailableMachineLayer)
+const accounts = Layer.mergeAll(connectionTestLayer, trustTestLayer, absentMachineLayer)
 const computers = computerStoreLayer.pipe(
   Layer.provideMerge(deviceLayer),
   Layer.provideMerge(accounts),

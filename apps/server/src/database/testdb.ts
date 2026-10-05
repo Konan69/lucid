@@ -4,7 +4,7 @@ import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Redacted from 'effect/Redacted'
-import { GoogleOAuthConfiguration, ServerConfig } from '../config.ts'
+import { ServerConfig } from '../config.ts'
 import { databaseLayer } from './client.ts'
 
 /** Synchronous suite gating reads only the isolated test variable, never `DATABASE_URL`. */
@@ -25,7 +25,12 @@ export const testConfigLayer = Layer.unwrap(
         RUNTIME_TOKEN: Redacted.make('test-runtime-token'),
         PORT: 8787,
         PUBLIC_URL: new URL('http://127.0.0.1:8787'),
-        GOOGLE_OAUTH: GoogleOAuthConfiguration.Disabled(),
+        // A fixed fake client: suites never reach Google, they only need the provider to exist.
+        GOOGLE_OAUTH: {
+          clientId: 'test-google-client',
+          clientSecret: Redacted.make('test-google-secret'),
+          redirectUri: new URL('http://127.0.0.1:8787/api/auth/callback/google'),
+        },
       }),
     ),
   ),

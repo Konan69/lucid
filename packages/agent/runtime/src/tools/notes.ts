@@ -3,7 +3,7 @@ import { MemoryKind } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
 import * as v from 'valibot'
 import { deleteNote, Note, NoteFile, NOTE_BODY_LIMIT, readNote, writeNote } from '../notes.ts'
-import { text } from './inputs.ts'
+import { summary, text } from './inputs.ts'
 import { Scope, type RunTool } from './scope.ts'
 
 /** The model names a note by its file name; the rule is stated so a refusal explains itself. */
@@ -26,6 +26,11 @@ const file = v.pipe(
  *
  * The acting Person comes from the server-prepared scope, never from model input, so a note can
  * only ever be read or written in that Person's own filesystem.
+ *
+ * Each call carries a `summary` like every other tool: it is the line a Person reads for the step.
+ * The note tools had none, so a Person saw "Did something" whenever Vivid read or kept a note, and
+ * the registry check that requires it (`tests/routes.ts`) never saw these tools, because the tests
+ * ran without notes while production ran with them.
  */
 export function noteTools(runTool: RunTool, directory: string) {
   return [
@@ -33,7 +38,7 @@ export function noteTools(runTool: RunTool, directory: string) {
       name: 'read_note',
       description:
         'Open one of your notes, by its file name from the list of what you remember, to read the whole fact before you use it.',
-      input: v.object({ file }),
+      input: v.object({ summary, file }),
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {
@@ -53,6 +58,7 @@ export function noteTools(runTool: RunTool, directory: string) {
       description:
         'Keep one thing you learned as a note, or change a note you already have by writing it again under the same file name. One note per thing.',
       input: v.object({
+        summary,
         file,
         kind: v.pipe(v.picklist(MemoryKind.literals), v.description('What kind of thing this is.')),
         description: text(
@@ -87,7 +93,7 @@ export function noteTools(runTool: RunTool, directory: string) {
       name: 'delete_note',
       description:
         'Delete one of your notes when the person asks you to forget it, or when it is wrong and nothing in it should be kept.',
-      input: v.object({ file }),
+      input: v.object({ summary, file }),
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {

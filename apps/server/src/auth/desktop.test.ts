@@ -10,7 +10,7 @@ import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import type * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import { afterAll, beforeAll, vi } from 'vitest'
-import { GoogleOAuthConfiguration, ServerConfig } from '../config.ts'
+import { ServerConfig } from '../config.ts'
 import { Database } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { authRoute } from '../http/router.ts'
@@ -90,7 +90,7 @@ interface Server {
  * public address is `origin`. Google is set up with a client that does not exist: nothing here
  * reaches Google.
  */
-const served = Effect.fn('DesktopSignInTest.served')(function* (origin: string, google: boolean) {
+const served = Effect.fn('DesktopSignInTest.served')(function* (origin: string) {
   const config = yield* ServerConfig
   const server = yield* Layer.build(NodeHttpServer.layerTest)
   yield* Layer.build(HttpRouter.serve(authRoute, { disableLogger: true })).pipe(
@@ -98,22 +98,20 @@ const served = Effect.fn('DesktopSignInTest.served')(function* (origin: string, 
     Effect.provideService(ServerConfig, {
       ...config,
       PUBLIC_URL: new URL(origin),
-      GOOGLE_OAUTH: google
-        ? GoogleOAuthConfiguration.Enabled({
-            clientId: 'desktop-sign-in-test.apps.googleusercontent.com',
-            clientSecret: Redacted.make('test-Google_secret-0123456789'),
-            redirectUri: new URL(`${origin}/api/auth/callback/google`),
-          })
-        : GoogleOAuthConfiguration.Disabled(),
+      GOOGLE_OAUTH: {
+        clientId: 'desktop-sign-in-test.apps.googleusercontent.com',
+        clientSecret: Redacted.make('test-Google_secret-0123456789'),
+        redirectUri: new URL(`${origin}/api/auth/callback/google`),
+      },
     }),
   )
   return { client: Context.get(server, HttpClient.HttpClient), origin } satisfies Server
 })
 
 /** The server as the test configuration builds it: plain `http` on the loopback address. */
-const local = served('http://127.0.0.1:8787', true)
+const local = served('http://127.0.0.1:8787')
 /** The same server at a public `https` address, as production is. */
-const secure = served('https://vivid.example', true)
+const secure = served('https://vivid.example')
 
 /** What one test request is made of. Only a request that sends something has a body. */
 interface Sent {
@@ -570,14 +568,6 @@ describe.skipIf(!testDatabaseConfigured)('the desktop app signing in with Google
           headers: {},
         })
         expect(malformed.status).toBe(400)
-      }).pipe(Effect.scoped),
-    )
-
-    it.effect('has no sign-in to start on a server without Google', () =>
-      Effect.gen(function* () {
-        const server = yield* served('http://127.0.0.1:8787', false)
-        const response = yield* call(server, startOf(attempt()), { method: 'GET', headers: {} })
-        expect(response.status).toBe(404)
       }).pipe(Effect.scoped),
     )
 
