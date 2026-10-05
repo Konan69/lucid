@@ -92,6 +92,7 @@ const authorized = (references: ExecutorReferences) =>
     app: references.app,
     profile: references.profile,
     owner: references.owner,
+    appOwnership: references.appOwnership,
     account: ExecutorAccountId.make(crypto.randomUUID()),
   })
 
@@ -120,6 +121,7 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
       const identity = {
         service: input.service,
         owner: input.owner,
+        appOwnership: 'Shared' as const,
         app: ExecutorAppId.make(crypto.randomUUID()),
         profile: ExecutorProfileId.make(crypto.randomUUID()),
       }
@@ -151,6 +153,7 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
       const identity = {
         service: input.references.service,
         owner: input.references.owner,
+        appOwnership: input.references.appOwnership,
         app: input.references.app,
         profile: input.references.profile,
       }

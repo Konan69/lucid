@@ -39,6 +39,7 @@ describe.skipIf(!testDatabaseConfigured)('Google fixed callback', () => {
                   app: step.references.app,
                   profile: step.references.profile,
                   owner: step.references.owner,
+                  appOwnership: step.references.appOwnership,
                   authorization: step.references.authorization,
                   googleState: GoogleState.make(crypto.randomUUID()),
                 }),

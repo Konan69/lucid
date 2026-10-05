@@ -8,6 +8,7 @@ import {
 } from '@vivid/contracts'
 import { Array as Arr, Effect, Match, Order, Schema } from 'effect'
 import data from './curation.json' with { type: 'json' }
+import { KeyedService } from './keyed.ts'
 
 /** An independent build manifest makes dropped judgements detectable even when names repeat. */
 const CatalogIdentity = Schema.Struct({ id: ServiceId, name: Schema.NonEmptyString })
@@ -25,6 +26,7 @@ const CurationEntry = Schema.Struct({
 /** The checked-in file owns the snapshot, every judgement and the single popularity list. */
 export const CurationDocument = Schema.Struct({
   version: Schema.Literal(1),
+  keyed: Schema.Record(ServiceId, KeyedService),
   worksNowRule: Schema.NonEmptyString,
   catalog: Schema.Array(CatalogIdentity).check(
     Schema.isMinLength(1),
@@ -40,6 +42,20 @@ export const CurationDocument = Schema.Struct({
     ),
   ),
 })
+/** GitHub accepts fine-grained and classic personal tokens; instruction and transport policy
+ * live in curation data. See https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens.
+ * Decode once at module ingress so Begin and catalogue presentation use the same policy. */
+const keyedCatalog = Schema.decodeUnknownSync(Schema.Record(ServiceId, KeyedService))(data.keyed)
+export function keyedService(service: ServiceId) {
+  return keyedCatalog[service]
+}
+
+/** Address registration reuses declared header policy by the complete endpoint, never by a
+ * host heuristic: two services on the same host may require different authorization headers. */
+export function keyedAddress(address: URL) {
+  return Object.values(keyedCatalog).find((service) => service.address.href === address.href)
+}
+
 const decodeCuration = Schema.decodeUnknownEffect(CurationDocument)
 
 /** The checked-in judgements failed to decode; the page says so instead of listing everything. */
@@ -76,18 +92,17 @@ export const loadCuration = Effect.fn('Connections.loadCuration')(
   Effect.mapError(() => missingCuration()),
 )
 
-/** Keep curation off Begin/Resume: Executor remains the authority for actual account setup. */
+/** Personal-key declarations override obsolete OAuth catalogue hints; other services retain inspection. */
 function decorate(service: Service, entry: typeof CurationEntry.Type) {
-  const worksNow =
-    entry.worksNow && !ServiceAuthorization.guards.SetupRequired(service.authorization)
+  const keyed = keyedService(service.id)
+  const authorization = keyed === undefined ? service.authorization : personalKeyAuthorization()
+  const worksNow = entry.worksNow && !ServiceAuthorization.guards.SetupRequired(authorization)
   return Service.make({
     id: service.id,
     name: service.name,
-    description: service.description,
+    description: keyed === undefined ? service.description : keyed.instruction,
     mark: service.mark,
-    authorization: worksNow
-      ? service.authorization
-      : ServiceAuthorization.cases.SetupRequired.make({}),
+    authorization: worksNow ? authorization : ServiceAuthorization.cases.SetupRequired.make({}),
     curation: { kind: entry.kind, auth: entry.auth, worksNow },
   })
 }
@@ -161,4 +176,11 @@ function relevance(name: string, query: string) {
   const normalized = name.trim().toLowerCase()
   if (normalized === query) return 0
   return normalized.startsWith(query) ? 1 : 2
+}
+
+/** The deployed declaration has one token field; provider method labels are not field titles. */
+export function personalKeyAuthorization() {
+  return ServiceAuthorization.cases.Key.make({
+    fields: [{ name: 'token', label: 'Personal access token' }],
+  })
 }

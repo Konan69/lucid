@@ -82,6 +82,7 @@ describe.skipIf(!testDatabaseConfigured)('Integration polling adapter', () => {
           app: row.references.app,
           profile: row.references.profile,
           owner: row.references.owner,
+          appOwnership: row.references.appOwnership,
           account,
         })
         yield* (yield* Database).run(

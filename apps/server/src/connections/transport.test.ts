@@ -54,6 +54,7 @@ const identity = {
   app: ExecutorAppId.make('app'),
   profile: ExecutorProfileId.make('profile'),
   owner: ExecutorOwnerId.make('private-owner'),
+  appOwnership: 'Shared' as const,
 }
 const references = ExecutorReferences.cases.Public.make(identity)
 const authorized = ExecutorReferences.cases.Authorized.make({
@@ -478,13 +479,19 @@ describe('Executor hosted transport', () => {
     ),
   )
 
-  it.effect('imports one shared MCP app with the source-verified body', () =>
+  it.effect('imports dedicated public MCP probes without cascading another Connection', () =>
     scenario((remote) =>
       Effect.gen(function* () {
         const source = ConnectionSource.cases.Mcp.make({
           address: 'https://example.test/mcp',
-          authorization: 'apiKey',
+          authorization: 'auto',
         })
+        yield* Ref.update(remote.replies, (replies) =>
+          new Map(replies).set(`DELETE ${hostedPrefix}/apps/app`, {
+            status: 200,
+            body: { app: 'app' },
+          }),
+        )
         const executor = yield* Executor
         const first = yield* executor.add({
           ...begin,
@@ -498,17 +505,17 @@ describe('Executor hosted transport', () => {
           service: ServiceId.make(`url:${source.address}`),
           source,
         })
-        expect(second.references.app).toBe(first.references.app)
+        expect(second.references.app).not.toBe(first.references.app)
         const requests = yield* Ref.get(remote.requests)
         const imports = requests.filter(
           (request) => request.path === `POST ${hostedPrefix}/apps/import`,
         )
-        expect(imports).toHaveLength(1)
+        expect(imports).toHaveLength(2)
         expect(requestAt(imports, 0).body).toEqual({
           source: { kind: 'mcp', url: source.address, name: expect.any(String) },
         })
         expect(requests.some((request) => request.path === `DELETE ${hostedPrefix}/apps/app`)).toBe(
-          false,
+          true,
         )
       }),
     ),
@@ -1080,7 +1087,7 @@ describe('Executor hosted transport', () => {
     ),
   )
 
-  it.effect('retains a refused custom import outside the catalogue until expiry', () =>
+  it.effect('switches a refused custom OAuth import to a dedicated personal-key app', () =>
     scenario((remote) =>
       Effect.gen(function* () {
         yield* Ref.set(remote.accounts, signInRequirement)
@@ -1089,23 +1096,48 @@ describe('Executor hosted transport', () => {
           authorization: 'auto',
         })
         const input = { ...begin, service: ServiceId.make(`url:${source.address}`), source }
-        yield* failRoute(remote, 'POST /connections/authorization/oauth/start', {
-          status: 409,
-          body: oauthClientUnavailableReply.make({}),
+        yield* failRoute(remote, 'GET /providers/provider/oauth/oauth/setup', {
+          status: 200,
+          body: { mode: 'client-required' },
         })
-        const executor = yield* Executor
-        expect(yield* executor.add(input).pipe(Effect.flip)).toHaveProperty(
-          '_tag',
-          'ExecutorSignInRequired',
+        const deployed = {
+          id: 'keyed-app',
+          name: 'Keyed fixture',
+          requirements: {
+            accounts: {
+              service: {
+                provider: 'provider',
+                definition: {
+                  auth: { pat: { type: 'secrets', fields: { properties: { token: {} } } } },
+                },
+              },
+            },
+          },
+        }
+        yield* Ref.update(remote.replies, (replies) =>
+          new Map(replies)
+            .set(`DELETE ${hostedPrefix}/apps/app`, { status: 200, body: { app: 'app' } })
+            .set(`POST ${hostedPrefix}/apps/deploy`, { status: 200, body: deployed }),
         )
-        yield* Ref.set(remote.replies, new Map())
-        yield* TestClock.adjust('9 minutes')
-        expect(yield* executor.add(input).pipe(Effect.flip)).toHaveProperty(
-          '_tag',
-          'ExecutorSetupRequired',
+        const step = yield* (yield* Executor).add(input)
+        expect(ExecutorStep.guards.EnterKey(step)).toBe(true)
+        if (!ExecutorStep.guards.EnterKey(step)) return expect.fail('Expected personal key')
+        expect(step.references).toMatchObject({
+          app: 'keyed-app',
+          method: 'pat',
+          appOwnership: 'Dedicated',
+        })
+        expect(step.fields).toEqual([{ name: 'token', label: 'Personal access token' }])
+        const requests = yield* Ref.get(remote.requests)
+        const remove = requests.findIndex(
+          (request) => request.path === `DELETE ${hostedPrefix}/apps/app`,
         )
-        yield* TestClock.adjust('1 minute')
-        expect(yield* executor.add(input)).toHaveProperty('_tag', 'OpenSignIn')
+        const deploy = requests.findIndex(
+          (request) => request.path === `POST ${hostedPrefix}/apps/deploy`,
+        )
+        expect(remove).toBeGreaterThan(-1)
+        expect(deploy).toBeGreaterThan(remove)
+        return yield* Effect.void
       }),
     ),
   )
@@ -1561,4 +1593,38 @@ it.effect('releases an unread Executor 401 before returning access denied', () =
       return undefined
     }).pipe(Effect.provide(remote.configured))
   }),
+)
+
+/** Dedicated source/deployment deletion follows profile and credential revocation. Shared code
+ * retains the earlier tests' behavior; only the saved lifecycle grants app deletion authority. */
+it.effect('removes dedicated app code after the exact profile and account', () =>
+  scenario((remote) =>
+    Effect.gen(function* () {
+      yield* Ref.update(remote.replies, (replies) =>
+        new Map(replies).set(`DELETE ${hostedPrefix}/apps/app`, {
+          status: 200,
+          body: { app: 'app' },
+        }),
+      )
+      const dedicated = ExecutorReferences.cases.Authorized.make({
+        service: authorized.service,
+        app: authorized.app,
+        profile: authorized.profile,
+        owner: authorized.owner,
+        account: authorized.account,
+        appOwnership: 'Dedicated',
+      })
+      yield* (yield* Executor).remove(dedicated)
+      const requests = yield* Ref.get(remote.requests)
+      expect(
+        requests
+          .filter((request) => request.path.startsWith('DELETE'))
+          .map((request) => request.path),
+      ).toEqual([
+        `DELETE ${hostedPrefix}/apps/app/profiles/profile`,
+        `DELETE ${hostedPrefix}/accounts/account`,
+        `DELETE ${hostedPrefix}/apps/app`,
+      ])
+    }),
+  ),
 )
