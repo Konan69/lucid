@@ -100,8 +100,7 @@ export const machineFailureReason = (failure: MachineFailure): string =>
       MachineRequestRejected: ({ status }) =>
         status >= 500 ? notAnswering : 'The Computer provider refused the operation.',
       MachinePersistenceFailed: () => 'The Computer provider binding could not be saved or read.',
-      MachineHeld: () =>
-        'Vivid’s computer on this installation is already in use by another account.',
+      MachineHeld: () => 'Vivid’s computer is already in use by another account.',
       MachineCapabilityUnavailable: ({ capability }) =>
         `The configured Computer provider does not support ${capability}.`,
       MachineNotRunning: () => 'The Computer is no longer running.',

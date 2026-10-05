@@ -23,9 +23,18 @@ account for a machine, but a table belongs to one server, and two servers could 
 existing machine without seeing the other. So every wake first settles the holder on the machine's
 own disk (`~/.vivid/holder`, `boat/holder.ts`), in the same command that opens the desktop: the
 first binding to wake a machine becomes its holder, and any other binding, from this server or
-another, is refused with "already in use by another account" before anything is opened. The record
-is kept across archive and resume. Giving a machine to another account is an operator's act: remove
-that file on the machine and the old binding in the table that holds it.
+another, is refused with "already in use by another account" before anything is opened. A
+process that meets a machine already running that it did not wake itself (after a restart, or
+with a row no wake made) asks the same question once before it runs a command, takes a desktop or
+browser step, shows the screen or stops the machine. A refused server gives its binding up. The
+record is kept across archive and resume. Giving a machine to another account is an operator's
+act: remove that file on the machine and the old binding in the table that holds it.
+
+Three limits. An archived machine cannot be asked, so a server it then refuses has already woken
+it, and leaves it running for Boat's own archive timer. A machine between states takes no command,
+so a stop sent to one is not checked. And a copy of the holder's database is the holder, because
+the record names a binding and a copied table has the same binding.
+`held.live.test.ts` (`VIVID_LIVE_MACHINE_HELD=1`) runs the refusal against a real machine.
 
 So `VIVID_BOAT_MACHINE` belongs in one environment only. A local or test stack must not name a
 machine another server's account holds: it would be refused at the first wake, having woken it.

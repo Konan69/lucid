@@ -1,0 +1,57 @@
+import { describe, expect, it } from '@effect/vitest'
+import { ComputerState } from '@vivid/contracts'
+import { Effect, Option } from 'effect'
+import { chainFixture, chainLayer } from '../runtime/chains.ts'
+import { bindings } from './boat/bindings.ts'
+import { active } from './boat/state.ts'
+import { transport } from './boat/transport.ts'
+import { computerMachineKey } from './store.ts'
+
+/**
+ * A second server that names a machine another server's account holds, through the real server
+ * and the real machine.
+ *
+ * The stack this runs against is the mistake itself: its `VIVID_BOAT_MACHINE` names a machine
+ * whose own record (`boat/holder.ts`) names a binding in another server's table, which this
+ * stack's table has never heard of. Before the record existed that stack bound the machine and
+ * shared its desktop, files and signed-in browser with the other account.
+ *
+ * Nothing is made, stopped or deleted to stage it, and the proof refuses to go on unless the
+ * machine is already running, so it wakes nothing. The claim is that the Person on this server
+ * is told the computer is another account's, that this server keeps no binding to it, and that
+ * the machine's record is exactly what it was.
+ */
+describe.skipIf(process.env['VIVID_LIVE_MACHINE_HELD'] !== '1')('A held machine, live', () => {
+  it.live(
+    'refuses a second server that names a machine another account holds, and changes nothing on it',
+    () =>
+      Effect.gen(function* () {
+        const api = yield* transport()
+        if (Option.isNone(api.adopt))
+          return yield* Effect.sync(() =>
+            expect.fail('The stack must name the held machine in VIVID_BOAT_MACHINE'),
+          )
+        const machine = api.adopt.value
+        const fixture = yield* chainFixture('Held machine proof')
+        const key = computerMachineKey(fixture.personId)
+        expect(
+          active((yield* api.get(machine)).sandbox.state),
+          'The machine must already be running: this proof does not wake it',
+        ).toBe(true)
+        const record = api.command(machine, key, 'cat "$HOME/.vivid/holder"', 10)
+        const before = yield* record
+        expect(before.exitCode, 'The machine must already record its holder').toBe(0)
+        expect(before.stdout.startsWith(`${machine} `)).toBe(true)
+
+        yield* fixture.rpc.StartComputer()
+        const shown = (yield* fixture.rpc.GetComputer()).computer.state
+        expect(ComputerState.guards.Failed(shown) && shown.reason).toBe(
+          'Vivid’s computer is already in use by another account.',
+        )
+        // This server's table does not go on naming the machine, so it has nothing to use it with.
+        expect(yield* (yield* bindings()).load(key)).toEqual(Option.none())
+        expect((yield* record).stdout).toBe(before.stdout)
+      }).pipe(Effect.scoped, Effect.provide(chainLayer)),
+    { timeout: 120_000 },
+  )
+})

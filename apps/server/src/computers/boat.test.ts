@@ -200,19 +200,35 @@ const commandExit = (exitCode: number) =>
 /**
  * The machine's side of the holder record (`boat/holder.ts`), as its shell behaves: no record or
  * another machine's record makes the caller the holder, the caller's own record lets it on, and
- * this machine's record for someone else ends the wake with `HELD` before the desktop is opened.
+ * this machine's record for someone else ends the command with `HELD` before the desktop is
+ * opened. A command that settles the holder and stops there opens no desktop either way.
  * The shell itself is run for real in `holder.test.ts`; here it is the machine's memory.
  */
-const wake = Effect.fn('BoatTest.wake')(function* (evidence: EvidenceService, command: string) {
+const launcher = '/opt/vivid/computer/desktop.py start'
+const settled = Effect.fn('BoatTest.holder')(function* (
+  evidence: EvidenceService,
+  command: string,
+) {
   const mine = /^mine='((bx_[a-z0-9]+) [0-9a-f-]+)'$/mu.exec(command)
   if (mine === null || mine[1] === undefined || mine[2] === undefined) return commandExit(74)
-  const [, record, machine] = mine
+  const [, claim, machine] = mine
   const held = (yield* Ref.get(evidence.holders)).get(machine)
-  if (held !== undefined && held !== record && held.startsWith(`${machine} `))
+  if (held !== undefined && held !== claim && held.startsWith(`${machine} `))
     return commandExit(HELD)
-  yield* Ref.update(evidence.holders, (holders) => new Map(holders).set(machine, record))
-  yield* Ref.update(evidence.launches, (count) => count + 1)
+  yield* Ref.update(evidence.holders, (holders) => new Map(holders).set(machine, claim))
+  if (command.endsWith(launcher)) yield* Ref.update(evidence.launches, (count) => count + 1)
   return commandReply('')
+})
+
+/** Another table's row for the same machine: an account of its own and an intent of its own. */
+const rebound = (row: typeof machineBindings.$inferSelect, key: MachineKey) => ({
+  key,
+  intent: NodeCrypto.randomUUID(),
+  requestedAt: row.requestedAt,
+  request: row.request,
+  providerId: row.providerId,
+  observedState: row.observedState,
+  since: row.since,
 })
 
 /** The guest fixture speaks actual Cua CLI JSON; unexpected tools fail the fixture. */
@@ -504,8 +520,7 @@ const commands = Effect.fn('BoatTest.commands')(function* (evidence: EvidenceSer
       '{"socket":"/run/user/1000/vivid-driver.sock","binary":"/home/user/.local/share/vivid/computer/driver","generation":"0123456789abcdef0123456789abcdef"}',
     )
   if (input.command === 'echo receipt') return commandReply('receipt\n')
-  if (input.command.endsWith('/opt/vivid/computer/desktop.py start'))
-    return yield* wake(evidence, input.command)
+  if (input.command.startsWith("mine='")) return yield* settled(evidence, input.command)
   return yield* native(evidence, input.command)
 })
 
@@ -756,7 +771,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       const failure = yield* machine.ensure(second).pipe(Effect.flip)
       expect(failure._tag).toBe('MachineHeld')
       expect(machineFailureReason(failure)).toBe(
-        'Vivid’s computer on this installation is already in use by another account.',
+        'Vivid’s computer is already in use by another account.',
       )
       expect(JSON.stringify(failure)).not.toContain(first)
       expect(JSON.stringify(failure)).not.toContain(second)
@@ -787,7 +802,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         const saved = yield* bindings()
         const evidence = yield* Evidence
         const command = { command: 'echo receipt', timeoutSeconds: 10 }
-        const held = 'Vivid’s computer on this installation is already in use by another account.'
+        const held = 'Vivid’s computer is already in use by another account.'
 
         // The first account uses its Computer: the machine becomes its own.
         expect((yield* store.exec(first.id, command)).exitCode).toBe(0)
@@ -848,7 +863,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         const ours = yield* database.run(
           database.select().from(machineBindings).where(eq(machineBindings.key, first)),
         )
-        expect(held).toBe(`${adoptedId} ${ours[0]?.intent}`)
+        expect(ours.map((row) => `${adoptedId} ${row.intent}`)).toEqual([held])
 
         // The other server: same machine named in its settings, a table without the first row.
         yield* database.run(database.delete(machineBindings).where(eq(machineBindings.key, first)))
@@ -876,6 +891,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
     Effect.gen(function* () {
       const key = yield* fixture()
       const machine = yield* Machine
+      const database = yield* Database
       const evidence = yield* Evidence
       // A machine made from a template carries the template machine's own record.
       yield* Ref.set(
@@ -883,10 +899,79 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         new Map([[adoptedId, 'bx_0000000a 99999999-9999-4999-8999-999999999999']]),
       )
       expect((yield* machine.ensure(key))._tag).toBe('Running')
-      expect((yield* Ref.get(evidence.holders)).get(adoptedId)?.startsWith(`${adoptedId} `)).toBe(
-        true,
+      const rows = yield* database.run(
+        database.select().from(machineBindings).where(eq(machineBindings.key, key)),
       )
+      expect(rows.map((row) => `${adoptedId} ${row.intent}`)).toEqual([
+        (yield* Ref.get(evidence.holders)).get(adoptedId),
+      ])
     }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  )
+
+  /**
+   * A row can name a machine without a wake having made it: written by hand, or left in a table
+   * from before the machine kept its record. Such a server finds the machine running under its
+   * holder and never wakes it, so the wake's check alone would let it straight in. Each use is
+   * tried against a fresh row here, because the first refusal gives the row up.
+   */
+  it.effect(
+    'a server whose row no wake made cannot use, watch or stop a machine that names another holder',
+    () =>
+      Effect.gen(function* () {
+        const first = yield* fixture()
+        const second = yield* fixture()
+        const machine = yield* Machine
+        const saved = yield* bindings()
+        const database = yield* Database
+        const evidence = yield* Evidence
+        expect((yield* machine.ensure(first))._tag).toBe('Running')
+        const held = (yield* Ref.get(evidence.holders)).get(adoptedId)
+        const ours = yield* database.run(
+          database.select().from(machineBindings).where(eq(machineBindings.key, first)),
+        )
+        // The other server's table: the same machine, its own account, an intent of its own.
+        yield* database.run(database.delete(machineBindings).where(eq(machineBindings.key, first)))
+        const theirs = ours.map((row) => rebound(row, second))
+        expect(theirs).toHaveLength(1)
+        const viewers = yield* Ref.get(evidence.viewers)
+        const uses = [
+          machine.exec({ key: second, command: 'echo receipt', timeoutSeconds: 10 }),
+          machine.desktop({ key: second, action: DesktopAction.cases.Look.make({}) }),
+          machine.status(second),
+          machine.stop(second),
+        ]
+        for (const use of uses) {
+          yield* database.run(database.insert(machineBindings).values(theirs))
+          expect((yield* use.pipe(Effect.flip))._tag).toBe('MachineHeld')
+          expect(yield* saved.load(second)).toEqual(Option.none())
+        }
+        // Nothing of its own reached the machine: no command, no viewer, no stop, no new holder.
+        const sent = yield* Ref.get(evidence.commands)
+        expect(sent.filter((command) => !command.startsWith("mine='"))).toEqual([])
+        expect(sent.filter((command) => command.endsWith(launcher))).toHaveLength(1)
+        expect(yield* Ref.get(evidence.viewers)).toBe(viewers)
+        expect(yield* Ref.get(evidence.state)).toBe('ready')
+        expect((yield* Ref.get(evidence.holders)).get(adoptedId)).toBe(held)
+
+        // The holder's own server after a restart is such a process too: its row, a running
+        // machine, no memory of the wake. It is played by an account whose row the machine's
+        // record names. It asks once, opens no desktop, and is not asked again.
+        const third = yield* fixture()
+        const named = ours.map((row) => rebound(row, third))
+        yield* database.run(database.insert(machineBindings).values(named))
+        yield* Ref.set(
+          evidence.holders,
+          new Map(named.map((row) => [adoptedId, `${adoptedId} ${row.intent}`])),
+        )
+        const receipt = machine.exec({ key: third, command: 'echo receipt', timeoutSeconds: 10 })
+        expect((yield* receipt).output).toBe('receipt\n')
+        expect((yield* receipt).output).toBe('receipt\n')
+        const after = (yield* Ref.get(evidence.commands)).slice(sent.length)
+        expect(after.filter((command) => command.startsWith("mine='"))).toHaveLength(1)
+        expect(after.filter((command) => command.endsWith(launcher))).toEqual([])
+        expect(after.slice(1)).toEqual(['echo receipt', 'echo receipt'])
+      }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+    15000,
   )
 
   /** Refusal creates no receipt that could expire while adoption is configured. */
@@ -1020,8 +1105,18 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
               return bound
             }),
           }
-          const owner = yield* lifecycle(api, racing, () => {})
-          const contender = yield* lifecycle(api, racing, () => {})
+          const owner = yield* lifecycle(
+            api,
+            racing,
+            () => {},
+            (_, identity) => Effect.succeed(identity),
+          )
+          const contender = yield* lifecycle(
+            api,
+            racing,
+            () => {},
+            (_, identity) => Effect.succeed(identity),
+          )
           const winning = yield* owner.ensure(first).pipe(Effect.forkChild)
           expect((yield* contender.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
           expect((yield* Fiber.join(winning))._tag).toBe('Running')

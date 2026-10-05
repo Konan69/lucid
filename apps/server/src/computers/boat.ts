@@ -3,11 +3,8 @@ import { Effect, Layer, Option } from 'effect'
 import {
   Machine,
   MachineCapabilityUnavailable,
-  MachineHeld,
   MachineInputInvalid,
-  MachinePersistenceFailed,
   MachineResponseInvalid,
-  MachineOperationFailed,
   type MachineKey,
 } from './machine.ts'
 import { bindings } from './boat/bindings.ts'
@@ -17,7 +14,7 @@ import { guestDriver } from './boat/guest.ts'
 import { desktopStep, look } from './boat/desktop.ts'
 import { browse } from './boat/browser.ts'
 import { lifecycle } from './boat/lifecycle.ts'
-import { HELD, holdable, wakeCommand } from './boat/holder.ts'
+import { holding, wake } from './boat/holder.ts'
 
 /** Boat ships the desktop and Chrome; this Layer owns a pinned guest driver prerequisite.
  * Binding lookup is durable; only per-process serialization is cached. Viewer authority is
@@ -29,18 +26,25 @@ export const boatMachineLayer = Layer.effect(
     const saved = yield* bindings()
     const drivers = new Map<MachineKey, { readonly native: Driver; readonly generation: string }>()
     const tabs = new Map<MachineKey, BrowseResult['tabs']>()
+    const forget = (key: MachineKey) => {
+      tabs.delete(key)
+      drivers.delete(key)
+    }
+    const { settle, admit } = holding(api, saved, forget)
     const { ensure, status, inspect, stop, running, permit } = yield* lifecycle(
       api,
       saved,
-      (key) => {
-        tabs.delete(key)
-        drivers.delete(key)
-      },
+      forget,
+      admit,
     )
+    /** A running machine that has accepted this binding. */
+    const accepted = Effect.fn('Machine.boat.accepted')(function* (key: MachineKey) {
+      return yield* admit(key, yield* running(key))
+    })
     /** Keep the public session through one guest generation so later reads retain the existing
      * profile grant. Resume or a guest service restart discards stale refs and session authority. */
     const nativeDriver = Effect.fn('Machine.boat.native')(function* (key: MachineKey) {
-      const identity = yield* running(key)
+      const identity = yield* accepted(key)
       const current = yield* guestDriver(api, identity.id, key)
       const previous = drivers.get(key)
       if (previous !== undefined && previous.generation === current.generation)
@@ -52,30 +56,11 @@ export const boatMachineLayer = Layer.effect(
       /** The prepared payload opens the native launcher once per desktop session. This is
        * presentation setup only; expensive installation happened before template capture.
        *
-       * The same command first settles whose machine this is (`boat/holder.ts`): the machine
-       * records its one holder on its own disk, and a binding it does not name is refused
-       * before anything is opened. The table cannot do this alone, because another server has
-       * another table. A refused binding is given up here, so this server's table does not go
-       * on saying the account holds a machine that says otherwise. */
+       * The same command first settles whose machine this is (`boat/holder.ts`), at every wake,
+       * so a machine that names another holder opens nothing for this one. */
       ensure: Effect.fn('Machine.boat.ensure')(function* (key) {
         const state = yield* ensure(key)
-        const identity = yield* running(key)
-        if (!holdable(identity.binding.intent))
-          return yield* Effect.fail(new MachinePersistenceFailed())
-        const receipt = yield* api.command(
-          identity.id,
-          key,
-          wakeCommand({ id: identity.id, intent: identity.binding.intent }),
-          30,
-        )
-        if (receipt.exitCode === HELD) {
-          yield* saved.release(key, identity.binding.intent)
-          tabs.delete(key)
-          drivers.delete(key)
-          return yield* Effect.fail(new MachineHeld())
-        }
-        if (receipt.exitCode !== 0 || receipt.timedOut)
-          return yield* Effect.fail(new MachineOperationFailed({ operation: 'desktop-launcher' }))
+        yield* settle(key, yield* running(key), wake)
         return state
       }),
       status,
@@ -94,7 +79,7 @@ export const boatMachineLayer = Layer.effect(
             input.command.length > 8000
           )
             return yield* Effect.fail(new MachineInputInvalid())
-          const identity = yield* running(input.key)
+          const identity = yield* accepted(input.key)
           const receipt = yield* api.command(
             identity.id,
             input.key,
@@ -117,7 +102,7 @@ export const boatMachineLayer = Layer.effect(
       ),
       desktop: Effect.fn('Machine.boat.desktop')(
         function* (input) {
-          const identity = yield* running(input.key)
+          const identity = yield* accepted(input.key)
           const native = yield* nativeDriver(input.key)
           yield* desktopStep(native, input.action)
           return yield* look(native, api, { id: identity.id, key: input.key })
