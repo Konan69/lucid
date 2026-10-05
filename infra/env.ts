@@ -39,9 +39,36 @@ export interface InfrastructureEnvironment {
   readonly observability: Option.Option<ObservabilityAccess>
   /**
    * Vivid's Computer. It is part of the product, so it is not optional: a deploy without it stops
-   * here, before it touches the target, and names the variable it lacks.
+   * here, before it touches the target, and names the variable it lacks. The same holds for
+   * texting and for notifications while away, below.
    */
   readonly computer: ComputerAccess
+  /** Texting Vivid over iMessage, through Photon (`apps/server/src/channels/photon.ts`). */
+  readonly texting: TextingAccess
+  /** Notifications while a Person is away, to browser and phone (`apps/server/src/push/config.ts`). */
+  readonly push: PushAccess
+}
+
+/**
+ * A Photon project: its id and the secret that signs the server in to it. Both were on the hosted
+ * server by hand and in no file here, so texting worked by accident and a new environment would
+ * have had none (found 5 October 2026). They are required now, so the deploy owns them.
+ */
+export interface TextingAccess {
+  readonly projectId: string
+  readonly projectSecret: Redacted.Redacted
+}
+
+/**
+ * A VAPID key pair and the contact a push service may write to (`https:` or `mailto:`). The pair
+ * is generated once for an installation and kept: replacing it silently unsubscribes every browser
+ * and phone that subscribed with the old public key. Before 5 October 2026 no environment had one,
+ * so nobody was ever notified while away.
+ */
+export interface PushAccess {
+  readonly publicKey: string
+  readonly privateKey: Redacted.Redacted
+  readonly subject: string
 }
 
 /**
@@ -167,6 +194,15 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
       lifetimeSeconds: yield* optionalString('VIVID_BOAT_LIFETIME_SECONDS'),
       machine: yield* optionalString('VIVID_BOAT_MACHINE'),
     }
+    const texting: TextingAccess = {
+      projectId: yield* requiredString('VIVID_PHOTON_PROJECT_ID'),
+      projectSecret: Redacted.make(yield* requiredString('VIVID_PHOTON_PROJECT_SECRET')),
+    }
+    const push: PushAccess = {
+      publicKey: yield* requiredString('VIVID_PUSH_VAPID_PUBLIC'),
+      privateKey: Redacted.make(yield* requiredString('VIVID_PUSH_VAPID_PRIVATE')),
+      subject: yield* requiredString('VIVID_PUSH_SUBJECT'),
+    }
 
     return {
       authSecret,
@@ -180,6 +216,8 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
       decisions,
       observability,
       computer,
+      texting,
+      push,
     } satisfies InfrastructureEnvironment
   },
 )()

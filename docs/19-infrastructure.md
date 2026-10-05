@@ -155,9 +155,18 @@ Required by the stack:
 - `VIVID_BOAT_API_KEY` — the Boat key Vivid's Computer is reached with. A secret.
 - `VIVID_BOAT_TEMPLATE` — the name of the prepared Boat template a Person's Computer is restored
   from (`infra/computer/prepare.py` prints it).
+- `VIVID_PHOTON_PROJECT_ID`, `VIVID_PHOTON_PROJECT_SECRET` — the Photon project Vivid texts
+  through. The secret is a secret.
+- `VIVID_PUSH_VAPID_PUBLIC`, `VIVID_PUSH_VAPID_PRIVATE`, `VIVID_PUSH_SUBJECT` — the key pair and
+  contact (`https:` or `mailto:`) that notifications while away are signed with. Generate the pair
+  once for an environment and keep it; a new pair unsubscribes every browser and phone:
 
-The Computer is part of the product, so the last two are required like the first three: the stack
-stops before it touches the target and names the variable it lacks. `VIVID_BOAT_ORG`,
+  ```sh
+  node -e "const c=require('node:crypto').createECDH('prime256v1');c.generateKeys();console.log('VIVID_PUSH_VAPID_PUBLIC='+c.getPublicKey().toString('base64url'));console.log('VIVID_PUSH_VAPID_PRIVATE='+c.getPrivateKey().toString('base64url'))"
+  ```
+
+The Computer, texting and away notifications are part of the product, so these are required like
+the first three: the stack stops before it touches the target and names the variable it lacks. `VIVID_BOAT_ORG`,
 `VIVID_BOAT_SIZE`, `VIVID_BOAT_LIFETIME_SECONDS` and `VIVID_BOAT_MACHINE` are forwarded to the
 hosted server when set (`apps/server/src/computers/README.md` says what each does).
 
