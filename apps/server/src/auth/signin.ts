@@ -433,7 +433,14 @@ const traded = (origin: string) =>
  */
 const tradedOnPhone = createAuthEndpoint(
   '/phone/session',
-  { method: 'POST', body: Schema.toStandardSchemaV1(SignInTrade) },
+  {
+    method: 'POST',
+    body: Schema.toStandardSchemaV1(SignInTrade),
+    // The answer is a credential: nothing between the server and the app may keep a copy
+    // (`Cache-Control: no-store`, set by `createAuthEndpoint` in `@better-auth/core` 1.7.5
+    // `dist/api/index.mjs`, as the token endpoints of Better Auth's own plugins ask for it).
+    metadata: { noStore: true },
+  },
   (ctx) =>
     honoured(ctx, 'Phone', ctx.body).then((found) =>
       Option.match(found, {

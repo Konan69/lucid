@@ -703,6 +703,8 @@ describe.skipIf(!testDatabaseConfigured)('the phone app signing in with Google',
         expect(answer.status).toBe(200)
         // The phone keeps a token. Nothing is left as a cookie for a browser to hold.
         expect(sessionCookieOf(answer)).toBeUndefined()
+        // And nothing on the way may keep a copy of the answer.
+        expect(answer.headers['cache-control']).toContain('no-store')
         const { token } = yield* bodyOf(answer, PhoneSignedIn)
 
         const onPhone = yield* whoHolds(server, token)
@@ -745,7 +747,7 @@ describe.skipIf(!testDatabaseConfigured)('the phone app signing in with Google',
         const { browser } = yield* grantedOnPhone(server, yield* account())
         const { mine, back } = yield* roundOnPhone(server, browser, {})
 
-        expect(back).toEqual(SignInReturn.cases.Failed.make({ state: mine.state }))
+        expect(back).toEqual({ _tag: 'Failed', state: mine.state })
       }).pipe(Effect.scoped),
     )
 
@@ -755,7 +757,7 @@ describe.skipIf(!testDatabaseConfigured)('the phone app signing in with Google',
         // What Google sends when the Person closes its page.
         const { mine, back } = yield* roundOnPhone(server, '', { error: 'access_denied' })
 
-        expect(back).toEqual(SignInReturn.cases.Failed.make({ state: mine.state }))
+        expect(back).toEqual({ _tag: 'Failed', state: mine.state })
       }).pipe(Effect.scoped),
     )
 
