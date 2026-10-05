@@ -1,7 +1,12 @@
 import { describe, expect, it } from '@effect/vitest'
 import { ServiceUnavailable } from '@vivid/contracts'
-import { Effect } from 'effect'
+import { Effect, Schema } from 'effect'
 import { chainFixture, chainLayer, completeRun, replyText, toolParts } from '../runtime/chains.ts'
+
+/** What a tool hands the model when the part of Vivid behind it is not answering. */
+const decodeRefusal = Schema.decodeUnknownEffect(
+  Schema.Struct({ ok: Schema.Literal(false), message: Schema.String }),
+)
 
 /**
  * Memory not answering, through the real server, runtime and model.
@@ -38,14 +43,22 @@ describe.skipIf(process.env['VIVID_LIVE_MEMORY_OUTAGE'] !== '1')('Memory outage 
         const recalls = toolParts(state).filter((part) => part.toolName === 'recall')
         expect(recalls.length).toBeGreaterThan(0)
         // The model is told only that this part is not available right now: no address, no cause.
+        // The tool's own answer is decoded, so words the model wrote into its input cannot pass
+        // for the refusal, and a recall that succeeded cannot pass at all.
         for (const part of recalls) {
-          expect(part.state).toBe('output-available')
-          expect(JSON.stringify(part)).toContain('not available right now')
-          expect(JSON.stringify(part)).not.toMatch(/helix|railway|ECONN|ENOTFOUND/iu)
+          if (part.state !== 'output-available')
+            return yield* Effect.sync(() => expect.fail('The recall must settle with an answer'))
+          expect(yield* decodeRefusal(part.output)).toEqual({
+            ok: false,
+            message: 'That part of Vivid is not available right now.',
+          })
+          expect(JSON.stringify(part.output)).not.toMatch(/helix|railway|ECONN|ENOTFOUND/iu)
         }
+        // Vivid says that it could not look, not that it looked and found nothing.
         expect(replyText(state)).toMatch(
-          /not available|unavailable|couldn.t|could not|can.t|right now/iu,
+          /not available|unavailable|isn.t (available|working|responding|answering)|can.t (reach|access|search|check)|couldn.t (reach|access|search|check|complete)|unable to/iu,
         )
+        expect(replyText(state)).not.toMatch(/no (travel )?plans|nothing (saved|stored|about)/iu)
       }).pipe(Effect.scoped, Effect.provide(chainLayer)),
     { timeout: 180_000 },
   )

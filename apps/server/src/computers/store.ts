@@ -668,7 +668,6 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
    * be asked, so that whether the machine stopped is not known and nothing is recorded.
    */
   const expire = Effect.fn('ComputerStore.expire')(function* (before: Stored) {
-    timers.delete(before.personId)
     return yield* state.lock(before.personId).withPermit(
       Effect.gen(function* () {
         const current = yield* state.rows.load(before.personId)
@@ -694,9 +693,14 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
    *
    * An idle stop the provider could not answer is tried again every minute until it can be, so an
    * outage at the deadline neither leaves the machine running for good nor records a failure that
-   * would outlive it. A retry is no longer in `timers` (`expire` removes itself before it writes,
-   * or its own write would interrupt it), so it is ended by what `expire` rechecks each time:
-   * activity since, a Person holding the Computer, a watcher, or a state that is no longer running.
+   * would outlive it.
+   *
+   * A timer leaves `timers` once, when it wakes and before it writes: its own write arms the next
+   * timer, which cancels whatever the map holds, and would otherwise interrupt itself. It is still
+   * this timer's entry then, because arming a newer one interrupts a timer that is still asleep.
+   * A retry never touches the map again, so it cannot drop the handle of a timer armed since; it
+   * is ended by what `expire` rechecks each time: activity since, a Person holding the Computer,
+   * a watcher, or a state that is no longer running.
    */
   const arm = Effect.fn('ComputerStore.armIdle')(function* (person: PersonId) {
     yield* cancel(person)
@@ -709,6 +713,7 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
       Effect.repeat({ until: (settled) => settled, schedule: Schedule.spaced('1 minute') }),
     )
     const timer = yield* Effect.sleep(delay).pipe(
+      Effect.andThen(Effect.sync(() => timers.delete(person))),
       Effect.andThen(settle),
       Effect.asVoid,
       Effect.catch(() => Effect.logError('Computer idle stop could not be persisted.')),
