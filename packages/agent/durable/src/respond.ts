@@ -84,26 +84,27 @@ const toTurn = Effect.fn('Durable.decodeTurn')(function* (body: typeof Body.Type
   return yield* resumed(message.parts)
 })
 
-/** Compiled ingress accepts untrusted chat bodies without an untyped application function parameter. */
-export const decodeTurn = Schema.decodeUnknownEffect(
-  Body.pipe(
-    Schema.decodeTo(ChatTurn, {
-      decode: SchemaGetter.transformEffect((body) =>
-        toTurn(body).pipe(
-          Effect.mapError((cause) => {
-            if (cause instanceof TurnInvalid)
-              return new SchemaIssue.InvalidValue(
-                { message: 'Expected a user message or a message with tool calls' },
-                body,
-              )
-            return cause instanceof Schema.SchemaError ? cause.issue : cause
-          }),
-        ),
+/** One chat-body contract yields a decoded turn for both object and JSON-text ingress. */
+export const TurnBody = Body.pipe(
+  Schema.decodeTo(ChatTurn, {
+    decode: SchemaGetter.transformEffect((body) =>
+      toTurn(body).pipe(
+        Effect.mapError((cause) => {
+          if (cause instanceof TurnInvalid)
+            return new SchemaIssue.InvalidValue(
+              { message: 'Expected a user message or a message with tool calls' },
+              body,
+            )
+          return cause instanceof Schema.SchemaError ? cause.issue : cause
+        }),
       ),
-      encode: SchemaGetter.forbiddenEncoding,
-    }),
-  ),
+    ),
+    encode: SchemaGetter.forbiddenEncoding,
+  }),
 )
+
+/** Compiled ingress accepts untrusted chat bodies without an untyped application function parameter. */
+export const decodeTurn = Schema.decodeUnknownEffect(TurnBody)
 
 /** Decisions settle first; only outputs for currently answerable calls are accepted from the client. */
 const settleHolds = Effect.fn('Durable.settleHolds')(function* (

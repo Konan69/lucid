@@ -1,12 +1,16 @@
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
 import { createUIMessageStreamResponse, type UIMessageChunk } from 'ai'
-import { Effect, Option, Stream } from 'effect'
+import { Effect, Option, Schema, Stream } from 'effect'
 
 import * as Core from './core.ts'
 import { TurnInvalid } from './errors.ts'
 import { prepareRun } from './stream.ts'
+import { TurnBody } from './respond.ts'
 import type { ToolsOptions } from './tools.ts'
+
+/** Like runtime/client.test.ts decodeIncoming, parse JSON text and validate through one compiled codec. */
+const decodeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(TurnBody))
 
 /** Promise facade; tool registration has one Effect implementation. */
 export const toolsExtension = (
@@ -61,7 +65,7 @@ export const continueRun = (...args: Parameters<typeof Core.continueRun>) =>
     ),
   )
 
-/** HTTP ingress reads JSON once, decodes the latest turn, and maps only the two chat protocol failures. */
+/** HTTP ingress reads body text once, parses and decodes the latest turn, and maps only the two chat protocol failures. */
 export const respond = (
   harness: Harness,
   conversationId: ConversationId,
@@ -70,10 +74,10 @@ export const respond = (
 ): Promise<Response> =>
   Effect.runPromise(
     Effect.tryPromise({
-      try: () => request.json(),
+      try: () => request.text(),
       catch: () => new TurnInvalid({}),
     }).pipe(
-      Effect.flatMap(Core.decodeTurn),
+      Effect.flatMap(decodeRequest),
       Effect.mapError(() => new TurnInvalid({})),
       Effect.flatMap((turn) => Core.respond(harness, conversationId, turn, context)),
       Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream)),

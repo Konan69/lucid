@@ -335,3 +335,24 @@ it.live.each([
     expect([...entries.items].some((entry) => entry.kind === 'pi.user')).toBe(false)
   }),
 )
+
+/** A real consumed Request rejects body reading; the facade refuses it without admitting a run. */
+it.live('maps a failed request body read to an invalid HTTP turn', () =>
+  Effect.gen(function* () {
+    const { harness, root } = yield* server([])
+    const request = new Request('http://durable.test/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        messages: [{ role: 'user', id: 'unreadable', parts: [{ type: 'text', text: 'Hello' }] }],
+      }),
+    })
+    yield* Effect.promise(() => request.text())
+    const response = yield* Effect.promise(() => respond(harness, root.id, request, context))
+    expect(response.status).toBe(400)
+    expect(yield* Effect.promise(() => response.text())).toBe(
+      'Expected a user message or a message with tool calls',
+    )
+    const entries = yield* Effect.promise(() => root.entries({}, 10, undefined, context))
+    expect([...entries.items].some((entry) => entry.kind === 'pi.user')).toBe(false)
+  }),
+)
