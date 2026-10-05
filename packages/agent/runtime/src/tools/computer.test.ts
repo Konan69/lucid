@@ -25,6 +25,12 @@ import {
   PersonId,
   ThreadId,
   ApprovalId,
+  WindowAction,
+  WindowResult,
+  WindowOutcome,
+  WindowId,
+  AppId,
+  LookId,
 } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
 import { Effect, Exit, Layer, Option, Predicate, Queue, Schema } from 'effect'
@@ -32,6 +38,7 @@ import * as RpcClient from 'effect/unstable/rpc/RpcClient'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/unstable/rpc/RpcMessage'
 import { browseModelTool, desktopModelTool, desktopToolFactory } from './computer.ts'
+import { personComputerModelTool } from './windows.ts'
 import { Scope, toolRunner } from './scope.ts'
 import { disposableStorage } from '../../tests/schema.ts'
 
@@ -79,6 +86,7 @@ const fixture = Effect.fn('DesktopToolsTest.fixture')(function* () {
     requests,
     rpc,
     browser: browseModelTool(runTool),
+    person: personComputerModelTool(runTool),
     tool: desktopModelTool(runTool),
     factory: desktopToolFactory(runTool),
   }
@@ -197,6 +205,8 @@ describe('browser model target and image result', () => {
           const [result] = yield* Effect.all([call, response], { concurrency: 2 })
           expect(result.content.every((block) => block.type === 'text')).toBe(true)
           expect(JSON.stringify(result.details)).toContain('The browser action completed.')
+          if (choice === 'person') expect(result.details).not.toHaveProperty('computer')
+          else expect(result.details).toHaveProperty('computer.active', true)
         }).pipe(Effect.scoped),
     )
   }
@@ -508,5 +518,225 @@ describe.skipIf(!testDatabaseConfigured)('Flue desktop picture to model', () => 
         expect(received).toBe(true)
       }).pipe(Effect.scoped),
     15000,
+  )
+})
+
+const nativeWindow = WindowId.make('native-window')
+const nativeLook = LookId.make('native-look')
+const nativeView = {
+  window: nativeWindow,
+  app: 'Terminal',
+  look: nativeLook,
+  picture: largePicture(),
+  width: 1,
+  height: 1,
+  outline: '[1] Edit command',
+  truncated: false,
+}
+
+/** Real schema-derived RPC and tool runner verify native translation and model image receipts. */
+const nativeReply = Effect.fn('PersonComputerTest.reply')(function* (
+  transport: Effect.Success<ReturnType<typeof fixture>>,
+  expected: WindowAction,
+  outcome: WindowOutcome,
+) {
+  const request = yield* Queue.take(transport.requests)
+  if (!Predicate.isTagged(request, 'Request')) expect.fail('Expected a generated RPC request')
+  expect(request.tag).toBe('UseWindow')
+  expect(request.payload).toEqual({ action: expected, summary: 'Work in the window' })
+  yield* transport.rpc.write({
+    // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- rc.116 RPC SDK exit envelopes have no constructor.
+    _tag: 'Exit',
+    clientId: 0,
+    requestId: request.id,
+    exit: Exit.succeed(outcome),
+  })
+})
+
+const nativeActions: ReadonlyArray<{ input: Schema.JsonObject; action: WindowAction }> = [
+  { input: { kind: 'list_apps' }, action: WindowAction.cases.ListApps.make({}) },
+  { input: { kind: 'list_windows' }, action: WindowAction.cases.ListWindows.make({}) },
+  {
+    input: { kind: 'open', app: 'terminal' },
+    action: WindowAction.cases.Open.make({ app: AppId.make('terminal') }),
+  },
+  {
+    input: { kind: 'look', window: nativeWindow },
+    action: WindowAction.cases.Look.make({ window: nativeWindow }),
+  },
+  {
+    input: { kind: 'press', window: nativeWindow, look: nativeLook, element: 1 },
+    action: WindowAction.cases.Press.make({ window: nativeWindow, look: nativeLook, element: 1 }),
+  },
+  {
+    input: { kind: 'choose', window: nativeWindow, look: nativeLook, element: 1 },
+    action: WindowAction.cases.Choose.make({ window: nativeWindow, look: nativeLook, element: 1 }),
+  },
+  {
+    input: { kind: 'fill', window: nativeWindow, look: nativeLook, element: 1, text: 'command' },
+    action: WindowAction.cases.Fill.make({
+      window: nativeWindow,
+      look: nativeLook,
+      element: 1,
+      text: 'command',
+    }),
+  },
+  {
+    input: {
+      kind: 'click',
+      window: nativeWindow,
+      look: nativeLook,
+      x: 2,
+      y: 3,
+      button: 'right',
+      times: 2,
+    },
+    action: WindowAction.cases.Click.make({
+      window: nativeWindow,
+      look: nativeLook,
+      at: { x: 2, y: 3 },
+      button: 'right',
+      times: 2,
+    }),
+  },
+  {
+    input: { kind: 'type', window: nativeWindow, text: 'command' },
+    action: WindowAction.cases.Type.make({ window: nativeWindow, text: 'command' }),
+  },
+  {
+    input: { kind: 'keys', window: nativeWindow, keys: 'Enter' },
+    action: WindowAction.cases.Keys.make({ window: nativeWindow, keys: 'Enter' }),
+  },
+  {
+    input: {
+      kind: 'scroll',
+      window: nativeWindow,
+      look: nativeLook,
+      x: 2,
+      y: 3,
+      direction: 'down',
+      notches: 2,
+    },
+    action: WindowAction.cases.Scroll.make({
+      window: nativeWindow,
+      look: nativeLook,
+      at: { x: 2, y: 3 },
+      direction: 'down',
+      notches: 2,
+    }),
+  },
+  {
+    input: { kind: 'close', window: nativeWindow },
+    action: WindowAction.cases.Close.make({ window: nativeWindow }),
+  },
+]
+
+describe('use_person_computer', () => {
+  for (const step of nativeActions) {
+    it.effect(`maps ${step.action._tag} to the native contract`, () =>
+      Effect.gen(function* () {
+        const transport = yield* fixture()
+        const input = { summary: 'Work in the window', action: step.input }
+        expect(
+          validateToolArguments(transport.person, {
+            type: 'toolCall',
+            id: 'native',
+            name: 'use_person_computer',
+            arguments: input,
+          }),
+        ).toEqual(input)
+        const [result] = yield* Effect.all(
+          [
+            Effect.promise(() => transport.person.execute('native', input)),
+            nativeReply(
+              transport,
+              step.action,
+              WindowOutcome.cases.Completed.make({ result: WindowResult.cases.Closed.make({}) }),
+            ),
+          ],
+          { concurrency: 2 },
+        )
+        expect(result.details).toMatchObject({ ok: true })
+        expect(result.details).not.toHaveProperty('computer')
+      }).pipe(Effect.scoped),
+    )
+  }
+
+  it.effect('requires a meaningful shared summary before any RPC', () =>
+    Effect.gen(function* () {
+      const transport = yield* fixture()
+      for (const input of [
+        { action: { kind: 'list_apps' } },
+        { action: { kind: 'list_apps' }, summary: '  ' },
+      ]) {
+        const result = yield* Effect.promise(() => transport.person.execute('invalid', input))
+        expect(result.details).toMatchObject({ ok: false })
+      }
+      expect(yield* Queue.size(transport.requests)).toBe(0)
+    }).pipe(Effect.scoped),
+  )
+
+  for (const result of [
+    WindowResult.cases.Seen.make({ view: nativeView }),
+    WindowResult.cases.Typed.make({ view: nativeView, complete: false, sent: 3 }),
+    WindowResult.cases.Closing.make({ view: nativeView }),
+  ]) {
+    it.effect(`${result._tag} hands the full PNG to Flue with outline and look ID as text`, () =>
+      Effect.gen(function* () {
+        const transport = yield* fixture()
+        const [receipt] = yield* Effect.all(
+          [
+            Effect.promise(() =>
+              transport.person.execute('native', {
+                summary: 'Work in the window',
+                action: { kind: 'look', window: nativeWindow },
+              }),
+            ),
+            nativeReply(
+              transport,
+              WindowAction.cases.Look.make({ window: nativeWindow }),
+              WindowOutcome.cases.Completed.make({ result }),
+            ),
+          ],
+          { concurrency: 2 },
+        )
+        expect(receipt.content).toContainEqual({
+          type: 'image',
+          mimeType: 'image/png',
+          data: nativeView.picture,
+        })
+        expect(receipt.details).toMatchObject({
+          view: { look: nativeLook, outline: nativeView.outline },
+        })
+        expect(receipt.details).not.toHaveProperty('computer')
+        expect(JSON.stringify(receipt.details)).not.toContain(nativeView.picture)
+      }).pipe(Effect.scoped),
+    )
+  }
+
+  it.effect('Stopped terminates the model turn', () =>
+    Effect.gen(function* () {
+      const transport = yield* fixture()
+      const [receipt] = yield* Effect.all(
+        [
+          Effect.promise(() =>
+            transport.person.execute('native', {
+              summary: 'Work in the window',
+              action: { kind: 'look', window: nativeWindow },
+            }),
+          ),
+          nativeReply(
+            transport,
+            WindowAction.cases.Look.make({ window: nativeWindow }),
+            WindowOutcome.cases.Refused.make({ reason: 'Stopped' }),
+          ),
+        ],
+        { concurrency: 2 },
+      )
+      expect(receipt.terminate).toBe(true)
+      expect(receipt.details).toMatchObject({
+        message: 'The person stopped Vivid on their computer. Stop and do not retry.',
+      })
+    }).pipe(Effect.scoped),
   )
 })

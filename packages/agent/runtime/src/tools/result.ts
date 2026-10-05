@@ -19,6 +19,8 @@ import type { NoteMissing, NotesUnavailable } from '../notes.ts'
 
 export interface ToolResult {
   readonly output: Schema.Json
+  /** Only Computer tools supply a source; Person receipts cannot advertise the cloud viewer. */
+  readonly computer?: 'person' | 'vivid'
   readonly terminate?: boolean
 }
 
@@ -101,7 +103,10 @@ function boundDocument(value: Schema.Json): Schema.Json {
 
 /** Product failures are safe sentences; driver payloads and supplied credentials never escape. */
 function failure(message: string) {
-  return Effect.succeed({ output: { ok: false, message: modelText(message) }, terminate: false })
+  return Effect.succeed<ToolResult>({
+    output: { ok: false, message: modelText(message) },
+    terminate: false,
+  })
 }
 
 /** Only tool identity and the declared failure tag reach logs; payloads and causes stay private. */
@@ -120,17 +125,28 @@ const session = Schema.encodeSync(ComputerSession)(
  * identifies the Thread/Run; the receipt adds no owner handle or provider authority. The relay
  * checks the viewer's own cookie again, including when this receipt is read in a shared Thread.
  */
-function withComputer(output: Schema.Json, tool: string): Schema.Json {
-  return computerTools.has(tool) && isObject(output) && output.ok === true
+function withComputer(
+  output: Schema.Json,
+  tool: string,
+  computer: Option.Option<'person' | 'vivid'>,
+): Schema.Json {
+  return !Option.contains(computer, 'person') &&
+    computerTools.has(tool) &&
+    isObject(output) &&
+    output.ok === true
     ? Object.fromEntries([...Object.entries(output), ['computer', session]])
     : output
 }
 
 /** The server bounds programs to 32 KiB, including logs and up to 100 receipts; preserve that result. */
-function modelOutput(output: Schema.Json, tool: string): Schema.Json {
+function modelOutput(
+  output: Schema.Json,
+  tool: string,
+  computer: Option.Option<'person' | 'vivid'>,
+): Schema.Json {
   if (tool === 'run_code') return output
   if (tool === 'read_document') return boundDocument(output)
-  return boundOutput(withComputer(output, tool))
+  return boundOutput(withComputer(output, tool, computer))
 }
 
 /** Only declared product failures are recovered; transport and configuration have fixed safe wording; defects propagate. */
@@ -180,7 +196,7 @@ export const settle = Effect.fn('Tools.settle')(function* (
     }),
   )
   return {
-    output: modelOutput(result.output, tool),
+    output: modelOutput(result.output, tool, Option.fromUndefinedOr(result.computer)),
     terminate: result.terminate === true,
   }
 })
