@@ -1,6 +1,7 @@
 import { Effect, Option } from 'effect'
 import {
   MachineAuthenticationFailed,
+  MachineExecutionUnknown,
   MachineFileRefused,
   MachineInputInvalid,
   MachineResponseInvalid,
@@ -14,6 +15,7 @@ import {
   LinkFileRefused,
   LinkHostMismatch,
   LinkKeyRefused,
+  LinkRunLost,
   LinkUnreachable,
   type Link,
   type LinkFailure,
@@ -28,10 +30,12 @@ import type { Transport } from './transport.ts'
  */
 const endpoint = (value: string) => {
   const cut = value.lastIndexOf(':')
-  return {
-    host: value.slice(0, cut).replace(/^\[|\]$/g, ''),
-    port: Number(value.slice(cut + 1)),
-  }
+  const host = value.slice(0, Math.max(cut, 0)).replace(/^\[|\]$/g, '')
+  const port = Number(value.slice(cut + 1))
+  // A reply that names no host or no usable port did not say where the machine is.
+  if (host === '' || !Number.isInteger(port) || port < 1 || port > 65535)
+    return Effect.fail(new MachineResponseInvalid({ operation: 'ssh-endpoint' }))
+  return Effect.succeed({ host, port })
 }
 
 /**
@@ -48,7 +52,7 @@ export const linkFailure = (failure: LinkFailure | LinkFileRefused): MachineFail
   return new MachineUnreachable()
 }
 const isLinkFailure = (
-  failure: MachineFailure | LinkFailure | LinkFileRefused,
+  failure: MachineFailure | LinkFailure | LinkFileRefused | LinkRunLost,
 ): failure is LinkFailure | LinkFileRefused =>
   failure instanceof LinkUnreachable ||
   failure instanceof LinkHostMismatch ||
@@ -68,10 +72,10 @@ export const machineLinks = (api: Transport) => {
    */
   const locate = Effect.fn('Machine.boat.locate')(function* (id: ProviderId) {
     const reply = yield* api.authorize(id)
-    const place = Option.fromNullishOr(reply.sshEndpoint).pipe(
+    const place = yield* Option.fromNullishOr(reply.sshEndpoint).pipe(
       Option.filter((value) => value !== ''),
       Option.match({
-        onNone: () => ({ host: reply.machineIp, port: 22 }),
+        onNone: () => Effect.succeed({ host: reply.machineIp, port: 22 }),
         onSome: endpoint,
       }),
     )
@@ -87,16 +91,22 @@ export const machineLinks = (api: Transport) => {
     (accepted: (key: MachineKey) => Effect.Effect<{ readonly id: ProviderId }, MachineFailure>) =>
     <A>(
       key: MachineKey,
-      call: (link: Link) => Effect.Effect<A, LinkFailure | LinkFileRefused>,
+      call: (link: Link) => Effect.Effect<A, LinkFailure | LinkFileRefused | LinkRunLost>,
     ): Effect.Effect<A, MachineFailure> =>
       connections
         .get(key, accepted(key).pipe(Effect.flatMap((identity) => locate(identity.id))))
         .pipe(
           Effect.flatMap(call),
           Effect.tapError((failure) =>
-            failure instanceof LinkUnreachable ? connections.drop(key) : Effect.void,
+            failure instanceof LinkUnreachable || failure instanceof LinkRunLost
+              ? connections.drop(key)
+              : Effect.void,
           ),
-          Effect.mapError((failure) => (isLinkFailure(failure) ? linkFailure(failure) : failure)),
+          Effect.mapError((failure) => {
+            // The command started and its end was not heard: uncertain, never run again.
+            if (failure instanceof LinkRunLost) return new MachineExecutionUnknown({ key })
+            return isLinkFailure(failure) ? linkFailure(failure) : failure
+          }),
         )
   /** The machine boundary's `run`, `read` and `put`, over the machine's connection. */
   const operations = (
@@ -127,5 +137,5 @@ export const machineLinks = (api: Transport) => {
       ),
     }
   }
-  return { drop: connections.drop, operations }
+  return { drop: connections.drop, close: connections.close, operations }
 }

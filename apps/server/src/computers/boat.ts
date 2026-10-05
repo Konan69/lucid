@@ -79,6 +79,7 @@ export const boatMachineLayer = Layer.effect(
     // The lifecycle tells this Layer when a machine stops or resumes; what was cached about the
     // machine it was is forgotten then, and the SSH connection to it is closed.
     const connections = machineLinks(api)
+    yield* Effect.addFinalizer(() => connections.close)
     const { ensure, status, inspect, stop, running, permit } = yield* lifecycle(
       api,
       saved,

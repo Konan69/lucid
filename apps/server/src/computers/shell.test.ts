@@ -93,7 +93,11 @@ const standIn = Effect.fn('ShellTest.standIn')(function* () {
     write: unused('write through the provider'),
     browse: unused('browse'),
     desktop: unused('use the desktop'),
-    run: (input) => link.run(input).pipe(Effect.mapError(linkFailure)),
+    run: (input) =>
+      link.run(input).pipe(
+        Effect.catchTag('LinkRunLost', () => Effect.die('The stand-in lost a command')),
+        Effect.mapError(linkFailure),
+      ),
     read: ({ path }) => link.read(path).pipe(Effect.mapError(linkFailure)),
     put: ({ path, content }) => link.put(path, content).pipe(Effect.mapError(linkFailure)),
   })

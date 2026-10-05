@@ -3,7 +3,7 @@ import * as NodeFS from 'node:fs'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import { Effect, Redacted } from 'effect'
-import { utils } from 'ssh2'
+import ssh2 from 'ssh2'
 import { identity } from './link.ts'
 
 /** Where OpenSSH's server is on a Debian or Ubuntu machine; a suite that needs a peer is skipped
@@ -53,7 +53,9 @@ export const peer = Effect.fn('Test.sshPeer')(function* () {
       const started = NodeChildProcess.spawn(
         SSHD,
         ['-D', '-e', '-f', NodePath.join(root, 'config'), '-p', String(port)],
-        { stdio: ['ignore', 'ignore', 'pipe'] },
+        // Its own process group: a session is a child of the listener, and a test that ends
+        // the machine must end its sessions too (`end` below).
+        { stdio: ['ignore', 'ignore', 'pipe'], detached: true },
       )
       started.stderr.setEncoding('utf8')
       // sshd says when its socket is open; that line is the signal, not a delay.
@@ -62,8 +64,8 @@ export const peer = Effect.fn('Test.sshPeer')(function* () {
       })
       started.on('exit', () => resume(Effect.die('The test SSH server did not start')))
     }),
-    // The captured child only.
-    (started) => Effect.sync(() => started.kill('SIGTERM')),
+    // The captured child and the group it leads, nothing found by a name.
+    (started) => Effect.sync(() => endGroup(started)),
   )
   const key = yield* identity(
     Redacted.make(NodeFS.readFileSync(NodePath.join(root, 'client'), 'utf8')),
@@ -73,7 +75,16 @@ export const peer = Effect.fn('Test.sshPeer')(function* () {
     return NodeFS.readFileSync(NodePath.join(root, 'stranger.pub'), 'utf8').trim()
   })
   return {
-    child,
+    /** Lets another key in, as a provider does when asked to authorize one. */
+    authorize: (publicKey: string) =>
+      NodeFS.appendFileSync(NodePath.join(root, 'authorized'), `${publicKey}\n`),
+    /** The machine goes: the listener and every open session, at once. */
+    end: Effect.callback<void>((resume) => {
+      if (child.exitCode !== null || child.signalCode !== null) return resume(Effect.void)
+      child.once('exit', () => resume(Effect.void))
+      endGroup(child)
+      return undefined
+    }),
     home,
     host: '127.0.0.1',
     port,
@@ -84,6 +95,12 @@ export const peer = Effect.fn('Test.sshPeer')(function* () {
     stranger,
   }
 })
+
+/** Signals the process group the captured child leads. A child that never started has no id. */
+const endGroup = (child: NodeChildProcess.ChildProcess) => {
+  if (child.pid !== undefined && child.exitCode === null && child.signalCode === null)
+    process.kill(-child.pid, 'SIGKILL')
+}
 
 /** A port the kernel says is free now. Another process could take it before sshd binds; sshd then
  * exits and the fixture fails loudly, it never connects to the other process (host key check). */
@@ -109,4 +126,4 @@ const freePort = Effect.callback<number>((resume) => {
  * key file). For suites that compose the provider and never connect; no key is checked in.
  */
 export const throwawayKeySetting = () =>
-  Buffer.from(utils.generateKeyPairSync('ed25519').private).toString('base64')
+  Buffer.from(ssh2.utils.generateKeyPairSync('ed25519').private).toString('base64')

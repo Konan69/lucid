@@ -409,6 +409,14 @@ answered "nothing there" without waking it, and only a tool the model calls wake
   Vivid's skills would stop every conversation (Flue throws on that at start). Vivid lists and
   inspects files with `bash`. Tested through Flue itself: a conversation that only looks at the
   desktop sends the server one call, the desktop one.
+- **A connection that dies.** The link knows when its connection closes: every call waiting on it
+  is told at once, and a call made afterwards is refused without reaching the library. A command
+  whose end was not heard is reported as "may have run", never as ended, and is not run again. The
+  next use of the machine asks the provider where it is now and opens a new connection. The
+  provider's stop timer counts from the resume, not from activity, so a held connection does end.
+- **Slow sending.** Sending to a machine through the provider's endpoint was measured at about
+  60 KB a second, so a 10 MB put takes about three minutes. A put has no deadline of its own, and
+  the keepalive keeps answering during it, so a slow upload is not taken for a dead connection.
 - **Waiting for a woken machine.** The store waits at most 90 seconds for the provider to say the
   machine runs, and answers "did not become ready within 90 seconds" otherwise. Opening SSH then
   tries every two seconds while the machine cannot be reached, for at most 75 seconds, and answers
@@ -429,6 +437,7 @@ answered "nothing there" without waking it, and only a tool the model calls wake
   One wake watched on 5 October had not finished starting after ten minutes.
 - A direct IPv4 session from the hosted server. Only the connection and first bytes were measured
   on that path; the whole session was run through the endpoint.
+- Whether the runtime's call to the server waits long enough for a large put on the slow path.
 - OpenSSH on the Computer accepting a signal request on a channel (it needs OpenSSH 7.9 or later;
   tested against OpenSSH on Ubuntu). Without it a cancelled command ends at its deadline instead.
 

@@ -1,8 +1,17 @@
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import { expect, it } from '@effect/vitest'
-import { Effect, Fiber } from 'effect'
-import { FILE_BYTES, LinkFileRefused, OUTPUT_BYTES, openLink } from './link.ts'
+import { Effect, Fiber, Ref } from 'effect'
+import {
+  FILE_BYTES,
+  LinkFileRefused,
+  LinkRunLost,
+  LinkUnreachable,
+  OUTPUT_BYTES,
+  openLink,
+  type Link,
+} from './link.ts'
+import { links } from './links.ts'
 import { peer, peerAvailable } from './peer.ts'
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
@@ -65,6 +74,20 @@ it.live.skipIf(!peerAvailable)(
     }).pipe(Effect.scoped),
   30_000,
 )
+
+/**
+ * Ends the connection from the machine's side, as a machine that stops does: the command kills
+ * the server process of its own session (its shell's parent's parent), found by its own ancestry.
+ * Its end is therefore never heard.
+ */
+const hangUp = (link: Link, home: string) =>
+  Effect.flip(
+    link.run({
+      command: 'kill -KILL $(ps -o ppid= -p $PPID)',
+      directory: home,
+      timeoutSeconds: 20,
+    }),
+  )
 
 /** Asks the machine itself until the process is gone; the loop is the machine's, not the test's. */
 const gone = (pid: string) => `while kill -0 ${pid} 2>/dev/null; do :; done; echo gone`
@@ -152,26 +175,75 @@ it.live.skipIf(!peerAvailable)(
 )
 
 it.live.skipIf(!peerAvailable)(
-  'reports an unreachable machine when the server goes while the connection is open',
+  'tells a running command its end was not heard when the machine goes, and is no longer alive',
   () =>
     Effect.gen(function* () {
       const { server, link } = yield* connected()
-      // Ending the listener leaves the session's own process; end the whole group's sessions by
-      // closing from this side is not the claim, so the peer is killed outright.
-      server.child.kill('SIGKILL')
-      const closed = yield* Effect.callback<boolean>((resume) => {
-        server.child.once('exit', () => resume(Effect.succeed(true)))
-      })
-      expect(closed).toBe(true)
-      const refused = yield* Effect.flip(openLink(server))
-      expect(refused._tag).toBe('LinkUnreachable')
-      // The open session has its own server process, which outlives the listener: it still works.
-      const run = yield* link.run({
-        command: 'echo alive',
+      const running = yield* Effect.forkChild(
+        Effect.flip(
+          link.run({
+            command: 'touch started; sleep 300',
+            directory: server.home,
+            timeoutSeconds: 600,
+          }),
+        ),
+      )
+      yield* link.run({
+        command: 'until [ -f started ]; do :; done',
         directory: server.home,
-        timeoutSeconds: 10,
+        timeoutSeconds: 20,
       })
-      expect(run.stdout.trim()).toBe('alive')
+      expect(yield* hangUp(link, server.home)).toBeInstanceOf(LinkRunLost)
+      yield* server.end
+      expect(yield* Fiber.join(running)).toBeInstanceOf(LinkRunLost)
+      expect(link.alive()).toBe(false)
+      // A call on the dead connection is told at once; it does not wait and does not throw.
+      expect(yield* Effect.flip(link.read(`${server.home}/started`))).toBeInstanceOf(
+        LinkUnreachable,
+      )
+      expect(yield* Effect.flip(openLink(server))).toBeInstanceOf(LinkUnreachable)
+    }).pipe(Effect.scoped),
+  40_000,
+)
+
+it.live.skipIf(!peerAvailable)(
+  'hands out one connection per machine, and a new one where the machine now is after the old one died',
+  () =>
+    Effect.gen(function* () {
+      const first = yield* peer()
+      const second = yield* peer()
+      second.authorize(first.identity.publicKey)
+      const located = yield* Ref.make(0)
+      const held = links<string>(first.identity)
+      yield* Effect.addFinalizer(() => held.close)
+      // The machine "resumes somewhere else": its provider names the second server from then on.
+      const locate = Ref.updateAndGet(located, (count) => count + 1).pipe(
+        Effect.map((count) => ({ ...(count === 1 ? first : second), identity: undefined })),
+      )
+      const one = yield* held.get('machine', locate)
+      expect(yield* held.get('machine', locate)).toBe(one)
+      expect(yield* Ref.get(located)).toBe(1)
+      yield* hangUp(one, first.home)
+      yield* first.end
+      const two = yield* held.get('machine', locate)
+      expect(two).not.toBe(one)
+      expect(yield* Ref.get(located)).toBe(2)
+      const run = yield* two.run({ command: 'pwd', directory: second.home, timeoutSeconds: 10 })
+      expect(run.stdout.trim()).toBe(second.home)
+    }).pipe(Effect.scoped),
+  40_000,
+)
+
+it.live.skipIf(!peerAvailable)(
+  'says a directory may not be made where a file is in the way, instead of calling it missing',
+  () =>
+    Effect.gen(function* () {
+      const { server, link } = yield* connected()
+      NodeFS.writeFileSync(NodePath.join(server.home, 'taken'), 'a file')
+      const refused = yield* Effect.flip(
+        link.put(NodePath.join(server.home, 'taken/inside/file.txt'), bytes('x')),
+      )
+      expect(refused).toBeInstanceOf(LinkFileRefused)
     }).pipe(Effect.scoped),
   30_000,
 )

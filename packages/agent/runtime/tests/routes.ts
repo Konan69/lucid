@@ -187,8 +187,16 @@ export const routes = Effect.fn('RuntimeTest.routes')(function* () {
           const system = context.messages.find((message) => message.role === 'system')
           if (system === undefined || system.toolsAdded === undefined)
             expect.fail('Vivid must register its tools')
+          // Flue's six machine tools are Flue's code and words unchanged (`tools/sandbox.ts`):
+          // like the framework's own three they carry no `summary`, and the clients label their
+          // steps from the path or the command instead.
+          const machine = ['read', 'write', 'edit', 'bash', 'grep', 'glob']
+          expect(system.toolsAdded.map((tool) => tool.name)).toEqual(
+            expect.arrayContaining(machine),
+          )
           const owned = system.toolsAdded.filter(
-            (tool) => !['task', 'activate_skill', 'read_skill_resource'].includes(tool.name),
+            (tool) =>
+              ![...machine, 'task', 'activate_skill', 'read_skill_resource'].includes(tool.name),
           )
           // Counted with notes mounted, as every runtime has them: the three note tools are in,
           // and the two knowledge-base tools that only a runtime without notes offered are gone.

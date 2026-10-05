@@ -56,7 +56,8 @@ export const ComputerResponse = Schema.Struct({ computer: Computer })
  * no summary and no approval: the Person allowed Vivid its Computer, and what Vivid does there is
  * not asked about. The acting Person comes from the call's authority, never from these fields.
  */
-export const ComputerPath = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(4096))
+/** Absolute: the machine has no "current directory" between calls, so a relative path has no meaning. */
+export const ComputerPath = Schema.String.check(Schema.isPattern(/^\//), Schema.isMaxLength(4096))
 
 /** A command in a directory. The deadline is the caller's; the machine ends the command at it. */
 export const ComputerShellRequest = Schema.Struct({

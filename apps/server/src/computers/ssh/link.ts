@@ -1,6 +1,8 @@
 import * as NodeBuffer from 'node:buffer'
 import { Effect, Option, Predicate, Redacted, Result, Schema, type Scope } from 'effect'
-import { Client, utils, type ClientChannel, type SFTPWrapper } from 'ssh2'
+// ssh2 is CommonJS and Node's ESM loader finds no named exports in it (seen: the server entry
+// failed to load with a named import that Vite had accepted), so the module is imported whole.
+import ssh2, { type Client, type ClientChannel, type SFTPWrapper } from 'ssh2'
 
 /**
  * One SSH connection to one machine, and the three things a caller does over it: run a command,
@@ -47,6 +49,14 @@ export class LinkFileRefused extends Schema.TaggedError<LinkFileRefused>()(
   { title: 'LinkFileRefused' },
 ) {}
 
+/** A command was started and the connection went before its end was heard: it may have run, may
+ * still be running, and must not be run again by itself. */
+export class LinkRunLost extends Schema.TaggedError<LinkRunLost>()(
+  'LinkRunLost',
+  {},
+  { title: 'LinkRunLost' },
+) {}
+
 export type LinkFailure = LinkUnreachable | LinkHostMismatch | LinkKeyRefused
 
 /** How a command ended. `timedOut` is this side's deadline; the exit code is then absent. */
@@ -60,14 +70,16 @@ export interface LinkRun {
 }
 
 export interface Link {
-  /** Runs `command` with bash as a login shell, in `directory`. */
+  /** Runs `command` with bash as a login shell, in `directory` (an absolute path). */
   readonly run: (input: {
     readonly command: string
     readonly directory: string
     readonly timeoutSeconds: number
-  }) => Effect.Effect<LinkRun, LinkUnreachable>
+  }) => Effect.Effect<LinkRun, LinkUnreachable | LinkRunLost>
+  /** False once the connection has closed; whoever holds the link opens another. */
+  readonly alive: () => boolean
   readonly read: (path: string) => Effect.Effect<Uint8Array, LinkUnreachable | LinkFileRefused>
-  /** Creates the missing directories above `path`, then replaces the file. */
+  /** Creates the missing directories above `path` (an absolute path), then replaces the file. */
   readonly put: (
     path: string,
     content: Uint8Array,
@@ -88,7 +100,7 @@ export const shellWord = (value: string) => `'${value.replaceAll("'", `'\\''`)}'
  * derived, never configured apart: two settings could disagree.
  */
 export const identity = Effect.fn('Link.identity')(function* (key: Redacted.Redacted) {
-  const parsed = utils.parseKey(Redacted.value(key))
+  const parsed = ssh2.utils.parseKey(Redacted.value(key))
   // ssh2 answers an Error for text that is not a key, and an array for a file of several keys.
   if (parsed instanceof Error || Array.isArray(parsed))
     return yield* Effect.fail(new LinkKeyRefused())
@@ -149,39 +161,96 @@ const ancestors = (path: string): ReadonlyArray<string> => {
   return parts.map((_, index) => `/${parts.slice(0, index + 1).join('/')}`)
 }
 
-const files = (sftp: SFTPWrapper) => {
-  const size = (path: string) =>
-    Effect.callback<number, LinkUnreachable | LinkFileRefused>((resume) => {
+/**
+ * The calls that are waiting on the connection. A closed connection answers none of them (ssh2
+ * drops the callbacks of a closed SFTP channel), so each waiting call registers how to be told,
+ * and `lost` tells them all once.
+ */
+const waiting = () => {
+  let open = true
+  const told = new Set<() => void>()
+  /** One library call. `start` gets `settle`, which only the first of the answer or the loss
+   * uses; a call made on a closed connection is told at once and never reaches the library. */
+  const call = <A, E>(
+    gone: E,
+    start: (settle: (answer: Effect.Effect<A, E>) => void) => void,
+  ): Effect.Effect<A, E> =>
+    Effect.callback<A, E>((resume) => {
+      let settled = false
+      const settle = (answer: Effect.Effect<A, E>) => {
+        if (settled) return
+        settled = true
+        told.delete(tell)
+        resume(answer)
+      }
+      const tell = () => settle(Effect.fail(gone))
+      if (!open) return tell()
+      told.add(tell)
+      start(settle)
+      return Effect.sync(() => {
+        settled = true
+        told.delete(tell)
+      })
+    })
+  return {
+    alive: () => open,
+    lost: () => {
+      open = false
+      for (const tell of told) tell()
+      told.clear()
+    },
+    call,
+  }
+}
+type Waiting = ReturnType<typeof waiting>
+
+const files = (sftp: SFTPWrapper, calls: Waiting) => {
+  type Refused = LinkUnreachable | LinkFileRefused
+  const gone: Refused = new LinkUnreachable()
+  const stat = (path: string) =>
+    calls.call<{ readonly size: number; readonly directory: boolean }, Refused>(gone, (settle) => {
       sftp.stat(path, (error, stats) => {
-        if (error !== undefined && error !== null) return resume(Effect.fail(fileFailure(error)))
-        if (stats.isDirectory())
-          return resume(Effect.fail(new LinkFileRefused({ reason: 'directory' })))
-        return resume(Effect.succeed(stats.size))
+        if (error !== undefined && error !== null) return settle(Effect.fail(fileFailure(error)))
+        return settle(Effect.succeed({ size: stats.size, directory: stats.isDirectory() }))
       })
     })
   const read = Effect.fn('Link.read')(function* (path: string) {
     // Asked first: a read answers the whole file, and one that is too large must not be fetched.
-    if ((yield* size(path)) > FILE_BYTES)
-      return yield* Effect.fail(new LinkFileRefused({ reason: 'large' }))
-    return yield* Effect.callback<Uint8Array, LinkUnreachable | LinkFileRefused>((resume) => {
+    const found = yield* stat(path)
+    if (found.directory) return yield* Effect.fail(new LinkFileRefused({ reason: 'directory' }))
+    if (found.size > FILE_BYTES) return yield* Effect.fail(new LinkFileRefused({ reason: 'large' }))
+    return yield* calls.call<Uint8Array, Refused>(gone, (settle) => {
       sftp.readFile(path, (error, data) => {
-        if (error !== undefined && error !== null) return resume(Effect.fail(fileFailure(error)))
-        return resume(Effect.succeed(new Uint8Array(data)))
+        if (error !== undefined && error !== null) return settle(Effect.fail(fileFailure(error)))
+        return settle(Effect.succeed(new Uint8Array(data)))
       })
     })
   })
-  /** One level; a directory that is already there is the wanted state, and SFTP has no code that
-   * says so (OpenSSH answers the general failure, 4), so the answer is not read. The write that
-   * follows fails precisely if the directory is in truth missing. */
-  const make = (path: string) =>
-    Effect.callback<void>((resume) => {
-      sftp.mkdir(path, () => resume(Effect.void))
-    })
+  /**
+   * One level. SFTP has no code for "it is already there" (OpenSSH answers the general failure,
+   * 4), so a refusal is believed only when the directory is in truth not there: then the refusal
+   * itself is the answer (no permission, a file in the way), and a lost connection stays lost.
+   */
+  const make = Effect.fn('Link.make')(function* (path: string) {
+    const made = yield* Effect.result(
+      calls.call<void, Refused>(gone, (settle) => {
+        sftp.mkdir(path, (error) => {
+          if (error !== undefined && error !== null) return settle(Effect.fail(fileFailure(error)))
+          return settle(Effect.void)
+        })
+      }),
+    )
+    if (Result.isSuccess(made)) return undefined
+    if (made.failure instanceof LinkUnreachable) return yield* Effect.fail(made.failure)
+    const there = yield* Effect.result(stat(path))
+    if (Result.isSuccess(there) && there.success.directory) return undefined
+    return yield* Effect.fail(made.failure)
+  })
   const write = (path: string, content: Uint8Array) =>
-    Effect.callback<void, LinkUnreachable | LinkFileRefused>((resume) => {
+    calls.call<void, Refused>(gone, (settle) => {
       sftp.writeFile(path, NodeBuffer.Buffer.from(content), (error) => {
-        if (error !== undefined && error !== null) return resume(Effect.fail(fileFailure(error)))
-        return resume(Effect.void)
+        if (error !== undefined && error !== null) return settle(Effect.fail(fileFailure(error)))
+        return settle(Effect.void)
       })
     })
   const put = Effect.fn('Link.put')(function* (path: string, content: Uint8Array) {
@@ -209,78 +278,94 @@ const GRACE_SECONDS = 2
  * `timeout`, which makes it a process group of its own: at the deadline `timeout` signals the
  * whole group, and kills it `GRACE_SECONDS` later. A caller that stops waiting (the model
  * cancelled, the request ended) sends that same `timeout` a TERM over the channel, which it
- * passes to the group in the same way. This side also stops waiting a little after the deadline,
- * so a machine that never answers cannot hold the caller.
+ * passes to the group in the same way; if the channel opens only after the caller has gone, it is
+ * ended the moment it opens. This side also stops waiting a little after the deadline, so a
+ * machine that never answers cannot hold the caller.
+ *
+ * A command has ended only when the machine said so (an exit status or a signal). A channel that
+ * closes without either is a connection that went: the command may be running still, which is
+ * `LinkRunLost`, never an ending.
  */
 const runner =
-  (client: Client): Link['run'] =>
-  ({ command, directory, timeoutSeconds }) =>
-    Effect.callback<LinkRun, LinkUnreachable>((resume) => {
-      const stdout = tail()
-      const stderr = tail()
-      let channel = Option.none<ClientChannel>()
-      const started = Date.now()
-      const finish = (code: number | null, timedOut: boolean) => {
-        clearTimeout(timer)
-        const out = stdout.text()
-        const err = stderr.text()
-        resume(
-          Effect.succeed({
-            stdout: out.text,
-            stderr: err.text,
-            exitCode: timedOut ? null : code,
-            timedOut,
-            truncated: out.cut || err.cut,
-          }),
-        )
-      }
-      const stop = () => {
-        Option.map(channel, (open) => {
-          open.signal('TERM')
-          open.close()
-        })
-      }
-      // A login shell, as a person at the machine has: their PATH and their profile.
-      const script = `cd -- ${shellWord(directory)} || exit 1\n${command}`
-      const timer = setTimeout(
-        () => {
-          stop()
-          finish(null, true)
-        },
-        (timeoutSeconds + GRACE_SECONDS + 3) * 1000,
-      )
-      client.exec(
-        `exec timeout -k ${GRACE_SECONDS} ${timeoutSeconds} bash -lc ${shellWord(script)}`,
-        (error, opened) => {
-          if (error !== undefined && error !== null) {
-            clearTimeout(timer)
-            return resume(Effect.fail(new LinkUnreachable()))
-          }
-          channel = Option.some(opened)
-          opened.on('data', stdout.add)
-          opened.stderr.on('data', stderr.add)
-          opened.on('close', (code: number | null) => {
-            // `timeout` answers 124 when it ended the command, 137 when it had to kill it. A
-            // command may exit with those codes itself, so the clock decides which it was.
-            const expired =
-              (code === 124 || code === 137) && Date.now() - started >= timeoutSeconds * 1000
-            finish(Predicate.isNumber(code) ? code : null, expired)
-          })
-          return undefined
-        },
-      )
-      return Effect.sync(() => {
-        clearTimeout(timer)
-        stop()
+  (client: Client, calls: Waiting): Link['run'] =>
+  ({ command, directory, timeoutSeconds }) => {
+    const stdout = tail()
+    const stderr = tail()
+    let channel = Option.none<ClientChannel>()
+    let stopped = false
+    const stop = () => {
+      stopped = true
+      Option.map(channel, (open) => {
+        open.signal('TERM')
+        open.close()
       })
-    })
+    }
+    // A login shell, as a person at the machine has: their PATH and their profile.
+    const script = `cd -- ${shellWord(directory)} || exit 1\n${command}`
+    const started = Date.now()
+    return calls
+      .call<LinkRun, LinkUnreachable | LinkRunLost>(new LinkRunLost(), (settle) => {
+        const done = (exitCode: number | null, timedOut: boolean) => {
+          clearTimeout(timer)
+          const out = stdout.text()
+          const err = stderr.text()
+          settle(
+            Effect.succeed({
+              stdout: out.text,
+              stderr: err.text,
+              exitCode: timedOut ? null : exitCode,
+              timedOut,
+              truncated: out.cut || err.cut,
+            }),
+          )
+        }
+        const timer = setTimeout(
+          () => {
+            stop()
+            done(null, true)
+          },
+          (timeoutSeconds + GRACE_SECONDS + 3) * 1000,
+        )
+        client.exec(
+          `exec timeout -k ${GRACE_SECONDS} ${timeoutSeconds} bash -lc ${shellWord(script)}`,
+          (error, opened) => {
+            if (error !== undefined && error !== null) {
+              clearTimeout(timer)
+              return settle(Effect.fail(new LinkUnreachable()))
+            }
+            channel = Option.some(opened)
+            if (stopped) return stop()
+            let ended = Option.none<number | null>()
+            opened.on('data', stdout.add)
+            opened.stderr.on('data', stderr.add)
+            // The machine's own word that the command ended: a status, or the signal that
+            // ended it (then there is no status).
+            opened.on('exit', (code: number | null) => {
+              ended = Option.some(Predicate.isNumber(code) ? code : null)
+            })
+            opened.on('close', () => {
+              clearTimeout(timer)
+              if (Option.isNone(ended)) return settle(Effect.fail(new LinkRunLost()))
+              const code = ended.value
+              // `timeout` answers 124 when it ended the command, 137 when it had to kill it. A
+              // command may exit with those codes itself, so the clock decides which it was.
+              const expired =
+                (code === 124 || code === 137) && Date.now() - started >= timeoutSeconds * 1000
+              return done(code, expired)
+            })
+            return undefined
+          },
+        )
+      })
+      .pipe(Effect.onInterrupt(() => Effect.sync(stop)))
+  }
 
 /** The file subsystem is opened once per connection and shared by every read and put. */
-const subsystem = (client: Client) =>
-  Effect.callback<SFTPWrapper, LinkUnreachable>((resume) => {
+const subsystem = (client: Client, calls: Waiting) =>
+  calls.call<SFTPWrapper, LinkUnreachable>(new LinkUnreachable(), (settle) => {
     client.sftp((error, sftp) => {
-      if (error !== undefined && error !== null) return resume(Effect.fail(new LinkUnreachable()))
-      return resume(Effect.succeed(sftp))
+      if (error !== undefined && error !== null) return settle(Effect.fail(new LinkUnreachable()))
+      return settle(Effect.succeed(sftp))
     })
   })
 
@@ -293,7 +378,9 @@ const sameHost = (expected: string, presented: NodeBuffer.Buffer) => {
 
 /**
  * Opens the connection and holds it for the scope. A machine that has just been woken refuses
- * connections for a while, so the caller retries this; nothing here waits or retries.
+ * connections for a while, so the caller retries this; nothing here waits or retries. The wait
+ * for the host ends on its first answer of any kind: ready, an error, or the host closing before
+ * it was ready, which ssh2 reports as a close and not as an error. Giving up closes the socket.
  */
 export const openLink = Effect.fn('Link.open')(function* (input: {
   readonly host: string
@@ -302,37 +389,50 @@ export const openLink = Effect.fn('Link.open')(function* (input: {
   readonly identity: Identity
   readonly hostKey: string
 }): Effect.fn.Return<Link, LinkFailure, Scope.Scope> {
-  const client = yield* Effect.acquireRelease(
-    Effect.callback<Client, LinkFailure>((resume) => {
-      const connection = new Client()
-      let mismatch = false
-      connection.once('ready', () => resume(Effect.succeed(connection)))
-      connection.once('error', (error: Error & { readonly level?: string }) => {
-        if (mismatch) return resume(Effect.fail(new LinkHostMismatch()))
-        if (error.level === 'client-authentication')
-          return resume(Effect.fail(new LinkKeyRefused()))
-        return resume(Effect.fail(new LinkUnreachable()))
-      })
-      connection.connect({
-        host: input.host,
-        port: input.port,
-        username: input.user,
-        privateKey: Redacted.value(input.identity.privateKey),
-        readyTimeout: 15_000,
-        // A connection that idles through a NAT or a proxy is dropped silently; a probe every
-        // fifteen seconds keeps it, and three lost ones end it so the next call dials afresh.
-        keepaliveInterval: 15_000,
-        keepaliveCountMax: 3,
-        hostVerifier: (presented: NodeBuffer.Buffer) => {
-          mismatch = !sameHost(input.hostKey, presented)
-          return !mismatch
-        },
-      })
-      return Effect.sync(() => connection.destroy())
-    }),
-    (connection) => Effect.sync(() => connection.end()),
-  )
-  const sftp = yield* subsystem(client)
-  const { read, put } = files(sftp)
-  return { run: runner(client), read, put }
+  const calls = waiting()
+  const client = yield* Effect.callback<Client, LinkFailure>((resume) => {
+    const connection = new ssh2.Client()
+    let mismatch = false
+    let settled = false
+    const settle = (answer: Effect.Effect<Client, LinkFailure>) => {
+      if (settled) return
+      settled = true
+      resume(answer)
+    }
+    const refused = (failure: LinkFailure) => {
+      connection.destroy()
+      settle(Effect.fail(failure))
+    }
+    connection.once('ready', () => settle(Effect.succeed(connection)))
+    connection.on('error', (error: Error & { readonly level?: string }) => {
+      if (mismatch) return refused(new LinkHostMismatch())
+      if (error.level === 'client-authentication') return refused(new LinkKeyRefused())
+      return refused(new LinkUnreachable())
+    })
+    // After it was ready this is the connection going; before, the host hung up on us.
+    connection.on('close', () => {
+      calls.lost()
+      settle(Effect.fail(mismatch ? new LinkHostMismatch() : new LinkUnreachable()))
+    })
+    connection.connect({
+      host: input.host,
+      port: input.port,
+      username: input.user,
+      privateKey: Redacted.value(input.identity.privateKey),
+      readyTimeout: 15_000,
+      // A connection that idles through a NAT or a proxy is dropped silently; a probe every
+      // fifteen seconds keeps it, and three lost ones end it so the next call dials afresh.
+      keepaliveInterval: 15_000,
+      keepaliveCountMax: 3,
+      hostVerifier: (presented: NodeBuffer.Buffer) => {
+        mismatch = !sameHost(input.hostKey, presented)
+        return !mismatch
+      },
+    })
+    return Effect.sync(() => connection.destroy())
+  })
+  yield* Effect.addFinalizer(() => Effect.sync(() => client.destroy()))
+  const sftp = yield* subsystem(client, calls)
+  const { read, put } = files(sftp, calls)
+  return { run: runner(client, calls), alive: calls.alive, read, put }
 })

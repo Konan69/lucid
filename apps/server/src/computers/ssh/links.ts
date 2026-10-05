@@ -35,14 +35,23 @@ export const links = <Key>(identity: Identity) => {
       open.delete(key)
       return Scope.close(found.scope, Exit.void)
     })
+  /** One try with a scope of its own, closed if the try fails: a connection that authenticated
+   * and then failed is not left open while the next try makes another. */
+  const attempt = Effect.fn('Links.attempt')(function* (target: LinkTarget) {
+    const scope = yield* Scope.make()
+    const link = yield* openLink({ ...target, identity }).pipe(
+      Scope.provide(scope),
+      Effect.onError(() => Scope.close(scope, Exit.void)),
+      Effect.onInterrupt(() => Scope.close(scope, Exit.void)),
+    )
+    return { link, scope }
+  })
   const dial = Effect.fn('Links.dial')(function* <Failure>(
     key: Key,
     locate: Effect.Effect<LinkTarget, Failure>,
   ) {
     const target = yield* locate
-    const scope = yield* Scope.make()
-    const link = yield* openLink({ ...target, identity }).pipe(
-      Scope.provide(scope),
+    const made = yield* attempt(target).pipe(
       Effect.retry({
         while: (failure: LinkFailure) => failure instanceof LinkUnreachable,
         schedule: Schedule.spaced('2 seconds'),
@@ -54,10 +63,9 @@ export const links = <Key>(identity: Identity) => {
         duration: '75 seconds',
         orElse: () => Effect.fail(new LinkUnreachable()),
       }),
-      Effect.onError(() => Scope.close(scope, Exit.void)),
     )
-    open.set(key, { link, scope })
-    return link
+    open.set(key, made)
+    return made.link
   })
   /** `locate` is run only when a connection has to be opened. */
   const get = <Failure>(
@@ -65,10 +73,16 @@ export const links = <Key>(identity: Identity) => {
     locate: Effect.Effect<LinkTarget, Failure>,
   ): Effect.Effect<Link, Failure | LinkFailure> =>
     opening.withPermit(
-      Effect.suspend(() => {
+      Effect.gen(function* () {
         const found = open.get(key)
-        return found === undefined ? dial(key, locate) : Effect.succeed(found.link)
+        if (found !== undefined && found.link.alive()) return found.link
+        // A connection that closed while nobody was using it (the machine stopped, the path
+        // dropped) is put away here, so a dead one is never handed out.
+        yield* drop(key)
+        return yield* dial(key, locate)
       }),
     )
-  return { get, drop }
+  /** Closes every connection: the owner's last act. */
+  const close = Effect.suspend(() => Effect.forEach([...open.keys()], drop, { discard: true }))
+  return { get, drop, close }
 }
