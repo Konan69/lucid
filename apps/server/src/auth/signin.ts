@@ -367,11 +367,7 @@ const refused = (ctx: GenericEndpointContext) =>
  * (`generateCodeChallenge`, the same S256 the integration checks with). `back` is which app is
  * trading: a code issued to the other app is not under its name and is not found.
  */
-const honoured = (
-  ctx: GenericEndpointContext,
-  back: Back['_tag'],
-  trade: SignInTrade,
-): Promise<Option.Option<Granted>> =>
+const honoured = (ctx: GenericEndpointContext, back: Back['_tag'], trade: SignInTrade) =>
   ctx.context.internalAdapter
     .consumeVerificationValue(`${GRANTED[back]}${trade.code}`)
     .then((row) =>
