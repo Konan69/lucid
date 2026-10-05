@@ -17,7 +17,7 @@ import { Screen } from '../ui/Screen'
 import { Row, Section } from '../ui/List'
 import { Live } from '../ui/Live'
 import { Button, Empty, Label, Notice, Skeleton, styles } from '../ui/ui'
-import { useGo, type Routes } from '../workspace'
+import { useGo, useOpenThread, type Routes } from '../workspace'
 import { CreateProject } from './project/Create'
 import { Mark } from './project/Mark'
 import { scope } from './project/scope'
@@ -189,7 +189,7 @@ function Filed({
   hidden: number
   now: number
 }) {
-  const go = useGo()
+  const openThread = useOpenThread()
   if (threads.length === 0 && hidden === 0) {
     return (
       <Label size="label" tone="ink-2">
@@ -207,7 +207,7 @@ function Filed({
               title={thread.title}
               detail={thread.preview.length > 0 ? thread.preview : undefined}
               trailing={<Standing thread={thread} now={now} />}
-              onPress={() => go.navigate('Chat', { id: thread.id })}
+              onPress={() => openThread(thread.id)}
             />
           ))}
         </Section>
@@ -227,6 +227,7 @@ function Filed({
 function Inside({ project, all }: { project: ProjectRecord; all: ReadonlyArray<ProjectRecord> }) {
   const data = useLiveData()
   const go = useGo()
+  const openThread = useOpenThread()
   const now = useNow()
   const threads = useLiveValue(data.live.threads)
   const [creating, setCreating] = useState(false)
@@ -253,7 +254,7 @@ function Inside({ project, all }: { project: ProjectRecord; all: ReadonlyArray<P
       setRefused(Option.some('Unable to start a thread here. Check your connection and try again.'))
       return
     }
-    go.navigate('Chat', { id })
+    openThread(id)
   }
 
   return (

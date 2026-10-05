@@ -1,10 +1,8 @@
 import { ConnectionStep, type ConnectionId, type ConnectionRequestMessage } from '@vivid/contracts'
-import { signInPage } from '@vivid/state'
-import { Data, Option, Result } from 'effect'
-import { useMemo, useState } from 'react'
-import { Linking, View } from 'react-native'
+import { Option, Result } from 'effect'
+import { useState } from 'react'
+import { View } from 'react-native'
 import { ExternalLink, KeyRound, Link2 } from 'lucide-react-native'
-import { onForeground } from '../../data/foreground'
 import { commit } from '../../data/haptics'
 import {
   Finish,
@@ -15,18 +13,20 @@ import {
   type KeyFields,
 } from '../../data/integration'
 import { useLiveData, useLiveValue } from '../../data/live'
-import { connectionsAddress } from '../../data/server'
 import { useTheme } from '../../theme'
 import { ServiceMark } from '../../ui/Mark'
 import { Button, EDGE, Label, Notice, radius } from '../../ui/ui'
+import { Integrations } from '../settings/Integrations'
 import { EnterKey } from './Key'
+import { Returning, showSignIn, Trip } from './Trip'
 
 /**
  * Vivid needs a service to go on. The card says why in Vivid's own words and finishes the job
  * where the Person already is.
  *
- * A service Vivid only offered from the catalogue is connected in the web app's settings, so the
- * card opens those in the browser. An Integration Vivid has already begun adding carries what is
+ * A service Vivid only offered from the catalogue is picked and connected in the Integrations
+ * sheet, which the card opens over the Thread; it used to send the Person to the web app's
+ * settings for that. An Integration Vivid has already begun adding carries what is
  * left (`authorization`): a sign-in, which opens the provider's page in the phone's browser and
  * asks the server where things stand when the Person comes back, or a key, which is typed into a
  * sheet that sends it straight to the Integration (never into the Thread, never to Vivid). The
@@ -100,7 +100,7 @@ export function IntegrationCard({
 }
 
 /**
- * The one thing left to do to connect it: sign in, give it a key, or pick it in the browser. A
+ * The one thing left to do to connect it: sign in, give it a key, or pick it from the catalog. A
  * projection of what is left onto the control that advances it; it holds nothing itself.
  */
 const left = (
@@ -110,7 +110,7 @@ const left = (
   onFinish: (finish: Finish) => void,
 ) =>
   Option.match(finish, {
-    onNone: () => <InBrowser />,
+    onNone: () => <Connect />,
     onSome: (next) =>
       Finish.$match(next, {
         SignIn: ({ id }) => <SignIn id={id} name={name} onFinish={onFinish} />,
@@ -124,38 +124,19 @@ const left = (
 
 /**
  * A service Vivid offered and has not begun adding. Choosing the account and authorizing it is
- * done in the web app's settings, so this leaves for the browser and says so.
+ * done in the Integrations sheet, opened here over the Thread, so the Person never leaves the
+ * app for it. Whether it worked is not this button's to hear: the card reads the live list and
+ * turns to "Carry on" by itself.
  */
-function InBrowser() {
-  const data = useLiveData()
+function Connect() {
+  const [open, setOpen] = useState(false)
   return (
-    <Button
-      icon={Link2}
-      label="Connect in your browser"
-      onPress={() => void Linking.openURL(connectionsAddress(data.session.server))}
-    />
+    <>
+      <Button icon={Link2} label="Connect" onPress={() => setOpen(true)} />
+      {open && <Integrations onClose={() => setOpen(false)} />}
+    </>
   )
 }
-
-/**
- * Where a sign-in stands, from this phone's side.
- *
- * - `Still`: nothing is in flight and there is nothing to say.
- * - `Opening`: the Person pressed Sign in, and the server is being asked for the provider's page.
- * - `Away`: that page was handed to the browser and the Person has not come back.
- * - `Checking`: they are back, and the server is being asked whether it went through.
- * - `Unfinished`: the server says the sign-in is still to do. Not an error: people look and leave.
- * - `Refused`: the page could not be opened, or the server would not say; its sentence.
- */
-type Trip = Data.TaggedEnum<{
-  Still: {}
-  Opening: {}
-  Away: {}
-  Checking: {}
-  Unfinished: {}
-  Refused: { readonly message: string }
-}>
-const Trip = Data.taggedEnum<Trip>()
 
 /** What the button says at each point. It is the way in at every point but the two it waits at. */
 const signInLabel = (trip: Trip): string =>
@@ -180,8 +161,8 @@ const signInLabel = (trip: Trip): string =>
  * whether it went through; if it did the card becomes "Carry on", and if it did not it says so
  * quietly and can be pressed again.
  *
- * The address is only ever opened when it is a web page (`signInPage`): handed to a phone as it
- * came, another app's scheme would open that app.
+ * The trip itself (its states, the hand-off to the browser, hearing the return) is `Trip.tsx`,
+ * shared with the Integrations sheet.
  */
 function SignIn({
   id,
@@ -204,23 +185,11 @@ function SignIn({
   }
 
   /** Hands the provider's page to the browser, and starts listening for the way back. */
-  function open(address: string) {
-    const page = signInPage(address)
-    if (Option.isNone(page)) {
-      setTrip(Trip.Refused({ message: `${name}’s sign-in page could not be opened.` }))
-      return
-    }
-    // Said before the browser is asked for, so the card is already listening for the return by
-    // the time the app leaves the front.
-    setTrip(Trip.Away())
-    void Linking.openURL(page.value.href).then(
-      () => undefined,
-      () =>
-        setTrip(
-          Trip.Refused({ message: `${name}’s sign-in page could not be opened in your browser.` }),
-        ),
-    )
-  }
+  const open = (address: string) =>
+    showSignIn(address, name, {
+      away: () => setTrip(Trip.Away()),
+      refused: (message) => setTrip(Trip.Refused({ message })),
+    })
 
   async function leave() {
     setTrip(Trip.Opening())
@@ -264,16 +233,6 @@ function SignIn({
       {Trip.$is('Refused')(trip) && <Notice message={trip.message} />}
     </View>
   )
-}
-
-/**
- * Hears the Person come back to the app. It draws nothing; being a component is what lets the
- * card listen only while they are away at the provider's page, with no effect to run: the
- * subscription is this view's ref, and it ends when the view goes.
- */
-function Returning({ onReturn }: { onReturn: () => void }) {
-  const heard = useMemo(() => onForeground(onReturn), [onReturn])
-  return <View ref={heard} />
 }
 
 /** Giving the service its key, in a sheet. The card itself never holds what is typed. */
