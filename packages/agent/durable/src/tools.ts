@@ -12,7 +12,16 @@ import { asSchema, type Tool, type ToolSet } from 'ai'
 import { Effect, Option, Predicate, Schema } from 'effect'
 
 import { ToolFailed, ToolOutputFailed, ToolSchemaFailed } from './errors.ts'
-import { applicable, holdKind, Holds, type Plan, settlement, slotOf, withPlan } from './holds.ts'
+import {
+  CallIdentity,
+  CallLookup,
+  lookupSnapshots,
+  holdKind,
+  Holds,
+  type Plan,
+  settlement,
+  withPlan,
+} from './holds.ts'
 import * as Pi from './pi.ts'
 
 /** Whether an interrupted call may run again after a crash. Pi's own default is unsafe. */
@@ -135,14 +144,18 @@ const answered = Effect.fn('Durable.answeredTool')(function* (
 ) {
   const holds = yield* Pi.snapshot(api, Holds, api.conversationId, context)
   const live = yield* Pi.snapshot(api, LiveDoc, api.conversationId, context)
-  const slot = live.pipe(Option.flatMap((document) => slotOf(document, api.callId)))
-  const settled = applicable(
-    holds.pipe(Option.flatMapNullishOr((document) => document.settled[api.callId])),
-    slot,
+  const found = lookupSnapshots(
+    live,
+    holds,
+    CallIdentity.cases.Task.make({
+      callId: api.callId,
+      taskId: api.taskId,
+      resultTask: Option.none(),
+    }),
   )
-  if (Option.isNone(settled) || settled.value.kind !== 'answered')
+  if (!CallLookup.guards.Settled(found) || found.settlement.kind !== 'answered')
     return failure(`Tool ${name} was not answered`)
-  const output = settled.value.output
+  const output = found.settlement.output
   return result({ text: Predicate.isString(output) ? output : JSON.stringify(output), output })
 })
 
@@ -158,7 +171,7 @@ const asked = Effect.fn('Durable.askedTool')(function* (
       token: Holds,
       conversationId: api.conversationId,
       change: (document) => {
-        document.asked[api.callId] = name
+        document.asked[api.callId] = { taskId: api.taskId, toolName: name }
       },
     },
     context,
@@ -228,6 +241,18 @@ const before = Effect.fn('Durable.beforeTool')(function* (
   api: Parameters<import('@earendil-works/pi-durable').ToolHooks['beforeTool']>[1],
   context: Context,
 ) {
+  const live = yield* Pi.snapshot(api, LiveDoc, api.conversationId, context)
+  const holds = yield* Pi.snapshot(api, Holds, api.conversationId, context)
+  const found = lookupSnapshots(
+    live,
+    holds,
+    CallIdentity.cases.Task.make({
+      callId: call.id,
+      taskId: api.taskId,
+      resultTask: Option.none(),
+    }),
+  )
+  if (CallLookup.guards.Duplicate(found)) return Option.some({ block: 'duplicate tool call id' })
   const plan = Option.fromNullishOr(plans.get(call.name))
   if (Option.isNone(plan) || Option.isNone(holdKind(plan.value, copyJson(call.arguments))))
     return Option.none<{ block: string }>()

@@ -11,7 +11,7 @@ import {
   fauxProvider,
   fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux'
-import { createRegistry, Harness } from '@earendil-works/pi-durable'
+import { createRegistry, Harness, type HarnessSettings } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import {
   DefaultChatTransport,
@@ -95,7 +95,12 @@ export function texts(message: UIMessage) {
  * Cleanup is registered before opening storage; a failed assertion still closes every harness.
  * Reopening builds fresh volatile models and registries, preserving only Pi's database.
  */
-export async function host(tools: ToolSet, options: ToolsOptions) {
+export async function host(
+  tools: ToolSet,
+  options: ToolsOptions,
+  settings: Partial<HarnessSettings> = {},
+  fauxOptions: Parameters<typeof fauxProvider>[0] = {},
+) {
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'vivid-conformance-'))
   const file = NodePath.join(directory, 'session.sqlite')
   const opened = new Set<Harness>()
@@ -108,7 +113,7 @@ export async function host(tools: ToolSet, options: ToolsOptions) {
   })
   /** Open a fresh process-equivalent host on the same durable transcript. */
   async function open() {
-    const faux = fauxProvider()
+    const faux = fauxProvider(fauxOptions)
     const models = createModels()
     models.setProvider(faux.provider)
     const registry = createRegistry()
@@ -117,7 +122,7 @@ export async function host(tools: ToolSet, options: ToolsOptions) {
     onTestFinished(() => storage.close(context))
     const harness = await Harness.open(
       storage,
-      { models, registry, settings: { retry: { baseDelayMs: 0 } } },
+      { models, registry, settings: { retry: { baseDelayMs: 0 }, ...settings } },
       context,
     )
     opened.add(harness)

@@ -4,13 +4,14 @@ import {
   defineDoc,
   type Harness,
   type HookApi,
+  type EntryRecord,
   type LiveState,
   LiveDoc,
   type TaskId,
   type ToolSlot,
   type ToolRegistration,
 } from '@earendil-works/pi-durable'
-import { Deferred, Effect, Match, Option, Predicate } from 'effect'
+import { Deferred, Effect, Match, Option, Predicate, Schema } from 'effect'
 
 import * as Pi from './pi.ts'
 import { CallNotWaiting } from './errors.ts'
@@ -41,33 +42,174 @@ export type Settled = { taskId: TaskId; settlement: Settlement }
  */
 export const Holds = defineDoc<{
   settled: Record<string, Settled>
-  asked: Record<string, string>
+  asked: Record<string, { taskId: TaskId; toolName: string }>
 }>({
   kind: 'durable.holds',
-  version: 2,
+  version: 3,
   scope: 'conversation',
   history: 'latest',
   fork: 'initial',
   initial: () => ({ settled: {}, asked: {} }),
 })
 
-/**
- * One settlement lookup for hooks, waiting views, streaming, and admission. A pending slot of a
- * different task invalidates the record. Once the slot is no longer pending, retain the decision
- * for idempotent retries and denied display. Always detach Pi transaction overlays before returning.
- */
-export function applicable(
-  record: Option.Option<Settled>,
-  slot: Option.Option<Readonly<ToolSlot>>,
-) {
-  if (Option.isNone(record)) return Option.none<Settlement>()
-  if (
-    Option.isSome(slot) &&
-    slot.value.status === 'pending' &&
-    slot.value.taskId !== record.value.taskId
+/** Pi types.ts defines task identities as erased numeric brands; no new identity is invented here. */
+const TaskIdentity = Schema.declare<TaskId>((value): value is TaskId => Predicate.isNumber(value))
+const SettlementValue = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal('approved') }),
+  Schema.Struct({ kind: Schema.Literal('denied'), reason: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal('answered'), output: Schema.MutableJson }),
+])
+
+/** Hooks address their exact task; public calls require unique ids and completed-entry provenance. */
+export const CallIdentity = Schema.TaggedUnion({
+  Public: {
+    callId: Schema.String,
+    resultTask: Schema.Option(TaskIdentity),
+    duplicate: Schema.Boolean,
+  },
+  Task: { callId: Schema.String, taskId: TaskIdentity, resultTask: Schema.Option(TaskIdentity) },
+})
+export type CallIdentity = typeof CallIdentity.Type
+
+/** Only Ready may wait. Queued has no task yet; Duplicate cannot be addressed by the public API. */
+export const CallLookup = Schema.TaggedUnion({
+  Duplicate: {},
+  Missing: {},
+  Queued: {},
+  Ready: { taskId: TaskIdentity },
+  Executing: { taskId: TaskIdentity },
+  Done: { taskId: TaskIdentity },
+  Settled: { taskId: TaskIdentity, settlement: SettlementValue },
+  Asked: { taskId: TaskIdentity, toolName: Schema.String },
+})
+export type CallLookup = typeof CallLookup.Type
+
+type HoldState = {
+  settled: Record<string, Settled>
+  asked: Record<string, { taskId: TaskId; toolName: string }>
+}
+
+/** The newest assistant entry owns the call; an older run's result is never evidence for a new invocation. */
+export function identify(entries: readonly EntryRecord[], callId: string) {
+  const at = entries.findLastIndex((entry) => callsIn(entry, callId).length > 0)
+  if (at === -1)
+    return CallIdentity.cases.Public.make({ callId, resultTask: Option.none(), duplicate: false })
+  const owner = entries[at]
+  const duplicate = owner !== undefined && callsIn(owner, callId).length > 1
+  const result = entries.slice(at + 1).find((entry) => {
+    const messages = entry.model
+    return (
+      messages !== undefined &&
+      messages.some((message) => message.role === 'toolResult' && message.toolCallId === callId)
+    )
+  })
+  return CallIdentity.cases.Public.make({
+    callId,
+    duplicate,
+    resultTask: Option.fromNullishOr(result).pipe(
+      Option.flatMapNullishOr((entry) => entry.byTaskId),
+    ),
+  })
+}
+
+/** The SDK's transcript is typed; select calls without flattening duplicate ids into a Map. */
+export function callsIn(entry: EntryRecord, callId: string) {
+  const messages = entry.model
+  if (messages === undefined) return []
+  return messages.flatMap((message) =>
+    message.role === 'assistant'
+      ? message.content.filter(
+          (block): block is Extract<typeof block, { type: 'toolCall' }> =>
+            block.type === 'toolCall' && block.id === callId,
+        )
+      : [],
   )
-    return Option.none<Settlement>()
-  return Option.some(copySettlement(record.value.settlement))
+}
+
+/** Apply stored state only to this exact task, irrespective of pending/running/done status. */
+function taskState(
+  holds: Readonly<HoldState>,
+  callId: string,
+  slot: Pick<ToolSlot, 'taskId' | 'status'>,
+) {
+  const taskId = slot.taskId
+  if (taskId === undefined) return CallLookup.cases.Queued.make({})
+  const recorded = holds.settled[callId]
+  if (recorded !== undefined && recorded.taskId === taskId)
+    return CallLookup.cases.Settled.make({
+      taskId,
+      settlement: copySettlement(recorded.settlement),
+    })
+  const asked = holds.asked[callId]
+  if (asked !== undefined && asked.taskId === taskId)
+    return CallLookup.cases.Asked.make({ taskId, toolName: asked.toolName })
+  return Match.value(slot.status).pipe(
+    Match.when('pending', () => CallLookup.cases.Ready.make({ taskId })),
+    Match.when('running', () => CallLookup.cases.Executing.make({ taskId })),
+    Match.when('done', () => CallLookup.cases.Done.make({ taskId })),
+    Match.exhaustive,
+  )
+}
+
+/**
+ * The sole safety lookup. A live id must be unique; a hook selects its slot by taskId. With no slot,
+ * only the newest call's tool-result byTaskId can validate a settlement. In-flight generation calls
+ * have no task yet and cannot inherit a prior run's settlement even before their slots are created.
+ */
+export function lookup(
+  live: Readonly<LiveState>,
+  holds: Readonly<HoldState>,
+  identity: CallIdentity,
+): CallLookup {
+  const slots = live.tools ?? []
+  const matching = slots.filter((slot) => slot.callId === identity.callId)
+  if (matching.length > 1) return CallLookup.cases.Duplicate.make({})
+  const slot = CallIdentity.match(identity, {
+    Public: () => Option.fromNullishOr(matching[0]),
+    Task: (task) =>
+      Option.fromNullishOr(
+        slots.find(
+          (candidate) => candidate.taskId === task.taskId && candidate.callId === task.callId,
+        ),
+      ),
+  })
+  if (Option.isSome(slot)) return taskState(holds, identity.callId, slot.value)
+  if (matching.length > 0) return CallLookup.cases.Missing.make({})
+  const generation = live.generation
+  if (
+    generation !== undefined &&
+    generation.message !== undefined &&
+    generation.message.content.some(
+      (block) => block.type === 'toolCall' && block.id === identity.callId,
+    )
+  )
+    return CallLookup.cases.Queued.make({})
+  return CallIdentity.match(identity, {
+    Public: (call) =>
+      call.duplicate
+        ? CallLookup.cases.Duplicate.make({})
+        : Option.match(call.resultTask, {
+            onNone: () => CallLookup.cases.Missing.make({}),
+            onSome: (taskId) => taskState(holds, call.callId, { taskId, status: 'done' }),
+          }),
+    Task: (task) =>
+      Option.contains(task.resultTask, task.taskId)
+        ? taskState(holds, task.callId, { taskId: task.taskId, status: 'done' })
+        : CallLookup.cases.Missing.make({}),
+  })
+}
+
+/** Normalize genuine document absence to Pi's declared initial value, then use the same pure lookup. */
+export function lookupSnapshots(
+  live: Option.Option<Readonly<LiveState>>,
+  holds: Option.Option<Readonly<HoldState>>,
+  identity: CallIdentity,
+) {
+  return lookup(
+    Option.getOrElse(live, () => LiveDoc.definition.initial()),
+    Option.getOrElse(holds, () => Holds.definition.initial()),
+    identity,
+  )
 }
 
 /** Pi drafts expire at commit; copy the closed settlement variant and any nested JSON result. */
@@ -84,14 +226,6 @@ function copySettlement(settled: Settlement): Settlement {
     })),
     Match.exhaustive,
   )
-}
-
-/** A live slot is absent between tool rounds; preserve that absence for the settlement rule. */
-export function slotOf(live: Readonly<LiveState>, callId: string) {
-  const tools = live.tools
-  return tools === undefined
-    ? Option.none<ToolSlot>()
-    : Option.fromNullishOr(tools.find((candidate) => candidate.callId === callId))
 }
 
 /**
@@ -181,12 +315,12 @@ const readSettlement = Effect.fn('Durable.readSettlement')(function* (
     })
     const holds = yield* Pi.snapshot(api, Holds, api.conversationId, context)
     const live = yield* Pi.snapshot(api, LiveDoc, api.conversationId, context)
-    const slot = live.pipe(Option.flatMap((document) => slotOf(document, callId)))
-    const settled = applicable(
-      holds.pipe(Option.flatMapNullishOr((document) => document.settled[callId])),
-      slot,
+    const found = lookupSnapshots(
+      live,
+      holds,
+      CallIdentity.cases.Task.make({ callId, taskId: api.taskId, resultTask: Option.none() }),
     )
-    if (Option.isSome(settled)) return settled
+    if (CallLookup.guards.Settled(found)) return Option.some(copySettlement(found.settlement))
     yield* Deferred.await(woken)
     return Option.none<Settlement>()
   }).pipe(Effect.ensuring(Effect.sync(() => unregister(key, woken))))
@@ -224,39 +358,55 @@ const settle = Effect.fn('Durable.settle')(function* (
   context: Context,
 ) {
   const conversation = yield* Pi.conversation(harness, conversationId, context)
-  const observed = yield* Pi.snapshot(harness, LiveDoc, conversationId, context)
-  const task = observed.pipe(
-    Option.flatMap((live) => slotOf(live, input.callId)),
-    Option.flatMapNullishOr((slot) => slot.taskId),
-  )
+  const observed = yield* readCall(harness, conversation, input.callId, context)
   const held = yield* waiting(harness, conversationId, context)
   const kind = input.next.kind === 'answered' ? 'answer' : 'approval'
   const allowed = held.some((call) => call.callId === input.callId && call.kind === kind)
+  const identity = CallLookup.guards.Ready(observed.found)
+    ? CallIdentity.cases.Task.make({
+        callId: input.callId,
+        taskId: observed.found.taskId,
+        resultTask: observed.identity.resultTask,
+      })
+    : observed.identity
   const winner = yield* Pi.commitWithLive(
     conversation,
     {
       token: Holds,
       conversationId,
       change: (holds, live) => {
-        const slot = slotOf(live, input.callId)
-        const existing = applicable(Option.fromNullishOr(holds.settled[input.callId]), slot)
-        if (Option.isSome(existing)) return existing
-        if (
-          !allowed ||
-          Option.isNone(task) ||
-          Option.isNone(slot) ||
-          slot.value.status !== 'pending' ||
-          slot.value.taskId !== task.value
-        )
-          return Option.none<Settlement>()
-        holds.settled[input.callId] = { taskId: task.value, settlement: copySettlement(input.next) }
+        const found = lookup(live, holds, identity)
+        if (CallLookup.guards.Settled(found)) return Option.some(copySettlement(found.settlement))
+        if (!allowed || !CallLookup.guards.Ready(found)) return Option.none<Settlement>()
+        holds.settled[input.callId] = {
+          taskId: found.taskId,
+          settlement: copySettlement(input.next),
+        }
         return Option.some(copySettlement(input.next))
       },
     },
     context,
   )
-  if (Option.isNone(winner))
+  if (Option.isNone(winner)) {
+    // A concurrent winner can finish before our commit. Reread its result provenance once;
+    // this is idempotency validation, never a retry that authorizes a different task.
+    const current = yield* readCall(harness, conversation, input.callId, context)
+    const found = lookup(
+      current.live,
+      current.holds,
+      CallIdentity.match(identity, {
+        Public: (): CallIdentity => current.identity,
+        Task: (task): CallIdentity =>
+          CallIdentity.cases.Task.make({
+            callId: task.callId,
+            taskId: task.taskId,
+            resultTask: current.identity.resultTask,
+          }),
+      }),
+    )
+    if (CallLookup.guards.Settled(found)) return copySettlement(found.settlement)
     return yield* new CallNotWaiting({ conversationId, callId: input.callId })
+  }
   yield* Effect.sync(() => harness.resume())
   yield* wake(wakeKey(conversationId, input.callId))
   return winner.value
@@ -310,9 +460,10 @@ export const answer = Effect.fn('Durable.answer')(function* (
   context: Context,
 ) {
   const conversation = yield* Pi.conversation(harness, conversationId, context)
-  const holds = yield* Pi.snapshot(harness, Holds, conversationId, context)
-  const toolName = holds.pipe(Option.flatMapNullishOr((document) => document.asked[given.callId]))
-  if (Option.isNone(toolName)) {
+  const current = yield* readCall(harness, conversation, given.callId, context)
+  const found = current.found
+  if (CallLookup.guards.Settled(found)) return copySettlement(found.settlement)
+  if (!CallLookup.guards.Asked(found))
     return yield* settle(
       harness,
       conversationId,
@@ -322,31 +473,34 @@ export const answer = Effect.fn('Durable.answer')(function* (
       },
       context,
     )
-  }
-  const taskId = yield* lateTask(harness, conversation, given.callId, context)
+  const identity = CallIdentity.cases.Task.make({
+    callId: given.callId,
+    taskId: found.taskId,
+    resultTask: current.identity.resultTask,
+  })
   yield* Pi.submit(
     conversation,
     {
       type: 'input',
-      content: answerText(toolName.value, given.output),
+      content: answerText(found.toolName, given.output),
       requestId: `answer:${given.callId}`,
       whenBusy: 'followUp',
     },
     context,
   )
   // Delete only after admission: a crash leaves the question open and retry deduplicates the input.
-  yield* Pi.commit(
+  yield* Pi.commitWithLive(
     conversation,
     {
       token: Holds,
       conversationId,
-      change: (document) => {
-        const recorded = Option.fromNullishOr(document.settled[given.callId])
-        if (Option.isNone(recorded) || recorded.value.taskId !== taskId)
-          document.settled[given.callId] = {
-            taskId,
-            settlement: { kind: 'answered', output: copyJson(given.output) },
-          }
+      change: (document, live) => {
+        const latest = lookup(live, document, identity)
+        if (!CallLookup.guards.Asked(latest)) return
+        document.settled[given.callId] = {
+          taskId: latest.taskId,
+          settlement: { kind: 'answered', output: copyJson(given.output) },
+        }
         delete document.asked[given.callId]
       },
     },
@@ -355,28 +509,21 @@ export const answer = Effect.fn('Durable.answer')(function* (
   return undefined
 })
 
-/** A later answer retains the task from its live slot or committed tool result for idempotent retries. */
-const lateTask = Effect.fn('Durable.lateAnswerTask')(function* (
+/** Resolve current provenance once for public admission; the serialized mutation revalidates it. */
+const readCall = Effect.fn('Durable.readCall')(function* (
   harness: Harness,
   conversation: import('@earendil-works/pi-durable').Conversation,
   callId: string,
   context: Context,
 ) {
-  const live = yield* Pi.snapshot(harness, LiveDoc, conversation.id, context)
-  const task = live.pipe(
-    Option.flatMap((document) => slotOf(document, callId)),
-    Option.flatMapNullishOr((slot) => slot.taskId),
+  const live = Option.getOrElse(
+    yield* Pi.snapshot(harness, LiveDoc, conversation.id, context),
+    () => LiveDoc.definition.initial(),
   )
-  if (Option.isSome(task)) return task.value
+  const holds = Option.getOrElse(yield* Pi.snapshot(harness, Holds, conversation.id, context), () =>
+    Holds.definition.initial(),
+  )
   const view = yield* Pi.view(conversation, context)
-  const entry = view.entries.findLast((candidate) => {
-    const model = candidate.model
-    return (
-      model !== undefined &&
-      model.some((message) => message.role === 'toolResult' && message.toolCallId === callId)
-    )
-  })
-  if (entry === undefined || entry.byTaskId === undefined)
-    return yield* new CallNotWaiting({ conversationId: conversation.id, callId })
-  return entry.byTaskId
+  const identity = identify(view.entries, callId)
+  return { live, holds, identity, found: lookup(live, holds, identity) }
 })

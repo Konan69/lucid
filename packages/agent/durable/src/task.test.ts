@@ -21,7 +21,6 @@ import {
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { expect, it } from '@effect/vitest'
 import { Deferred, Effect, Option, Schema } from 'effect'
-import { slotOf } from './holds.ts'
 import * as Pi from './pi.ts'
 
 const context = BACKGROUND_CONTEXT
@@ -87,7 +86,7 @@ it.live(
           ],
           hooks: [
             hook(ToolTask, {
-              beforeTool: (call, api, callbackContext) =>
+              beforeTool: (_call, api, callbackContext) =>
                 Pi.runForPi(
                   Effect.gen(function* () {
                     const live = Option.getOrThrow(
@@ -95,7 +94,9 @@ it.live(
                     )
                     yield* Deferred.succeed(recovered, {
                       taskId: api.taskId,
-                      slot: slotOf(live, call.id),
+                      slot: Option.fromNullishOr(
+                        (live.tools ?? []).find((candidate) => candidate.taskId === api.taskId),
+                      ),
                     })
                     return yield* Effect.never
                   }),

@@ -1,14 +1,14 @@
 import type { Chunk } from './chunks.ts'
 import { Match, Option } from 'effect'
 
-import { holdKind, type Plan, type Settlement } from './holds.ts'
+import { CallLookup, holdKind, type Plan } from './holds.ts'
 
 /** What the stream must know about a conversation's tools to present their calls. */
 export type Desk = {
   /** The plan of a bridged tool, by name; `undefined` for any other Pi Durable tool. */
   readonly plan: (toolName: string) => Option.Option<Plan>
-  /** Settlements committed so far, by tool call id. */
-  readonly settled: Readonly<Record<string, Settlement>>
+  /** Every presentation uses the same task/provenance lookup as hooks and admission. */
+  readonly call: (callId: string) => CallLookup
 }
 
 /**
@@ -17,9 +17,10 @@ export type Desk = {
 export type Round = {
   readonly awaiting: ReadonlySet<string>
   readonly running: ReadonlySet<string>
+  readonly unrequested: ReadonlyMap<string, InputAvailable>
 }
 
-export const emptyRound: Round = { awaiting: new Set(), running: new Set() }
+export const emptyRound: Round = { awaiting: new Set(), running: new Set(), unrequested: new Map() }
 
 /**
  * Every open call waits for a person and nothing else runs, so the run cannot move until someone
@@ -34,6 +35,7 @@ const without = (set: ReadonlySet<string>, id: string) =>
   new Set([...set].filter((each) => each !== id))
 
 const close = (round: Round, id: string): Round => ({
+  unrequested: new Map([...round.unrequested].filter(([callId]) => callId !== id)),
   awaiting: without(round.awaiting, id),
   running: without(round.running, id),
 })
@@ -55,31 +57,37 @@ function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown 
   }
   const { dynamic: _dynamic, ...typed } = chunk
   const kind = holdKind(plan.value, chunk.input)
-  const settled = desk.settled[chunk.toolCallId]
-  const request: readonly Chunk[] = Option.contains(kind, 'approval')
-    ? [
-        {
-          type: 'tool-approval-request',
-          approvalId: chunk.toolCallId,
-          toolCallId: chunk.toolCallId,
-        },
-      ]
-    : []
+  const found = desk.call(chunk.toolCallId)
+  const settled = CallLookup.guards.Settled(found) ? Option.some(found.settlement) : Option.none()
+  const request: readonly Chunk[] =
+    Option.contains(kind, 'approval') && CallLookup.isAnyOf(['Ready', 'Settled'])(found)
+      ? [
+          {
+            type: 'tool-approval-request',
+            approvalId: chunk.toolCallId,
+            toolCallId: chunk.toolCallId,
+          },
+        ]
+      : []
   const response: readonly Chunk[] =
-    Option.contains(kind, 'approval') && settled !== undefined
+    Option.contains(kind, 'approval') && Option.isSome(settled)
       ? [
           {
             type: 'tool-approval-response',
             approvalId: chunk.toolCallId,
-            approved: settled.kind !== 'denied',
+            approved: settled.value.kind !== 'denied',
           },
         ]
       : []
-  const waits = Option.isSome(kind) && settled === undefined
+  const waits = Option.isSome(kind) && CallLookup.isAnyOf(['Ready', 'Queued'])(found)
+  const unrequested = new Map(round.unrequested)
+  if (Option.isSome(kind) && CallLookup.guards.Queued(found))
+    unrequested.set(chunk.toolCallId, typed)
+  else unrequested.delete(chunk.toolCallId)
   return {
     round: waits
-      ? { ...round, awaiting: new Set([...round.awaiting, chunk.toolCallId]) }
-      : { ...round, running: new Set([...round.running, chunk.toolCallId]) },
+      ? { ...round, unrequested, awaiting: new Set([...round.awaiting, chunk.toolCallId]) }
+      : { ...round, unrequested, running: new Set([...round.running, chunk.toolCallId]) },
     chunks: [typed, ...request, ...response],
   }
 }
@@ -99,8 +107,8 @@ function show(round: Round, chunk: Chunk, desk: Desk): Shown {
     })),
     Match.when({ type: 'tool-output-error' }, (output): Shown => {
       // Pi's blocked result becomes the AI SDK denial state only when the durable decision denied it.
-      const settled = desk.settled[output.toolCallId]
-      const denied = settled !== undefined && settled.kind === 'denied'
+      const found = desk.call(output.toolCallId)
+      const denied = CallLookup.guards.Settled(found) && found.settlement.kind === 'denied'
       return {
         round: close(round, output.toolCallId),
         chunks: [denied ? { type: 'tool-output-denied', toolCallId: output.toolCallId } : output],
@@ -119,13 +127,29 @@ function show(round: Round, chunk: Chunk, desk: Desk): Shown {
  * conversation's tools and on the settlements, both given in `desk`.
  */
 export function present(round: Round, chunks: readonly Chunk[], desk: Desk): Shown {
-  return chunks.reduce<Shown>(
-    (shown, chunk) => {
-      const next = show(shown.round, chunk, desk)
-      return { round: next.round, chunks: [...shown.chunks, ...next.chunks] }
+  const shown = chunks.reduce<Shown>(
+    (accumulated, chunk) => {
+      const next = show(accumulated.round, chunk, desk)
+      return { round: next.round, chunks: [...accumulated.chunks, ...next.chunks] }
     },
     { round, chunks: [] },
   )
+  return refresh(shown, desk)
+}
+
+/** Partial input can precede task allocation. Present its hold only after the shared lookup admits it. */
+function refresh(shown: Shown, desk: Desk): Shown {
+  let round = shown.round
+  const chunks: Chunk[] = [...shown.chunks]
+  for (const [id, input] of shown.round.unrequested) {
+    const found = desk.call(id)
+    if (CallLookup.isAnyOf(['Queued', 'Missing'])(found)) continue
+    const next = inputAvailable(close(round, id), input, desk)
+    round = next.round
+    // The input was already sent; only its newly admitted approval is presented again.
+    chunks.push(...next.chunks.slice(1))
+  }
+  return { round, chunks }
 }
 
 /** Whether presenting `chunks` needs the desk. Reading it costs a document read, so text skips it. */

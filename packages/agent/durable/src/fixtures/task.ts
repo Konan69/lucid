@@ -19,7 +19,6 @@ import {
 } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { Effect, Option } from 'effect'
-import { slotOf } from '../holds.ts'
 import * as Pi from '../pi.ts'
 
 const context = BACKGROUND_CONTEXT
@@ -46,13 +45,17 @@ registry.install(
     ],
     hooks: [
       hook(ToolTask, {
-        beforeTool: (call, api, callbackContext) =>
+        beforeTool: (_call, api, callbackContext) =>
           Pi.runForPi(
             Effect.gen(function* () {
               const live = Option.getOrThrow(
                 yield* Pi.snapshot(api, LiveDoc, api.conversationId, callbackContext),
               )
-              const slot = Option.getOrThrow(slotOf(live, call.id))
+              const slot = Option.getOrThrow(
+                Option.fromNullishOr(
+                  (live.tools ?? []).find((candidate) => candidate.taskId === api.taskId),
+                ),
+              )
               if (slot === undefined) return yield* Effect.fail(new Error('Missing pending slot'))
               process.stdout.write(
                 JSON.stringify({

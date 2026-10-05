@@ -21,7 +21,7 @@ import {
   translate,
 } from './chunks.ts'
 import { RunMissing, type PiFailed, type WatchClosed, type WatchOverflowed } from './errors.ts'
-import { applicable, Holds, planOf, slotOf } from './holds.ts'
+import { CallLookup, identify, lookupSnapshots, Holds, planOf } from './holds.ts'
 import * as Pi from './pi.ts'
 
 /** A retried input retains its client request id and therefore Pi's submission identity. */
@@ -31,7 +31,7 @@ export type RunInput = {
   readonly requestId: string
 }
 
-const noDesk: Desk = { plan: () => Option.none(), settled: {} }
+const noDesk: Desk = { plan: () => Option.none(), call: () => CallLookup.cases.Missing.make({}) }
 
 type WatchFailure = PiFailed | WatchClosed | WatchOverflowed
 
@@ -54,20 +54,10 @@ const readDesk = Effect.fn('Durable.readDesk')(function* (reader: Reader) {
   )
   const holds = yield* Pi.snapshot(reader.harness, Holds, reader.conversation.id, reader.context)
   const live = yield* Pi.snapshot(reader.harness, LiveDoc, reader.conversation.id, reader.context)
-  const records = Option.match(holds, {
-    onNone: () => ({}),
-    onSome: (document) => document.settled,
-  })
-  const settled = Object.fromEntries(
-    Object.entries(records).flatMap(([callId, record]) => {
-      const slot = live.pipe(Option.flatMap((document) => slotOf(document, callId)))
-      const found = applicable(Option.some(record), slot)
-      return Option.isNone(found) ? [] : [[callId, found.value]]
-    }),
-  )
+  const view = yield* Pi.view(reader.conversation, reader.context)
   return {
     plan: (toolName: string) => Option.fromNullishOr(plans.get(toolName)),
-    settled,
+    call: (callId: string) => lookupSnapshots(live, holds, identify(view.entries, callId)),
   } satisfies Desk
 })
 
@@ -88,7 +78,8 @@ const apply = Effect.fn('Durable.streamEvent')(function* (
   event: AgentEvent,
 ) {
   const translated = translate(current.state, event)
-  const desk = needsDesk(translated.chunks) ? yield* readDesk(reader) : noDesk
+  const needsRefresh = event.type === 'message_end' && current.round.unrequested.size > 0
+  const desk = needsDesk(translated.chunks) || needsRefresh ? yield* readDesk(reader) : noDesk
   const roundSettled = event.type === 'message_end' || event.type === 'tool_execution_end'
   const written = writeStep(current, translated, roundSettled, desk)
   return { ...written, ended: written.ended || event.type === 'run_end' }

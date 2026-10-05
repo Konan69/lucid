@@ -1,0 +1,218 @@
+import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
+import { tool } from 'ai'
+import { expect, it } from 'vitest'
+import { z } from 'zod'
+
+import { CallNotWaiting, continueRun, decide, streamRun, waiting } from '../main.ts'
+import { call, consume, context, host, modelText, shop, signal } from './fixtures/host.ts'
+
+// Review dup.test.ts: Pi generation.startToolRound accepts duplicate ids but public decisions cannot distinguish them.
+it('blocks every duplicate id in a round without requesting approval or paying', async () => {
+  const fixture = await shop()
+  const opened = await fixture.open()
+  let reason = ''
+  opened.faux.setResponses([
+    fauxAssistantMessage(
+      [
+        fauxToolCall('pay', { amount: 1 }, { id: 'dup' }),
+        fauxToolCall('pay', { amount: 999 }, { id: 'dup' }),
+      ],
+      { stopReason: 'toolUse' },
+    ),
+    (request) => {
+      reason = modelText(request.messages)
+      return fauxAssistantMessage('Blocked.')
+    },
+  ])
+  const result = await consume(
+    await streamRun(
+      opened.harness,
+      {
+        conversationId: opened.root.id,
+        content: 'Pay',
+        requestId: 'duplicate',
+      },
+      context,
+    ),
+  )
+  expect(result.chunks.filter((chunk) => chunk.type === 'tool-approval-request')).toEqual([])
+  expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
+  await expect(
+    decide(opened.harness, opened.root.id, { callId: 'dup', approved: true }, context),
+  ).rejects.toBeInstanceOf(CallNotWaiting)
+  await opened.root.waitForIdle(context)
+  expect(reason).toContain('duplicate tool call id')
+  expect(fixture.paid).toEqual([])
+})
+
+// Review probe.test.ts E: a completed unrelated task must retain its actual error, not an older denial.
+it('does not apply a stale denial to a failing unheld task with the same id', async () => {
+  const fixture = await host(
+    {
+      pay: tool({ inputSchema: z.object({}), execute: async () => 'paid' }),
+      boom: tool({
+        inputSchema: z.object({}),
+        execute: async (): Promise<string> => {
+          throw new Error('exploded')
+        },
+      }),
+    },
+    { approval: { pay: true } },
+  )
+  const opened = await fixture.open()
+  opened.faux.setResponses([
+    call('pay', {}, 'same'),
+    fauxAssistantMessage('Denied.'),
+    call('boom', {}, 'same'),
+    fauxAssistantMessage('Failed.'),
+  ])
+  await consume(
+    await streamRun(
+      opened.harness,
+      {
+        conversationId: opened.root.id,
+        content: 'Pay',
+        requestId: 'denied',
+      },
+      context,
+    ),
+  )
+  await decide(
+    opened.harness,
+    opened.root.id,
+    { callId: 'same', approved: false, reason: 'no' },
+    context,
+  )
+  await opened.root.waitForIdle(context)
+  const result = await consume(
+    await streamRun(
+      opened.harness,
+      {
+        conversationId: opened.root.id,
+        content: 'Fail',
+        requestId: 'failed',
+      },
+      context,
+    ),
+  )
+  expect(result.chunks.filter((chunk) => chunk.type === 'tool-output-denied')).toEqual([])
+  expect(result.chunks.find((chunk) => chunk.type === 'tool-output-error')).toMatchObject({
+    toolCallId: 'same',
+    errorText: expect.stringContaining('exploded'),
+  })
+  await expect(
+    decide(opened.harness, opened.root.id, { callId: 'same', approved: true }, context),
+  ).rejects.toBeInstanceOf(CallNotWaiting)
+})
+
+// Review probe.test.ts B: streamed input exists before its new tool task; historical approvals never apply.
+it('requests a fresh approval for a reused id in a later run with streamed partial input', async () => {
+  const paid: number[] = []
+  const fixture = await host(
+    {
+      pay: tool({
+        inputSchema: z.object({ amount: z.number() }),
+        execute: async ({ amount }) => {
+          paid.push(amount)
+          return amount
+        },
+      }),
+    },
+    { approval: { pay: true } },
+    {},
+    { tokensPerSecond: 60 },
+  )
+  const opened = await fixture.open()
+  opened.faux.setResponses([
+    call('pay', { amount: 100 }, 'reused'),
+    fauxAssistantMessage('First paid.'),
+    fauxAssistantMessage(
+      [
+        fauxToolCall('pay', { amount: 200 }, { id: 'reused' }),
+        { type: 'text', text: 'word '.repeat(60) },
+      ],
+      { stopReason: 'toolUse' },
+    ),
+    fauxAssistantMessage('Second denied.'),
+  ])
+  await consume(
+    await streamRun(
+      opened.harness,
+      {
+        conversationId: opened.root.id,
+        content: 'Pay',
+        requestId: 'first',
+      },
+      context,
+    ),
+  )
+  await decide(opened.harness, opened.root.id, { callId: 'reused', approved: true }, context)
+  await opened.root.waitForIdle(context)
+  const result = await consume(
+    await streamRun(
+      opened.harness,
+      {
+        conversationId: opened.root.id,
+        content: 'Again',
+        requestId: 'second',
+      },
+      context,
+    ),
+  )
+  expect(result.chunks.filter((chunk) => chunk.type === 'tool-approval-response')).toEqual([])
+  expect(result.chunks.filter((chunk) => chunk.type === 'tool-approval-request')).toHaveLength(1)
+  expect(await waiting(opened.harness, opened.root.id, context)).toMatchObject([
+    { callId: 'reused', input: { amount: 200 } },
+  ])
+  expect(paid).toEqual([100])
+  await decide(opened.harness, opened.root.id, { callId: 'reused', approved: false }, context)
+  await opened.root.waitForIdle(context)
+  expect(paid).toEqual([100])
+})
+
+// Review probe.test.ts F: the next round of one run has its own task even when its call id is reused.
+it('requires a fresh decision when a later round of the same run reuses an id', async () => {
+  const fixture = await shop()
+  const opened = await fixture.open()
+  const entered = signal()
+  const release = signal()
+  opened.faux.setResponses([
+    call('pay', { amount: 100 }, 'reused'),
+    async () => {
+      entered.resolve()
+      await release.promise
+      return call('pay', { amount: 200 }, 'reused')
+    },
+    fauxAssistantMessage('Resolved.'),
+  ])
+  const first = await consume(
+    await streamRun(
+      opened.harness,
+      {
+        conversationId: opened.root.id,
+        content: 'Pay',
+        requestId: 'rounds',
+      },
+      context,
+    ),
+  )
+  await decide(opened.harness, opened.root.id, { callId: 'reused', approved: true }, context)
+  try {
+    await entered.promise
+    const stream = await continueRun(opened.harness, opened.root.id, new Set(['reused']), context)
+    release.resolve()
+    const result = await consume(stream, first.message)
+    expect(result.chunks.filter((chunk) => chunk.type === 'tool-approval-request')).toMatchObject([
+      { toolCallId: 'reused' },
+    ])
+    expect(await waiting(opened.harness, opened.root.id, context)).toMatchObject([
+      { callId: 'reused', input: { amount: 200 } },
+    ])
+    expect(fixture.paid).toEqual([100])
+    await decide(opened.harness, opened.root.id, { callId: 'reused', approved: false }, context)
+    await opened.root.waitForIdle(context)
+    expect(fixture.paid).toEqual([100])
+  } finally {
+    release.resolve()
+  }
+})
