@@ -330,8 +330,8 @@ hosted: runtime --> server --SSH--> the Person's Computer
 
 ### Measured on 5 October 2026
 
-On a second machine of the same provider account, not on a Person's Computer. "Hosted server"
-means inside the production server's container.
+On a second machine of the same provider account. "Hosted server" means inside the production
+server's container. The same steps on a Person's Computer are in the next section.
 
 | What                                                                                  | Result                                                                                          |
 | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
@@ -355,6 +355,54 @@ through the endpoint is slower and uneven. Which of the two a machine gets is th
 choice at each wake. One held connection pays the handshake once; each command still pays the
 path.
 
+### Measured on a Person's Computer, 5 October 2026
+
+The one production Computer. It had only an IPv6 address that evening, so every connection went
+through the endpoint. Each session used a throwaway key, authorized through the provider and
+removed afterwards.
+
+One wake:
+
+| What                                                    | Result                                                                                  |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| A first resume                                          | "Provisioning" for 18 minutes 37 seconds, then "archived" again, with no error reported |
+| The next resume, until the provider reported an address | 4 minutes 29 seconds                                                                    |
+| The machine's own uptime when SSH first answered        | 298 s: it had booted at the resume, long before the provider reported an address        |
+| From the reported address to an accepted SSH login      | At most 28 s; the probe made other calls first                                          |
+| The provider's command endpoint in those 28 s           | Did not answer                                                                          |
+| The states reported during that start                   | "provisioning", "archived" for half a minute, then "provisioned" with the address       |
+| The provider's stop timer afterwards                    | Two hours after the start, not counted from the last activity                           |
+
+Two whole sessions from the hosted server:
+
+| What                                               | First session    | Second session         |
+| -------------------------------------------------- | ---------------- | ---------------------- |
+| Handshake and key login                            | 0.54 s           | 1.14 s                 |
+| The host key against the one the provider reported | Equal            | Equal                  |
+| First command                                      | 29.4 s           | 0.37 s                 |
+| Three more commands on the held connection         | 0.13 s each      | 0.36 s, 0.36 s, 1.02 s |
+| 256 KB of command output received                  | 0.35 s           | 0.58 s                 |
+| A small file written, read back and removed        | Identical; 1.2 s | Identical; 0.9 s       |
+| A 256 KB file written                              | 4.9 s            | 4.4 s                  |
+| The same 256 KB sent as command input              | Not run          | 4.1 s                  |
+| The same file written with parallel requests       | Not run          | 4.5 s                  |
+| The 256 KB file read back                          | Identical; 1.3 s | Identical; 0.7 s       |
+
+What the numbers say:
+
+- The mechanics hold on a Person's Computer from the hosted server: the key call, the address
+  rule, the host key, commands and files on one held connection.
+- Sending to the machine through the endpoint is slow, about 60 KB a second whichever way the
+  bytes are sent, so it is the path and not the client call. Receiving is about ten times faster.
+- One first command stalled for 29 seconds and the cause is not known. A caller's time limit has
+  to allow for it.
+- The provider's guide says a resume takes a few seconds. That evening one did not finish at all
+  and the next took four and a half minutes. Waiting for a Computer needs an upper bound and a
+  failure the model can read.
+- A state of "archived" in the middle of a start is not proof that the start failed.
+- The machine was running a test suite during both sessions (load 3 on 4 cores), so the command
+  times are not clean.
+
 ### What starting a conversation asks of the machine
 
 Read in the installed Flue 2.2.2 (`discoverSessionContext`). When a conversation starts and the
@@ -367,12 +415,13 @@ answered "nothing there" without waking it, and only a tool the model calls wake
 
 ### Not verified
 
-- How long after a wake a machine accepts SSH. Its command endpoint refuses for 20 to 40 seconds.
-  One wake watched on 5 October had not finished starting after ten minutes.
-- The same steps on a Person's Computer. There is no test Computer: the proof on one can only be
-  run on the deployed product.
-- A direct IPv4 session from the hosted server. Only the connection and first bytes were measured
-  on that path; the whole session was run through the endpoint.
+- How long a normal wake takes. Only the one slow start above was timed.
+- A machine with its own IPv4 address, from the hosted server: only the connection and the first
+  bytes were measured on that path. Every whole session went through the endpoint.
+- Why sending is slow through the endpoint, and whether it is as slow on a machine with its own
+  IPv4 address.
+- The rule for the start of a conversation. It is read from the runtime's code; nothing is built
+  yet that could be run.
 
 ## Runtime on the Computer: planned
 
