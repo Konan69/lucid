@@ -53,3 +53,29 @@ export function toolRunner(layer: Layer.Layer<Scope, ToolFailure>) {
 }
 
 export type RunTool = ReturnType<typeof toolRunner>
+
+/**
+ * The same authority for a call whose answer is not a tool result: the Computer sandbox's file and
+ * shell verbs, which Flue's own tools call and which answer bytes and output, not a display
+ * record. A failure rejects with an `Error` whose message Flue shows the model; a server failure
+ * that is not a sentence for the model becomes one here.
+ */
+export function scopedRunner(layer: Layer.Layer<Scope, ToolFailure>) {
+  return function runScoped<A>(
+    program: Effect.Effect<A, ToolFailure | Error, Scope>,
+    signal: AbortSignal | undefined,
+  ): Promise<A> {
+    const settled = program.pipe(
+      Effect.provide(layer),
+      Effect.mapError((failure) =>
+        failure instanceof Error && !('_tag' in failure)
+          ? failure
+          : new Error('The Computer could not be reached. Try again.'),
+      ),
+    )
+    // oxlint-disable-next-line vivid/no-runpromise-in-library -- The Flue sandbox verb boundary, classified exactly by the Effect audit.
+    return Effect.runPromise(settled, signal === undefined ? {} : { signal })
+  }
+}
+
+export type RunScoped = ReturnType<typeof scopedRunner>
