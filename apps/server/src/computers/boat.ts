@@ -83,7 +83,7 @@ const endpoint = (value: string) => {
  * which is an invalid response, never a machine to use. A lost or refused connection is an outage
  * of the path to the machine and says nothing about the machine.
  */
-const linkFailure = (failure: LinkFailure | LinkFileRefused): MachineFailure => {
+export const linkFailure = (failure: LinkFailure | LinkFileRefused): MachineFailure => {
   if (failure instanceof LinkFileRefused) return new MachineFileRefused({ reason: failure.reason })
   if (failure instanceof LinkHostMismatch)
     return new MachineResponseInvalid({ operation: 'ssh-host-key' })

@@ -54,8 +54,10 @@ const assignments = (env: Readonly<Record<string, string>>) =>
  * conversation if a skill directory there had the name of one of Vivid's own skills (Flue throws
  * on that collision at start). So discovery finds no workspace: `exists` says no, and the two
  * that may refuse do. Vivid lists and inspects files with `bash`, as a person does.
+ *
+ * `home` is where commands start and relative paths resolve: `COMPUTER_HOME` on a Computer.
  */
-export function computerSandbox(run: RunScoped): Sandbox {
+export function computerSandbox(run: RunScoped, home: string): Sandbox {
   const unsupported = (operation: string) =>
     Promise.reject(
       new SandboxOperationUnsupportedError({
@@ -74,7 +76,7 @@ export function computerSandbox(run: RunScoped): Sandbox {
         const { client } = yield* Scope
         const outcome = yield* client.ComputerShell({
           command: (env === undefined ? '' : assignments(env)) + command,
-          directory: cwd === undefined ? COMPUTER_HOME : cwd,
+          directory: cwd === undefined ? home : cwd,
           timeoutSeconds: Math.min(Math.max(seconds, 1), LONGEST_SECONDS),
         })
         return yield* ComputerShellOutcome.match<Effect.Effect<ShellResult, Error>>(outcome, {
@@ -156,7 +158,7 @@ export function computerSandbox(run: RunScoped): Sandbox {
         `rm ${options?.recursive === true ? '-r ' : ''}${options?.force === true ? '-f ' : ''}-- ${word(path)}`,
       ).then(checked),
   }
-  return sandboxFromDriver(driver, COMPUTER_HOME)
+  return sandboxFromDriver(driver, home)
 }
 
 /** A file command that failed says why on its error stream. */
@@ -166,11 +168,12 @@ const checked = (result: { readonly exitCode: number; readonly stderr: string })
 
 /** Flue's own six tools, built on the sandbox Flue hands back (it carries Flue's skill-file
  * overlay on `readFile`). They are Flue's code and words unchanged. */
-export const machineTools = (sandbox: Sandbox) => [
-  createReadTool(sandbox),
-  createWriteTool(sandbox),
-  createEditTool(sandbox),
-  createBashTool(sandbox),
-  createGrepTool(sandbox),
-  createGlobTool(sandbox),
-]
+export const machineTools = (sandbox: Sandbox) =>
+  [
+    createReadTool(sandbox),
+    createWriteTool(sandbox),
+    createEditTool(sandbox),
+    createBashTool(sandbox),
+    createGrepTool(sandbox),
+    createGlobTool(sandbox),
+  ] as const

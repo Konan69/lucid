@@ -20,7 +20,7 @@ import { personComputerModelTool } from './windows.ts'
 import { warnFailure } from './result.ts'
 import * as v from 'valibot'
 import { Scope, type RunScoped, type RunTool } from './scope.ts'
-import { computerSandbox, machineTools } from './sandbox.ts'
+import { COMPUTER_HOME, computerSandbox, machineTools } from './sandbox.ts'
 import { summary, text } from './inputs.ts'
 import { browseOutcome, commandOutcome, desktopOutcome } from './outcomes.ts'
 
@@ -297,7 +297,7 @@ export function desktopModelTool(runTool: RunTool) {
  */
 export function computerSandboxFactory(runTool: RunTool, run: RunScoped) {
   return {
-    createSandbox: () => Promise.resolve(computerSandbox(run)),
+    createSandbox: () => Promise.resolve(computerSandbox(run, COMPUTER_HOME)),
     tools: (sandbox) => [...machineTools(sandbox), ...pictureTools(runTool)],
   } satisfies SandboxFactory
 }
