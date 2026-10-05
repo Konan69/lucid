@@ -302,41 +302,45 @@ What running it against real pages changed (each is stated beside its code):
 
 ### Apps on the Person's computer (Windows)
 
-Allowing a computer is the whole permission. Where Vivid's helper is present (Windows, shipped
-under `resources/native/windows`; see `native/windows/README.md`), the app says so when it starts
-listening (`ability.apps`) and carries out `Window` work through it: any app, any window, nothing
-asked and nothing banned.
+Allowing a computer is the whole permission. Where the Computer is present (Windows, the vendored
+pair shipped under `resources/native/computer`; see `vendor/computer/README.md`), the app says so
+when it starts listening (`ability.apps`) and carries out `Window` work through it: any app, any
+window, nothing asked and nothing banned.
 
-- **The process** (`main/helper.ts`, `main/wire.ts`): one `Vivid.Windows.exe --parent-pid <pid>`,
-  started at the first work in an app, hidden, private pipes, both drained. One request at a time,
-  each with its turn and its budget; every line is decoded with a schema. A reply that never
-  comes (exit 70 included), a line that is not the protocol, or a request that outlives its
-  budget by 2 s ends the request as lost, and the last two end the process.
+- **The process** (`main/computer.ts`, `main/wire.ts`): the vendored supervisor
+  (`codex-computer-use.exe --parent-pid <pid>`) with the engine beside it, started at the first
+  work in an app, hidden, private pipes, both drained. One request at a time over the
+  supervisor's own JSON-RPC stdio protocol, each with its turn and its budget; every line is
+  decoded with a schema. A reply that never comes, a line that is not the protocol, or a request
+  that outlives its budget by 2 s ends the request as lost, and the last two end the process.
+- **Approvals**: an approval ask is answered by the desktop itself, at once, with the approved
+  app in the re-sent request's `meta` (the reference client's own key). Nothing is ever asked of
+  the Person and nothing is banned here once the computer is allowed.
 - **Turns** (`main/turn.ts`): one turn per Run, the Run's id as the turn's id. It begins at a
   Run's first work in an app and ends on `RunEnded`, after 60 s with no work, when work of
-  another Run arrives, and when the link ends (which also ends the process).
-- **Stop**: Escape anywhere (the helper's `stopped` line) or Stop on the notice ends the turn.
-  Work in flight answers `Declined: Stopped`; with nothing in flight the app calls
+  another Run arrives, and when the link ends (which also ends the process). A gone Computer is
+  started anew; never reused.
+- **Stop**: Escape anywhere (the supervisor ends itself with exit 130) or Stop on the notice
+  ends the turn. Work in flight answers `Declined: Stopped`; with nothing in flight the app calls
   `ReportDeviceStop` at once. That Run is over; a new Run works at once. There is no pause.
-- **Unknown outcomes**: a change that was written to the helper and got no answer, or whose
-  failure does not say nothing was sent, is not answered at all. The server records it as
-  unknown; it is never reported as done, declined or failed.
-- **The mapping** (`main/windows.ts`): each `WindowAction` as helper requests and back. A change
-  answers with a fresh look at the window. Windows get short names of the turn's own (`w1`); the
-  helper's ids never leave the computer.
+- **Unknown outcomes**: a change that was written and got no answer, or whose failure does not
+  say nothing was sent, is not answered at all. The server records it as unknown; it is never
+  reported as done, declined or failed.
+- **The mapping** (`main/windows.ts`): each `WindowAction` as the supervisor's methods and back.
+  A change answers with a fresh look at the window. Windows get short names of the turn's own
+  (`w1`); the pair's ids never leave the computer.
 - **The notice** (`main/notice.ts`, `apps/web/src/notice.tsx`): a small frameless window, top
   centre of the primary display, always on top, shown without taking focus, not in the taskbar,
   and left out of screen captures so it is never in a picture sent to the model. It says
   "<Vivid's name> is using <app>" with an Esc hint and Stop.
 
-The helper is compiled by `scripts/build.mjs` on Windows (its own `build.ps1`, the compiler that
-ships in Windows) into `dist/native/windows`; a failed compile fails the build, and
-`scripts/packed.mjs` refuses to package a Windows app without it. On other systems the build
-skips it and that app reports `apps: false`.
+The pair is vendored (`vendor/computer/`) and shipped verbatim by `electron-builder.yml`;
+`scripts/packed.mjs` refuses to package a Windows app without it. On other systems the app
+reports `apps: false`.
 
 The tests run the desktop's side against a stand-in process (`main/fake.mjs`) that speaks the
-same lines. Not proved here: the real helper, the notice window, and the packaged installer; they
-need Windows.
+same protocol. Not proved here: the real pair, the notice window, and the packaged installer;
+they need Windows.
 
 ### The proof
 

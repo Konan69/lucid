@@ -4,8 +4,8 @@ import { Schema } from 'effect'
  * Vivid working in the apps on a Person's own computer: any window, not only the pages of the
  * desktop app's browser (`BrowserAction`).
  *
- * The work is done by Vivid's own helper on that computer (`apps/desktop/native/windows`), which
- * the desktop app starts and supervises. This is the vocabulary between the server, the desktop
+ * The work is done by the vendored Computer on that person's Windows machine
+ * (`apps/desktop/vendor/computer/`), which the desktop app starts and supervises. This is the vocabulary between the server, the desktop
  * app and Vivid's model for it. It follows the helper's protocol, which follows the inspected
  * reference's window methods (list apps and windows, read one window as a picture and a named
  * outline, act on an element or at a point, type, press keys, scroll); the names are Vivid's.
