@@ -737,7 +737,8 @@ describe.skipIf(!testDatabaseConfigured)('the phone app signing in with Google',
         const { browser } = yield* grantedOnPhone(server, yield* account())
         const { mine, back } = yield* roundOnPhone(server, browser, {})
 
-        expect(back).toEqual({ _tag: 'Failed', state: mine.state })
+        expect(SignInReturn.guards.Failed(back)).toBe(true)
+        expect(back.state).toBe(mine.state)
       }).pipe(Effect.scoped),
     )
 
@@ -747,7 +748,8 @@ describe.skipIf(!testDatabaseConfigured)('the phone app signing in with Google',
         // What Google sends when the Person closes its page.
         const { mine, back } = yield* roundOnPhone(server, '', { error: 'access_denied' })
 
-        expect(back).toEqual({ _tag: 'Failed', state: mine.state })
+        expect(SignInReturn.guards.Failed(back)).toBe(true)
+        expect(back.state).toBe(mine.state)
       }).pipe(Effect.scoped),
     )
 
