@@ -5,6 +5,8 @@ import {
   CompanyId,
   DEFAULT_APPEARANCE,
   DraftListResponse,
+  DraftPlace,
+  DraftWorkspace,
   MeResponse,
   NotificationListResponse,
   Person,
@@ -24,6 +26,7 @@ import { LiveState, liveStateOf, makeLive, type ProductFailure } from './live.js
 import {
   judge,
   keepLatest,
+  LIMITS,
   makeSnapshots,
   readSnapshot,
   Verdict,
@@ -32,6 +35,9 @@ import {
 } from './snapshot.js'
 
 const ORIGIN = 'https://vivid.example'
+/** The device's clock in every test, and a session that ends an hour after it. */
+const NOW = 1_000_000
+const LATER = NOW + 3_600_000
 
 const person = (id: string, name: string) =>
   new Person({ id: PersonId.make(id), name, email: `${id}@example.com` })
@@ -61,42 +67,113 @@ const listOf = (...threads: ReadonlyArray<Thread>): ThreadListResponse => ({ thr
 /** The text a device holds for a snapshot it wrote. Every snapshot here is one it can write. */
 const textOf = (snapshot: Snapshot) => Option.getOrThrow(writeSnapshot(snapshot))
 
-/** What a device wrote down the last time Ada used it. */
-const kept: Snapshot = {
-  version: 1,
+/** A snapshot of Ada's own space, with these lists and this end of session. */
+const snapshotOf = (holding: {
+  readonly expiresAt: number
+  readonly threads: Option.Option<ThreadListResponse>
+  readonly drafts: Option.Option<DraftListResponse>
+}): Snapshot => ({
+  version: 2,
   origin: ORIGIN,
+  expiresAt: holding.expiresAt,
   me: meOf(ada, personal),
-  threads: Option.some(listOf(thread('t1', 'Board pack'))),
+  threads: holding.threads,
   projects: Option.none(),
   settings: Option.none(),
   appearance: Option.some(DEFAULT_APPEARANCE),
   notifications: Option.none(),
-  drafts: Option.none(),
-}
+  drafts: holding.drafts,
+})
+
+const boardPack = Option.some(listOf(thread('t1', 'Board pack')))
+
+/** What a device wrote down the last time Ada used it. */
+const kept = snapshotOf({ expiresAt: LATER, threads: boardPack, drafts: Option.none() })
 
 describe('a snapshot in a device store', () => {
   it('reads back what was written', () => {
-    const read = readSnapshot(Option.some(textOf(kept)), ORIGIN)
+    const read = readSnapshot(Option.some(textOf(kept)), ORIGIN, NOW)
     expect(Option.map(read, (snapshot) => snapshot.me.person.id)).toEqual(Option.some(ada.id))
     expect(Option.flatMap(read, (snapshot) => snapshot.threads)).toEqual(kept.threads)
     expect(Option.flatMap(read, (snapshot) => snapshot.projects)).toEqual(Option.none())
   })
 
   it('refuses one read from another server', () => {
-    expect(readSnapshot(Option.some(textOf(kept)), 'https://other.example')).toEqual(Option.none())
+    expect(readSnapshot(Option.some(textOf(kept)), 'https://other.example', NOW)).toEqual(
+      Option.none(),
+    )
   })
 
   it('refuses text that is not this format, and never casts it', () => {
     const text = textOf(kept)
-    expect(readSnapshot(Option.none(), ORIGIN)).toEqual(Option.none())
-    expect(readSnapshot(Option.some(text.slice(0, 40)), ORIGIN)).toEqual(Option.none())
-    expect(readSnapshot(Option.some(text.replace('"version":1', '"version":2')), ORIGIN)).toEqual(
-      Option.none(),
-    )
+    expect(readSnapshot(Option.none(), ORIGIN, NOW)).toEqual(Option.none())
+    expect(readSnapshot(Option.some(text.slice(0, 40)), ORIGIN, NOW)).toEqual(Option.none())
+    expect(
+      readSnapshot(Option.some(text.replace('"version":2', '"version":3')), ORIGIN, NOW),
+    ).toEqual(Option.none())
     // A Thread list from a build whose Threads had no title is not a Thread list.
-    expect(readSnapshot(Option.some(text.replace('"title":"Board pack",', '')), ORIGIN)).toEqual(
-      Option.none(),
+    expect(
+      readSnapshot(Option.some(text.replace('"title":"Board pack",', '')), ORIGIN, NOW),
+    ).toEqual(Option.none())
+  })
+
+  it('refuses one whose session has ended by this device’s clock, or that records no end', () => {
+    const text = textOf(kept)
+    expect(Option.isSome(readSnapshot(Option.some(text), ORIGIN, LATER - 1))).toBe(true)
+    expect(readSnapshot(Option.some(text), ORIGIN, LATER)).toEqual(Option.none())
+    expect(
+      readSnapshot(Option.some(text.replace(`"expiresAt":${LATER},`, '')), ORIGIN, NOW),
+    ).toEqual(Option.none())
+  })
+
+  it('keeps a list whole or not at all, and nothing when the whole is too large', () => {
+    const many = (count: number) =>
+      listOf(...Array.from({ length: count }, (_, index) => thread(`t${index}`, `Thread ${index}`)))
+    const reread = (threads: ThreadListResponse) =>
+      Option.flatMap(
+        readSnapshot(
+          writeSnapshot(
+            snapshotOf({ expiresAt: LATER, threads: Option.some(threads), drafts: Option.none() }),
+          ),
+          ORIGIN,
+          NOW,
+        ),
+        (snapshot) => snapshot.threads,
+      )
+    expect(Option.map(reread(many(LIMITS.threads)), (list) => list.threads.length)).toEqual(
+      Option.some(LIMITS.threads),
     )
+    // One more than the first screen draws: not cut to fit, which would read as the whole list.
+    expect(reread(many(LIMITS.threads + 1))).toEqual(Option.none())
+    const pages = 'words '.repeat(LIMITS.total / 6)
+    expect(
+      writeSnapshot(
+        snapshotOf({
+          expiresAt: LATER,
+          threads: boardPack,
+          drafts: Option.some({
+            workspace: DraftWorkspace.cases.Personal.make({}),
+            generation: 1,
+            drafts: [
+              {
+                place: DraftPlace.cases.NewThread.make({}),
+                text: pages.slice(0, 50_000),
+                revision: 1,
+                savedAt: 0,
+                device: 'phone',
+              },
+              ...Array.from({ length: 8 }, (_, index) => ({
+                place: DraftPlace.cases.InThread.make({ thread: ThreadId.make(`t${index}`) }),
+                text: pages.slice(0, 50_000),
+                revision: 1,
+                savedAt: 0,
+                device: 'phone',
+              })),
+            ],
+          }),
+        }),
+      ),
+    ).toEqual(Option.none())
   })
 
   it('judges whose it is by the server, not by what it says itself', () => {
@@ -144,6 +221,7 @@ describe('writing a snapshot down', () => {
  * snapshot wiring over both, all on the test's clock.
  */
 const launched = Effect.fn('Test.launched')(function* (stored: Option.Option<string>) {
+  const writes = yield* Ref.make(0)
   const run = yield* FiberSet.makeRuntime()
   const clock = yield* Clock.Clock
   const store = yield* Ref.make(stored)
@@ -165,9 +243,12 @@ const launched = Effect.fn('Test.launched')(function* (stored: Option.Option<str
     registry: live.registry,
     queries,
     origin: ORIGIN,
+    expiry: Effect.succeed(Option.some(LATER)),
+    now: () => NOW,
     store: {
       read: Ref.get(store),
-      write: (text) => Ref.set(store, Option.some(text)),
+      write: (text) =>
+        Ref.set(store, Option.some(text)).pipe(Effect.andThen(Ref.update(writes, (n) => n + 1))),
       erase: Ref.set(store, Option.none()),
     },
     launch: (program) => {
@@ -176,6 +257,10 @@ const launched = Effect.fn('Test.launched')(function* (stored: Option.Option<str
         run(Fiber.interrupt(fiber))
       }
     },
+  })
+  // Every surface wires the engine's "the server refused this session" to the one ending.
+  live.whenSessionGone(() => {
+    run(snapshots.ended)
   })
   yield* Effect.addFinalizer(() => Effect.sync(snapshots.stop))
   // Lets the store be read and the subscriptions open before the test speaks for the server.
@@ -189,7 +274,7 @@ const launched = Effect.fn('Test.launched')(function* (stored: Option.Option<str
   return {
     titles,
     origin: () => live.registry.get(queries.threads.origin),
-    stored: Effect.map(Ref.get(store), (text) => readSnapshot(text, ORIGIN)),
+    stored: Effect.map(Ref.get(store), (text) => readSnapshot(text, ORIGIN, NOW)),
     hearMe: (next: MeResponse) => Queue.offer(me, next).pipe(Effect.andThen(TestClock.adjust(0))),
     hearThreads: (next: ThreadListResponse) =>
       Queue.offer(threads, next).pipe(Effect.andThen(TestClock.adjust(0))),
@@ -197,7 +282,9 @@ const launched = Effect.fn('Test.launched')(function* (stored: Option.Option<str
       Effect.andThen(TestClock.adjust(0)),
     ),
     flush: snapshots.flush,
-    erase: snapshots.erase.pipe(Effect.andThen(TestClock.adjust(0))),
+    ended: snapshots.ended.pipe(Effect.andThen(TestClock.adjust(0))),
+    writes: Ref.get(writes),
+    raw: Ref.get(store),
   }
 })
 
@@ -273,12 +360,40 @@ describe('launching from what the device kept', () => {
     }),
   )
 
+  it.effect('erases a snapshot whose session has expired without drawing it', () =>
+    Effect.gen(function* () {
+      const device = yield* launched(
+        Option.some(
+          textOf(snapshotOf({ expiresAt: NOW - 1, threads: boardPack, drafts: Option.none() })),
+        ),
+      )
+      expect(device.titles()).toBe('loading')
+      expect(device.origin()).toBe('nothing')
+      expect(yield* device.raw).toEqual(Option.none())
+    }),
+  )
+
+  it.effect('writes nothing after the session ended, however much arrives or is flushed', () =>
+    Effect.gen(function* () {
+      const device = yield* launched(Option.none())
+      yield* device.hearMe(meOf(ada, personal))
+      yield* device.hearThreads(listOf(thread('t1', 'Board pack')))
+      // A paced write is pending when the session ends.
+      yield* device.ended
+      yield* device.hearThreads(listOf(thread('t2', 'Arrived after the end')))
+      yield* TestClock.adjust('30 seconds')
+      yield* device.flush
+      expect(yield* device.writes).toBe(0)
+      expect(yield* device.raw).toEqual(Option.none())
+    }),
+  )
+
   it.effect('erases everything on sign-out', () =>
     Effect.gen(function* () {
       const device = yield* launched(Option.some(textOf(kept)))
       yield* device.hearMe(meOf(ada, personal))
       yield* device.hearThreads(listOf(thread('t1', 'Board pack')))
-      yield* device.erase
+      yield* device.ended
       expect(yield* device.stored).toEqual(Option.none())
       yield* device.flush
       expect(yield* device.stored).toEqual(Option.none())

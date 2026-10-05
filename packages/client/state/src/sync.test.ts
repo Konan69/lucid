@@ -1,7 +1,9 @@
 import {
+  CompanyId,
   DatabaseUnavailable,
   DraftPlace,
   DraftSaved,
+  DraftWorkspace,
   ThreadId,
   type Draft,
   type SaveDraftRequest,
@@ -13,7 +15,8 @@ import { draftIn, noDrafts, whereOf, withDraft, type DraftScope, type Drafts } f
 import type { ProductFailure } from './live.js'
 import { makeDraftSync } from './sync.js'
 
-const scope: DraftScope = { person: 'ada', workspace: 'northwind' }
+const northwind = DraftWorkspace.cases.Company.make({ company: CompanyId.make('northwind') })
+const scope: DraftScope = { person: 'ada', workspace: northwind }
 const place = DraftPlace.cases.InThread.make({ thread: ThreadId.make('t1') })
 const where = whereOf(scope, place)
 
@@ -38,6 +41,7 @@ const device = Effect.fn('Test.device')(function* () {
       sync.changed()
     },
     scope: () => Option.some(scope),
+    threads: () => Option.none(),
     save: (request) =>
       Effect.sync(() => {
         if (!online) return lost
@@ -52,8 +56,8 @@ const device = Effect.fn('Test.device')(function* () {
         }
         return Result.succeed(
           request.text.length === 0
-            ? DraftSaved.cases.Cleared.make({ place: request.place })
-            : DraftSaved.cases.Kept.make({ draft }),
+            ? DraftSaved.cases.Cleared.make({ place: request.place, generation: revision })
+            : DraftSaved.cases.Kept.make({ draft, generation: revision }),
         )
       }),
     launch: (program) => {
@@ -83,6 +87,27 @@ const device = Effect.fn('Test.device')(function* () {
 const rest = TestClock.adjust('700 millis')
 
 describe('saving drafts as they are typed', () => {
+  it.effect('holds a list for another workspace until the Person is said to be there', () =>
+    Effect.gen(function* () {
+      const laptop = yield* device()
+      const own = DraftWorkspace.cases.Personal.make({})
+      // The Person is in Northwind. A list for their own space is not laid over Northwind.
+      laptop.sync.heard({
+        workspace: own,
+        generation: 5,
+        drafts: [{ place, text: 'Mine alone', revision: 5, savedAt: 0, device: 'phone' }],
+      })
+      expect(draftIn(laptop.drafts(), where)).toBe('')
+      // The list for where they are replaces it and is applied.
+      laptop.sync.heard({
+        workspace: northwind,
+        generation: 6,
+        drafts: [{ place, text: 'For Northwind', revision: 6, savedAt: 0, device: 'phone' }],
+      })
+      expect(draftIn(laptop.drafts(), where)).toBe('For Northwind')
+    }),
+  )
+
   it.effect('saves a sentence once, after it has rested', () =>
     Effect.gen(function* () {
       const laptop = yield* device()
@@ -105,7 +130,7 @@ describe('saving drafts as they are typed', () => {
       laptop.type('')
       yield* rest
       expect(laptop.sent.map((request) => request.text)).toEqual(['Ask Dami', ''])
-      expect(laptop.drafts()).toEqual(noDrafts)
+      expect(laptop.drafts().entries).toEqual([])
     }),
   )
 
@@ -119,9 +144,11 @@ describe('saving drafts as they are typed', () => {
       expect(draftIn(laptop.drafts(), where)).toBe('Typed on the train')
       laptop.mend()
       // The socket came back: `WatchDrafts` says what the server holds, which is another draft.
-      laptop.sync.heard([
-        { place, text: 'From the phone', revision: 3, savedAt: 3000, device: 'phone' },
-      ])
+      laptop.sync.heard({
+        workspace: northwind,
+        generation: 3,
+        drafts: [{ place, text: 'From the phone', revision: 3, savedAt: 3000, device: 'phone' }],
+      })
       yield* rest
       expect(laptop.sent.map((request) => request.text)).toEqual(['Typed on the train'])
       expect(draftIn(laptop.drafts(), where)).toBe('Typed on the train')

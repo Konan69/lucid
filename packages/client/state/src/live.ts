@@ -274,6 +274,80 @@ function reopenEnded(registry: AtomRegistry.AtomRegistry, sources: WeakMap<objec
 }
 
 /**
+ * Every live query of one kind, one per argument, each made the first time it is asked for and
+ * the same object for as long as anything holds it.
+ */
+function familyOf<Argument, Value>(
+  key: (argument: Argument) => string,
+  make: (argument: Argument) => LiveQuery<Value>,
+): LiveFamily<Argument, Value> {
+  // Held weakly: the query for a Thread is the same object for as long as anything refers to
+  // it (a screen, a mounted atom), and is collected once nothing does. A plain Map kept one,
+  // with its atoms, for every Thread and folder visited since the page loaded.
+  const queries = new Map<string, WeakRef<LiveQuery<Value>>>()
+  // Takes a name out once its query has been collected, unless a newer query already has it.
+  const forget = (name: string) => {
+    const held = queries.get(name)
+    if (held !== undefined && held.deref() === undefined) queries.delete(name)
+  }
+  // Browsers and Node report a collected query through FinalizationRegistry. Hermes (React
+  // Native) has WeakRef but no FinalizationRegistry, and constructing one there threw
+  // "Property 'FinalizationRegistry' doesn't exist" on the first signed-in render. Without it
+  // the dead names are swept when the next query is made, which bounds the Map the same way.
+  // The installed Effect source makes the same check in `Atom.family`
+  // (effect/src/unstable/reactivity/Atom.ts).
+  const remember: (made: LiveQuery<Value>, name: string) => void =
+    typeof FinalizationRegistry === 'undefined'
+      ? () => {
+          for (const name of queries.keys()) forget(name)
+        }
+      : (
+          (gone) => (made, name) =>
+            gone.register(made, name)
+        )(new FinalizationRegistry<string>(forget))
+  const known = (name: string) =>
+    Option.flatMap(Option.fromUndefinedOr(queries.get(name)), (held) =>
+      Option.fromUndefinedOr(held.deref()),
+    )
+  return {
+    get: (argument) => {
+      const name = key(argument)
+      return Option.getOrElse(known(name), () => {
+        const made = make(argument)
+        remember(made, name)
+        queries.set(name, new WeakRef(made))
+        return made
+      })
+    },
+  }
+}
+
+/**
+ * Who hears that the server no longer accepts this session.
+ *
+ * `gone` is run on that failure from the four places every call and every subscription
+ * passes through (`subscription`, `ask`, `beat`, `run`), so an `Unauthenticated` is heard
+ * whichever call it answers, not only the one that asks who is signed in: a session revoked from
+ * another device is refused on whatever is asked next.
+ */
+function makeLeaving() {
+  const leaving = new Set<() => void>()
+  return {
+    /** Tells everyone listening. Run by `refused` below, on the one failure that means it. */
+    gone: Effect.sync(() => {
+      for (const hear of leaving) hear()
+    }),
+    /** Hears, each time, that the server refused this session. Answers with the way to stop. */
+    whenSessionGone: (hear: () => void) => {
+      leaving.add(hear)
+      return () => {
+        leaving.delete(hear)
+      }
+    },
+  }
+}
+
+/**
  * How long a query stays subscribed after the last screen reading it has gone: five minutes, so
  * moving between Threads, Routines and the Library in the course of a piece of work is instant
  * and current. It costs the server an open subscription, not a refetch.
@@ -301,6 +375,8 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
   // does not make a second, cold one. Once the atom is let go, both can be collected.
   const sources = new WeakMap<object, object>()
 
+  const { gone, whenSessionGone } = makeLeaving()
+
   /** One `Watch…` subscription on the app's socket, reopened when the connection drops. */
   const subscription = <Value>(watch: (client: Client) => Stream.Stream<Value, ProductFailure>) =>
     runtime.atom(
@@ -309,6 +385,10 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
           Effect.gen(function* () {
             return watch(yield* VividRpcClient)
           }),
+        ),
+      ).pipe(
+        Stream.tapError((failure) =>
+          Predicate.isTagged(failure, 'Unauthenticated') ? gone : Effect.void,
         ),
       ),
     )
@@ -331,47 +411,7 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
   const family = <Argument, Value>(
     key: (argument: Argument) => string,
     watch: (client: Client, argument: Argument) => Stream.Stream<Value, ProductFailure>,
-  ): LiveFamily<Argument, Value> => {
-    // Held weakly: the query for a Thread is the same object for as long as anything refers to
-    // it (a screen, a mounted atom), and is collected once nothing does. A plain Map kept one,
-    // with its atoms, for every Thread and folder visited since the page loaded.
-    const queries = new Map<string, WeakRef<LiveQuery<Value>>>()
-    // Takes a name out once its query has been collected, unless a newer query already has it.
-    const forget = (name: string) => {
-      const held = queries.get(name)
-      if (held !== undefined && held.deref() === undefined) queries.delete(name)
-    }
-    // Browsers and Node report a collected query through FinalizationRegistry. Hermes (React
-    // Native) has WeakRef but no FinalizationRegistry, and constructing one there threw
-    // "Property 'FinalizationRegistry' doesn't exist" on the first signed-in render. Without it
-    // the dead names are swept when the next query is made, which bounds the Map the same way.
-    // The installed Effect source makes the same check in `Atom.family`
-    // (effect/src/unstable/reactivity/Atom.ts).
-    const remember: (made: LiveQuery<Value>, name: string) => void =
-      typeof FinalizationRegistry === 'undefined'
-        ? () => {
-            for (const name of queries.keys()) forget(name)
-          }
-        : (
-            (gone) => (made, name) =>
-              gone.register(made, name)
-          )(new FinalizationRegistry<string>(forget))
-    const known = (name: string) =>
-      Option.flatMap(Option.fromUndefinedOr(queries.get(name)), (held) =>
-        Option.fromUndefinedOr(held.deref()),
-      )
-    return {
-      get: (argument) => {
-        const name = key(argument)
-        return Option.getOrElse(known(name), () => {
-          const made = query((client) => watch(client, argument))
-          remember(made, name)
-          queries.set(name, new WeakRef(made))
-          return made
-        })
-      },
-    }
-  }
+  ) => familyOf(key, (argument: Argument) => query((client) => watch(client, argument)))
 
   /**
    * A question whose answer depends on something the Person is typing or choosing: a search.
@@ -390,6 +430,9 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
       return Effect.gen(function* () {
         return yield* call(yield* VividRpcClient, asked)
       }).pipe(
+        Effect.tapError((failure) =>
+          Predicate.isTagged(failure, 'Unauthenticated') ? gone : Effect.void,
+        ),
         Effect.retry({
           while: (failure) => !FINAL.has(failure._tag),
           schedule: Schedule.spaced('1500 millis'),
@@ -416,7 +459,14 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
         const said = get(argument)
         return Effect.gen(function* () {
           yield* call(yield* VividRpcClient, said)
-        }).pipe(Effect.ignore, Effect.repeat(Schedule.spaced(every)), Effect.asVoid)
+        }).pipe(
+          Effect.tapError((failure) =>
+            Predicate.isTagged(failure, 'Unauthenticated') ? gone : Effect.void,
+          ),
+          Effect.ignore,
+          Effect.repeat(Schedule.spaced(every)),
+          Effect.asVoid,
+        )
       }),
       0,
     )
@@ -430,6 +480,10 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
     Effect.result(
       Effect.flatMap(AtomRegistry.getResult(registry, runtime), (context) =>
         Effect.provideContext(program, context),
+      ).pipe(
+        Effect.tapError((failure) =>
+          Predicate.isTagged(failure, 'Unauthenticated') ? gone : Effect.void,
+        ),
       ),
     )
 
@@ -465,5 +519,5 @@ export function makeLive(layer: Layer.Layer<VividRpcClient>) {
 
   const reopen = () => reopenEnded(registry, sources)
 
-  return { registry, query, kept, family, ask, beat, run, change, reopen }
+  return { registry, query, kept, family, ask, beat, run, change, reopen, whenSessionGone }
 }

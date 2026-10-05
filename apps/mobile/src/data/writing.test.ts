@@ -1,4 +1,4 @@
-import { ThreadId } from '@vivid/contracts'
+import { CompanyId, DraftWorkspace, ThreadId } from '@vivid/contracts'
 import { draftIn, draftPlace, noDrafts, owed, withDraft, type Drafts } from '@vivid/state'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
@@ -47,7 +47,10 @@ describe('typing before the phone has read its store', () => {
     expect(draftIn(kept(read), ada('t1'))).toBe('')
     // The emptying is what the Person's other devices still have to hear about.
     expect(
-      owed(kept(read), { person: 'ada', workspace: 'northwind' }).map((place) => place.text),
+      owed(kept(read), {
+        person: 'ada',
+        workspace: DraftWorkspace.cases.Company.make({ company: CompanyId.make('northwind') }),
+      }).map((place) => place.text),
     ).toEqual([''])
   })
 

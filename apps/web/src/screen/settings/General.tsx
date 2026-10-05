@@ -4,8 +4,8 @@ import { LogOut } from 'lucide-react'
 import { useState } from 'react'
 import { reload, signOut } from '../../data/account'
 import { change, live, LiveState, useLive } from '../../data/live'
-import { run } from '../../data/app'
-import { snapshots } from '../../data/snapshot'
+import { run, send } from '../../data/app'
+import { sessionEnded } from '../../data/ending'
 import { theme } from '../../data/theme'
 import { mayCustomise, useAppearance } from '../../data/vivid'
 import { PersonAvatar } from '../../ui/Person'
@@ -54,7 +54,7 @@ export function General({ me }: { me: MeResponse }) {
     }
     // Nothing of this Person stays in the browser for whoever opens it next. It is erased
     // before the page reloads, or the reload would start from it.
-    await run(snapshots.erase)
+    await send(sessionEnded)
     reload('/')
   }
 

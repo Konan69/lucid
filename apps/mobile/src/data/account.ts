@@ -175,3 +175,38 @@ export const pairingTransport = (server: ServerAddress): PairingTransport => ({
       },
     }),
 })
+
+/** The part of Better Auth's session answer that says when the session ends. */
+const Ending = Schema.fromJsonString(
+  Schema.Struct({ session: Schema.Struct({ expiresAt: Schema.String }) }),
+)
+const decodeEnding = Schema.decodeUnknownOption(Ending)
+
+/**
+ * When the session this phone holds ends, in epoch milliseconds, as the server says (Better
+ * Auth's `get-session`, asked with the session's own token; `session.expiresAt` is an ISO date,
+ * better-auth 1.7.5 `dist/api/routes/session.mjs`). The phone keeps a token and nothing about
+ * it, so this is the only way it knows. None when the server cannot be reached or the answer
+ * does not read as a date: what depends on it (`data/snapshot.ts`) then keeps nothing.
+ */
+export const sessionExpiry = (session: SignedIn): Effect.Effect<Option.Option<number>> =>
+  Effect.tryPromise({
+    try: async (signal) => {
+      const response = await request(accountAddress(session.server, 'get-session'), {
+        method: 'GET',
+        headers: bearer(session.token),
+        signal,
+      })
+      return response.ok ? Option.some(await response.text()) : Option.none<string>()
+    },
+    catch: () => new AccountUnreachable({ message: UNREACHABLE }),
+  }).pipe(
+    Effect.map((body) =>
+      body.pipe(
+        Option.flatMap(decodeEnding),
+        Option.map((here) => Date.parse(here.session.expiresAt)),
+        Option.filter((until) => Number.isFinite(until)),
+      ),
+    ),
+    Effect.catchTag('AccountUnreachable', () => Effect.succeed(Option.none<number>())),
+  )

@@ -1,5 +1,6 @@
-import type { Draft, DraftSaved, SaveDraftRequest } from '@vivid/contracts'
+import type { DraftListResponse, DraftSaved, SaveDraftRequest, ThreadId } from '@vivid/contracts'
 import {
+  forgotten,
   makeDraftSync,
   readDrafts,
   writeDrafts,
@@ -135,15 +136,17 @@ const installation = Atom.keepAlive(Atom.make(named()))
 
 /** What a session supplies for its drafts to follow the Person: who, where, and the socket. */
 export interface Following {
-  /** Who is signed in and where they are working, once the server has said. */
+  /** Who is signed in and where they are working, once the server itself has said. */
   readonly scope: () => Option.Option<DraftScope>
+  /** The Threads of where the Person is, once their list has answered. */
+  readonly threads: () => Option.Option<ReadonlySet<ThreadId>>
   /** One `SaveDraft` call on the session's socket, its refusal in the value. */
   readonly save: (
     request: SaveDraftRequest,
   ) => Effect.Effect<Result.Result<DraftSaved, ProductFailure>>
   /** Subscribes to what the server holds (`WatchDrafts`); answers with the way to stop. */
-  readonly listen: (hear: (list: ReadonlyArray<Draft>) => void) => () => void
-  /** Subscribes to who is signed in and where changing; answers with the way to stop. */
+  readonly listen: (hear: (list: DraftListResponse) => void) => () => void
+  /** Subscribes to who is signed in, where, and their Thread list changing; answers with the way to stop. */
   readonly moved: (hear: () => void) => () => void
 }
 
@@ -163,6 +166,7 @@ export function followDrafts(session: Following): () => void {
       read: () => door.get(draftsAtom),
       update: (change) => door.set(writing, revising(door.get(writing), change)),
       scope: session.scope,
+      threads: session.threads,
       save: session.save,
       launch,
     })
@@ -187,6 +191,12 @@ export function followDrafts(session: Following): () => void {
     for (const stop of stops) stop()
   }
 }
+
+/**
+ * The session ended: everything the server has a copy of leaves this phone. Words typed here
+ * that it never took stay, named for their Person, because they are nowhere else.
+ */
+export const forgetDrafts = () => door.set(writing, revising(door.get(writing), forgotten))
 
 export const draft = {
   /** The words left in a place right now, for code that runs after a screen has waited. */

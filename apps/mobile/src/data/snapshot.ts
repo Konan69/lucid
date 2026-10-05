@@ -1,6 +1,6 @@
 import type { SnapshotStore } from '@vivid/state'
 import { Effect, Option } from 'effect'
-import { forgetFile, keepFile, recallFile } from './storage'
+import { forgetFile, keepFileAside, recallFile } from './storage'
 
 /**
  * Where this phone keeps the first screen's last answers, so opening the app draws Home and the
@@ -10,8 +10,9 @@ import { forgetFile, keepFile, recallFile } from './storage'
  *
  * It is a file of the app's own (`storage.ts`), like the drafts: the protected store is for a
  * few short secrets, and nothing in a snapshot is one. The app's documents are private to the
- * app. One read at launch and one paced write of some kilobytes do not need a database, so no
- * native module is added for it.
+ * app. One read at launch and one paced, bounded write (`LIMITS`) do not need a database, so no
+ * native module is added for it. The read is the file API's own asynchronous one and the write
+ * is `keepFileAside`; encoding happens in the writer's program, a turn after it was asked for.
  */
 
 const FILE = 'snapshot.json'
@@ -25,7 +26,8 @@ export const snapshotStore: SnapshotStore = {
   read: recallFile(FILE).pipe(
     Effect.catchTag('StorageUnavailable', () => Effect.succeed(Option.none<string>())),
   ),
+  // Handed to the native side and answered later; the app is not held up while it lands.
   write: (text) =>
-    keepFile(FILE, text).pipe(Effect.catchTag('StorageUnavailable', () => Effect.void)),
+    keepFileAside(FILE, text).pipe(Effect.catchTag('StorageUnavailable', () => Effect.void)),
   erase: forgetFile(FILE).pipe(Effect.catchTag('StorageUnavailable', () => Effect.void)),
 }

@@ -8,6 +8,7 @@ import type {
   ThreadId,
 } from '@vivid/contracts'
 import {
+  draftScopeOf,
   LiveState,
   liveStateOf,
   makeLink,
@@ -21,13 +22,14 @@ import {
   type ProductFailure,
   type Settle,
 } from '@vivid/state'
-import { Data, Effect, Equal, Layer, Option, Predicate, Result } from 'effect'
+import { Data, Effect, Equal, Layer, Option, Predicate, Result, Stream } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import * as Atom from 'effect/unstable/reactivity/Atom'
 import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
 import { door } from './door'
-import { followDrafts } from './drafts'
+import { sessionExpiry } from './account'
+import { followDrafts, forgetDrafts } from './drafts'
 import { forgetAppearance, vividAtom } from './vivid'
 import { inFront } from './foreground'
 import { liveAddress } from './server'
@@ -129,16 +131,18 @@ function makeSeenThread(
  */
 function keepOnDevice(
   engine: ReturnType<typeof makeLive>,
-  origin: string,
+  session: SignedIn,
   queries: KeptQueries,
-): () => void {
+) {
   // The first screen's answers are written down as they change and are read back now, so this
   // session starts from what the phone last knew (`@vivid/state` `snapshot.ts`).
   const snapshots = makeSnapshots({
     registry: engine.registry,
     queries,
     store: snapshotStore,
-    origin,
+    origin: session.server,
+    expiry: sessionExpiry(session),
+    now: () => Date.now(),
     launch,
   })
   // An app in the background can be ended without a word, so what has changed since the last
@@ -154,8 +158,12 @@ function keepOnDevice(
   const unfollow = followDrafts({
     scope: () => {
       const me = engine.registry.get(queries.me.answers)
-      return AsyncResult.isSuccess(me)
-        ? Option.some({ person: me.value.person.id, workspace: workspaceKey(me.value.workspace) })
+      return AsyncResult.isSuccess(me) ? Option.some(draftScopeOf(me.value)) : Option.none()
+    },
+    threads: () => {
+      const threads = engine.registry.get(queries.threads.answers)
+      return AsyncResult.isSuccess(threads)
+        ? Option.some(new Set(threads.value.threads.map((thread) => thread.id)))
         : Option.none()
     },
     save: (request) => engine.change((client) => client.SaveDraft(request)),
@@ -163,16 +171,43 @@ function keepOnDevice(
       engine.registry.subscribe(
         queries.drafts.answers,
         (result) => {
-          if (AsyncResult.isSuccess(result)) hear(result.value.drafts)
+          if (AsyncResult.isSuccess(result)) hear(result.value)
         },
         { immediate: true },
       ),
-    moved: (hear) => engine.registry.subscribe(queries.me.answers, hear),
+    moved: (hear) => {
+      const stops = [
+        engine.registry.subscribe(queries.me.answers, hear),
+        engine.registry.subscribe(queries.threads.answers, hear),
+      ]
+      return () => {
+        for (const stop of stops) stop()
+      }
+    },
   })
-  return () => {
-    unflush()
-    snapshots.stop()
-    unfollow()
+  return {
+    /** The engine is being disposed: stop listening and writing. Nothing is erased. */
+    stop: () => {
+      unflush()
+      snapshots.stop()
+      unfollow()
+    },
+    /**
+     * The session ended, whatever ended it (`sessionEnded` below): what it was allowed to see
+     * leaves the phone. The snapshot comes off the screen and out of the file, no write of it
+     * can follow, saves of drafts on their way are called off, and every draft the server has a
+     * copy of is forgotten.
+     */
+    ended: Effect.suspend(() => {
+      unflush()
+      unfollow()
+      return snapshots.ended
+    }).pipe(
+      // The drafts are device atoms, and this is started from inside the session atom's own
+      // change (`dispose`): they are written on a turn of their own, as `dropAtom` is.
+      Effect.andThen(Effect.yieldNow),
+      Effect.andThen(Effect.sync(forgetDrafts)),
+    ),
   }
 }
 
@@ -190,6 +225,12 @@ function makeLiveData(session: SignedIn) {
       Layer.provide(bearerSocket(session.token)),
     ),
   )
+  /**
+   * Every Thread the server has refused this Person as not found, in this session: deleted, or
+   * no longer theirs to see. A Thread joins it when its own live query says so, which happens
+   * when its screen is opened; the Notifications screen reads it to say a row is unavailable.
+   */
+  const gone = Atom.keepAlive(Atom.make<ReadonlySet<ThreadId>>(new Set<ThreadId>()))
   const one = engine.query
   /** A query the first screen needs: its last answer is kept on the phone (`data/snapshot.ts`). */
   const kept = engine.kept
@@ -204,7 +245,17 @@ function makeLiveData(session: SignedIn) {
     threads: kept((client) => client.WatchThreads()),
     thread: family(
       (id: ThreadId) => id,
-      (client, id) => client.WatchThread({ id }),
+      (client, id) =>
+        client.WatchThread({ id }).pipe(
+          // The server's own word that this Thread is not there for this Person. It is what a
+          // row elsewhere may go on to say (`gone`); nothing is inferred from a list.
+          Stream.tapError((failure) =>
+            Effect.sync(() => {
+              if (!Predicate.isTagged(failure, 'NotFound')) return
+              engine.registry.set(gone, new Set([...engine.registry.get(gone), id]))
+            }),
+          ),
+        ),
     ),
     routines: one((client) => client.WatchRoutines()),
     projects: kept((client) => client.WatchProjects()),
@@ -250,7 +301,7 @@ function makeLiveData(session: SignedIn) {
     engine.reopen()
   })
 
-  const unkeep = keepOnDevice(engine, session.server, {
+  const onDevice = keepOnDevice(engine, session, {
     me: live.me,
     threads: live.threads,
     projects: live.projects,
@@ -313,24 +364,28 @@ function makeLiveData(session: SignedIn) {
   // a build that had no accounts) cannot be made to work by waiting. The device signs out, which
   // puts the sign-in screen in front of the Person, saying so, with their server still chosen. It
   // is dropped, not adopted: a dead token must leave the app even if the store cannot be written.
-  engine.registry.subscribe(
-    live.me.atom,
-    (result) => {
-      const state = liveStateOf(result)
-      if (LiveState.$is('Failed')(state) && Predicate.isTagged(state.failure, 'Unauthenticated')) {
-        // On the next turn, not in this one: dropping the session disposes this very registry,
-        // and it is in the middle of telling its listeners about this result.
-        queueMicrotask(() => door.set(dropAtom, Session.Expired({ server: session.server })))
-      }
-    },
-    { immediate: true },
-  )
+  // It is heard on whichever call the server refuses, not only the one that asks who is signed
+  // in (`whenSessionGone`), and dropping the session is what ends it (`dispose`).
+  engine.whenSessionGone(() => {
+    // On the next turn, not in this one: dropping the session disposes this very registry,
+    // and it is in the middle of telling its listeners about this result.
+    queueMicrotask(() => door.set(dropAtom, Session.Expired({ server: session.server })))
+  })
 
   return {
     session,
-    /** Ends the session's live data: every subscription, the socket, and what rode on it. */
+    /**
+     * The session ended. This is the phone's one path for it, because every way a session ends
+     * here is the session atom changing (signing out, the server refusing the token on any call,
+     * a different server or Person), and that is the only thing that disposes this. An app that
+     * is merely closed runs nothing, so its snapshot is there at the next launch.
+     *
+     * What the session was allowed to see leaves the phone (`keepOnDevice` `ended`), then every
+     * subscription and the socket go.
+     */
     dispose: () => {
-      unkeep()
+      launch(onDevice.ended)
+      onDevice.stop()
       engine.registry.dispose()
     },
     registry: engine.registry,
@@ -347,6 +402,7 @@ function makeLiveData(session: SignedIn) {
       ...expectations: ReadonlyArray<() => Settle>
     ) => start(engine.change(program, ...expectations)),
     link: link.atom,
+    gone,
     seenThread,
     typingIn,
     presentIn,
@@ -383,8 +439,8 @@ export const entryAtom = Atom.keepAlive(
       onFailure: () => Entry.Door({ session: Session.Unset() }),
       onSuccess: ({ value }) => {
         if (!Session.$is('SignedIn')(value)) {
-          // Nobody is signed in: signed out, expired, or never. Nothing the last Person was
-          // shown stays on the phone for whoever signs in next.
+          // Nobody is signed in: signed out, expired, or never. The session's own ending erased
+          // what it kept (`dispose`); this is for an app that was closed before that landed.
           launch(snapshotStore.erase)
           return Entry.Door({ session: value })
         }
