@@ -10,6 +10,7 @@ export { channelLinks, channelMessages, channelReplies } from '../channels/table
 export { auditEntries } from '../audit/tables.ts'
 export { computers, machineBindings, devices, deviceRequests } from '../computers/tables.ts'
 export { connections, credentials } from '../connections/tables.ts'
+export { drafts } from '../drafts/tables.ts'
 export { inputRequests } from '../inputs/tables.ts'
 export { libraryChunks, libraryDocuments, libraryFolders } from '../library/tables.ts'
 export { occurrences, routines } from '../routines/tables.ts'
