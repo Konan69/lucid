@@ -264,10 +264,10 @@ What running it against real pages changed (each is stated beside its code):
 ### The proof
 
 `scripts/control.ts` runs the real executor inside real Electron against real pages, under
-`xvfb-run`, in a disposable profile; `src/main/driver.test.ts` runs it:
+`xvfb-run`, in a disposable profile; `src/main/driver.live.test.ts` runs it when asked (it needs the public internet, so the push gate skips it):
 
 ```sh
-pnpm --filter @vivid/desktop exec vitest run src/main/driver.test.ts
+VIVID_TEST_DESKTOP_LIVE=1 pnpm --filter @vivid/desktop exec vitest run src/main/driver.live.test.ts
 ```
 
 It needs the public internet (`https://example.com`, and `https://httpbin.org/redirect-to` for a

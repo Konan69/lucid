@@ -7,7 +7,7 @@ metadata:
     Shipped guidance keeps completion evidence and permission beside the steps.
 ---
 
-Establish the Person's local date and timezone, then the accounts and commitments they want covered. Use `list_routines` for scheduled commitments and `recall` for working preferences. Discover calendar and mail reads with `find_tools`. If either required integration is not connected, offer `connect` and explain which part of the brief cannot yet be checked. Do not imply that an empty result means no commitments when access failed.
+Establish the Person's local date and timezone, then the accounts and commitments they want covered. Use `list_routines` for scheduled commitments and what you remember for working preferences. Discover calendar and mail reads with `find_tools`. If either required integration is not connected, offer `connect` and explain which part of the brief cannot yet be checked. Do not imply that an empty result means no commitments when access failed.
 
 Read today's real calendar, including cancellations and timezone changes. Read a bounded window of urgent or unanswered mail and check the full conversation before identifying a request. Combine these with upcoming Routines and explicit commitments. Prioritize what changes the Person's day: imminent meetings, decisions waiting for them, deadlines and a conflict that needs attention. Include source links and concrete next steps. Keep informational mail separate and omit noise.
 

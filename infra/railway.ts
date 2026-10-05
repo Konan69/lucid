@@ -137,6 +137,17 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     env: {
       PORT: String(ports.executor),
       EXECUTOR_OAUTH_CALLBACK_URL: `https://\${{${serviceNames.server}.RAILWAY_PUBLIC_DOMAIN}}/api/connections/return`,
+      /**
+       * Executor fetches an address a Person gives it, from a network that also holds the
+       * database and Helix. These three keep it to public addresses: no loopback, no plain-HTTP
+       * exceptions, no private ranges or internal names for an app's own requests. Upstream
+       * enforces them at connection time, after DNS (`packages/utils/src/url-policy.ts`), so a
+       * name that later resolves inward is refused too. The server may declare
+       * `VIVID_EXECUTOR_PUBLIC_ONLY` only because these are set here.
+       */
+      EXECUTOR_URL_ALLOW_LOOPBACK_HTTP: 'false',
+      EXECUTOR_URL_ALLOW_HTTP_ORIGINS: '[]',
+      EXECUTOR_APPS_ALLOW_PRIVATE_FETCH: 'false',
     },
   })
   yield* Railway.Volume('ExecutorData', { project, service: executor, mountPath: '/app/data' })
@@ -152,6 +163,8 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       VIVID_EXECUTOR_URL: privateUrl(serviceNames.executor, ports.executor),
       VIVID_EXECUTOR_KEY: key,
       VIVID_EXECUTOR_ORGANIZATION: organization,
+      /** Lets a Person add an Integration by address; true only with the Executor settings above. */
+      VIVID_EXECUTOR_PUBLIC_ONLY: 'true',
     }),
   })
 

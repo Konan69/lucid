@@ -109,6 +109,7 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
           id: serviceId,
           name: 'Records',
           description: 'Read and write records',
+          domain: null,
           authorization: ServiceAuthorization.cases.None.make({}),
         }),
       ]

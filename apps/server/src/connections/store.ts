@@ -7,6 +7,7 @@ import {
   BeginConnectionRequest,
   CompanyId,
   CompleteConnectionRequest,
+  Connection,
   ConnectionId,
   ConnectionState,
   ConnectionStep,
@@ -25,6 +26,7 @@ import { Database, returned } from '../database/client.ts'
 import { Changes } from '../live/changes.ts'
 import {
   Executor,
+  ExecutorTool,
   ExecutorOwnerId,
   ExecutorReferences,
   ExecutorResourceMissing,
@@ -51,7 +53,7 @@ import {
 } from './records.ts'
 import { connections } from './tables.ts'
 import { callbackHash, correlateSignIn } from './correlation.ts'
-import { catalogService, serviceLogo } from './logo.ts'
+import { catalogService, IMPORTED, serviceLogo } from './logo.ts'
 import { loadCuration } from './curation.ts'
 import { connectionAddressLayer, type ConnectionSource } from './address.ts'
 
@@ -300,29 +302,62 @@ const resume = Effect.fn('Connections.resume')(function* (actor: Actor, row: Con
   })
 })
 
+/** Empty ready catalogs and newly failed Integrations have different admission meanings.
+ * Discovery returns the transition it persisted; callers never guess it from a second read. */
+export const ToolDiscovery = Schema.TaggedUnion({
+  Ready: { tools: Schema.Array(ExecutorTool) },
+  Failed: { reason: Schema.String },
+})
+
 /** Permanently missing resources fail the persisted Connection and disappear from discovery. */
 const loadTools = Effect.fn('Connections.tools')(function* (actor: Actor, row: ConnectionRecord) {
   const executor = yield* Executor
   return yield* executor.tools(row.references).pipe(
+    Effect.map((tools) => ToolDiscovery.cases.Ready.make({ tools })),
     Effect.mapError((error) => (isResourceMissing(error) ? error : executorFailure(error))),
     Effect.catchTag(
       'ExecutorResourceMissing',
       Effect.fn('Connections.failDiscovery')(function* ({ resource }) {
+        const reason = resourceReason(resource)
         const saved = yield* saveState(
           row,
-          ConnectionState.cases.Failed.make({
-            reason: resourceReason(resource),
-          }),
+          ConnectionState.cases.Failed.make({ reason }),
           row.references,
         )
         yield* recordChanged(actor, saved)
-        return []
+        return ToolDiscovery.cases.Failed.make({ reason })
       }),
     ),
   )
 })
 
 /** Capture authority once; the adapter owns discovery and catalog cache lifetimes. */
+/**
+ * Gives each catalog Connection the catalog's icon for its service. A Connection that already
+ * names an icon (an added server) keeps it; one whose service the catalog does not list keeps
+ * none.
+ */
+const withCatalogMarks = (
+  items: ReadonlyArray<Connection>,
+  catalog: ReadonlyArray<Service>,
+): ReadonlyArray<Connection> => {
+  const marks = new Map(catalog.map((entry) => [entry.id, entry.mark]))
+  return items.map((item) =>
+    item.mark === null
+      ? Connection.make({
+          id: item.id,
+          service: item.service,
+          serviceName: item.serviceName,
+          mark: Option.getOrNull(Option.fromNullishOr(marks.get(item.service))),
+          label: item.label,
+          ownership: item.ownership,
+          state: item.state,
+          createdAt: item.createdAt,
+        })
+      : item,
+  )
+}
+
 const makeStore = Effect.fn('Connections.makeStore')(function* () {
   const executor: ExecutorService = yield* Executor
   const database = yield* Database
@@ -393,11 +428,19 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
         ),
       ),
     ),
-    /** Read persistence even when the catalog host is offline. */
+    /**
+     * Read persistence even when the catalog host is offline. An added server names its own icon
+     * (`connectionLogo`); a catalog service's icon is the catalog's, so it is filled in here when
+     * the catalog can be read and left absent when it cannot, in which case each client draws its
+     * bundled logo or the service's initial.
+     */
     list: Effect.fn('Connections.list')(function* (actor: Actor) {
       const rows = yield* provide(listRecords(actor))
       const items = yield* Effect.forEach(rows, (row) => provide(publicConnection(actor, row)))
-      return { connections: items }
+      const catalog = yield* catalogServices().pipe(
+        Effect.catchTag('ServiceUnavailable', () => Effect.succeed<ReadonlyArray<Service>>([])),
+      )
+      return { connections: withCatalogMarks(items, catalog) }
     }),
     records: (actor: Actor) => provide(listRecords(actor)),
     tools: (actor: Actor, row: ConnectionRecord) => provide(loadTools(actor, row)),
@@ -430,7 +473,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     ) {
       if (request.shared) yield* requireAdmin(actor.workspace)
       const importedService = Service.make({
-        id: ServiceId.make(`url:${source.address}`),
+        id: ServiceId.make(`${IMPORTED}${source.address}`),
         name: request.name,
         description: '',
         mark: serviceLogo(source.address),

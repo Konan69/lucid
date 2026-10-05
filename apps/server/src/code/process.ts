@@ -12,6 +12,9 @@ import {
   ApprovalId,
 } from '@vivid/contracts'
 import {
+  Cause,
+  Predicate,
+  Result,
   Config,
   Context,
   Deferred,
@@ -24,6 +27,7 @@ import {
   Semaphore,
 } from 'effect'
 import { CodeTiming } from '@vivid/contracts/code'
+import { isCodeName } from '../observability/messages.ts'
 import { boundedLogs, encodedPrefix } from './logs.ts'
 import { budgets, bytes } from './budgets.ts'
 import { prepareWorker } from './source.ts'
@@ -241,6 +245,30 @@ function boundedFailure(failure: CodeFailure, calls: readonly CodeCall[], printe
   })
 }
 
+/**
+ * Inspect only the first sixteen Effect-owned reasons. Fail tags must be own data properties and
+ * code names (at most 120 characters); messages, inherited accessors and every Die payload stay
+ * unread. Result.try contains a revoked Proxy's descriptor trap, like the observability guard.
+ */
+function supervisionTags<E>(cause: Cause.Cause<E>) {
+  return cause.reasons
+    .slice(0, 16)
+    .flatMap((reason) => {
+      if (!Cause.isFailReason(reason)) return []
+      return Result.getOrElse(
+        Result.try(() => {
+          if (!Predicate.isObject(reason.error)) return []
+          const descriptor = Object.getOwnPropertyDescriptor(reason.error, '_tag')
+          if (descriptor === undefined || !Object.hasOwn(descriptor, 'value')) return []
+          const tag: unknown = descriptor.value
+          return Predicate.isString(tag) && isCodeName(tag) ? [tag] : []
+        }),
+        () => [],
+      )
+    })
+    .join(',')
+}
+
 /** Parent state is never supplied by the worker. Pending consequential calls are uncertain on loss. */
 export class Execution {
   readonly calls: CodeCall[] = []
@@ -288,6 +316,22 @@ export class Execution {
     if (this.calls.some((call) => call.end === 'unknown'))
       return CodeOutcome.cases.OutcomeUnknown.make({ calls: this.calls.slice() })
     return boundedFailure(failure, this.calls, this.logs)
+  }
+
+  /** Supervision owns recovery after guest resources close; receipts still determine uncertainty. */
+  supervise<E, R>(program: Effect.Effect<CodeOutcome, E, R>) {
+    return program.pipe(
+      Effect.catchCause((cause) =>
+        // Only reason kinds and bounded Fail tags are read. Never give a logger the foreign failure:
+        // rc.116 Cause.pretty runs getters and recursively follows circular causes (guard.ts).
+        Effect.annotateLogs(Effect.logError('Program supervision failed'), {
+          'vivid.supervision.failures': supervisionTags(cause),
+          'vivid.supervision.failed': Cause.hasFails(cause),
+          'vivid.supervision.defected': Cause.hasDies(cause),
+          'vivid.supervision.interrupted': Cause.hasInterrupts(cause),
+        }).pipe(Effect.as(this.failed(CodeFailure.cases.Unavailable.make({})))),
+      ),
+    )
   }
 
   /** Reserve bounded queue space before forking; arguments count even if completion cancels the call. */
@@ -612,12 +656,6 @@ const execute = Effect.fn('Code.supervise')(function* (
         ),
       )
     }),
-  ).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logError('Program supervision failed', cause).pipe(
-        Effect.as(state.failed(CodeFailure.cases.Unavailable.make({}))),
-      ),
-    ),
   )
   const deadline = Effect.fn('Code.deadline')(function* () {
     yield* Effect.sleep(`${budgets.seconds} seconds`)
@@ -630,7 +668,7 @@ const execute = Effect.fn('Code.supervise')(function* (
     })
     return yield* state.timeout(cancelled)
   })()
-  return yield* Effect.raceFirst(program, deadline)
+  return yield* Effect.raceFirst(state.supervise(program), deadline)
 })
 
 /** Fail-fast capacity avoids running stale requests after another program has finished. */

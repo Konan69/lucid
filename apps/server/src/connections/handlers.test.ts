@@ -171,6 +171,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
                   id: serviceId,
                   name: 'Records',
                   description: 'Records',
+                  domain: null,
                   authorization: ServiceAuthorization.cases.SetupRequired.make({}),
                 }),
               ]),

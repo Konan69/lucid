@@ -2,6 +2,7 @@ import {
   BrowseOutcome,
   BrowseRequest,
   CommandOutcome,
+  CodeCallKind,
   FindToolsRequest,
   ReadPageOutcome,
   ReadPageRequest,
@@ -10,8 +11,9 @@ import {
 } from '@vivid/contracts'
 import { Context, Effect, Layer, Schema } from 'effect'
 import { DecisionModel } from 'effect/unstable/ai'
-import { ToolEffects } from '../connections/effects.ts'
 import { CodeToolNames } from '@vivid/contracts/code'
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
+import { ToolEffects } from '../connections/effects.ts'
 import type { Actor } from '../auth/access.ts'
 import { Gate } from '../approvals/gate.ts'
 import { Executor } from '../connections/executor.ts'
@@ -65,6 +67,17 @@ const returned = (
   end: 'completed' | 'refused' = 'completed',
 ) => CallOutcome.cases.Returned.make({ value, summary, end })
 
+/** Typed recovery here decides a new refusal; carried Tool, Page and Device replies bypass it. */
+// Untraced, as `recordRefusal` is: the event belongs on the producer's span, not a child of it.
+const refused = Effect.fnUntraced(function* (
+  call: CodeCallKind,
+  value: Schema.Json,
+  summary: string,
+) {
+  yield* recordRefusal(Refusal.cases.CallRefused.make({ call }))
+  return returned(value, summary, 'refused')
+})
+
 /** Resolve under current authority; the existing owner rechecks provider metadata and gates the action. */
 const connection = Effect.fn('Code.useConnection')(function* (actor: Actor, input: Schema.Json) {
   const request = yield* decodeUse(input, { onExcessProperty: 'error' })
@@ -96,120 +109,146 @@ const command = Effect.fn('Code.runCommand')(function* (actor: Actor, input: Sch
     request.timeoutSeconds !== undefined &&
     (request.timeoutSeconds < 1 || request.timeoutSeconds > 30)
   )
-    return returned(
+    return yield* refused(
+      'run_command',
       { ok: false, reason: 'Command timeout must be between 1 and 30 seconds.' },
       request.summary,
-      'refused',
     )
-  return CommandOutcome.match<CallOutcome>(yield* computerRunCommand(actor, request), {
+  const outcome = yield* computerRunCommand(actor, request)
+  return yield* CommandOutcome.match<Effect.Effect<CallOutcome>>(outcome, {
     Completed: ({ result }) =>
-      returned(
-        {
-          ok: true,
-          result: { exitCode: result.exitCode, output: result.output, truncated: result.truncated },
-        },
-        request.summary,
+      Effect.succeed(
+        returned(
+          {
+            ok: true,
+            result: {
+              exitCode: result.exitCode,
+              output: result.output,
+              truncated: result.truncated,
+            },
+          },
+          request.summary,
+        ),
       ),
     ApprovalRequired: ({ approvalId, summary }) =>
-      CallOutcome.cases.ApprovalRequired.make({ approvalId, summary }),
-    Blocked: ({ rule }) => CallOutcome.cases.Blocked.make({ rule, summary: request.summary }),
+      Effect.succeed(CallOutcome.cases.ApprovalRequired.make({ approvalId, summary })),
+    Blocked: ({ rule }) =>
+      Effect.succeed(CallOutcome.cases.Blocked.make({ rule, summary: request.summary })),
+    // Command unavailability has no lower refusal receipt; the code reply decides it here.
     Unavailable: () =>
-      returned(
+      refused(
+        'run_command',
         { ok: false, reason: 'The Computer is unavailable. No action was sent.' },
         request.summary,
-        'refused',
       ),
-    OutcomeUnknown: () => CallOutcome.cases.Unknown.make({ summary: request.summary }),
+    OutcomeUnknown: () =>
+      Effect.succeed(CallOutcome.cases.Unknown.make({ summary: request.summary })),
   })
 })
 
 /** Browser results expose readable content, never Computer or session references or screen URLs. */
 const browse = Effect.fn('Code.browse')(function* (actor: Actor, input: Schema.Json) {
   const request = yield* decodeBrowse(input, { onExcessProperty: 'error' })
-  return BrowseOutcome.match<CallOutcome>(yield* computerBrowse(actor, request), {
+  const outcome = yield* computerBrowse(actor, request)
+  // Each exhaustive branch owns whether this is a new code refusal or a carried Device reply.
+  // New outcomes must choose their recording Effect here; there is no separate recording list.
+  return yield* BrowseOutcome.match<Effect.Effect<CallOutcome>>(outcome, {
     NotConnected: () =>
-      returned(
+      refused(
+        'browse',
         { ok: false, reason: 'The Person’s desktop app is not connected. Ask them to connect it.' },
         request.summary,
-        'refused',
       ),
+    // The Device already recorded AddressRefused, Stopped, PageGone and Unsupported.
     AddressRefused: () =>
-      returned(
-        {
-          ok: false,
-          reason:
-            'That page or address cannot be opened on the Person’s computer. Use a public web address.',
-        },
-        request.summary,
-        'refused',
+      Effect.succeed(
+        returned(
+          {
+            ok: false,
+            reason:
+              'That page or address cannot be opened on the Person’s computer. Use a public web address.',
+          },
+          request.summary,
+          'refused',
+        ),
       ),
     NotAllowed: () =>
-      returned(
+      refused(
+        'browse',
         {
           ok: false,
           reason:
             'The Person has not allowed access to their computer. Ask them to allow it in the desktop app.',
         },
         request.summary,
-        'refused',
       ),
     Busy: () =>
-      returned(
+      refused(
+        'browse',
         {
           ok: false,
           reason: 'The Person’s computer is busy with an earlier action. Wait for it to finish.',
         },
         request.summary,
-        'refused',
       ),
     Stopped: () =>
-      returned(
-        {
-          ok: false,
-          reason: 'The Person took control of the page. Stop and do not retry by yourself.',
-        },
-        request.summary,
-        'refused',
+      Effect.succeed(
+        returned(
+          {
+            ok: false,
+            reason: 'The Person took control of the page. Stop and do not retry by yourself.',
+          },
+          request.summary,
+          'refused',
+        ),
       ),
     PageGone: () =>
-      returned(
-        { ok: false, reason: 'The page is gone. Ask the Person to open it again.' },
-        request.summary,
-        'refused',
+      Effect.succeed(
+        returned(
+          { ok: false, reason: 'The page is gone. Ask the Person to open it again.' },
+          request.summary,
+          'refused',
+        ),
       ),
     Unsupported: () =>
-      returned(
-        {
-          ok: false,
-          reason:
-            'The Person’s computer does not support this browser action. Ask the Person to do it.',
-        },
-        request.summary,
-        'refused',
+      Effect.succeed(
+        returned(
+          {
+            ok: false,
+            reason:
+              'The Person’s computer does not support this browser action. Ask the Person to do it.',
+          },
+          request.summary,
+          'refused',
+        ),
       ),
     RunRequired: () =>
-      returned(
+      refused(
+        'browse',
         {
           ok: false,
           reason:
             'Nothing was sent, because the work that asked for it has ended. Ask the Person before trying again.',
         },
         request.summary,
-        'refused',
       ),
     Completed: ({ result }) =>
-      returned(
-        {
-          ok: true,
-          result: { title: result.title, outline: result.outline, truncated: result.truncated },
-        },
-        request.summary,
+      Effect.succeed(
+        returned(
+          {
+            ok: true,
+            result: { title: result.title, outline: result.outline, truncated: result.truncated },
+          },
+          request.summary,
+        ),
       ),
     ApprovalRequired: ({ approvalId, summary }) =>
-      CallOutcome.cases.ApprovalRequired.make({ approvalId, summary }),
-    Blocked: ({ rule }) => CallOutcome.cases.Blocked.make({ rule, summary: request.summary }),
-    Unavailable: ({ reason }) => returned({ ok: false, reason }, request.summary, 'refused'),
-    OutcomeUnknown: () => CallOutcome.cases.Unknown.make({ summary: request.summary }),
+      Effect.succeed(CallOutcome.cases.ApprovalRequired.make({ approvalId, summary })),
+    Blocked: ({ rule }) =>
+      Effect.succeed(CallOutcome.cases.Blocked.make({ rule, summary: request.summary })),
+    Unavailable: ({ reason }) => refused('browse', { ok: false, reason }, request.summary),
+    OutcomeUnknown: () =>
+      Effect.succeed(CallOutcome.cases.Unknown.make({ summary: request.summary })),
   })
 })
 
@@ -296,49 +335,42 @@ export const codeCallsLayer = Layer.effect(
             ),
             Effect.catchTags({
               SchemaError: () =>
-                Effect.succeed(
-                  returned(
-                    { ok: false, reason: 'The tool arguments are invalid.' },
-                    'Check tool arguments',
-                    'refused',
-                  ),
+                refused(
+                  call.kind,
+                  { ok: false, reason: 'The tool arguments are invalid.' },
+                  'Check tool arguments',
                 ),
               NotFound: () =>
-                Effect.succeed(
-                  returned(
-                    { ok: false, reason: 'That tool is not available here.' },
-                    'Find the tool',
-                    'refused',
-                  ),
+                refused(
+                  call.kind,
+                  { ok: false, reason: 'That tool is not available here.' },
+                  'Find the tool',
                 ),
               InvalidRequest: () =>
-                Effect.succeed(
-                  returned(
-                    { ok: false, reason: 'The request was refused.' },
-                    'Check the request',
-                    'refused',
-                  ),
+                refused(
+                  call.kind,
+                  { ok: false, reason: 'The request was refused.' },
+                  'Check the request',
                 ),
               Conflict: () =>
-                Effect.succeed(
-                  returned(
-                    { ok: false, reason: 'The account changed; discover its tools again.' },
-                    'Check the account',
-                    'refused',
-                  ),
+                refused(
+                  call.kind,
+                  { ok: false, reason: 'The account changed; discover its tools again.' },
+                  'Check the account',
                 ),
             }),
             // Owning adapters report post-dispatch loss as values. Remaining typed errors are
             // pre-dispatch refusals; defects deliberately bypass this typed recovery.
             Effect.catch(() =>
-              Effect.succeed(
-                returned(
-                  { ok: false, reason: 'The service is unavailable. No action was sent.' },
-                  'Check service availability',
-                  'refused',
-                ),
+              refused(
+                call.kind,
+                { ok: false, reason: 'The service is unavailable. No action was sent.' },
+                'Check service availability',
               ),
             ),
+            // Tool/Page/Device refusals and Gate Blocked decisions are recorded by their owners.
+            // CodeAuthorityRevoked also returns Blocked, but has no Gate decision and no matching
+            // Refusal case; authority revocation remains unrecorded in this vocabulary.
           ),
         ),
     })

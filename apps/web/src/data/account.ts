@@ -159,10 +159,36 @@ export const adoptFirstArrival = Effect.suspend(() => {
     onNone: () => Effect.void,
     onSome: (address) => {
       history.replaceState(history.state, '', address)
-      return adoptTimeZone
+      return Effect.andThen(
+        justJoined,
+        Effect.fn(function* (joined) {
+          if (joined) yield* adoptTimeZone
+        }),
+      )
     },
   })
 })
+
+/** How long after an account is made its landing still counts as the first one. */
+const FIRST_ARRIVAL_MS = 10 * 60 * 1000
+
+/** The part of Better Auth's session answer that says when this Person's account was made. */
+const Joined = Schema.Struct({ user: Schema.Struct({ createdAt: Schema.String }) })
+
+/**
+ * Whether the account signed in here was made in the last few minutes, as the server says.
+ *
+ * The `joined=google` mark is only an address, and anyone can send a signed-in Person a link that
+ * carries it; acted on alone it let such a link replace a time zone the Person had chosen. The
+ * account's own creation time is the server's, so the mark is now only the reason to ask, and
+ * this is the authority. No session, or an answer that cannot be read, is not a new account.
+ */
+const justJoined = Effect.suspend(() =>
+  read('get-session', Joined).pipe(
+    Effect.map((here) => Date.now() - Date.parse(here.user.createdAt) < FIRST_ARRIVAL_MS),
+    Effect.orElseSucceed(() => false),
+  ),
+)
 
 export const signOut = () => post('sign-out', {})
 

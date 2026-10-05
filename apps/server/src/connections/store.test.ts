@@ -513,6 +513,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
             id: ServiceId.make(`service-${index}`),
             name: `Records ${index}`,
             description: 'Records',
+            domain: null,
             authorization:
               index < 24
                 ? ServiceAuthorization.cases.SignIn.make({})

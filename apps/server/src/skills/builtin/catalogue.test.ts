@@ -63,6 +63,7 @@ const connection = (serviceName: string, state: ConnectionState) =>
     id: ConnectionId.make('MARK-connection'),
     service: ServiceId.make('MARK-service'),
     serviceName,
+    mark: null,
     label: 'Work',
     ownership: ConnectionOwnership.cases.Shared.make({}),
     state,
