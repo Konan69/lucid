@@ -25,7 +25,7 @@ Last brought up to date on 3 October 2026.
 | Vivid answers in a Thread, streaming, with send-while-working and stop                                                                          | Seen in the app with a real model                                 |
 | Personal space and Companies in one product: Memberships, roles, shared and private Threads, attributed messages, presence                      | Tests; seen in the app                                            |
 | Reading a web page (`read_page`), refused for anything not on the public internet                                                               | Seen in the app with a real model                                 |
-| Programs Vivid writes (`run_code`), in an interpreter with no network, a cleared environment and hard memory, CPU and time limits               | Seen in the app with a real model; tests against the real sandbox |
+| Programs Vivid writes (`run_code`), run on the Person's Computer with a heap limit and a time limit; calls for the Person checked on the server | Tests with the real runner; a live run on a real Boat machine     |
 | Cards in a Thread (`show`): table, charts, steps, options, comparison, links, facts, draft, schedule, form, pictures                            | Rehearsed for every kind; charts seen with a real model           |
 | Questions Vivid cannot answer alone (Input requests), answered from a card                                                                      | Seen in the app with a real model                                 |
 | Routines once at a time, on a schedule, by webhook, and on an Integration's events (by polling)                                                 | Tests                                                             |
@@ -89,7 +89,8 @@ instruction owner's lane.
 Run these proofs serially with the existing stack, from the server package, using
 `pnpm exec vitest run --config src/runtime/vitest.ts` and exactly one of
 `VIVID_LIVE_THREAD_COMPUTER`, `VIVID_LIVE_THREAD_APPROVAL`, `VIVID_LIVE_THREAD_CONNECTION`,
-`VIVID_LIVE_THREAD_ROUTINE`, or `VIVID_LIVE_FIRST_CONVERSATION` set to `1`. Each corresponding
+`VIVID_LIVE_THREAD_ROUTINE`, `VIVID_LIVE_THREAD_PROGRAM`, or `VIVID_LIVE_FIRST_CONVERSATION` set
+to `1`. Each corresponding
 `thread.live.test.ts` (and `threads/first.live.test.ts`, the first Thread) has one scenario;
 no judge or retry loop calls the model. The supplied `VIVID_TEST_DATABASE_URL` must designate the
 same disposable database as the stack; the proof never falls back to an application database.
