@@ -78,7 +78,9 @@ export const boatConfiguration = Effect.fn('Machine.boat.configuration')(functio
   // that machine instead of a new one. Boat's trial account refuses to create machines once
   // its free hours are used, while it still resumes one that exists (seen 4 October 2026:
   // create answered `trial_compute_limit_reached`, resume of the prepared machine answered
-  // 202). This is for one Person: the first owner keeps the machine; other accounts are refused.
+  // 202). This is for one Person: the first owner keeps the machine; other accounts are refused,
+  // on this server by the binding table and on any other by the machine's own holder record
+  // (`holder.ts`). Name a machine here in one environment only.
   const adopt = yield* optionalSetting(
     'VIVID_BOAT_MACHINE',
     Protocol.ProviderId,
