@@ -41,7 +41,7 @@ import type { RoutineRecord } from './records.ts'
 import { IntegrationNotice, IntegrationStopReason } from './integration.ts'
 import { RoutineStore, ScheduledFailure, type RoutineMissing } from './store.ts'
 import type { InvalidRoutineSchedule } from './timing.ts'
-import { untracedTimer } from '../observability/timer.ts'
+import { untraced } from '../observability/quiet.ts'
 
 const isNotFound = Schema.is(NotFound)
 
@@ -420,6 +420,6 @@ export const routineSchedulerLayer = Layer.effectDiscard(
       Effect.tapError((error) => Effect.logError('Routine scheduler pass failed', error)),
       Effect.ignore,
     )
-    yield* pass.pipe(untracedTimer, Effect.repeat(Schedule.spaced('20 seconds')), Effect.forkScoped)
+    yield* pass.pipe(untraced, Effect.repeat(Schedule.spaced('20 seconds')), Effect.forkScoped)
   }),
 )
