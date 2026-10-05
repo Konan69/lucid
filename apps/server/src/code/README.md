@@ -27,8 +27,18 @@ checked like any call the model makes alone, and the receipts are the server's o
 
 `budgets.ts` holds them. The server enforces time (from waking the Computer to the last line),
 the number of calls, the size of each call and answer, the total data, and the final result. The
-runner enforces the program's heap and cuts printed output. The provider ends a runner that
+runner enforces the program's heap, cuts printed output, and stops a program at the call and
+call-size limits before anything is forwarded, so a program that starts calls without waiting for
+them cannot fill the Computer faster than the server reads. The provider ends a runner that
 outlives its deadline.
+
+## What is left on the Computer
+
+Nothing of the program. When it ends, the runner ends the processes the program started, removes
+its directory and only then prints its final line. A program the server gives up on (a decision,
+the deadline, a broken connection) is told to stop; if a file of the server's arrives after the
+runner has gone, the server removes the directory that file put back. What the program wrote
+elsewhere on the Computer stays: that is the Person's machine and the program's to use.
 
 ## Tests
 

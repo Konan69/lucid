@@ -486,11 +486,11 @@ const execute = Effect.fn('Code.supervise')(function* (
         CodePipeFailure: (failure) =>
           failure.reason === 'size'
             ? Effect.succeed(failed(CodeFailure.cases.OverLimit.make({ limit: 'data' })))
-            : // The process is over or is being stopped; what its provider said about the end
-              // tells a memory or time limit apart from everything else.
+            : // The process is over, or the server can no longer talk to it and ends it. What
+              // its provider said about the end tells a memory or time limit apart from the rest.
               Option.match(running.guest, {
                 onNone: () => Effect.succeed(failed(CodeFailure.cases.Unavailable.make({}))),
-                onSome: (guest) => guest.ended.pipe(Effect.map(failed)),
+                onSome: (guest) => guest.stopped.pipe(Effect.map(failed)),
               }),
       }),
     ),

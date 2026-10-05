@@ -803,24 +803,78 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
       { timeout: 15_000 },
     )
 
-    it.effect(
-      'a process that dies after dispatch leaves the call it was waiting for unknown',
-      () =>
-        Effect.gen(function* () {
-          const dispatch: Dispatch = Effect.fn('Test.lostProcess')(function* (call) {
-            if (call.id === 1) return yield* reply(call)
-            return yield* Effect.never
-          })
-          const outcome = yield* run(
-            // The whole runner is killed, so no final message is printed: the server learns of the
-            // end only from the process having ended.
-            'await tools.find_tools({}); tools.use_tool({}); await new Promise((done) => setTimeout(done, 200)); process.kill(process.pid, "SIGKILL");',
-            dispatch,
-          )
-          expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
-          expect(outcome.calls.map((call) => call.end)).toEqual(['completed', 'unknown'])
-        }),
-      { timeout: 15_000 },
+    it.effect('a process that dies after dispatch leaves the call it was waiting for unknown', () =>
+      Effect.gen(function* () {
+        const dispatch: Dispatch = Effect.fn('Test.lostProcess')(function* (call) {
+          if (call.id === 2) return yield* Effect.never
+          return yield* reply(call)
+        })
+        const outcome = yield* run(
+          // The whole runner is killed, so no final message is printed: the server learns of the
+          // end only from the process having ended. The third call is answered only after the
+          // second was dispatched, so the kill cannot come before the call it must leave unknown.
+          'await tools.find_tools({}); tools.use_tool({}); await tools.find_tools({}); process.kill(process.pid, "SIGKILL");',
+          dispatch,
+        )
+        expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
+        expect(outcome.calls.map((call) => call.end)).toEqual(['completed', 'unknown', 'completed'])
+      }),
+    )
+
+    it.effect('cuts a flood of empty printed lines like any other output', () =>
+      Effect.gen(function* () {
+        const outcome = yield* run(
+          'for (let i = 0; i < 90000; i++) console.log(); return 1;',
+          reply,
+        )
+        check(outcome, 'Completed', { result: 1, logsTruncated: true })
+        expect(Buffer.byteLength(JSON.stringify(outcome))).toBeLessThanOrEqual(budgets.result)
+      }),
+    )
+
+    it.effect('finishes a program that waits for its own write to standard output', () =>
+      Effect.gen(function* () {
+        const outcome = yield* run(
+          'await new Promise((written) => process.stdout.write("straight out\\n", written)); return 1;',
+          reply,
+        )
+        check(outcome, 'Completed', { result: 1, logs: ['straight out'] })
+      }),
+    )
+
+    it.effect('ends the processes a program started when the program ends', () =>
+      Effect.gen(function* () {
+        // The first program leaves a child behind and says which. The second reads that process's
+        // record: gone, or ended and waiting to be collected (state Z), is ended.
+        const outcome = yield* run(
+          'const {spawn} = await import("node:child_process"); return spawn("sleep", ["600"]).pid;',
+          reply,
+        )
+        const started = CodeOutcome.guards.Completed(outcome)
+          ? Option.some(outcome.result)
+          : Option.none()
+        expect(Option.isSome(started)).toBe(true)
+        const after = yield* run(
+          `const files = await import("node:fs");
+        try {
+          const record = files.readFileSync("/proc/" + ${JSON.stringify(Option.getOrNull(started))} + "/stat", "utf8");
+          return record.slice(record.lastIndexOf(")") + 2).startsWith("Z") ? "ended" : "running";
+        } catch (gone) { return "ended"; }`,
+          reply,
+        )
+        check(after, 'Completed', { result: 'ended' })
+      }),
+    )
+
+    it.effect('stops a program that starts calls without waiting, at the call limit', () =>
+      Effect.gen(function* () {
+        const outcome = yield* run(
+          'for (let i = 0; i < 100000; i++) tools.find_tools({}); await new Promise(() => {});',
+          reply,
+        )
+        check(outcome, 'Failed', { failure: CodeFailure.cases.OverLimit.make({ limit: 'calls' }) })
+        expect(outcome.calls.length).toBeLessThanOrEqual(budgets.calls)
+      }),
     )
   })
 })

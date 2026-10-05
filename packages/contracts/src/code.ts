@@ -72,8 +72,9 @@ export const CodeFailure = Schema.TaggedUnion({
   TimedOut: { seconds: Schema.Number },
   /** It used more memory, made more calls or returned more than a program may. */
   OverLimit: { limit: Schema.Literals(['memory', 'calls', 'data', 'result'] as const) },
-  /** The Person's Computer could not run the program right now: it did not start, the Person is
-   * using it, or its provider is not answering. Nothing of the program ran. */
+  /** The Person's Computer could not run the program, or stopped carrying it: it did not start,
+   * the Person is using it, or its provider stopped answering. When no call is listed, nothing
+   * was done for the Person; the program itself may have run for a while on the Computer. */
   Unavailable: {},
 })
 export type CodeFailure = typeof CodeFailure.Type

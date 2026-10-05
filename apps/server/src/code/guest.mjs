@@ -1,6 +1,6 @@
 // The program runner. It is the only file of the server that runs on a Person's Computer, so it
 // uses nothing but Node 24: the server sends this text as it is and starts it there with
-// `node <this file> <directory> <result bytes> <log characters> <heap MiB>`.
+// `node <this file> <directory> <result bytes> <log characters> <heap MiB> <calls> <call bytes>`.
 //
 // The Computer is where a program runs (5 October 2026). There is no interpreter inside the
 // interpreter and no second sandbox: the program is JavaScript in a worker thread of this process,
@@ -46,10 +46,29 @@ function program() {
   // Adding the listener above took a reference (Node `worker_threads`, `port.ref()`), so this
   // comes after it; a call takes the reference back for as long as it waits.
   port.unref()
+  const { limits } = NodeWorkerThreads.workerData
+  let attempts = 0
+  let over = false
+  /**
+   * A limit ends the program here, before anything is forwarded, as the bridge of the interpreter
+   * this replaces did. The server enforces the same limits, but it can only do so on what reaches
+   * it: a program that starts calls without awaiting them would otherwise fill this process with
+   * pending calls faster than the server reads them. The promise never settles, so a `catch`
+   * around the call cannot carry the program past its limit.
+   */
+  const exceed = (limit) => {
+    over = true
+    port.ref()
+    port.postMessage({ type: 'over', limit })
+    return new Promise(() => {})
+  }
   /** Arguments make a JSON round trip, as in pi: what cannot be JSON rejects the call. */
   const call = (kind) => (input) => {
     const text = JSON.stringify(input)
     if (text === undefined) return Promise.reject(new TypeError('Tool input must be JSON.'))
+    if (over) return new Promise(() => {})
+    if (++attempts > limits.calls) return exceed('calls')
+    if (Buffer.byteLength(text) > limits.frame) return exceed('data')
     const id = ++next
     return new Promise((resolve) => {
       waiting.set(id, resolve)
@@ -132,62 +151,144 @@ function said(error) {
   return message.slice(0, 500)
 }
 
+/**
+ * Ends every process the program started, and theirs. Ending the worker thread ends only the
+ * thread: a child the program spawned would otherwise run on after the program was reported
+ * finished, where no later order to stop could reach it. They are found by their recorded parent
+ * (`/proc/<pid>/stat`), starting from this process, never by a name. A process that detached
+ * itself from this one on purpose is not found, and is not looked for.
+ */
+function endChildren() {
+  const parents = new Map()
+  let entries
+  try {
+    entries = NodeFS.readdirSync('/proc')
+  } catch {
+    return
+  }
+  for (const name of entries) {
+    if (!/^\d+$/.test(name)) continue
+    try {
+      const stat = NodeFS.readFileSync(`/proc/${name}/stat`, 'utf8')
+      // The command name is in parentheses and may itself hold spaces and parentheses; the
+      // state and the parent follow the last one.
+      parents.set(Number(name), Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]))
+    } catch {
+      // It ended between the listing and the read.
+    }
+  }
+  const started = [process.pid]
+  for (let index = 0; index < started.length; index++)
+    for (const [pid, parent] of parents) if (parent === started[index]) started.push(pid)
+  for (const pid of started.slice(1)) {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
 /** The runner's side: the messages, the files that answer them, and the end of the program. */
 function runner() {
-  const [directory, resultBytes, logCharacters, heap] = process.argv.slice(2)
+  const [directory, resultBytes, logCharacters, heap, calls, frameBytes] = process.argv.slice(2)
   const inbox = NodePath.join(directory, 'in')
-  const limits = { result: Number(resultBytes), logs: Number(logCharacters), heap: Number(heap) }
+  const limits = {
+    result: Number(resultBytes),
+    logs: Number(logCharacters),
+    heap: Number(heap),
+    calls: Number(calls),
+    frame: Number(frameBytes),
+  }
   const logs = []
   let kept = 0
   let logsTruncated = false
   let worker
   let finished = false
-  const print = (line) => process.stdout.write(`${line}\n`)
-  /** Lines past the allowance are dropped here; the server fits what is kept to its exact bytes. */
+  /**
+   * Lines past the allowance are dropped here; the server fits what is kept to its exact bytes.
+   * Every line costs at least one, so a flood of empty lines is cut like any other.
+   */
   const keep = (line) => {
     if (logsTruncated) return
-    if (kept + line.length <= limits.logs) {
+    if (kept + line.length + 1 <= limits.logs) {
       logs.push(line)
-      kept += line.length
+      kept += line.length + 1
       return
     }
     logsTruncated = true
     let prefix = ''
     // Whole code points only: half a surrogate pair is not text.
     for (const character of line) {
-      if (kept + prefix.length + character.length > limits.logs) break
+      if (kept + prefix.length + character.length + 1 > limits.logs) break
       prefix += character
     }
     logs.push(prefix)
   }
-  /** Exactly one final message; then nothing of the program is left on the Computer. */
+  /**
+   * What the program writes straight to its output streams is printed text like any other. It is
+   * also read so that the write ends: Node completes a worker's write only when this side takes
+   * it (`lib/internal/worker/io.js`), so a program awaiting one would wait for ever unread.
+   */
+  const printedBy = (stream) => {
+    let rest = ''
+    stream.setEncoding('utf8')
+    stream.on('data', (text) => {
+      const lines = (rest + text).split('\n')
+      // The line still being written is held, but never past the allowance.
+      rest = lines.pop().slice(0, limits.logs)
+      for (const line of lines) keep(line)
+    })
+    stream.on('end', () => {
+      if (rest !== '') keep(rest)
+    })
+  }
+  /**
+   * Exactly one final message, printed when nothing of the program is left on the Computer: its
+   * thread is over, the processes it started are ended and its directory is gone. The server may
+   * start the next program the moment it reads that line. The process itself ends only once the
+   * line is written out: an exit straight after `write` can cut a long line short when the reader
+   * is slow.
+   */
   const finish = (message) => {
     if (finished) return
     finished = true
     clearTimeout(unstarted)
     watcher.close()
-    print(JSON.stringify({ ...message, logs, logsTruncated }))
-    NodeFS.rmSync(directory, { recursive: true, force: true })
-    // The program may have left timers, sockets or child processes; none of them outlives it.
-    if (worker === undefined) process.exit(0)
-    else worker.terminate().then(() => process.exit(0))
+    const over = worker === undefined ? Promise.resolve() : worker.terminate()
+    over.then(() => {
+      endChildren()
+      NodeFS.rmSync(directory, { recursive: true, force: true })
+      process.stdout.write(`${JSON.stringify({ ...message, logs, logsTruncated })}\n`, () =>
+        process.exit(0),
+      )
+    })
   }
   const failed = (failure) => finish({ _tag: 'Failed', failure })
   const start = (code) => {
     clearTimeout(unstarted)
     worker = new NodeWorkerThreads.Worker(new URL(import.meta.url), {
-      workerData: { code, kinds: ['find_tools', 'use_tool', 'run_command', 'browse', 'read_page'] },
+      workerData: {
+        code,
+        kinds: ['find_tools', 'use_tool', 'run_command', 'browse', 'read_page'],
+        limits: { calls: limits.calls, frame: limits.frame },
+      },
       resourceLimits: { maxOldGenerationSizeMb: limits.heap },
       // What the program writes to its own output is not a message and must not become one.
       stdout: true,
       stderr: true,
     })
+    printedBy(worker.stdout)
+    printedBy(worker.stderr)
     worker.on('message', (message) => {
       if (finished) return
       if (message.type === 'log') keep(message.text)
       // The input is already JSON text; it is placed in the line as it is, never parsed here.
       else if (message.type === 'call')
-        print(`{"_tag":"Call","id":${message.id},"kind":"${message.kind}","input":${message.text}}`)
+        process.stdout.write(
+          `{"_tag":"Call","id":${message.id},"kind":"${message.kind}","input":${message.text}}\n`,
+        )
+      else if (message.type === 'over') failed({ _tag: 'OverLimit', limit: message.limit })
       else if (message.type === 'threw') failed({ _tag: 'Threw', message: message.message })
       else if (Buffer.byteLength(message.text) > limits.result)
         failed({ _tag: 'OverLimit', limit: 'result' })
@@ -218,7 +319,15 @@ function runner() {
   /** A file is a message once its line is complete; one still being written is left for the next event. */
   const drain = () => {
     if (finished) return
-    for (const name of NodeFS.readdirSync(inbox)) {
+    let names
+    try {
+      names = NodeFS.readdirSync(inbox)
+    } catch {
+      // The directory was taken away under a running program: the server has given it up.
+      failed({ _tag: 'Unavailable' })
+      return
+    }
+    for (const name of names) {
       if (taken.has(name)) continue
       const text = NodeFS.readFileSync(NodePath.join(inbox, name), 'utf8')
       if (!text.endsWith('\n')) continue
