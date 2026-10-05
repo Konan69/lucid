@@ -22,6 +22,7 @@ import { PushConfig, PushConfiguration } from './config.ts'
 import { PushAcceptance, PushReceipt } from './receipts.ts'
 import { pushDeliveries } from './tables.ts'
 import { PushTargets } from './targets.ts'
+import { untraced } from '../observability/quiet.ts'
 
 const NoticeRow = createSelectSchema(notifications, {
   id: NotificationId,
@@ -314,6 +315,7 @@ export const pushReceiptsLayer = Layer.effectDiscard(
         Effect.logWarning('Push receipts could not be checked', error._tag),
       ),
       Effect.ignore,
+      untraced,
       Effect.repeat(Schedule.spaced('1 minute')),
       Effect.forkScoped,
     )

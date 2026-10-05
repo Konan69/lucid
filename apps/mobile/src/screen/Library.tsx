@@ -17,7 +17,8 @@ import { commit, warn } from '../data/haptics'
 import { refusalOf, useLive, useLiveData } from '../data/live'
 import { Start, startThread } from '../data/threads'
 import { useTheme } from '../theme'
-import { Header, Screen } from '../ui/Header'
+import { Bar } from '../ui/Bar'
+import { Screen } from '../ui/Screen'
 import { Live } from '../ui/Live'
 import { Row, Section } from '../ui/List'
 import { NameSheet, Sheet } from '../ui/Sheet'
@@ -25,7 +26,6 @@ import {
   Button,
   confirmDestructive,
   Empty,
-  IconButton,
   Label,
   Notice,
   Segmented,
@@ -60,7 +60,7 @@ const Over = Data.taggedEnum<Over>()
 export function Library() {
   const me = useMe()
   const data = useLiveData()
-  const go = useGo()
+
   const shelves = library.shelvesOf(me.workspace)
   const [chosen, setChosen] = useState<LibraryShelf>('Mine')
   // Leaving a Company takes its shelf with it; the Person is then looking at their own.
@@ -74,7 +74,6 @@ export function Library() {
         Company: () => 'What Vivid can read, yours and the company’s.',
       })}
       level={level}
-      onBack={go.goBack}
       above={
         shelves.length > 1 ? (
           <Segmented
@@ -93,14 +92,13 @@ export function Library() {
 /** One folder, a level down. Renaming and deleting it live at the foot of its own page. */
 export function Folder({ route }: NativeStackScreenProps<Routes, 'Folder'>) {
   const data = useLiveData()
-  const go = useGo()
+
   const { shelf, id, name } = route.params
   const level: Level = { shelf, folderId: id, query: data.live.folder.get({ shelf, folderId: id }) }
   return (
     <LevelScreen
       title={name}
       level={level}
-      onBack={go.goBack}
       above={null}
       below={<FolderActions id={id} name={name} />}
     />
@@ -139,14 +137,12 @@ function LevelScreen({
   title,
   subtitle,
   level,
-  onBack,
   above,
   below,
 }: {
   title: string
   subtitle?: string
   level: Level
-  onBack: () => void
   above: ReactNode
   below: ReactNode
 }) {
@@ -163,27 +159,36 @@ function LevelScreen({
   }
   return (
     <Screen>
-      <Header
+      <Bar
         title={title}
-        subtitle={subtitle}
-        onBack={onBack}
-        trailing={
-          <>
-            <IconButton
-              icon={FolderPlus}
-              label="New folder"
-              onPress={() => open(Over.NewFolder())}
-            />
-            <IconButton
-              icon={Upload}
-              label="Add a file"
-              disabled={adding.busy}
-              onPress={() => void adding.add()}
-            />
-          </>
-        }
+        actions={[
+          {
+            symbol: 'folder.badge.plus',
+            icon: FolderPlus,
+            label: 'New folder',
+            disabled: false,
+            onPress: () => open(Over.NewFolder()),
+          },
+          {
+            symbol: 'square.and.arrow.up',
+            icon: Upload,
+            label: 'Add a file',
+            disabled: adding.busy,
+            onPress: () => void adding.add(),
+          },
+        ]}
       />
-      <ScrollView contentContainerStyle={[styles.page, styles.column]}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.page, styles.column]}
+      >
+        {/* What this level is, as the page's first line. It was the line under the bar's title;
+            the system's bar has no such line without a native change (`ui/Bar.tsx`). */}
+        {subtitle !== undefined && (
+          <Label size="label" tone="ink-2">
+            {subtitle}
+          </Label>
+        )}
         {above}
         {adding.busy && (
           <Label size="label" tone="ink-2">

@@ -176,6 +176,17 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.name)],
   },
+  // A built-in way of working is, to a Person, the same thing as one Vivid saved: how it does
+  // something. Its runtime name ("first-conversation") is an implementation word, so the step
+  // has no detail. Without this entry the first step of a first Thread read "Did something".
+  activate_skill: {
+    said: {
+      running: 'Reading how it does this',
+      done: 'Read how it does this',
+      failed: 'Could not read how it does this',
+    },
+    detail: nothing,
+  },
   save_skill: {
     said: {
       running: 'Saving how to do this',

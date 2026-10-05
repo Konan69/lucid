@@ -69,6 +69,35 @@ export const ExternalUrl = Schema.String.check(
   ),
 )
 
+/**
+ * Whether the system browser opened for a Google sign-in. A browser that did not open is not the
+ * end of the attempt: the shell is still listening, and the window offers to open it again.
+ */
+export const SignInBrowser = Schema.Literals(['opened', 'unopened'] as const)
+export type SignInBrowser = typeof SignInBrowser.Type
+
+/**
+ * How one Google sign-in ended, as the shell tells the window that asked.
+ *
+ * - `Granted`: the browser came back with a code. The window trades the three values for a
+ *   session, on its own origin, so that Chromium keeps the cookie and the shell never holds it.
+ *   They cross the bridge once, to the document that started the attempt, and are not kept here.
+ * - `Failed`: the browser came back without a code. Google or the server did not sign the Person
+ *   in (they closed Google's page, for one).
+ * - `Expired`: nothing came back in the five minutes a sign-in at Google may take.
+ * - `Cancelled`: the window cancelled it, or started another, or nothing was in progress.
+ *
+ * The values are plain text here because the sandboxed preload cannot load the contracts
+ * package; the window decodes them with `SignInTrade` (`@vivid/contracts/signin`) before use.
+ */
+export const SignInEnding = Schema.TaggedUnion({
+  Granted: { code: NonEmptyString, state: NonEmptyString, verifier: NonEmptyString },
+  Failed: {},
+  Expired: {},
+  Cancelled: {},
+})
+export type SignInEnding = typeof SignInEnding.Type
+
 /** Every renderer-to-main capability and argument is schema-decoded in main. */
 export const BridgeRequest = Schema.TaggedUnion({
   GetAppVersion: {},
@@ -77,11 +106,18 @@ export const BridgeRequest = Schema.TaggedUnion({
   ForgetServer: {},
   OpenExternal: { url: ExternalUrl },
   /**
-   * Open, in the Person's system browser, the page where they approve this app's sign-in. It is
-   * the one address an app document may send out of the window, and main admits it only when it
-   * is the selected server's approval page (`isApprovalAddress` in `main/security.ts`).
+   * Start signing in with Google: the shell listens on a loopback address and opens the selected
+   * server's sign-in in the system browser (`main/signin.ts`). It takes no argument. The address
+   * is built by the shell from the server it saved, so a document cannot send the browser
+   * anywhere. Starting again replaces an attempt in progress.
    */
-  OpenApproval: { address: ExternalUrl },
+  BeginGoogleSignIn: {},
+  /** Open the system browser again for the attempt in progress, on the same address. */
+  ReopenGoogleSignIn: {},
+  /** Wait for the attempt in progress to end. It answers once, when it has. */
+  AwaitGoogleSignIn: {},
+  /** Stop the attempt in progress and stop listening. */
+  CancelGoogleSignIn: {},
   Pages: { request: PagesRequest },
   /** What this computer is to Vivid, as the app last heard it. */
   GetDeviceLink: {},
@@ -101,6 +137,9 @@ export const BridgeResponse = Schema.TaggedUnion({
   ExternalOpenFailed: {},
   Pages: { value: PagesResponse },
   DeviceLink: { value: DeviceLink },
+  GoogleSignInBegun: { browser: SignInBrowser },
+  GoogleSignInEnded: { value: SignInEnding },
+  GoogleSignInCancelled: {},
 })
 export type BridgeResponse = typeof BridgeResponse.Type
 
@@ -158,6 +197,25 @@ export const encodeBridgeResponse = (response: BridgeResponse) =>
 /** Encode a trusted event before sending it to the isolated renderer. */
 export const encodeBridgeEvent = (event: BridgeEvent) => encodeEvent(event)
 
+/**
+ * Signing in with Google from an app document. The window cannot show Google's sign-in (Google
+ * refuses an embedded window), so the shell hands the Person to their system browser and brings
+ * the result back. One attempt runs at a time.
+ */
+export interface VividSignInBridge {
+  /**
+   * Starts an attempt and opens the system browser on Google's account chooser. It answers as
+   * soon as the browser has been asked to open, with whether it did.
+   */
+  readonly begin: () => Promise<SignInBrowser>
+  /** Opens the browser again for the attempt in progress, for a Person who closed it. */
+  readonly reopen: () => Promise<SignInBrowser>
+  /** Resolves when the attempt in progress ends, with how. */
+  readonly ended: () => Promise<SignInEnding>
+  /** Stops the attempt in progress. A pending `ended` resolves `Cancelled`. */
+  readonly cancel: () => Promise<void>
+}
+
 /** The local chooser and web shell import this type without Electron or filesystem authority. */
 export interface VividDesktopBridge {
   /**
@@ -176,12 +234,7 @@ export interface VividDesktopBridge {
   }
   readonly getAppVersion: () => Promise<string>
   readonly openExternal: (url: string) => Promise<void>
-  /**
-   * Opens the selected server's approval page for a sign-in code in the system browser. An app
-   * document signs in with Google this way: a same-origin address would otherwise stay inside
-   * the window, where Google refuses to sign anyone in.
-   */
-  readonly openApproval: (address: string) => Promise<void>
+  readonly signIn: VividSignInBridge
 }
 
 export { ServerSettings, ServerChoice } from './settings.ts'
@@ -213,5 +266,5 @@ export {
 /** Selected app documents get page authority; chooser-only server settings remain separate. */
 export type VividAppBridge = Pick<
   VividDesktopBridge,
-  'getAppVersion' | 'pages' | 'device' | 'openApproval' | 'reporting'
+  'getAppVersion' | 'pages' | 'device' | 'signIn' | 'reporting'
 >

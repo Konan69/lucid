@@ -10,10 +10,14 @@ import {
 import type { DeviceLink } from '../shared/device.ts'
 import { ServerChoice, type ServerSettings, type ServerAddress } from '../shared/settings.ts'
 import type { DesktopSettings } from './settings.ts'
+import type { GoogleSignIn } from './signin.ts'
 import { chooseServer } from './server.ts'
 import { type PagesRequest, PagesResponse, type PagesFailure } from '../shared/pages.ts'
 
-/** Main supplies settings, version metadata, external browsing and the isolated Browser authority. */
+/**
+ * Main supplies settings, version metadata, external browsing, Google sign-in and the isolated
+ * Browser authority.
+ */
 export interface BridgeHandlers {
   readonly pages: (request: PagesRequest) => Effect.Effect<PagesResponse, PagesFailure>
   readonly getAppVersion: () => string
@@ -24,6 +28,8 @@ export interface BridgeHandlers {
   readonly openExternal: (
     url: string,
   ) => Effect.Effect<void, { readonly _tag: 'ExternalUrlOpenFailed' }>
+  /** The one Google sign-in attempt the shell runs through the system browser (`signin.ts`). */
+  readonly signIn: GoogleSignIn
 }
 
 /** Choosing a server publishes navigation only after its probe and durable write both succeed. */
@@ -77,15 +83,24 @@ export const handleBridgeRequest = Effect.fn('DesktopBridge.handleRequest')(func
           Effect.succeed(BridgeResponse.cases.ExternalOpenFailed.make({})),
         ),
       ),
-    // The same hand-off to the operating system as `OpenExternal`. What differs is who may ask
-    // and for what, which `authorize` has already decided from the address.
-    OpenApproval: ({ address }) =>
-      handlers.openExternal(address).pipe(
-        Effect.as(BridgeResponse.cases.ExternalOpened.make({})),
-        Effect.catchTag('ExternalUrlOpenFailed', () =>
-          Effect.succeed(BridgeResponse.cases.ExternalOpenFailed.make({})),
-        ),
+    // None of the four carries an argument: the address the browser is sent to is built in main
+    // from the saved server, and `authorize` has already refused every sender but that server's
+    // own document. Beginning and reopening answer alike, with whether the browser opened.
+    BeginGoogleSignIn: () =>
+      handlers.signIn.begin.pipe(
+        Effect.map((browser) => BridgeResponse.cases.GoogleSignInBegun.make({ browser })),
       ),
+    ReopenGoogleSignIn: () =>
+      handlers.signIn.reopen.pipe(
+        Effect.map((browser) => BridgeResponse.cases.GoogleSignInBegun.make({ browser })),
+      ),
+    // This one stays pending for as long as the attempt does, up to its five minutes.
+    AwaitGoogleSignIn: () =>
+      handlers.signIn.ended.pipe(
+        Effect.map((value) => BridgeResponse.cases.GoogleSignInEnded.make({ value })),
+      ),
+    CancelGoogleSignIn: () =>
+      handlers.signIn.cancel.pipe(Effect.as(BridgeResponse.cases.GoogleSignInCancelled.make({}))),
     GetDeviceLink: () =>
       Effect.sync(() => BridgeResponse.cases.DeviceLink.make({ value: handlers.device.state() })),
     RefreshDeviceLink: () =>

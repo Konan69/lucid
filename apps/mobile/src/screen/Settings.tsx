@@ -20,7 +20,7 @@ import { leaveAtom } from '../data/signing'
 import { useAppearance } from '../data/vivid'
 import { Avatar, pictureOf } from '../ui/Avatar'
 import { Face } from '../ui/Face'
-import { Header, Screen } from '../ui/Header'
+import { Screen } from '../ui/Screen'
 import { Row, Section } from '../ui/List'
 import { Live } from '../ui/Live'
 import { NameSheet } from '../ui/Sheet'
@@ -82,8 +82,10 @@ export function Settings() {
 
   return (
     <Screen>
-      <Header title="Settings" onBack={go.goBack} />
-      <ScrollView contentContainerStyle={[styles.page, styles.column]}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.page, styles.column]}
+      >
         <Section title="You">
           <Row
             leading={<Avatar name={me.person.name} image={pictureOf(me.person)} size={40} />}

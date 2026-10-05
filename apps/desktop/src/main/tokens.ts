@@ -18,13 +18,25 @@ const RgbTriplet = Schema.String.check(
   ),
 )
 
-/** Window colors extracted from the shared design-token source for both native schemes. */
+/**
+ * Window colors extracted from the shared design-token source for both native schemes.
+ *
+ * `face` is what Vivid's face is painted with where nobody has changed it: the accent of the
+ * scheme in force (`--primary`, the `Accent` look of `packages/contracts/src/appearance.ts`) and
+ * the one eye colour both schemes share (`--face-eye`). The page the browser ends on after Google
+ * sign-in draws the face with them (`landing.ts`).
+ */
 export const ThemeSurfaces = Schema.Struct({
   dark: HexColor,
   light: HexColor,
   inkBase: Schema.Struct({
     dark: RgbTriplet,
     light: RgbTriplet,
+  }),
+  face: Schema.Struct({
+    dark: HexColor,
+    light: HexColor,
+    eye: HexColor,
   }),
 })
 export interface ThemeSurfaces extends Schema.Schema.Type<typeof ThemeSurfaces> {}
@@ -36,7 +48,7 @@ export class ThemeTokensReadFailed extends Schema.TaggedError<ThemeTokensReadFai
   { title: 'Desktop theme tokens could not be read' },
 ) {}
 
-/** Required native-window colors are absent or malformed in the shared token file. */
+/** Required native-window or face colors are absent or malformed in the shared token file. */
 export class ThemeTokensInvalid extends Schema.TaggedError<ThemeTokensInvalid>()(
   'ThemeTokensInvalid',
   { path: Schema.String },
@@ -46,7 +58,7 @@ export class ThemeTokensInvalid extends Schema.TaggedError<ThemeTokensInvalid>()
 const decodeThemeSurfaces = Schema.decodeUnknownEffect(ThemeSurfaces)
 
 /**
- * Extract only the two native-window colors owned by design tokens. Schema validates capture
+ * Extract only the native-window and face colors owned by design tokens. Schema validates capture
  * count and format together, so CSS changes cannot silently substitute a raw fallback color.
  *
  * The page colour is read from `--screen`, the literal the tokens declare; `--surface-0` is
@@ -54,6 +66,10 @@ const decodeThemeSurfaces = Schema.decodeUnknownEffect(ThemeSurfaces)
  * value stopped the app at startup once the tokens were layered that way. The first two
  * declarations are the default dark and light schemes; the named themes after them are the web
  * app's and do not colour the native window.
+ *
+ * The face's fill is read the same way, from the first two `--primary` declarations. The pattern
+ * names the whole property, so `--primary-foreground` and `--color-primary` are not read for it.
+ * `--face-eye` is declared once, for every scheme.
  */
 const parseThemeSurfaces = Effect.fn('DesktopTheme.parseTokens')(function* (
   path: string,
@@ -63,12 +79,19 @@ const parseThemeSurfaces = Effect.fn('DesktopTheme.parseTokens')(function* (
   const inks = [...css.matchAll(/--ink-base:\s*(\d{1,3} \d{1,3} \d{1,3})/gu)].map(
     (match) => match[1],
   )
+  const accents = [...css.matchAll(/--primary:\s*(#[0-9a-fA-F]{6})/gu)].map((match) => match[1])
+  const eyes = [...css.matchAll(/--face-eye:\s*(#[0-9a-fA-F]{6})/gu)].map((match) => match[1])
   return yield* decodeThemeSurfaces({
     dark: surfaces[0],
     light: surfaces[1],
     inkBase: {
       dark: inks[0],
       light: inks[1],
+    },
+    face: {
+      dark: accents[0],
+      light: accents[1],
+      eye: eyes[0],
     },
   }).pipe(Effect.mapError(() => new ThemeTokensInvalid({ path })))
 })
