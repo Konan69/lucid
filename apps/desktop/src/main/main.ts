@@ -24,7 +24,7 @@ import {
   vividUrlsFromArguments,
   type VividDeepLink,
 } from './links.ts'
-import { focusMainWindow, installApplicationMenu } from './menu.ts'
+import { focusMainWindow, installApplicationMenu, raiseMainWindow } from './menu.ts'
 import {
   DisplayWorkArea,
   clampWindowPlacement,
@@ -282,7 +282,7 @@ const signInThroughBrowser = Effect.fn('DesktopMain.signIn')(function* (input: {
     server: input.server,
     open: openExternalUrl,
     random: (size) => NodeCrypto.randomBytes(size),
-    focus: () => focusMainWindow(mainWindow),
+    focus: () => raiseMainWindow(mainWindow),
     surfaces: input.surfaces,
   }).pipe(Scope.provide(untilQuit))
 })
