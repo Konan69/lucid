@@ -5,7 +5,18 @@ import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
 import { BrowserAction, ComputerState, DesktopAction } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
-import { ConfigProvider, Context, Effect, Layer, Option, Ref, Schema, Predicate } from 'effect'
+import {
+  ConfigProvider,
+  Context,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Ref,
+  Schema,
+  Predicate,
+} from 'effect'
 import {
   FetchHttpClient,
   HttpClient,
@@ -27,6 +38,7 @@ import { driver } from './boat/driver.ts'
 import { transport } from './boat/transport.ts'
 import { guestCommand } from './boat/guest.ts'
 import { bindings } from './boat/bindings.ts'
+import { lifecycle } from './boat/lifecycle.ts'
 import { machineFailureReason } from './store.ts'
 
 // Deliberate PNG fixture, not a claim that the guest was exercised.
@@ -590,33 +602,71 @@ const fixture = Effect.fn('BoatTest.fixture')(function* () {
 })
 
 describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => {
-  it.effect(
-    'adopts the configured machine for one Person and preserves another account’s refused intent',
-    () =>
-      Effect.gen(function* () {
-        const first = yield* fixture()
-        const second = yield* fixture()
-        const machine = yield* Machine
-        const saved = yield* bindings()
-        const evidence = yield* Evidence
-        expect((yield* machine.ensure(first))._tag).toBe('Running')
-        expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: adoptedId }))
-        const failure = yield* machine.ensure(second).pipe(Effect.flip)
-        expect(failure._tag).toBe('MachineHeld')
-        expect(machineFailureReason(failure)).toBe(
-          'Vivid’s computer on this installation is already in use by another account.',
-        )
-        expect(JSON.stringify(failure)).not.toContain(first)
-        expect(JSON.stringify(failure)).not.toContain(second)
-        const refused = yield* saved.load(second)
-        expect(refused).toMatchObject(Option.some({ providerId: null, observedState: 'intent' }))
-        expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
-        expect(yield* saved.load(second)).toEqual(refused)
-        expect((yield* machine.ensure(first))._tag).toBe('Running')
-        expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: adoptedId }))
-        expect(yield* Ref.get(evidence.created)).toBe(0)
-        expect(yield* Ref.get(evidence.intents)).toEqual([])
-      }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  it.effect('adopts for one Person without writing an intent for a refused Person', () =>
+    Effect.gen(function* () {
+      const first = yield* fixture()
+      const second = yield* fixture()
+      const machine = yield* Machine
+      const saved = yield* bindings()
+      const evidence = yield* Evidence
+      expect((yield* machine.ensure(first))._tag).toBe('Running')
+      expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: adoptedId }))
+      const failure = yield* machine.ensure(second).pipe(Effect.flip)
+      expect(failure._tag).toBe('MachineHeld')
+      expect(machineFailureReason(failure)).toBe(
+        'Vivid’s computer on this installation is already in use by another account.',
+      )
+      expect(JSON.stringify(failure)).not.toContain(first)
+      expect(JSON.stringify(failure)).not.toContain(second)
+      const refused = yield* saved.load(second)
+      expect(refused).toEqual(Option.none())
+      expect(yield* machine.inspect(second)).toEqual(ComputerState.cases.Absent.make({}))
+      expect(yield* machine.stop(second)).toBeUndefined()
+      expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+      expect(yield* saved.load(second)).toEqual(refused)
+      expect((yield* machine.ensure(first))._tag).toBe('Running')
+      expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: adoptedId }))
+      expect(yield* Ref.get(evidence.created)).toBe(0)
+      expect(yield* Ref.get(evidence.intents)).toEqual([])
+    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  )
+
+  /** Refusal creates no receipt that could expire while adoption is configured. */
+  it.effect('creates a new paid intent after refused adoption is removed a day later', () =>
+    Effect.gen(function* () {
+      const first = yield* fixture()
+      const second = yield* fixture()
+      const machine = yield* Machine
+      const saved = yield* bindings()
+      yield* machine.ensure(first)
+      expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+      expect(yield* saved.load(second)).toEqual(Option.none())
+      yield* TestClock.adjust('24 hours')
+      const paidLayer = Layer.fresh(boatMachineLayer).pipe(
+        Layer.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              VIVID_BOAT_API_KEY: 'protocol-test-key',
+              VIVID_BOAT_ORG: 'personal',
+              VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
+            }),
+          ),
+        ),
+      )
+      expect(
+        (yield* Effect.gen(function* () {
+          return yield* (yield* Machine).ensure(second)
+        }).pipe(Effect.provide(paidLayer)))._tag,
+      ).toBe('Running')
+      expect(yield* saved.load(second)).toMatchObject(
+        Option.some({
+          requestedAt: 24 * 60 * 60_000,
+          providerId: id,
+        }),
+      )
+      expect(yield* Ref.get((yield* Evidence).created)).toBe(1)
+      expect((yield* machine.ensure(first))._tag).toBe('Running')
+    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
   )
 
   it.effect(
@@ -645,6 +695,11 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         expect(yield* saved.load(second)).toEqual(original)
         expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
         expect(yield* saved.load(second)).toEqual(original)
+        expect((yield* machine.inspect(second))._tag).toBe('Failed')
+        expect((yield* machine.stop(second).pipe(Effect.flip))._tag).toBe(
+          'MachineCreationUnresolved',
+        )
+        expect(yield* saved.load(second)).toEqual(original)
         expect((yield* machine.ensure(first))._tag).toBe('Running')
         expect(yield* Ref.get((yield* Evidence).created)).toBe(0)
       }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
@@ -656,8 +711,8 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       const second = yield* fixture()
       const saved = yield* bindings()
       const api = yield* transport()
-      const owner = yield* saved.intend(first, api.create)
-      const waiting = yield* saved.intend(second, api.create)
+      const { binding: owner } = yield* saved.intend(first, api.create)
+      const { binding: waiting } = yield* saved.intend(second, api.create)
       yield* saved.bind(first, owner.intent, Protocol.ProviderId.make(id))
       expect(
         (yield* saved.bind(second, waiting.intent, Protocol.ProviderId.make(id)).pipe(Effect.flip))
@@ -671,6 +726,58 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
     }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
   )
 
+  for (const existing of [false, true]) {
+    /** Two lifecycle instances model separate servers. Real SQL arbitrates the collision;
+     * Deferred gates make both holder checks finish before either bind, with a known winner. */
+    it.effect(
+      `cleans an adoption race loser only when its intent is fresh (existing ${existing})`,
+      () =>
+        Effect.gen(function* () {
+          const first = yield* fixture()
+          const second = yield* fixture()
+          const saved = yield* bindings()
+          const api = yield* transport()
+          if (existing) yield* saved.intend(second, api.create)
+          const before = yield* saved.load(second)
+          const checked = yield* Ref.make(0)
+          const bothChecked = yield* Deferred.make<void>()
+          const ownerBound = yield* Deferred.make<void>()
+          const racing = {
+            ...saved,
+            holder: Effect.fn('BoatTest.racingHolder')(function* (providerId: Protocol.ProviderId) {
+              const held = yield* saved.holder(providerId)
+              if ((yield* Ref.updateAndGet(checked, (count) => count + 1)) === 2)
+                yield* Deferred.succeed(bothChecked, undefined)
+              yield* Deferred.await(bothChecked)
+              return held
+            }),
+            bind: Effect.fn('BoatTest.racingBind')(function* (
+              key: MachineKey,
+              intent: string,
+              providerId: Protocol.ProviderId,
+            ) {
+              if (key === second) yield* Deferred.await(ownerBound)
+              const bound = yield* saved.bind(key, intent, providerId)
+              if (key === first) yield* Deferred.succeed(ownerBound, undefined)
+              return bound
+            }),
+          }
+          const owner = yield* lifecycle(api, racing, () => {})
+          const contender = yield* lifecycle(api, racing, () => {})
+          const winning = yield* owner.ensure(first).pipe(Effect.forkChild)
+          expect((yield* contender.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+          expect((yield* Fiber.join(winning))._tag).toBe('Running')
+          expect(yield* saved.load(second)).toEqual(before)
+          if (!existing) {
+            expect(yield* contender.inspect(second)).toEqual(ComputerState.cases.Absent.make({}))
+            expect(yield* contender.stop(second)).toBeUndefined()
+          }
+          expect((yield* owner.inspect(first))._tag).toBe('Running')
+          expect(yield* Ref.get((yield* Evidence).created)).toBe(0)
+        }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+    )
+  }
+
   it.effect('replays the original paid-create receipt after adoption is refused and removed', () =>
     Effect.gen(function* () {
       const first = yield* fixture()
@@ -679,7 +786,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       const saved = yield* bindings()
       const api = yield* transport()
       const evidence = yield* Evidence
-      const original = yield* saved.intend(second, api.create)
+      const { binding: original } = yield* saved.intend(second, api.create)
       // Rebuild the Machine layer and replace settings to remove adoption, retaining SQL and HTTP.
       // A new release must not replace the persisted request when recovering the lost receipt.
       const paidLayer = Layer.fresh(boatMachineLayer).pipe(
@@ -707,6 +814,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
       expect(yield* saved.load(second)).toEqual(Option.some(original))
       expect((yield* machine.ensure(first))._tag).toBe('Running')
+      yield* TestClock.adjust('22 hours')
       const recovered = yield* Effect.gen(function* () {
         return yield* (yield* Machine).ensure(second)
       }).pipe(Effect.provide(paidLayer))

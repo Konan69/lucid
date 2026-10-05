@@ -158,15 +158,18 @@ function createBrowser(
     run: (program) => {
       void Effect.runPromise(program)
     },
+    // The window is asked first: once it is closed, reading `webContents` itself throws
+    // "Object has been destroyed", and closing the app publishes one last change (the browser
+    // resets on `closed`), which showed a JavaScript error dialog on every quit.
     publish: (value) => {
-      if (!window.webContents.isDestroyed())
+      if (!window.isDestroyed() && !window.webContents.isDestroyed())
         window.webContents.send(
           BRIDGE_EVENT_CHANNEL,
           encodeBridgeEvent(BridgeEvent.cases.PagesChanged.make({ value })),
         )
     },
     downloadRefused: (value) => {
-      if (!window.webContents.isDestroyed())
+      if (!window.isDestroyed() && !window.webContents.isDestroyed())
         window.webContents.send(
           BRIDGE_EVENT_CHANNEL,
           encodeBridgeEvent(BridgeEvent.cases.PageDownloadRefused.make({ value })),

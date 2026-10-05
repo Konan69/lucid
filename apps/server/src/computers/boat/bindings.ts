@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, eq, getTableName } from 'drizzle-orm'
+import { and, eq, getTableName, isNull } from 'drizzle-orm'
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core/errors'
 import * as SqlError from 'effect/unstable/sql/SqlError'
 import { Cause, Clock, Effect, Option, Predicate, Schema } from 'effect'
@@ -62,10 +62,11 @@ export const bindings = Effect.fn('Machine.boat.bindings')(function* () {
     },
     (effect) => effect.pipe(Effect.mapError(() => new MachinePersistenceFailed())),
   )
+  /** RETURNING proves whether this call owns a fresh intent; an existing receipt may have reached Boat. */
   const intend = Effect.fn('Machine.boat.binding.intend')(
     function* (key: MachineKey, request: CreateRequest) {
       const now = yield* Clock.currentTimeMillis
-      yield* database.run(
+      const inserted = yield* database.run(
         database
           .insert(machineBindings)
           .values({
@@ -77,14 +78,33 @@ export const bindings = Effect.fn('Machine.boat.bindings')(function* () {
             observedState: 'intent',
             since: now,
           })
-          .onConflictDoNothing({ target: machineBindings.key }),
+          .onConflictDoNothing({ target: machineBindings.key })
+          .returning({ key: machineBindings.key }),
       )
       const found = yield* load(key)
-      return yield* Option.match(found, {
+      const binding = yield* Option.match(found, {
         onNone: () => Effect.fail(new MachinePersistenceFailed()),
         onSome: Effect.succeed,
       })
+      return { binding, inserted: inserted.length === 1 }
     },
+    (effect) => effect.pipe(Effect.mapError(() => new MachinePersistenceFailed())),
+  )
+  /** Remove only this call's unbound adoption intent after a proven provider-id race loss.
+   * Key, intent and absence of provider authority prevent deleting a replacement or bound row. */
+  const discard = Effect.fn('Machine.boat.binding.discard')(
+    (key: MachineKey, intent: string) =>
+      database.run(
+        database
+          .delete(machineBindings)
+          .where(
+            and(
+              eq(machineBindings.key, key),
+              eq(machineBindings.intent, intent),
+              isNull(machineBindings.providerId),
+            ),
+          ),
+      ),
     (effect) => effect.pipe(Effect.mapError(() => new MachinePersistenceFailed())),
   )
   const bind = Effect.fn('Machine.boat.binding.bind')(
@@ -130,6 +150,6 @@ export const bindings = Effect.fn('Machine.boat.bindings')(function* () {
     },
     (effect) => effect.pipe(Effect.mapError(() => new MachinePersistenceFailed())),
   )
-  return { load, holder, intend, bind, observe }
+  return { load, holder, intend, discard, bind, observe }
 })
 export type Bindings = Effect.Success<ReturnType<typeof bindings>>
