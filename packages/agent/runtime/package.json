@@ -8,13 +8,13 @@
   },
   "scripts": {
     "build": "vite build",
-    "check:types": "tsc --noEmit",
+    "check:types": "pnpm typecheck",
     "dev": "vite dev",
     "docs": "flue docs",
     "start": "node dist/server.mjs",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "lint": "oxlint --type-aware src",
+    "typecheck": "tsc --checkers 1 --noEmit",
+    "lint": "node ../../../scripts/lint.mjs",
     "db:generate": "echo 'Flue owns runtime schema migrations'",
     "db:migrate": "echo 'Flue owns runtime schema migrations'"
   },

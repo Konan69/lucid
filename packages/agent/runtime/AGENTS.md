@@ -30,7 +30,7 @@ schema-derived `VividRpcClient`.
 - `pnpm dev` — start the Vite/Flue server.
 - `pnpm build && pnpm start` — build and run `dist/server.mjs`.
 - `pnpm check:types` — typecheck this package.
-- `pnpm lint` — run type-aware lint on `src`.
+- `pnpm lint` — run type-aware lint on the whole package, including tests and scripts.
 - `pnpm docs` — list the bundled Flue documentation.
 - `pnpm exec flue docs search <query>` — search version-matched docs.
 - `pnpm exec flue docs read <path>` — read a complete documentation page.

@@ -11,8 +11,8 @@
     "web": "expo start --web",
     "build": "expo export --platform all",
     "updates": "node scripts/publish.mjs",
-    "typecheck": "tsc --noEmit",
-    "lint": "oxlint --type-aware src",
+    "typecheck": "tsc --checkers 1 --noEmit",
+    "lint": "node ../../scripts/lint.mjs",
     "test": "vitest run"
   },
   "dependencies": {

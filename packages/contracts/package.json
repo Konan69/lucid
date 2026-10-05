@@ -11,8 +11,8 @@
     "./signin": "./src/signin.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "lint": "oxlint --type-aware src",
+    "typecheck": "tsc --checkers 1 --noEmit",
+    "lint": "node ../../scripts/lint.mjs",
     "test": "vitest run"
   },
   "dependencies": {

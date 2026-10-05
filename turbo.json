@@ -4,14 +4,75 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/tsconfig.base.json"],
       "outputs": ["dist/**", "build/**", ".output/**", "!.output/cache/**"]
     },
     "typecheck": {
-      "dependsOn": ["^typecheck"],
+      "dependsOn": ["checkinputs"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/tsconfig.base.json"],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
       "outputs": [".cache/typescript/**", "*.tsbuildinfo"]
     },
     "lint": {
-      "dependsOn": ["^lint"],
+      "dependsOn": ["checkinputs"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/.oxlintrc.json",
+        "$TURBO_ROOT$/tsconfig*.json",
+        "$TURBO_ROOT$/apps/**/tsconfig*.json",
+        "$TURBO_ROOT$/packages/**/tsconfig*.json",
+        "$TURBO_ROOT$/scripts/lint.mjs",
+        "$TURBO_ROOT$/scripts/oxlint-plugin-vivid.mjs",
+        "$TURBO_ROOT$/tools/oxlint/**",
+        "$TURBO_ROOT$/apps/web/src/styles/**"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS"],
+      "outputs": []
+    },
+    "checkinputs": {
+      "dependsOn": ["^checkinputs"],
+      "outputs": []
+    },
+    "//#lint:root": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "apps/**",
+        "packages/**",
+        "tools/oxlint/**",
+        "!**/{node_modules,.cache,.turbo,dist,build,coverage,.expo,.output,.alchemy,.alchemy.*,.state}/**",
+        "!**/*.tsbuildinfo",
+        "!**/.env*",
+        "!**/*.local",
+        "!apps/mobile/{android,ios}/**"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS"],
+      "outputs": []
+    },
+    "//#typecheck:root": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "apps/**",
+        "packages/**",
+        "!**/{node_modules,.cache,.turbo,dist,build,coverage,.expo,.output,.alchemy,.alchemy.*,.state}/**",
+        "!**/*.tsbuildinfo",
+        "!**/.env*",
+        "!**/*.local",
+        "!apps/mobile/{android,ios}/**"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
+      "outputs": [".cache/typescript/root.tsbuildinfo"]
+    },
+    "//#format:root": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "apps/**",
+        "packages/**",
+        "!**/{node_modules,.cache,.turbo,dist,build,coverage,.expo,.output,.alchemy,.alchemy.*,.state}/**",
+        "!**/*.tsbuildinfo",
+        "!**/.env*",
+        "!**/*.local",
+        "!apps/mobile/{android,ios}/**"
+      ],
       "outputs": []
     },
     "test": {
