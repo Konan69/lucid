@@ -43,7 +43,7 @@ describe('what a refusal says', () => {
       new ChannelProviderFailed({ channel: 'iMessage' }),
     ].map(textingRefusal)
     expect(said).toEqual([
-      'WhatsApp is not set up on this Vivid yet.',
+      'Vivid cannot text on WhatsApp yet.',
       'That is not a phone number iMessage can reach. Write it with its country code, like +234 801 234 5678.',
       'That number is already connected to someone. Use a different number.',
       'No more people can be connected to iMessage right now.',
@@ -175,7 +175,7 @@ describe('where a channel stands, in a word', () => {
         }),
         ChannelStanding.cases.Connected.make({ address: mine, textTo, since: 0 }),
       ].map(channelWords),
-    ).toEqual(['Not set up', 'Not connected', 'Waiting for your text', 'Connected'])
+    ).toEqual(['Not available yet', 'Not connected', 'Waiting for your text', 'Connected'])
   })
 })
 

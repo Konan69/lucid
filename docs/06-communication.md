@@ -35,8 +35,10 @@ keys: { p256dh, auth } } })`. Use the subscription's unpadded base64url keys. Su
   the client owners and are not implemented by this backend lane.
 
 Set `VIVID_PUSH_VAPID_PUBLIC`, `VIVID_PUSH_VAPID_PRIVATE` and `VIVID_PUSH_SUBJECT` (an HTTPS URL
-or `mailto:` contact). Missing or invalid configuration returns `PushUnavailable` from setup RPCs;
-the server still starts and keeps in-app Notifications. Private keys and target credentials never
+or `mailto:` contact). All three are required: with one missing, a subject a push service would
+refuse, or a private key that does not belong to the public key, the server does not start and
+names the variable. Generate the pair once for an installation and keep it; replacing it
+unsubscribes every browser and phone that subscribed with the old public key. Private keys and target credentials never
 enter model context. Apply the generated product migration before restarting the server; restart
 the runtime to mount the new tools and built-in skill. No new webhook or scheduler is needed.
 

@@ -26,7 +26,7 @@ export type SavedProcedures = typeof SavedProcedures.Type
 /**
  * What Vivid remembers, as one response sees it.
  *
- * - `Off`: this installation keeps no notes, or nobody is behind the message.
+ * - `Off`: nobody is behind the message, so there is nobody whose notes to read.
  * - `Notes`: the index of the acting Person's notes, which may be empty.
  * - `Unavailable`: the notes exist but could not be read. This is told to the model as such; it
  *   is never shown as an empty index, which would read as "you know nothing about this Person".

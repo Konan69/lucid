@@ -1,7 +1,12 @@
-import { ServiceUnavailable } from '@vivid/contracts'
-import { Config, Context, Effect, Layer, Redacted, Schema } from 'effect'
+import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
-import { ProviderMalformed, providerResponse, type ProviderFailure } from './embeddings.js'
+import { optionalSetting, settingText } from '../config.ts'
+import {
+  modelGatewayKey,
+  ProviderMalformed,
+  providerResponse,
+  type ProviderFailure,
+} from './embeddings.js'
 
 const ChatResponse = Schema.Struct({
   choices: Schema.Array(
@@ -121,37 +126,25 @@ export class MemoryModel extends Context.Service<MemoryModel, MemoryModelService
   'vivid/MemoryModel',
 ) {}
 
-/** Resolve configuration once in the owning Layer; missing credentials fail a background operation without failing server startup. */
+/**
+ * Resolve configuration once in the owning Layer. A missing gateway key or a malformed model name
+ * stops launch naming the variable: before, the failure was captured here and handed back on
+ * every later completion, so the server ran for its whole life naming no Thread and learning
+ * nothing. The gateway not answering is still a typed failure on the one completion that met it.
+ */
 export const memoryModelLayer = Layer.effect(
   MemoryModel,
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient
-    const configured = yield* Effect.result(
-      Effect.gen(function* () {
-        const key = yield* Config.Redacted('EXPLABS_API_KEY').pipe(
-          Effect.mapError(() =>
-            ServiceUnavailable.make({
-              service: 'memory',
-              message: 'EXPLABS_API_KEY is unconfigured',
-            }),
-          ),
-        )
-        const model = yield* Config.String('VIVID_MEMORY_MODEL').pipe(
-          Config.withDefault('glm-5.3-flash'),
-          Effect.mapError(() =>
-            ServiceUnavailable.make({
-              service: 'memory',
-              message: 'VIVID_MEMORY_MODEL is invalid',
-            }),
-          ),
-        )
-        return { client, key, model }
-      }),
+    const key = yield* modelGatewayKey
+    const model = Option.getOrElse(
+      yield* optionalSetting('VIVID_MEMORY_MODEL', settingText, 'a model name'),
+      () => 'glm-5.3-flash',
     )
     return MemoryModel.of({
-      complete: Effect.fn('MemoryModel.complete')(function* (input) {
-        return yield* complete(yield* Effect.fromResult(configured), input)
-      }),
+      complete: Effect.fn('MemoryModel.complete')((input) =>
+        complete({ client, key, model }, input),
+      ),
     })
   }),
 )

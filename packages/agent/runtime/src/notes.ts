@@ -1,8 +1,8 @@
+import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import { MemoryKind, type PersonId } from '@vivid/contracts'
 import type { AgentFS } from 'agentfs-sdk'
 import * as Arr from 'effect/Array'
-import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Order from 'effect/Order'
@@ -19,15 +19,6 @@ import * as Schema from 'effect/Schema'
  * The folder of notes is the filesystem root and holds nothing else. In the first live run of the
  * design a model given room outside the folder wrote its index to the wrong place.
  */
-
-/**
- * Where the SQLite files are kept. Memory as notes is an optional part of an installation: with
- * no directory configured, Vivid mounts no note tools and is told nothing about notes.
- */
-// Flue renders an agent synchronously, and whether the note tools are mounted is decided in that
-// render, so the setting is read synchronously here, once, when the module loads.
-// oxlint-disable-next-line vivid/no-runpromise-in-library
-export const notesDirectory = Effect.runSync(Config.option(Config.String('VIVID_MEMORY_DIR')))
 
 /** A note's file name: short, lower-case, hyphenated, flat. Subfolders would hide a note from the index. */
 export const NoteFile = Schema.String.check(
@@ -132,6 +123,10 @@ const open = new Map<string, Promise<AgentFS>>()
  */
 async function openStore(path: string) {
   const { AgentFS: store } = await import('agentfs-sdk')
+  // AgentFS makes directories only for its own default location, not for a path it is given. The
+  // notes directory is required but need not exist yet (a fresh checkout, a new volume), and
+  // without this every note call would fail until someone made it by hand.
+  await NodeFS.promises.mkdir(NodePath.dirname(path), { recursive: true })
   return store.open({ path })
 }
 

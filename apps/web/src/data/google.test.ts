@@ -11,11 +11,6 @@ describe('what a Better Auth code means to a Person', () => {
     expect(outcomeOf('account_not_linked')).toBe('NotLinked')
   })
 
-  it('reads a server with no Google client the same before leaving and on the way back', () => {
-    expect(outcomeOf('PROVIDER_NOT_FOUND')).toBe('NotSetUp')
-    expect(outcomeOf('oauth_provider_not_found')).toBe('NotSetUp')
-  })
-
   it('reads every code it has no sentence for as a failure to try again', () => {
     expect(outcomeOf('state_mismatch')).toBe('Failed')
     expect(outcomeOf('invalid_code')).toBe('Failed')

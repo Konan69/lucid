@@ -13,19 +13,30 @@ export class InfrastructureEnvironmentError extends Schema.TaggedError<Infrastru
   { title: 'Infrastructure environment error' },
 ) {}
 
+/**
+ * What a deploy must be given. Every part of the product a Person is told Vivid has is required
+ * here: the Computer, Integrations, texting, away notifications and Google sign-in. A deploy that
+ * lacks one of their settings stops in this file, before it touches the target, and names the
+ * variable. The server holds the same line at its own start (`requiredSetting` in
+ * `apps/server/src/config.ts`), so "not configured" is neither a deploy that went through nor a
+ * server that is running. Only choices with a default, and telemetry, stay optional.
+ */
 export interface InfrastructureEnvironment {
   readonly authSecret: Redacted.Redacted
   readonly runtimeToken: Redacted.Redacted
   readonly modelGatewayKey: Redacted.Redacted
   readonly model: string
-  readonly googleClientId: Option.Option<string>
-  readonly googleClientSecret: Option.Option<Redacted.Redacted>
-  readonly googleRedirectUri: Option.Option<string>
+  /** Sign-in with Google: the client's id and secret and the address Google sends a Person back to. */
+  readonly google: GoogleAccess
   /**
-   * The key and organization Vivid's server uses on Executor. Both are minted on the deployed
-   * Executor itself, so the first deploy has neither and the server runs with Integrations off.
+   * The key and organization Vivid's server uses on Executor, which gives Vivid its Integrations.
+   * Both are minted on the deployed Executor itself (`docs/24-executor-scale.md`).
    */
-  readonly executor: Option.Option<ExecutorAccess>
+  readonly executor: ExecutorAccess
+  /** Texting Vivid over iMessage, through Photon (`apps/server/src/channels/photon.ts`). */
+  readonly texting: TextingAccess
+  /** Notifications while a Person is away, to browser and phone (`apps/server/src/push/config.ts`). */
+  readonly push: PushAccess
   /**
    * Whether Jev makes Vivid's small judgements (`VIVID_DECISIONS` in
    * `apps/server/src/decisions/model.ts`). Absent means the server's own default, which is off.
@@ -39,36 +50,9 @@ export interface InfrastructureEnvironment {
   readonly observability: Option.Option<ObservabilityAccess>
   /**
    * Vivid's Computer. It is part of the product, so it is not optional: a deploy without it stops
-   * here, before it touches the target, and names the variable it lacks. The same holds for
-   * texting and for notifications while away, below.
+   * here, before it touches the target, and names the variable it lacks.
    */
   readonly computer: ComputerAccess
-  /** Texting Vivid over iMessage, through Photon (`apps/server/src/channels/photon.ts`). */
-  readonly texting: TextingAccess
-  /** Notifications while a Person is away, to browser and phone (`apps/server/src/push/config.ts`). */
-  readonly push: PushAccess
-}
-
-/**
- * A Photon project: its id and the secret that signs the server in to it. Both were on the hosted
- * server by hand and in no file here, so texting worked by accident and a new environment would
- * have had none (found 5 October 2026). They are required now, so the deploy owns them.
- */
-export interface TextingAccess {
-  readonly projectId: string
-  readonly projectSecret: Redacted.Redacted
-}
-
-/**
- * A VAPID key pair and the contact a push service may write to (`https:` or `mailto:`). The pair
- * is generated once for an installation and kept: replacing it silently unsubscribes every browser
- * and phone that subscribed with the old public key. Before 5 October 2026 no environment had one,
- * so nobody was ever notified while away.
- */
-export interface PushAccess {
-  readonly publicKey: string
-  readonly privateKey: Redacted.Redacted
-  readonly subject: string
 }
 
 /**
@@ -94,6 +78,29 @@ export interface ComputerAccess {
   readonly machine: Option.Option<string>
 }
 
+export interface GoogleAccess {
+  readonly clientId: string
+  readonly clientSecret: Redacted.Redacted
+  readonly redirectUri: string
+}
+
+/** A Photon project: its id and the secret that signs the server in to it. */
+export interface TextingAccess {
+  readonly projectId: string
+  readonly projectSecret: Redacted.Redacted
+}
+
+/**
+ * A VAPID key pair and the contact a push service may write to (`https:` or `mailto:`). The pair
+ * is generated once for an installation and kept: replacing it silently unsubscribes every browser
+ * and phone that subscribed with the old public key.
+ */
+export interface PushAccess {
+  readonly publicKey: string
+  readonly privateKey: Redacted.Redacted
+  readonly subject: string
+}
+
 /** The OTLP/HTTP base address and the `name=value` headers that authenticate an export. */
 export interface ObservabilityAccess {
   readonly url: string
@@ -111,12 +118,11 @@ const environmentError = (variable: string) =>
     message: `${variable} is missing or invalid`,
   })
 
-const requiredSecret = (name: string) =>
-  Config.Redacted(name).pipe(Effect.mapError(() => environmentError(name)))
-
 /** A present, non-empty value: an empty line in an env file must not pass for a setting. */
 const requiredString = (name: string) =>
   Config.NonEmptyString(name).pipe(Effect.mapError(() => environmentError(name)))
+
+const requiredSecret = (name: string) => requiredString(name).pipe(Effect.map(Redacted.make))
 
 const optionalString = (name: string) =>
   Config.option(Config.String(name)).pipe(Effect.mapError(() => environmentError(name)))
@@ -134,39 +140,24 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
       Config.withDefault('explabs/glm-5.3-flash'),
       Effect.mapError(() => environmentError('VIVID_MODEL')),
     )
-    const googleClientId = yield* optionalString('GOOGLE_CLIENT_ID')
-    const googleClientSecret = yield* optionalSecret('GOOGLE_CLIENT_SECRET')
-    const googleRedirectUri = yield* optionalString('GOOGLE_REDIRECT_URI')
-
-    const configuredGoogleValues = [
-      Option.isSome(googleClientId),
-      Option.isSome(googleClientSecret),
-      Option.isSome(googleRedirectUri),
-    ].filter(Boolean).length
-    if (configuredGoogleValues !== 0 && configuredGoogleValues !== 3) {
-      return yield* Effect.fail(
-        new InfrastructureEnvironmentError({
-          variable: 'GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI',
-          message: 'Google OAuth configuration must provide all three variables or none',
-        }),
-      )
+    const google: GoogleAccess = {
+      clientId: yield* requiredString('GOOGLE_CLIENT_ID'),
+      clientSecret: yield* requiredSecret('GOOGLE_CLIENT_SECRET'),
+      redirectUri: yield* requiredString('GOOGLE_REDIRECT_URI'),
     }
-
-    const executorKey = yield* optionalSecret('VIVID_EXECUTOR_KEY')
-    const executorOrganization = yield* optionalString('VIVID_EXECUTOR_ORGANIZATION')
-    if (Option.isSome(executorKey) !== Option.isSome(executorOrganization)) {
-      return yield* Effect.fail(
-        new InfrastructureEnvironmentError({
-          variable: 'VIVID_EXECUTOR_KEY, VIVID_EXECUTOR_ORGANIZATION',
-          message: 'Executor access must provide both variables or neither',
-        }),
-      )
+    const executor: ExecutorAccess = {
+      key: yield* requiredSecret('VIVID_EXECUTOR_KEY'),
+      organization: yield* requiredString('VIVID_EXECUTOR_ORGANIZATION'),
     }
-    const executor = Option.zipWith(
-      executorKey,
-      executorOrganization,
-      (key, organization): ExecutorAccess => ({ key, organization }),
-    )
+    const texting: TextingAccess = {
+      projectId: yield* requiredString('VIVID_PHOTON_PROJECT_ID'),
+      projectSecret: yield* requiredSecret('VIVID_PHOTON_PROJECT_SECRET'),
+    }
+    const push: PushAccess = {
+      publicKey: yield* requiredString('VIVID_PUSH_VAPID_PUBLIC'),
+      privateKey: yield* requiredSecret('VIVID_PUSH_VAPID_PRIVATE'),
+      subject: yield* requiredString('VIVID_PUSH_SUBJECT'),
+    }
 
     const decisions = yield* optionalString('VIVID_DECISIONS')
 
@@ -187,21 +178,12 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
     )
 
     const computer: ComputerAccess = {
-      key: Redacted.make(yield* requiredString('VIVID_BOAT_API_KEY')),
+      key: yield* requiredSecret('VIVID_BOAT_API_KEY'),
       template: yield* requiredString('VIVID_BOAT_TEMPLATE'),
       organization: yield* optionalString('VIVID_BOAT_ORG'),
       size: yield* optionalString('VIVID_BOAT_SIZE'),
       lifetimeSeconds: yield* optionalString('VIVID_BOAT_LIFETIME_SECONDS'),
       machine: yield* optionalString('VIVID_BOAT_MACHINE'),
-    }
-    const texting: TextingAccess = {
-      projectId: yield* requiredString('VIVID_PHOTON_PROJECT_ID'),
-      projectSecret: Redacted.make(yield* requiredString('VIVID_PHOTON_PROJECT_SECRET')),
-    }
-    const push: PushAccess = {
-      publicKey: yield* requiredString('VIVID_PUSH_VAPID_PUBLIC'),
-      privateKey: Redacted.make(yield* requiredString('VIVID_PUSH_VAPID_PRIVATE')),
-      subject: yield* requiredString('VIVID_PUSH_SUBJECT'),
     }
 
     return {
@@ -209,15 +191,13 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
       runtimeToken,
       modelGatewayKey,
       model,
-      googleClientId,
-      googleClientSecret,
-      googleRedirectUri,
+      google,
       executor,
+      texting,
+      push,
       decisions,
       observability,
       computer,
-      texting,
-      push,
     } satisfies InfrastructureEnvironment
   },
 )()
