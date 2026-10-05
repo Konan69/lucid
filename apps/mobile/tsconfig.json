@@ -6,8 +6,7 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo",
-    "types": ["react", "node"],
-    "disableSourceOfProjectReferenceRedirect": true
+    "types": ["react", "node"]
   },
   "include": ["**/*.ts", "**/*.tsx"],
   "references": [

@@ -9,8 +9,7 @@
     "declaration": true,
     "emitDeclarationOnly": true,
     "rootDir": "src",
-    "outDir": ".cache/typescript/types",
-    "disableSourceOfProjectReferenceRedirect": true
+    "outDir": ".cache/typescript/types"
   },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"],

@@ -9,8 +9,7 @@
     },
     "noEmit": true,
     "types": ["vite/client"],
-    "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo",
-    "disableSourceOfProjectReferenceRedirect": true
+    "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo"
   },
   "include": ["src"],
   "references": [

@@ -8,8 +8,7 @@
     "types": ["node"],
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "tsBuildInfoFile": ".cache/typescript/main.tsbuildinfo",
-    "disableSourceOfProjectReferenceRedirect": true
+    "tsBuildInfoFile": ".cache/typescript/main.tsbuildinfo"
   },
   "include": ["src/main/**/*.ts", "src/shared/**/*.ts"],
   "references": [

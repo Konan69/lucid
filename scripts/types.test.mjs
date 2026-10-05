@@ -179,6 +179,19 @@ void test('restored declaration caches retain production, test, and consumer err
   const root = fixture(t)
   const valid = cachedCheck(root)
   assert.equal(valid.status, 0, `${valid.stdout}\n${valid.stderr}`)
+  const consumerFiles = NodeChildProcess.spawnSync(
+    process.execPath,
+    [
+      NodePath.join(root, 'node_modules/@typescript/native/bin/tsc'),
+      '-p',
+      'packages/client/rpc/tsconfig.types.json',
+      '--listFilesOnly',
+    ],
+    { cwd: root, encoding: 'utf8' },
+  )
+  assert.equal(consumerFiles.status, 0, consumerFiles.stderr)
+  assert.match(consumerFiles.stdout, /contracts\/\.cache\/typescript\/types\/index\.d\.ts/u)
+  assert.doesNotMatch(consumerFiles.stdout, /contracts\/src\/index\.ts/u)
   for (const workspace of ['packages/contracts', 'packages/client/rpc']) {
     NodeFS.rmSync(NodePath.join(root, workspace, '.cache'), { recursive: true, force: true })
   }
@@ -225,35 +238,51 @@ void test('typed lint diagnoses production, tests, and consumers before declarat
   const root = fixture(t)
   NodeFS.writeFileSync(
     NodePath.join(root, '.oxlintrc.json'),
-    '{"rules":{"typescript/no-floating-promises":"error"}}\n',
+    '{"rules":{"typescript/no-floating-promises":"error","typescript/no-redundant-type-constituents":"error"}}\n',
   )
+  NodeFS.writeFileSync(
+    NodePath.join(root, 'packages/contracts/src/index.ts'),
+    'export interface Failure { readonly code: string }\nexport const pending = () => Promise.resolve(1)\n',
+  )
+  NodeFS.writeFileSync(
+    NodePath.join(root, 'packages/contracts/src/check.test.ts'),
+    "import { pending } from './index.js'\nexport const checked = pending\n",
+  )
+  NodeFS.writeFileSync(
+    NodePath.join(root, 'packages/client/rpc/src/index.ts'),
+    "import { pending, type Failure } from '@vivid/contracts'\nexport type Refusal = Failure | string\nexport const checked = pending\n",
+  )
+  const invoke = () =>
+    NodeChildProcess.spawnSync(
+      process.execPath,
+      [
+        oxlint,
+        '--type-aware',
+        '--threads=1',
+        '--format=unix',
+        'packages/contracts',
+        'packages/client/rpc',
+      ],
+      {
+        cwd: root,
+        env: {
+          ...process.env,
+          GOMAXPROCS: '1',
+          OXLINT_TSGOLINT_PATH: NodePath.join(repositoryRoot, 'node_modules/.bin/tsgolint'),
+        },
+        encoding: 'utf8',
+      },
+    )
+  const valid = invoke()
+  assert.equal(valid.status, 0, `${valid.stdout}\n${valid.stderr}`)
   for (const file of [
     'packages/contracts/src/index.ts',
     'packages/contracts/src/check.test.ts',
     'packages/client/rpc/src/index.ts',
   ]) {
-    NodeFS.appendFileSync(NodePath.join(root, file), 'Promise.resolve(1)\n')
+    NodeFS.appendFileSync(NodePath.join(root, file), 'pending()\n')
   }
-  const result = NodeChildProcess.spawnSync(
-    process.execPath,
-    [
-      oxlint,
-      '--type-aware',
-      '--threads=1',
-      '--format=unix',
-      'packages/contracts',
-      'packages/client/rpc',
-    ],
-    {
-      cwd: root,
-      env: {
-        ...process.env,
-        GOMAXPROCS: '1',
-        OXLINT_TSGOLINT_PATH: NodePath.join(repositoryRoot, 'node_modules/.bin/tsgolint'),
-      },
-      encoding: 'utf8',
-    },
-  )
+  const result = invoke()
   assert.notEqual(result.status, 0)
   assert.match(result.stdout, /contracts\/src\/index\.ts.*no-floating-promises/u)
   assert.match(result.stdout, /check\.test\.ts.*no-floating-promises/u)

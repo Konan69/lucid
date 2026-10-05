@@ -5,8 +5,7 @@
     "types": ["node"],
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo",
-    "disableSourceOfProjectReferenceRedirect": true
+    "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo"
   },
   "include": ["src", "tests"],
   "references": [
