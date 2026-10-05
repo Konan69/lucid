@@ -10,7 +10,7 @@ import { tool } from 'ai'
 import { describe, expect, it, onTestFinished } from 'vitest'
 import { z } from 'zod'
 
-import { attachRun, streamRun } from '../index.ts'
+import { attachRun, streamRun } from '../main.ts'
 import { consume, context, host, modelText, signal, texts } from './fixtures/host.ts'
 
 /**
@@ -195,10 +195,10 @@ it.each(['unsafe', 'safe'] as const)(
         return fauxAssistantMessage('Finished.')
       },
     ])
-    const stream = await attachRun(harness, root.id, context)
-    if (stream === undefined) throw new Error('Expected the interrupted run')
+    const attachedRun = await attachRun(harness, root.id, context)
+    if (attachedRun.status === 'idle') throw new Error('Expected the interrupted run')
     harness.resume()
-    const result = await consume(stream)
+    const result = await consume(attachedRun.stream)
     const part = result.message.parts.find((candidate) => candidate.type === 'tool-work')
     if (policy === 'safe') {
       expect(executions).toBe(1)

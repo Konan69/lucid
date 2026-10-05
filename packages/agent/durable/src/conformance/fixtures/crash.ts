@@ -12,7 +12,7 @@ import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite
 import { tool } from 'ai'
 import { z } from 'zod'
 
-import { streamRun, toolsExtension } from '../../index.ts'
+import { streamRun, toolsExtension } from '../../main.ts'
 
 /**
  * Pi harness-tools-recovery.test.ts: interruption after intent, adapted to a real process death.

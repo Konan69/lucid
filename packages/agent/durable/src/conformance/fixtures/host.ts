@@ -25,7 +25,7 @@ import {
 import { onTestFinished } from 'vitest'
 import { z } from 'zod'
 
-import { respond, toolsExtension, type ToolsOptions } from '../../index.ts'
+import { respond, toolsExtension, type ToolsOptions } from '../../main.ts'
 
 export const context = BACKGROUND_CONTEXT
 

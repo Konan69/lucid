@@ -1,7 +1,7 @@
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from 'vitest'
 
-import { answer, continueRun, decide, streamRun, waiting } from '../index.ts'
+import { answer, continueRun, decide, streamRun, waiting } from '../main.ts'
 import { call, consume, context, modelText, shop, signal, texts } from './fixtures/host.ts'
 
 /** Run through the public stream until a complete tool round parks for a person. */

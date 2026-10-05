@@ -3,7 +3,7 @@ import { tool } from 'ai'
 import { expect, it } from 'vitest'
 import { z } from 'zod'
 
-import { continueRun, decide, streamRun } from '../index.ts'
+import { continueRun, decide, streamRun } from '../main.ts'
 import { call, consume, context, host, shop, texts } from './fixtures/host.ts'
 
 // Flue packages/runtime/src/test-utils/define-conversation-stream-store-contract-tests.ts:

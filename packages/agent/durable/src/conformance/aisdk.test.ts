@@ -16,7 +16,7 @@ import { expect, it } from 'vitest'
 import { z } from 'zod'
 
 import { PlainChat } from '../fixtures/chat.ts'
-import { answer, attachRun, continueRun, decide, respond, streamRun, waiting } from '../index.ts'
+import { answer, attachRun, continueRun, decide, respond, streamRun, waiting } from '../main.ts'
 import { call, consume, context, host, modelText, shop, signal, texts } from './fixtures/host.ts'
 
 /**
@@ -280,10 +280,10 @@ it('a host reconnect route streams the active run through the stock transport', 
     fetch: async (url, init) => {
       const request = new Request(url, init)
       if (request.method !== 'GET') return respond(opened.harness, opened.root.id, request, context)
-      const stream = await attachRun(opened.harness, opened.root.id, context)
-      if (stream === undefined) return new Response(null, { status: 204 })
+      const attachedRun = await attachRun(opened.harness, opened.root.id, context)
+      if (attachedRun.status === 'idle') return new Response(null, { status: 204 })
       attached.resolve()
-      return createUIMessageStreamResponse({ stream })
+      return createUIMessageStreamResponse({ stream: attachedRun.stream })
     },
   })
   const chat = new PlainChat({ transport })
@@ -336,10 +336,10 @@ it.fails('snapshot reconnect after a network interruption does not duplicate tex
     fetch: async (url, init) => {
       const request = new Request(url, init)
       if (request.method === 'GET') {
-        const stream = await attachRun(opened.harness, opened.root.id, context)
-        if (stream === undefined) return new Response(null, { status: 204 })
+        const attachedRun = await attachRun(opened.harness, opened.root.id, context)
+        if (attachedRun.status === 'idle') return new Response(null, { status: 204 })
         attached.resolve()
-        return createUIMessageStreamResponse({ stream })
+        return createUIMessageStreamResponse({ stream: attachedRun.stream })
       }
       const response = await respond(opened.harness, opened.root.id, request, context)
       if (response.body === null) throw new Error('Expected an SSE body')
