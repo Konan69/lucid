@@ -14,7 +14,7 @@ The server owns all product logic and persistence. Clients use `VividRpc` over `
 
 - Handlers decode, call services, and encode. No SQL or business rules.
 - Stores contain queries and domain rules. No HTTP or RPC types.
-- Code calls service relationships `Connection`; every string a Person reads says **Integration**. Executor owns Integration credentials; memory uses HelixDB and the Computer provider is Boat or the explicit local Docker provider.
+- Code calls service relationships `Connection`; every string a Person reads says **Integration**. Executor owns Integration credentials; memory uses HelixDB and the Computer provider is Boat. All three are required: the server does not start without their settings, and none has a local stand-in.
 - A domain depends on another domain's exported service, never its store internals.
 - Shared infrastructure does not import domains, except `database/schema.ts`, the required Drizzle barrel.
 - Use `Context.Service`, named `Effect.fn` methods, and flat Layer composition.
