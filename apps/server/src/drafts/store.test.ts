@@ -1,18 +1,27 @@
+import { PgClient } from '@effect/sql-pg/PgClient'
 import { describe, expect, layer } from '@effect/vitest'
 import { DraftPlace, DraftSaved, SaveDraftRequest, ThreadId } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
-import { Effect, Layer, Result } from 'effect'
+import { Deferred, Effect, Fiber, Layer, Queue, Result, Stream } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { changesLayer } from '../live/changes.ts'
-import { nextValue } from '../live/testing.ts'
+import { CHANNEL, changesLayer, Topic } from '../live/changes.ts'
+import { nextValue, payload } from '../live/testing.ts'
 import { ThreadStore, threadStoreLayer } from '../threads/store.ts'
 import { threads } from '../threads/tables.ts'
 import { draftHandlers } from './handlers.ts'
-import { draftStoreLayer } from './store.ts'
+import { DraftStore, draftStoreLayer } from './store.ts'
 import { drafts } from './tables.ts'
-import { current, fixture, observing, signedIn, thread, type Caller } from './testing.ts'
+import {
+  beforeTransaction,
+  current,
+  fixture,
+  observing,
+  signedIn,
+  thread,
+  type Caller,
+} from './testing.ts'
 
 const testLayer = Layer.mergeAll(draftStoreLayer, threadStoreLayer, changesLayer).pipe(
   Layer.provideMerge(testDatabaseLayer),
@@ -28,6 +37,152 @@ const save = (caller: Caller, place: DraftPlace, text: string) =>
 
 describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
   layer(testLayer)((it) => {
+    it.effect('draft changes announce only their Person and never wake a Company peer', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const peer = yield* observing(test.foreign)
+        const notices = yield* (yield* PgClient).listen(CHANNEL)
+        yield* save(test.member, newThread, 'private Company draft')
+        // The ordered SQL marker fails if Company was included, even though unchanged draft
+        // responses would normally be deduplicated and conceal the unnecessary peer reload.
+        yield* payload(notices, [Topic.person(test.member.actor.person.id)])
+        yield* save(test.foreign, newThread, 'peer change is the deterministic barrier')
+        yield* payload(notices, [Topic.person(test.foreign.actor.person.id)])
+        expect((yield* nextValue(peer)).drafts).toMatchObject([
+          { text: 'peer change is the deterministic barrier' },
+        ])
+        expect(yield* Queue.size(peer.values)).toBe(0)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('two People drafting in one shared Thread keep separate words and revisions', () =>
+      Effect.gen(function* () {
+        const test = yield* fixture()
+        const id = yield* thread(test.member)
+        const database = yield* Database
+        yield* database.run(
+          database.update(threads).set({ audience: 'company' }).where(eq(threads.id, id)),
+        )
+        const place = DraftPlace.cases.InThread.make({ thread: id })
+        yield* save(test.member, place, 'first Person')
+        yield* save(test.foreign, place, 'second Person')
+        yield* save(test.member, place, 'first Person revised')
+        expect((yield* current(test.member)).drafts).toMatchObject([
+          { place, text: 'first Person revised', revision: 2 },
+        ])
+        expect((yield* current(test.foreign)).drafts).toMatchObject([
+          { place, text: 'second Person', revision: 1 },
+        ])
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'the just-saved place survives fifty equal-clock drafts and archived rows survive',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const database = yield* Database
+          const archived = yield* thread(test.personal)
+          yield* save(
+            test.personal,
+            DraftPlace.cases.InThread.make({ thread: archived }),
+            'archived',
+          )
+          yield* (yield* ThreadStore).patch(test.personal.actor.person.id, archived, {
+            archived: true,
+          })
+          yield* TestClock.setTime(at)
+          for (let i = 0; i < 50; i++) {
+            const id = yield* thread(test.personal)
+            yield* save(test.personal, DraftPlace.cases.InThread.make({ thread: id }), `kept ${i}`)
+          }
+          // This sorts behind all existing UUID places: old offset(50) trimmed the written row.
+          const last = ThreadId.make(`!${crypto.randomUUID()}`)
+          yield* database.run(
+            database.insert(threads).values({
+              id: last,
+              personId: test.personal.actor.person.id,
+              title: 'Frozen-clock draft',
+              titleSource: 'Person',
+              updatedAt: at,
+            }),
+          )
+          const place = DraftPlace.cases.InThread.make({ thread: last })
+          yield* save(test.personal, place, 'just saved')
+          const listed = (yield* current(test.personal)).drafts
+          expect(listed).toHaveLength(50)
+          expect(listed.find((draft) => draft.text === 'just saved')).toMatchObject({ place })
+          expect(listed.find((draft) => draft.text === 'archived')).toBeUndefined()
+          const stored = yield* database.run(
+            database
+              .select()
+              .from(drafts)
+              .where(eq(drafts.personId, test.personal.actor.person.id)),
+          )
+          expect(stored).toHaveLength(51)
+          expect(stored.find((draft) => draft.threadId === archived)).toMatchObject({
+            text: 'archived',
+          })
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'archiving hides a draft; archived saves are allowed and unarchiving restores it',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const id = yield* thread(test.personal)
+          const place = DraftPlace.cases.InThread.make({ thread: id })
+          yield* save(test.personal, place, 'before archive')
+          const watch = yield* observing(test.personal)
+          const store = yield* ThreadStore
+          yield* store.patch(test.personal.actor.person.id, id, { archived: true })
+          expect((yield* nextValue(watch)).drafts).toEqual([])
+          const saved = yield* save(test.personal, place, 'written while archived')
+          expect(DraftSaved.guards.Kept(saved)).toBe(true)
+          expect((yield* current(test.personal)).drafts).toEqual([])
+          yield* Stream.runHead(watch.receipt)
+          yield* TestClock.adjust('20 millis')
+          expect(yield* Queue.size(watch.values)).toBe(0)
+          yield* store.patch(test.personal.actor.person.id, id, { archived: false })
+          expect((yield* nextValue(watch)).drafts).toMatchObject([
+            { place, text: 'written while archived', revision: 2 },
+          ])
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'a Thread deleted at the former pre-transaction check gap is NotFound at the store',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const id = yield* thread(test.personal)
+          const entered = yield* Deferred.make<void>()
+          const resume = yield* Deferred.make<void>()
+          const database = yield* Database
+          const observed = beforeTransaction(
+            database,
+            Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(resume))),
+          )
+          const controlled = Layer.fresh(draftStoreLayer).pipe(
+            Layer.provide(Layer.succeed(Database, observed)),
+          )
+          const request = SaveDraftRequest.make({
+            place: DraftPlace.cases.InThread.make({ thread: id }),
+            text: 'the Thread was deleted',
+            device: 'laptop',
+          })
+          const saving = yield* Effect.flatMap(DraftStore, (store) =>
+            store.save(test.personal.actor, request),
+          ).pipe(Effect.provide(controlled), Effect.result, Effect.forkScoped)
+          yield* Deferred.await(entered)
+          yield* (yield* ThreadStore).remove(test.personal.actor.person.id, id)
+          yield* Deferred.succeed(resume, undefined)
+          const result = yield* Fiber.join(saving)
+          expect(Result.isFailure(result) && result.failure._tag).toBe('NotFound')
+        }).pipe(Effect.scoped),
+    )
+
     it.effect('save is emitted by an open watch with server time and revision one', () =>
       Effect.gen(function* () {
         const test = yield* fixture()

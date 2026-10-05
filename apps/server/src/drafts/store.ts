@@ -1,5 +1,6 @@
-import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, desc, eq, exists, inArray, isNull, or, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
+import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core/errors'
 import { Clock, Context, Effect, Layer, Schema } from 'effect'
 import {
   CompanyId,
@@ -14,8 +15,9 @@ import {
 import { companyColumnOf, ownedHere, type Actor } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database, decodeStored, returned } from '../database/client.ts'
-import { changed } from '../live/changes.ts'
+import { Changes, Topic } from '../live/changes.ts'
 import { readableThread, requireThread } from '../threads/access.ts'
+import { threads } from '../threads/tables.ts'
 import { drafts } from './tables.ts'
 
 const fields = createSelectSchema(drafts, {
@@ -54,18 +56,35 @@ const wire = Effect.fn('DraftStore.wire')(function* (row: typeof drafts.$inferSe
   })
 })
 
-/** Cross-workspace Thread links save in the Thread's workspace, as threads/access.ts requires. */
-const location = Effect.fn('DraftStore.location')(function* (actor: Actor, place: DraftPlace) {
+/**
+ * Lock the Thread against deletion before checking reach on the writing connection. A delete
+ * that won first becomes NotFound; a later delete waits for commit instead of causing an FK
+ * failure. Archived Threads remain writable, matching threads/gateway.ts#admitted and
+ * threads/access.ts#requireThread, which admit messages by reach without an archive restriction.
+ */
+const location = Effect.fn('DraftStore.location')(function* (
+  tx: Transaction,
+  actor: Actor,
+  place: DraftPlace,
+) {
   return yield* DraftPlace.match<
     Effect.Effect<
       { readonly companyId: CompanyId | null; readonly threadId: ThreadId | null },
-      Effect.Error<ReturnType<typeof requireThread>>,
+      Effect.Error<ReturnType<typeof requireThread>> | EffectDrizzleQueryError,
       Database
     >
   >(place, {
     NewThread: () =>
-      Effect.succeed({ companyId: companyColumnOf(actor.workspace), threadId: null }),
+      Effect.succeed({
+        companyId: companyColumnOf(actor.workspace),
+        threadId: null,
+      }),
     InThread: Effect.fn('DraftStore.threadLocation')(function* ({ thread }) {
+      yield* tx
+        .select({ id: threads.id })
+        .from(threads)
+        .where(eq(threads.id, thread))
+        .for('key share')
       const found = yield* requireThread(thread, actor.person.id)
       return { companyId: found.companyId, threadId: found.id }
     }),
@@ -81,19 +100,45 @@ const scope = (actor: Actor, companyId: CompanyId | null) =>
 
 type Transaction = Parameters<Parameters<Database['Service']['transaction']>[0]>[0]
 
-/** Keep at most fifty including hidden drafts; a deterministic key breaks equal-clock ties. */
+/** Archived rows survive but occupy no list or cap slot; hidden, unarchived rows still count. */
+const unarchived = or(
+  isNull(drafts.threadId),
+  exists(
+    sql`(select 1 from ${threads} where ${threads.id} = ${drafts.threadId} and ${threads.archived} = false)`,
+  ),
+)
+
+/**
+ * Always retain the written place, even if Clock moved backwards or tied fifty older saves.
+ * Rank the written place first among active rows, then keep the newest others up to fifty.
+ * Read archive status in the pruning statement: a concurrent archive must not turn a remembered
+ * active flag into an unnecessary deletion of another place.
+ * Archived drafts are untouched so unarchiving restores their unsent words.
+ */
 const trim = Effect.fn('DraftStore.trim')(function* (
   tx: Transaction,
   actor: Actor,
-  companyId: CompanyId | null,
+  kept: typeof drafts.$inferSelect,
 ) {
   const oldest = tx
     .select({ key: drafts.placeKey })
     .from(drafts)
-    .where(scope(actor, companyId))
-    .orderBy(desc(drafts.savedAt), desc(drafts.placeKey))
+    .where(and(scope(actor, kept.companyId), unarchived))
+    .orderBy(
+      sql`case when ${drafts.placeKey} = ${kept.placeKey} then 0 else 1 end`,
+      desc(drafts.savedAt),
+      desc(drafts.placeKey),
+    )
     .offset(50)
-  yield* tx.delete(drafts).where(and(scope(actor, companyId), inArray(drafts.placeKey, oldest)))
+  yield* tx
+    .delete(drafts)
+    .where(
+      and(
+        scope(actor, kept.companyId),
+        inArray(drafts.placeKey, oldest),
+        sql`${drafts.placeKey} is distinct from ${kept.placeKey}`,
+      ),
+    )
 })
 
 /** The service owns durable unsent words and cap enforcement, not transport or client state. */
@@ -107,6 +152,7 @@ const makeStore = (database: Database['Service']) => {
         .where(
           and(
             ownedHere(drafts, actor),
+            unarchived,
             or(isNull(drafts.threadId), readableThread(drafts.threadId, actor.person.id)),
           ),
         )
@@ -119,20 +165,24 @@ const makeStore = (database: Database['Service']) => {
   /**
    * Serialize one Person's writes on their real owner row, including initially empty workspaces:
    * concurrent inserts for different places must not each miss the other's fifty-first draft.
+   * NO KEY UPDATE serializes this cap without blocking KEY SHARE locks from unrelated Person
+   * foreign-key inserts. The owner row is never modified; FOR UPDATE would needlessly block them.
    * The upsert increments revision in one statement. Trimming shares its transaction. The
-   * receipt is published only after commit; no words enter logs or span attributes.
+   * receipt is published only to this Person after commit. Installed Effect Statement.ts:1334
+   * traces parameterized SQL, not bindings; makeWithDefaults uses Drizzle's no-op logger
+   * (effect-core/logger.js:34). Draft text is never logged or attached to a span.
    */
   const save = Effect.fn('DraftStore.save')(function* (actor: Actor, request: SaveDraftRequest) {
-    const where = yield* location(actor, request.place).pipe(
-      Effect.provideService(Database, database),
-    )
     const result = yield* database.transaction((tx) =>
       Effect.gen(function* () {
         yield* tx
           .select({ id: personTable.id })
           .from(personTable)
           .where(eq(personTable.id, actor.person.id))
-          .for('update')
+          .for('no key update')
+        const where = yield* location(tx, actor, request.place).pipe(
+          Effect.provideService(Database, database),
+        )
         if (request.text.trim().length === 0) {
           const place = DraftPlace.match(request.place, {
             NewThread: () => isNull(drafts.threadId),
@@ -163,12 +213,13 @@ const makeStore = (database: Database['Service']) => {
             },
           })
           .returning()
-        const draft = yield* wire(yield* returned(rows, 'Draft'))
-        yield* trim(tx, actor, where.companyId)
+        const row = yield* returned(rows, 'Draft')
+        const draft = yield* wire(row)
+        yield* trim(tx, actor, row)
         return DraftSaved.cases.Kept.make({ draft })
       }),
     )
-    yield* changed(actor)
+    yield* (yield* Changes).publish([Topic.person(actor.person.id)])
     return result
   })
   return { list, save }

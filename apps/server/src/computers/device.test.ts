@@ -1,4 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
+import { PgClient } from '@effect/sql-pg/PgClient'
 import { describe, expect, it } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import {
@@ -20,6 +21,8 @@ import {
   BrowserAction,
   BrowseOutcome,
   BrowseResult,
+  Company,
+  CompanyId,
   DeviceAnswer,
   DevicePresence,
   DeviceRequestId,
@@ -38,10 +41,11 @@ import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { refusalLogs } from '../observability/testlogger.ts'
 import { authEffect, localAuthRuntimeLayer } from '../auth/provider.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
+import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database, decodeStored } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { Changes, changesLayer, Topic } from '../live/changes.ts'
-import { nextValue } from '../live/testing.ts'
+import { CHANNEL, Changes, changesLayer, Topic } from '../live/changes.ts'
+import { nextValue, payload, silent } from '../live/testing.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
 import { actingRun } from '../threads/runs.ts'
 import { actionOrigin } from '../approvals/gate.ts'
@@ -131,6 +135,45 @@ const as = (who: Somebody) =>
       workspace: Workspace.cases.Personal.make({}),
     }),
   )
+
+/** A real Company selection makes accidental Company fanout observable at the SQL bus. */
+const companyWorkspace = Effect.fn('DeviceTest.companyWorkspace')(function* (who: Somebody) {
+  const database = yield* Database
+  const company = Company.make({
+    id: CompanyId.make(NodeCrypto.randomUUID()),
+    name: 'Device Company',
+    slug: NodeCrypto.randomUUID(),
+  })
+  yield* Effect.addFinalizer(() =>
+    database.run(database.delete(companyTable).where(eq(companyTable.id, company.id))).pipe(
+      Effect.asVoid,
+      Effect.catch(() => Effect.sync(() => expect.fail('Device Company cleanup failed'))),
+    ),
+  )
+  yield* database.run(database.insert(companyTable).values(company))
+  yield* database.run(
+    database.insert(membershipTable).values({
+      id: NodeCrypto.randomUUID(),
+      companyId: company.id,
+      userId: who.person.id,
+      role: 'member',
+    }),
+  )
+  yield* database.run(
+    database
+      .update(sessionTable)
+      .set({ activeCompanyId: company.id })
+      .where(eq(sessionTable.id, who.sessionId)),
+  )
+  return Effect.provideService(
+    AuthContext,
+    AuthState.Person({
+      person: who.person,
+      sessionId: who.sessionId,
+      workspace: Workspace.cases.Company.make({ company, role: 'member' }),
+    }),
+  )
+})
 
 /** A Thread with one admitted, working Run that acts for `actingFor`. */
 const working = Effect.fn('DeviceTest.working')(function* (owner: Person, actingFor: Person) {
@@ -234,6 +277,64 @@ const failureOf = <E extends { readonly _tag: string }>(exit: Exit.Exit<void, E>
 
 /** Real PostgreSQL holds the Devices, Runs and ledger; the desktop app is the handlers' caller. */
 describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
+  it.effect('desktop connect and disconnect announce only the Person in a Company workspace', () =>
+    Effect.gen(function* () {
+      const ada = yield* somebody(farFuture)
+      const signedInCompany = yield* companyWorkspace(ada)
+      const { device, installation } = yield* enrolled(ada, 'Laptop')
+      yield* computerHandlers.AllowDevice({ id: device.id }).pipe(signedInCompany)
+      const notices = yield* (yield* PgClient).listen(CHANNEL)
+      const connected = yield* computerHandlers
+        .WatchDeviceRequests({ device: device.id, installation })
+        .pipe(Stream.runDrain, signedInCompany, Effect.forkScoped)
+      yield* Queue.take((yield* Bus).watching)
+      yield* payload(notices, [Topic.person(ada.person.id)])
+      yield* Fiber.interrupt(connected)
+      yield* payload(notices, [Topic.person(ada.person.id)])
+      expect(yield* listed(ada)).toEqual([['Laptop', 'Allowed', 'Offline']])
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('refused desktop admission announces nothing on any topic', () =>
+    Effect.gen(function* () {
+      const ada = yield* somebody(farFuture)
+      const signedInCompany = yield* companyWorkspace(ada)
+      const { device, installation } = yield* enrolled(ada, 'Laptop')
+      const notices = yield* (yield* PgClient).listen(CHANNEL)
+      const failure = yield* computerHandlers
+        .WatchDeviceRequests({ device: device.id, installation })
+        .pipe(Stream.runDrain, signedInCompany, Effect.flip)
+      expect(failure._tag).toBe('Forbidden')
+      yield* silent(notices)
+      expect(yield* listed(ada)).toEqual([['Laptop', 'Pending', 'Offline']])
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('replacement keeps the Device Connected until the successor disconnects', () =>
+    Effect.gen(function* () {
+      const ada = yield* somebody(farFuture)
+      const { device, installation } = yield* enrolled(ada, 'Laptop')
+      yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
+      const watch = yield* watchingDevices(ada)
+      const previous = yield* listen(ada, device, installation)
+      expect((yield* nextValue(watch)).devices[0]).toMatchObject({
+        presence: DevicePresence.cases.Connected.make({}),
+      })
+      const successor = yield* listen(ada, device, installation)
+      expect(failureOf(yield* Fiber.await(previous.ended))).toBe('ended')
+      // Replacement opens one link and closes the old one. Consume both actual bus receipts
+      // before advancing the debounce clock; neither can emit a false Offline transition.
+      yield* watch.receipt.pipe(Stream.take(2), Stream.runDrain)
+      yield* TestClock.adjust('20 millis')
+      expect(yield* listed(ada)).toEqual([['Laptop', 'Allowed', 'Connected']])
+      expect(yield* Queue.size(watch.values)).toBe(0)
+      yield* Fiber.interrupt(successor.ended)
+      expect((yield* nextValue(watch)).devices[0]).toMatchObject({
+        presence: DevicePresence.cases.Offline.make({}),
+      })
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
   it.effect('WatchDevices emits enrol, allow and revoke using the one-shot loader', () =>
     Effect.gen(function* () {
       const ada = yield* somebody(farFuture)

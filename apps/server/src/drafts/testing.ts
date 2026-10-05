@@ -156,3 +156,29 @@ export const current = Effect.fn('DraftTest.current')(function* (caller: Caller)
     onSome: Effect.succeed,
   })
 })
+
+/**
+ * Pause a real transaction before store SQL begins, to delete the Thread at the old pre-check
+ * race point. Every query, driver, constraint and transaction remains the production adapter;
+ * only this public authority seam's invocation ordering is controlled by the test.
+ */
+export const beforeTransaction = (database: Database['Service'], before: Effect.Effect<void>) =>
+  Database.of({
+    _: database._,
+    query: database.query,
+    $with: database.$with,
+    $cache: database.$cache,
+    $count: database.$count.bind(database),
+    with: database.with.bind(database),
+    select: database.select.bind(database),
+    selectDistinct: database.selectDistinct.bind(database),
+    selectDistinctOn: database.selectDistinctOn.bind(database),
+    insert: database.insert.bind(database),
+    update: database.update.bind(database),
+    delete: database.delete.bind(database),
+    refreshMaterializedView: database.refreshMaterializedView.bind(database),
+    execute: database.execute.bind(database),
+    run: database.run,
+    transaction: (operation) =>
+      database.transaction((tx) => before.pipe(Effect.andThen(operation(tx)))),
+  })

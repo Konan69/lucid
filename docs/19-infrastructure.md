@@ -28,6 +28,8 @@ fixes and remote verification described below.
 
 ### Deploying to production
 
+Keep the server at one Railway replica until desktop presence is shared and browse requests route to the replica holding the socket.
+
 `pnpm infra:deploy --yes` needs `RAILWAY_API_TOKEN` for the personal Railway account, and is run
 from a clean checkout of `main` so half-edited files never ship.
 
