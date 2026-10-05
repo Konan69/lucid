@@ -338,32 +338,36 @@ const startMachine = Effect.fn('ComputerStore.boot')(function* (
     !Stored.guards.starting(current.value) ||
     current.value.since !== before.since
   )
-    return
-  const state = yield* machine.ensure(before.machine).pipe(
+    return Option.none<MachineNoCapacity>()
+  const started = yield* machine.ensure(before.machine).pipe(
     Effect.timeout('90 seconds'),
     Effect.catchTag('TimeoutError', () => Effect.fail(new ComputerWakeTimedOut({ person }))),
-    Effect.match({
-      onFailure: (failure): MachineState => {
-        if (failure instanceof ComputerWakeTimedOut)
-          return ComputerState.cases.Failed.make({
-            since: before.since,
-            reason: 'The Computer did not become ready within 90 seconds.',
-          })
-        if (isOutage(failure)) return ComputerState.cases.Stopped.make({ since: before.since })
-        // No machine was free on any size: the Computer is stopped and whole, which is what the
-        // record says. A failed record would stop Vivid waking it until a Person pressed Start,
-        // and this ends by itself, so the next need simply asks the provider again.
-        if (failure instanceof MachineNoCapacity)
-          return ComputerState.cases.Stopped.make({ since: before.since })
+    Effect.result,
+  )
+  const state = Result.match(started, {
+    onFailure: (failure): MachineState => {
+      if (failure instanceof ComputerWakeTimedOut)
         return ComputerState.cases.Failed.make({
           since: before.since,
-          reason: machineFailureReason(failure),
+          reason: 'The Computer did not become ready within 90 seconds.',
         })
-      },
-      onSuccess: (running) => running,
-    }),
-  )
+      // No machine was free on any size: the Computer is stopped and whole, which is what the
+      // record says. A failed record would stop Vivid waking it until a Person pressed Start,
+      // and this ends by itself, so the next need simply asks the provider again.
+      if (isOutage(failure) || failure instanceof MachineNoCapacity)
+        return ComputerState.cases.Stopped.make({ since: before.since })
+      return ComputerState.cases.Failed.make({
+        since: before.since,
+        reason: machineFailureReason(failure),
+      })
+    },
+    onSuccess: (running) => running,
+  })
   yield* rows.update(person, before, state)
+  // The record says only "stopped", so the start hands its reason to the call that waited for it.
+  return Result.isFailure(started) && started.failure instanceof MachineNoCapacity
+    ? Option.some(started.failure)
+    : Option.none<MachineNoCapacity>()
 })
 type StoreError = DatabaseInfrastructureError
 export interface ComputerStoreService {
@@ -547,7 +551,8 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
   const rows = yield* persistence(machine, lock)
   const scope = yield* Effect.scope
   const pending = new Set<PersonId>()
-  const workers = new Map<PersonId, Fiber.Fiber<void>>()
+  /** A worker ends with the reason its start found no machine, when that is how it ended. */
+  const workers = new Map<PersonId, Fiber.Fiber<Option.Option<MachineNoCapacity>>>()
   /** Startup markers precede publication; cleanup removes both ownership records together. */
   const forget = Effect.fn('ComputerStore.forget')((person: PersonId) =>
     Effect.sync(() => {
@@ -575,7 +580,11 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
       }
       const worker = yield* startMachine(machine, rows, person, row.value).pipe(
         (effect) => lock(person).withPermit(effect),
-        Effect.catch(() => Effect.logError('Computer startup state could not be persisted.')),
+        Effect.catch(() =>
+          Effect.logError('Computer startup state could not be persisted.').pipe(
+            Effect.as(Option.none<MachineNoCapacity>()),
+          ),
+        ),
         Effect.ensuring(forget(person)),
         Effect.forkIn(scope, { startImmediately: false }),
       )
@@ -638,7 +647,12 @@ const prepare = Effect.fn('ComputerStore.prepare')(
     if (MachineState.isAnyOf(['Absent', 'Stopped', 'Starting'])(current.state))
       yield* state.start(person)
     const worker = state.workers.get(person)
-    if (worker !== undefined) yield* Fiber.await(worker)
+    if (worker === undefined) return
+    const ended = yield* Fiber.await(worker)
+    // The start this action waited for found no machine free. The record only says "stopped",
+    // so the action is refused with the provider's own reason, and the next one asks again.
+    if (Exit.isSuccess(ended) && Option.isSome(ended.value))
+      return yield* Effect.fail(ended.value.value)
   },
   (effect, _state, person) =>
     effect.pipe(

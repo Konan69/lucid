@@ -105,22 +105,19 @@ const bind = Effect.fn('Machine.boat.reconcileBinding')(function* (
 })
 
 /**
- * Starts a stopped machine on the first size Boat has free: the configured one, then each larger
+ * Starts a stopped machine on the first size that takes it: the configured one, then each larger
  * one (`api.sizes`). Every try is a resume that may not wait (`api.resume`), so each is answered in
- * about two seconds and a refused one leaves the machine stopped. When no size is free the start
- * fails `MachineNoCapacity` with the machine untouched.
+ * about two seconds and a refused one leaves the machine stopped. A size is passed over when Boat
+ * has no machine of it free, or when the machine's disk has outgrown it. When no size takes the
+ * machine the start fails `MachineNoCapacity` with the machine untouched.
  */
 const start = Effect.fn('Machine.boat.start')(function* (api: Transport, id: ProviderId) {
   for (const size of api.sizes) {
-    const started = yield* api.resume(id, size).pipe(
-      Effect.as(true),
-      Effect.catchTag('MachineNoCapacity', () => Effect.succeed(false)),
-    )
-    if (!started) continue
-    // The move costs more for as long as the machine runs, so the log says when it happened.
+    if ((yield* api.resume(id, size)) !== 'started') continue
+    // A larger size costs more for as long as the machine runs, so the log says when it happened.
     if (size !== api.sizes[0])
-      yield* Effect.logWarning('Computer started on a larger size; its own had no machine free', {
-        wanted: api.sizes[0],
+      yield* Effect.logWarning('Computer started on a larger size than the configured one', {
+        configured: api.sizes[0],
         started: size,
       })
     return undefined
@@ -153,9 +150,12 @@ const QUEUE_GRACE_MILLIS = 10_000
  * placed has nothing new to save. `force` stays false, so a stop Boat cannot make safely is
  * refused by Boat.
  *
- * How long it has waited is read from the binding: `observe` keeps the time Vivid first saw the
- * state, and every status read of a Person's Computer records it. A resume first seen less than
- * the grace ago is returned as it is, and the caller waits for it as it always did.
+ * The wait is counted from when Vivid first saw it, which the binding keeps (`observe`; every
+ * status read of a Person's Computer records it), so a resume already seen waiting is withdrawn at
+ * once and one first seen here is looked at every two seconds until the grace has passed. A resume
+ * that gets its machine meanwhile is returned as it then is and nothing is stopped. The stop
+ * follows a read made just before it, never an older one: a machine between states cannot be
+ * asked who holds it (`admit`), so what is stopped must be what was just seen waiting.
  */
 const withdrawn = Effect.fn('Machine.boat.withdrawn')(function* (
   api: Transport,
@@ -164,9 +164,14 @@ const withdrawn = Effect.fn('Machine.boat.withdrawn')(function* (
   input: { readonly key: MachineKey; readonly row: Binding; readonly record: MachineRecord },
 ) {
   const since = yield* saved.observe(input.key, input.row, input.record.state)
-  if ((yield* Clock.currentTimeMillis) - since < QUEUE_GRACE_MILLIS) return input.record
+  let record = input.record
+  while (queued(record) && (yield* Clock.currentTimeMillis) - since < QUEUE_GRACE_MILLIS) {
+    yield* Effect.sleep('2 seconds')
+    record = (yield* api.get(record.id)).sandbox
+  }
+  if (!queued(record)) return record
   yield* Effect.logWarning('Computer start was left waiting for a machine; withdrawing it')
-  yield* api.stop(input.record.id)
+  yield* api.stop(record.id)
   return yield* wait(input.key, 'archived')
 })
 
@@ -213,7 +218,11 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
       yield* start(api, identity.id)
     }
     const ready = yield* wait(key, 'running')
-    return MachineState.cases.Running.make({ since: yield* saved.observe(key, row, ready.state) })
+    // Read again: a start that was seen waiting wrote that to the binding after `row` was read.
+    const settled = yield* bound(key)
+    return MachineState.cases.Running.make({
+      since: yield* saved.observe(key, settled.binding, ready.state),
+    })
   })
   /** A live create reports Starting immediately; a restart replays only the persisted intent. */
   const ensure = Effect.fn('Machine.boat.ensure')(

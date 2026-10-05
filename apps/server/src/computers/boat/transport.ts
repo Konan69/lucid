@@ -7,7 +7,6 @@ import {
   MachineRequestRejected,
   MachineResponseInvalid,
   MachineExecutionUnknown,
-  MachineNoCapacity,
   MachineUnreachable,
   type MachineKey,
 } from '../machine.ts'
@@ -19,9 +18,6 @@ const Request = Schema.TaggedUnion({
   Post: { path: Schema.String, body: Schema.Json },
   Put: { path: Schema.String, body: Schema.Json },
   Create: { intent: Schema.String, body: Schema.Json },
-  /** A resume that may not wait for a machine. It is its own case because its 503 is an answer,
-   * not an outage (`refused`). */
-  Start: { path: Schema.String, body: Schema.Json },
 })
 type Request = typeof Request.Type
 const jsonBody = HttpClientRequest.schemaBodyJson(Schema.Json)
@@ -106,18 +102,8 @@ const requests = (
   })
   /** The failure an answer outside 2xx stands for. */
   const refused = Effect.fn('Machine.boat.refused')(function* (
-    input: Request,
     response: HttpClientResponse.HttpClientResponse,
   ) {
-    // A start that may not wait (`failFast`) is answered 503 `no_ready_machine` by Boat itself
-    // when it has no machine of that size free: "Nothing was started or counted" (seen 5 October
-    // 2026; v1 `NoReadyMachine`). That is an answer, so its body is read. Any other 503 body,
-    // an edge's HTML included, does not decode to that code and stays the outage below.
-    if (Request.guards.Start(input) && response.status === 503) {
-      const reply = yield* decodeError(response).pipe(Effect.option)
-      if (Option.isSome(reply) && reply.value.error.code === 'no_ready_machine')
-        return yield* Effect.fail(new MachineNoCapacity())
-    }
     // A 5xx is the provider failing, and its body is whatever an edge in front of it sent:
     // HTML, nothing, half a document. The status alone says it is an outage, so it is
     // classified before the body is read; decoding first turned such an answer into an
@@ -131,13 +117,12 @@ const requests = (
       return yield* Effect.fail(new MachineAuthenticationFailed())
     return yield* Effect.fail(new MachineRequestRejected({ status: response.status }))
   })
-  /** One dispatch and its status check, shared by a whole answer and a followed one. */
-  const dispatch = Effect.fn('Machine.boat.dispatch')(function* (input: Request) {
+  /** Sends one request and hands back Boat's answer, whatever its status. */
+  const send = Effect.fn('Machine.boat.send')(function* (input: Request) {
     const raw = Request.match(input, {
       Get: ({ path }) => Effect.succeed(HttpClientRequest.get(path)),
       Post: ({ path, body }) => jsonBody(HttpClientRequest.post(path), body),
       Put: ({ path, body }) => jsonBody(HttpClientRequest.put(path), body),
-      Start: ({ path, body }) => jsonBody(HttpClientRequest.post(path), body),
       Create: ({ intent, body }) =>
         jsonBody(
           HttpClientRequest.post('/sandboxes').pipe(
@@ -149,7 +134,7 @@ const requests = (
     const outgoing = yield* raw.pipe(
       Effect.mapError(() => new MachineResponseInvalid({ operation: 'encode' })),
     )
-    const response = yield* client
+    return yield* client
       .execute(
         outgoing.pipe(
           HttpClientRequest.prependUrl('https://boat.dev/api/v1'),
@@ -163,9 +148,44 @@ const requests = (
         ),
       )
       .pipe(Effect.mapError(() => new MachineUnreachable()))
-    if (response.status < 200 || response.status >= 300) return yield* refused(input, response)
+  })
+  /** One dispatch and its status check, shared by a whole answer and a followed one. */
+  const dispatch = Effect.fn('Machine.boat.dispatch')(function* (input: Request) {
+    const response = yield* send(input)
+    if (response.status < 200 || response.status >= 300) return yield* refused(response)
     return response
   })
+  /**
+   * A resume that may not wait (`failFast`), and which of its three answers Boat gave.
+   *
+   * Two refusals are answers about the size that was asked for, not failures of the start, so they
+   * are returned and the caller moves to the next size. `no_ready_machine` is Boat's own 503 when
+   * it has no machine of that size free: "Nothing was started or counted" (body seen 5 October
+   * 2026; v1 `NoReadyMachine`). `type_too_small` is its refusal of a size whose disk the machine's
+   * data does not fit (v1 `ResumeRequest.type`; documented, not seen, so its status is not
+   * assumed). Both are told by the code in Boat's error body. Anything else that is not 2xx, an
+   * edge's HTML 503 included, has no such code and is the failure `refused` makes of it.
+   */
+  const started = (path: string, body: Schema.Json) =>
+    Effect.gen(function* () {
+      const response = yield* send(Request.cases.Post.make({ path, body }))
+      if (response.status >= 200 && response.status < 300) {
+        yield* HttpClientResponse.schemaBodyJson(Protocol.Transition)(response).pipe(
+          Effect.mapError(() => new MachineResponseInvalid({ operation: 'response' })),
+        )
+        return 'started' as const
+      }
+      const code = Option.map(
+        yield* decodeError(response).pipe(Effect.option),
+        (reply) => reply.error.code,
+      )
+      if (Option.contains(code, 'no_ready_machine')) return 'none-free' as const
+      if (Option.contains(code, 'type_too_small')) return 'too-small' as const
+      return yield* refused(response)
+    }).pipe(
+      Effect.timeout('60 seconds'),
+      Effect.catchTag('TimeoutError', () => Effect.fail(new MachineUnreachable())),
+    )
   /** Each decoder is compiled at its ingress; only bounded status survives a refusal. */
   const whole = <A>(input: Request, schema: Schema.ConstraintDecoder<A>) =>
     dispatch(input).pipe(
@@ -224,7 +244,7 @@ const requests = (
         ),
       ),
     )
-  return { whole, followed }
+  return { whole, followed, started }
 }
 
 /** API key remains Redacted until the HTTP authorization header is encoded.
@@ -232,7 +252,7 @@ const requests = (
 export const transport = Effect.fn('Machine.boat.transport')(function* () {
   const client = yield* HttpClient.HttpClient
   const { key, org, create, adopt } = yield* boatConfiguration()
-  const { whole: request, followed } = requests(client, key, org)
+  const { whole: request, followed, started } = requests(client, key, org)
   // The sizes a start may use, in the order it tries them: the configured size, then each larger
   // one. A larger machine always holds the disk and the work; it costs more only while it runs,
   // and the next start asks for the configured size first again.
@@ -301,26 +321,25 @@ export const transport = Effect.fn('Machine.boat.transport')(function* () {
       ),
     ),
     /**
-     * Starts a stopped machine on one size, only if Boat has a machine of that size free now.
+     * Starts a stopped machine on one size, only if Boat has a machine of that size free now, and
+     * says which of Boat's answers it got (`started`).
      *
      * `failFast` is what keeps a start from hanging. Without it Boat accepts the resume and lets
      * it wait for a machine: on 5 October 2026 the installation's machine sat in `provisioning`
      * for two hours that way, with no error to read, while a `failFast` resume on the next size
-     * was running 25 seconds later. With it Boat answers in about two seconds: 202 and the machine
-     * is already placed, or 503 `no_ready_machine` with the machine left stopped and nothing
-     * billed or counted, which fails here as `MachineNoCapacity` so the caller can try another
-     * size. `type` is always sent, because Boat keeps the size a machine last ran on: naming it
-     * brings a machine that was moved up back to its own size on the next start that can have it.
+     * was running 25 seconds later. With it Boat answers in about two seconds, and a refused
+     * start leaves the machine stopped with nothing billed or counted. `type` is always sent,
+     * because Boat keeps the size a machine last ran on: naming it brings a machine that was
+     * moved up back to its own size on the next start that can have it.
      */
     resume: Effect.fn('Machine.boat.resume')(
       (id: Protocol.ProviderId, size: typeof Protocol.Size.Type) =>
-        request(
-          Request.cases.Start.make({
-            path: `/sandboxes/${id}/resume`,
-            body: { ttlSeconds: create.ttlSeconds, noEnv: true, failFast: true, type: size },
-          }),
-          Protocol.Transition,
-        ),
+        started(`/sandboxes/${id}/resume`, {
+          ttlSeconds: create.ttlSeconds,
+          noEnv: true,
+          failFast: true,
+          type: size,
+        }),
     ),
     viewer: Effect.fn('Machine.boat.viewer')((id: Protocol.ProviderId) =>
       request(
