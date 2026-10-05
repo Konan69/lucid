@@ -768,7 +768,8 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         expect((yield* store.access(second.id))._tag).toBe('Unavailable')
         // Nothing of the second account holds the machine, and nothing was sent to it.
         expect(yield* saved.load(computerMachineKey(second.id))).toEqual(Option.none())
-        expect(Option.map(yield* saved.holder(adoptedId), (binding) => binding.key)).toEqual(
+        const holder = yield* saved.holder(Protocol.ProviderId.make(adoptedId))
+        expect(Option.map(holder, (binding) => binding.key)).toEqual(
           Option.some(computerMachineKey(first.id)),
         )
         expect(
