@@ -131,9 +131,7 @@ function Shelf({
         <Chevron pointerEvents="none" size={16} strokeWidth={1.7} color={c.chevron} />
       </Press>
       {open &&
-        done.map((thread) => (
-          <ThreadRow key={thread.id} thread={thread} now={now} {...actions} />
-        ))}
+        done.map((thread) => <ThreadRow key={thread.id} thread={thread} now={now} {...actions} />)}
     </View>
   )
 }
