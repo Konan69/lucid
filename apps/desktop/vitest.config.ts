@@ -1,5 +1,3 @@
-
-
 const project = {
   test: {
     name: '@vivid/desktop',

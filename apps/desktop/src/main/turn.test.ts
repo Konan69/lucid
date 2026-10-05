@@ -157,17 +157,19 @@ describe('Vivid’s turn on the Person’s computer', () => {
     }),
   )
 
-  it.effect('a change the Computer died on is not answered, and the next work starts it again', () =>
-    Effect.gen(function* () {
-      const { notice, list, type, tagOf } = yield* fixture()
-      yield* list(first)
-      expect(yield* notice).toBe('Working')
-      // Exit 70: the input may have gone in. Not done, not declined, not failed.
-      expect(tagOf(yield* type(first, 'exit70'))).toBe('no answer')
-      expect(yield* notice).toBe('Hidden')
-      expect(tagOf(yield* list(first))).toBe('Windows')
-      expect(yield* notice).toBe('Working')
-    }),
+  it.effect(
+    'a change the Computer died on is not answered, and the next work starts it again',
+    () =>
+      Effect.gen(function* () {
+        const { notice, list, type, tagOf } = yield* fixture()
+        yield* list(first)
+        expect(yield* notice).toBe('Working')
+        // Exit 70: the input may have gone in. Not done, not declined, not failed.
+        expect(tagOf(yield* type(first, 'exit70'))).toBe('no answer')
+        expect(yield* notice).toBe('Hidden')
+        expect(tagOf(yield* list(first))).toBe('Windows')
+        expect(yield* notice).toBe('Working')
+      }),
   )
 
   it.effect('a change refused before anything was sent fails plainly', () =>

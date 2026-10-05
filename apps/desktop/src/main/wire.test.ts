@@ -50,10 +50,10 @@ describe('the Computer’s JSON lines', () => {
       decodeLine(
         '{"id":5,"ok":false,"approvalRequest":{"app":"notepad.exe","displayName":"Notepad","allowPersistentApproval":true}}',
       ),
+    ).toEqual(Option.some(ComputerLine.cases.Approval.make({ id: 5, app: 'notepad.exe' })))
+    expect(
+      decodeLine('{"id":6,"ok":false,"error":"computer-use request budget exhausted"}'),
     ).toEqual(
-      Option.some(ComputerLine.cases.Approval.make({ id: 5, app: 'notepad.exe' })),
-    )
-    expect(decodeLine('{"id":6,"ok":false,"error":"computer-use request budget exhausted"}')).toEqual(
       Option.some(
         ComputerLine.cases.Reply.make({
           id: 6,
@@ -145,9 +145,13 @@ describe('the Computer’s JSON lines', () => {
   it.effect('begin turn and status stay local; the rest reach the wire', () =>
     Effect.gen(function* () {
       const local = (call: ComputerCall) =>
-        requestLine({ id: 1, call, turn: Option.none(), budget: 1000, approvedApp: Option.none() }).pipe(
-        Effect.option,
-      )
+        requestLine({
+          id: 1,
+          call,
+          turn: Option.none(),
+          budget: 1000,
+          approvedApp: Option.none(),
+        }).pipe(Effect.option)
       expect(yield* local(ComputerCall.cases.BeginTurn.make({}))).toEqual(Option.some(''))
       expect(yield* local(ComputerCall.cases.Status.make({}))).toEqual(Option.some(''))
       const end = yield* requestLine({

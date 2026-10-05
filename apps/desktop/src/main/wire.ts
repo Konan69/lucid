@@ -120,7 +120,9 @@ export const budgetCeiling = (call: ComputerCall): number =>
  */
 const wireWindow = (window: ComputerWindow): { app?: string; id: number | string } => {
   const id = Number(window.id)
-  return Number.isInteger(id) && id >= 0 ? { app: window.app, id } : { app: window.app, id: window.id }
+  return Number.isInteger(id) && id >= 0
+    ? { app: window.app, id }
+    : { app: window.app, id: window.id }
 }
 
 /**

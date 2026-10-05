@@ -204,7 +204,10 @@ const spawnComputer = Effect.fn('DesktopComputer.spawn')(function* (command: Com
       catch: () => new ComputerUnavailable({}),
     }),
     (spawned) =>
-      Effect.sync(() => stopAll(spawned)).pipe(Effect.andThen(Deferred.await(ended)), Effect.asVoid),
+      Effect.sync(() => stopAll(spawned)).pipe(
+        Effect.andThen(Deferred.await(ended)),
+        Effect.asVoid,
+      ),
   )
   // `error` is how Node reports a program that could not be started; `close` follows an exit
   // once both output pipes have drained. Either means there is no process to talk to.
@@ -229,7 +232,6 @@ const lose = (bus: Bus): void => {
   )
   bus.waiting = Option.none()
 }
-
 
 /** The reply the supervisor sends for a turn the Person stopped: the in-flight request's refusal. */
 const escapeRefusal = () =>

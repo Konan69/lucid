@@ -76,7 +76,11 @@ const looked = (after: ReadonlyArray<ComputerReply>) =>
     const table = blankTable()
     yield* perform(Computer.asking, table, WindowAction.cases.ListWindows.make({}))
     yield* perform(Computer.asking, table, WindowAction.cases.Look.make({ window: w1 }))
-    return { Computer, table, run: (action: WindowAction) => perform(Computer.asking, table, action) }
+    return {
+      Computer,
+      table,
+      run: (action: WindowAction) => perform(Computer.asking, table, action),
+    }
   })
 
 describe('Vivid’s actions as the Computer’s requests', () => {
@@ -121,9 +125,9 @@ describe('Vivid’s actions as the Computer’s requests', () => {
         ),
       )
       // Listed again, the same window keeps its name.
-      expect(yield* perform(Computer.asking, table, WindowAction.cases.ListWindows.make({}))).toEqual(
-        first,
-      )
+      expect(
+        yield* perform(Computer.asking, table, WindowAction.cases.ListWindows.make({})),
+      ).toEqual(first)
     }),
   )
 
@@ -223,21 +227,21 @@ describe('Vivid’s actions as the Computer’s requests', () => {
     }),
   )
 
-  it.effect('the Computer refusing a change is unknown when it may have gone in, failed when not', () =>
-    Effect.gen(function* () {
-      const { run } = yield* looked([refusedBy('NativeInputFailed')])
-      // Something may have gone in: not done, not refused, not failed.
-      expect(yield* run(WindowAction.cases.Keys.make({ window: w1, keys: 'Enter' }))).toEqual(
-        unknown,
-      )
-      // The budget gate rejects a request before anything runs: nothing was sent.
-      const rejected = yield* looked([
-        refusedBy('computer-use request budget exhausted'),
-      ])
-      expect(yield* rejected.run(WindowAction.cases.Keys.make({ window: w1, keys: 'Enter' }))).toEqual(
-        failed,
-      )
-    }),
+  it.effect(
+    'the Computer refusing a change is unknown when it may have gone in, failed when not',
+    () =>
+      Effect.gen(function* () {
+        const { run } = yield* looked([refusedBy('NativeInputFailed')])
+        // Something may have gone in: not done, not refused, not failed.
+        expect(yield* run(WindowAction.cases.Keys.make({ window: w1, keys: 'Enter' }))).toEqual(
+          unknown,
+        )
+        // The budget gate rejects a request before anything runs: nothing was sent.
+        const rejected = yield* looked([refusedBy('computer-use request budget exhausted')])
+        expect(
+          yield* rejected.run(WindowAction.cases.Keys.make({ window: w1, keys: 'Enter' })),
+        ).toEqual(failed)
+      }),
   )
 
   it.effect('Escape refuses the change in flight as Stopped', () =>

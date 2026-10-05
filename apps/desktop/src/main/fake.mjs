@@ -45,7 +45,11 @@ const methods = {
     if (params.app === 'approval.app') {
       if (!approvalOnce) {
         approvalOnce = true
-        return send({ id, ok: false, approvalRequest: { app: params.app, displayName: 'Approval' } })
+        return send({
+          id,
+          ok: false,
+          approvalRequest: { app: params.app, displayName: 'Approval' },
+        })
       }
       return ok(id, {})
     }
@@ -98,6 +102,7 @@ NodeReadline.createInterface({ input: NodeProcess.stdin }).on('line', (line) => 
 
   if (request.method === 'end_turn') return methods.end_turn(request.id)
   const known = methods[request.method]
-  return known === undefined ? fail(request.id, 'unknown method') : known(request.id, request.params)
+  return known === undefined
+    ? fail(request.id, 'unknown method')
+    : known(request.id, request.params)
 })
-

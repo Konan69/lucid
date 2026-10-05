@@ -14,7 +14,14 @@ import {
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import { ComputerCall, ComputerReply, changes, screenshotPng, ESCAPE_STOPPED, type ComputerWindow } from './wire.ts'
+import {
+  ComputerCall,
+  ComputerReply,
+  changes,
+  screenshotPng,
+  ESCAPE_STOPPED,
+  type ComputerWindow,
+} from './wire.ts'
 
 /**
  * The one place where Vivid's vocabulary for a Person's computer (`WindowAction`, `WindowResult`,
@@ -222,7 +229,11 @@ const listWindows = Effect.fn('DesktopWindows.listWindows')(function* (
   asking: Asking,
   table: Table,
 ) {
-  const listed = yield* ask(asking, ComputerCall.cases.ListWindows.make({}), Schema.Array(WindowEntry))
+  const listed = yield* ask(
+    asking,
+    ComputerCall.cases.ListWindows.make({}),
+    Schema.Array(WindowEntry),
+  )
   table.windows.clear()
   const windows = listed.flatMap((entry) =>
     Option.toArray(

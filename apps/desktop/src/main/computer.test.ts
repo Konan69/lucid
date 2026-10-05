@@ -85,7 +85,9 @@ describe('the Computer process', () => {
       // The reply to the Esc'd request is the supervisor's own Escape message; the stop and the
       // exit follow it in that order.
       const said = yield* type('escape')
-      expect(ComputerReply.guards.Refused(said) && said.name.startsWith('Computer Use was stopped')).toBe(true)
+      expect(
+        ComputerReply.guards.Refused(said) && said.name.startsWith('Computer Use was stopped'),
+      ).toBe(true)
       expect(yield* Queue.take(heard)).toEqual('stopped run-1')
       expect(yield* Queue.take(heard)).toEqual('gone')
     }),
@@ -94,9 +96,7 @@ describe('the Computer process', () => {
   it.effect('a request past its budget and grace is lost, and the process is stopped', () =>
     Effect.gen(function* () {
       const { heard, type } = yield* started()
-      const lost = yield* Effect.forkChild(
-        type('hang').pipe(Effect.andThen(Queue.take(heard))),
-      )
+      const lost = yield* Effect.forkChild(type('hang').pipe(Effect.andThen(Queue.take(heard))))
       yield* TestClock.adjust(`${5_000 + WATCHDOG_GRACE_MS + 1} millis`)
       expect(yield* Fiber.join(lost)).toEqual('gone')
     }),
@@ -107,7 +107,11 @@ describe('the Computer process', () => {
       const { computer, ask } = yield* started()
       // The stand-in answers nothing and exits for good.
       const dying = yield* Effect.forkChild(
-        computer.ask({ call: ComputerCall.cases.TypeText.make({ window, text: 'exit70' }), turn, budget: 5000 }),
+        computer.ask({
+          call: ComputerCall.cases.TypeText.make({ window, text: 'exit70' }),
+          turn,
+          budget: 5000,
+        }),
       )
       yield* TestClock.adjust('1 seconds')
       yield* Fiber.join(dying)

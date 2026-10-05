@@ -46,4 +46,3 @@ await build({
   entryPoints: ['src/preload/notice.ts'],
   outfile: 'dist/preload/notice.cjs',
 })
-

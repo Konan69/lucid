@@ -7,11 +7,11 @@ binaries; never reimplement them").
 
 ## Files
 
-| File | Size | SHA-256 (first 16) | What it is |
-|---|---|---|---|
-| `codex-computer-use.exe` | 1,549,616 | `85e82a75724934b1` | The supervisor. Serves JSON-RPC over stdin/stdout, draws the status pill, gates policy and approvals. |
-| `swift/x64/codex-computer-use-swift.exe` | 54,849,840 | `46ceb2f44b2e678b` | The engine. Windows identity, capture, accessibility outline, and input. |
-| `swift/x64/MSVCP140.dll`, `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll` | — | see `swift/x64` manifest hashes | The VC runtime the engine loads. |
+| File                                                               | Size       | SHA-256 (first 16)              | What it is                                                                                            |
+| ------------------------------------------------------------------ | ---------- | ------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `codex-computer-use.exe`                                           | 1,549,616  | `85e82a75724934b1`              | The supervisor. Serves JSON-RPC over stdin/stdout, draws the status pill, gates policy and approvals. |
+| `swift/x64/codex-computer-use-swift.exe`                           | 54,849,840 | `46ceb2f44b2e678b`              | The engine. Windows identity, capture, accessibility outline, and input.                              |
+| `swift/x64/MSVCP140.dll`, `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll` | —          | see `swift/x64` manifest hashes | The VC runtime the engine loads.                                                                      |
 
 The pair came from the Windows machine's own reference install (verified against
 `~/codex-recon/helper/` and the install's `manifest.json` hashes), captured
@@ -38,7 +38,7 @@ stdin/stdout:
 
 - request: `{"id": <n>, "method": "<name>", "params": {...}, "meta": {...}}\n`
 - reply: `{"id": <n>, "ok": true, "result": ...}` / `{"id": <n>, "ok": false,
-  "approvalRequest": {...}}` / `{"id": <n>, "error": "..."}`
+"approvalRequest": {...}}` / `{"id": <n>, "error": "..."}`
 - methods: `list_apps`, `list_windows`, `get_window`, `get_window_state`,
   `launch_app`, `activate_window`, `click`, `click_element`, `drag`, `scroll`,
   `type_text`, `press_key`, `set_value`, `perform_secondary_action`,
