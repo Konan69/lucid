@@ -189,6 +189,52 @@ function endChildren() {
   }
 }
 
+/** What the program printed, kept within its allowance of characters. */
+function printedLines(allowance) {
+  const logs = []
+  let kept = 0
+  let logsTruncated = false
+  /**
+   * Lines past the allowance are dropped here; the server fits what is kept to its exact bytes.
+   * Every line costs at least one, so a flood of empty lines is cut like any other.
+   */
+  const keep = (line) => {
+    if (logsTruncated) return
+    if (kept + line.length + 1 <= allowance) {
+      logs.push(line)
+      kept += line.length + 1
+      return
+    }
+    logsTruncated = true
+    let prefix = ''
+    // Whole code points only: half a surrogate pair is not text.
+    for (const character of line) {
+      if (kept + prefix.length + character.length + 1 > allowance) break
+      prefix += character
+    }
+    logs.push(prefix)
+  }
+  /**
+   * What the program writes straight to its output streams is printed text like any other. It is
+   * also read so that the write ends: Node completes a worker's write only when this side takes
+   * it (`lib/internal/worker/io.js`), so a program awaiting one would wait for ever unread.
+   */
+  const from = (stream) => {
+    let rest = ''
+    stream.setEncoding('utf8')
+    stream.on('data', (text) => {
+      const lines = (rest + text).split('\n')
+      // The line still being written is held, but never past the allowance.
+      rest = lines.pop().slice(0, allowance)
+      for (const line of lines) keep(line)
+    })
+    stream.on('end', () => {
+      if (rest !== '') keep(rest)
+    })
+  }
+  return { keep, from, read: () => ({ logs, logsTruncated }) }
+}
+
 /** The runner's side: the messages, the files that answer them, and the end of the program. */
 function runner() {
   const [directory, resultBytes, logCharacters, heap, calls, frameBytes] = process.argv.slice(2)
@@ -200,49 +246,9 @@ function runner() {
     calls: Number(calls),
     frame: Number(frameBytes),
   }
-  const logs = []
-  let kept = 0
-  let logsTruncated = false
+  const output = printedLines(limits.logs)
   let worker
   let finished = false
-  /**
-   * Lines past the allowance are dropped here; the server fits what is kept to its exact bytes.
-   * Every line costs at least one, so a flood of empty lines is cut like any other.
-   */
-  const keep = (line) => {
-    if (logsTruncated) return
-    if (kept + line.length + 1 <= limits.logs) {
-      logs.push(line)
-      kept += line.length + 1
-      return
-    }
-    logsTruncated = true
-    let prefix = ''
-    // Whole code points only: half a surrogate pair is not text.
-    for (const character of line) {
-      if (kept + prefix.length + character.length + 1 > limits.logs) break
-      prefix += character
-    }
-    logs.push(prefix)
-  }
-  /**
-   * What the program writes straight to its output streams is printed text like any other. It is
-   * also read so that the write ends: Node completes a worker's write only when this side takes
-   * it (`lib/internal/worker/io.js`), so a program awaiting one would wait for ever unread.
-   */
-  const printedBy = (stream) => {
-    let rest = ''
-    stream.setEncoding('utf8')
-    stream.on('data', (text) => {
-      const lines = (rest + text).split('\n')
-      // The line still being written is held, but never past the allowance.
-      rest = lines.pop().slice(0, limits.logs)
-      for (const line of lines) keep(line)
-    })
-    stream.on('end', () => {
-      if (rest !== '') keep(rest)
-    })
-  }
   /**
    * Exactly one final message, printed when nothing of the program is left on the Computer: its
    * thread is over, the processes it started are ended and its directory is gone. The server may
@@ -259,7 +265,7 @@ function runner() {
     over.then(() => {
       endChildren()
       NodeFS.rmSync(directory, { recursive: true, force: true })
-      process.stdout.write(`${JSON.stringify({ ...message, logs, logsTruncated })}\n`, () =>
+      process.stdout.write(`${JSON.stringify({ ...message, ...output.read() })}\n`, () =>
         process.exit(0),
       )
     })
@@ -278,11 +284,11 @@ function runner() {
       stdout: true,
       stderr: true,
     })
-    printedBy(worker.stdout)
-    printedBy(worker.stderr)
+    output.from(worker.stdout)
+    output.from(worker.stderr)
     worker.on('message', (message) => {
       if (finished) return
-      if (message.type === 'log') keep(message.text)
+      if (message.type === 'log') output.keep(message.text)
       // The input is already JSON text; it is placed in the line as it is, never parsed here.
       else if (message.type === 'call')
         process.stdout.write(
