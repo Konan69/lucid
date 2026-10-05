@@ -9,6 +9,9 @@ export const ProviderId = Schema.String.check(
   Schema.isPattern(new RegExp(`^bx_[${providerAlphabet}]{${providerLength}}$`, 'u')),
 ).pipe(Schema.brand('BoatMachineId'))
 export type ProviderId = typeof ProviderId.Type
+/** Boat's machine sizes, smallest first. The order is used: a start that finds no machine of its
+ * size free moves to the sizes after it (`transport.ts`, `sizes`), never to a smaller one, which
+ * Boat refuses when the disk does not fit (`type_too_small`). */
 export const Size = Schema.Literals(['small', 'default', 'large'])
 export const Lifetime = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 2592000 }))
 /** Operator-published frozen Computer release; names are versioned and never point at a Person's machine. */

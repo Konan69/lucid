@@ -3,6 +3,7 @@ import { Clock, Effect, Match, Option, Semaphore } from 'effect'
 import {
   MachineCreationUnresolved,
   MachineHeld,
+  MachineNoCapacity,
   MachineState,
   MachineOperationFailed,
   type MachineKey,
@@ -10,7 +11,7 @@ import {
 } from '../machine.ts'
 import { active, observations, type Identity } from './state.ts'
 import type { Transport } from './transport.ts'
-import type { Bindings } from './bindings.ts'
+import type { Binding, Bindings } from './bindings.ts'
 import type { MachineRecord, ProviderId } from './protocol.ts'
 
 /** Provider observations have one exhaustive projection; readiness shares the `active` guard. */
@@ -104,6 +105,77 @@ const bind = Effect.fn('Machine.boat.reconcileBinding')(function* (
 })
 
 /**
+ * Starts a stopped machine on the first size that takes it: the configured one, then each larger
+ * one (`api.sizes`). Every try is a resume that may not wait (`api.resume`), so each is answered in
+ * about two seconds and a refused one leaves the machine stopped. A size is passed over when Boat
+ * has no machine of it free, or when the machine's disk has outgrown it. When no size takes the
+ * machine the start fails `MachineNoCapacity` with the machine untouched.
+ */
+const start = Effect.fn('Machine.boat.start')(function* (api: Transport, id: ProviderId) {
+  for (const size of api.sizes) {
+    if ((yield* api.resume(id, size)) !== 'started') continue
+    // A larger size costs more for as long as the machine runs, so the log says when it happened.
+    if (size !== api.sizes[0])
+      yield* Effect.logWarning('Computer started on a larger size than the configured one', {
+        configured: api.sizes[0],
+        started: size,
+      })
+    return undefined
+  }
+  return yield* Effect.fail(new MachineNoCapacity())
+})
+
+/**
+ * A resume that Boat accepted with no machine to put it on.
+ *
+ * `provisioning` is Boat looking for a machine and `provisioned` is the machine found: a resume
+ * that had one free answered `provisioned` in the same second (5 October 2026). `snapshotAvailable`
+ * is what makes it a resume and not a first creation: there is a saved disk to go back to, so the
+ * wait can be given up without losing anything. A creation is never taken for one; it has no saved
+ * disk yet and is left to finish.
+ */
+const queued = (record: MachineRecord): boolean =>
+  record.state === 'provisioning' && record.snapshotAvailable
+
+/** How long a resume may be seen without a machine before it counts as left waiting. A machine
+ * that is free is given within a second, so this only spares a resume asked for a moment ago. */
+const QUEUE_GRACE_MILLIS = 10_000
+
+/**
+ * Gives up a resume that Boat left waiting for a machine, so that `start` can ask for one that is
+ * free. This is the state another caller leaves behind when it resumes without `failFast` (an SSH
+ * wake did on 5 October 2026: two hours in `provisioning`, no error, and every start from here
+ * only waited with it). The stop was tried on that machine: Boat answered 202 and the machine was
+ * `archived` five seconds later with its saved disk as it was, because a machine that was never
+ * placed has nothing new to save. `force` stays false, so a stop Boat cannot make safely is
+ * refused by Boat.
+ *
+ * The wait is counted from when Vivid first saw it, which the binding keeps (`observe`; every
+ * status read of a Person's Computer records it), so a resume already seen waiting is withdrawn at
+ * once and one first seen here is looked at every two seconds until the grace has passed. A resume
+ * that gets its machine meanwhile is returned as it then is and nothing is stopped. The stop
+ * follows a read made just before it, never an older one: a machine between states cannot be
+ * asked who holds it (`admit`), so what is stopped must be what was just seen waiting.
+ */
+const withdrawn = Effect.fn('Machine.boat.withdrawn')(function* (
+  api: Transport,
+  saved: Bindings,
+  wait: Effect.Success<ReturnType<typeof observations>>['wait'],
+  input: { readonly key: MachineKey; readonly row: Binding; readonly record: MachineRecord },
+) {
+  const since = yield* saved.observe(input.key, input.row, input.record.state)
+  let record = input.record
+  while (queued(record) && (yield* Clock.currentTimeMillis) - since < QUEUE_GRACE_MILLIS) {
+    yield* Effect.sleep('2 seconds')
+    record = (yield* api.get(record.id)).sandbox
+  }
+  if (!queued(record)) return record
+  yield* Effect.logWarning('Computer start was left waiting for a machine; withdrawing it')
+  yield* api.stop(record.id)
+  return yield* wait(input.key, 'archived')
+})
+
+/**
  * Persist before provisioning, replay only the original intent, and wait for snapshot archival.
  *
  * `admit` is the adapter's question to a running machine, whether this binding is its holder
@@ -136,16 +208,23 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
     if (row.providerId === null) row = yield* bind(api, saved, { key, intent })
     const identity = yield* bound(key)
     let record = (yield* api.get(identity.id)).sandbox
+    if (queued(record)) record = yield* withdrawn(api, saved, wait, { key, row, record })
+    // After the withdrawal, not before: another caller may stop a waiting resume while it is
+    // looked at, and it then comes back from there on its way to `archived`.
     if (record.state === 'archiving') record = yield* wait(key, 'archived')
     if (record.state === 'archived') {
       yield* invalidate(key)
       yield* invalidateViewer(key)
       if (!record.snapshotAvailable)
         return yield* Effect.fail(new MachineOperationFailed({ operation: 'snapshot-missing' }))
-      yield* api.transition(identity.id, 'resume')
+      yield* start(api, identity.id)
     }
     const ready = yield* wait(key, 'running')
-    return MachineState.cases.Running.make({ since: yield* saved.observe(key, row, ready.state) })
+    // Read again: a start that was seen waiting wrote that to the binding after `row` was read.
+    const settled = yield* bound(key)
+    return MachineState.cases.Running.make({
+      since: yield* saved.observe(key, settled.binding, ready.state),
+    })
   })
   /** A live create reports Starting immediately; a restart replays only the persisted intent. */
   const ensure = Effect.fn('Machine.boat.ensure')(
@@ -198,7 +277,7 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
       if (active(record.state)) yield* admit(key, identity)
       yield* invalidate(key)
       yield* invalidateViewer(key)
-      yield* api.transition(identity.id, 'stop')
+      yield* api.stop(identity.id)
       const archived = yield* wait(key, 'archived')
       if (archived.state !== 'archived' || !archived.snapshotAvailable)
         return yield* Effect.fail(new MachineOperationFailed({ operation: 'snapshot-missing' }))
