@@ -1,0 +1,21 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "noEmit": false,
+    "tsBuildInfoFile": ".cache/typescript/types.tsbuildinfo",
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "src",
+    "outDir": ".cache/typescript/types",
+    "disableSourceOfProjectReferenceRedirect": true
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"],
+  "references": [
+    {
+      "path": "../../contracts/tsconfig.types.json"
+    }
+  ]
+}

@@ -11,6 +11,6 @@
     "generate:native": "node generate-native.mjs",
     "build": "node generate-native.mjs --check",
     "typecheck": "node generate-native.mjs --check",
-    "lint": "oxlint --type-aware generate-native.mjs src/native.ts"
+    "lint": "node ../../../scripts/lint.mjs"
   }
 }

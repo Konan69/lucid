@@ -4,14 +4,83 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/tsconfig.base.json"],
       "outputs": ["dist/**", "build/**", ".output/**", "!.output/cache/**"]
     },
     "typecheck": {
-      "dependsOn": ["^typecheck"],
+      "dependsOn": ["types", "^types", "checkinputs"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/types.mjs"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
       "outputs": [".cache/typescript/**", "*.tsbuildinfo"]
     },
     "lint": {
-      "dependsOn": ["^lint"],
+      "dependsOn": ["checkinputs"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/.oxlintrc.json",
+        "$TURBO_ROOT$/tsconfig*.json",
+        "$TURBO_ROOT$/apps/**/tsconfig*.json",
+        "$TURBO_ROOT$/packages/**/tsconfig*.json",
+        "$TURBO_ROOT$/scripts/lint.mjs",
+        "$TURBO_ROOT$/scripts/oxlint-plugin-vivid.mjs",
+        "$TURBO_ROOT$/tools/oxlint/**",
+        "$TURBO_ROOT$/apps/web/src/styles/**"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS"],
+      "outputs": []
+    },
+    "checkinputs": {
+      "dependsOn": ["^typeinputs"],
+      "outputs": []
+    },
+    "typeinputs": {
+      "dependsOn": ["^typeinputs"],
+      "outputs": []
+    },
+    "//#lint:root": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "apps/**",
+        "packages/**",
+        "tools/oxlint/**",
+        "!**/{node_modules,.cache,.turbo,dist,build,coverage,.expo,.output,.alchemy,.alchemy.*,.state}/**",
+        "!**/*.tsbuildinfo",
+        "!**/.env*",
+        "!**/*.local",
+        "!apps/mobile/{android,ios}/**"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS"],
+      "outputs": []
+    },
+    "//#typecheck:root": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "apps/**",
+        "packages/**",
+        "!**/{node_modules,.cache,.turbo,dist,build,coverage,.expo,.output,.alchemy,.alchemy.*,.state}/**",
+        "!**/*.tsbuildinfo",
+        "!**/.env*",
+        "!**/*.local",
+        "!apps/mobile/{android,ios}/**"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
+      "outputs": [".cache/typescript/root.tsbuildinfo"]
+    },
+    "//#format:root": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "apps/**",
+        "packages/**",
+        "!**/{node_modules,.cache,.turbo,dist,build,coverage,.expo,.output,.alchemy,.alchemy.*,.state}/**",
+        "!**/*.tsbuildinfo",
+        "!**/.env*",
+        "!**/*.local",
+        "!apps/mobile/{android,ios}/**"
+      ],
       "outputs": []
     },
     "test": {
@@ -24,6 +93,70 @@
       "persistent": true,
       "interactive": true,
       "interruptible": true
+    },
+    "types": {
+      "dependsOn": ["^types", "typeinputs"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!src/**/*.test.ts",
+        "!src/**/*.test.tsx",
+        "!tests/**",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/types.mjs"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
+      "outputs": [".cache/typescript/types/**", ".cache/typescript/types.tsbuildinfo"]
+    },
+    "@vivid/contracts#typeinputs": {
+      "inputs": ["$TURBO_DEFAULT$", "!src/**/*.test.ts", "!src/**/*.test.tsx", "!tests/**"]
+    },
+    "@vivid/client-runtime#typeinputs": {
+      "inputs": ["$TURBO_DEFAULT$", "!src/**/*.test.ts", "!src/**/*.test.tsx", "!tests/**"]
+    },
+    "@vivid/state#typeinputs": {
+      "inputs": ["$TURBO_DEFAULT$", "!src/**/*.test.ts", "!src/**/*.test.tsx", "!tests/**"]
+    },
+    "@vivid/skills#typeinputs": {
+      "inputs": ["$TURBO_DEFAULT$", "!src/**/*.test.ts", "!src/**/*.test.tsx", "!tests/**"]
+    },
+    "@vivid/agent-runtime#typeinputs": {
+      "inputs": ["$TURBO_DEFAULT$", "!src/**/*.test.ts", "!src/**/*.test.tsx", "!tests/**"]
+    },
+    "@vivid/skills#typecheck": {
+      "dependsOn": [
+        "types",
+        "^types",
+        "checkinputs",
+        "@vivid/agent-runtime#types",
+        "@vivid/agent-runtime#checkinputs"
+      ]
+    },
+    "@vivid/skills#lint": {
+      "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"]
+    },
+    "@vivid/agent-runtime#typecheck": {
+      "dependsOn": ["types", "^types", "checkinputs", "@vivid/server#checkinputs"]
+    },
+    "@vivid/agent-runtime#lint": {
+      "dependsOn": ["checkinputs", "@vivid/server#checkinputs"]
+    },
+    "@vivid/server#typecheck": {
+      "dependsOn": [
+        "types",
+        "^types",
+        "checkinputs",
+        "@vivid/agent-runtime#types",
+        "@vivid/agent-runtime#checkinputs"
+      ]
+    },
+    "@vivid/server#lint": {
+      "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"]
+    },
+    "@vivid/mobile#typecheck": {
+      "dependsOn": ["types", "^types", "checkinputs", "@vivid/web#checkinputs"]
+    },
+    "@vivid/mobile#lint": {
+      "dependsOn": ["checkinputs", "@vivid/web#checkinputs"]
     }
   }
 }

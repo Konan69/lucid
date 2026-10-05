@@ -11,10 +11,16 @@ import * as Socket from 'effect/unstable/socket/Socket'
 import type { ThreadId } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
 
-export type VividRpcClientService = RpcClient.RpcClient<
+/**
+ * Keep the schema-derived client named in Context.Service's emitted base class.
+ * A mapped type alias expands every RPC method there (6,000 declaration lines),
+ * forcing each consumer to parse another expanded copy of the contract.
+ * The interface inherits the same calls, payloads, results, and failure channels.
+ */
+export interface VividRpcClientService extends RpcClient.RpcClient<
   RpcGroup.Rpcs<typeof VividRpc>,
   RpcClientError.RpcClientError
->
+> {}
 
 /** Schema-derived product client shared by web, mobile, desktop, and the Flue runtime. */
 export class VividRpcClient extends Context.Service<VividRpcClient, VividRpcClientService>()(
