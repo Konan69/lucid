@@ -18,15 +18,17 @@ import {
   hostedPrefix,
   hostedExecutorFixture,
   hostedService,
+  remoteEntries,
 } from './testing.ts'
 import { ServerConfig } from '../config.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 
+// A made-up service family: Google is not a catalogue install, the server carries it itself.
 const calendar = {
-  id: 'curated/google-calendar',
+  id: 'curated/acme-calendar',
   kind: 'app',
-  name: 'Google Calendar',
-  description: 'Manage Google calendars',
+  name: 'Acme Calendar',
+  description: 'Manage Acme calendars',
 }
 
 /** Only catalogue HTTP is simulated: decoding, retained availability and connection guards
@@ -43,8 +45,8 @@ const remote = Effect.fn('ConnectionsSetupTest.remote')(function* () {
     if (request.method === 'GET' && request.url === `${hostedPrefix}/catalog`)
       return HttpServerResponse.jsonUnsafe([
         calendar,
-        { ...calendar, id: 'curated/google-gmail', name: 'Gmail', description: 'Gmail REST API' },
-        { ...calendar, id: 'curated/google-drive', name: 'Google Drive' },
+        { ...calendar, id: 'curated/acme-mail', name: 'Acme Mail', description: 'Acme Mail API' },
+        { ...calendar, id: 'curated/acme-drive', name: 'Acme Drive' },
         {
           ...calendar,
           id: 'unknown-auth',
@@ -71,6 +73,8 @@ const remote = Effect.fn('ConnectionsSetupTest.remote')(function* () {
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
+          GOOGLE_CLIENT_ID: 'isolated-test-client',
+          GOOGLE_CLIENT_SECRET: 'isolated-test-secret',
           VIVID_EXECUTOR_URL: url.href.replace(/\/$/u, ''),
           VIVID_EXECUTOR_KEY: 'isolated-test-key',
           VIVID_EXECUTOR_ORGANIZATION: hostedOrganization,
@@ -88,7 +92,7 @@ it.effect(
       const http = yield* remote()
       yield* Effect.gen(function* () {
         const executor = yield* Executor
-        const entries = yield* executor.catalog()
+        const entries = remoteEntries(yield* executor.catalog())
         expect(entries).toHaveLength(5)
         expect(entries.slice(0, 4).map((entry) => entry.authorization._tag)).toEqual([
           'KnownAfterInstall',
@@ -107,7 +111,7 @@ it.effect(
 describe.skipIf(!testDatabaseConfigured)('setup-required public discovery', () => {
   layer(connectionTestLayer)((test) => {
     test.effect(
-      'preserves deferred setup for Google and refuses an unknown auth hint before import',
+      'preserves deferred setup for a catalogue service and refuses an unknown auth hint before import',
       () =>
         Effect.gen(function* () {
           const { ownerActor, threadId } = yield* fixture()
@@ -119,11 +123,11 @@ describe.skipIf(!testDatabaseConfigured)('setup-required public discovery', () =
           })
           const store = connectionStoreLayer.pipe(Layer.provide(http.configured))
           yield* Effect.gen(function* () {
-            const found = yield* connectionHandlers.FindIntegrations({ query: 'Google' })
+            const found = yield* connectionHandlers.FindIntegrations({ query: 'Acme' })
             expect(found.integrations.map((entry) => entry.name)).toEqual([
-              'Google Calendar',
-              'Gmail',
-              'Google Drive',
+              'Acme Calendar',
+              'Acme Mail',
+              'Acme Drive',
             ])
             expect(found.integrations).toMatchObject([
               {
@@ -142,7 +146,7 @@ describe.skipIf(!testDatabaseConfigured)('setup-required public discovery', () =
             const service = (yield* (yield* ConnectionStore).catalog()).find(
               (entry) => entry.id === 'unknown-auth',
             )
-            if (service === undefined) expect.fail('Expected Google Calendar')
+            if (service === undefined) expect.fail('Expected the unknown-auth service')
             const error = yield* connectionHandlers
               .OfferConnection({ service: service.id, reason: 'Read calendar' })
               .pipe(Effect.flip)
@@ -203,7 +207,7 @@ describe.skipIf(!testDatabaseConfigured)('catalogue Begin without auth hints', (
           )
           yield* Effect.gen(function* () {
             const store = yield* ConnectionStore
-            expect((yield* store.catalog())[0]).toHaveProperty(
+            expect(remoteEntries(yield* store.catalog())[0]).toHaveProperty(
               'authorization._tag',
               'KnownAfterInstall',
             )

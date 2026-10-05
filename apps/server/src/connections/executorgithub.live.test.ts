@@ -12,6 +12,8 @@ const configured = executorLayer.pipe(
   Layer.provide(
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({
+        GOOGLE_CLIENT_ID: 'isolated-test-client',
+        GOOGLE_CLIENT_SECRET: 'isolated-test-secret',
         VIVID_EXECUTOR_URL: NodeProcess.env['VIVID_TEST_EXECUTOR_URL'],
         VIVID_EXECUTOR_KEY: NodeProcess.env['VIVID_TEST_EXECUTOR_KEY'],
         VIVID_EXECUTOR_ORGANIZATION: NodeProcess.env['VIVID_TEST_EXECUTOR_ORGANIZATION'],

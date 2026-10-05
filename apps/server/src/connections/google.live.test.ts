@@ -1,7 +1,7 @@
 import * as NodeProcess from 'node:process'
 import { describe, expect, it } from '@effect/vitest'
 import { ConnectionId, ServiceAuthorization } from '@vivid/contracts'
-import { Console, Effect, Layer, Option, Redacted } from 'effect'
+import { ConfigProvider, Effect, Layer } from 'effect'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import {
   Executor,
@@ -10,86 +10,115 @@ import {
   ExecutorStep,
   executorLayer,
 } from './executor.ts'
-import { googleReturnPath, loadGoogleInstallation } from './google.ts'
+import { googleReturnPath, googleServices, type GoogleService } from './google.ts'
 
-const liveLayer = executorLayer.pipe(Layer.provide(FetchHttpClient.layer))
+/** The address the disposable Executor returns every sign-in to. Start it with
+ * `EXECUTOR_OAUTH_CALLBACK_URL` set to exactly this, as `infra/railway.ts` does with the hosted
+ * server's own address; Executor ignores a return address sent with a request. */
+const returnAddress = `https://vivid.example.test${googleReturnPath}`
+const clientId = 'isolated-test-client'
 
-/** Native Executor requests prove operator-client provisioning for separate Vivid owners.
- * No product database or Google token exchange is involved. Every temporary profile/request
- * is removed; the encrypted operator client registration is intentionally retained in Executor.
- * Assertions use booleans so a failure cannot print either client value or the consent URL.
+const liveLayer = executorLayer.pipe(
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(
+    ConfigProvider.layer(
+      ConfigProvider.fromUnknown({
+        // A stand-in client: Google is asked only for its published sign-in metadata, and no
+        // Person signs in, so no real client or account is involved.
+        GOOGLE_CLIENT_ID: clientId,
+        GOOGLE_CLIENT_SECRET: 'isolated-test-secret',
+        VIVID_EXECUTOR_URL: NodeProcess.env['VIVID_TEST_EXECUTOR_URL'],
+        VIVID_EXECUTOR_KEY: NodeProcess.env['VIVID_TEST_EXECUTOR_KEY'],
+        VIVID_EXECUTOR_ORGANIZATION: NodeProcess.env['VIVID_TEST_EXECUTOR_ORGANIZATION'],
+      }),
+    ),
+  ),
+)
+
+/** Begin one Connection for a separate owner and always remove what it created on Executor: the
+ * profile and its pending request. The app is shared code and stays, which is what the second
+ * Begin then has to find. */
+const begun = Effect.fn('GoogleProof.begin')(function* <A>(
+  google: GoogleService,
+  inspect: (
+    step: typeof ExecutorStep.cases.OpenSignIn.Type,
+    references: typeof ExecutorReferences.cases.GoogleSigningIn.Type,
+  ) => A,
+) {
+  const executor = yield* Executor
+  return yield* Effect.acquireUseRelease(
+    executor
+      .begin({
+        connectionId: ConnectionId.make(crypto.randomUUID()),
+        owner: ExecutorOwnerId.make(`google-proof-${crypto.randomUUID()}`),
+        subject: 'google-proof-person',
+        service: google.service,
+        label: 'Google verification',
+        returnAddress,
+      })
+      .pipe(
+        Effect.catchTags({
+          ExecutorSignInRequired: (error) =>
+            executor.remove(error.references).pipe(Effect.andThen(Effect.fail(error))),
+          ExecutorAuthorizationUnavailable: (error) =>
+            executor.remove(error.references).pipe(Effect.andThen(Effect.fail(error))),
+        }),
+      ),
+    (step) => {
+      if (!ExecutorStep.guards.OpenSignIn(step)) return expect.fail('Google consent URL required')
+      if (!ExecutorReferences.guards.GoogleSigningIn(step.references))
+        return expect.fail('Google correlation required')
+      return Effect.succeed(inspect(step, step.references))
+    },
+    (step) => executor.remove(step.references),
+  )
+})
+
+/**
+ * The real adapter against a disposable hosted Executor, with nothing installed on it beforehand:
+ * no product database and no Google token exchange. For each of the six services the first Begin
+ * deploys Vivid's own source and the second finds that app, and both return Google's own consent
+ * address carrying the client, the return address, the state Vivid stored and the service's scopes.
+ *
+ * Run on the hosted Executor's own image (`executor-selfhost:src-304bf60`), which must be started
+ * with `EXECUTOR_OAUTH_CALLBACK_URL` set to `returnAddress` above. Assertions compare to booleans
+ * so a failure prints neither a client value nor a consent address.
  */
 describe.skipIf(NodeProcess.env['VIVID_LIVE_GOOGLE'] !== '1')(
-  'Google operator provisioning',
+  'Google Integrations on Executor',
   () => {
     it.live(
-      'offers installed Google services and returns real consent URLs for independent owners',
+      'offers the six services, installs each once, and returns Google consent addresses',
       () =>
         Effect.gen(function* () {
-          const installation = yield* loadGoogleInstallation()
-          if (Option.isNone(installation)) expect.fail('Google operator configuration required')
-          const executor = yield* Executor
-          const catalog = yield* executor.catalog()
-          for (const app of installation.value.apps) {
+          const catalog = yield* (yield* Executor).catalog()
+          for (const google of googleServices) {
             expect(
               catalog.some(
                 (entry) =>
-                  entry.id === app.service &&
+                  entry.id === google.service &&
                   ServiceAuthorization.guards.SignIn(entry.authorization),
               ),
             ).toBe(true)
-            yield* Effect.acquireUseRelease(
-              executor
-                .begin({
-                  connectionId: ConnectionId.make(crypto.randomUUID()),
-                  owner: ExecutorOwnerId.make(`google-proof-${crypto.randomUUID()}`),
-                  subject: 'google-proof-person',
-                  service: app.service,
-                  label: 'Google verification',
-                  returnAddress: 'https://vivid.example.test/api/connections/return/verification',
-                })
-                .pipe(
-                  Effect.catchTags({
-                    ExecutorSignInRequired: (error) =>
-                      executor.remove(error.references).pipe(Effect.andThen(Effect.fail(error))),
-                    ExecutorAuthorizationUnavailable: (error) =>
-                      executor.remove(error.references).pipe(Effect.andThen(Effect.fail(error))),
-                  }),
-                ),
-              Effect.fn('GoogleProof.inspect')(function* (step) {
-                if (!ExecutorStep.guards.OpenSignIn(step))
-                  expect.fail('Google consent URL required')
-                if (!ExecutorReferences.guards.GoogleSigningIn(step.references))
-                  expect.fail('Google correlation required')
-                const address = new URL(step.address)
-                expect(address.hostname === 'accounts.google.com').toBe(true)
-                expect(address.pathname === '/o/oauth2/v2/auth').toBe(true)
-                expect(
-                  address.searchParams.get('client_id') ===
-                    Redacted.value(installation.value.client.clientId),
-                ).toBe(true)
-                expect(
-                  address.searchParams.get('redirect_uri') ===
-                    `https://vivid.example.test${googleReturnPath}`,
-                ).toBe(true)
-                expect(step.references.googleState === address.searchParams.get('state')).toBe(true)
-                const scope = address.searchParams.get('scope')
-                expect(scope !== null && scope.includes('https://www.googleapis.com/auth/')).toBe(
-                  true,
-                )
-                yield* Console.log({
-                  service: app.service,
-                  host: address.hostname,
-                  path: address.pathname,
-                  redirect_uri: address.searchParams.get('redirect_uri'),
-                  scope,
-                })
-              }),
-              Effect.fn('GoogleProof.cleanup')((step) => executor.remove(step.references)),
-            )
+            const first = yield* begun(google, (step, references) => {
+              const address = new URL(step.address)
+              const sent = (name: string) => address.searchParams.get(name)
+              expect(address.origin === 'https://accounts.google.com').toBe(true)
+              expect(address.pathname === '/o/oauth2/v2/auth').toBe(true)
+              expect(sent('client_id') === clientId).toBe(true)
+              expect(sent('redirect_uri') === returnAddress).toBe(true)
+              expect(sent('state') === references.googleState).toBe(true)
+              expect(sent('scope') === google.scopes.join(' ')).toBe(true)
+              // Google issues a refresh token only for offline access, and takes no resource.
+              expect(sent('access_type') === 'offline').toBe(true)
+              expect(address.searchParams.has('resource')).toBe(false)
+              return references.app
+            })
+            const second = yield* begun(google, (_step, references) => references.app)
+            expect(second === first).toBe(true)
           }
         }).pipe(Effect.provide(liveLayer)),
-      { timeout: 120_000 },
+      { timeout: 240_000 },
     )
   },
 )

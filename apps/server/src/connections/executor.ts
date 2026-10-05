@@ -39,11 +39,14 @@ import { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './sou
 export { ExecutorSourceUnsupported, ExecutorImportQueryUnsupported } from './source.ts'
 import {
   encodeGoogleClient,
-  googleApp,
+  googleAppName,
+  googleFiles,
+  googleService,
+  googleServices,
   GoogleState,
   decodeGoogleState,
-  loadGoogleInstallation,
-  type GoogleInstallation,
+  loadGoogleClient,
+  type GoogleClient,
 } from './google.ts'
 
 export const ExecutorAppId = Schema.NonEmptyString.pipe(Schema.brand('ExecutorAppId'))
@@ -836,7 +839,7 @@ function referenceIdentity(references: ExecutorReferences) {
 }
 
 /** Compile the narrow foreign response schemas once for this authenticated client. */
-function makeHttp(client: HttpClient.HttpClient, google: Option.Option<GoogleInstallation>) {
+function makeHttp(client: HttpClient.HttpClient, google: GoogleClient) {
   const read = responseReader(client)
   const readApp = read(WireApp)
   const readInventory = read(WireInventory)
@@ -951,19 +954,21 @@ function makeSignIn(
     pending: typeof ExecutorReferences.cases.SigningIn.Type,
     methodName: string,
   ) {
-    const installed = googleApp(http.google, input.service)
+    // A Google service signs in with the installation's own Google client, sent on every start:
+    // Executor keeps it encrypted under the owner, provider, callback and scopes it was used for
+    // (`resolveSetup` and `beginOAuth` in its `packages/sdk/src/implementation/oauth.ts`).
+    const installed = googleService(input.service)
     const submission = { method: methodName, label: input.label }
-    const body =
-      Option.isSome(installed) && Option.isSome(http.google)
-        ? {
-            ...submission,
-            client: yield* encodeGoogleClient(http.google.value.client).pipe(
-              Effect.mapError(() =>
-                ExecutorResponseInvalid.make({ service: 'connections', tool: null }),
-              ),
+    const body = Option.isSome(installed)
+      ? {
+          ...submission,
+          client: yield* encodeGoogleClient(http.google).pipe(
+            Effect.mapError(() =>
+              ExecutorResponseInvalid.make({ service: 'connections', tool: null }),
             ),
-          }
-        : submission
+          ),
+        }
+      : submission
     const result = yield* http
       .readSignIn(post(`/connections/${query(pending.authorization)}/oauth/start`, body), null)
       .pipe(
@@ -1286,11 +1291,6 @@ function keyLabel(name: string, field: typeof FieldSchema.Type) {
  */
 function makeInspectSetup(http: ExecutorHttp) {
   return Effect.fn('Executor.inspectSetup')(function* (requirement: typeof Requirement.Type) {
-    if (
-      Option.isSome(http.google) &&
-      http.google.value.apps.some((app) => app.provider === requirement.provider)
-    )
-      return ServiceAuthorization.cases.SignIn.make({})
     const methods = Object.entries(requirement.definition.auth)
     const signIn = methods.find(([, method]) => AuthorizationMethod.guards.oauth2(method))
     const key = methods.find(([, method]) => AuthorizationMethod.guards.secrets(method))
@@ -1461,6 +1461,9 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
         )
       if (keyedService(service) !== undefined) return personalKeyAuthorization()
       if (ServiceAuthorization.guards.None(entry.authorization)) return entry.authorization
+      // Google signs in with the client Vivid sends on each start. Executor holds none until the
+      // first one, so asking it about setup would answer `client-required` for a service that works.
+      if (Option.isSome(googleService(service))) return entry.authorization
       const definition = HashMap.get(yield* Ref.get(definitions), service)
       if (Option.isNone(definition)) return entry.authorization
       const authorization = yield* permits.withPermits(1)(
@@ -1627,10 +1630,9 @@ const makeInstall = Effect.fn('Executor.installLocks')(function* (http: Executor
   const locks = yield* RcMap.make({ lookup: (_name: string) => Semaphore.make(1) })
   const provision = makeProvision(http)
   return Effect.fn('Executor.install')(function* (
-    service: ServiceId,
+    name: string,
     install: (name: string) => Effect.Effect<typeof WireApp.Type, ExecutorFailure>,
   ) {
-    const name = integrationAppName(service)
     const permit = yield* RcMap.get(locks, name)
     return yield* permit.withPermit(provision(name, install))
   }, Effect.scoped)
@@ -1664,9 +1666,20 @@ function makeBegin(
       )
     // Hosted CatalogEntry omits auth. Explicit Begin installs first, then its real requirements
     // establish authorization; absent catalog hints never grant unauthenticated access.
-    const app = yield* install(input.service, (name) =>
-      http.readApp(post('/apps/install', { entry: entry.id, name }), null),
-    )
+    // A Google service is no catalogue install: Executor's catalogue only names its definition
+    // (kind `openapi`, which `/apps/install` refuses), so Vivid deploys its own source for it. The
+    // name carries the source's hash, so the first Begin on an organization deploys and every
+    // later one, from any server on the same source, finds that app.
+    const app = yield* Option.match(googleService(input.service), {
+      onNone: () =>
+        install(integrationAppName(input.service), (name) =>
+          http.readApp(post('/apps/install', { entry: entry.id, name }), null),
+        ),
+      onSome: (google) =>
+        install(googleAppName(google), (name) =>
+          http.readApp(post('/apps/deploy', { name, files: googleFiles(google) }), null),
+        ),
+    })
     const authorization =
       Object.keys(app.requirements.accounts).length === 0
         ? ServiceAuthorization.cases.None.make({})
@@ -1873,7 +1886,7 @@ function makeAdd(
     if (policy !== undefined || input.source.authorization === 'apiKey')
       return yield* keyed(input, transport)
     const app = yield* Effect.acquireRelease(
-      install(ServiceId.make(`import:${input.connectionId}`), (name) => {
+      install(integrationAppName(ServiceId.make(`import:${input.connectionId}`)), (name) => {
         // Executor resolves the inspected URL again; production requires public-only egress.
         const source = WireImportSource.make({ name, url: input.source.address })
         return http.readApp(post('/apps/import', { source }), null)
@@ -2202,8 +2215,7 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
       HttpClientRequest.acceptJson,
     ),
   )
-  const google = yield* loadGoogleInstallation()
-  const http = makeHttp(client, google)
+  const http = makeHttp(client, yield* loadGoogleClient())
   const remoteCatalog = yield* retainCatalog(
     makeCatalog(http)().pipe(
       Effect.mapError(() =>
@@ -2215,26 +2227,22 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
     capacity: 1000,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? '5 minutes' : 0),
   })
+  // Vivid's own Google services lead the catalogue and need nothing from Executor to be listed,
+  // so they stay offered while its public catalogue feed is unavailable.
+  const google = googleServices.map((service) =>
+    ExecutorServiceEntry.make({
+      id: service.service,
+      name: service.name,
+      description: service.description,
+      domain: service.domain,
+      authorization: ServiceAuthorization.cases.SignIn.make({}),
+    }),
+  )
   const catalog = Effect.fn('Executor.installedCatalog')(function* () {
-    const installed = Option.match(google, {
-      onNone: () => [],
-      onSome: (value) =>
-        value.apps.map((app) =>
-          ExecutorServiceEntry.make({
-            id: app.service,
-            name: app.name,
-            description: app.name,
-            domain: null,
-            authorization: ServiceAuthorization.cases.SignIn.make({}),
-          }),
-        ),
-    })
     const remote = yield* remoteCatalog().pipe(
-      Effect.catchTag('ServiceUnavailable', (error) =>
-        installed.length > 0 ? Effect.succeed([]) : Effect.fail(error),
-      ),
+      Effect.catchTag('ServiceUnavailable', () => Effect.succeed([])),
     )
-    return [...installed, ...remote.filter((entry) => Option.isNone(googleApp(google, entry.id)))]
+    return [...google, ...remote.filter((entry) => Option.isNone(googleService(entry.id)))]
   })
   const availability = yield* makeAuthorization(http, catalog)
   const discover = Effect.fn('Executor.discoverCached')((references: ExecutorReferences) =>
