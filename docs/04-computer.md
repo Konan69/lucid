@@ -302,9 +302,12 @@ hosted: runtime --> server --SSH--> the Person's Computer
 ```
 
 - **Direction.** The server dials out to each Computer on port 22. Nothing dials in to the server.
-- **Finding the machine.** Each Computer has its own public address. The address, the host name
-  and the machine id change when a machine is stopped and resumed, so the server asks the provider
-  for the address after every wake and never stores it.
+- **Finding the machine.** The address comes from the provider's answer to the key call, after
+  every wake, and is never stored: the address, the host name and the machine id all change when a
+  machine is stopped and resumed. A machine has either a public IPv4 address of its own or only an
+  IPv6 one; the same machine had each within one hour. For an IPv6-only machine the answer also
+  carries an SSH endpoint, a host and port on IPv4. The hosted server has no IPv6 route, so the
+  rule is: use the SSH endpoint when the answer has one, else the machine's address on port 22.
 - **Keys.** One key pair for the installation. The private half is a required server setting. The
   public half is authorized on a Computer through the provider when the Computer wakes; the same
   call returns the machine's host key, which the server checks when it connects. A wrong host is a
@@ -327,28 +330,49 @@ hosted: runtime --> server --SSH--> the Person's Computer
 
 ### Measured on 5 October 2026
 
-On a second machine of the same provider account, not on a Person's Computer.
+On a second machine of the same provider account, not on a Person's Computer. "Hosted server"
+means inside the production server's container.
 
-| What                                                      | Result                                          |
-| --------------------------------------------------------- | ----------------------------------------------- |
-| Authorizing a key through the provider, on the trial plan | Accepted; repeating it is harmless              |
-| What that call returns                                    | The address, the user, and one ed25519 host key |
-| From the hosted server: connection to port 22             | 20 ms                                           |
-| From the hosted server: first bytes of SSH                | 51 ms                                           |
-| From a development machine in Lagos: the same two         | 165 ms and 345 ms                               |
-| From that machine: a whole first connection               | 2.6 s                                           |
-| From that machine: a command on the open connection       | 0.35 s                                          |
-| A 5 MB stream over the connection                         | Arrived intact                                  |
-| An SSH session and a provider command                     | See the same machine and processes              |
+| What                                                                                  | Result                                                                                          |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Authorizing a key through the provider, on the trial plan                             | Accepted; repeating it is harmless                                                              |
+| What that call returns                                                                | The address, the user, one ed25519 host key, and the SSH endpoint when the machine is IPv6-only |
+| Hosted server to a machine with its own IPv4: connection to port 22                   | 20 ms, four of four                                                                             |
+| Hosted server to that machine: first bytes of SSH                                     | 51 ms, four of four                                                                             |
+| Hosted server to an IPv6 address                                                      | Refused locally: no route                                                                       |
+| Hosted server to the SSH endpoint of an IPv6-only machine: connection                 | 42 ms                                                                                           |
+| Hosted server to that endpoint: first bytes of SSH                                    | 85 ms twice, 1.1 s and 3.2 s once each                                                          |
+| A whole session from the hosted server through that endpoint: handshake and key login | 1.5 s                                                                                           |
+| In that session: the host key against the one the provider reported                   | Equal                                                                                           |
+| In that session: a command, then the next one                                         | 0.42 s, 0.68 s                                                                                  |
+| In that session: a file written, read back and removed                                | Identical; 2.6 s for the three                                                                  |
+| From a development machine in Lagos, direct IPv4: a first connection, then a command  | 2.6 s, 0.35 s                                                                                   |
+| A 5 MB stream over a connection                                                       | Arrived intact                                                                                  |
+| An SSH session and a provider command                                                 | See the same machine and processes                                                              |
+
+What the numbers say: a machine with its own IPv4 is close to the hosted server, and the path
+through the endpoint is slower and uneven. Which of the two a machine gets is the provider's
+choice at each wake. One held connection pays the handshake once; each command still pays the
+path.
+
+### What starting a conversation asks of the machine
+
+Read in the installed Flue 2.2.2 (`discoverSessionContext`). When a conversation starts and the
+slot holds a machine, the runtime asks it, at the working directory: whether `AGENTS.md`,
+`CLAUDE.md` and `.agents/skills` exist, and for the directory listing. A failed listing is
+tolerated; a failed "exists" fails the start. Today these are answered by the stand-in and never
+reach a machine, so starting a conversation does not wake the Computer. With the real machine in
+the slot they would, so the rule is: while the Computer is not running, these four questions are
+answered "nothing there" without waking it, and only a tool the model calls wakes it.
 
 ### Not verified
 
-- A whole SSH session from the hosted server. Only the port and the first bytes were measured.
-- What the runtime, beside the server, requests over the connection when a conversation starts,
-  and so whether starting one would wake a sleeping Computer. It must not.
 - How long after a wake a machine accepts SSH. Its command endpoint refuses for 20 to 40 seconds.
+  One wake watched on 5 October had not finished starting after ten minutes.
 - The same steps on a Person's Computer. There is no test Computer: the proof on one can only be
   run on the deployed product.
+- A direct IPv4 session from the hosted server. Only the connection and first bytes were measured
+  on that path; the whole session was run through the endpoint.
 
 ## Runtime on the Computer: planned
 
