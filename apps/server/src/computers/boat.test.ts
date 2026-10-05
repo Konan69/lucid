@@ -650,19 +650,20 @@ const serverLayer = Layer.effect(
         })
       }
       // The adopted machine stops and starts like the created one.
-      const machine = path.startsWith(`/api/v1/sandboxes/${adoptedId}/`) ? adoptedId : id
-      if (path === `/api/v1/sandboxes/${machine}/stop`) {
+      const stopping = [id, adoptedId].find((known) => path === `/api/v1/sandboxes/${known}/stop`)
+      if (stopping !== undefined) {
         yield* Stop
         yield* Ref.update(evidence.stops, (count) => count + 1)
         yield* Ref.set(evidence.state, 'archived')
         return HttpServerResponse.jsonUnsafe({
           ok: true,
           type: 'sandbox.stopping',
-          id: machine,
+          id: stopping,
           status: 'archiving',
         })
       }
-      if (path === `/api/v1/sandboxes/${machine}/resume`) {
+      const resuming = [id, adoptedId].find((known) => path === `/api/v1/sandboxes/${known}/resume`)
+      if (resuming !== undefined) {
         const asked = yield* Resume
         if (yield* Ref.get(evidence.breakResume)) {
           yield* Ref.update(evidence.resumes, (sizes) => [...sizes, asked.type])
@@ -674,7 +675,7 @@ const serverLayer = Layer.effect(
         return HttpServerResponse.jsonUnsafe({
           ok: true,
           type: 'sandbox.resuming',
-          id: machine,
+          id: resuming,
           status: 'resuming',
         })
       }
