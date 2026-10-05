@@ -163,6 +163,33 @@ void test('shared lint and TypeScript inputs invalidate the correct cached tasks
     runner.get('@vivid/contracts#types').hash,
   )
   assert.notEqual(plugin.get('@vivid/web#typecheck').hash, runner.get('@vivid/web#typecheck').hash)
+  assert.equal(plugin.get('@vivid/web#lint').hash, runner.get('@vivid/web#lint').hash)
+})
+
+/** tsgolint reopens referenced source, so declaration emission must not delay lint. */
+void test('lint checks every workspace without executing declaration producers', (t) => {
+  const root = fixture(t)
+  runTurbo(root, ['lint', 'lint:root', '--concurrency=1', '--ui=stream'])
+  const receipts = []
+  for (const directory of [
+    '',
+    'apps/desktop',
+    'apps/mobile',
+    'apps/server',
+    'apps/web',
+    'packages/contracts',
+    'packages/client/rpc',
+    'packages/computer/state',
+    'packages/client/state',
+    'packages/design/marks',
+    'packages/design/tokens',
+    'packages/agent/runtime',
+    'packages/agent/skills',
+  ]) {
+    receipts.push(NodeFS.readFileSync(NodePath.join(root, directory, '.cache/executions'), 'utf8'))
+  }
+  assert.equal(receipts.filter((receipt) => receipt === 'lint\n').length, 12)
+  assert.equal(receipts.filter((receipt) => receipt === 'lint:root\n').length, 1)
 })
 
 /** Contracts still invalidate consumers when their declarations are generated separately. */

@@ -13,6 +13,7 @@ const repositoryRoot = NodePath.resolve(
   '..',
 )
 const turbo = NodePath.join(repositoryRoot, 'node_modules/turbo/bin/turbo')
+const oxlint = NodePath.join(repositoryRoot, 'node_modules/oxlint/bin/oxlint')
 
 /** Exercise the real pinned compiler and repository configs with small owned source files. */
 function fixture(t) {
@@ -216,4 +217,45 @@ void test('restored declaration caches retain production, test, and consumer err
   const consumer = cachedCheck(root)
   assert.notEqual(consumer.status, 0)
   assert.match(consumer.stdout, /@vivid\/client-runtime:types: src\/index\.ts.*TS2322/u)
+})
+
+/** The pinned engine must retain semantic lint diagnostics without emitted references. */
+void test('typed lint diagnoses production, tests, and consumers before declaration emission', (t) => {
+  const root = fixture(t)
+  NodeFS.writeFileSync(
+    NodePath.join(root, '.oxlintrc.json'),
+    '{"rules":{"typescript/no-floating-promises":"error"}}\n',
+  )
+  for (const file of [
+    'packages/contracts/src/index.ts',
+    'packages/contracts/src/check.test.ts',
+    'packages/client/rpc/src/index.ts',
+  ]) {
+    NodeFS.appendFileSync(NodePath.join(root, file), 'Promise.resolve(1)\n')
+  }
+  const result = NodeChildProcess.spawnSync(
+    process.execPath,
+    [
+      oxlint,
+      '--type-aware',
+      '--threads=1',
+      '--format=unix',
+      'packages/contracts',
+      'packages/client/rpc',
+    ],
+    {
+      cwd: root,
+      env: {
+        ...process.env,
+        GOMAXPROCS: '1',
+        OXLINT_TSGOLINT_PATH: NodePath.join(repositoryRoot, 'node_modules/.bin/tsgolint'),
+      },
+      encoding: 'utf8',
+    },
+  )
+  assert.notEqual(result.status, 0)
+  assert.match(result.stdout, /contracts\/src\/index\.ts.*no-floating-promises/u)
+  assert.match(result.stdout, /check\.test\.ts.*no-floating-promises/u)
+  assert.match(result.stdout, /client\/rpc\/src\/index\.ts.*no-floating-promises/u)
+  assert.ok(!NodeFS.existsSync(NodePath.join(root, 'packages/contracts/.cache/typescript/types')))
 })

@@ -18,7 +18,7 @@
       "outputs": [".cache/typescript/**", "*.tsbuildinfo"]
     },
     "lint": {
-      "dependsOn": ["types", "^types", "checkinputs"],
+      "dependsOn": ["checkinputs"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/.oxlintrc.json",
@@ -110,19 +110,13 @@
       ]
     },
     "@vivid/skills#lint": {
-      "dependsOn": [
-        "types",
-        "^types",
-        "checkinputs",
-        "@vivid/agent-runtime#types",
-        "@vivid/agent-runtime#checkinputs"
-      ]
+      "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"]
     },
     "@vivid/agent-runtime#typecheck": {
       "dependsOn": ["types", "^types", "checkinputs", "@vivid/server#checkinputs"]
     },
     "@vivid/agent-runtime#lint": {
-      "dependsOn": ["types", "^types", "checkinputs", "@vivid/server#checkinputs"]
+      "dependsOn": ["checkinputs", "@vivid/server#checkinputs"]
     },
     "@vivid/server#typecheck": {
       "dependsOn": [
@@ -134,19 +128,13 @@
       ]
     },
     "@vivid/server#lint": {
-      "dependsOn": [
-        "types",
-        "^types",
-        "checkinputs",
-        "@vivid/agent-runtime#types",
-        "@vivid/agent-runtime#checkinputs"
-      ]
+      "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"]
     },
     "@vivid/mobile#typecheck": {
       "dependsOn": ["types", "^types", "checkinputs", "@vivid/web#checkinputs"]
     },
     "@vivid/mobile#lint": {
-      "dependsOn": ["types", "^types", "checkinputs", "@vivid/web#checkinputs"]
+      "dependsOn": ["checkinputs", "@vivid/web#checkinputs"]
     }
   }
 }
