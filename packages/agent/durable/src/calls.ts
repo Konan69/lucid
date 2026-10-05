@@ -1,11 +1,12 @@
 import type { UIMessageChunk } from 'ai'
+import { Match, Option } from 'effect'
 
 import { holdKind, type Plan, type Settlement } from './holds.ts'
 
 /** What the stream must know about a conversation's tools to present their calls. */
 export type Desk = {
   /** The plan of a bridged tool, by name; `undefined` for any other Pi Durable tool. */
-  readonly plan: (toolName: string) => Plan | undefined
+  readonly plan: (toolName: string) => Option.Option<Plan>
   /** Settlements committed so far, by tool call id. */
   readonly settled: Readonly<Record<string, Settlement>>
 }
@@ -46,14 +47,14 @@ type InputAvailable = Extract<UIMessageChunk, { type: 'tool-input-available' }>
  */
 function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown {
   const plan = desk.plan(chunk.toolName)
-  if (plan === undefined) {
+  if (Option.isNone(plan)) {
     return {
       round: { ...round, running: new Set([...round.running, chunk.toolCallId]) },
       chunks: [chunk],
     }
   }
   const { dynamic: _dynamic, ...typed } = chunk
-  const kind = holdKind(plan, chunk.input)
+  const kind = holdKind(plan.value, chunk.input)
   const settled = desk.settled[chunk.toolCallId]
   const request: readonly UIMessageChunk[] =
     kind === 'approval'
@@ -86,28 +87,29 @@ function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown 
 
 /** Present one translated chunk. */
 function show(round: Round, chunk: UIMessageChunk, desk: Desk): Shown {
-  switch (chunk.type) {
-    case 'tool-input-start': {
-      if (desk.plan(chunk.toolName) === undefined) return { round, chunks: [chunk] }
-      const { dynamic: _dynamic, ...typed } = chunk
+  return Match.value(chunk).pipe(
+    Match.when({ type: 'tool-input-start' }, (input): Shown => {
+      if (Option.isNone(desk.plan(input.toolName))) return { round, chunks: [input] }
+      const { dynamic: _dynamic, ...typed } = input
       return { round, chunks: [typed] }
-    }
-    case 'tool-input-available':
-      return inputAvailable(round, chunk, desk)
-    case 'tool-output-available':
-      return { round: close(round, chunk.toolCallId), chunks: [chunk] }
-    case 'tool-output-error': {
-      // Pi Durable reports a denied call as a blocked call, which is an error result. The AI SDK
-      // has a state of its own for it.
-      const denied = desk.settled[chunk.toolCallId]?.kind === 'denied'
+    }),
+    Match.when({ type: 'tool-input-available' }, (input) => inputAvailable(round, input, desk)),
+    Match.when({ type: 'tool-output-available' }, (output): Shown => ({
+      round: close(round, output.toolCallId),
+      chunks: [output],
+    })),
+    Match.when({ type: 'tool-output-error' }, (output): Shown => {
+      // Pi's blocked result becomes the AI SDK denial state only when the durable decision denied it.
+      const settled = desk.settled[output.toolCallId]
+      const denied = settled !== undefined && settled.kind === 'denied'
       return {
-        round: close(round, chunk.toolCallId),
-        chunks: [denied ? { type: 'tool-output-denied', toolCallId: chunk.toolCallId } : chunk],
+        round: close(round, output.toolCallId),
+        chunks: [denied ? { type: 'tool-output-denied', toolCallId: output.toolCallId } : output],
       }
-    }
-    default:
-      return { round, chunks: [chunk] }
-  }
+    }),
+    // Every other chunk, including open-ended data-* extensions, has no tool-presentation behavior.
+    Match.orElse((other): Shown => ({ round, chunks: [other] })),
+  )
 }
 
 /**

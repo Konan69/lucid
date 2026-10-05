@@ -9,6 +9,7 @@ import {
   watchEvents,
 } from '@earendil-works/pi-durable'
 import type { UIMessageChunk } from 'ai'
+import { Option } from 'effect'
 
 import { type Desk, emptyRound, needsDesk, parked, present, type Round } from './calls.ts'
 import {
@@ -32,7 +33,7 @@ export type RunInput = {
 type Controller = ReadableStreamDefaultController<UIMessageChunk>
 
 /** The desk for a batch with no tool chunks: nothing to look up. */
-const noDesk: Desk = { plan: () => undefined, settled: {} }
+const noDesk: Desk = { plan: () => Option.none(), settled: {} }
 
 /** Read the conversation's current tools and settlements. Tools can change between turns. */
 async function readDesk(
@@ -48,7 +49,10 @@ async function readDesk(
     }),
   )
   const holds = await harness.snapshot(Holds, conversation.id, context)
-  return { plan: (toolName) => plans.get(toolName), settled: holds?.settled ?? {} }
+  return {
+    plan: (toolName) => Option.fromNullishOr(plans.get(toolName)),
+    settled: holds?.settled ?? {},
+  }
 }
 
 /**
@@ -195,7 +199,7 @@ export async function attachRun(
 ): Promise<ReadableStream<UIMessageChunk> | undefined> {
   const conversation = await existing(harness, conversationId, context)
   const events = await watchEvents(harness, conversationId, context)
-  const prefix = replay(events.snapshot)
+  const prefix = Option.getOrUndefined(replay(events.snapshot))
   if (prefix === undefined) {
     await events.stop()
     return undefined
@@ -227,7 +231,7 @@ export async function continueRun(
 ): Promise<ReadableStream<UIMessageChunk> | undefined> {
   const conversation = await existing(harness, conversationId, context)
   const events = await watchEvents(harness, conversationId, context)
-  const prefix = replayAfter(events.snapshot, known)
+  const prefix = Option.getOrUndefined(replayAfter(events.snapshot, known))
   if (prefix === undefined) {
     await events.stop()
     return undefined

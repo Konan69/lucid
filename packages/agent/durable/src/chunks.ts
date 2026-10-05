@@ -6,6 +6,12 @@ import type {
   SnapshotEvent,
 } from '@earendil-works/pi-durable'
 import type { UIMessageChunk } from 'ai'
+import { Array as Arr, Match, Option, Schema } from 'effect'
+
+/** Pi's closed event and block types are exhaustive; an impossible branch indicates an SDK contract defect. */
+const unreachable = (value: never): never => {
+  throw new Error(`Unexpected Pi variant: ${String(value)}`)
+}
 
 /**
  * How far one content block of the in-flight assistant message has been reported.
@@ -59,6 +65,7 @@ function openBlock(state: RunState, contentIndex: number, block: Block): readonl
         { type: 'tool-input-start', toolCallId: block.id, toolName: block.name, dynamic: true },
       ]
   }
+  return unreachable(block)
 }
 
 /** Chunks that close a block whose final value is `block`. */
@@ -84,6 +91,7 @@ function closeBlock(
         },
       ]
   }
+  return unreachable(block)
 }
 
 /** The text a block holds now, as one delta. Empty text gives no chunk; a tool call has none. */
@@ -190,6 +198,7 @@ function applyChange(state: RunState, change: MessageChange): Step {
     case 'message':
       return finishMessage(state, change.message)
   }
+  return unreachable(change)
 }
 
 /** Report every block of `message` that is not closed yet. */
@@ -208,18 +217,20 @@ const resultText = (result: ToolResultMessage) =>
   result.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('')
 
 /** The tool result message of a `pi.tool-result` entry. */
-function toolResult(entry: EntryRecord): ToolResultMessage | undefined {
-  const message = entry.model?.[0]
-  return message?.role === 'toolResult' ? message : undefined
+function toolResult(entry: EntryRecord): Option.Option<ToolResultMessage> {
+  return Option.fromNullishOr(entry.model).pipe(
+    Option.flatMap(Arr.head),
+    Option.filter((message): message is ToolResultMessage => message.role === 'toolResult'),
+  )
 }
 
 /**
  * The end of one tool call. An absent entry means the tool task faulted or was orphaned, which the
  * model also sees as a failed call.
  */
-function toolEnd(toolCallId: string, entry: EntryRecord | undefined): readonly UIMessageChunk[] {
-  const result = entry === undefined ? undefined : toolResult(entry)
-  if (result === undefined) {
+function toolEnd(toolCallId: string, entry: Option.Option<EntryRecord>): readonly UIMessageChunk[] {
+  const found = Option.flatMap(entry, toolResult)
+  if (Option.isNone(found)) {
     return [
       {
         type: 'tool-output-error',
@@ -229,6 +240,7 @@ function toolEnd(toolCallId: string, entry: EntryRecord | undefined): readonly U
       },
     ]
   }
+  const result = found.value
   if (result.isError) {
     return [{ type: 'tool-output-error', toolCallId, errorText: resultText(result), dynamic: true }]
   }
@@ -236,24 +248,26 @@ function toolEnd(toolCallId: string, entry: EntryRecord | undefined): readonly U
   // `streamText` would give it. Any other Pi Durable tool gives what the model read, and its details.
   const output = bridgedOutput(result.details)
   return [
-    output === undefined
+    Option.isNone(output)
       ? {
           type: 'tool-output-available',
           toolCallId,
           output: { content: result.content, details: result.details },
           dynamic: true,
         }
-      : { type: 'tool-output-available', toolCallId, output: output.output },
+      : { type: 'tool-output-available', toolCallId, output: output.value.output },
   ]
 }
 
 /** The output a bridged tool stored in its result details: `{ output }` and nothing else. */
-function bridgedOutput(details: unknown): { readonly output: unknown } | undefined {
-  if (typeof details !== 'object' || details === null || Array.isArray(details)) return undefined
-  const keys = Object.keys(details)
-  return keys.length === 1 && keys[0] === 'output'
-    ? (details as { readonly output: unknown })
-    : undefined
+const BridgedOutput = Schema.Struct({ output: Schema.Unknown })
+const decodeBridgedOutput = Schema.decodeUnknownOption(BridgedOutput, { onExcessProperty: 'error' })
+
+/** Pi details are SDK ingress; only the bridge's exact single-key envelope is recognized. */
+function bridgedOutput(
+  details: ToolResultMessage['details'],
+): Option.Option<typeof BridgedOutput.Type> {
+  return decodeBridgedOutput(details)
 }
 
 /**
@@ -279,60 +293,50 @@ function assistantEnd(state: RunState, message: AssistantMessage): Step {
  * chunks here; they are the caller's to surface.
  */
 export function translate(state: RunState, event: AgentEvent): Step {
-  switch (event.type) {
-    case 'run_start':
-      return {
-        state: initialRunState,
-        chunks: [{ type: 'start', messageId: `run:${event.inputs.join('+')}` }],
-      }
-    case 'run_end':
-      return {
-        state,
-        chunks: [
-          ...state.failure.map((errorText) => ({ type: 'error' as const, errorText })),
-          { type: 'finish' },
-        ],
-      }
-    case 'turn_start':
-      return startTurn(state)
-    case 'message_start':
-      return event.message.role === 'assistant'
-        ? startResponse(state, event.message)
-        : { state, chunks: [] }
-    case 'turn_end':
-      return { state, chunks: [{ type: 'finish-step' }] }
-    case 'message_update':
-      return event.changes.reduce<Step>(
+  return Match.value(event).pipe(
+    Match.when({ type: 'run_start' }, (started): Step => ({
+      state: initialRunState,
+      chunks: [{ type: 'start', messageId: `run:${started.inputs.join('+')}` }],
+    })),
+    Match.when({ type: 'run_end' }, (): Step => ({
+      state,
+      chunks: [
+        ...state.failure.map((errorText): UIMessageChunk => ({ type: 'error', errorText })),
+        { type: 'finish' },
+      ],
+    })),
+    Match.when({ type: 'turn_start' }, () => startTurn(state)),
+    Match.when({ type: 'message_start' }, (started) =>
+      started.message.role === 'assistant'
+        ? startResponse(state, started.message)
+        : { state, chunks: [] },
+    ),
+    Match.when({ type: 'turn_end' }, (): Step => ({ state, chunks: [{ type: 'finish-step' }] })),
+    Match.when({ type: 'message_update' }, (update) =>
+      update.changes.reduce<Step>(
         (step, change) => {
           const next = applyChange(step.state, change)
           return { state: next.state, chunks: [...step.chunks, ...next.chunks] }
         },
         { state, chunks: [] },
-      )
-    case 'message_end': {
-      const message = event.entry.model?.[0]
-      return message?.role === 'assistant' ? assistantEnd(state, message) : { state, chunks: [] }
-    }
-    case 'tool_execution_end':
-      return { state, chunks: toolEnd(event.toolCallId, event.entry) }
-    // No AI SDK counterpart. Listed, not defaulted, so a new Pi Durable event fails the typecheck
-    // here and gets a decision.
-    case 'snapshot':
-    case 'tool_execution_start':
-    case 'tool_execution_update':
-    case 'inbox_update':
-    case 'submission':
-    case 'auto_retry_start':
-    case 'auto_retry_end':
-    case 'deferred_poll':
-    case 'entry_appended':
-    case 'agent_changed':
-    case 'usage_changed':
-    case 'task_failed':
-    case 'compaction_start':
-    case 'compaction_end':
-      return { state, chunks: [] }
-  }
+      ),
+    ),
+    Match.when({ type: 'message_end' }, (ended) =>
+      Option.fromNullishOr(ended.entry.model).pipe(
+        Option.flatMap(Arr.head),
+        Option.filter((message): message is AssistantMessage => message.role === 'assistant'),
+        Option.match({
+          onNone: () => ({ state, chunks: [] }),
+          onSome: (message) => assistantEnd(state, message),
+        }),
+      ),
+    ),
+    Match.when({ type: 'tool_execution_end' }, (ended) => ({
+      state,
+      chunks: toolEnd(ended.toolCallId, Option.fromNullishOr(ended.entry)),
+    })),
+    Match.orElse((other) => untranslated(state, other)),
+  )
 }
 
 const join = (a: Step, b: Step): Step => ({ state: b.state, chunks: [...a.chunks, ...b.chunks] })
@@ -345,13 +349,16 @@ function runEntries(entries: readonly EntryRecord[]): readonly EntryRecord[] {
 
 /** One stored entry of the run in progress, as the chunks its live events would have produced. */
 function replayEntry(state: RunState, entry: EntryRecord): Step {
-  const message = entry.model?.[0]
-  if (message?.role === 'assistant') {
+  const found = Option.fromNullishOr(entry.model).pipe(Option.flatMap(Arr.head))
+  if (Option.isNone(found)) return { state, chunks: [] }
+  const message = found.value
+  if (message.role === 'assistant') {
     const turn = startTurn(state)
     const response: RunState = { ...turn.state, response: turn.state.response + 1, failure: [] }
     return join(turn, assistantEnd(response, message))
   }
-  if (message?.role === 'toolResult') return { state, chunks: toolEnd(message.toolCallId, entry) }
+  if (message.role === 'toolResult')
+    return { state, chunks: toolEnd(message.toolCallId, Option.some(entry)) }
   return { state, chunks: [] }
 }
 
@@ -369,8 +376,8 @@ function replayPartial(state: RunState, message: AssistantMessage): Step {
  *
  * Limit: a steer adds a user entry inside a run, so the prefix then starts at the steer.
  */
-export function replay(snapshot: SnapshotEvent): Step | undefined {
-  if (snapshot.run === undefined) return undefined
+export function replay(snapshot: SnapshotEvent): Option.Option<Step> {
+  if (snapshot.run === undefined) return Option.none()
   const started: Step = {
     state: initialRunState,
     chunks: [{ type: 'start', messageId: `run:${snapshot.run.inputs.join('+')}` }],
@@ -379,16 +386,24 @@ export function replay(snapshot: SnapshotEvent): Step | undefined {
     (step, entry) => join(step, replayEntry(step.state, entry)),
     started,
   )
-  const partial = snapshot.generation?.message
-  return partial === undefined ? stored : join(stored, replayPartial(stored.state, partial))
+  const partial = Option.fromNullishOr(snapshot.generation).pipe(
+    Option.flatMapNullishOr((generation) => generation.message),
+  )
+  return Option.some(
+    Option.match(partial, {
+      onNone: () => stored,
+      onSome: (message) => join(stored, replayPartial(stored.state, message)),
+    }),
+  )
 }
 
 /** Whether `entry` is an assistant message that calls one of the tool calls in `known`. */
 function callsAny(entry: EntryRecord, known: ReadonlySet<string>): boolean {
-  const message = entry.model?.[0]
+  const found = Option.fromNullishOr(entry.model).pipe(Option.flatMap(Arr.head))
   return (
-    message?.role === 'assistant' &&
-    message.content.some((block) => block.type === 'toolCall' && known.has(block.id))
+    Option.isSome(found) &&
+    found.value.role === 'assistant' &&
+    found.value.content.some((block) => block.type === 'toolCall' && known.has(block.id))
   )
 }
 
@@ -406,9 +421,9 @@ function callsAny(entry: EntryRecord, known: ReadonlySet<string>): boolean {
 export function replayAfter(
   snapshot: SnapshotEvent,
   known: ReadonlySet<string>,
-): { readonly step: Step; readonly live: boolean } | undefined {
+): Option.Option<{ readonly step: Step; readonly live: boolean }> {
   const at = snapshot.entries.findLastIndex((entry) => callsAny(entry, known))
-  if (at === -1) return undefined
+  if (at === -1) return Option.none()
   const rest = snapshot.entries.slice(at + 1)
   const nextInput = rest.findIndex((entry) => entry.kind === 'pi.user')
   const live = nextInput === -1 && snapshot.run !== undefined
@@ -417,9 +432,60 @@ export function replayAfter(
     // No message id: the client continues the assistant message it already has.
     { state: initialRunState, chunks: [{ type: 'start' }] },
   )
-  const partial = live ? snapshot.generation?.message : undefined
-  return {
-    step: partial === undefined ? stored : join(stored, replayPartial(stored.state, partial)),
+  const partial = live
+    ? Option.fromNullishOr(snapshot.generation).pipe(
+        Option.flatMapNullishOr((generation) => generation.message),
+      )
+    : Option.none()
+  return Option.some({
+    step: Option.match(partial, {
+      onNone: () => stored,
+      onSome: (message) => join(stored, replayPartial(stored.state, message)),
+    }),
     live,
-  }
+  })
+}
+
+/** Events without a chunk counterpart remain exhaustive without bloating the translator's decisions. */
+function untranslated(
+  state: RunState,
+  event: Exclude<
+    AgentEvent,
+    {
+      type:
+        | 'run_start'
+        | 'run_end'
+        | 'turn_start'
+        | 'message_start'
+        | 'turn_end'
+        | 'message_update'
+        | 'message_end'
+        | 'tool_execution_end'
+    }
+  >,
+): Step {
+  return Match.value(event).pipe(
+    Match.when(
+      {
+        type: Match.is(
+          'snapshot',
+          'tool_execution_start',
+          'tool_execution_update',
+          'inbox_update',
+          'submission',
+          'auto_retry_start',
+          'auto_retry_end',
+          'deferred_poll',
+          'entry_appended',
+          'agent_changed',
+          'usage_changed',
+          'task_failed',
+          'compaction_start',
+          'compaction_end',
+        ),
+      },
+      () => ({ state, chunks: [] }),
+    ),
+    Match.exhaustive,
+  )
 }
