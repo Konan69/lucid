@@ -1,6 +1,7 @@
 import { copyJson, type Context, type JsonValue } from '@earendil-works/chord'
 import {
   defineExtension,
+  LiveDoc,
   hook,
   type ToolExecutionApi,
   type ToolExecutionResult,
@@ -11,7 +12,7 @@ import { asSchema, type Tool, type ToolSet } from 'ai'
 import { Effect, Option, Predicate, Schema } from 'effect'
 
 import { ToolFailed, ToolOutputFailed, ToolSchemaFailed } from './errors.ts'
-import { holdKind, Holds, type Plan, settlement, withPlan } from './holds.ts'
+import { applicable, holdKind, Holds, type Plan, settlement, slotOf, withPlan } from './holds.ts'
 import * as Pi from './pi.ts'
 
 /** Whether an interrupted call may run again after a crash. Pi's own default is unsafe. */
@@ -133,7 +134,12 @@ const answered = Effect.fn('Durable.answeredTool')(function* (
   context: Context,
 ) {
   const holds = yield* Pi.snapshot(api, Holds, api.conversationId, context)
-  const settled = holds.pipe(Option.flatMapNullishOr((document) => document.settled[api.callId]))
+  const live = yield* Pi.snapshot(api, LiveDoc, api.conversationId, context)
+  const slot = live.pipe(Option.flatMap((document) => slotOf(document, api.callId)))
+  const settled = applicable(
+    holds.pipe(Option.flatMapNullishOr((document) => document.settled[api.callId])),
+    slot,
+  )
   if (Option.isNone(settled) || settled.value.kind !== 'answered')
     return failure(`Tool ${name} was not answered`)
   const output = settled.value.output

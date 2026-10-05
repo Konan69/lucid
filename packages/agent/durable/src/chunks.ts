@@ -379,7 +379,12 @@ export function replay(snapshot: SnapshotEvent): Option.Option<Step> {
   if (snapshot.run === undefined) return Option.none()
   const started: Step = {
     state: initialRunState,
-    chunks: [{ type: 'start', messageId: `run:${snapshot.run.inputs.join('+')}` }],
+    // SDK chat.ts retains the streaming state after a network error. Its start chunk only
+    // changes identity; process-ui-message-stream.ts reset-step clears the retained current step.
+    chunks: [
+      { type: 'start', messageId: `run:${snapshot.run.inputs.join('+')}` },
+      { type: 'reset-step' },
+    ],
   }
   const stored = runEntries(snapshot.entries).reduce<Step>(
     (step, entry) => join(step, replayEntry(step.state, entry)),

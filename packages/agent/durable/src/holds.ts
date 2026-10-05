@@ -1,14 +1,20 @@
-import type { Context, JsonValue } from '@earendil-works/chord'
+import { copyJson, type Context, type JsonValue } from '@earendil-works/chord'
 import {
   type ConversationId,
   defineDoc,
   type Harness,
   type HookApi,
+  type LiveState,
+  LiveDoc,
+  type TaskId,
+  type ToolSlot,
   type ToolRegistration,
 } from '@earendil-works/pi-durable'
-import { Deferred, Effect, Option, Predicate } from 'effect'
+import { Deferred, Effect, Match, Option, Predicate } from 'effect'
 
 import * as Pi from './pi.ts'
+import { CallNotWaiting } from './errors.ts'
+import { waiting } from './waiting.ts'
 
 /**
  * How one held tool call was settled by whoever it waited for.
@@ -22,24 +28,71 @@ export type Settlement =
   | { kind: 'denied'; reason: string }
   | { kind: 'answered'; output: JsonValue }
 
+/** A provider's call id may be reused; Pi's durable task id identifies the exact held invocation. */
+export type Settled = { taskId: TaskId; settlement: Settlement }
+
 /**
  * Durable hold state of one conversation.
  *
- * `settled` is keyed by tool call id. `asked` lists the calls of answer-later tools that already
+ * `settled` records the owning Pi task so reused provider call ids never inherit approval.
+ * `asked` lists the calls of answer-later tools that already
  * returned to the model and still expect an answer, with the tool's name for the message that
  * delivers it. Latest-only: a hold belongs to a run in progress, never to a rewound transcript.
  */
 export const Holds = defineDoc<{
-  settled: Record<string, Settlement>
+  settled: Record<string, Settled>
   asked: Record<string, string>
 }>({
   kind: 'durable.holds',
-  version: 1,
+  version: 2,
   scope: 'conversation',
   history: 'latest',
   fork: 'initial',
   initial: () => ({ settled: {}, asked: {} }),
 })
+
+/**
+ * One settlement lookup for hooks, waiting views, streaming, and admission. A pending slot of a
+ * different task invalidates the record. Once the slot is no longer pending, retain the decision
+ * for idempotent retries and denied display. Always detach Pi transaction overlays before returning.
+ */
+export function applicable(
+  record: Option.Option<Settled>,
+  slot: Option.Option<Readonly<ToolSlot>>,
+) {
+  if (Option.isNone(record)) return Option.none<Settlement>()
+  if (
+    Option.isSome(slot) &&
+    slot.value.status === 'pending' &&
+    slot.value.taskId !== record.value.taskId
+  )
+    return Option.none<Settlement>()
+  return Option.some(copySettlement(record.value.settlement))
+}
+
+/** Pi drafts expire at commit; copy the closed settlement variant and any nested JSON result. */
+function copySettlement(settled: Settlement): Settlement {
+  return Match.value(settled).pipe(
+    Match.when({ kind: 'approved' }, (): Settlement => ({ kind: 'approved' })),
+    Match.when({ kind: 'denied' }, (denied): Settlement => ({
+      kind: 'denied',
+      reason: denied.reason,
+    })),
+    Match.when({ kind: 'answered' }, (answered): Settlement => ({
+      kind: 'answered',
+      output: copyJson(answered.output),
+    })),
+    Match.exhaustive,
+  )
+}
+
+/** A live slot is absent between tool rounds; preserve that absence for the settlement rule. */
+export function slotOf(live: Readonly<LiveState>, callId: string) {
+  const tools = live.tools
+  return tools === undefined
+    ? Option.none<ToolSlot>()
+    : Option.fromNullishOr(tools.find((candidate) => candidate.callId === callId))
+}
 
 /**
  * Where a tool's result comes from.
@@ -106,10 +159,10 @@ const wake = (key: string) =>
 
 /** Remove only this waiter's registration, including on interruption or snapshot failure. */
 function unregister(key: string, deferred: Deferred.Deferred<void>) {
-  const waiting = wakers.get(key)
-  if (waiting === undefined) return
-  waiting.delete(deferred)
-  if (waiting.size === 0) wakers.delete(key)
+  const listeners = wakers.get(key)
+  if (listeners === undefined) return
+  listeners.delete(deferred)
+  if (listeners.size === 0) wakers.delete(key)
 }
 
 /** Register before reading so a concurrent durable settlement cannot be lost between read and wait. */
@@ -122,12 +175,17 @@ const readSettlement = Effect.fn('Durable.readSettlement')(function* (
   const woken = yield* Deferred.make<void>()
   return yield* Effect.gen(function* () {
     yield* Effect.sync(() => {
-      const waiting = wakers.get(key) ?? new Set<Deferred.Deferred<void>>()
-      waiting.add(woken)
-      wakers.set(key, waiting)
+      const listeners = wakers.get(key) ?? new Set<Deferred.Deferred<void>>()
+      listeners.add(woken)
+      wakers.set(key, listeners)
     })
     const holds = yield* Pi.snapshot(api, Holds, api.conversationId, context)
-    const settled = holds.pipe(Option.flatMapNullishOr((document) => document.settled[callId]))
+    const live = yield* Pi.snapshot(api, LiveDoc, api.conversationId, context)
+    const slot = live.pipe(Option.flatMap((document) => slotOf(document, callId)))
+    const settled = applicable(
+      holds.pipe(Option.flatMapNullishOr((document) => document.settled[callId])),
+      slot,
+    )
     if (Option.isSome(settled)) return settled
     yield* Deferred.await(woken)
     return Option.none<Settlement>()
@@ -155,7 +213,10 @@ export const settlement = Effect.fn('Durable.settlement')(function* (
   }
 })
 
-/** First settlement wins inside Pi's serialized commit, then the harness and local waiters resume. */
+/**
+ * Validate the observed waiting task, then select the first settlement atomically with its live slot.
+ * Concurrent decisions return detached copies; stale call ids cannot authorize a successor task.
+ */
 const settle = Effect.fn('Durable.settle')(function* (
   harness: Harness,
   conversationId: ConversationId,
@@ -163,23 +224,42 @@ const settle = Effect.fn('Durable.settle')(function* (
   context: Context,
 ) {
   const conversation = yield* Pi.conversation(harness, conversationId, context)
-  const winner = yield* Pi.commit(
+  const observed = yield* Pi.snapshot(harness, LiveDoc, conversationId, context)
+  const task = observed.pipe(
+    Option.flatMap((live) => slotOf(live, input.callId)),
+    Option.flatMapNullishOr((slot) => slot.taskId),
+  )
+  const held = yield* waiting(harness, conversationId, context)
+  const kind = input.next.kind === 'answered' ? 'answer' : 'approval'
+  const allowed = held.some((call) => call.callId === input.callId && call.kind === kind)
+  const winner = yield* Pi.commitWithLive(
     conversation,
     {
       token: Holds,
       conversationId,
-      change: (holds) => {
-        const existing = holds.settled[input.callId]
-        if (existing !== undefined) return existing
-        holds.settled[input.callId] = input.next
-        return input.next
+      change: (holds, live) => {
+        const slot = slotOf(live, input.callId)
+        const existing = applicable(Option.fromNullishOr(holds.settled[input.callId]), slot)
+        if (Option.isSome(existing)) return existing
+        if (
+          !allowed ||
+          Option.isNone(task) ||
+          Option.isNone(slot) ||
+          slot.value.status !== 'pending' ||
+          slot.value.taskId !== task.value
+        )
+          return Option.none<Settlement>()
+        holds.settled[input.callId] = { taskId: task.value, settlement: copySettlement(input.next) }
+        return Option.some(copySettlement(input.next))
       },
     },
     context,
   )
+  if (Option.isNone(winner))
+    return yield* new CallNotWaiting({ conversationId, callId: input.callId })
   yield* Effect.sync(() => harness.resume())
   yield* wake(wakeKey(conversationId, input.callId))
-  return winner
+  return winner.value
 })
 
 /** A person's decision on a tool call that waits for approval. */
@@ -233,7 +313,7 @@ export const answer = Effect.fn('Durable.answer')(function* (
   const holds = yield* Pi.snapshot(harness, Holds, conversationId, context)
   const toolName = holds.pipe(Option.flatMapNullishOr((document) => document.asked[given.callId]))
   if (Option.isNone(toolName)) {
-    yield* settle(
+    return yield* settle(
       harness,
       conversationId,
       {
@@ -242,8 +322,8 @@ export const answer = Effect.fn('Durable.answer')(function* (
       },
       context,
     )
-    return
   }
+  const taskId = yield* lateTask(harness, conversation, given.callId, context)
   yield* Pi.submit(
     conversation,
     {
@@ -261,9 +341,42 @@ export const answer = Effect.fn('Durable.answer')(function* (
       token: Holds,
       conversationId,
       change: (document) => {
+        const recorded = Option.fromNullishOr(document.settled[given.callId])
+        if (Option.isNone(recorded) || recorded.value.taskId !== taskId)
+          document.settled[given.callId] = {
+            taskId,
+            settlement: { kind: 'answered', output: copyJson(given.output) },
+          }
         delete document.asked[given.callId]
       },
     },
     context,
   )
+  return undefined
+})
+
+/** A later answer retains the task from its live slot or committed tool result for idempotent retries. */
+const lateTask = Effect.fn('Durable.lateAnswerTask')(function* (
+  harness: Harness,
+  conversation: import('@earendil-works/pi-durable').Conversation,
+  callId: string,
+  context: Context,
+) {
+  const live = yield* Pi.snapshot(harness, LiveDoc, conversation.id, context)
+  const task = live.pipe(
+    Option.flatMap((document) => slotOf(document, callId)),
+    Option.flatMapNullishOr((slot) => slot.taskId),
+  )
+  if (Option.isSome(task)) return task.value
+  const view = yield* Pi.view(conversation, context)
+  const entry = view.entries.findLast((candidate) => {
+    const model = candidate.model
+    return (
+      model !== undefined &&
+      model.some((message) => message.role === 'toolResult' && message.toolCallId === callId)
+    )
+  })
+  if (entry === undefined || entry.byTaskId === undefined)
+    return yield* new CallNotWaiting({ conversationId: conversation.id, callId })
+  return entry.byTaskId
 })

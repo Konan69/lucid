@@ -1,7 +1,7 @@
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from 'vitest'
 
-import { answer, continueRun, decide, streamRun, waiting } from '../main.ts'
+import { CallNotWaiting, answer, continueRun, decide, streamRun, waiting } from '../main.ts'
 import { call, consume, context, modelText, shop, signal, texts } from './fixtures/host.ts'
 
 /** Run through the public stream until a complete tool round parks for a person. */
@@ -93,8 +93,8 @@ it('a decision with no client attached completes the durable run', async () => {
 })
 
 // Cloudflare packages/think/src/tests/actions-durable-pause.test.ts: does not double-execute across a duplicate approve when idempotency-keyed.
-// Gap: a repeated decision returns an overlay proxy that has already been settled by Pi.
-it.fails('repeated decisions return the first settlement and execute once', async () => {
+// A repeated decision returns the detached first settlement after Pi commits its overlay.
+it('repeated decisions return the first settlement and execute once', async () => {
   const fixture = await shop()
   const opened = await fixture.open()
   opened.faux.setResponses([call('pay', { amount: 500 }, 'pay'), fauxAssistantMessage('Once.')])
@@ -117,8 +117,8 @@ it.fails('repeated decisions return the first settlement and execute once', asyn
 })
 
 // Cloudflare packages/think/src/tests/actions-durable-pause.test.ts: picks a single winner under concurrent approves.
-// Gap: the losing concurrent decision returns an unusable settled overlay instead of a detached value.
-it.fails('concurrent decisions return usable settlements and execute once', async () => {
+// Concurrent decisions return the same detached first settlement.
+it('concurrent decisions return usable settlements and execute once', async () => {
   const fixture = await shop()
   const opened = await fixture.open()
   opened.faux.setResponses([call('pay', { amount: 500 }, 'pay'), fauxAssistantMessage('Once.')])
@@ -200,8 +200,8 @@ it('two holds in one round settle independently', async () => {
 
 // Cloudflare packages/think/src/tests/execute-hitl.test.ts: double-approve is graceful: the second returns an error and leaves the transcript alone.
 // Adapt stale/non-pending interaction validation to the package's person-answered tool API.
-// Gap: answer accepts a call that is not waiting and persists an unsolicited settlement.
-it.fails('rejects an answer for a call that is not waiting', async () => {
+// Unsolicited answers fail with the tagged CallNotWaiting domain error.
+it('rejects an answer for a call that is not waiting', async () => {
   const fixture = await shop()
   const opened = await fixture.open()
   expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
@@ -213,11 +213,19 @@ it.fails('rejects an answer for a call that is not waiting', async () => {
       context,
     ),
   ).rejects.toThrow()
+  await expect(
+    answer(
+      opened.harness,
+      opened.root.id,
+      { callId: 'never-called', output: 'unsolicited' },
+      context,
+    ),
+  ).rejects.toBeInstanceOf(CallNotWaiting)
 })
 
 // Cloudflare packages/think/src/tests/actions-durable-pause.test.ts: does not resolve a later paused call that reuses the toolCallId (#1992).
-// Gap: settlement keys have only the call id, so a later run inherits an earlier run's approval.
-it.fails('a reused call id in a new run needs its own approval', async () => {
+// A settlement authorizes its durable Pi task; a reused provider id starts a fresh hold.
+it('a reused call id in a new run needs its own approval', async () => {
   const fixture = await shop()
   const opened = await fixture.open()
   opened.faux.setResponses([

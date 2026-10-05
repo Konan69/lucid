@@ -426,3 +426,14 @@ it.live('keeps an approval decision whose reason is not a string', () =>
     expect(paid).toEqual([{ amount: 42 }])
   }),
 )
+
+/** Stock HttpChatTransport treats the Promise handler's bodyless 204 response as no active stream. */
+it.live('returns no active stream for an idle SDK reconnect GET', () =>
+  Effect.gen(function* () {
+    const { transport } = yield* server([])
+    const reconnected = yield* Effect.promise(() =>
+      transport.reconnectToStream({ chatId: 'idle', abortSignal: undefined }),
+    )
+    expect(reconnected).toBeNull()
+  }),
+)

@@ -7,6 +7,7 @@ import type {
   SnapshotEvent,
   SubmissionId,
 } from '@earendil-works/pi-durable'
+import { LiveDoc } from '@earendil-works/pi-durable'
 import type { UIMessageChunk } from 'ai'
 import { Effect, Exit, Option, Scope, Stream } from 'effect'
 
@@ -20,7 +21,7 @@ import {
   translate,
 } from './chunks.ts'
 import { RunMissing, type PiFailed, type WatchClosed, type WatchOverflowed } from './errors.ts'
-import { Holds, planOf } from './holds.ts'
+import { applicable, Holds, planOf, slotOf } from './holds.ts'
 import * as Pi from './pi.ts'
 
 /** A retried input retains its client request id and therefore Pi's submission identity. */
@@ -52,9 +53,21 @@ const readDesk = Effect.fn('Durable.readDesk')(function* (reader: Reader) {
     }),
   )
   const holds = yield* Pi.snapshot(reader.harness, Holds, reader.conversation.id, reader.context)
+  const live = yield* Pi.snapshot(reader.harness, LiveDoc, reader.conversation.id, reader.context)
+  const records = Option.match(holds, {
+    onNone: () => ({}),
+    onSome: (document) => document.settled,
+  })
+  const settled = Object.fromEntries(
+    Object.entries(records).flatMap(([callId, record]) => {
+      const slot = live.pipe(Option.flatMap((document) => slotOf(document, callId)))
+      const found = applicable(Option.some(record), slot)
+      return Option.isNone(found) ? [] : [[callId, found.value]]
+    }),
+  )
   return {
     plan: (toolName: string) => Option.fromNullishOr(plans.get(toolName)),
-    settled: Option.match(holds, { onNone: () => ({}), onSome: (document) => document.settled }),
+    settled,
   } satisfies Desk
 })
 

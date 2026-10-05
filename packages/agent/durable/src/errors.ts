@@ -143,3 +143,15 @@ export class WatchClosed extends Schema.TaggedError<WatchClosed>()(
     return `Watch for conversation ${this.conversationId} closed: ${this.reason}`
   }
 }
+
+/** An unsolicited or stale settlement cannot authorize a tool task. */
+export class CallNotWaiting extends Schema.TaggedError<CallNotWaiting>()(
+  'CallNotWaiting',
+  { conversationId: ConversationId, callId: Schema.String },
+  { title: 'CallNotWaiting' },
+) {
+  /** Preserve the call and conversation that require a refreshed waiting view. */
+  override get message() {
+    return `Call ${this.callId} in conversation ${this.conversationId} is not waiting`
+  }
+}

@@ -6,11 +6,12 @@ import type {
   DocumentReader,
   Harness,
   JsonObject,
+  LiveState,
   Tx,
   AgentEvent,
   AgentEventStream,
 } from '@earendil-works/pi-durable'
-import { watchEvents } from '@earendil-works/pi-durable'
+import { watchEvents, LiveDoc } from '@earendil-works/pi-durable'
 import { Cause, Effect, Option, Queue, Stream } from 'effect'
 
 import { ConversationMissing, PiFailed, WatchClosed, WatchOverflowed } from './errors.ts'
@@ -55,6 +56,42 @@ export const commit = <T extends JsonObject, A>(
     try: () => owner.commit(changeDoc(mutation, context.abortSignal), context),
     catch: (cause) => new PiFailed({ operation: 'commit', cause }),
   })
+
+/** Settlement admission reads its live slot and hold document on Pi's serialized transaction line. */
+export const commitWithLive = <T extends JsonObject, A>(
+  owner: Pick<Conversation, 'commit'>,
+  mutation: {
+    readonly token: ConversationDocToken<T>
+    readonly conversationId: ConversationId
+    readonly change: (document: Draft<T>, live: Readonly<LiveState>) => A
+  },
+  context: Context,
+) =>
+  Effect.tryPromise({
+    try: () => owner.commit(changeLiveDoc(mutation, context.abortSignal), context),
+    catch: (cause) => new PiFailed({ operation: 'commit', cause }),
+  })
+
+/** Both document reads belong to the same commit; return only detached domain values from change. */
+function changeLiveDoc<T extends JsonObject, A>(
+  mutation: {
+    readonly token: ConversationDocToken<T>
+    readonly conversationId: ConversationId
+    readonly change: (document: Draft<T>, live: Readonly<LiveState>) => A
+  },
+  signal: Context['abortSignal'],
+) {
+  return function change(tx: Tx) {
+    return runForPi(
+      Effect.gen(function* () {
+        const live = yield* doc(tx, LiveDoc, mutation.conversationId)
+        const document = yield* doc(tx, mutation.token, mutation.conversationId)
+        return mutation.change(document, live)
+      }),
+      signal,
+    )
+  }
+}
 
 /** Pi owns transaction reads; this narrow adapter retains their typed rejection. */
 const doc = <T extends JsonObject>(

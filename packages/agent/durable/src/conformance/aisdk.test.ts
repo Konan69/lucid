@@ -304,8 +304,8 @@ it('a host reconnect route streams the active run through the stock transport', 
 })
 
 // AI SDK packages/ai/src/ui/chat.test.ts: should continue an active text part when resuming after a disconnect.
-// Gap: attachRun replays the whole prefix into AbstractChat's retained response, duplicating old text.
-it.fails('snapshot reconnect after a network interruption does not duplicate text', async () => {
+// Replaying a snapshot resets the SDK's retained current step before emitting its durable contents.
+it('snapshot reconnect after a network interruption does not duplicate text', async () => {
   const entered = signal()
   const release = signal()
   const fixture = await host(
@@ -382,12 +382,29 @@ it.fails('snapshot reconnect after a network interruption does not duplicate tex
 })
 
 // AI SDK packages/ai/src/ui/chat.test.ts: should continue an active text part when resuming after a disconnect.
-// Gap: respond always parses JSON, so the stock reconnect GET fails before it can attachRun.
-it.fails('resumeStream reconnects to an in-progress run through respond', async () => {
+// The GET receipt opens observation before the held tool is released.
+it('resumeStream reconnects to an in-progress run through respond', async () => {
   const opened = await running()
-  const chat = new PlainChat({ transport: opened.transport })
+  const attached = signal()
+  const transport = new DefaultChatTransport<UIMessage>({
+    api: 'http://durable.test/chat',
+    fetch: async (url, init) => {
+      const response = await respond(
+        opened.harness,
+        opened.root.id,
+        new Request(url, init),
+        context,
+      )
+      attached.resolve()
+      return response
+    },
+  })
+  const chat = new PlainChat({ transport })
   try {
-    await chat.resumeStream()
+    const resumed = chat.resumeStream()
+    await attached.promise
+    opened.release.resolve()
+    await resumed
   } finally {
     opened.release.resolve()
     await opened.root.waitForIdle(context)
@@ -399,8 +416,8 @@ it.fails('resumeStream reconnects to an in-progress run through respond', async 
 })
 
 // AI SDK packages/ai/src/ui/chat.test.ts: should not copy the previous assistant message when resuming a stream (reconnectToStream transport seam).
-// Gap: respond rejects the DefaultChatTransport reconnect GET with an empty-body JSON SyntaxError.
-it.fails('reconnectToStream returns the in-progress run through respond', async () => {
+// The Promise handler serves the bodyless GET through the public attachment seam.
+it('reconnectToStream returns the in-progress run through respond', async () => {
   const opened = await running()
   try {
     const stream = await opened.transport.reconnectToStream({

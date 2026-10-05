@@ -3,7 +3,7 @@ import { type ConversationId, type Harness, LiveDoc } from '@earendil-works/pi-d
 
 import { Array as Arr, Effect, Option } from 'effect'
 
-import { holdKind, Holds, planOf } from './holds.ts'
+import { applicable, holdKind, Holds, planOf } from './holds.ts'
 import * as Pi from './pi.ts'
 
 /**
@@ -65,7 +65,10 @@ export const waiting = Effect.fn('Durable.waiting')(function* (
     const tool = agent.tools.find((each) => each.name === slot.name)
     const plan = Option.fromNullishOr(tool).pipe(Option.flatMap(planOf))
     const call = Option.fromNullishOr(calls.get(slot.callId))
-    const settled = holds.pipe(Option.flatMapNullishOr((document) => document.settled[slot.callId]))
+    const settled = applicable(
+      holds.pipe(Option.flatMapNullishOr((document) => document.settled[slot.callId])),
+      Option.some(slot),
+    )
     if (Option.isNone(plan) || Option.isNone(call) || Option.isSome(settled)) return []
     // Pi AI exposes readonly JSON while chord owns the mutable JSON used by hold contracts.
     const input = copyJson(call.value.arguments)

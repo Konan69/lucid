@@ -53,7 +53,8 @@
       "runForPi",
       "openWatch",
       "stop",
-      "closed"
+      "closed",
+      "commitWithLive"
     ]
   },
   {
@@ -103,5 +104,10 @@
     "file": "packages/agent/durable/src/conformance/fixtures/host.ts",
     "classification": "test-fixture-entrypoint",
     "symbols": ["consume", "host", "open", "fetch", "close", "shop", "execute"]
+  },
+  {
+    "file": "packages/agent/durable/src/fixtures/task.ts",
+    "classification": "test-process-entrypoint",
+    "symbols": ["harness", "root", "<module>"]
   }
 ]

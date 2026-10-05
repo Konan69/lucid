@@ -96,6 +96,13 @@ export async function respond(
   request: Request,
   context: Context,
 ): Promise<Response> {
+  // AI SDK HttpChatTransport.reconnectToStream sends a bodyless GET and treats 204 as idle.
+  if (request.method === 'GET') {
+    const attached = await attachRun(harness, conversationId, context)
+    return attached.status === 'idle'
+      ? new Response(null, { status: 204 })
+      : createUIMessageStreamResponse({ stream: attached.stream })
+  }
   const turn = await Effect.runPromise(
     Effect.tryPromise({
       try: () => request.text(),
@@ -112,6 +119,7 @@ export async function respond(
 }
 
 export {
+  CallNotWaiting,
   WatchClosed,
   WatchOverflowed,
   ConversationMissing,
