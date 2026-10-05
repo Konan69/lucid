@@ -298,10 +298,10 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           1,
         )
         const after = yield* run(count, reply)
-        expect(CodeOutcome.guards.Completed(before) && CodeOutcome.guards.Completed(after)).toBe(
-          true,
-        )
-        expect(after).toHaveProperty('result', Reflect.get(before, 'result'))
+        const counted = (outcome: CodeOutcome) =>
+          CodeOutcome.guards.Completed(outcome) ? Option.some(outcome.result) : Option.none()
+        expect(Option.isSome(counted(before))).toBe(true)
+        expect(counted(after)).toEqual(counted(before))
       }),
     )
 
