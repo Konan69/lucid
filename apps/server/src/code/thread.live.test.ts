@@ -5,7 +5,7 @@ import { Config, Effect, Option, Schema } from 'effect'
 import { eq } from 'drizzle-orm'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 import { bindings } from '../computers/boat/bindings.ts'
-import { ReadFile } from '../computers/boat/protocol.ts'
+import { CreateRequest, ProviderId, ReadFile } from '../computers/boat/protocol.ts'
 import { computerMachineKey } from '../computers/store.ts'
 import { machineBindings } from '../computers/tables.ts'
 import { Database } from '../database/client.ts'
@@ -17,15 +17,20 @@ const decodeRan = Schema.decodeUnknownEffect(Ran)
 const decodeFile = HttpClientResponse.schemaBodyJson(ReadFile)
 
 /**
- * This proof never makes a machine and never deletes one. It runs only on an installation that
- * names the machine it already has (`VIVID_BOAT_MACHINE`); the new Person takes that machine, and
- * the only thing removed afterwards is that Person's binding row in the disposable database, so
- * the next run's Person can take it again. Registered before the first message is sent.
+ * Binds the proof's Person to the installation's existing machine before anything is asked of the
+ * Computer, through the product's own binding store. This proof never makes a machine and never
+ * deletes one, and it does not rely on the server sharing this process's settings for that: a
+ * Person who already has a machine is given no other, whatever the server is set to do for a
+ * Person without one. If another Person of this database holds the machine, this fails here,
+ * before a model request is sent. The only thing removed afterwards is this binding row, so the
+ * next run's Person can take the machine; the removal is registered before the row is written.
  */
-const releaseComputer = Effect.fn('ProgramProof.releaseComputer')(function* (
+const holdComputer = Effect.fn('ProgramProof.holdComputer')(function* (
   person: Parameters<typeof computerMachineKey>[0],
 ) {
+  const machine = yield* Config.schema(ProviderId, 'VIVID_BOAT_MACHINE')
   const database = yield* Database
+  const saved = yield* bindings()
   const key = computerMachineKey(person)
   yield* Effect.addFinalizer(() =>
     database
@@ -36,6 +41,12 @@ const releaseComputer = Effect.fn('ProgramProof.releaseComputer')(function* (
         ),
       ),
   )
+  // The request is what a binding records about how its machine would be made. None is made here.
+  const intent = yield* saved.intend(
+    key,
+    CreateRequest.make({ type: 'default', ttlSeconds: 3600, noEnv: true, snapshots: true }),
+  )
+  yield* saved.bind(key, intent.binding.intent, machine)
 })
 
 /**
@@ -81,12 +92,8 @@ describe.skipIf(process.env['VIVID_LIVE_THREAD_PROGRAM'] !== '1')(
       'a program Vivid writes runs on the Computer, has its calls answered and writes there what it read',
       () =>
         Effect.gen(function* () {
-          expect(
-            yield* Config.NonEmptyString('VIVID_BOAT_MACHINE'),
-            'This proof takes the installation’s existing machine; it never creates one',
-          ).toMatch(/^bx_/)
           const fixture = yield* chainFixture('Program chain proof')
-          yield* releaseComputer(fixture.personId)
+          yield* holdComputer(fixture.personId)
           const name = `vivid-program-proof-${NodeCrypto.randomUUID()}.txt`
           const runId = yield* fixture.send(
             `Do this with one run_code program and nothing else. In the program: read https://example.com/ and https://www.iana.org/help/example-domains with tools.read_page, both at the same time. Then use node:fs/promises to write a file named ${name} in the current directory, holding the two page titles, one per line. Return the two titles. Afterwards tell me the titles.`,
