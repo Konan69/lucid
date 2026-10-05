@@ -402,13 +402,6 @@ const RESTING = {
     action: TURN_ON,
     busy: false,
   },
-  Unavailable: {
-    title: 'Not set up here',
-    detail:
-      'This installation has no machine provider configured, so Vivid works without a computer.',
-    action: null,
-    busy: false,
-  },
 } as const
 
 /** A computer that is not running and did not fail: what it says, and the one thing to do about it. */
@@ -473,7 +466,6 @@ function Screen({ computer }: { computer: ComputerRecord }) {
     Absent: resting,
     Starting: resting,
     Stopped: resting,
-    Unavailable: resting,
   })
 }
 

@@ -1,20 +1,29 @@
 # Boat Computer provider
 
-Boat is the only Computer provider. `Machine` owns its lifecycle, commands, browser input and
-native desktop actions. `computerStoreLayer` owns Person scope, takeover and approvals;
-`computerHandlers` exposes the shared RPC contract. No provider configured means `Unavailable`.
+Boat is the only Computer provider and every Vivid has it. `Machine` owns its lifecycle, commands,
+browser input and native desktop actions. `computerStoreLayer` owns Person scope, takeover and
+approvals; `computerHandlers` exposes the shared RPC contract.
 
-Configure the local server with server-only credentials and a prepared template:
+The server does not start without these two, and the failure names the variable:
 
 ```dotenv
-VIVID_COMPUTER_PROVIDER=boat
+VIVID_BOAT_API_KEY=…        # secret
 VIVID_BOAT_TEMPLATE=vivid-computer-20261004
-VIVID_BOAT_SIZE=default
 ```
 
-`VIVID_BOAT_API_KEY` is required and stays secret. `VIVID_BOAT_ORG` is optional: omit it for the
-key's personal wallet; set it to the paying organization when using an organization wallet.
-`VIVID_BOAT_LIFETIME_SECONDS` is optional and defaults to 3600; 0 disables automatic archive.
+There is no provider selector and no "no provider" server. Optional, each with a default or a real
+choice behind it: `VIVID_BOAT_ORG` (omit it for the key's own wallet; set it to the paying
+organization when the key's account belongs to one), `VIVID_BOAT_SIZE` (`default`),
+`VIVID_BOAT_LIFETIME_SECONDS` (3600; 0 disables automatic archive), and `VIVID_BOAT_MACHINE`, which
+names one existing machine for the installation to use instead of creating one for each Person:
+the first Person to start a Computer keeps it and other accounts are refused.
+
+Boat itself not answering is not a state the server is in. A connection that fails, a reply that
+does not come in time, or Boat's own 5xx is an outage: the call that met it is refused with
+"Vivid’s computer is not answering right now", nothing about it is written to the Computer's
+record, and the next call asks Boat again, so it is over when Boat is back, with no restart and
+without anyone pressing Start. A start that Boat refused or could not finish is different: it is
+recorded as failed with its reason and needs a Person to start the Computer again.
 
 Boat supplies the real desktop, Chrome and native input driver. Running state carries a short-lived,
 token-gated Viewer address; provider keys never enter client state or model context. Browser and
@@ -29,5 +38,11 @@ response context; absent machines and failed probes make no installed-app claim.
 
 Opt-in live proofs use `VIVID_TEST_BOAT_LIVE=1` and `VIVID_LIVE_THREAD_COMPUTER=1`, respectively.
 Database authority must come from `VIVID_TEST_DATABASE_URL` for an isolated disposable database.
-Fixture cleanup registers before creation and deletes only its captured provider id using Boat's
-exact-id confirmation header. Owner machines are never fixtures.
+
+The Thread proof (`thread.live.test.ts`) never creates or deletes a machine. It signs in as the
+standing proof account (`VIVID_PROOF_EMAIL`, `VIVID_PROOF_PASSWORD`, read from the environment at
+run time), whose durable binding resolves to a machine that already exists, refuses to run when
+that account has no binding, and turns the Computer off again through `StopComputer`. The adapter
+proof (`boat.live.test.ts`) does create a fixture machine: it registers cleanup before creation and
+deletes only its captured provider id using Boat's exact-id confirmation header. Owner machines are
+never fixtures.
