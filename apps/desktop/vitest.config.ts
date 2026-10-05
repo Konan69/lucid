@@ -1,4 +1,4 @@
-import { defineProject } from 'vitest/config'
+
 
 const project = {
   test: {

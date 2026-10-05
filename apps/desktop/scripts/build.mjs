@@ -1,7 +1,6 @@
 import { build } from 'esbuild'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodePath from 'node:path'
-import * as NodeProcess from 'node:process'
 import * as NodeURL from 'node:url'
 
 const desktopDirectory = NodeURL.fileURLToPath(new URL('..', import.meta.url))
