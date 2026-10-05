@@ -88,15 +88,24 @@ stopping)`.
    newer ones sit in `DEPLOYING`. In the GraphQL API, `deploymentEvents` for a new one ends at
    `CREATE_CONTAINER` with no `completedAt`.
 
-What cleared it on 5 October: the integrator copied the volume's data off, moved the volume to a
-throwaway service and back to the Executor, and deployed again. Between the two moves the
-Executor ran for about three minutes with no volume, so with an empty store: it passed `/health`
-and refused the server's key (`Invalid API key`). Health alone is therefore not proof of
-recovery; make one real call with the server's key and compare the answer with what it was.
+What to do, in this order, and only as the session that deploys:
 
-Not proven: a second session sent `deploymentStop` for the stuck deployment in the same minute as
-the first volume move. Which of the two released the container is unknown, so do not rely on
-`deploymentStop` alone.
+1. Copy the volume's data off first if the service can still be reached, and keep the copy out
+   of Git (it holds keys). The 5 October copy of the Executor's `/app/data` is under
+   `artifacts/backup/`, which Git ignores.
+2. Stop the old deployment by its id: GraphQL `mutation { deploymentStop(id: "<id>") }`.
+3. If a new deployment still waits at `CREATE_CONTAINER`, move the volume to another service and
+   back (`volumeInstanceUpdate`).
+4. Deploy with `serviceInstanceDeployV2`. `serviceInstanceRedeploy` reuses the image of the last
+   deployment, which after a rollback is the old one.
+
+On 5 October steps 2 and 3 were both done within a minute of each other, by two sessions, so
+which one released the container is not known; that is why both are listed. Between the two
+volume moves the Executor ran for about three minutes with no volume, so with an empty store: it
+passed `/health` and refused the server's key (`Invalid API key`). Health alone is therefore not
+proof of recovery. Make one real call with the server's key (`GET
+/api/organizations/<organization>/inventory`) and compare the answer with what it was: after the
+recovery it was `200` and 8,914 bytes, the same as before.
 
 Ruled out, so do not spend time on them again: the image (it pulled without credentials, and the
 previous image hung the same way), the volume's own state (`READY`), the domain, the target port
@@ -105,10 +114,10 @@ and the region.
 ### Executor's image
 
 Production's Executor is upstream Executor's source at commit `304bf60`, unchanged, built with
-upstream's own self-host Dockerfile and published as `executor-selfhost:src-304bf60`. No feature
-requires it: adding an Integration by a personal key was proven on the last published tag,
-`2.0.0-beta.8`, as well. The source build is simply newer upstream code that passed the same
-tests. The store schema and migrations are identical in both, the server's key is valid on both,
+upstream's own self-host Dockerfile and published as `executor-selfhost:src-304bf60`. It was a
+choice to move to current upstream source, not a requirement: adding an Integration by a
+personal key was proven on the last published tag, `2.0.0-beta.8`, as well. A copy of production
+data was started on the new image before the switch. The store schema and migrations are identical in both, the server's key is valid on both,
 and going back to the tag is safe.
 
 ### Telemetry volume
@@ -152,6 +161,23 @@ Required by the stack:
 - `AUTH_SECRET` — the server requires at least 32 characters, 12 distinct characters, and 3 character classes.
 - `EXPLABS_API_KEY` — the Experiential Labs model gateway.
 - `VIVID_RUNTIME_TOKEN` — shared only between the application server and Flue runtime.
+- `VIVID_BOAT_API_KEY` — the Boat key Vivid's Computer is reached with. A secret.
+- `VIVID_BOAT_TEMPLATE` — the name of the prepared Boat template a Person's Computer is restored
+  from (`infra/computer/prepare.py` prints it).
+- `VIVID_PHOTON_PROJECT_ID`, `VIVID_PHOTON_PROJECT_SECRET` — the Photon project Vivid texts
+  through. The secret is a secret.
+- `VIVID_PUSH_VAPID_PUBLIC`, `VIVID_PUSH_VAPID_PRIVATE`, `VIVID_PUSH_SUBJECT` — the key pair and
+  contact (`https:` or `mailto:`) that notifications while away are signed with. Generate the pair
+  once for an environment and keep it; a new pair unsubscribes every browser and phone:
+
+  ```sh
+  node -e "const c=require('node:crypto').createECDH('prime256v1');c.generateKeys();console.log('VIVID_PUSH_VAPID_PUBLIC='+c.getPublicKey().toString('base64url'));console.log('VIVID_PUSH_VAPID_PRIVATE='+c.getPrivateKey().toString('base64url'))"
+  ```
+
+The Computer, texting and away notifications are part of the product, so these are required like
+the first three: the stack stops before it touches the target and names the variable it lacks. `VIVID_BOAT_ORG`,
+`VIVID_BOAT_SIZE`, `VIVID_BOAT_LIFETIME_SECONDS` and `VIVID_BOAT_MACHINE` are forwarded to the
+hosted server when set (`apps/server/src/computers/README.md` says what each does).
 
 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` form one optional atomic
 set for account sign-in. They do not configure Google Integrations in Executor. `VIVID_MODEL`
@@ -159,13 +185,11 @@ defaults to `explabs/glm-5.3-flash`; pi `0.87.1` and the provider at
 `packages/agent/runtime/src/providers/explabs.ts` supply model access. Vivid adds no model retry
 or fallback layer. AWS credentials are not required locally.
 
-The server also has adapters for Executor (`VIVID_EXECUTOR_URL`, `VIVID_EXECUTOR_KEY`), HelixDB
-(`VIVID_HELIX_URL` and embedding configuration), and Boat (`VIVID_COMPUTER_PROVIDER=boat` and
-Boat configuration). These services are not provisioned here, and their environment values are
-not explicitly forwarded by the stack today. Check the owning adapters for their exact contract.
-Boat was proven against the real service on 3 October 2026; that does not prove this stack
-configures the provider. With no Computer provider or HelixDB address, those capabilities report
-unavailable.
+The hosted stack runs HelixDB as a Railway service and gives the server its private address
+(`VIVID_HELIX_URL`), and it gives the server the Boat settings above. Boat itself is an outside
+service the stack does not provision. The local process graph forwards neither: `Command.Dev`
+merges the stack's variables over the environment `pnpm infra:dev` was started in, so a local
+server reads `VIVID_HELIX_URL` and the Boat settings from that environment.
 
 Outputs contain only web, server, and runtime URLs. Database and application secrets are never
 outputs. Local Alchemy resources create no AWS bill, but real model calls and external services
