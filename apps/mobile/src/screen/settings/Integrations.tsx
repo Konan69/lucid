@@ -147,6 +147,9 @@ function Body({ me, query }: { me: MeResponse; query: string }) {
       {flow.away && <Returning onReturn={() => void flow.returned()} />}
       {Option.isSome(flow.asking) && (
         <EnterKey
+          // One form for one Integration: a form asked for by another service is a new form, so
+          // nothing typed for the first can be sent to the second.
+          key={flow.asking.value.keying.id}
           keying={flow.asking.value.keying}
           onClose={flow.closeKey}
           onConnected={flow.keyed}

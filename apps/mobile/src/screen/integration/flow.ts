@@ -82,9 +82,10 @@ export function useFlow() {
 
   /** One press, from its first word to what the server made of it. */
   async function press(key: PressKey, ask: Ask) {
-    // One press is one Integration: a row is not pressed again while its first press is still on
-    // its way to the server.
-    if (presses.get(key) === 'starting') return
+    // One Integration is begun at a time: nothing is pressed while a press is still on its way to
+    // the server, this row's or another's. Two answers arriving together used to be able to ask
+    // for two keys at once, with one form between them.
+    if ([...presses.values()].includes('starting')) return
     // Felt as the Person commits, not when the answer comes back.
     commit()
     setRefused(Option.none())
@@ -104,7 +105,12 @@ export function useFlow() {
     const result = await data.change((client) => client.RemoveConnection({ id: connection.id }))
     if (Result.isFailure(result)) {
       setRefused(Option.some(`${connection.serviceName} could not be disconnected. Try again.`))
+      return
     }
+    // What an earlier press left on this account's row and on its service's row ("Connected") is
+    // no longer true; the live list is what says how they stand now.
+    mark(connection.id, Option.none())
+    mark(connection.service, Option.none())
   }
 
   return {

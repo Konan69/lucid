@@ -24,6 +24,7 @@ import { Monitor, Share2, SquarePen, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { commit } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
+import { useDrawerOpened } from '../data/drawer'
 import { inFront, onForeground } from '../data/foreground'
 import { LiveState, refusalOf, useLive, useLiveData } from '../data/live'
 import { isShown, isStreaming, lastWordsOf, type Around } from '../data/message'
@@ -94,12 +95,15 @@ export function Chat({ id, writing }: { id: ThreadId; writing: boolean }) {
  * A native stack keeps a screen mounted under whatever is pushed over it, and an app in the
  * background can go on receiving for a while. Being mounted used to be taken for looking, so a
  * Thread the Person had left behind went on marking its replies read and saying they were there,
- * and the server, believing it, sent no notification for work they had not seen.
+ * and the server, believing it, sent no notification for work they had not seen. The open menu
+ * counts as covering it for the same reason.
  */
 function useLooking(): boolean {
   const focused = useIsFocused()
   const front = useAtomValue(inFront)
-  return focused && front
+  // The menu is drawn over the first screen without taking its focus, and it covers the Thread.
+  const covered = useDrawerOpened()
+  return focused && front && !covered
 }
 
 /**

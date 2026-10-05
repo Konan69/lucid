@@ -247,7 +247,9 @@ function NewRule({ manages }: { manages: boolean }) {
       return
     }
     commit()
-    setAction('')
+    // Only the words that were saved leave the field. It stays editable while the rule is on its
+    // way, so by now it can hold the start of another rule, which is still the Person's.
+    setAction((now) => (now.trim() === text ? '' : now))
     setAdding(Adding.Idle())
   }
 

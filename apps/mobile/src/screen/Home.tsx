@@ -1,6 +1,5 @@
 import { useAtomValue } from '@effect/atom-react'
 import { useAppearance } from '../data/vivid'
-import type { ThreadId } from '@vivid/contracts'
 import { draftPlace, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
 import { useCallback, useState, useSyncExternalStore } from 'react'
@@ -202,19 +201,21 @@ function useStart() {
   const [sending, setSending] = useState(false)
   const [last, setLast] = useState<Option.Option<Start>>(Option.none())
 
-  /** The empty Thread an earlier attempt left behind, when there is one. */
-  const resume = Option.flatMap(last, (outcome) =>
-    Start.$is('NotSaid')(outcome) ? Option.some(outcome.id) : Option.none<ThreadId>(),
-  )
-
   async function send() {
     const message = typed.trim()
     if (message.length === 0 || sending) return
     setSending(true)
     // A Thread started while the drawer is scoped to a Project is filed in that Project.
     const projectId = Option.getOrNull(Option.map(scoped, (project) => project.id))
-    const outcome = await startThread(data, { message, projectId, resume })
+    // The empty Thread an earlier attempt left behind is spoken into, not made again. It is the
+    // shell's to remember (`front.unsaid`): this screen is taken down between the two attempts
+    // whenever the Person looks at another Thread first.
+    const outcome = await startThread(data, { message, projectId, resume: front.unsaid() })
     setSending(false)
+    // A Thread that was made and not reached is owed these words; one that started owes nothing.
+    // A refusal to make one changes neither.
+    if (Start.$is('NotSaid')(outcome)) front.owe(Option.some(outcome.id))
+    if (Start.$is('Started')(outcome)) front.owe(Option.none())
     if (Start.$is('Started')(outcome)) {
       // Only the words that were sent leave the composer. It stays usable while the send is on
       // its way, so by now it can hold a second request; emptying it whatever it held used to
