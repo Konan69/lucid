@@ -35,9 +35,9 @@ const snapshots = contextSnapshots()
  * nothing about the Person because a file could not be opened.
  */
 const loadMemory = Effect.fn('Context.loadMemory')(function* (acting: Option.Option<Acting>) {
-  if (Option.isNone(notesDirectory) || Option.isNone(acting)) return Remembered.cases.Off.make({})
+  if (Option.isNone(acting)) return Remembered.cases.Off.make({})
   return yield* noteIndex({
-    directory: notesDirectory.value,
+    directory: notesDirectory,
     person: acting.value.personId,
   }).pipe(
     Effect.map((index) => Remembered.cases.Notes.make({ index })),
