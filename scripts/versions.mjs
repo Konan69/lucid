@@ -379,8 +379,10 @@ function rootManifestErrors(manifest, catalog) {
   if (scripts.prepare === undefined || !scripts.prepare.includes('effect-language-service patch')) {
     errors.push('package.json: prepare must patch TypeScript with effect-language-service')
   }
-  if (scripts.lint === undefined || !scripts.lint.includes('--type-aware')) {
-    errors.push('package.json: lint must enable Oxlint --type-aware analysis')
+  // The lint runner owns mandatory type-aware analysis; the public command must
+  // enter Turbo so successful package checks and their diagnostics can be reused.
+  if (scripts.lint === undefined || !scripts.lint.startsWith('turbo run lint lint:root ')) {
+    errors.push('package.json: lint must run cached workspace and root lint through Turbo')
   }
   return errors
 }

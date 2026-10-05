@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
-    "typecheck": "tsc --noEmit",
-    "lint": "oxlint --type-aware src",
+    "typecheck": "node ../../scripts/types.mjs",
+    "lint": "node ../../scripts/lint.mjs",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:generate:product": "drizzle-kit generate --config product-drizzle.config.ts",

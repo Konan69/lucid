@@ -11,5 +11,16 @@
     "types": ["vite/client"],
     "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo"
   },
-  "include": ["src"]
+  "include": ["src"],
+  "references": [
+    {
+      "path": "../../packages/client/state/tsconfig.types.json"
+    },
+    {
+      "path": "../../packages/client/rpc/tsconfig.types.json"
+    },
+    {
+      "path": "../../packages/contracts/tsconfig.types.json"
+    }
+  ]
 }

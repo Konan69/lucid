@@ -50,6 +50,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # pnpm's cache contains downloads, not successful check results. Task hashes
+      # decide reuse after restoring the latest cache for this lockfile.
+      - name: Restore Turbo task cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
       # Runs after the install because the script imports `effect`; before it, Node cannot
       # resolve the package and the job stopped here without checking anything.
       - name: Check package-manager policy

@@ -7,5 +7,16 @@
     "allowImportingTsExtensions": true,
     "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo"
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests"],
+  "references": [
+    {
+      "path": "../../packages/contracts/tsconfig.types.json"
+    },
+    {
+      "path": "../../packages/agent/skills/tsconfig.types.json"
+    },
+    {
+      "path": "../../packages/agent/runtime/tsconfig.types.json"
+    }
+  ]
 }

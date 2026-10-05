@@ -165,13 +165,22 @@ const checked = (result: { readonly exitCode: number; readonly stderr: string })
 }
 
 /** Flue's own six tools, built on the sandbox Flue hands back (it carries Flue's skill-file
- * overlay on `readFile`). They are Flue's code and words unchanged. */
-export const machineTools = (sandbox: Sandbox) =>
-  [
-    createReadTool(sandbox),
-    createWriteTool(sandbox),
-    createEditTool(sandbox),
-    createBashTool(sandbox),
-    createGrepTool(sandbox),
-    createGlobTool(sandbox),
-  ] as const
+ * overlay on `readFile`). The public constructor types keep TypeBox internals out of our
+ * declaration imports. They are Flue's code and words unchanged. */
+export const machineTools = (
+  sandbox: Sandbox,
+): readonly [
+  ReturnType<typeof createReadTool>,
+  ReturnType<typeof createWriteTool>,
+  ReturnType<typeof createEditTool>,
+  ReturnType<typeof createBashTool>,
+  ReturnType<typeof createGrepTool>,
+  ReturnType<typeof createGlobTool>,
+] => [
+  createReadTool(sandbox),
+  createWriteTool(sandbox),
+  createEditTool(sandbox),
+  createBashTool(sandbox),
+  createGrepTool(sandbox),
+  createGlobTool(sandbox),
+]
