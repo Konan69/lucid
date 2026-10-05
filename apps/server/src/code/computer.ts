@@ -100,44 +100,43 @@ const endedBecause = (exit: Option.Option<typeof MachineOutput.cases.Exited.Type
   })
 
 /**
- * Starts the runner on an attached Computer and joins its two directions.
- *
- * Out: the provider follows what the command prints, in pieces; whole lines are decoded as the
- * program's messages. In: each message is a small file the runner is watching for, because the
- * provider cannot write to a running command (Boat v1 `CommandRequest`: `stream` carries output
- * only). The first start on a Computer finds no runner, says so with its exit code, and is
- * repeated once after the file is put there.
+ * What is known about a program's process, each from its own evidence. Three of these mean the
+ * program needs no order to stop: it printed its final message, it was given the order, or the
+ * provider reported its exit. A stream that broke, or a line that was not a message, proves none
+ * of them. `draining`: the server has given the program up, and reads on only to reach its end.
+ * `waited`: word of its end has been waited for once; that wait is not repeated. `said`: the
+ * program's own reason for having no result.
  */
-export const openGuest = Effect.fn('Code.openGuest')(function* (
-  attachment: ComputerAttachment,
-  runner: Runner,
-  /** Where work that outlives the program is done: the removal of its directory. */
-  background: Scope.Scope,
-) {
-  const directory = `.cache/vivid/programs/${NodeCrypto.randomUUID()}`
-  // Every word is the server's own: a path from a hash, a fresh identifier, five numbers.
-  const command = `[ -f '${runner.path}' ] || exit ${NOT_INSTALLED}; exec node '${runner.path}' '${directory}' ${budgets.result} ${budgets.logs} ${budgets.heap} ${budgets.calls} ${budgets.frame}`
-  // A full queue stops the reading, which stops the provider's stream: a program that prints
-  // faster than its calls are checked waits, and nothing piles up here.
-  const messages = yield* Queue.bounded<WorkerMessage, PipeFailure>(budgets.calls)
-  // Why the reading ended. It is not proof that the process did: a broken stream ends the reading
-  // with the program possibly still running.
-  const ended = yield* Deferred.make<CodeFailure>()
-  /**
-   * What is known about the process, each from its own evidence. Three of these mean the program
-   * needs no order to stop: it printed its final message, it was given the order, or the provider
-   * reported its exit. A stream that broke, or a line that was not a message, proves none of them.
-   * `draining`: the server has given the program up, and reads on only to reach its end.
-   * `waited`: word of its end has been waited for once; that wait is not repeated.
-   */
-  const known = {
-    final: false,
-    told: false,
-    exited: false,
-    draining: false,
-    waited: false,
-    said: Option.none<CodeFailure>(),
-  }
+interface Known {
+  final: boolean
+  told: boolean
+  exited: boolean
+  draining: boolean
+  waited: boolean
+  said: Option.Option<CodeFailure>
+}
+
+/** One program's link, as its two halves share it: the reading and the ending. */
+interface Link {
+  readonly attachment: ComputerAttachment
+  readonly runner: Runner
+  readonly command: string
+  /** A full queue stops the reading, which stops the provider's stream: a program that prints
+   * faster than its calls are checked waits, and nothing piles up here. */
+  readonly messages: Queue.Queue<WorkerMessage, PipeFailure>
+  /** Why the reading ended. It is not proof that the process did: a broken stream ends the
+   * reading with the program possibly still running. */
+  readonly ended: Deferred.Deferred<CodeFailure>
+  readonly known: Known
+}
+
+/**
+ * The reading half: follows the start command for the life of the scope and turns what it prints
+ * into the program's messages. The first start on a Computer finds no runner, says so with its
+ * exit code, and is repeated once after the file is put there.
+ */
+const readGuest = Effect.fn('Code.readGuest')(function* (link: Link) {
+  const { attachment, runner, command, messages, ended, known } = link
 
   const accept = Effect.fn('Code.guestLine')(function* (text: string) {
     if (!boundedNesting(text)) return yield* Effect.fail(new PipeFailure({ reason: 'size' }))
@@ -216,6 +215,37 @@ export const openGuest = Effect.fn('Code.openGuest')(function* (
     ),
     Effect.forkScoped,
   )
+})
+
+/**
+ * Starts the runner on an attached Computer and joins its two directions.
+ *
+ * Out: the provider follows what the command prints, in pieces; whole lines are decoded as the
+ * program's messages (`readGuest`). In: each message is a small file the runner is watching for,
+ * because the provider cannot write to a running command (Boat v1 `CommandRequest`: `stream`
+ * carries output only).
+ */
+export const openGuest = Effect.fn('Code.openGuest')(function* (
+  attachment: ComputerAttachment,
+  runner: Runner,
+  /** Where work that outlives the program is done: the removal of its directory. */
+  background: Scope.Scope,
+) {
+  const directory = `.cache/vivid/programs/${NodeCrypto.randomUUID()}`
+  // Every word is the server's own: a path from a hash, a fresh identifier, five numbers.
+  const command = `[ -f '${runner.path}' ] || exit ${NOT_INSTALLED}; exec node '${runner.path}' '${directory}' ${budgets.result} ${budgets.logs} ${budgets.heap} ${budgets.calls} ${budgets.frame}`
+  const messages = yield* Queue.bounded<WorkerMessage, PipeFailure>(budgets.calls)
+  const ended = yield* Deferred.make<CodeFailure>()
+  const known: Known = {
+    final: false,
+    told: false,
+    exited: false,
+    draining: false,
+    waited: false,
+    said: Option.none(),
+  }
+
+  yield* readGuest({ attachment, runner, command, messages, ended, known })
 
   const send = Effect.fn('Code.sendGuest')(function* (message: ParentMessage) {
     // An answer for a program that has said its last has no reader.

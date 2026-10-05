@@ -48,7 +48,7 @@ function program() {
   port.unref()
   const { limits } = NodeWorkerThreads.workerData
   let attempts = 0
-  let over = false
+  let limited = false
   /**
    * A limit ends the program here, before anything is forwarded, as the bridge of the interpreter
    * this replaces did. The server enforces the same limits, but it can only do so on what reaches
@@ -57,7 +57,7 @@ function program() {
    * around the call cannot carry the program past its limit.
    */
   const exceed = (limit) => {
-    over = true
+    limited = true
     port.ref()
     port.postMessage({ type: 'over', limit })
     return new Promise(() => {})
@@ -66,7 +66,7 @@ function program() {
   const call = (kind) => (input) => {
     const text = JSON.stringify(input)
     if (text === undefined) return Promise.reject(new TypeError('Tool input must be JSON.'))
-    if (over) return new Promise(() => {})
+    if (limited) return new Promise(() => {})
     if (++attempts > limits.calls) return exceed('calls')
     if (Buffer.byteLength(text) > limits.frame) return exceed('data')
     const id = ++next
