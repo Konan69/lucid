@@ -4,7 +4,7 @@ import {
   ChannelUnavailable,
   ChannelProviderFailed,
 } from '@vivid/contracts'
-import { Context, Effect, Layer, Schema, Stream } from 'effect'
+import { Context, type Effect, Schema, type Stream } from 'effect'
 
 /** Provider ids are opaque; replay identity must not depend on the message's words. */
 export const ChannelMessageId = Schema.NonEmptyString.pipe(Schema.brand('ChannelMessageId'))
@@ -49,6 +49,10 @@ export class ChannelRecipientMissing extends Schema.TaggedError<ChannelRecipient
 ) {}
 
 export interface ChannelProviderService {
+  /**
+   * The channels Vivid can text on. `Channel` is the closed product vocabulary and is wider: a
+   * channel named there and absent here (WhatsApp today) is refused with `ChannelUnavailable`.
+   */
   readonly channels: ReadonlyArray<Channel>
   /** Photon deletes by user id, so its opaque enrolment receipt must survive server restarts. */
   readonly enrol: (
@@ -77,21 +81,6 @@ export type ChannelEnrolment = typeof ChannelEnrolment.Type
 export class ChannelProvider extends Context.Service<ChannelProvider, ChannelProviderService>()(
   'vivid/ChannelProvider',
 ) {}
-
-/** Missing credentials leave the server operational and every channel start explicitly unavailable. */
-export const unavailableChannelProviderLayer = Layer.succeed(ChannelProvider, {
-  channels: [],
-  enrol: Effect.fn('Channels.unavailableEnrol')((channel) =>
-    Effect.fail(new ChannelUnavailable({ channel })),
-  ),
-  unenrol: Effect.fn('Channels.unavailableUnenrol')((channel) =>
-    Effect.fail(new ChannelUnavailable({ channel })),
-  ),
-  inbound: Stream.empty,
-  send: Effect.fn('Channels.unavailableSend')((input) =>
-    Effect.fail(new ChannelUnavailable({ channel: input.channel })),
-  ),
-})
 
 /** A timed-out send may still reach Photon; the claimed reply must remain unknown. */
 export class ChannelSendTimedOut extends Schema.TaggedError<ChannelSendTimedOut>()(

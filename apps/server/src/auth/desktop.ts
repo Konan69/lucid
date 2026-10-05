@@ -177,9 +177,14 @@ const started = (origin: string) =>
     '/desktop/google',
     { method: 'GET', query: Schema.toStandardSchemaV1(SignInStart) },
     (ctx) => {
+      // Every server registers Google: its client is required at start (`config.ts`). The lookup
+      // is Better Auth's list, whose type still allows an absent entry, so that case is refused
+      // here rather than cast away; it is not a state a running server reaches.
       const google = ctx.context.socialProviders.find((provider) => provider.id === 'google')
       if (google === undefined)
-        return Promise.reject(ctx.error('NOT_FOUND', { message: 'Google sign-in is not set up' }))
+        return Promise.reject(
+          ctx.error('NOT_FOUND', { message: 'No Google provider is registered' }),
+        )
       return addOAuthServerContext({ [ATTEMPT]: encodeAttempt(ctx.query) })
         .then(() => toGoogle(ctx, google, origin))
         .then((address) => Promise.reject(ctx.redirect(address)))

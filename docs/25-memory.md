@@ -136,7 +136,9 @@ What goes to memory and what goes to the knowledge base, and whether one feeds t
   one per line, bounded to about 2,000 tokens, with a note when older facts exist. No model runs on
   that path (`apps/server/src/memory/page.ts`, `MemoryAccess.page`, `GetMemoryPage`). It replaced a
   model-written brief of at most 300 words that was rebuilt whenever a fact changed.
-- The model's tools are `remember`, `recall`, `correct` and `forget`.
+- The model's knowledge-base tools are `recall` and `remember`. It changes and removes what it
+  knows on its notes (`read_note`, `write_note`, `delete_note`); a Person corrects and removes
+  knowledge-base facts in Settings.
 - Nothing seeds memory. A new Person starts with no facts; no write happens at sign-up or
   onboarding.
 - On 4 October 2026 the production Helix held no memories. Learning is not called for a Run that

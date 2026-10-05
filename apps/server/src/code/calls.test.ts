@@ -23,7 +23,7 @@ import { membershipTable } from '../companies/tables.ts'
 import { threads } from '../threads/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
-import { unavailableMachineLayer } from '../computers/machine.ts'
+import { absentMachineLayer } from '../computers/testing.ts'
 import {
   ComputerAccess,
   ComputerNotReady,
@@ -49,7 +49,7 @@ const isRepositoryInput = Schema.is(Schema.Struct({ repoName: Schema.String }))
 const missingHost = programHost(Option.fromUndefinedOr(NodeProcess.env.XDG_RUNTIME_DIR))
 if (Option.isSome(missingHost)) console.warn(`Skipping supervised programs: ${missingHost.value}`)
 
-const accounts = Layer.mergeAll(connectionTestLayer, trustTestLayer, unavailableMachineLayer)
+const accounts = Layer.mergeAll(connectionTestLayer, trustTestLayer, absentMachineLayer)
 const computers = computerStoreLayer.pipe(
   Layer.provideMerge(deviceLayer),
   Layer.provideMerge(accounts),

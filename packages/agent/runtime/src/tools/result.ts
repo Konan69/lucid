@@ -171,7 +171,6 @@ export const settle = Effect.fn('Tools.settle')(function* (
         failure('The request conflicts with the current state; check it before trying again.'),
       InvalidRequest: () => failure('The request is invalid; check the supplied details.'),
       ServiceUnavailable: () => failure('That part of Vivid is not available right now.'),
-      PushUnavailable: () => failure('Push notifications are not configured on this Vivid server.'),
       RuntimeUnavailable: () => failure('Vivid cannot start that work right now.'),
       DatabaseUnavailable: () => failure('Vivid cannot reach its saved records right now.'),
       DatabaseConstraintViolation: () =>

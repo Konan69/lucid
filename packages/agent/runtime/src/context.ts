@@ -11,7 +11,8 @@ import {
 import { asActing, type Acting } from './client.ts'
 import * as views from './tools/views.ts'
 import { boundOutput } from './tools/result.ts'
-import { noteIndex, notesDirectory, type NoteIndex } from './notes.ts'
+import { noteIndex, type NoteIndex } from './notes.ts'
+import { notesDirectory } from './settings.ts'
 import { ContextSkill, contextSnapshots, Remembered, VividContext } from './tools/snapshots.ts'
 
 export type { VividContext } from './tools/snapshots.ts'
@@ -35,9 +36,9 @@ const snapshots = contextSnapshots()
  * nothing about the Person because a file could not be opened.
  */
 const loadMemory = Effect.fn('Context.loadMemory')(function* (acting: Option.Option<Acting>) {
-  if (Option.isNone(notesDirectory) || Option.isNone(acting)) return Remembered.cases.Off.make({})
+  if (Option.isNone(acting)) return Remembered.cases.Off.make({})
   return yield* noteIndex({
-    directory: notesDirectory.value,
+    directory: notesDirectory,
     person: acting.value.personId,
   }).pipe(
     Effect.map((index) => Remembered.cases.Notes.make({ index })),

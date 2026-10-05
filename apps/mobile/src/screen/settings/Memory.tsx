@@ -99,8 +99,9 @@ export function Memory() {
 
 /**
  * The live query's three states, kept apart. This screen does not use `ui/Live.tsx` because its
- * failure is not the server's sentence: memory is a part an installation can run without, which
- * is nothing the Person did or can fix, so it is said plainly and not painted as a refusal.
+ * failure is not the server's sentence: every Vivid has its memory, so a failure here is memory
+ * not answering for a while. That is nothing the Person did or can fix, so it is said plainly,
+ * with what stays true (nothing is lost), and not painted as a refusal.
  */
 function Shown({
   state,
@@ -116,8 +117,8 @@ function Shown({
     Failed: () => (
       <Card>
         <Label size="label" tone="ink-2">
-          Memory is not available on this installation right now. Vivid still works; it just does
-          not carry things between threads.
+          Vivid’s memory is not answering right now. Nothing is lost: what Vivid knows is kept, and
+          it will be here again as soon as memory answers.
         </Label>
       </Card>
     ),

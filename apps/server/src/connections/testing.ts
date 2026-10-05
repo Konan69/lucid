@@ -99,7 +99,6 @@ const authorized = (references: ExecutorReferences) =>
 /** Source effects and recorded calls belong to the external adapter test boundary. */
 const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
   return Executor.of({
-    configured: true,
     authorization: Effect.fn('Executor.Test.authorization')(() =>
       Effect.succeed(ServiceAuthorization.cases.None.make({})),
     ),

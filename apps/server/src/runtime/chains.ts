@@ -106,7 +106,9 @@ const chainThread = Effect.fn('ThreadProof.thread')(function* (
       HttpClientRequest.post(new URL(`/api/vivid/${threadId}`, server)).pipe(
         HttpClientRequest.setHeader('cookie', cookie),
       ),
-      { body, idempotencyKey: NodeCrypto.randomUUID() },
+      // The gateway accepts only a Person's own message, and says so by its kind
+      // (`SendMessageRequest`); without it the message is refused as having no text.
+      { kind: 'user', body, idempotencyKey: NodeCrypto.randomUUID() },
     )
     const accepted = yield* http
       .execute(sent)

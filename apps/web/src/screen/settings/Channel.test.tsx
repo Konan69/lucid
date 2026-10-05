@@ -22,9 +22,12 @@ const drawn = (standing: ChannelStanding) => {
 }
 
 describe('the control for texting Vivid', () => {
-  it('shows a channel this Vivid is not set up for, with nothing to press or fill in', () => {
-    const html = drawn(ChannelStanding.cases.Unavailable.make({}))
-    expect(html).toContain('This Vivid is not set up for iMessage yet.')
+  it('shows a channel Vivid does not text on yet, with nothing to press or fill in', () => {
+    const links: ReadonlyArray<ChannelLink> = [
+      { channel: 'WhatsApp', standing: ChannelStanding.cases.Unavailable.make({}) },
+    ]
+    const html = renderToStaticMarkup(createElement(TextingChannels, { links, acts }))
+    expect(html).toContain('Vivid cannot text on WhatsApp yet.')
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Connect<\/button>/u)
     expect(html).not.toContain('<input')
   })

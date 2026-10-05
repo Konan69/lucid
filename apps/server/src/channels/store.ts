@@ -147,7 +147,7 @@ const makeChannels = Effect.fn('Channels.makeStore')(function* () {
   const announce = (actor: Actor) => changed(actor).pipe(Effect.provideService(Changes, changes))
 
   const { byPerson, byAddress } = linkQueries(database)
-  /** Listing does no network I/O; an absent provider stays unavailable even if old rows remain. */
+  /** Listing does no network I/O; a channel Vivid does not text on yet stands Unavailable. */
   const list = Effect.fn('Channels.list')(function* (actor: Actor) {
     return yield* Effect.forEach(
       Channel.literals,

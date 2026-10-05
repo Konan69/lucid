@@ -15,7 +15,6 @@ import {
 import { Database, decodeStored, returned } from '../database/client.ts'
 import { sessionTable } from '../auth/tables.ts'
 import { Changes, Topic } from '../live/changes.ts'
-import { PushConfig, requirePushConfiguration } from './config.ts'
 import { pushTargets } from './tables.ts'
 
 const TargetRow = createSelectSchema(pushTargets, {
@@ -66,13 +65,7 @@ export const addressHash = (destination: PushDestination) =>
     .digest('hex')
 
 /** Persistence owns session checks and endpoint uniqueness, independent of RPC and network APIs. */
-const makeTargets = (
-  database: Database['Service'],
-  changes: Changes['Service'],
-  config: PushConfig['Service'],
-) => {
-  const configured = requirePushConfiguration().pipe(Effect.provideService(PushConfig, config))
-
+const makeTargets = (database: Database['Service'], changes: Changes['Service']) => {
   /** A session expiry has no delete hook; pruning at every read prevents stale subscriptions. */
   const active = Effect.fn('PushTargets.active')(function* (personId: PersonId) {
     const now = yield* Clock.currentTimeMillis
@@ -109,7 +102,6 @@ const makeTargets = (
     readonly sessionId: SessionId
     readonly destination: PushDestination
   }) {
-    yield* configured
     yield* validateDestination(input.destination)
     const now = yield* Clock.currentTimeMillis
     const id = PushTargetId.make(NodeCrypto.randomUUID())
@@ -167,13 +159,12 @@ const makeTargets = (
 
   /** Lists all of this Person's active targets across sessions; no Company can widen ownership. */
   const list = Effect.fn('PushTargets.list')(function* (personId: PersonId) {
-    yield* configured
     return (yield* active(personId)).map((row) =>
       PushTarget.make({ id: row.id, destination: row.destination, createdAt: row.createdAt }),
     )
   })
 
-  /** A recipient may remove any of their own targets, including when config was switched off. */
+  /** A recipient may remove any of their own targets, from any of their sessions. */
   const remove = Effect.fn('PushTargets.remove')(function* (personId: PersonId, id: PushTargetId) {
     yield* database.run(
       database
@@ -193,6 +184,6 @@ export class PushTargets extends Context.Service<PushTargets, ReturnType<typeof 
 export const pushTargetsLayer = Layer.effect(
   PushTargets,
   Effect.gen(function* () {
-    return PushTargets.of(makeTargets(yield* Database, yield* Changes, yield* PushConfig))
+    return PushTargets.of(makeTargets(yield* Database, yield* Changes))
   }),
 )
