@@ -1,63 +1,47 @@
-import type { Notification, NotificationId } from '@vivid/contracts'
-import {
-  everyNoticeRead,
-  noticeFace,
-  noticeRows,
-  NoticeRow,
-  noticesRead,
-  type NoticeFace,
-} from '@vivid/state'
+import type { NotificationId } from '@vivid/contracts'
+import { everyNoticeRead, noticeRows, noticesRead, type NotificationList } from '@vivid/state'
 import { Option } from 'effect'
-import { FlatList, View } from 'react-native'
+import { useState } from 'react'
+import { FlatList, Linking, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Check, CheckCheck, Hand, Share2, UserPlus, type LucideIcon } from 'lucide-react-native'
+import { Bell, CheckCheck } from 'lucide-react-native'
 import { useNow } from '../data/foreground'
-import { relativeTime } from '../data/lanes'
+import { commit } from '../data/haptics'
 import { LiveState, useLive, useLiveData, useLiveValue, type LiveData } from '../data/live'
-import { useTheme, type Colors } from '../theme'
+import { invitationAddress } from '../data/server'
+import { useTheme } from '../theme'
 import { Header, Screen } from '../ui/Header'
-import { Live } from '../ui/Live'
-import { Dot, Empty, GUTTER, IconButton, Label, Press, radius, Skeleton, styles } from '../ui/ui'
+import { GUTTER, IconButton, Label, Notice, radius, styles } from '../ui/ui'
 import { useGo } from '../workspace'
+import { Destination } from './notifications/destination'
+import { Item, itemKey, itemsOf } from './notifications/list'
+import { NoticeLine, NoticeOutline } from './notifications/Row'
 
 /**
- * Notifications: what finished or needs the Person while they were somewhere else. The phone had
- * no such list; something that finished in another Thread could only be found by reading the
- * Thread list for what had moved.
+ * Notifications: what finished or needs the Person while they were somewhere else.
  *
  * It is a screen on the app's one stack, pushed from the drawer and left by the system's back
- * swipe, not the web's panel hung from a bell: a phone has no corner to hang a panel from, and a
- * list this long wants the whole screen. The rows, their words and what reading one means are
- * the web's, from the same shared model (`@vivid/state` `notices.ts`); only the drawing is the
- * phone's.
+ * swipe, under the bar every screen has (`ui/Header.tsx`); the web hangs a panel from a bell, and
+ * a phone has no corner to hang one from. What is listed, in what order and in what words is the
+ * web's, from the same shared model (`@vivid/state` `notices.ts`). How it is drawn is the
+ * phone's: an inbox under day headings, like the Thread list, with "Mark all read" where a
+ * screen's one action goes, at the trailing end of the bar.
  *
  * It owns no data. The list is the live query, which starts from what the phone kept
- * (`data/snapshot.ts`), so it is drawn at once on a cold start and corrected when the server
- * answers; a press is shown at once and taken back if the server refuses it.
+ * (`data/snapshot.ts`): on a cold start the kept list is drawn at once, with no outline and no
+ * spinner over it, and corrected when the server answers. A press is shown at once and taken
+ * back if the server refuses it.
+ *
+ * Nothing here is pulled to refresh or swiped: no other screen of the app refreshes by hand
+ * (every list is live), and the only swipe in the app files a Thread.
  */
 export function Notifications() {
   const data = useLiveData()
-  const go = useGo()
-  const insets = useSafeAreaInsets()
   const state = useLive(data.live.notifications)
-  const threads = useLiveValue(data.live.threads)
-  // The moment the app last came to the front: times do not tick under a finger.
-  const now = useNow()
-  const unread = LiveState.$is('Ready')(state)
-    ? state.value.notifications.filter((notice) => notice.readAt === null).length
-    : 0
-
-  /** Goes to what a row is about, marking all of it read on the way. */
-  const visit = NoticeRow.$match({
-    // A notice about no Thread has nowhere on the phone to go; pressing it is reading it.
-    Single: ({ notice }) => read(data, notice.readAt === null ? [notice.id] : []),
-    // A Thread that was deleted still opens: its screen says it is gone, in the server's words.
-    Grouped: ({ threadId, unread: ids }) => {
-      read(data, ids)
-      go.navigate('Chat', { id: threadId })
-    },
-  })
-
+  // What is unread is the server's count of everything, which can be more than the notices
+  // listed: "Mark all read" stays offered while anything, listed or not, is unread.
+  const unread = LiveState.$is('Ready')(state) ? state.value.unreadCount : 0
+  const go = useGo()
   return (
     <Screen>
       <Header
@@ -72,39 +56,34 @@ export function Notifications() {
           />
         }
       />
-      <Live
-        state={state}
-        loading={
-          <View style={[styles.page, styles.column]}>
-            <Skeleton rows={5} />
-          </View>
-        }
-      >
-        {(value) => (
-          <FlatList
-            data={noticeRows(
-              value.notifications,
-              // Until the Thread list has answered, a row leads with its notice's own title.
-              Option.match(threads, { onNone: () => [], onSome: (list) => list.threads }),
-            )}
-            keyExtractor={(row) => noticeFace(row).key}
-            renderItem={({ item }) => (
-              <Line face={noticeFace(item)} now={now} onOpen={() => visit(item)} />
-            )}
-            ListEmptyComponent={
-              <View style={{ paddingHorizontal: 12 }}>
-                <Empty line="You’re all caught up. When Vivid finishes something or needs you, it’s listed here." />
-              </View>
-            }
-            contentContainerStyle={[
-              styles.column,
-              { paddingHorizontal: GUTTER - 12, paddingTop: 4, paddingBottom: insets.bottom + 24 },
-            ]}
-          />
-        )}
-      </Live>
+      <Body state={state} />
     </Screen>
   )
+}
+
+/**
+ * What is under the bar, one drawing for each state of the live query so none can be mistaken
+ * for another: the list's outline only when the phone kept nothing to draw (a kept list is
+ * `Ready` from the first frame), the server's own sentence when the list cannot be read at all
+ * (a live query fails only for good; a dropped connection keeps the last list on screen), and
+ * otherwise the list, or the sentence that says there is nothing in it.
+ */
+function Body({ state }: { state: LiveState<NotificationList> }) {
+  if (LiveState.$is('Loading')(state)) {
+    return (
+      <View style={[styles.column, { paddingTop: 4 }]}>
+        <NoticeOutline />
+      </View>
+    )
+  }
+  if (LiveState.$is('Failed')(state)) {
+    return (
+      <View style={[styles.page, styles.column]}>
+        <Notice message={state.failure.message} />
+      </View>
+    )
+  }
+  return state.value.notifications.length === 0 ? <Quiet /> : <Listed list={state.value} />
 }
 
 /** Shows these notices as read at once, sends that, and takes it back if the server refuses. */
@@ -118,8 +97,9 @@ function read(data: LiveData, ids: ReadonlyArray<NotificationId>) {
   )
 }
 
-/** Marks every notice read, shown at once the same way. */
+/** Marks every notice read, shown at once the same way, and felt as the press that did it. */
 function readAll(data: LiveData) {
+  commit()
   const at = Date.now()
   void data.change(
     (client) => client.ReadNotifications({}),
@@ -128,123 +108,123 @@ function readAll(data: LiveData) {
 }
 
 /**
- * The mark each kind of notice leads with, so the list can be read by colour before a word of it
- * is: green for done, orange for "this needs you", blue for something shared, magenta for an
- * invitation. The colours are the palette's own (`face-*`), the ones a Project's mark uses. A new
- * kind of notice fails to compile here.
+ * Nothing to list, said once the server (or what the phone kept of it) has answered that there
+ * is nothing. The words are the web panel's. It is set where every empty screen of the app sets
+ * its sentence, at the top of the page on the gutter, under the mark of the place; Vivid's face
+ * is not drawn, because an empty list is not Vivid speaking (`ui/ui.tsx` `Empty`).
  */
-const KIND = {
-  finished: { icon: Check, color: 'face-green' },
-  'needs-you': { icon: Hand, color: 'face-orange' },
-  shared: { icon: Share2, color: 'face-blue' },
-  invited: { icon: UserPlus, color: 'face-magenta' },
-} as const satisfies Record<Notification['kind'], { icon: LucideIcon; color: keyof Colors }>
-
-/** The tile a row leads with. A read row's steps back, so what is new is found without reading. */
-function Tile({ kind, unread }: { kind: Notification['kind']; unread: boolean }) {
+function Quiet() {
   const { colors: c } = useTheme()
-  const { icon: Icon, color } = KIND[kind]
   return (
-    <View
-      pointerEvents="none"
-      style={{
-        width: 34,
-        height: 34,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: radius.row,
-        borderCurve: 'continuous',
-        backgroundColor: c['wash-pressed'],
-        opacity: unread ? 1 : 0.6,
-      }}
-    >
-      <Icon size={17} strokeWidth={1.7} color={c[color]} />
+    <View style={[styles.page, styles.column, { paddingTop: 24, gap: 14 }]}>
+      <View
+        pointerEvents="none"
+        style={{
+          width: 44,
+          height: 44,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: radius.control,
+          borderCurve: 'continuous',
+          backgroundColor: c['wash-hover'],
+        }}
+      >
+        <Bell size={21} strokeWidth={1.7} color={c['ink-3']} />
+      </View>
+      <View style={{ gap: 4 }}>
+        <Label accessibilityRole="header" size="headline">
+          You’re all caught up
+        </Label>
+        <Label tone="ink-2" style={{ maxWidth: 340 }}>
+          Vivid will tell you here.
+        </Label>
+      </View>
     </View>
   )
 }
 
-/** What a screen reader says for a row: what it is, where it leads, what was said, what is new. */
-const spokenOf = (face: NoticeFace): string =>
-  [
-    Option.getOrElse(face.spoken, () => ''),
-    face.heading,
-    face.waiting ? 'Needs you' : '',
-    face.line,
-    face.unread > 0 ? `${face.unread} unread` : '',
-  ]
-    .filter((part) => part.length > 0)
-    .join('. ')
+/** A day band's heading, in the place and the type a Section's title is set (`ui/List.tsx`). */
+function Caption({ label }: { label: string }) {
+  return (
+    <Label
+      accessibilityRole="header"
+      size="label"
+      tone="ink-2"
+      style={{ fontWeight: '600', paddingHorizontal: GUTTER, paddingTop: 18, paddingBottom: 4 }}
+    >
+      {label}
+    </Label>
+  )
+}
 
 /**
- * One row: the newest notice's mark, where it leads (a Thread's title), and under it one line of
- * what was last said, with what is unread at the trailing edge.
+ * The list itself: a row for each place to go, newest first, under the day it happened.
  *
- * The layout is the web panel's row, for the same reasons: the time is alone at the end of the
- * first line, so a long title keeps its room beside it; the unread count and dot sit at the end
- * of the second line, which is the one that gives way. Both lines are one line each, so every
- * row is the same height and a count that changes changes words, not layout. The whole row is
- * the target, 58 points tall, and darkens under a finger.
+ * It holds the one thing a row cannot say for itself: that the phone's browser would not take
+ * an invitation's page. That is said above the list, where the Person is looking, and cleared by
+ * the next press that leaves.
  */
-function Line({
-  face,
-  now,
-  onOpen,
-}: {
-  face: NoticeFace
-  /** The moment times are counted from. */
-  now: number
-  onOpen: () => void
-}) {
-  const { colors: c } = useTheme()
-  const unread = face.unread > 0
+function Listed({ list }: { list: NotificationList }) {
+  const data = useLiveData()
+  const go = useGo()
+  const insets = useSafeAreaInsets()
+  const threads = useLiveValue(data.live.threads)
+  // The moment the app last came to the front: times do not tick under a finger.
+  const now = useNow()
+  const [unopened, setUnopened] = useState<Option.Option<string>>(Option.none())
+
+  /** Hands the invitation's page to the phone's browser, and says so here if it is refused. */
+  const leave = (address: string) => {
+    setUnopened(Option.none())
+    void Linking.openURL(address).then(
+      () => undefined,
+      () => setUnopened(Option.some('That invitation could not be opened in your browser.')),
+    )
+  }
+
+  /** Goes to what a row is about, marking all of it read on the way. */
+  const open = (unread: ReadonlyArray<NotificationId>, leads: Destination) => {
+    read(data, unread)
+    Destination.$match(leads, {
+      Thread: ({ id }) => go.navigate('Chat', { id }),
+      // The phone has no screen that accepts an invitation; the web's page for it does.
+      Invitation: ({ id }) => leave(invitationAddress(data.session.server, id)),
+      // Reading it is all a press on these does, and all that is left to do with them.
+      Gone: () => undefined,
+      Nowhere: () => undefined,
+    })
+  }
+
+  const items = itemsOf(
+    noticeRows(
+      list.notifications,
+      // Until the Thread list has answered, a row leads with its notice's own title.
+      Option.match(threads, { onNone: () => [], onSome: (answer) => answer.threads }),
+    ),
+    Option.map(threads, (answer) => new Set(answer.threads.map((thread) => thread.id))),
+    now,
+  )
+
   return (
-    <Press
-      accessibilityRole="button"
-      accessibilityLabel={spokenOf(face)}
-      onPress={onOpen}
-      style={({ pressed }) => ({
-        minHeight: 58,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-        borderRadius: radius.row,
-        borderCurve: 'continuous',
-        backgroundColor: pressed ? c['row-hover'] : 'transparent',
-      })}
-    >
-      <Tile kind={face.notice.kind} unread={unread} />
-      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-          <Label
-            numberOfLines={1}
-            tone={unread ? 'ink' : 'ink-2'}
-            style={{ flex: 1, fontWeight: unread ? '600' : '400' }}
-          >
-            {face.heading}
-          </Label>
-          <Label size="caption" tone="ink-3" style={{ fontVariant: ['tabular-nums'] }}>
-            {relativeTime(face.notice.createdAt, now)}
-          </Label>
-        </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          {face.waiting && (
-            <Label size="label" tone="status-attention">
-              Needs you
-            </Label>
-          )}
-          <Label numberOfLines={1} size="label" tone="ink-3" style={{ flex: 1 }}>
-            {face.line}
-          </Label>
-          {face.unread > 1 && (
-            <Label size="caption" tone="ink-2" style={{ fontVariant: ['tabular-nums'] }}>
-              {face.unread} new
-            </Label>
-          )}
-          {unread && <Dot tone="accent" size={8} />}
-        </View>
-      </View>
-    </Press>
+    <FlatList
+      data={items}
+      keyExtractor={itemKey}
+      ListHeaderComponent={
+        Option.isSome(unopened) ? (
+          <View style={{ paddingHorizontal: GUTTER, paddingTop: 8 }}>
+            <Notice message={unopened.value} />
+          </View>
+        ) : null
+      }
+      renderItem={({ item }) =>
+        Item.$match(item, {
+          Heading: ({ label }) => <Caption label={label} />,
+          Entry: ({ face, leads, unread }) => (
+            <NoticeLine face={face} leads={leads} now={now} onPress={() => open(unread, leads)} />
+          ),
+        })
+      }
+      contentContainerStyle={[styles.column, { paddingBottom: insets.bottom + 24 }]}
+    />
   )
 }
