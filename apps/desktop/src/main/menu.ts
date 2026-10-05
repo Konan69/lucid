@@ -1,6 +1,6 @@
 import * as Option from 'effect/Option'
 import * as NodeEvents from 'node:events'
-import { BrowserWindow, Menu, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from 'electron'
 import type { DesktopPlatform } from '../shared/bridge.ts'
 
 /** App zoom changes also reposition the native page viewport; Electron's zoom event covers wheels only. */
@@ -77,6 +77,38 @@ export function focusMainWindow(window: Option.Option<BrowserWindow>): void {
       if (available.isMinimized()) available.restore()
       available.show()
       available.focus()
+    },
+  })
+}
+
+/**
+ * Put the window in front of another application's windows, for the one moment the Person is
+ * somewhere else and Vivid has something for them: their browser has just signed them in.
+ *
+ * `focusMainWindow` is not enough there. It is right when the operating system has handed this
+ * app the front, as it does for a second launch or a menu command. Here the browser holds the
+ * front, and Windows refuses it to any process that does not (the rules of
+ * `SetForegroundWindow`): `focus()` only makes the taskbar button flash, and the browser stays
+ * on top of a window that has just signed in. This was seen on Windows 11 with the packaged app.
+ *
+ * A window may always change its own place in the stacking order, whoever holds the front. So it
+ * is made topmost for an instant, which puts it above the browser, and let go at once so it does
+ * not stay above everything else. `focus()` is still asked for, and is granted wherever the
+ * system allows it. On macOS `app.focus({ steal: true })` is the system's own way to come
+ * forward from behind another app; it does nothing more elsewhere.
+ */
+export function raiseMainWindow(window: Option.Option<BrowserWindow>): void {
+  Option.match(window, {
+    onNone: () => undefined,
+    onSome: (available) => {
+      if (available.isDestroyed()) return
+      if (available.isMinimized()) available.restore()
+      available.setAlwaysOnTop(true)
+      available.show()
+      available.moveTop()
+      available.focus()
+      available.setAlwaysOnTop(false)
+      app.focus({ steal: true })
     },
   })
 }

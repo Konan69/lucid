@@ -7,8 +7,16 @@ the contracts and HTTP routes use only the Vivid glossary terms.
 
 Browser clients and the Electron web renderer use Better Auth's HttpOnly session cookie. Expo
 uses a bearer session token kept in SecureStore on native devices. The device-authorization
-plugin supports pairing; mobile implements the code exchange. The desktop shell currently uses
-the bundled web sign-in, not a separate bearer-token flow.
+plugin supports pairing; mobile implements the code exchange.
+
+The desktop app's window is the web app, so it signs in with email and password in the window
+and keeps the same cookie. Google will not sign anyone in inside an app window, so for Google the
+shell opens the system browser on `GET /api/auth/desktop/google`, Google's callback sends the
+browser to a loopback address the shell listens on with a one-use code, and the window trades the
+code and a secret only the app holds for a session of its own at `POST /api/auth/desktop/session`
+(`src/auth/desktop.ts`, after `@better-auth/electron`; the wire contract is
+`packages/contracts/src/signin.ts`). No code is shown to the Person and nothing is approved by
+hand.
 
 ## Configuration
 
