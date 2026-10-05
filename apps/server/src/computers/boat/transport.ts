@@ -38,11 +38,7 @@ const decodeError = HttpClientResponse.schemaBodyJson(Protocol.ErrorReply)
  * active wallet, which someone can change from the dashboard.
  */
 export const boatConfiguration = Effect.fn('Machine.boat.configuration')(function* () {
-  const key = yield* requiredSetting(
-    'VIVID_BOAT_API_KEY',
-    settingSecret,
-    'the Boat API key',
-  )
+  const key = yield* requiredSetting('VIVID_BOAT_API_KEY', settingSecret, 'the Boat API key')
   const org = yield* optionalSetting('VIVID_BOAT_ORG', settingText, 'a Boat organization')
   const template = yield* requiredSetting(
     'VIVID_BOAT_TEMPLATE',

@@ -2316,11 +2316,7 @@ export const executorLayer = Layer.effect(
       "Executor's absolute URL",
     )
     // The bearer credential for that address; without it every Executor call is refused.
-    const key = yield* requiredSetting(
-      'VIVID_EXECUTOR_KEY',
-      settingSecret,
-      'the Executor API key',
-    )
+    const key = yield* requiredSetting('VIVID_EXECUTOR_KEY', settingSecret, 'the Executor API key')
     // Every request path is scoped to one Executor organization; there is no default one.
     const organization = yield* requiredSetting(
       'VIVID_EXECUTOR_ORGANIZATION',
