@@ -12,7 +12,6 @@ import { Data, Option, Schema } from 'effect'
  * - `Projects`: the shelf of Projects, or one Project open on it. The open one rides in the path
  *   so the sidebar's group can link straight to a Project.
  * - `Invite`: an invitation to a Company, shown before it is accepted.
- * - `Device`: approving a phone or desktop app that is asking to sign in as this Person.
  */
 export type Route = Data.TaggedEnum<{
   New: {}
@@ -21,7 +20,6 @@ export type Route = Data.TaggedEnum<{
   Library: {}
   Projects: { readonly open: Option.Option<ProjectId> }
   Invite: { readonly id: InvitationId }
-  Device: { readonly code: Option.Option<string> }
 }>
 export const Route = Data.taggedEnum<Route>()
 
@@ -53,7 +51,7 @@ const PLACES = new Map<string, Route>([
 const unescaped = Option.liftThrowable(decodeURIComponent)
 
 /** Reads a path. Anything unrecognised is the first screen rather than an error page. */
-export function parseRoute(pathname: string, search: string): Route {
+export function parseRoute(pathname: string): Route {
   const [first, second] = pathname.split('/').filter((part) => part.length > 0)
   if (first === undefined) return Route.New()
   const named = second === undefined ? Option.none<string>() : unescaped(second)
@@ -65,11 +63,6 @@ export function parseRoute(pathname: string, search: string): Route {
   }
   if (first === 'projects' && Option.isSome(named)) {
     return Route.Projects({ open: Option.some(ProjectId.make(named.value)) })
-  }
-  if (first === 'device') {
-    return Route.Device({
-      code: Option.fromNullOr(new URLSearchParams(search).get('user_code')),
-    })
   }
   const place = PLACES.get(first)
   return place === undefined ? Route.New() : place
@@ -87,26 +80,15 @@ export const pathOf = (route: Route): string =>
         onSome: (id) => `/projects/${encodeURIComponent(id)}`,
       }),
     Invite: ({ id }) => `/invite/${encodeURIComponent(id)}`,
-    Device: () => '/device',
   })
 
 const listeners = new Set<() => void>()
-let current = parseRoute(location.pathname, location.search)
+let current = parseRoute(location.pathname)
 let settings = decodeSection(new URLSearchParams(location.search).get('settings'))
-if (Route.$is('Device')(current)) settings = Option.some('devices')
-
-/**
- * The Settings section the address asks for. A device's approval link (`/device?user_code=…`) is
- * a request to open Devices with its code filled in, wherever the Person happens to land.
- */
-const sectionAt = (route: Route, search: string) =>
-  Route.$is('Device')(route)
-    ? Option.some<SettingsSection>('devices')
-    : decodeSection(new URLSearchParams(search).get('settings'))
 
 const read = () => {
-  current = parseRoute(location.pathname, location.search)
-  settings = sectionAt(current, location.search)
+  current = parseRoute(location.pathname)
+  settings = decodeSection(new URLSearchParams(location.search).get('settings'))
   for (const listener of listeners) listener()
 }
 

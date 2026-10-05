@@ -23,13 +23,6 @@ describe('what a Better Auth code means to a Person', () => {
 })
 
 describe('reading the address the welcome was opened at', () => {
-  it('starts Google for the address a phone opens, and goes on to approve that phone', () => {
-    expect(readAddress('/device?user_code=ABCD2345&signin=google')).toEqual({
-      destination: '/device?user_code=ABCD2345',
-      standing: Standing.Start(),
-    })
-  })
-
   it('says why a Google sign-in came back, and drops the error from where to go next', () => {
     expect(
       readAddress(
@@ -45,12 +38,17 @@ describe('reading the address the welcome was opened at', () => {
     expect(readAddress('/?error=access_denied').standing).toEqual(Standing.Plain())
   })
 
-  it('does not start for a mark it never writes', () => {
-    expect(readAddress('/?signin=github').standing).toEqual(Standing.Plain())
+  it('reads a mark it never writes as no mark, and still takes it off', () => {
+    expect(readAddress('/library?signin=google')).toEqual({
+      destination: '/library',
+      standing: Standing.Plain(),
+    })
   })
 
   it('goes to the first screen when the address names another site', () => {
-    expect(readAddress('//elsewhere.example/device?signin=google')).toEqual({
+    expect(
+      readAddress('//elsewhere.example/invite/abc?signin=returned&error=access_denied'),
+    ).toEqual({
       destination: '/',
       standing: Standing.Plain(),
     })
@@ -58,38 +56,36 @@ describe('reading the address the welcome was opened at', () => {
 })
 
 describe('the addresses Better Auth is given for one Google sign-in', () => {
-  const given = googleAddresses('/device?user_code=ABCD2345')
+  const given = googleAddresses('/invite/abc?from=mail')
 
   it('lands a returning Person where they were going', () => {
-    expect(given.callbackURL).toBe('/device?user_code=ABCD2345')
+    expect(given.callbackURL).toBe('/invite/abc?from=mail')
   })
 
-  it('lands a failure back on a welcome that says why and does not start again', () => {
+  it('lands a failure back on a welcome that says why', () => {
     // Better Auth appends its code to the address it was given (`appendQueryParams`).
     const landed = readAddress(`${given.errorCallbackURL}&error=access_denied`)
     expect(landed).toEqual({
-      destination: '/device?user_code=ABCD2345',
+      destination: '/invite/abc?from=mail',
       standing: Standing.Returned({ outcome: 'Cancelled' }),
     })
   })
 
   it('lands a new account where its time zone is adopted, then on the same place', () => {
-    expect(firstArrival(given.newUserCallbackURL)).toEqual(
-      Option.some('/device?user_code=ABCD2345'),
-    )
+    expect(firstArrival(given.newUserCallbackURL)).toEqual(Option.some('/invite/abc?from=mail'))
   })
 
-  it('never hands Better Auth an address that restarts Google', () => {
-    const restarting = googleAddresses('/?signin=google')
-    for (const address of Object.values(restarting)) {
-      expect(readAddress(address).standing).not.toEqual(Standing.Start())
-    }
+  it('never hands Better Auth an address that carries an earlier attempt’s error', () => {
+    const after = googleAddresses('/library?signin=returned&error=access_denied')
+    expect(after.callbackURL).toBe('/library')
+    expect(readAddress(after.newUserCallbackURL).standing).toEqual(Standing.Plain())
+    expect(readAddress(after.errorCallbackURL).standing).toEqual(Standing.Plain())
   })
 })
 
 describe('the landing of a first sign-in with Google', () => {
   it('is not any other landing', () => {
-    expect(firstArrival('/device?user_code=ABCD2345')).toEqual(Option.none())
+    expect(firstArrival('/invite/abc?from=mail')).toEqual(Option.none())
     expect(firstArrival('/?joined=email')).toEqual(Option.none())
   })
 })

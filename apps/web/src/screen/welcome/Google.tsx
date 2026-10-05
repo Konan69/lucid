@@ -41,10 +41,6 @@ export function GoogleMark() {
   )
 }
 
-// An address that asks for Google sign-in starts it once for each load of the page, however many
-// times React draws the welcome (twice in development, where it mounts everything a second time).
-let started = false
-
 /**
  * The other way in: one button, for a new Person and a returning one alike, set apart from the
  * form above it by a word and not by a second card. It is a control like the form's own button
@@ -52,35 +48,16 @@ let started = false
  *
  * - `resting`: a request is on its way (this one or the form's), so it cannot be pressed.
  * - `leaving`: this is the one on its way, and the button says where the page is going.
- * - `starting`: the address asked for Google sign-in, so it begins as the button is first put on
- *   the page. That moment is the proof that nobody is signed in, which is the only time it should
- *   start: a signed-in Person on the same address is shown where they were going and never the
- *   welcome. It runs from the button's `ref`, which React calls once the button is on the page,
- *   so nothing starts for a welcome that was drawn and thrown away.
- *
- * Before it starts by itself, the mark that asked is taken out of the address bar (`destination`
- * is the address without it), so going Back from Google lands on this welcome at rest and not on
- * an address that sends the Person straight to Google again.
  */
 export function GoogleWay({
-  destination,
-  starting,
   resting,
   leaving,
   onStart,
 }: {
-  destination: string
-  starting: boolean
   resting: boolean
   leaving: boolean
   onStart: () => void
 }) {
-  const startOnce = (button: HTMLButtonElement | null) => {
-    if (button === null || started) return
-    started = true
-    history.replaceState(history.state, '', destination)
-    onStart()
-  }
   return (
     <>
       <div className="flex items-center gap-3 text-meta text-ink-3">
@@ -88,13 +65,7 @@ export function GoogleWay({
         or
         <span aria-hidden className="h-px flex-1 bg-line-2" />
       </div>
-      <Button
-        ref={starting ? startOnce : undefined}
-        variant="outline"
-        disabled={resting}
-        onClick={onStart}
-        className="w-full"
-      >
+      <Button variant="outline" disabled={resting} onClick={onStart} className="w-full">
         <GoogleMark />
         {leaving ? 'Opening Google…' : 'Continue with Google'}
       </Button>

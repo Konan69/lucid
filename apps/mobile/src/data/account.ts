@@ -1,5 +1,3 @@
-import type { PairingClient } from '@vivid/contracts/auth'
-import { DEVICE_GRANT, Wire, type PairingTransport } from '@vivid/state'
 import { Effect, Option, Redacted, Schema } from 'effect'
 import { AccountRefused, AccountUnreachable, type RefusalReason } from './refusal'
 import { accountAddress, type ServerAddress } from './server'
@@ -18,7 +16,7 @@ import { bearer, request } from './transport'
 
 const UNREACHABLE = 'Vivid could not be reached at that address. Check the server and try again.'
 const NO_SESSION =
-  'That server signed you in but gave this device nothing to stay signed in with. Use a code instead.'
+  'That server signed you in but gave this device nothing to stay signed in with. Try again.'
 
 const Refusal = Schema.fromJsonString(Schema.Struct({ message: Schema.optionalKey(Schema.String) }))
 const decodeRefusal = Schema.decodeUnknownOption(Refusal)
@@ -117,64 +115,8 @@ const asPerson = Effect.fn('Account.asPerson')(function* (
   yield* answer.ok ? Effect.void : Effect.fail(refusalFor(answer.status, answer.body))
 })
 
-/**
- * Binds a waiting code to the Person signed in on this phone. Better Auth 1.7.5 refuses to approve
- * a code no session has claimed (`DEVICE_CODE_NOT_CLAIMED`, `plugins/device-authorization/routes.mjs`),
- * and the claim is a `GET /device?user_code=…` made with the approving session, so it goes first.
- */
-const claimDevice = Effect.fn('Account.claimDevice')(function* (
-  session: SignedIn,
-  userCode: string,
-) {
-  const address = `${accountAddress(session.server, 'device')}?user_code=${encodeURIComponent(userCode)}`
-  const response = yield* Effect.tryPromise({
-    try: (signal) => request(address, { method: 'GET', headers: bearer(session.token), signal }),
-    catch: () => new AccountUnreachable({ message: UNREACHABLE }),
-  })
-  const body = yield* Effect.tryPromise({
-    try: () => response.text(),
-    catch: () => new AccountUnreachable({ message: UNREACHABLE }),
-  })
-  yield* response.ok ? Effect.void : Effect.fail(refusalFor(response.status, body))
-})
-
 /** Ends the session on the server, so its token stops working everywhere. */
 export const signOut = (session: SignedIn) => asPerson(session, 'sign-out', {})
-
-/**
- * Lets another device that is waiting with this code sign in as the Person holding this phone.
- * The same call the web makes from Settings → Devices, carried by this session's token.
- */
-export const approveDevice = (session: SignedIn, userCode: string) =>
-  Effect.andThen(claimDevice(session, userCode), asPerson(session, 'device/approve', { userCode }))
-
-/**
- * Names this app to the server, which issues a code to Vivid's own apps only and tells the Person
- * approving it which one asked (`PairingClient`).
- */
-const CLIENT_ID: PairingClient = 'vivid-mobile'
-
-/** One request of the code exchange, with "no answer" kept apart from "an answer that says no". */
-const wire = (posting: Omit<Posting, 'headers'>) =>
-  post({ ...posting, headers: {} }).pipe(
-    Effect.map((answer) => Wire.Answered({ ok: answer.ok, body: answer.body })),
-    Effect.catchTag('AccountUnreachable', () => Effect.succeed(Wire.Unreachable())),
-  )
-
-/** The code exchange's two requests against one server. See `pairing.ts` in `@vivid/state` for the protocol. */
-export const pairingTransport = (server: ServerAddress): PairingTransport => ({
-  requestCode: wire({ server, path: 'device/code', fields: { client_id: CLIENT_ID } }),
-  askToken: (deviceCode) =>
-    wire({
-      server,
-      path: 'device/token',
-      fields: {
-        grant_type: DEVICE_GRANT,
-        device_code: Redacted.value(deviceCode),
-        client_id: CLIENT_ID,
-      },
-    }),
-})
 
 /** The part of Better Auth's session answer that says when the session ends. */
 const Ending = Schema.fromJsonString(

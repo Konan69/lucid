@@ -13,7 +13,7 @@ import { useCallback, useSyncExternalStore } from 'react'
  * when it ends (`live.ts`), so nothing a previous Person saw can still be on screen.
  *
  * Effects here are run by the registry, not by a component: writing to a function atom starts
- * it, reading the atom says how it went. That is how the app signs in, saves and pairs without a
+ * it, reading the atom says how it went. That is how the app signs in and saves without a
  * hand-rolled runtime or an effect hook.
  */
 export const door = AtomRegistry.make()
@@ -22,8 +22,9 @@ export const door = AtomRegistry.make()
  * Reads a device atom. The component re-renders when, and only when, its value changes.
  *
  * `subscribe` is kept stable per atom because React resubscribes whenever it changes identity,
- * and for an atom that is alive only while it is read (the device code exchange) a resubscribe
- * on every render would be a disposal and a restart away from an interrupted exchange.
+ * and for an atom that is alive only while it is read (listening for the link Google sign-in
+ * comes back on) a resubscribe on every render would be a disposal and a restart, with a link
+ * that arrived in between heard by nobody.
  */
 export function useDoor<Value>(atom: Atom.Atom<Value>): Value {
   const subscribe = useCallback((notify: () => void) => door.subscribe(atom, notify), [atom])
