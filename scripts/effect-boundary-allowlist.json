@@ -30,11 +30,6 @@
     "symbols": ["openStore", "opened", "attempt", "noteIndex"]
   },
   {
-    "file": "apps/server/src/code/worker.ts",
-    "classification": "third-party-adapter",
-    "symbols": ["invokeTool"]
-  },
-  {
     "file": "apps/server/src/auth/dialect.ts",
     "classification": "third-party-adapter",
     "symbols": ["attempt", "settle", "owned"]
