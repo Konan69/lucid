@@ -1223,7 +1223,9 @@ function makeCatalog(http: ExecutorHttp) {
     const rejected: Option.Option<{ readonly id: ServiceId }>[] = []
     const decoded = yield* Effect.forEach(
       entries,
-      Effect.fn('Executor.catalogEntry')(
+      // Untraced: this runs once for each of about a thousand catalogue entries on every read,
+      // and a span apiece was 27,000 spans an hour with one Person. `Executor.catalog` is the span.
+      Effect.fnUntraced(
         function* (entry) {
           const { kind } = yield* decodeKind(entry)
           if (!knownKind(kind)) return []
@@ -1382,7 +1384,8 @@ const makeSetupRefusals = Effect.fn('Executor.setupRefusals')(function* (
 ) {
   const refusals = yield* Ref.make(HashMap.empty<ServiceId, typeof SetupRefusal.Type>())
   return {
-    read: Effect.fn('Executor.readSetupRefusal')(function* (service: ServiceId) {
+    // Untraced: read once per catalogue entry on every list (see `refreshAvailability`).
+    read: Effect.fnUntraced(function* (service: ServiceId) {
       const now = yield* Clock.currentTimeMillis
       const refusal = yield* Ref.get(refusals).pipe(
         Effect.map((current) => HashMap.get(current, service)),
@@ -1489,7 +1492,9 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
   const refusals = yield* makeSetupRefusals(inspections)
   const readInspection = makeInspectionReader({ inspections, refusals, publication, record })
   /** Refresh expired inspection entries in the owning scope while serving retained display facts. */
-  const refreshAvailability = Effect.fn('Executor.refreshAvailability')(function* (
+  // Untraced: one call per catalogue entry, about a thousand a read. A span each, with the
+  // refusal read beneath, was 63,000 spans an hour; `Executor.availableCatalog` is the span.
+  const refreshAvailability = Effect.fnUntraced(function* (
     entry: typeof ExecutorServiceEntry.Type,
     current: HashMap.HashMap<ServiceId, ServiceAuthorization>,
   ) {
