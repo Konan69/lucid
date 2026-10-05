@@ -353,7 +353,7 @@ it('a host reconnect route streams the active run through the stock transport', 
 
 // AI SDK packages/ai/src/ui/chat.test.ts: should continue an active text part when resuming after a disconnect.
 // Replaying a snapshot resets the SDK's retained current step before emitting its durable contents.
-it('snapshot reconnect after a network interruption does not duplicate text', async () => {
+it('step 1 snapshot reconnect after a network interruption does not duplicate text', async () => {
   const entered = signal()
   const release = signal()
   const fixture = await host(
@@ -478,6 +478,97 @@ it('reconnectToStream returns the in-progress run through respond', async () => 
     expect(texts(result.message)).toEqual(['Starting.', 'Finished.'])
   } finally {
     opened.release.resolve()
+    await opened.root.waitForIdle(context)
+  }
+})
+
+// Review step.mjs: the server replays start(messageId), reset-step, then the whole run. Installed
+// ai/src/ui/process-ui-message-stream.ts:144–156,938–963 resets only the current step; start changes
+// identity without replacing older parts. chat.ts:852–882 retains resumable state in this Chat;
+// a fresh page instead constructs a new message. No server chunk replaces the earlier steps.
+// This is the one permitted expected failure: applications reload history before reconnecting.
+it.fails('step 2 snapshot reconnect into a retained partial message duplicates earlier text and tools', async () => {
+  const entered = signal()
+  const release = signal()
+  const fixture = await host(
+    {
+      work: tool({ inputSchema: z.object({}), execute: async () => '12 pages' }),
+      pause: tool({
+        inputSchema: z.object({}),
+        execute: async () => {
+          entered.resolve()
+          await release.promise
+          return 'continued'
+        },
+      }),
+    },
+    {},
+  )
+  const opened = await fixture.open()
+  opened.faux.setResponses([
+    fauxAssistantMessage(
+      [{ type: 'text', text: 'Starting.' }, fauxToolCall('work', {}, { id: 'work' })],
+      { stopReason: 'toolUse' },
+    ),
+    fauxAssistantMessage(
+      [{ type: 'text', text: 'Fin' }, fauxToolCall('pause', {}, { id: 'pause' })],
+      { stopReason: 'toolUse' },
+    ),
+    fauxAssistantMessage('Finished.'),
+  ])
+  const attached = signal()
+  const transport = new DefaultChatTransport<UIMessage>({
+    api: 'http://durable.test/chat',
+    fetch: async (url, init) => {
+      const request = new Request(url, init)
+      const response = await respond(opened.harness, opened.root.id, request, context)
+      if (request.method === 'GET') {
+        attached.resolve()
+        return response
+      }
+      if (response.body === null) throw new Error('Expected an SSE body')
+      const decoder = new TextDecoder()
+      // Fault before closing step 2's text, retaining step 1 and the second partial text.
+      let secondText = false
+      const dropped = response.body.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            const text = decoder.decode(chunk)
+            if (secondText && text.includes('text-end')) {
+              controller.error(new TypeError('network connection lost'))
+              return
+            }
+            if (text.includes('text-delta') && text.includes('"delta":"Fin"')) secondText = true
+            controller.enqueue(chunk)
+          },
+        }),
+      )
+      return new Response(dropped, { headers: response.headers })
+    },
+  })
+  const chat = new PlainChat({ transport })
+  try {
+    await chat.sendMessage({ text: 'Build in steps' })
+    await entered.promise
+    expect(chat.status).toBe('error')
+    if (chat.lastMessage === undefined) throw new Error('Expected the retained message')
+    expect(texts(chat.lastMessage)).toEqual(['Starting.', 'Fin'])
+    expect(chat.lastMessage.parts.filter((part) => part.type === 'tool-work')).toHaveLength(1)
+    const id = chat.lastMessage.id
+    chat.clearError()
+    const resumed = chat.resumeStream()
+    await attached.promise
+    release.resolve()
+    await resumed
+    expect(chat.status).toBe('ready')
+    expect(chat.lastMessage.id).toBe(id)
+    expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
+    expect({
+      text: texts(chat.lastMessage),
+      tools: chat.lastMessage.parts.filter((part) => part.type === 'tool-work').length,
+    }).toEqual({ text: ['Starting.', 'Fin', 'Finished.'], tools: 1 })
+  } finally {
+    release.resolve()
     await opened.root.waitForIdle(context)
   }
 })
