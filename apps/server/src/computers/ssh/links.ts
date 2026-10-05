@@ -51,21 +51,28 @@ export const links = <Key>(identity: Identity) => {
   const pending = new Map<Key, symbol>()
   /** Set by `close`. Nothing is opened afterwards: the owner would never close it. */
   let closed = false
+  /**
+   * Takes a connection out of the map and closes it as one step that cannot be interrupted
+   * between the two: `Scope.close` does not mask interruption itself (Effect rc.116), and a
+   * connection that is out of the map and not closed is open with no owner.
+   */
+  const shut = (key: Key, which: (link: Link) => boolean) =>
+    Effect.uninterruptible(
+      Effect.suspend(() => {
+        const found = open.get(key)
+        if (found === undefined || !which(found.link)) return Effect.void
+        open.delete(key)
+        return Scope.close(found.scope, Exit.void)
+      }),
+    )
   const forget = (key: Key) =>
-    Effect.suspend(() => {
-      pending.delete(key)
-      const found = open.get(key)
-      if (found === undefined) return Effect.void
-      open.delete(key)
-      return Scope.close(found.scope, Exit.void)
-    })
-  const discard = (key: Key, link: Link) =>
-    Effect.suspend(() => {
-      const found = open.get(key)
-      if (found === undefined || found.link !== link) return Effect.void
-      open.delete(key)
-      return Scope.close(found.scope, Exit.void)
-    })
+    Effect.uninterruptible(
+      Effect.suspend(() => {
+        pending.delete(key)
+        return shut(key, () => true)
+      }),
+    )
+  const discard = (key: Key, link: Link) => shut(key, (held) => held === link)
   /**
    * One try, with a scope of its own. Learning that the connection opened and handing it to the
    * map are one uninterruptible step: a caller that gives up, or the deadline passing, at that
@@ -112,8 +119,14 @@ export const links = <Key>(identity: Identity) => {
         orElse: () => Effect.fail(new LinkUnreachable()),
       }),
     )
-  const dial = <Failure>(key: Key, locate: Effect.Effect<LinkTarget, Failure>) =>
+  const dial = <Failure>(
+    key: Key,
+    locate: Effect.Effect<LinkTarget, Failure>,
+  ): Effect.Effect<Link, Failure | LinkFailure> =>
     Effect.suspend(() => {
+      // Asked in the same step that takes the token. A check made earlier could be followed by
+      // `close` and then by this opening, which would make a connection after the owner's last act.
+      if (closed) return Effect.fail(new LinkUnreachable())
       const token = Symbol('opening')
       pending.set(key, token)
       return locate.pipe(
@@ -133,7 +146,6 @@ export const links = <Key>(identity: Identity) => {
   ): Effect.Effect<Link, Failure | LinkFailure> =>
     opening(key).withPermit(
       Effect.gen(function* () {
-        if (closed) return yield* Effect.fail(new LinkUnreachable())
         const found = open.get(key)
         if (found === undefined) return yield* dial(key, locate)
         if (found.link.alive()) return found.link
@@ -144,10 +156,12 @@ export const links = <Key>(identity: Identity) => {
       }),
     )
   /** Closes every connection and abandons every opening: the owner's last act. */
-  const close = Effect.suspend(() => {
-    closed = true
-    pending.clear()
-    return Effect.forEach([...open.keys()], forget, { discard: true })
-  })
+  const close = Effect.uninterruptible(
+    Effect.suspend(() => {
+      closed = true
+      pending.clear()
+      return Effect.forEach([...open.keys()], forget, { discard: true })
+    }),
+  )
   return { get, forget, discard, close }
 }

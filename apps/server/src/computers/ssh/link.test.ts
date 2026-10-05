@@ -328,6 +328,32 @@ it.live.skipIf(!peerAvailable)(
 )
 
 it.live.skipIf(!peerAvailable)(
+  'keeps nothing from an opening the owner closed over',
+  () =>
+    Effect.gen(function* () {
+      const server = yield* peer()
+      const held = links<string>(server.identity)
+      const located = yield* Ref.make(0)
+      const asked = yield* Deferred.make<void>()
+      const answer = yield* Deferred.make<void>()
+      const locate = Ref.update(located, (count) => count + 1).pipe(
+        Effect.andThen(Deferred.succeed(asked, undefined)),
+        Effect.andThen(Deferred.await(answer)),
+        Effect.as({ ...server, identity: undefined }),
+      )
+      const opening = yield* held.get('machine', locate).pipe(Effect.flip, Effect.forkChild)
+      yield* Deferred.await(asked)
+      yield* held.close
+      yield* Deferred.succeed(answer, undefined)
+      expect(yield* Fiber.join(opening)).toBeInstanceOf(LinkUnreachable)
+      // Closed for good: a later use is refused without asking where the machine is.
+      expect(yield* Effect.flip(held.get('machine', locate))).toBeInstanceOf(LinkUnreachable)
+      expect(yield* Ref.get(located)).toBe(1)
+    }).pipe(Effect.scoped),
+  40_000,
+)
+
+it.live.skipIf(!peerAvailable)(
   'opens nothing after the owner has closed',
   () =>
     Effect.gen(function* () {
