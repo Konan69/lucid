@@ -43,7 +43,7 @@ import {
   Skeleton,
   styles,
 } from '../ui/ui'
-import { useGo } from '../workspace'
+import { useOpenThread } from '../workspace'
 
 /**
  * What is open over the list: nothing, the form for a new Routine, or one Routine. Only this is
@@ -77,7 +77,7 @@ function useZone(): string {
  */
 export function Routines() {
   const data = useLiveData()
-  const go = useGo()
+  const openThread = useOpenThread()
   const list = useLive(data.live.routines)
   const [over, setOver] = useState<Over>(Over.Nothing())
   // A delete closes its sheet at once, so a refused one has only the list to be said in.
@@ -142,7 +142,7 @@ export function Routines() {
           onUndeleted={(message) => setUndeleted(Option.some(message))}
           onOpenThread={(id) => {
             close()
-            go.navigate('Chat', { id })
+            openThread(id)
           }}
         />
       )}

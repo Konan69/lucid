@@ -1,3 +1,4 @@
+import { Runtime } from '../runtime/client.ts'
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, it } from '@effect/vitest'
 import { eq, inArray } from 'drizzle-orm'
@@ -24,7 +25,7 @@ import {
   BrowserPicture,
   DeviceAnswer,
   RunId,
-  type DeviceRequest,
+  DeviceRequest,
   CommandOutcome,
   Company,
   CompanyId,
@@ -297,8 +298,13 @@ const dependencies = Layer.mergeAll(
   changesLayer,
   gateLayer,
 )
+/** Device answers may stop their Run through the public runtime abort adapter. */
+const runtimeTestLayer = Layer.mock(Runtime, {
+  stop: Effect.fn('ComputerTest.abort')((_thread) => Effect.succeed(true)),
+})
 const testLayer = computerStoreLayer.pipe(
   Layer.provideMerge(deviceLayer),
+  Layer.provideMerge(runtimeTestLayer),
   Layer.provideMerge(dependencies),
 )
 /** Real approval claim and Gate over a test Device, with the Computer runner used in production. */
@@ -353,20 +359,25 @@ const personalBrowser = Effect.fn('Computer.test.personalBrowser')(function* () 
     name: 'Personal browser',
   })
   const session = yield* watchAuth(test.personal.person)
-  const requests = yield* Queue.unbounded<DeviceRequest>()
+  const requests = yield* Queue.unbounded<typeof DeviceRequest.cases.Act.Type>()
   /** Acquiring watch establishes presence before the producer can dispatch. */
   const connect = Effect.fn('Computer.test.connect')(function* () {
     yield* registry.allow(test.personal.person.id, device.id)
     const ready = yield* Deferred.make<void>()
     const fiber = yield* Effect.gen(function* () {
       const stream = yield* registry.watch({
+        ability: { pages: true, apps: false },
         personId: test.personal.person.id,
         sessionId: session.sessionId,
         device: device.id,
         installation,
       })
       yield* Deferred.succeed(ready, undefined)
-      yield* stream.pipe(Stream.runForEach((request) => Queue.offer(requests, request)))
+      yield* stream.pipe(
+        Stream.runForEach((request) =>
+          DeviceRequest.guards.Act(request) ? Queue.offer(requests, request) : Effect.void,
+        ),
+      )
     }).pipe(Effect.scoped, Effect.forkScoped)
     yield* Deferred.await(ready)
     return fiber
@@ -1465,6 +1476,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         const device = yield* registry.enrol(first.id, { installation, name: 'Test computer' })
         yield* registry.allow(first.id, device.id)
         yield* registry.watch({
+          ability: { pages: true, apps: false },
           personId: first.id,
           sessionId: SessionId.make(NodeCrypto.randomUUID()),
           device: device.id,

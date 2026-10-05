@@ -1,11 +1,12 @@
 import { useAtomValue } from '@effect/atom-react'
 import { VividRpcClient } from '@vivid/client-runtime'
-import type {
-  LibraryFolderId,
-  LibraryShelf,
-  MeResponse,
-  ThreadDetail,
-  ThreadId,
+import {
+  ServiceCatalog,
+  type LibraryFolderId,
+  type LibraryShelf,
+  type MeResponse,
+  type ThreadDetail,
+  type ThreadId,
 } from '@vivid/contracts'
 import {
   draftScopeOf,
@@ -22,7 +23,7 @@ import {
   type ProductFailure,
   type Settle,
 } from '@vivid/state'
-import { Data, Effect, Equal, Layer, Option, Predicate, Result, Stream } from 'effect'
+import { Data, Effect, Equal, Layer, Option, Predicate, Result, Schedule, Stream } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import * as Atom from 'effect/unstable/reactivity/Atom'
 import { createContext, useContext } from 'react'
@@ -212,6 +213,42 @@ function keepOnDevice(
 }
 
 /**
+ * Builds a session's reading of the catalog of services, for the Integrations sheet: what is
+ * typed into its search, and the part of the catalog that answers to it.
+ *
+ * Ported from the web (`serviceSearch`, `catalogFor` and `services` in
+ * `apps/web/src/data/live.ts`). There they are the page's own; here they are made per session,
+ * on the session's engine, like every query the phone has.
+ */
+function makeCatalog(engine: ReturnType<typeof makeLive>) {
+  /**
+   * What the Person has typed into the catalog search. Empty asks for the most-used services.
+   * Nothing typed by one Person is still there for the next: it goes with the session.
+   */
+  const serviceSearch = Atom.make('')
+
+  /**
+   * The part of the catalog that matches what is typed. The catalog is thousands of services
+   * nobody owns, so it is searched on the server and never held here; see `ServiceCatalog` for
+   * why it can be `Unavailable` while every Connection still lists.
+   */
+  const services = engine.ask(serviceSearch, (client, asked) =>
+    // The catalog is read in the background by the server and is out of reach for a few seconds
+    // after it starts. That is not an answer to show for good, so it is asked again for a short
+    // while; only if it is still out of reach after that does the sheet say so.
+    client.FindServices({ query: asked }).pipe(
+      Effect.repeat({
+        until: ServiceCatalog.guards.Ready,
+        schedule: Schedule.spaced('2 seconds'),
+        times: 6,
+      }),
+    ),
+  )
+
+  return { serviceSearch, services }
+}
+
+/**
  * Builds the live data of one session: one socket, opened as the signed-in Person, and a query
  * for every `Watch…` call the app draws from.
  */
@@ -275,6 +312,10 @@ function makeLiveData(session: SignedIn) {
     connections: one((client) => client.WatchConnections()),
     /** The messaging apps a Person can text Vivid from, and where each stands for them. */
     channels: one((client) => client.WatchChannels()),
+    /** What Vivid may do without asking: the Person's own rules and their Company's. */
+    rules: one((client) => client.WatchRules()),
+    /** The record of what was done, and by whom, newest first. */
+    audit: one((client) => client.WatchAudit()),
     /** What finished or needs the Person while they were elsewhere, newest first. */
     notifications: kept((client) => client.WatchNotifications()),
     memory: one((client) => client.WatchMemory()),
@@ -286,6 +327,7 @@ function makeLiveData(session: SignedIn) {
     drafts: kept((client) => client.WatchDrafts()),
   }
 
+  const catalog = makeCatalog(engine)
   // Where the Person was working when a query was last asked, for the subscription below.
   let whereabouts = Option.none<string>()
 
@@ -402,6 +444,7 @@ function makeLiveData(session: SignedIn) {
       ...expectations: ReadonlyArray<() => Settle>
     ) => start(engine.change(program, ...expectations)),
     link: link.atom,
+    ...catalog,
     gone,
     seenThread,
     typingIn,

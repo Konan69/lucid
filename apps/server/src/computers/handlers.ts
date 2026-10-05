@@ -1,6 +1,8 @@
 import { Effect, Exit, Scope, Stream } from 'effect'
 import {
   ComputerResponse,
+  type ReportDeviceStopRequest,
+  type UseWindowRequest,
   DeviceListResponse,
   DeviceResponse,
   type AnswerDeviceRequest,
@@ -15,6 +17,7 @@ import {
 import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { live, sessionEnded } from '../live/query.ts'
+import { computerWindow } from './windows.ts'
 import { DeviceRegistry } from './device.ts'
 import { ComputerStore, computerRunCommand, computerBrowse, computerDesktop } from './store.ts'
 import { computerInventory } from './inventory.ts'
@@ -54,6 +57,7 @@ const admitted = Effect.fn('Computer.admitted')(function* (
       sessionId: auth.sessionId,
       device: request.device,
       installation: request.installation,
+      ability: request.ability,
     })
     .pipe(
       Effect.provideService(Scope.Scope, scope),
@@ -77,6 +81,15 @@ export const computerHandlers = {
     const device = yield* (yield* DeviceRegistry).enrol(auth.person.id, request)
     yield* (yield* Changes).publish([Topic.person(auth.person.id)])
     return one(device)
+  }),
+  /** Installation and Run ownership are checked by the registry before the shared Stop path. */
+  ReportDeviceStop: Effect.fn('Rpc.ReportDeviceStop')(function* (request: ReportDeviceStopRequest) {
+    const auth = yield* requirePerson()
+    yield* (yield* DeviceRegistry).reportStop(auth.person.id, request)
+  }),
+  UseWindow: Effect.fn('Rpc.UseWindow')(function* (request: UseWindowRequest) {
+    yield* requireVivid()
+    return yield* computerWindow(yield* requireActor(), request)
   }),
   ListDevices: Effect.fn('Rpc.ListDevices')(function* () {
     return yield* loadDevices(yield* requirePerson())

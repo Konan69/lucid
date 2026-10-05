@@ -46,6 +46,23 @@ describe('a step, in words', () => {
     ).toMatchObject({ label: 'Working on its computer', detail: 'List the downloads' })
   })
 
+  it('says work in the Person’s own apps is on their computer, not Vivid’s', () => {
+    const asked = readAsked({ summary: 'Open the March invoice in Excel' })
+    const use = 'use_person_computer'
+    expect(describeToolCall(use, asked, Option.none(), 'running')).toMatchObject({
+      state: 'running',
+      label: 'Working on your computer',
+      detail: 'Open the March invoice in Excel',
+    })
+    expect(describeToolCall(use, asked, readAnswered({ ok: true }), 'done')).toMatchObject({
+      label: 'Worked on your computer',
+    })
+    expect(describeToolCall(use, asked, readAnswered({ ok: false }), 'done')).toMatchObject({
+      state: 'failed',
+      label: 'Your computer did not do it',
+    })
+  })
+
   it('gives a tool it has not heard of a true line and nothing made up', () => {
     expect(
       describeToolCall('future_tool', readAsked({ anything: 1 }), Option.none(), 'running'),

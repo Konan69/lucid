@@ -1,13 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import {
-  BrowserAction,
-  BrowserPicture,
-  DeviceAnswer,
-  DeviceRequest,
-  DeviceRequestId,
-  RunId,
-  ThreadId,
-} from '@vivid/contracts'
+import { BrowserAction, BrowserPicture, DeviceAnswer } from '@vivid/contracts'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
@@ -33,6 +25,7 @@ import {
   scrollDelta,
   type CommandParameters,
   type ControlledBrowser,
+  type PageWork,
 } from './control.ts'
 
 /** The smallest text the contract accepts as a picture: the PNG signature. */
@@ -205,14 +198,7 @@ function fixture(options: {
 
 const opened = Tab.make('9c2d1f3a-5b7e-4a1c-8d2f-3e4a5b6c7d8e')
 
-const request = (action: BrowserAction, expiresAt = 30_000) =>
-  DeviceRequest.make({
-    id: DeviceRequestId.make('3f0e2f52-6d0f-4c0f-9a34-6f6b3c0f8a11'),
-    threadId: ThreadId.make('thread-1'),
-    runId: RunId.make('run-1'),
-    action,
-    expiresAt,
-  })
+const request = (action: BrowserAction, expiresAt = 30_000): PageWork => ({ action, expiresAt })
 
 const refused = (reason: 'Stopped' | 'PageGone' | 'NotAllowed' | 'Unsupported') =>
   Option.some(DeviceAnswer.cases.Refused.make({ reason }))

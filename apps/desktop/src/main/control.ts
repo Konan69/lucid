@@ -1,10 +1,4 @@
-import {
-  BrowseResult,
-  BrowserAction,
-  DeviceAnswer,
-  type BrowserPicture,
-  type DeviceRequest,
-} from '@vivid/contracts'
+import { BrowseResult, BrowserAction, DeviceAnswer, type BrowserPicture } from '@vivid/contracts'
 import * as Clock from 'effect/Clock'
 import * as Deferred from 'effect/Deferred'
 import * as Duration from 'effect/Duration'
@@ -766,6 +760,12 @@ const act = Effect.fn('DesktopControl.act')(function* (acting: Acting, action: B
   )
 })
 
+/** One step in a page, as the link hands it over: the action and when its authority ends. */
+export interface PageWork {
+  readonly action: BrowserAction
+  readonly expiresAt: number
+}
+
 /**
  * Carries out the actions Vivid sends to this computer, one at a time, in the app's own Browser.
  *
@@ -796,7 +796,7 @@ export const executor = Effect.fn('DesktopControl.make')(function* (
    * out. The server has already recorded such a request as unknown and ignores a late answer, so
    * an expired action is never started and a slow one is stopped rather than finished unseen.
    */
-  const inTurn = Effect.fn('DesktopControl.inTurn')(function* (request: DeviceRequest) {
+  const inTurn = Effect.fn('DesktopControl.inTurn')(function* (request: PageWork) {
     const now = yield* Clock.currentTimeMillis
     if (now >= request.expiresAt) return Option.none<DeviceAnswer>()
     const current: Running = { held: Option.none(), stopped: yield* Deferred.make<void>() }
@@ -814,7 +814,7 @@ export const executor = Effect.fn('DesktopControl.make')(function* (
   })
 
   return {
-    execute: (request: DeviceRequest) => inTurn(request).pipe(Semaphore.withPermit(turn)),
+    execute: (request: PageWork) => inTurn(request).pipe(Semaphore.withPermit(turn)),
     /**
      * The Person pressed Stop on this page. Ends the action running on it, at once; the answer is
      * `Refused: Stopped`, which tells Vivid the Person stopped it. A page Vivid is not using has

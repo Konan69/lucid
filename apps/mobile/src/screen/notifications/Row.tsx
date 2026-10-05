@@ -2,7 +2,7 @@ import type { Notification } from '@vivid/contracts'
 import type { NoticeFace } from '@vivid/state'
 import { Option } from 'effect'
 import { I18nManager, useWindowDimensions, View } from 'react-native'
-import { Check, ExternalLink, Hand, Share2, UserPlus, type LucideIcon } from 'lucide-react-native'
+import { Check, Hand, Share2, UserPlus, type LucideIcon } from 'lucide-react-native'
 import { relativeTime } from '../../data/lanes'
 import { MOBILE_TYPOGRAPHY } from '../../data/typography'
 import { useTheme, type Colors } from '../../theme'
@@ -152,7 +152,6 @@ function Unread({ face }: { face: NoticeFace }) {
  *   words there and nothing above it moves.
  */
 function Words({ face, leads, now }: { face: NoticeFace; leads: Destination; now: number }) {
-  const { colors: c } = useTheme()
   const unread = face.unread > 0
   const said = face.line.trim()
   return (
@@ -185,15 +184,6 @@ function Words({ face, leads, now }: { face: NoticeFace; leads: Destination; now
           {unread && <Unread face={face} />}
         </View>
       )}
-      {Destination.$is('Invitation')(leads) && (
-        // Said in words before the press, not only to a screen reader: this row leaves the app.
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 }}>
-          <ExternalLink pointerEvents="none" size={12} strokeWidth={1.8} color={c['ink-3']} />
-          <Label size="caption" tone="ink-3">
-            Opens in your browser
-          </Label>
-        </View>
-      )}
     </View>
   )
 }
@@ -215,7 +205,7 @@ const spokenOf = (face: NoticeFace, leads: Destination, now: number): string =>
 /** What a screen reader calls a row that can be pressed, and what it says the press will do. */
 const pressed = Destination.$match({
   Thread: () => ({ role: 'button', hint: 'Opens the thread' }) as const,
-  Invitation: () => ({ role: 'link', hint: 'Opens in your browser' }) as const,
+  Invitation: () => ({ role: 'button', hint: 'Opens the invitation' }) as const,
   Gone: () => ({ role: 'button', hint: 'Marks this as read' }) as const,
   Nowhere: () => ({ role: 'button', hint: 'Marks this as read' }) as const,
 })

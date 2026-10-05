@@ -23,10 +23,15 @@ const shared = {
   logLevel: 'info',
 }
 
+// Which commit an error report names (`src/main/telemetry.ts`). `VIVID_COMMIT` is the name the
+// server and the web build already read theirs from; a build without it reports the version alone.
+const commit = process.env.VIVID_COMMIT === undefined ? '' : process.env.VIVID_COMMIT
+
 await build({
   ...shared,
   entryPoints: ['src/main/main.ts'],
   outfile: 'dist/main/main.cjs',
+  define: { __VIVID_COMMIT__: JSON.stringify(commit) },
 })
 
 // Packaging consumes this snapshot, so later web-lane builds cannot change a bundle mid-package.
@@ -38,4 +43,11 @@ await build({
   ...shared,
   entryPoints: ['src/preload/main.ts'],
   outfile: 'dist/preload/main.cjs',
+})
+
+// The notice window has a preload of its own, with only what the notice may do.
+await build({
+  ...shared,
+  entryPoints: ['src/preload/notice.ts'],
+  outfile: 'dist/preload/notice.cjs',
 })
