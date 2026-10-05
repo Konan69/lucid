@@ -72,7 +72,7 @@ function fixture(t) {
     )
     const probe = `${'../'.repeat(directory.split('/').filter(Boolean).length)}probe.mjs`
     for (const task of Object.keys(manifest.scripts)) {
-      if (task === 'lint' || task === 'typecheck' || task.endsWith(':root')) {
+      if (task === 'lint' || task === 'typecheck' || task === 'types' || task.endsWith(':root')) {
         manifest.scripts[task] = `node ${probe} ${task}`
       }
     }
@@ -104,6 +104,11 @@ fs.mkdirSync('.cache/typescript', { recursive: true })
 fs.appendFileSync('.cache/executions', task + '\\n')
 if (task.startsWith('typecheck')) {
   fs.writeFileSync('.cache/typescript/' + (task.endsWith(':root') ? 'root' : 'tsconfig') + '.tsbuildinfo', 'cached build info')
+}
+if (task === 'types') {
+  fs.mkdirSync('.cache/typescript/types', { recursive: true })
+  fs.writeFileSync('.cache/typescript/types/probe.d.ts', 'export declare const probe: number')
+  fs.writeFileSync('.cache/typescript/types.tsbuildinfo', 'cached declaration build info')
 }
 console.log('typescript(no-explicit-any): probe diagnostic')
 `,
@@ -151,7 +156,7 @@ void test('shared lint and TypeScript inputs invalidate the correct cached tasks
   assert.equal(compiler.get('@vivid/web#typecheck').hash, plugin.get('@vivid/web#typecheck').hash)
 })
 
-/** Source-exported contracts affect their consumers even without building declarations. */
+/** Contracts still invalidate consumers when their declarations are generated separately. */
 void test('dependency source invalidates consumers while unrelated leaf checks stay reusable', (t) => {
   const root = fixture(t)
   const initial = hashes(root)
@@ -169,6 +174,53 @@ void test('dependency source invalidates consumers while unrelated leaf checks s
   }
   assert.notEqual(initial.get('//#typecheck:root').hash, changed.get('//#typecheck:root').hash)
   assert.notEqual(initial.get('@vivid/client-runtime#lint').command, '<NONEXISTENT>')
+})
+
+/** Relative integration imports are real dependencies despite absent manifest edges. */
+void test('integration source invalidates importing checks without cycling production tasks', (t) => {
+  const root = fixture(t)
+  const initial = hashes(root)
+  NodeFS.appendFileSync(
+    NodePath.join(root, 'packages/agent/runtime/src/probe.ts'),
+    'export const changed = 2\n',
+  )
+  const changed = hashes(root)
+  for (const task of ['lint', 'typecheck']) {
+    for (const consumer of ['server', 'skills']) {
+      assert.notEqual(
+        initial.get(`@vivid/${consumer}#${task}`).hash,
+        changed.get(`@vivid/${consumer}#${task}`).hash,
+      )
+    }
+    assert.equal(
+      initial.get(`@vivid/computer#${task}`).hash,
+      changed.get(`@vivid/computer#${task}`).hash,
+    )
+  }
+})
+
+/** Consumers need restored declarations, not just a successful cached compiler log. */
+void test('declaration cache restores types before a consumer runs', (t) => {
+  const root = fixture(t)
+  const args = ['types', '--filter=@vivid/contracts', '--concurrency=1', '--ui=stream']
+  runTurbo(root, args)
+  const packageRoot = NodePath.join(root, 'packages/contracts')
+  const outputs = NodePath.join(packageRoot, '.cache/typescript')
+  const executions = NodeFS.readFileSync(NodePath.join(packageRoot, '.cache/executions'), 'utf8')
+  NodeFS.rmSync(outputs, { recursive: true })
+  runTurbo(root, args)
+  assert.equal(
+    NodeFS.readFileSync(NodePath.join(packageRoot, '.cache/executions'), 'utf8'),
+    executions,
+  )
+  assert.equal(
+    NodeFS.readFileSync(NodePath.join(outputs, 'types/probe.d.ts'), 'utf8'),
+    'export declare const probe: number',
+  )
+  assert.equal(
+    NodeFS.readFileSync(NodePath.join(outputs, 'types.tsbuildinfo'), 'utf8'),
+    'cached declaration build info',
+  )
 })
 
 /** Cached logs must preserve ratchets, and incremental outputs must actually restore. */

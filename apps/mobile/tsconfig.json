@@ -6,7 +6,20 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo",
-    "types": ["react", "node"]
+    "types": ["react", "node"],
+    "disableSourceOfProjectReferenceRedirect": true
   },
-  "include": ["**/*.ts", "**/*.tsx"]
+  "include": ["**/*.ts", "**/*.tsx"],
+  "references": [
+    {
+      "path": "../../packages/client/state/tsconfig.types.json"
+    },
+    {
+      "path": "../../packages/client/rpc/tsconfig.types.json"
+    },
+    {
+      "path": "../../packages/contracts/tsconfig.types.json"
+    }
+  ],
+  "exclude": ["node_modules", "android", "ios", ".cache", ".turbo", "dist", "build", "coverage"]
 }

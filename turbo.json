@@ -8,13 +8,13 @@
       "outputs": ["dist/**", "build/**", ".output/**", "!.output/cache/**"]
     },
     "typecheck": {
-      "dependsOn": ["checkinputs"],
+      "dependsOn": ["types", "^types", "checkinputs"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/tsconfig.base.json"],
       "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
       "outputs": [".cache/typescript/**", "*.tsbuildinfo"]
     },
     "lint": {
-      "dependsOn": ["checkinputs"],
+      "dependsOn": ["types", "^types", "checkinputs"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/.oxlintrc.json",
@@ -85,6 +85,60 @@
       "persistent": true,
       "interactive": true,
       "interruptible": true
+    },
+    "types": {
+      "dependsOn": ["^types", "checkinputs"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/tsconfig.base.json"],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
+      "outputs": [".cache/typescript/types/**", ".cache/typescript/types.tsbuildinfo"]
+    },
+    "@vivid/skills#typecheck": {
+      "dependsOn": [
+        "types",
+        "^types",
+        "checkinputs",
+        "@vivid/agent-runtime#types",
+        "@vivid/agent-runtime#checkinputs"
+      ]
+    },
+    "@vivid/skills#lint": {
+      "dependsOn": [
+        "types",
+        "^types",
+        "checkinputs",
+        "@vivid/agent-runtime#types",
+        "@vivid/agent-runtime#checkinputs"
+      ]
+    },
+    "@vivid/agent-runtime#typecheck": {
+      "dependsOn": ["types", "^types", "checkinputs", "@vivid/server#checkinputs"]
+    },
+    "@vivid/agent-runtime#lint": {
+      "dependsOn": ["types", "^types", "checkinputs", "@vivid/server#checkinputs"]
+    },
+    "@vivid/server#typecheck": {
+      "dependsOn": [
+        "types",
+        "^types",
+        "checkinputs",
+        "@vivid/agent-runtime#types",
+        "@vivid/agent-runtime#checkinputs"
+      ]
+    },
+    "@vivid/server#lint": {
+      "dependsOn": [
+        "types",
+        "^types",
+        "checkinputs",
+        "@vivid/agent-runtime#types",
+        "@vivid/agent-runtime#checkinputs"
+      ]
+    },
+    "@vivid/mobile#typecheck": {
+      "dependsOn": ["types", "^types", "checkinputs", "@vivid/web#checkinputs"]
+    },
+    "@vivid/mobile#lint": {
+      "dependsOn": ["types", "^types", "checkinputs", "@vivid/web#checkinputs"]
     }
   }
 }

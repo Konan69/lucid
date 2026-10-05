@@ -1,9 +1,8 @@
 {
-  "extends": "../../../tsconfig.base.json",
-  "compilerOptions": {
-    "lib": ["ES2022", "DOM"],
-    "noEmit": true,
-    "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo"
-  },
-  "include": ["src"]
+  "files": [],
+  "references": [
+    {
+      "path": "./tsconfig.types.json"
+    }
+  ]
 }

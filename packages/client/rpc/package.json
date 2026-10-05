@@ -8,8 +8,9 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --checkers 1 --noEmit",
-    "lint": "node ../../../scripts/lint.mjs"
+    "typecheck": "tsc -b --checkers 1 --builders 1",
+    "lint": "node ../../../scripts/lint.mjs",
+    "types": "tsc -b tsconfig.types.json --checkers 1 --builders 1"
   },
   "dependencies": {
     "@vivid/contracts": "workspace:*",

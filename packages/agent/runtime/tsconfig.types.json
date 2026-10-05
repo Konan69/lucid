@@ -1,0 +1,34 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": false,
+    "allowImportingTsExtensions": true,
+    "tsBuildInfoFile": ".cache/typescript/types.tsbuildinfo",
+    "skipLibCheck": true,
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "src",
+    "outDir": ".cache/typescript/types",
+    "disableSourceOfProjectReferenceRedirect": true
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"],
+  "references": [
+    {
+      "path": "../../contracts/tsconfig.types.json"
+    },
+    {
+      "path": "../../client/rpc/tsconfig.types.json"
+    },
+    {
+      "path": "../skills/tsconfig.types.json"
+    }
+  ]
+}

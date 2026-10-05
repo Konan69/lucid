@@ -11,9 +11,10 @@
     "./*/SKILL.md": "./*/SKILL.md"
   },
   "scripts": {
-    "typecheck": "tsc --checkers 1 --noEmit",
+    "typecheck": "tsc -b --checkers 1 --builders 1",
     "lint": "node ../../../scripts/lint.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "types": "tsc -b tsconfig.types.json --checkers 1 --builders 1"
   },
   "dependencies": {
     "@flue/runtime": "catalog:",

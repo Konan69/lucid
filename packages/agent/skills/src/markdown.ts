@@ -20,9 +20,14 @@ export class SkillMarkdownInvalid extends Schema.TaggedError<SkillMarkdownInvali
 ) {}
 
 /** Reuse Flue 2.2.2's exported parseSkillMarkdown (result-BWvTzP0z.mjs) and validated output.
+ * Its result interface is private, so declarations name the exported function's ReturnType
+ * instead of trying to import that interface. This preserves the exact upstream result.
  * The root API has no parser export; this narrow adapter uses its pinned /internal export until
  * a public replacement exists. It owns no second YAML grammar and never re-decodes trusted output. */
-export const parseMarkdown = (runtimeName: BuiltinRuntimeName, source: string) =>
+export const parseMarkdown = (
+  runtimeName: BuiltinRuntimeName,
+  source: string,
+): Result.Result<ReturnType<typeof parseSkillMarkdown>, SkillMarkdownInvalid> =>
   Result.try({
     try: () =>
       parseSkillMarkdown(source, { directoryName: runtimeName, path: `${runtimeName}/SKILL.md` }),
@@ -31,7 +36,12 @@ export const parseMarkdown = (runtimeName: BuiltinRuntimeName, source: string) =
 
 /** The synchronous server catalogue reads immutable release files only at startup. Return tagged
  * failures to its startup boundary; runtime native imports do not read the host filesystem. */
-export const readMarkdown = (runtimeName: BuiltinRuntimeName) =>
+export const readMarkdown = (
+  runtimeName: BuiltinRuntimeName,
+): Result.Result<
+  ReturnType<typeof parseSkillMarkdown>,
+  SkillFileUnavailable | SkillMarkdownInvalid
+> =>
   Result.try({
     try: () => NodeFS.readFileSync(new URL(`../${runtimeName}/SKILL.md`, import.meta.url), 'utf8'),
     catch: () => new SkillFileUnavailable({ runtimeName }),
