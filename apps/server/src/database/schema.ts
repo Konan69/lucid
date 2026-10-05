@@ -6,7 +6,6 @@
  */
 export {
   accountTable,
-  deviceCodeTable,
   personTable,
   sessionTable,
   verificationTable,

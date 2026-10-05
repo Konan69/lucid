@@ -1,4 +1,4 @@
-import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
+import { boolean, index, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 import { companyTable } from '../companies/tables.ts'
 
 const id = () => text().primaryKey()
@@ -75,24 +75,4 @@ export const verificationTable = pgTable(
     updatedAt: createdAt(),
   },
   (table) => [index('verification_identifier_idx').on(table.identifier)],
-)
-
-export const deviceCodeTable = pgTable(
-  'deviceCode',
-  {
-    id: id(),
-    deviceCode: text().notNull(),
-    userCode: text().notNull(),
-    userId: text().references(() => personTable.id, { onDelete: 'cascade' }),
-    expiresAt: timestamp({ withTimezone: true, mode: 'date' }).notNull(),
-    status: text().notNull(),
-    lastPolledAt: timestamp({ withTimezone: true, mode: 'date' }),
-    pollingInterval: integer(),
-    clientId: text(),
-    scope: text(),
-  },
-  (table) => [
-    uniqueIndex('device_code_device_idx').on(table.deviceCode),
-    uniqueIndex('device_code_user_idx').on(table.userCode),
-  ],
 )

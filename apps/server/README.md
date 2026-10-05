@@ -5,18 +5,23 @@ and invitation concepts use Better Auth's organization-plugin backend, but are c
 physical model names `company` and `membership`. That mapping is internal to the auth boundary;
 the contracts and HTTP routes use only the Vivid glossary terms.
 
-Browser clients and the Electron web renderer use Better Auth's HttpOnly session cookie. Expo
-uses a bearer session token kept in SecureStore on native devices. The device-authorization
-plugin supports pairing; mobile implements the code exchange.
+Browser clients and the Electron web renderer use Better Auth's HttpOnly session cookie. The
+phone app uses a bearer session token kept in SecureStore.
 
-The desktop app's window is the web app, so it signs in with email and password in the window
-and keeps the same cookie. Google will not sign anyone in inside an app window, so for Google the
-shell opens the system browser on `GET /api/auth/desktop/google`, Google's callback sends the
-browser to a loopback address the shell listens on with a one-use code, and the window trades the
-code and a secret only the app holds for a session of its own at `POST /api/auth/desktop/session`
-(`src/auth/desktop.ts`, after `@better-auth/electron`; the wire contract is
-`packages/contracts/src/signin.ts`). No code is shown to the Person and nothing is approved by
-hand.
+No app signs in with a code a Person reads, types or approves; the device-authorization grant is
+not installed. Email and password are typed in each app. Google will not sign anyone in inside an
+app's own window, so both apps hand Google to a browser they do not own and get the result back
+the same way (`src/auth/signin.ts`, after `@better-auth/electron` and `@better-auth/expo`; the
+wire contract is `packages/contracts/src/signin.ts`): the app keeps a secret and sends its
+digest, Better Auth's own Google callback issues a one-use code only for the session it has just
+made, and the app trades the code and the secret for a session of its own.
+
+- The desktop shell opens the system browser on `GET /api/auth/desktop/google`. The code comes
+  back on a loopback address the shell listens on, and the window trades it at
+  `POST /api/auth/desktop/session` for a cookie.
+- The phone app opens the platform's sign-in sheet on `GET /api/auth/phone/google`. The code
+  comes back on the app's own link (`vivid://signin`), which closes the sheet, and the app trades
+  it at `POST /api/auth/phone/session` for the session's token.
 
 ## Configuration
 
