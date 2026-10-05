@@ -1,21 +1,28 @@
 import type { Device } from '@vivid/contracts'
 import { Option, Result } from 'effect'
 import { Suspense, use, useState } from 'react'
-import { run } from '../../data/app'
 import {
-  allowComputer,
   allowed,
+  allowing,
   nudgeThisComputer,
   standing,
-  stopAllowingComputer,
+  stopping,
   thisComputer,
-  yourComputers,
 } from '../../data/computers'
+import { change, live, LiveState, useLive } from '../../data/live'
 import { Button } from '../../ui/button'
 import { Empty, Refusal, Row, Section } from './Parts'
 
-/** Asks for the Person's computers and which one this is. A failure is an answer too. */
-const ask = async () => ({ answer: await run(yourComputers()), here: await thisComputer() })
+/**
+ * What the list says while it has no rows. "No computer yet" is an answer, so it is only said
+ * once the server has answered.
+ */
+const QUIET = {
+  Loading: 'Looking…',
+  Failed: 'Vivid could not list your computers just now. Open this again in a moment.',
+  Ready:
+    'No computer yet. Open the Vivid desktop app on your computer and sign in, and it appears here.',
+} satisfies Record<LiveState<unknown>['_tag'], string>
 
 /**
  * The Person's own computers, and the one decision about each: whether Vivid may use it.
@@ -23,20 +30,30 @@ const ask = async () => ({ answer: await run(yourComputers()), here: await thisC
  * A computer appears here when the Vivid desktop app on it is signed in; appearing grants nothing.
  * Allowing one stops allowing any other, because Vivid acts on one computer at a time. This is
  * the only place that decision is made on the web, and it is the same list on every surface.
+ *
+ * The list is live. It used to be asked for once when Settings opened and again after each
+ * decision, so a desktop app signing in on another machine did not show until the page was
+ * reloaded. Now it is a `Watch…` query like every other list: a new computer appears, waiting,
+ * while this is open, and a decision is shown at once and taken back if the server refuses it.
  */
 export function YourComputers() {
-  // The list as last asked for. A decision asks again, so the rows are what the server now says.
-  const [asked, setAsked] = useState(ask)
+  const state = useLive(live.devices)
   const [refused, setRefused] = useState<string | null>(null)
+  // Which computer this window is running on. Only the desktop app can say, and it says once.
+  const [here] = useState(thisComputer)
 
-  async function decide(made: Promise<Result.Result<Device, unknown>>, words: string) {
+  /** Shows a decision at once, sends it, and says so when the server would not take it. */
+  async function decide(
+    made: ReturnType<typeof change<{ readonly device: Device }>>,
+    words: string,
+  ) {
     const result = await made
     setRefused(Result.isFailure(result) ? words : null)
     // The desktop app hears of the decision now, instead of on its next scheduled look.
     await nudgeThisComputer()
-    setAsked(ask())
   }
 
+  const devices = LiveState.$is('Ready')(state) ? state.value.devices : []
   return (
     <>
       <Refusal message={refused} />
@@ -44,55 +61,57 @@ export function YourComputers() {
         title="Your computers"
         detail="Vivid can open and use pages in the Vivid desktop app on one computer you allow. A page Vivid is using shows a Stop button."
       >
-        <Suspense fallback={<Empty>Looking…</Empty>}>
-          <ComputerList
-            asked={asked}
-            onAllow={(device) =>
-              void decide(
-                run(allowComputer(device.id)),
-                `${device.name} could not be allowed. Try again.`,
-              )
-            }
-            onStop={(device) =>
-              void decide(
-                run(stopAllowingComputer(device.id)),
-                `${device.name} is still allowed. Try again.`,
-              )
-            }
-          />
-        </Suspense>
+        {devices.length === 0 ? (
+          <Empty>{QUIET[state._tag]}</Empty>
+        ) : (
+          <Suspense fallback={<Empty>Looking…</Empty>}>
+            <ComputerList
+              devices={devices}
+              here={here}
+              onAllow={(device) =>
+                void decide(
+                  change(
+                    (client) => client.AllowDevice({ id: device.id }),
+                    () => live.devices.expect(allowing(device.id, Date.now())),
+                  ),
+                  `${device.name} could not be allowed. Try again.`,
+                )
+              }
+              onStop={(device) =>
+                void decide(
+                  change(
+                    (client) => client.RevokeDevice({ id: device.id }),
+                    () => live.devices.expect(stopping(device.id, Date.now())),
+                  ),
+                  `${device.name} is still allowed. Try again.`,
+                )
+              }
+            />
+          </Suspense>
+        )}
       </Section>
     </>
   )
 }
 
 function ComputerList({
-  asked,
+  devices,
+  here,
   onAllow,
   onStop,
 }: {
-  asked: ReturnType<typeof ask>
+  devices: ReadonlyArray<Device>
+  here: ReturnType<typeof thisComputer>
   onAllow: (device: Device) => void
   onStop: (device: Device) => void
 }) {
-  const { answer, here } = use(asked)
-  if (Result.isFailure(answer)) {
-    return <Empty>Vivid could not list your computers just now. Open this again in a moment.</Empty>
-  }
-  if (answer.success.length === 0) {
-    return (
-      <Empty>
-        No computer yet. Open the Vivid desktop app on your computer and sign in, and it appears
-        here.
-      </Empty>
-    )
-  }
+  const mine = use(here)
   return (
     <>
-      {answer.success.map((device) => (
+      {devices.map((device) => (
         <Row
           key={device.id}
-          label={Option.contains(here, device.id) ? `${device.name} · this computer` : device.name}
+          label={Option.contains(mine, device.id) ? `${device.name} · this computer` : device.name}
           detail={standing(device)}
         >
           {allowed(device) ? (

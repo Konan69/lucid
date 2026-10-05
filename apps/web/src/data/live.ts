@@ -57,6 +57,8 @@ export const live = {
   memory: one((client) => client.WatchMemory()),
   computer: one((client) => client.WatchComputer()),
   suggestions: one((client) => client.WatchSuggestions()),
+  /** The Person's own computers, each with its access and whether its desktop app is listening. */
+  devices: one((client) => client.WatchDevices()),
   /** What the Person has typed and not sent, on any device, where they are working. */
   drafts: kept((client) => client.WatchDrafts()),
 }
