@@ -10,8 +10,9 @@ import { Data, Option } from 'effect'
  * - `Thread`: the row is about a Thread the Person can open.
  * - `Invitation`: the row is an invitation to a Company. The phone has no screen that accepts
  *   one, so it opens the web's own invitation page in the phone's browser.
- * - `Gone`: the row is about a Thread that is not in the Person's list any more (deleted, or no
- *   longer theirs to see). It says so and does not open a screen that could only say the same.
+ * - `Gone`: the row is about a Thread the server has said is not there for this Person (deleted,
+ *   or no longer theirs to see). It says so and does not open a screen that could only say the
+ *   same.
  * - `Nowhere`: a notice about no Thread that carries no invitation. There is nothing to open.
  */
 export type Destination = Data.TaggedEnum<{
@@ -25,16 +26,15 @@ export const Destination = Data.taggedEnum<Destination>()
 /**
  * Where a row leads.
  *
- * `known` is every Thread the Person can see, once the Thread list has answered. Until it has,
- * a row about a Thread is taken to be openable: calling a Thread gone because the list is still
- * on its way would refuse a press that works a moment later. The server lists at most the 500
- * Threads that moved most recently (`apps/server/src/threads/store.ts`), so for a Person with
- * more than that, a notice about one of the older ones also reads as gone here.
+ * `gone` is every Thread the server has refused this Person in this session: they opened it and
+ * its own live query answered `NotFound` (`data/live.ts`). Only that makes a row read as
+ * unavailable. It used to be "not in the Thread list", but the list is the 500 Threads that
+ * moved most recently (`apps/server/src/threads/store.ts`) and is not every Thread a Person can
+ * open: a notice about an older one was called gone and could not be pressed, though the Thread
+ * was a tap away. So a row about a Thread always opens it, and the Thread's own screen, which
+ * asks the server about that one Thread, is what says when it is not there.
  */
-export const destinationOf = (
-  row: NoticeRow,
-  known: Option.Option<ReadonlySet<ThreadId>>,
-): Destination =>
+export const destinationOf = (row: NoticeRow, gone: ReadonlySet<ThreadId>): Destination =>
   NoticeRow.$match(row, {
     Single: ({ notice }) =>
       Option.match(invitationIn(notice), {
@@ -42,9 +42,7 @@ export const destinationOf = (
         onSome: (id) => Destination.Invitation({ id }),
       }),
     Grouped: ({ threadId }) =>
-      Option.exists(known, (threads) => !threads.has(threadId))
-        ? Destination.Gone()
-        : Destination.Thread({ id: threadId }),
+      gone.has(threadId) ? Destination.Gone() : Destination.Thread({ id: threadId }),
   })
 
 /** Whether pressing the row goes somewhere, in the app or out of it. */

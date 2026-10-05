@@ -28,7 +28,10 @@ const thread = (id: string, title: string): NoticeThread => ({
   attention: 'Quiet',
 })
 
-/** The screen's items for these notices, with the Thread list answered (or not yet). */
+/**
+ * The screen's items for these notices, with the Thread list answered (or not yet) and no Thread
+ * refused by the server.
+ */
 const listed = (
   notices: ReadonlyArray<Notification>,
   threads: Option.Option<ReadonlyArray<NoticeThread>>,
@@ -38,7 +41,7 @@ const listed = (
       notices,
       Option.getOrElse(threads, () => []),
     ),
-    Option.map(threads, (known) => new Set(known.map((each) => each.id))),
+    new Set(),
     NOW,
   )
 
@@ -92,14 +95,18 @@ describe('where a row leads', () => {
     expect(outline(items)).toEqual(['Today', 'first -> Thread'])
   })
 
-  it('says a Thread is gone once the list has answered without it', () => {
+  it('opens a Thread that is not in the capped Thread list, which is not every Thread', () => {
     const items = listed([notice('a', NOW, {})], Option.some([thread('other', 'Other')]))
-    expect(outline(items)).toEqual(['Today', 'first -> Gone'])
+    expect(outline(items)).toEqual(['Today', 'first -> Thread'])
   })
 
-  it('does not call a Thread gone while the Thread list is still on its way', () => {
-    const items = listed([notice('a', NOW, {})], Option.none())
-    expect(outline(items)).toEqual(['Today', 'first -> Thread'])
+  it('says a Thread is gone only once the server has said so', () => {
+    const rows = noticeRows([notice('a', NOW, {})], [thread('first', 'Still listed')])
+    expect(outline(itemsOf(rows, new Set(), NOW))).toEqual(['Today', 'first -> Thread'])
+    expect(outline(itemsOf(rows, new Set([ThreadId.make('first')]), NOW))).toEqual([
+      'Today',
+      'first -> Gone',
+    ])
   })
 
   it('sends an invitation to its page, and a notice about nothing nowhere', () => {

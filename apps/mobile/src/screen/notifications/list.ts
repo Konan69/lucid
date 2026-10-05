@@ -39,7 +39,7 @@ const unreadOf = NoticeRow.$match({
  */
 export const itemsOf = (
   rows: ReadonlyArray<NoticeRow>,
-  known: Option.Option<ReadonlySet<ThreadId>>,
+  gone: ReadonlySet<ThreadId>,
   now: number,
 ): ReadonlyArray<Item> => {
   const items: Array<Item> = []
@@ -51,7 +51,7 @@ export const itemsOf = (
       band = Option.some(next)
       items.push(Item.Heading({ label: next }))
     }
-    items.push(Item.Entry({ face, leads: destinationOf(row, known), unread: unreadOf(row) }))
+    items.push(Item.Entry({ face, leads: destinationOf(row, gone), unread: unreadOf(row) }))
   }
   return items
 }

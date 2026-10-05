@@ -1,3 +1,4 @@
+import { useAtomValue } from '@effect/atom-react'
 import type { NotificationId } from '@vivid/contracts'
 import { everyNoticeRead, noticeRows, noticesRead, type NotificationList } from '@vivid/state'
 import { Option } from 'effect'
@@ -169,6 +170,9 @@ function Listed({ list }: { list: NotificationList }) {
   const go = useGo()
   const insets = useSafeAreaInsets()
   const threads = useLiveValue(data.live.threads)
+  // The Threads the server has said are not there for this Person; nothing else makes a row
+  // read as unavailable (`destinationOf`).
+  const gone = useAtomValue(data.gone)
   // The moment the app last came to the front: times do not tick under a finger.
   const now = useNow()
   const [unopened, setUnopened] = useState<Option.Option<string>>(Option.none())
@@ -201,7 +205,7 @@ function Listed({ list }: { list: NotificationList }) {
       // Until the Thread list has answered, a row leads with its notice's own title.
       Option.match(threads, { onNone: () => [], onSome: (answer) => answer.threads }),
     ),
-    Option.map(threads, (answer) => new Set(answer.threads.map((thread) => thread.id))),
+    gone,
     now,
   )
 
