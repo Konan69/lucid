@@ -1,7 +1,6 @@
 import { Schema } from 'effect'
 import { BrowserAction, DefaultBrowseTarget, DesktopAction } from './computers.js'
 import { ApprovalId, ConnectionId, PersonSummary, RunId, ThreadId } from './identity.js'
-import { AppName, WindowAction } from './windows.js'
 
 /**
  * How much an action can change. `read` changes nothing outside Vivid; `write` creates or edits
@@ -27,14 +26,6 @@ export const ActionTarget = Schema.TaggedUnion({
   Browser: { action: BrowserAction, target: DefaultBrowseTarget },
   /** One pointer or keyboard action on the Computer's desktop. */
   Desktop: { action: DesktopAction },
-  /**
-   * Vivid going into one app on the Person's own computer. The Approval is for the APP in this
-   * Thread, asked before the first look or touch (a look sends a picture of their window to the
-   * model): once given, further actions in that app in this Thread are not asked for again, and
-   * "always" keeps it for that app in every Thread. `action` is the first thing Vivid wanted to
-   * do there, which runs on approval like every approved action.
-   */
-  Window: { app: AppName, action: WindowAction },
 })
 export type ActionTarget = typeof ActionTarget.Type
 

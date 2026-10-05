@@ -1,13 +1,6 @@
 import { Effect, Schema } from 'effect'
 import { ApprovalId, ComputerId, RunId, ThreadId } from './identity.js'
-import {
-  AppName,
-  AppsAllowance,
-  DeviceAbility,
-  WindowAction,
-  WindowRefusal,
-  WindowResult,
-} from './windows.js'
+import { DeviceAbility, WindowAction, WindowRefusal, WindowResult } from './windows.js'
 
 /**
  * How a running Computer's screen is watched. `Relay` is a remote-framebuffer socket this server
@@ -216,8 +209,6 @@ export const Device = Schema.Struct({
   id: DeviceId,
   name: DeviceName,
   access: DeviceAccess,
-  /** Whether Vivid is let into this computer's apps, beyond pages in the desktop app. */
-  apps: AppsAllowance,
   presence: DevicePresence,
 }).annotate({ identifier: 'Device', title: 'Device' })
 export interface Device extends Schema.Schema.Type<typeof Device> {}
@@ -248,12 +239,11 @@ export type DeviceRequestId = typeof DeviceRequestId.Type
 
 /**
  * The work a Device is asked to do: a step in a page of the desktop app's own browser, or an
- * action in an app on the computer. `app` is the name the Person approved, so the computer can
- * say on its notice which app Vivid is in, and refuse a window that is not that app's.
+ * action in an app on the computer.
  */
 export const DeviceWork = Schema.TaggedUnion({
   Page: { action: BrowserAction },
-  Window: { action: WindowAction, app: Schema.OptionFromNullOr(AppName) },
+  Window: { action: WindowAction },
 })
 export type DeviceWork = typeof DeviceWork.Type
 
@@ -424,7 +414,3 @@ export const ReportDeviceStopRequest = Schema.Struct({
 export interface ReportDeviceStopRequest extends Schema.Schema.Type<
   typeof ReportDeviceStopRequest
 > {}
-
-/** Turns Vivid's use of the apps on one computer on or off. Only that computer's Person may. */
-export const AllowAppsRequest = Schema.Struct({ id: DeviceId, allowed: Schema.Boolean })
-export interface AllowAppsRequest extends Schema.Schema.Type<typeof AllowAppsRequest> {}

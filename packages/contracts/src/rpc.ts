@@ -42,7 +42,6 @@ import {
   SwitchWorkspaceRequest,
 } from './companies.js'
 import {
-  AllowAppsRequest,
   AnswerDeviceRequest,
   DeviceId,
   DeviceListResponse,
@@ -767,12 +766,6 @@ const RevokeDevice = Rpc.make('RevokeDevice', {
   payload: { id: DeviceId },
   success: DeviceResponse,
 })
-/** Lets Vivid into the apps of one computer, or stops letting it. Separate from `AllowDevice`. */
-const AllowApps = Rpc.make('AllowApps', {
-  ...call,
-  payload: AllowAppsRequest,
-  success: DeviceResponse,
-})
 /** The desktop app saying its Person stopped Vivid between two actions of a Run. */
 const ReportDeviceStop = Rpc.make('ReportDeviceStop', {
   ...call,
@@ -951,7 +944,6 @@ export const VividRpc = RpcGroup.make(
   WatchDevices,
   AllowDevice,
   RevokeDevice,
-  AllowApps,
   ReportDeviceStop,
   UseWindow,
   WatchDeviceRequests,

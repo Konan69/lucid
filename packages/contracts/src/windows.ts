@@ -1,5 +1,4 @@
 import { Schema } from 'effect'
-import { ApprovalId } from './identity.js'
 
 /**
  * Vivid working in the apps on a Person's own computer: any window, not only the pages of the
@@ -16,13 +15,12 @@ import { ApprovalId } from './identity.js'
  * is theirs: Vivid is let into one app at a time, sees one window at a time, and never the whole
  * screen. An action here always names its window, and the picture is of that window alone.
  *
- * Three things must all be true before anything is done, and each is a different decision:
- * the Person allowed apps on that computer at all (`AppsAllowance`, off until they turn it on,
- * separately from letting Vivid use pages in the desktop app); the Person approved THIS app for
- * THIS Thread (`ActionTarget.Window`, asked before the first look or touch of an app, because
- * looking sends a picture of their window to the model); and the Person is not using the
- * computer at that moment and has not just stopped Vivid (the helper refuses, and the refusal
- * comes back as `WindowRefusal`).
+ * Nothing is asked and nothing is banned once the Person has allowed that computer (`DeviceAccess`,
+ * the one switch): no Approval per app or per action, no list of apps Vivid is kept out of, no
+ * wait while the Person is at the keyboard. It is their own machine and they said yes to it. What
+ * the Person has instead is sight and a stop: a notice on their screen for as long as Vivid is
+ * working there, and Escape ends it. The only refusals left are things the computer itself
+ * cannot do (`WindowRefusal`).
  */
 
 /** An installed app as the computer lists it. Opaque to everything but that computer. */
@@ -73,9 +71,7 @@ const ElementIndex = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 49
  * and the keyboard, for apps that offer nothing else. There is deliberately no drag, no move and
  * no wait: the helper has none, and none is promised.
  *
- * `Open` starts an app from the list the computer gave in this turn and nothing else: not a path,
- * not a command. Shells, terminals and script hosts are never listed as openable and are refused
- * by the computer whatever is asked.
+ * `Open` starts an app from the list the computer gave. Any app: a terminal is an app.
  */
 export const WindowAction = Schema.TaggedUnion({
   ListApps: {},
@@ -116,20 +112,16 @@ export const WindowAction = Schema.TaggedUnion({
 })
 export type WindowAction = typeof WindowAction.Type
 
-/** An app the computer has. `openable` is false for what Vivid is never let into, with no reason given to the model beyond that. */
-export const InstalledApp = Schema.Struct({
-  id: AppId,
-  name: AppName,
-  openable: Schema.Boolean,
-})
+/** An app the computer has. */
+export const InstalledApp = Schema.Struct({ id: AppId, name: AppName })
 export interface InstalledApp extends Schema.Schema.Type<typeof InstalledApp> {}
 
-/**
- * An open window. Its title is NOT here: a title is whatever the Person has open ("Payslip
- * March.pdf", a chat with someone's name), and listing windows is allowed before any app is
- * approved. Vivid learns a window's title by looking at it, which the Person approves per app.
- */
-export const OpenWindow = Schema.Struct({ id: WindowId, app: AppName })
+/** An open window: which app it is and what its title bar says, so Vivid can pick the right one. */
+export const OpenWindow = Schema.Struct({
+  id: WindowId,
+  app: AppName,
+  title: Schema.String.check(Schema.isMaxLength(400)),
+})
 export interface OpenWindow extends Schema.Schema.Type<typeof OpenWindow> {}
 
 /**
@@ -168,14 +160,12 @@ export const WindowResult = Schema.TaggedUnion({
 export type WindowResult = typeof WindowResult.Type
 
 /**
- * Why the computer would not do it. Each is a different thing to say to the Person and a
- * different thing for Vivid to do next, so they are not one "refused":
+ * Why the computer could not do it. None of these is a rule of Vivid's; each is something that
+ * happened or something the operating system does not allow:
  *
  * - `Stopped`: the Person pressed Escape or Stop. The turn is over; Vivid does not continue.
- * - `Resting`: within the pause after a stop. Nothing starts until it has passed.
- * - `PersonActive`: the Person is using the keyboard or mouse right now. Vivid waits and may ask again.
- * - `NotThisApp`: a shell, a terminal, a script host or the Run box. Never driven.
- * - `Elevated`: the window runs as administrator. Never driven.
+ * - `Elevated`: the window runs as administrator, and Windows does not deliver input from an
+ *   ordinary program to it. Vivid says so; the Person can do that step.
  * - `WindowGone`: the window closed or was replaced; list again.
  * - `LookStale`: the look named is not the latest of that window; look again.
  * - `NotInFront`: Windows would not bring the window forward.
@@ -183,9 +173,6 @@ export type WindowResult = typeof WindowResult.Type
  */
 export const WindowRefusal = Schema.Literals([
   'Stopped',
-  'Resting',
-  'PersonActive',
-  'NotThisApp',
   'Elevated',
   'WindowGone',
   'LookStale',
@@ -204,39 +191,20 @@ export interface UseWindowRequest extends Schema.Schema.Type<typeof UseWindowReq
 /**
  * What came of it, as the server answers Vivid's runtime.
  *
- * - `NotConnected`: no computer of this Person's is listening.
- * - `AppsNotAllowed`: the Person has not turned on apps for that computer. Vivid says so and
- *   says where to turn it on; it does not ask again by itself.
- * - `ApprovalRequired`: this app has not been approved for this Thread. The Approval names the
- *   app; nothing was looked at or touched.
+ * - `NotConnected`: no allowed computer of this Person's is listening.
  * - `OutcomeUnknown`: the action was sent and no answer came (the link dropped, the helper died).
  *   It may have happened. It is never sent again without the Person saying so.
  */
 export const WindowOutcome = Schema.TaggedUnion({
   Completed: { result: WindowResult },
   Refused: { reason: WindowRefusal },
-  ApprovalRequired: { approvalId: ApprovalId, summary: Schema.String },
-  Blocked: { rule: Schema.String },
   NotConnected: {},
-  AppsNotAllowed: {},
   Busy: {},
   RunRequired: {},
   Unavailable: { reason: Schema.String },
   OutcomeUnknown: {},
 })
 export type WindowOutcome = typeof WindowOutcome.Type
-
-/**
- * Whether the Person lets Vivid into the apps of one computer. It is its own switch, off until
- * the Person turns it on, and turning on "use pages in the desktop app" does not turn it on:
- * a page in Vivid's own browser panel and the rest of someone's computer are not the same trust.
- * `since` is epoch milliseconds.
- */
-export const AppsAllowance = Schema.TaggedUnion({
-  Off: {},
-  Allowed: { since: Schema.Number },
-})
-export type AppsAllowance = typeof AppsAllowance.Type
 
 /**
  * What the desktop app on a computer can do, said by the app when it starts listening and never
