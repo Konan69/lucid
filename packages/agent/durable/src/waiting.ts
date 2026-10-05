@@ -1,8 +1,10 @@
 import type { Context } from '@earendil-works/chord'
-import type { AssistantMessage } from '@earendil-works/pi-ai'
 import { type ConversationId, type Harness, LiveDoc } from '@earendil-works/pi-durable'
 
+import { Array as Arr, Effect, Option } from 'effect'
+
 import { holdKind, Holds, planOf } from './holds.ts'
+import * as Pi from './pi.ts'
 
 /**
  * A tool call that waits for a person.
@@ -19,8 +21,6 @@ export type Waiting = {
   readonly input?: unknown
 }
 
-type ToolCall = Extract<AssistantMessage['content'][number], { type: 'toolCall' }>
-
 /**
  * Every tool call of a conversation that waits for a person, read from durable state only, so the
  * answer is the same before and after a restart and with no client attached.
@@ -29,44 +29,55 @@ type ToolCall = Extract<AssistantMessage['content'][number], { type: 'toolCall' 
  * therefore derived: a call of the current round that has not started (`pending`), whose tool's
  * plan holds it, and that has no settlement yet.
  */
-export async function waiting(
+export const waiting = Effect.fn('Durable.waiting')(function* (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,
-): Promise<readonly Waiting[]> {
-  const conversation = await harness.conversation(conversationId, context)
-  if (conversation === undefined) throw new Error(`Conversation ${conversationId} does not exist`)
-  const holds = await harness.snapshot(Holds, conversationId, context)
-  const later = Object.entries(holds?.asked ?? {}).map(([callId, toolName]): Waiting => ({
+) {
+  const conversation = yield* Pi.conversation(harness, conversationId, context)
+  const holds = yield* Pi.snapshot(harness, Holds, conversationId, context)
+  const later = Object.entries(
+    Option.match(holds, { onNone: () => ({}), onSome: (document) => document.asked }),
+  ).map(([callId, toolName]): Waiting => ({
     kind: 'later',
     callId,
     toolName,
   }))
-  const live = await harness.snapshot(LiveDoc, conversationId, context)
-  const pending = (live?.tools ?? []).filter((slot) => slot.status === 'pending')
+  const live = yield* Pi.snapshot(harness, LiveDoc, conversationId, context)
+  const pending = Option.match(live, {
+    onNone: () => [],
+    onSome: (document) => document.tools ?? [],
+  }).filter((slot) => slot.status === 'pending')
   if (pending.length === 0) return later
 
-  const agent = await conversation.agent(context)
-  const view = await conversation.context(context)
+  const agent = yield* Pi.agent(conversation, context)
+  const view = yield* Pi.view(conversation, context)
   const calls = new Map(
     view.entries.flatMap((entry) => {
-      const message = entry.model?.[0]
-      if (message?.role !== 'assistant') return []
-      return message.content.flatMap((block) =>
+      const message = Option.fromNullishOr(entry.model).pipe(Option.flatMap(Arr.head))
+      if (Option.isNone(message) || message.value.role !== 'assistant') return []
+      return message.value.content.flatMap((block) =>
         block.type === 'toolCall' ? [[block.id, block] as const] : [],
       )
     }),
   )
   const held = pending.flatMap((slot): Waiting[] => {
     const tool = agent.tools.find((each) => each.name === slot.name)
-    const plan = tool === undefined ? undefined : planOf(tool)
-    const call: ToolCall | undefined = calls.get(slot.callId)
-    if (plan === undefined || call === undefined || holds?.settled[slot.callId] !== undefined)
-      return []
-    const kind = holdKind(plan, call.arguments)
-    return kind === undefined
+    const plan = Option.fromNullishOr(tool).pipe(Option.flatMap(planOf))
+    const call = Option.fromNullishOr(calls.get(slot.callId))
+    const settled = holds.pipe(Option.flatMapNullishOr((document) => document.settled[slot.callId]))
+    if (Option.isNone(plan) || Option.isNone(call) || Option.isSome(settled)) return []
+    const kind = holdKind(plan.value, call.value.arguments)
+    return Option.isNone(kind)
       ? []
-      : [{ kind, callId: slot.callId, toolName: slot.name, input: call.arguments }]
+      : [
+          {
+            kind: kind.value,
+            callId: slot.callId,
+            toolName: slot.name,
+            input: call.value.arguments,
+          },
+        ]
   })
   return [...held, ...later]
-}
+})

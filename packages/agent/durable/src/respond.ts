@@ -2,9 +2,10 @@ import type { Context, JsonValue } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
 import { createUIMessageStreamResponse } from 'ai'
 
-import { type Answer, answer, decide, type Decision } from './holds.ts'
+import { type Answer, type Decision } from './holds.ts'
+import { answer, decide } from './main.ts'
 import { continueRun, streamRun } from './stream.ts'
-import { waiting } from './waiting.ts'
+import { waiting } from './main.ts'
 
 /**
  * What an AI SDK chat request asks for, read from its newest message.

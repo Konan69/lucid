@@ -13,13 +13,14 @@ import {
 import { createRegistry, Harness } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { readUIMessageStream, tool, type UIMessage, type UIMessageChunk } from 'ai'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect } from 'vitest'
+import { it } from '@effect/vitest'
+import { Effect } from 'effect'
 import { z } from 'zod'
 
-import { answer, decide } from './holds.ts'
+import { answer, decide, waiting } from './core.ts'
 import { continueRun, streamRun } from './stream.ts'
 import { toolsExtension } from './tools.ts'
-import { waiting } from './waiting.ts'
 
 const context = BACKGROUND_CONTEXT
 
@@ -113,191 +114,230 @@ const lastText = (messages: readonly Message[]) => {
     : last.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('')
 }
 
-it('holds a call for approval across a restart, then runs it once', async () => {
-  const paid: unknown[] = []
-  const file = await storageFile()
-  const first = await host(paid)
-  first.faux.setResponses([callTool('pay', { amount: 500 }, 'call-pay')])
-  const before = await first.open(file)
+it.live('holds a call for approval across a restart, then runs it once', () =>
+  Effect.gen(function* () {
+    const paid: unknown[] = []
+    const file = yield* Effect.promise(() => storageFile())
+    const first = yield* Effect.promise(() => host(paid))
+    first.faux.setResponses([callTool('pay', { amount: 500 }, 'call-pay')])
+    const before = yield* Effect.promise(() => first.open(file))
 
-  const parkedStream = await streamRun(
-    before.harness,
-    { conversationId: before.root.id, content: 'Pay the invoice', requestId: 'm1' },
-    context,
-  )
-  const parkedRun = await consume(parkedStream)
+    const parkedStream = yield* Effect.promise(() =>
+      streamRun(
+        before.harness,
+        { conversationId: before.root.id, content: 'Pay the invoice', requestId: 'm1' },
+        context,
+      ),
+    )
+    const parkedRun = yield* Effect.promise(() => consume(parkedStream))
 
-  // The stream finished, the run did not: the call waits and the tool has not run.
-  expect(parkedRun.types.at(-1)).toBe('finish')
-  expect(parkedRun.message?.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
-    state: 'approval-requested',
-    input: { amount: 500 },
-    approval: { id: 'call-pay' },
-  })
-  expect(paid).toEqual([])
-  expect(await waiting(before.harness, before.root.id, context)).toEqual([
-    { kind: 'approval', callId: 'call-pay', toolName: 'pay', input: { amount: 500 } },
-  ])
+    // The stream finished, the run did not: the call waits and the tool has not run.
+    expect(parkedRun.types.at(-1)).toBe('finish')
+    expect(parkedRun.message?.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
+      state: 'approval-requested',
+      input: { amount: 500 },
+      approval: { id: 'call-pay' },
+    })
+    expect(paid).toEqual([])
+    expect(yield* waiting(before.harness, before.root.id, context)).toEqual([
+      { kind: 'approval', callId: 'call-pay', toolName: 'pay', input: { amount: 500 } },
+    ])
 
-  // The process stops with the approval open. A new process builds everything again.
-  await before.harness.close(context)
-  const second = await host(paid)
-  second.faux.setResponses([fauxAssistantMessage('Paid.')])
-  const after = await second.open(file)
+    // The process stops with the approval open. A new process builds everything again.
+    yield* Effect.promise(() => before.harness.close(context))
+    const second = yield* Effect.promise(() => host(paid))
+    second.faux.setResponses([fauxAssistantMessage('Paid.')])
+    const after = yield* Effect.promise(() => second.open(file))
 
-  expect(await waiting(after.harness, after.root.id, context)).toEqual([
-    { kind: 'approval', callId: 'call-pay', toolName: 'pay', input: { amount: 500 } },
-  ])
-  await decide(after.harness, after.root.id, { callId: 'call-pay', approved: true }, context)
-  const stream = await continueRun(after.harness, after.root.id, new Set(['call-pay']), context)
-  if (stream === undefined) throw new Error('expected a run to continue')
-  const finished = await consume(stream, parkedRun.message)
+    expect(yield* waiting(after.harness, after.root.id, context)).toEqual([
+      { kind: 'approval', callId: 'call-pay', toolName: 'pay', input: { amount: 500 } },
+    ])
+    yield* decide(after.harness, after.root.id, { callId: 'call-pay', approved: true }, context)
+    const stream = yield* Effect.promise(() =>
+      continueRun(after.harness, after.root.id, new Set(['call-pay']), context),
+    )
+    if (stream === undefined) throw new Error('expected a run to continue')
+    const finished = yield* Effect.promise(() => consume(stream, parkedRun.message))
 
-  expect(paid).toEqual([{ amount: 500 }])
-  expect(finished.message?.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
-    state: 'output-available',
-    output: { receipt: 'paid 500' },
-  })
-  expect(finished.message?.parts.filter((part) => part.type === 'text')).toEqual([
-    expect.objectContaining({ text: 'Paid.' }),
-  ])
-  expect(await waiting(after.harness, after.root.id, context)).toEqual([])
-  await after.harness.close(context)
-})
+    expect(paid).toEqual([{ amount: 500 }])
+    expect(finished.message?.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
+      state: 'output-available',
+      output: { receipt: 'paid 500' },
+    })
+    expect(finished.message?.parts.filter((part) => part.type === 'text')).toEqual([
+      expect.objectContaining({ text: 'Paid.' }),
+    ])
+    expect(yield* waiting(after.harness, after.root.id, context)).toEqual([])
+    yield* Effect.promise(() => after.harness.close(context))
+  }),
+)
+it.live('does not hold a call the approval test lets through', () =>
+  Effect.gen(function* () {
+    const paid: unknown[] = []
+    const { faux, open } = yield* Effect.promise(() => host(paid))
+    faux.setResponses([
+      callTool('pay', { amount: 20 }, 'call-small'),
+      fauxAssistantMessage('Paid.'),
+    ])
+    const { harness, root } = yield* Effect.flatMap(Effect.promise(storageFile), (file) =>
+      Effect.promise(() => open(file)),
+    )
 
-it('does not hold a call the approval test lets through', async () => {
-  const paid: unknown[] = []
-  const { faux, open } = await host(paid)
-  faux.setResponses([callTool('pay', { amount: 20 }, 'call-small'), fauxAssistantMessage('Paid.')])
-  const { harness, root } = await open(await storageFile())
+    const { message } = yield* Effect.flatMap(
+      Effect.promise(() =>
+        streamRun(
+          harness,
+          { conversationId: root.id, content: 'Pay it', requestId: 'm1' },
+          context,
+        ),
+      ),
+      (stream) => Effect.promise(() => consume(stream)),
+    )
 
-  const { message } = await consume(
-    await streamRun(
+    expect(paid).toEqual([{ amount: 20 }])
+    expect(message?.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
+      state: 'output-available',
+    })
+    yield* Effect.promise(() => harness.close(context))
+  }),
+)
+it.live('never runs a denied call and tells the model why', () =>
+  Effect.gen(function* () {
+    const paid: unknown[] = []
+    const { faux, open } = yield* Effect.promise(() => host(paid))
+    let told = ''
+    faux.setResponses([
+      callTool('pay', { amount: 900 }, 'call-deny'),
+      (request) => {
+        told = lastText(request.messages)
+        return fauxAssistantMessage('I did not pay.')
+      },
+    ])
+    const { harness, root } = yield* Effect.flatMap(Effect.promise(storageFile), (file) =>
+      Effect.promise(() => open(file)),
+    )
+
+    const parkedRun = yield* Effect.flatMap(
+      Effect.promise(() =>
+        streamRun(
+          harness,
+          { conversationId: root.id, content: 'Pay it', requestId: 'm1' },
+          context,
+        ),
+      ),
+      (stream) => Effect.promise(() => consume(stream)),
+    )
+    yield* decide(
       harness,
-      { conversationId: root.id, content: 'Pay it', requestId: 'm1' },
+      root.id,
+      { callId: 'call-deny', approved: false, reason: 'Too much' },
       context,
-    ),
-  )
+    )
+    const stream = yield* Effect.promise(() =>
+      continueRun(harness, root.id, new Set(['call-deny']), context),
+    )
+    if (stream === undefined) throw new Error('expected a run to continue')
+    const finished = yield* Effect.promise(() => consume(stream, parkedRun.message))
 
-  expect(paid).toEqual([{ amount: 20 }])
-  expect(message?.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
-    state: 'output-available',
-  })
-  await harness.close(context)
-})
+    expect(paid).toEqual([])
+    expect(told).toContain('Too much')
+    expect(finished.message?.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
+      state: 'output-denied',
+    })
+    yield* Effect.promise(() => harness.close(context))
+  }),
+)
+it.live('keeps the model inside a call until a person answers it', () =>
+  Effect.gen(function* () {
+    const { faux, open } = yield* Effect.promise(() => host([]))
+    faux.setResponses([
+      callTool('ask_person', { question: 'Which account?' }, 'call-ask'),
+      (request) => fauxAssistantMessage(`Using ${lastText(request.messages)}.`),
+    ])
+    const { harness, root } = yield* Effect.flatMap(Effect.promise(storageFile), (file) =>
+      Effect.promise(() => open(file)),
+    )
 
-it('never runs a denied call and tells the model why', async () => {
-  const paid: unknown[] = []
-  const { faux, open } = await host(paid)
-  let told = ''
-  faux.setResponses([
-    callTool('pay', { amount: 900 }, 'call-deny'),
-    (request) => {
-      told = lastText(request.messages)
-      return fauxAssistantMessage('I did not pay.')
-    },
-  ])
-  const { harness, root } = await open(await storageFile())
+    const parkedRun = yield* Effect.flatMap(
+      Effect.promise(() =>
+        streamRun(
+          harness,
+          { conversationId: root.id, content: 'Pay it', requestId: 'm1' },
+          context,
+        ),
+      ),
+      (stream) => Effect.promise(() => consume(stream)),
+    )
+    expect(parkedRun.message?.parts.find((part) => part.type === 'tool-ask_person')).toMatchObject({
+      state: 'input-available',
+    })
+    expect(yield* waiting(harness, root.id, context)).toMatchObject([
+      { kind: 'answer', callId: 'call-ask' },
+    ])
 
-  const parkedRun = await consume(
-    await streamRun(
-      harness,
-      { conversationId: root.id, content: 'Pay it', requestId: 'm1' },
-      context,
-    ),
-  )
-  await decide(
-    harness,
-    root.id,
-    { callId: 'call-deny', approved: false, reason: 'Too much' },
-    context,
-  )
-  const stream = await continueRun(harness, root.id, new Set(['call-deny']), context)
-  if (stream === undefined) throw new Error('expected a run to continue')
-  const finished = await consume(stream, parkedRun.message)
+    yield* answer(harness, root.id, { callId: 'call-ask', output: 'savings' }, context)
+    const stream = yield* Effect.promise(() =>
+      continueRun(harness, root.id, new Set(['call-ask']), context),
+    )
+    if (stream === undefined) throw new Error('expected a run to continue')
+    const finished = yield* Effect.promise(() => consume(stream, parkedRun.message))
 
-  expect(paid).toEqual([])
-  expect(told).toContain('Too much')
-  expect(finished.message?.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
-    state: 'output-denied',
-  })
-  await harness.close(context)
-})
+    expect(finished.message?.parts.find((part) => part.type === 'tool-ask_person')).toMatchObject({
+      state: 'output-available',
+      output: 'savings',
+    })
+    expect(finished.message?.parts.filter((part) => part.type === 'text')).toEqual([
+      expect.objectContaining({ text: 'Using savings.' }),
+    ])
+    yield* Effect.promise(() => harness.close(context))
+  }),
+)
+it.live('lets the model finish its answer and delivers a late answer as a new run', () =>
+  Effect.gen(function* () {
+    const { faux, open } = yield* Effect.promise(() => host([]))
+    let late = ''
+    faux.setResponses([
+      callTool('ask_later', { question: 'Which account?' }, 'call-later'),
+      fauxAssistantMessage('I asked. I will carry on with the rest.'),
+      (request) => {
+        late = lastText(request.messages)
+        return fauxAssistantMessage('Thanks, using savings.')
+      },
+    ])
+    const { harness, root } = yield* Effect.flatMap(Effect.promise(storageFile), (file) =>
+      Effect.promise(() => open(file)),
+    )
 
-it('keeps the model inside a call until a person answers it', async () => {
-  const { faux, open } = await host([])
-  faux.setResponses([
-    callTool('ask_person', { question: 'Which account?' }, 'call-ask'),
-    (request) => fauxAssistantMessage(`Using ${lastText(request.messages)}.`),
-  ])
-  const { harness, root } = await open(await storageFile())
+    // The run ends by itself: the model did not wait for the answer.
+    const first = yield* Effect.flatMap(
+      Effect.promise(() =>
+        streamRun(
+          harness,
+          { conversationId: root.id, content: 'Pay it', requestId: 'm1' },
+          context,
+        ),
+      ),
+      (stream) => Effect.promise(() => consume(stream)),
+    )
+    expect(first.message?.parts.filter((part) => part.type === 'text')).toEqual([
+      expect.objectContaining({ text: 'I asked. I will carry on with the rest.' }),
+    ])
+    yield* Effect.promise(() => root.waitForIdle(context))
+    expect(yield* waiting(harness, root.id, context)).toEqual([
+      { kind: 'later', callId: 'call-later', toolName: 'ask_later' },
+    ])
 
-  const parkedRun = await consume(
-    await streamRun(
-      harness,
-      { conversationId: root.id, content: 'Pay it', requestId: 'm1' },
-      context,
-    ),
-  )
-  expect(parkedRun.message?.parts.find((part) => part.type === 'tool-ask_person')).toMatchObject({
-    state: 'input-available',
-  })
-  expect(await waiting(harness, root.id, context)).toMatchObject([
-    { kind: 'answer', callId: 'call-ask' },
-  ])
+    // Answering twice delivers once: the request id is the call id.
+    yield* answer(harness, root.id, { callId: 'call-later', output: 'savings' }, context)
+    yield* answer(harness, root.id, { callId: 'call-later', output: 'savings' }, context)
+    yield* Effect.promise(() => root.waitForIdle(context))
 
-  await answer(harness, root.id, { callId: 'call-ask', output: 'savings' }, context)
-  const stream = await continueRun(harness, root.id, new Set(['call-ask']), context)
-  if (stream === undefined) throw new Error('expected a run to continue')
-  const finished = await consume(stream, parkedRun.message)
-
-  expect(finished.message?.parts.find((part) => part.type === 'tool-ask_person')).toMatchObject({
-    state: 'output-available',
-    output: 'savings',
-  })
-  expect(finished.message?.parts.filter((part) => part.type === 'text')).toEqual([
-    expect.objectContaining({ text: 'Using savings.' }),
-  ])
-  await harness.close(context)
-})
-
-it('lets the model finish its answer and delivers a late answer as a new run', async () => {
-  const { faux, open } = await host([])
-  let late = ''
-  faux.setResponses([
-    callTool('ask_later', { question: 'Which account?' }, 'call-later'),
-    fauxAssistantMessage('I asked. I will carry on with the rest.'),
-    (request) => {
-      late = lastText(request.messages)
-      return fauxAssistantMessage('Thanks, using savings.')
-    },
-  ])
-  const { harness, root } = await open(await storageFile())
-
-  // The run ends by itself: the model did not wait for the answer.
-  const first = await consume(
-    await streamRun(
-      harness,
-      { conversationId: root.id, content: 'Pay it', requestId: 'm1' },
-      context,
-    ),
-  )
-  expect(first.message?.parts.filter((part) => part.type === 'text')).toEqual([
-    expect.objectContaining({ text: 'I asked. I will carry on with the rest.' }),
-  ])
-  await root.waitForIdle(context)
-  expect(await waiting(harness, root.id, context)).toEqual([
-    { kind: 'later', callId: 'call-later', toolName: 'ask_later' },
-  ])
-
-  // Answering twice delivers once: the request id is the call id.
-  await answer(harness, root.id, { callId: 'call-later', output: 'savings' }, context)
-  await answer(harness, root.id, { callId: 'call-later', output: 'savings' }, context)
-  await root.waitForIdle(context)
-
-  expect(late).toBe('[answer to ask_later] savings')
-  expect(await waiting(harness, root.id, context)).toEqual([])
-  const inputs = (await root.context(context)).entries.filter((entry) => entry.kind === 'pi.user')
-  expect(inputs).toHaveLength(2)
-  await harness.close(context)
-})
+    expect(late).toBe('[answer to ask_later] savings')
+    expect(yield* waiting(harness, root.id, context)).toEqual([])
+    const inputs = (yield* Effect.promise(() => root.context(context))).entries.filter(
+      (entry) => entry.kind === 'pi.user',
+    )
+    expect(inputs).toHaveLength(2)
+    yield* Effect.promise(() => harness.close(context))
+  }),
+)

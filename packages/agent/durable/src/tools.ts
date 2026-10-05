@@ -9,8 +9,10 @@ import {
   ToolTask,
 } from '@earendil-works/pi-durable'
 import { asSchema, type Tool, type ToolSet } from 'ai'
+import { Option } from 'effect'
 
-import { holdKind, Holds, type Plan, settlement, type Source, withPlan } from './holds.ts'
+import { holdKind, Holds, type Plan, type Source, withPlan } from './holds.ts'
+import { settlement } from './main.ts'
 
 /** Whether an interrupted call may run again after a crash. Pi Durable's own default is `unsafe`. */
 export type Replay = 'safe' | 'unsafe'
@@ -184,7 +186,7 @@ export async function toolsExtension(
   const waits = hook(ToolTask, {
     beforeTool: async (call, api, context) => {
       const plan = plans.get(call.name)
-      if (plan === undefined || holdKind(plan, call.arguments) === undefined) return undefined
+      if (plan === undefined || Option.isNone(holdKind(plan, call.arguments))) return undefined
       const settled = await settlement(api, call.id, context)
       return settled.kind === 'denied' ? { block: settled.reason } : undefined
     },

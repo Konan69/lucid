@@ -1,4 +1,4 @@
-import type { Context } from '@earendil-works/chord'
+import type { Context, Draft } from '@earendil-works/chord'
 import type {
   Conversation,
   ConversationDocToken,
@@ -38,16 +38,32 @@ export const snapshot = <T extends JsonObject>(
     catch: (cause) => new PiFailed({ operation: 'snapshot', cause }),
   }).pipe(Effect.map(Option.fromNullishOr))
 
-/** Pi serializes and commits the supplied transaction callback atomically. */
-export const commit = <A>(
+/** The transaction receives a pure document mutation; only this Pi adapter owns its Promise callback. */
+export const commit = <T extends JsonObject, A>(
   owner: Pick<Conversation, 'commit'>,
-  change: (tx: Tx) => Promise<A>,
+  mutation: {
+    readonly token: ConversationDocToken<T>
+    readonly conversationId: ConversationId
+    readonly change: (document: Draft<T>) => A
+  },
   context: Context,
 ) =>
   Effect.tryPromise({
-    try: () => owner.commit(change, context),
+    try: () => owner.commit(changeDoc(mutation), context),
     catch: (cause) => new PiFailed({ operation: 'commit', cause }),
   })
+
+/** Pi's transaction document read is Promise-only; mutation remains synchronous on the adopted draft. */
+function changeDoc<T extends JsonObject, A>(mutation: {
+  readonly token: ConversationDocToken<T>
+  readonly conversationId: ConversationId
+  readonly change: (document: Draft<T>) => A
+}) {
+  return async function change(tx: Tx): Promise<A> {
+    const document = await tx.doc(mutation.token, mutation.conversationId)
+    return mutation.change(document)
+  }
+}
 
 /** Admission is the idempotent Pi operation; consumers select the returned submission id. */
 export const submit = (

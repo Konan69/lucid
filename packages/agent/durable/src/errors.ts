@@ -1,9 +1,15 @@
-import { Schema } from 'effect'
+import type { ConversationId as PiConversationId } from '@earendil-works/pi-durable'
+import { Predicate, Schema } from 'effect'
+
+/** Pi's types.ts Id is an erased numeric brand; retain that identity in the shared error contract. */
+const ConversationId = Schema.declare<PiConversationId>((value): value is PiConversationId =>
+  Predicate.isNumber(value),
+)
 
 /** The harness owns conversation identity; errors retain the requested identifier verbatim. */
 export class ConversationMissing extends Schema.TaggedError<ConversationMissing>()(
   'ConversationMissing',
-  { conversationId: Schema.Number },
+  { conversationId: ConversationId },
   { title: 'ConversationMissing' },
 ) {}
 
@@ -19,7 +25,6 @@ export class PiFailed extends Schema.TaggedError<PiFailed>()(
       'watch',
       'agent',
       'context',
-      'doc',
     ]),
     cause: Schema.Defect(),
   },
@@ -37,7 +42,7 @@ export class TurnInvalid extends Schema.TaggedError<TurnInvalid>()(
 export class RunMissing extends Schema.TaggedError<RunMissing>()(
   'RunMissing',
   {
-    conversationId: Schema.Number,
+    conversationId: ConversationId,
   },
   { title: 'RunMissing' },
 ) {}

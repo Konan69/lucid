@@ -45,7 +45,7 @@ async function readDesk(
   const plans = new Map(
     agent.tools.flatMap((tool) => {
       const plan = planOf(tool)
-      return plan === undefined ? [] : [[tool.name, plan] as const]
+      return Option.isNone(plan) ? [] : [[tool.name, plan.value] as const]
     }),
   )
   const holds = await harness.snapshot(Holds, conversation.id, context)

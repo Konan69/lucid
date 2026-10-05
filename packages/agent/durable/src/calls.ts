@@ -56,18 +56,17 @@ function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown 
   const { dynamic: _dynamic, ...typed } = chunk
   const kind = holdKind(plan.value, chunk.input)
   const settled = desk.settled[chunk.toolCallId]
-  const request: readonly UIMessageChunk[] =
-    kind === 'approval'
-      ? [
-          {
-            type: 'tool-approval-request',
-            approvalId: chunk.toolCallId,
-            toolCallId: chunk.toolCallId,
-          },
-        ]
-      : []
+  const request: readonly UIMessageChunk[] = Option.contains(kind, 'approval')
+    ? [
+        {
+          type: 'tool-approval-request',
+          approvalId: chunk.toolCallId,
+          toolCallId: chunk.toolCallId,
+        },
+      ]
+    : []
   const response: readonly UIMessageChunk[] =
-    kind === 'approval' && settled !== undefined
+    Option.contains(kind, 'approval') && settled !== undefined
       ? [
           {
             type: 'tool-approval-response',
@@ -76,7 +75,7 @@ function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown 
           },
         ]
       : []
-  const waits = kind !== undefined && settled === undefined
+  const waits = Option.isSome(kind) && settled === undefined
   return {
     round: waits
       ? { ...round, awaiting: new Set([...round.awaiting, chunk.toolCallId]) }

@@ -6,6 +6,9 @@ import {
   type HookApi,
   type ToolRegistration,
 } from '@earendil-works/pi-durable'
+import { Deferred, Effect, Option, Predicate } from 'effect'
+
+import * as Pi from './pi.ts'
 
 /**
  * How one held tool call was settled by whoever it waited for.
@@ -69,13 +72,16 @@ type Planned = ToolRegistration & { readonly [planned]?: Plan }
 export const withPlan = (tool: ToolRegistration, plan: Plan): ToolRegistration =>
   Object.assign(tool, { [planned]: plan })
 
-/** The plan of a tool registered through the bridge; `undefined` for any other Pi Durable tool. */
-export const planOf = (tool: ToolRegistration): Plan | undefined => (tool as Planned)[planned]
+/** The optional symbol survives Pi's registration wrappers; unbridged tools have no plan. */
+export const planOf = (tool: ToolRegistration): Option.Option<Plan> => {
+  // SAFETY: only withPlan writes this globally registered symbol, with a Plan; Pi spreads registrations verbatim.
+  return Option.fromNullishOr((tool as Planned)[planned])
+}
 
-/** What a call waits for under `plan`, given its input. `undefined`: it does not wait. */
-export function holdKind(plan: Plan, input: unknown): 'approval' | 'answer' | undefined {
-  if (plan.source === 'wait') return 'answer'
-  return plan.approval(input) ? 'approval' : undefined
+/** What a call waits for under its plan; None means the tool executes without a hold. */
+export function holdKind(plan: Plan, input: unknown): Option.Option<'approval' | 'answer'> {
+  if (plan.source === 'wait') return Option.some('answer')
+  return plan.approval(input) ? Option.some('approval') : Option.none()
 }
 
 /**
@@ -84,34 +90,45 @@ export function holdKind(plan: Plan, input: unknown): 'approval' | 'answer' | un
  * Only the wake-up lives here. A waiter always rereads the durable document after it wakes, so a
  * wake-up for the same key from another harness in this process is harmless.
  */
-const wakers = new Map<string, Set<() => void>>()
+const wakers = new Map<string, Set<Deferred.Deferred<void>>>()
 
 const wakeKey = (conversationId: ConversationId, callId: string) => `${conversationId}:${callId}`
 
-/** Resolves at the next `wake` of `key`; rejects when `signal` aborts first. */
-function nextWake(key: string, signal: AbortSignal | undefined): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const waiting = wakers.get(key) ?? new Set()
-    wakers.set(key, waiting)
-    const done = () => {
-      waiting.delete(done)
-      if (waiting.size === 0) wakers.delete(key)
-      signal?.removeEventListener('abort', aborted)
-      resolve()
-    }
-    const aborted = () => {
-      waiting.delete(done)
-      if (waiting.size === 0) wakers.delete(key)
-      reject(signal?.reason)
-    }
-    waiting.add(done)
-    signal?.addEventListener('abort', aborted, { once: true })
+/** Complete every local waiter; each one rereads Pi's document rather than trusting the notification. */
+const wake = (key: string) =>
+  Effect.forEach(wakers.get(key) ?? [], (deferred) => Deferred.succeed(deferred, undefined), {
+    discard: true,
   })
+
+/** Remove only this waiter's registration, including on interruption or snapshot failure. */
+function unregister(key: string, deferred: Deferred.Deferred<void>) {
+  const waiting = wakers.get(key)
+  if (waiting === undefined) return
+  waiting.delete(deferred)
+  if (waiting.size === 0) wakers.delete(key)
 }
 
-function wake(key: string) {
-  for (const done of [...(wakers.get(key) ?? [])]) done()
-}
+/** Register before reading so a concurrent durable settlement cannot be lost between read and wait. */
+const readSettlement = Effect.fn('Durable.readSettlement')(function* (
+  api: HookApi,
+  callId: string,
+  context: Context,
+) {
+  const key = wakeKey(api.conversationId, callId)
+  const woken = yield* Deferred.make<void>()
+  return yield* Effect.gen(function* () {
+    yield* Effect.sync(() => {
+      const waiting = wakers.get(key) ?? new Set<Deferred.Deferred<void>>()
+      waiting.add(woken)
+      wakers.set(key, waiting)
+    })
+    const holds = yield* Pi.snapshot(api, Holds, api.conversationId, context)
+    const settled = holds.pipe(Option.flatMapNullishOr((document) => document.settled[callId]))
+    if (Option.isSome(settled)) return settled
+    yield* Deferred.await(woken)
+    return Option.none<Settlement>()
+  }).pipe(Effect.ensuring(Effect.sync(() => unregister(key, woken))))
+})
 
 /**
  * Wait until call `callId` is settled, from inside a `beforeTool` hook.
@@ -123,45 +140,43 @@ function wake(key: string) {
  * The wake-up is registered before the read. Registering after would lose a settlement committed
  * between the read and the registration.
  */
-export async function settlement(
+export const settlement = Effect.fn('Durable.settlement')(function* (
   api: HookApi,
   callId: string,
   context: Context,
-): Promise<Settlement> {
-  const key = wakeKey(api.conversationId, callId)
+) {
   for (;;) {
-    const woken = nextWake(key, context.abortSignal)
-    // Observed even when the settlement is already there and the wake-up is never awaited.
-    woken.catch(() => {})
-    const holds = await api.snapshot(Holds, api.conversationId, context)
-    const settled = holds?.settled[callId]
-    if (settled !== undefined) return settled
-    await woken
+    const settled = yield* readSettlement(api, callId, context)
+    if (Option.isSome(settled)) return settled.value
   }
-}
+})
 
-/** Record `next` for `callId` unless it is already settled. The first settlement wins and is returned. */
-async function settle(
+/** First settlement wins inside Pi's serialized commit, then the harness and local waiters resume. */
+const settle = Effect.fn('Durable.settle')(function* (
   harness: Harness,
   conversationId: ConversationId,
-  callId: string,
-  next: Settlement,
+  input: { readonly callId: string; readonly next: Settlement },
   context: Context,
-): Promise<Settlement> {
-  const conversation = await harness.conversation(conversationId, context)
-  if (conversation === undefined) throw new Error(`Conversation ${conversationId} does not exist`)
-  const winner = await conversation.commit(async (tx) => {
-    const holds = await tx.doc(Holds, conversationId)
-    const existing = holds.settled[callId]
-    if (existing !== undefined) return existing
-    holds.settled[callId] = next
-    return next
-  }, context)
-  // The tool task that waits is only scheduled while the harness runs.
-  harness.resume()
-  wake(wakeKey(conversationId, callId))
+) {
+  const conversation = yield* Pi.conversation(harness, conversationId, context)
+  const winner = yield* Pi.commit(
+    conversation,
+    {
+      token: Holds,
+      conversationId,
+      change: (holds) => {
+        const existing = holds.settled[input.callId]
+        if (existing !== undefined) return existing
+        holds.settled[input.callId] = input.next
+        return input.next
+      },
+    },
+    context,
+  )
+  yield* Effect.sync(() => harness.resume())
+  yield* wake(wakeKey(conversationId, input.callId))
   return winner
-}
+})
 
 /** A person's decision on a tool call that waits for approval. */
 export type Decision = {
@@ -182,11 +197,11 @@ export function decide(
   conversationId: ConversationId,
   decision: Decision,
   context: Context,
-): Promise<Settlement> {
+) {
   const next: Settlement = decision.approved
     ? { kind: 'approved' }
     : { kind: 'denied', reason: decision.reason ?? 'The person denied this call' }
-  return settle(harness, conversationId, decision.callId, next, context)
+  return settle(harness, conversationId, { callId: decision.callId, next }, context)
 }
 
 /** The result of a tool call that a person supplies. */
@@ -194,7 +209,7 @@ export type Answer = { readonly callId: string; readonly output: JsonValue }
 
 /** The message that delivers a late answer to the model. */
 const answerText = (toolName: string, output: JsonValue) =>
-  `[answer to ${toolName}] ${typeof output === 'string' ? output : JSON.stringify(output)}`
+  `[answer to ${toolName}] ${Predicate.isString(output) ? output : JSON.stringify(output)}`
 
 /**
  * Supply the result of a tool call that has no server `execute`.
@@ -204,38 +219,47 @@ const answerText = (toolName: string, output: JsonValue) =>
  * run when the conversation is idle and otherwise waits for the current answer. The request id is
  * the call id, so answering twice delivers once.
  */
-export async function answer(
+export const answer = Effect.fn('Durable.answer')(function* (
   harness: Harness,
   conversationId: ConversationId,
   given: Answer,
   context: Context,
-): Promise<void> {
-  const conversation = await harness.conversation(conversationId, context)
-  if (conversation === undefined) throw new Error(`Conversation ${conversationId} does not exist`)
-  const holds = await harness.snapshot(Holds, conversationId, context)
-  const toolName = holds?.asked[given.callId]
-  if (toolName === undefined) {
-    await settle(
+) {
+  const conversation = yield* Pi.conversation(harness, conversationId, context)
+  const holds = yield* Pi.snapshot(harness, Holds, conversationId, context)
+  const toolName = holds.pipe(Option.flatMapNullishOr((document) => document.asked[given.callId]))
+  if (Option.isNone(toolName)) {
+    yield* settle(
       harness,
       conversationId,
-      given.callId,
-      { kind: 'answered', output: given.output },
+      {
+        callId: given.callId,
+        next: { kind: 'answered', output: given.output },
+      },
       context,
     )
     return
   }
-  await conversation.submit(
+  yield* Pi.submit(
+    conversation,
     {
       type: 'input',
-      content: answerText(toolName, given.output),
+      content: answerText(toolName.value, given.output),
       requestId: `answer:${given.callId}`,
       whenBusy: 'followUp',
     },
     context,
   )
-  // After the submission, so a crash between the two leaves the question open and a repeated
-  // answer is deduplicated by its request id.
-  await conversation.commit(async (tx) => {
-    delete (await tx.doc(Holds, conversationId)).asked[given.callId]
-  }, context)
-}
+  // Delete only after admission: a crash leaves the question open and retry deduplicates the input.
+  yield* Pi.commit(
+    conversation,
+    {
+      token: Holds,
+      conversationId,
+      change: (document) => {
+        delete document.asked[given.callId]
+      },
+    },
+    context,
+  )
+})
