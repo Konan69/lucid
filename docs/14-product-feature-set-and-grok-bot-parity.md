@@ -88,8 +88,9 @@ instruction owner's lane.
 
 Run these proofs serially with the existing stack, from the server package, using
 `pnpm exec vitest run --config src/runtime/vitest.ts` and exactly one of
-`VIVID_LIVE_THREAD_COMPUTER`, `VIVID_LIVE_THREAD_APPROVAL`, `VIVID_LIVE_THREAD_CONNECTION`, or
-`VIVID_LIVE_THREAD_ROUTINE` set to `1`. Each corresponding `thread.live.test.ts` has one scenario;
+`VIVID_LIVE_THREAD_COMPUTER`, `VIVID_LIVE_THREAD_APPROVAL`, `VIVID_LIVE_THREAD_CONNECTION`,
+`VIVID_LIVE_THREAD_ROUTINE`, or `VIVID_LIVE_FIRST_CONVERSATION` set to `1`. Each corresponding
+`thread.live.test.ts` (and `threads/first.live.test.ts`, the first Thread) has one scenario;
 no judge or retry loop calls the model. The supplied `VIVID_TEST_DATABASE_URL` must designate the
 same disposable database as the stack; the proof never falls back to an application database.
 
