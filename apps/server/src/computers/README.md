@@ -23,7 +23,10 @@ does not come in time, or Boat's own 5xx is an outage: the call that met it is r
 "Vivid’s computer is not answering right now", nothing about it is written to the Computer's
 record, and the next call asks Boat again, so it is over when Boat is back, with no restart and
 without anyone pressing Start. A start that Boat refused or could not finish is different: it is
-recorded as failed with its reason and needs a Person to start the Computer again.
+recorded as failed with its reason and needs a Person to start the Computer again. So does one
+outage case: when the outage met the creation of a Person's first machine, Boat's adapter keeps the
+unanswered creation as unresolved (a machine may have been made and paid for) and it is reconciled
+by an explicit Start, never by a retry on its own.
 
 Boat supplies the real desktop, Chrome and native input driver. Running state carries a short-lived,
 token-gated Viewer address; provider keys never enter client state or model context. Browser and
