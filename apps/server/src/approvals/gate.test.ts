@@ -17,7 +17,7 @@ import { Gate, GateDecision } from './gate.ts'
 import { Review } from './policy.ts'
 import { ApprovalStore } from './store.ts'
 import {
-  commandAction,
+  desktopAction,
   connectionAction,
   fixture,
   JudgmentMode,
@@ -223,7 +223,7 @@ describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', (
       })
       yield* Ref.set((yield* Observation).judgment, JudgmentMode.cases.Failed.make({}))
       // An unjudged Allow can only loosen: the default stays in force and nothing asks.
-      expect(yield* gate.check(test.vivid, commandAction, 'Ordinary')).toEqual(
+      expect(yield* gate.check(test.vivid, desktopAction, 'Ordinary')).toEqual(
         GateDecision.cases.Allowed.make({}),
       )
       yield* rules.create(test.personal, {
@@ -231,7 +231,7 @@ describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', (
         decision: 'Ask',
         scope: RuleScope.cases.Personal.make({}),
       })
-      const decision = yield* gate.check(test.vivid, commandAction, 'Ordinary')
+      const decision = yield* gate.check(test.vivid, desktopAction, 'Ordinary')
       expect(GateDecision.guards.ApprovalRequired(decision)).toBe(true)
     }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
@@ -250,35 +250,27 @@ describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', (
     }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
 
-  it.effect(
-    'unmatched Computer work is allowed; commands are audited and browser steps are not',
-    () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        const gate = yield* Gate
-        const browser = ProposedAction.make({
-          summary: 'Open working page',
-          rationale: 'Inspect work',
-          effect: 'write',
-          target: ActionTarget.cases.Browser.make({
-            action: BrowserAction.cases.Open.make({ address: 'https://example.test' }),
-          }),
-        })
-        expect(yield* gate.check(test.vivid, commandAction, 'Ordinary')).toEqual(
-          GateDecision.cases.Allowed.make({}),
-        )
-        expect(yield* gate.check(test.vivid, browser, 'Ordinary')).toEqual(
-          GateDecision.cases.Allowed.make({}),
-        )
-        expect((yield* loadAudit(test.personal)).entries.map((entry) => entry.event)).toEqual([
-          AuditEvent.cases.ActionAllowed.make({
-            service: 'Computer',
-            tool: 'command',
-            effect: 'write',
-          }),
-        ])
-        expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toEqual([])
-      }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
+  it.effect('unmatched Computer work is allowed and is not audited', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const gate = yield* Gate
+      const browser = ProposedAction.make({
+        summary: 'Open working page',
+        rationale: 'Inspect work',
+        effect: 'write',
+        target: ActionTarget.cases.Browser.make({
+          action: BrowserAction.cases.Open.make({ address: 'https://example.test' }),
+        }),
+      })
+      expect(yield* gate.check(test.vivid, desktopAction, 'Ordinary')).toEqual(
+        GateDecision.cases.Allowed.make({}),
+      )
+      expect(yield* gate.check(test.vivid, browser, 'Ordinary')).toEqual(
+        GateDecision.cases.Allowed.make({}),
+      )
+      expect((yield* loadAudit(test.personal)).entries).toEqual([])
+      expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toEqual([])
+    }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
 
   it.effect(
@@ -391,7 +383,7 @@ describe.skipIf(!testDatabaseConfigured)('Trust gate precedence and defaults', (
     Effect.gen(function* () {
       const test = yield* fixture()
       const observed = yield* Observation
-      expect(yield* (yield* Gate).check(test.vivid, commandAction, 'Ordinary')).toEqual(
+      expect(yield* (yield* Gate).check(test.vivid, desktopAction, 'Ordinary')).toEqual(
         GateDecision.cases.Allowed.make({}),
       )
       expect(yield* Ref.get(observed.reviewCalls)).toEqual([])

@@ -200,8 +200,8 @@ export const routes = Effect.fn('RuntimeTest.routes')(function* () {
           )
           // Counted with notes mounted, as every runtime has them: the three note tools are in,
           // and the two knowledge-base tools that only a runtime without notes offered are gone.
-          // One more than main alone: the Person's computer is ours (`use_person_computer`).
-          expect(owned).toHaveLength(30)
+          // The Person's computer is ours (`use_person_computer`).
+          expect(owned).toHaveLength(29)
           expect(owned.map((tool) => tool.name)).toContain('use_person_computer')
           // Every tool says its step to the Person in `summary`. `ask_person` is the one that
           // does not: its `question` is already that sentence (`tools/ask.ts`, 5 October 2026).

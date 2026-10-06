@@ -162,10 +162,12 @@ asking. Nobody being present never grants anything: when the reviewer says ask, 
 for the Person, and an Approval that expires unanswered is a refusal.
 
 The **Computer** is Vivid's own machine, and work on it is contained there: a command or a browser
-step is not an action in anyone's account. So with no matching rule it runs without asking. A
-rule can still forbid it or make it ask, and if the rule check cannot run, it asks. Every command
-is written to the audit record; browser steps are shown on the Computer's screen and are not
-recorded one by one. Anything done through a Connection, from the Computer or not, is a Connection
+step is not an action in anyone's account. Vivid's shell and files there are its own: once a
+Person has allowed Vivid its Computer, a command or a file change is never asked about, never
+forbidden by a rule and not written to the audit record. A browser or desktop step runs without
+asking when no rule matches; a rule can still forbid it or make it ask, and if the rule check
+cannot run, it asks. Those steps are shown on the Computer's screen and are not recorded one by
+one. Anything done through a Connection, from the Computer or not, is a Connection
 action and follows the steps above.
 
 ## What the model is shown
@@ -421,7 +423,7 @@ Vivid is a character the Person works with, and the surface is built so that rea
   Thread; a key goes straight to the integration and never into the Thread or the model.
 - **Use a computer.** `browse` drives the browser by what a page says (with tabs, scrolling,
   history and waiting); `use_desktop` works any window by looking at the screen and using the
-  pointer and keys; `run_command` is a shell. The Computer wakes when work needs it and stops
+  pointer and keys; `bash` is a shell. The Computer wakes when work needs it and stops
   when idle. The machine is Boat's (see [The Computer](04-computer.md)); a local container stands
   in for it offline.
 - **Write a program.** `run_code` runs JavaScript Vivid wrote over the tools it already has. The

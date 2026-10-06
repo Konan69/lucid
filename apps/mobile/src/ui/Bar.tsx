@@ -7,17 +7,19 @@ import {
   type NativeStackNavigationOptions,
   type NativeStackNavigationProp,
 } from '@react-navigation/native-stack'
-import { PanelLeft, Phone, type LucideIcon } from 'lucide-react-native'
+import { Menu as MenuLines, Phone, type LucideIcon } from 'lucide-react-native'
 import { useLayoutEffect, useRef, useState } from 'react'
-import { Animated, Platform, useWindowDimensions, View } from 'react-native'
+import { Animated, Image, Platform, View } from 'react-native'
 import { openDrawer } from '../data/drawer'
+import { menuMark, useMenuMark } from '../data/mark'
 import type { Stand } from '../data/stand'
 import { useAppearance } from '../data/vivid'
+import { useTheme } from '../theme'
 import { Faces } from './Avatar'
 import { GLASS_SUPPORTED } from './Glass'
-import { capsule, type Origin, type Told } from './Presence'
+import { presence, type Told } from './Presence'
 import { NO_SCROLL_EDGES, SCROLL_EDGES } from './stack'
-import { IconButton, Label, TARGET, type Tone } from './ui'
+import { IconButton, Label, Press, radius, TARGET, type Tone } from './ui'
 
 /**
  * What a screen puts in the system's navigation bar: its title and at most a couple of actions.
@@ -25,8 +27,9 @@ import { IconButton, Label, TARGET, type Tone } from './ui'
  * The bar is the platform's own (`GLASS_HEADER` in `ui/stack.ts`). On iOS every action is a real
  * `UIBarButtonItem`, so on iOS 26 the system draws it, and the way back, as round liquid glass;
  * nothing here draws a button. A screen says what it wants by rendering `Bar`, `StandingBar` or
- * `VividBar`, which draw nothing themselves. `VividBar` also says what Vivid's capsule shows,
- * which floats over the stack where the bar's title would be (`ui/Presence.tsx`).
+ * `VividBar`, which draw nothing themselves. A Thread also renders `VividAtTop`, which says how
+ * Vivid's avatar stands; that floats over the stack where the bar's title would be
+ * (`ui/Presence.tsx`).
  *
  * Ported from T3 Code mobile `src/native/StackHeader.tsx` (`NativeStackScreenOptions`,
  * `NativeHeaderToolbar`) and its uses in `src/features/settings/SettingsRouteScreen.tsx` and
@@ -156,13 +159,62 @@ const endOptions = (end: BarEnd, press: PressAt): NativeStackNavigationOptions =
             : () => <BarButtons {...end} press={press} />,
       }
 
-/** The way to the menu, as the action it is in a bar. */
-const MENU: BarAction = {
-  symbol: 'sidebar.left',
-  icon: PanelLeft,
-  label: 'Open menu',
-  disabled: false,
+/** What a screen reader says for the way to the menu. */
+const MENU_LABEL = 'Open menu'
+
+/** The mark's own size: the 22 points the image is drawn at (`assets/menu.png`). */
+const MENU_MARK = 22
+
+/**
+ * iOS: the way to the menu as the system's own bar button. Its picture is the app's own mark
+ * once that is known to load (`own`, `data/mark.ts`), and the system's three-line symbol until
+ * then, so the button is never blank.
+ */
+const menuItem = (own: boolean): NativeStackHeaderItem => ({
+  type: 'button',
+  // The picture is the whole button; the name is for assistive technology only.
+  label: '',
+  accessibilityLabel: MENU_LABEL,
+  // The image is tinted, so the system draws it in the bar's own ink as it does a symbol.
+  icon: own
+    ? { type: 'image', source: menuMark, tinted: true }
+    : { type: 'sfSymbol', name: 'line.3.horizontal' },
+  variant: 'plain',
+  glassEffect: false,
+  sharesBackground: true,
+  hidesSharedBackground: false,
   onPress: openDrawer,
+})
+
+/** Android: the same mark, or the three lines until it loads, in a button the app draws. */
+function MenuButton() {
+  const { colors: c } = useTheme()
+  const own = useMenuMark()
+  return (
+    <Press
+      accessibilityRole="button"
+      accessibilityLabel={MENU_LABEL}
+      onPress={openDrawer}
+      style={({ pressed }) => ({
+        width: TARGET,
+        height: TARGET,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: radius.control,
+        backgroundColor: pressed ? c['wash-pressed'] : 'transparent',
+      })}
+    >
+      {own ? (
+        <Image
+          source={menuMark}
+          // The mark is black on clear; the tint draws it in the bar's ink.
+          style={{ width: MENU_MARK, height: MENU_MARK, tintColor: c['ink-2'] }}
+        />
+      ) : (
+        <MenuLines pointerEvents="none" size={21} strokeWidth={1.7} color={c['ink-2']} />
+      )}
+    </Press>
+  )
 }
 
 /**
@@ -170,19 +222,25 @@ const MENU: BarAction = {
  * screen is the root of the stack, so the system draws no way back there and this button is
  * alone at the start.
  *
- * It is the system's sidebar symbol as a bar button of its own (the reference's "Show thread
- * sidebar" button, `src/features/layout/workspace-sidebar-toolbar.tsx`), so on iOS 26 the system
- * draws it as round glass like every other bar button. Vivid's face used to be the button; the
- * owner asked for a sidebar icon here and Vivid in the centre (5 October 2026), and the face is
- * in Vivid's capsule now (`ui/Presence.tsx`). `unstable_headerLeftItems` is iOS's, so Android
- * gets the same button drawn by the app in its solid bar.
+ * It is a bar button of its own (the reference's "Show thread sidebar" button,
+ * `src/features/layout/workspace-sidebar-toolbar.tsx`), so on iOS 26 the system draws it as round
+ * glass like every other bar button. Its picture is the mark the owner pointed at, the Claude
+ * iPhone app's (6 October 2026): three lines from one edge, the last about half as long. The
+ * reference's is the system's sidebar symbol, a window with a pane, which he called "the pc
+ * version" on a phone, and the system has no symbol for this one, so it is an image of ours
+ * (`assets/menu.png`, drawn at 22 points for each screen density). The installed
+ * react-native-screens loads a bar button's image with its density and draws it as a template
+ * (`ios/helpers/image/RNSImageLoadingHelper.mm`), so it arrives in an update like any other
+ * asset and needs no new binary. It is used only once it is known to load (`data/mark.ts`).
+ *
+ * Vivid's face used to be the button; the owner asked for a menu icon here and Vivid in the
+ * centre (5 October 2026). `unstable_headerLeftItems` is iOS's, so Android gets the same mark in
+ * a button drawn by the app in its solid bar.
  */
-const menuOptions = (): NativeStackNavigationOptions =>
+const menuOptions = (own: boolean): NativeStackNavigationOptions =>
   Platform.OS === 'ios'
-    ? { unstable_headerLeftItems: () => barItems([MENU], () => openDrawer()) }
-    : {
-        headerLeft: () => <IconButton icon={MENU.icon} label={MENU.label} onPress={MENU.onPress} />,
-      }
+    ? { unstable_headerLeftItems: () => [menuItem(own)] }
+    : { headerLeft: () => <MenuButton /> }
 
 /** Nobody else is here. One value, for the same reason as `NO_ACTIONS`. */
 export const NOBODY: ReadonlyArray<PersonSummary> = []
@@ -289,27 +347,6 @@ export function StandingBar({
 }
 
 /**
- * The room the bar keeps at each side of the capsule: the system's 16-point margin, one 44-point
- * button for each thing that stands there, and 12 between the buttons and the capsule. The
- * capsule is centred, so the busier side decides for both. The reference leaves room for its
- * bar's actions the same way (`src/features/home/WorkspaceConnectionTitle.tsx`, `maxWidth`).
- */
-const roomBeside = (end: BarEnd): number => {
-  const standing = end.actions.length + (end.present.length > 0 ? 1 : 0)
-  return 16 + TARGET * Math.max(1, standing) + 12
-}
-
-/**
- * The least the capsule is ever allowed: its face and a few letters. A narrow window with a full
- * bar would otherwise work out to nothing, or less, and a width below zero is not a layout.
- */
-const LEAST = 96
-
-/** The widest the capsule may be in a window, between what stands at each end of its bar. */
-const limitIn = (window: number, end: BarEnd): number =>
-  Math.max(LEAST, window - 2 * roomBeside(end))
-
-/**
  * The way to call Vivid, which ends the first screen's bar.
  *
  * It does nothing yet. Vivid has no calls (`docs/22-one-product.md`, "Not in this build"), and
@@ -327,12 +364,12 @@ const callAction = (name: string): BarAction => ({
 })
 
 /**
- * Tells the capsule over the stack how Vivid stands on this screen (`capsule`, `ui/Presence.tsx`),
- * for as long as this screen is the one in front.
+ * Tells the avatar over the stack how Vivid stands on this screen (`presence`,
+ * `ui/Presence.tsx`), for as long as this screen is the one in front.
  *
  * It is said in a layout effect, before paint, for the reason a screen's bar options are
  * (`useBar`): what a screen says cannot be handed up while it renders, and said any later the
- * capsule would be seen for a frame as the last screen left it. It is said again only when what
+ * avatar would be seen for a frame as the last screen left it. It is said again only when what
  * it would show has changed. A screen that is covered, or gone, takes back only what it said
  * itself, so it can never clear what the screen now in front has already said.
  */
@@ -344,56 +381,57 @@ function useTelling(said: Told) {
   useLayoutEffect(() => {
     latest.current = said
   })
-  const signature = JSON.stringify([said.stand, said.limit])
-  const { id, button, sends } = said.origin
+  const signature = JSON.stringify(said.stand)
   useLayoutEffect(() => {
-    if (focused) capsule.say(owner, latest.current)
-    else capsule.leave(owner)
-  }, [focused, owner, signature, id, button, sends])
-  useLayoutEffect(() => () => capsule.leave(owner), [owner])
+    if (focused) presence.say(owner, latest.current)
+    else presence.leave(owner)
+  }, [focused, owner, signature])
+  useLayoutEffect(() => () => presence.leave(owner), [owner])
+}
+
+/**
+ * Vivid at the top centre of this screen, standing as `stand` says, for as long as this is
+ * rendered and the screen is in front. A Thread with words in it renders this; a page with no
+ * conversation yet has Vivid's avatar in its own middle instead and does not. It draws nothing
+ * itself: the avatar is the one over the stack (`Presence`).
+ */
+export function VividAtTop({ stand }: { stand: Stand }) {
+  useTelling({ stand })
+  return null
 }
 
 /**
  * The first screen's bar, whether it shows the greeting or a Thread: the way to the menu first,
- * Vivid's capsule in the middle, and at the end who else is here, what can be done, and the way
- * to call Vivid.
+ * nothing in the middle, and at the end who else is here, what can be done, and the way to call
+ * Vivid.
  *
- * The capsule is not in the bar. The bar's title is left empty and one capsule floats over the
- * whole stack in its place (`Presence`), where it can be pressed, change shape on the UI thread
- * and take the disc that rises from the composer. This says what that capsule should show while
- * the screen is in front, and draws nothing itself. A Thread's title is not in its bar either:
+ * The middle is Vivid's, and Vivid is not in the bar. The title is left empty and, in a Thread,
+ * Vivid's avatar floats over the whole stack in its place (`VividAtTop`, `Presence`), where it
+ * can be pressed and change shape on the UI thread. A Thread's title is not in its bar either:
  * the owner asked for Vivid in the centre, and the title is where the Person chose the Thread,
  * its row in the menu.
  *
  * `inverted` says the screen's scroller is a Thread's upside-down list, which the system's edge
  * effect frosts whole (`NO_SCROLL_EDGES`); the greeting's scroller is the right way up and keeps
  * the effect. Both are named every time, because the two share one route and `setOptions` merges.
- *
- * `origin` is the composer on the same screen, where a send leaves from.
  */
-export function VividBar({
-  stand,
-  origin,
-  inverted,
-  present,
-  actions,
-}: BarEnd & { stand: Stand; origin: Origin; inverted: boolean }) {
+export function VividBar({ inverted, present, actions }: BarEnd & { inverted: boolean }) {
   const vivid = useAppearance()
   const end: BarEnd = { present, actions: [...actions, callAction(vivid.name)] }
-  const limit = limitIn(useWindowDimensions().width, end)
   const people = present.map((person) => [person.id, person.name, person.image])
+  // Part of what the bar looks like: the options are applied again when the mark is known to load.
+  const own = useMenuMark()
   useBar(
-    JSON.stringify(['vivid', inverted, people, shownOf(end.actions)]),
+    JSON.stringify(['vivid', inverted, own, people, shownOf(end.actions)]),
     end.actions,
     (press) => ({
       title: '',
       ...PLAIN,
       scrollEdgeEffects: edgesFor(inverted),
-      ...menuOptions(),
+      ...menuOptions(own),
       ...endOptions(end, press),
     }),
   )
-  useTelling({ stand, origin, limit })
   return null
 }
 
@@ -424,8 +462,8 @@ function StandingTitle({ title, standing }: { title: string; standing: Standing 
  *
  * Under a glass bar UIKit insets a scroll view by itself (`contentInsetAdjustmentBehavior`), and
  * that is what every ordinary screen uses. A Thread's list is inverted, so the system's top inset
- * would land at the foot of the conversation; it and the Thread's outline take this room instead,
- * at their visual top. The height is the stack's own measurement, so it follows the device and
+ * would land at the foot of the conversation; the Thread puts this room above its list and its
+ * outline instead, so neither is ever behind the bar (`Transcript`, `screen/Chat.tsx`). The height is the stack's own measurement, so it follows the device and
  * the text size. Where the bar is solid the content already starts below it and no room is made.
  */
 export function BarRoom() {

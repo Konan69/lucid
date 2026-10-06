@@ -257,13 +257,13 @@ the screen union belongs to its own lane. Runtime placement and external state s
 ## Reaching the Computer: one SSH connection
 
 **Status: decided 5 October 2026. Built on `feat/native-computer`: the server holds the connection
-and Vivid has Flue's six file and shell tools on its Computer. It is proven against a real SSH
-server that is not a Computer; it has not yet run on a Person's Computer (see "Not verified").
-`run_command` is still there and goes once that run is done.** This is the step between today and
+and Vivid has Flue's six file and shell tools on its Computer. Its connection code is proven on a real SSH server and on a Person's Computer, and the product path
+(a Thread and a model using the tools) ran on a Person's Computer in production on 6 October 2026.
+`run_command`, the earlier tool that asked for an Approval per command, is deleted: from the model, from programs (a program runs on the Computer and starts its own commands there), from the server and its contract, and with it the command kind of Approval.** This is the step between today and
 "Runtime on the Computer" below. It is deliberately thin, because it is deleted when the runtime
 moves onto the machine.
 
-### What is wrong today
+### What was wrong before 5 October 2026
 
 Vivid cannot read or write one file on its own Computer. Its runtime runs beside the server, and
 reaches the machine through one custom tool, `run_command`: the model asks the server, the server
@@ -485,28 +485,64 @@ answered "nothing there" without waking it, and only a tool the model calls wake
   tries every two seconds while the machine cannot be reached, for at most 75 seconds, and answers
   "not answering" otherwise. Neither hangs. A wrong host key or a refused key is not retried.
 
+### The built code on a Person's Computer, 6 October 2026
+
+Run with `apps/server/src/computers/ssh/computer.live.test.ts` against the Vivid Computer bound to
+the developer's own account, from a development machine in Lagos. The machine had its own IPv4
+address and was already running; the proof wakes, stops, creates and deletes nothing, binds no
+Person, and removes its files and its key line at the end. It is the server's own connection code
+with the provider's real key call. It is not the product: no Thread, no model, no store.
+
+| What                                                                        | Result                                              |
+| --------------------------------------------------------------------------- | --------------------------------------------------- |
+| Opening: key made, let in by the provider, host key checked, old lines gone | Worked; 7.8 s                                       |
+| A command on the open connection                                            | 0.85 s                                              |
+| A small file put into a directory that did not exist, then read back        | Identical                                           |
+| 256 KB put, then read back                                                  | Identical; 3.2 s, 5.4 s                             |
+| A command the caller stopped waiting for                                    | Gone, with its child                                |
+| A command past its one-second deadline                                      | Ended, reported as timed out                        |
+| A second opening after the first was closed                                 | A different key; one line of Vivid's on the machine |
+| Lines in the key file that are not Vivid's                                  | Same count before and after                         |
+| After the proof                                                             | No file, no key line of Vivid's, file mode 600      |
+
+The machine runs OpenSSH 9.6, which takes the signal a cancelled command is ended with. The times
+are from Lagos and include the provider's key call; from the hosted server the path is shorter.
+
+### The product on a Person's Computer, 6 October 2026
+
+Run in production, signed in as the Person whose Computer it is, in a new Thread in the web app.
+The Computer was already running.
+
+| Asked                                                    | What the Thread showed                                        | Time |
+| -------------------------------------------------------- | ------------------------------------------------------------- | ---- |
+| Write a file, read it back, run a command that counts it | Wrote a file, read a file, worked on its computer; the output | 45 s |
+| Change one word in that file and show it                 | Changed a file, worked on its computer; the new line          | 33 s |
+
+No Approval and no question appeared. Looked at on the machine afterwards: the file held the
+changed line and was the machine user's, and the key file held exactly one line of Vivid's,
+written when the first request opened the connection. The times are from sending to the answer
+being seen, so they include the model. `run_command` was still mounted during this run, and a
+command step reads the same in a Thread for either tool, so which of the two ran the commands is
+not known; the file steps can only have been the new tools.
+
 ### Not verified
 
-- Vivid's own tools on a Person's Computer. The connection itself was run there (above); the
-  built tools were not: there is no test Computer. After the deploy, check on production, in this
-  order: in a Thread ask Vivid to write a
-  file on its computer and read it back (`write`, `read`); ask for a command (`bash`); stop the
-  Computer, start a conversation that does not need it, and confirm it stays stopped; ask for a
-  file again and confirm it wakes and answers.
+- A conversation in production that does not need the Computer leaving a stopped Computer
+  stopped, and a request for a file waking it. Check: stop the Computer, start a conversation
+  that does not need it, confirm it stays stopped; ask for a file and confirm it wakes and answers.
+- `bash` in production now that `run_command` is deleted: ask for a command after the deploy
+  that carries the removal.
+- A program starting a command of its own on the Computer in production (`node:child_process`),
+  now that programs have no command call to the server.
 - Whether the provider puts back, after a resume, a key it was given earlier. The removal at each
   opening takes it out either way.
-- The removal of old key lines on a Computer (`~/.ssh/authorized_keys`). It is tested on a real SSH
-  server with its own key file.
-- A real model turn using the tools. The test drives Flue's own tool code through the server's
-  functions against a real SSH server, with no model and no HTTP hop between runtime and server.
 - Whether cancelling a tool call in the runtime interrupts the server's call. The server ends the
-  command when its call is interrupted (tested); the interruption crossing the RPC was not.
+  command when its call is interrupted (tested, also on the Computer); the interruption crossing
+  the RPC was not.
 - Whether the runtime's call to the server waits long enough for a large put on the slow path.
-- OpenSSH on the Computer accepting a signal request on a channel (it needs OpenSSH 7.9 or later;
-  tested against OpenSSH on Ubuntu). Without it a cancelled command ends at its deadline instead.
 - How long a normal wake takes. Only the one slow start above was timed.
 - A machine with its own IPv4 address, from the hosted server: only the connection and the first
-  bytes were measured on that path. Every whole session went through the endpoint.
+  bytes were measured on that path. Every whole session from there went through the endpoint.
 - Why sending is slow through the endpoint, and whether it is as slow on a machine with its own
   IPv4 address.
 

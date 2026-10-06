@@ -54,6 +54,15 @@ export const SCROLL_EDGES = {
  * Not reproduced: there is no iOS 26 device or simulator to run it on from here. The reading is
  * from the screenshot and from where react-native-screens applies the effect
  * (`RNSScrollEdgeEffectApplicator`, to the first scroll view under the screen).
+ *
+ * This option alone did not hold on his phone (6 October 2026: the conversation was still drawn
+ * at about a fifth of its strength). The library applies it when the option's value changes and
+ * when the screen is put in its stack, to the scroll view on the screen's first-child chain at
+ * that moment (`RNSScreen.mm`, `updateContentScrollViewEdgeEffectsIfExists`, from the props
+ * update and from `willMoveToParentViewController`; `RNSScrollViewFinder`), and a
+ * Thread's list is mounted after its outline, so it kept the system's default. The Thread's list
+ * is therefore also laid out under the bar and not behind it (`Transcript`, `screen/Chat.tsx`).
+ * The option stays, for the list that is already there when a Thread takes the screen.
  */
 export const NO_SCROLL_EDGES = {
   top: 'hidden',

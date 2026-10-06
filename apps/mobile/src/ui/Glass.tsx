@@ -2,7 +2,6 @@ import { BlurView } from 'expo-blur'
 import { GlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect'
 import type { ReactNode, Ref } from 'react'
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
-import Animated from 'react-native-reanimated'
 import { useTheme } from '../theme'
 
 /**
@@ -124,8 +123,9 @@ export function Glass({
  * a field that grows or a button that appears never relays out the system's effect view.
  *
  * It has no tint, no fill and no border of its own where the system draws glass: the material is
- * exactly what iOS makes of what is behind it. Elsewhere it is the bordered frosted fill every
- * other glass falls back to.
+ * exactly what iOS makes of what is behind it. Elsewhere it is the frosted fill every other glass
+ * falls back to, also with no border: the shape it is laid behind carries its own edge, as the
+ * ring of its shadow (`ui/elevation.ts`), and a border beside that ring would be a second line.
  *
  * Ported from T3 Code mobile `src/features/threads/ThreadComposer.tsx` (`ComposerSurface`: its
  * `AnimatedGlassSurface` with `chrome="none"`, `glassEffectStyle="regular"`,
@@ -148,19 +148,8 @@ export function GlassMaterial({ ref, style }: { ref?: Ref<View>; style?: StylePr
     )
   }
   return (
-    <View
-      ref={ref}
-      pointerEvents="none"
-      style={[{ overflow: 'hidden', borderWidth: 1, borderColor: c.border }, style]}
-    >
+    <View ref={ref} pointerEvents="none" style={[{ overflow: 'hidden' }, style]}>
       <GlassFill opaque={c['card-alt']} />
     </View>
   )
 }
-
-/**
- * The glass material as an animated view, so it follows the same layout transition as the outline
- * it sits behind: the composer's shape and Vivid's capsule at the top of a screen. The reference's
- * `AnimatedGlassSurface` (`src/features/threads/ThreadComposer.tsx`).
- */
-export const AnimatedGlassMaterial = Animated.createAnimatedComponent(GlassMaterial)

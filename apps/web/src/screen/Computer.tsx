@@ -419,7 +419,7 @@ const clock = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-d
  *
  * What Vivid is doing on the machine right now ("Typing the echo command into the terminal") is
  * not here, because it does not reach this panel. Those words are the `summary` of each
- * `use_desktop`, `browse` and `run_command` step, read by `describeToolCall` in `@vivid/state`
+ * `use_desktop` and `browse` step, read by `describeToolCall` in `@vivid/state`
  * from the Thread's own stream, which only the Thread screen holds. When the Thread publishes its
  * current or last such step where the panel can read it, that sentence and its time replace this
  * line while watching.

@@ -18,8 +18,8 @@ import { Message } from './messages.ts'
 /**
  * Which kind of thing an action would have been done to: the tags of `ActionTarget` in
  * `@vivid/contracts`, read from its `cases` so a target added there is a kind here without a
- * second list. Only the tag is carried; the target's own fields (an account label, a command
- * line, a tool's input) are a Person's content and stay out of telemetry.
+ * second list. Only the tag is carried; the target's own fields (an account label, a typed
+ * text, a tool's input) are a Person's content and stay out of telemetry.
  */
 const ActionTargetKind = Schema.Literals(Struct.keys(ActionTarget.cases))
 

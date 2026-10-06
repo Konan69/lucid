@@ -1,11 +1,10 @@
-import { defineTool, useSandbox, type SandboxFactory } from '@flue/runtime'
+import { useSandbox, type SandboxFactory } from '@flue/runtime'
 import { Type } from '@earendil-works/pi-ai'
 import {
   BrowserAction,
   BrowseTarget,
-  RunCommandRequest,
+  BrowseRequest,
   DesktopOutcome,
-  CommandOutcome,
   BrowseOutcome,
   UseDesktopRequest,
 } from '@vivid/contracts'
@@ -21,8 +20,8 @@ import { warnFailure } from './result.ts'
 import * as v from 'valibot'
 import { Scope, type RunScoped, type RunTool } from './scope.ts'
 import { COMPUTER_HOME, computerSandbox, machineTools } from './sandbox.ts'
-import { summary, text } from './inputs.ts'
-import { browseOutcome, commandOutcome, desktopOutcome } from './outcomes.ts'
+import { summary } from './inputs.ts'
+import { browseOutcome, desktopOutcome } from './outcomes.ts'
 
 /** The authoritative browser schema uses these model-facing words and text limits. */
 const browserWords = {
@@ -86,7 +85,7 @@ const browseInput = Schema.Struct({
     modelAction(BrowserAction.cases.ShowTab.fields, 'show_tab'),
     modelAction(BrowserAction.cases.CloseTab.fields, 'close_tab'),
   ]),
-  summary: RunCommandRequest.fields.summary
+  summary: BrowseRequest.fields.summary
     .check(
       Schema.isPattern(/\S/),
       Schema.makeFilter((value) => v.is(summary, value)),
@@ -147,49 +146,13 @@ function browserAction(input: typeof browseInput.Type.action): BrowserAction {
   )
 }
 
-/** Computer tools propose actions only; availability, takeover and approvals belong to the server. */
-export function computerTools(runTool: RunTool, run: RunScoped) {
+/**
+ * Mounts Vivid's Computer for this conversation: Flue's own file and shell tools on the real
+ * machine, with `use_desktop`, `browse` and the Person's computer beside them. Nothing else is
+ * registered. Availability and takeover still belong to the server.
+ */
+export function mountComputer(runTool: RunTool, run: RunScoped) {
   useSandbox(computerSandboxFactory(runTool, run))
-  return [commandDefinition(runTool)]
-}
-
-/** The command definition is mounted directly; native browse mounts through the image factory. */
-export function commandDefinition(runTool: RunTool) {
-  return defineTool({
-    name: 'run_command',
-    description:
-      'Run a command on the person’s Computer when needed for their request. If approval is requested, stop and wait.',
-    input: v.object({
-      command: text('The command to run.', 8000),
-      summary,
-      timeoutSeconds: v.optional(
-        v.pipe(
-          v.number(),
-          v.integer(),
-          v.minValue(1),
-          v.description('Maximum seconds to wait for the command.'),
-        ),
-      ),
-    }),
-    /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
-    run({ data, signal }) {
-      const request: Schema.Struct.Mutable<RunCommandRequest> = {
-        command: data.command,
-        summary: data.summary,
-      }
-      if (data.timeoutSeconds !== undefined) request.timeoutSeconds = data.timeoutSeconds
-      return runTool(
-        Effect.gen(function* () {
-          const { client } = yield* Scope
-          const outcome = yield* client.RunCommand(RunCommandRequest.make(request))
-          if (CommandOutcome.isAnyOf(['Blocked', 'Unavailable'])(outcome))
-            yield* warnFailure('run_command', outcome._tag)
-          return commandOutcome(outcome)
-        }),
-        { signal, tool: 'run_command' },
-      )
-    },
-  })
 }
 
 const browseDescription =

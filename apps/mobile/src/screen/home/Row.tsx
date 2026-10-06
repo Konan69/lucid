@@ -7,11 +7,11 @@ import { commit, warn } from '../../data/haptics'
 import { relativeTime } from '../../data/lanes'
 import { useLiveData } from '../../data/live'
 import { deleteThread, patchThread, retitleThread } from '../../data/threads'
-import { ControlPillMenu } from '../../t3/Menu'
+import { HoldMenu } from '../../t3/Menu'
 import { ThreadSwipeable } from '../../t3/swipe'
 import { useTheme } from '../../theme'
 import { Faces } from '../../ui/Avatar'
-import { confirmDestructive, Dot, GUTTER, Label, Press, radius } from '../../ui/ui'
+import { confirmDestructive, Dot, GUTTER, Label, radius } from '../../ui/ui'
 
 /** Who else is in a Thread: faces for named people, a mark for the whole Company. */
 function Audience({ thread }: { thread: Thread }) {
@@ -173,7 +173,7 @@ export function ThreadRow({
         )
       },
     })
-  // What the long-press menu can do, by the id the native menu reports back when one is chosen.
+  // What the menu on a hold can do, by the id the native menu reports back when one is chosen.
   const filing = Option.match(onFile, {
     onNone: () => [],
     onSome: () => [{ id: 'file', title: 'Move to a project' }],
@@ -201,8 +201,7 @@ export function ThreadRow({
         onPress: shelve,
       }}
     >
-      <ControlPillMenu
-        shouldOpenOnLongPress
+      <HoldMenu
         title={thread.title}
         actions={[
           { id: 'rename', title: 'Rename' },
@@ -211,17 +210,16 @@ export function ThreadRow({
           { id: 'shelve', title: shelveLabel },
           { id: 'remove', title: 'Delete…', attributes: { destructive: true } },
         ]}
-        onPressAction={({ nativeEvent }) => {
-          const act = chosen.get(nativeEvent.event)
+        onChoose={(id) => {
+          const act = chosen.get(id)
           if (act !== undefined) act()
         }}
+        onPress={() => onOpen(thread)}
       >
-        <Press accessibilityRole="button" onPress={() => onOpen(thread)}>
-          {({ pressed }) => (
-            <LineFace thread={thread} now={now} pressed={pressed} retitling={retitling} />
-          )}
-        </Press>
-      </ControlPillMenu>
+        {({ pressed }) => (
+          <LineFace thread={thread} now={now} pressed={pressed} retitling={retitling} />
+        )}
+      </HoldMenu>
     </ThreadSwipeable>
   )
 }

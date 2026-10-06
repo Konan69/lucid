@@ -125,7 +125,7 @@ export interface ActionRunnerService {
 
 /**
  * Performs approved actions. Composed in `main.ts` from the domains that own each kind of target:
- * Connections for `Connection`, the Computer for `Command` and `Browser`.
+ * Connections for `Connection`, the Computer for `Browser` and `Desktop`.
  */
 export class ActionRunner extends Context.Service<ActionRunner, ActionRunnerService>()(
   'vivid/ActionRunner',
@@ -145,19 +145,17 @@ import { Reviewer } from './review.ts'
 export const usesPersonalBrowser = (action: ProposedAction) =>
   ActionTarget.match(action.target, {
     Browser: ({ target }) => BrowseTarget.match(target, { Person: () => true, Vivid: () => false }),
-    Command: () => false,
     Desktop: () => false,
     Connection: () => false,
   })
 
-/** Record commands, consequential Connection allowance and use of the Person's own browser. */
+/** Record consequential Connection allowance and use of the Person's own browser. */
 const allow = Effect.fn('Gate.allow')(function* (
   audit: Audit['Service'],
   actor: Actor,
   action: ProposedAction,
 ) {
   if (
-    ActionTarget.guards.Command(action.target) ||
     (ActionTarget.guards.Connection(action.target) && action.effect !== 'read') ||
     (ActionTarget.guards.Browser(action.target) && BrowseTarget.guards.Person(action.target.target))
   ) {

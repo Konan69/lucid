@@ -49,6 +49,28 @@ the build goes on and succeeds on Railway. Two consequences:
   run, and the plan caps domains per service. After each deploy, delete every server domain except
   the first one, which `PUBLIC_URL` uses. Remove this step when the provider waits for the build.
 
+### Deploying from the Boat machine
+
+The deploy uploads each service's build context to Railway, and from a home connection that
+upload is reset part-way often enough to cost several attempts. Run from the developer's Boat
+machine the same two uploads take seconds, so that is where a deploy is run (6 October 2026). The
+state still belongs to the deploy checkout: the Boat machine is given a copy for one run and
+hands it back.
+
+1. Send the Boat machine the committed tree (`git archive` of the commit on `main`, not a
+   checkout) and a copy of the deploy checkout's `.alchemy/`. Put installed packages one directory
+   above the tree, never inside it: the upload walks the build context and follows the package
+   manager's links without end.
+2. Send `.env.production` and the two tokens (`RAILWAY_API_TOKEN`, `GITHUB_TOKEN`) over the
+   connection's standard input into files only the owner can read. They are never typed into a
+   command line and never printed.
+3. Run `alchemy plan --stage production --env-file <file>` there and read it, as "Before a
+   production deploy" says. Then the same with `deploy ... --yes`.
+4. When Railway reports the new deployment as succeeded: delete the extra generated server
+   domain, copy `.alchemy/` back over the deploy checkout's, fast-forward that checkout to the
+   commit that was deployed, and remove the settings, the tokens and the state copy from the Boat
+   machine. The state files hold the settings' values, so they are a secret too.
+
 ### Before a production deploy
 
 On 5 October 2026 two sessions ran `pnpm infra:deploy` from the same checkout one minute apart
