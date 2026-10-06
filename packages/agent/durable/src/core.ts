@@ -12,6 +12,7 @@ export {
   RejoinInvalid,
   PartUnsupported,
   PartTooLarge,
+  LimitInvalid,
   RunMissing,
   ToolSchemaFailed,
   ToolFailed,

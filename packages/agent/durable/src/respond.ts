@@ -16,9 +16,16 @@ import { answerObserved, decideObserved } from './holds.ts'
 import { runMessageId } from './chunks.ts'
 import * as Pi from './pi.ts'
 import { LiveDoc } from '@earendil-works/pi-durable'
-import { attachRun, completeTurn, continueRun, prepareRun, rejoinRun } from './stream.ts'
+import {
+  attachRun,
+  completeTurn,
+  continueRun,
+  prepareInput,
+  prepareRun,
+  rejoinRun,
+} from './stream.ts'
 import { waiting } from './waiting.ts'
-import { InputPart, InputParts, type InputOptions } from './input.ts'
+import { InputPart, InputParts, type InputOptions, inputLimit, type PartLimit } from './input.ts'
 
 /** The pair is either absent or complete; partial pairs and nonpositive/noninteger counts fail ingress. */
 const RejoinQuery = Schema.Union([
@@ -274,11 +281,23 @@ export const respond = Effect.fn('Durable.respond')(function* (
   context: Context,
 ) {
   const { turn, options } = 'turn' in input ? input : { turn: input, options: {} }
+  const limit = yield* inputLimit(options)
+  return yield* respondWithPolicy(harness, conversationId, { turn, limit }, context)
+})
+
+/** Request ingress can validate the host policy before reading its body and pass the trusted state. */
+export const respondWithPolicy = Effect.fn('Durable.respondWithPolicy')(function* (
+  harness: Harness,
+  conversationId: ConversationId,
+  input: { readonly turn: ChatTurn; readonly limit: PartLimit },
+  context: Context,
+) {
+  const { turn, limit } = input
   return yield* ChatTurn.match(turn, {
     Input: ({ parts, messageId }): ResponseEffect =>
-      prepareRun(
+      prepareInput(
         harness,
-        { conversationId, content: parts, requestId: messageId, options },
+        { conversationId, content: parts, requestId: messageId, options: limit },
         context,
       ),
     Resume: (resume): ResponseEffect =>

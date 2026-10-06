@@ -107,6 +107,18 @@ export class PartTooLarge extends Schema.TaggedError<PartTooLarge>()(
   }
 }
 
+/** A host byte budget must be a finite nonnegative whole number, before request reading/admission. */
+export class LimitInvalid extends Schema.TaggedError<LimitInvalid>()(
+  'LimitInvalid',
+  { value: Schema.UndefinedOr(Schema.Number) },
+  { title: 'LimitInvalid' },
+) {
+  /** This is a host configuration fault, not a client's unsupported part. */
+  override get message() {
+    return 'Part byte limit must be a finite nonnegative integer'
+  }
+}
+
 /** None of the stored assistant messages made the tool calls named by a resume. */
 export class RunMissing extends Schema.TaggedError<RunMissing>()(
   'RunMissing',

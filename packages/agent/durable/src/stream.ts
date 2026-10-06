@@ -31,7 +31,13 @@ import {
 import { readDesk, noDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
 import { captureRun, inputReplay, selectRun, type ResumeInput } from './resume.ts'
-import { inputContent, type InputPart, type InputOptions } from './input.ts'
+import {
+  inputContent,
+  inputLimit,
+  type PartLimit,
+  type InputPart,
+  type InputOptions,
+} from './input.ts'
 
 /** A retried input retains its client request id and therefore Pi's submission identity. */
 export type RunInput = {
@@ -40,6 +46,9 @@ export type RunInput = {
   readonly requestId: string
   readonly options?: InputOptions
 }
+
+/** The public optional wire policy is normalized before any watch or Pi admission. */
+type PreparedInput = Omit<RunInput, 'options'> & { readonly options: PartLimit }
 
 type WatchFailure = PiFailed | WatchClosed | WatchOverflowed
 
@@ -175,8 +184,17 @@ export const prepareRun = Effect.fn('Durable.prepareRun')(function* (
   input: RunInput,
   context: Context,
 ) {
-  const options = input.options === undefined ? {} : input.options
-  const content = yield* inputContent(input.content, options)
+  const options = yield* inputLimit(input.options === undefined ? {} : input.options)
+  return yield* prepareInput(harness, { ...input, options }, context)
+})
+
+/** Already-decoded byte policy is carried explicitly throughout internal admission. */
+export const prepareInput = Effect.fn('Durable.prepareInput')(function* (
+  harness: Harness,
+  input: PreparedInput,
+  context: Context,
+) {
+  const content = yield* inputContent(input.content, input.options)
   const scope = yield* Scope.make()
   return yield* Effect.gen(function* () {
     const conversation = yield* Pi.conversation(harness, input.conversationId, context)

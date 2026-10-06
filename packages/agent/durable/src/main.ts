@@ -6,9 +6,9 @@ import { Effect, Function, Option, Result, Schema, Stream } from 'effect'
 import * as Core from './core.ts'
 import { HoldIdInvalid, TurnInvalid } from './errors.ts'
 import { prepareRun } from './stream.ts'
-import { reconnectRequest, turnFailure, TurnBody } from './respond.ts'
+import { reconnectRequest, turnFailure, TurnBody, respondWithPolicy } from './respond.ts'
 import type { ToolsOptions } from './tools.ts'
-import type { InputOptions } from './input.ts'
+import { inputLimit, type InputOptions } from './input.ts'
 
 /** A host can bound decoded parts while preserving the four-argument Request ingress. */
 export type RequestInput = Request | { readonly request: Request; readonly options: InputOptions }
@@ -96,26 +96,27 @@ export const respondTurn = (
   turn: Core.TurnInput,
   context: Context,
 ): Promise<Response> =>
-  Effect.runPromise(
-    Core.respond(harness, conversationId, turn, context).pipe(
-      Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream)),
-      Effect.map((stream) => createUIMessageStreamResponse({ stream })),
-      Effect.catchTag('RunMissing', () =>
-        Effect.succeed(new Response('No run made these tool calls', { status: 409 })),
-      ),
-      Effect.catchTag('ConversationMissing', () =>
-        Effect.succeed(new Response('Conversation not found', { status: 404 })),
-      ),
-      Effect.catchTag('PartUnsupported', () =>
-        Effect.succeed(
-          new Response('Unsupported file; use an inline base64 image', { status: 400 }),
-        ),
-      ),
-      Effect.catchTag('PartTooLarge', () =>
-        Effect.succeed(new Response('File part too large', { status: 413 })),
-      ),
+  Effect.runPromise(turnResponse(Core.respond(harness, conversationId, turn, context)))
+
+/** Both Request and decoded-turn adapters share exactly the same expected HTTP error mapping. */
+function turnResponse(program: ReturnType<typeof Core.respond>) {
+  return program.pipe(
+    Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream)),
+    Effect.map((stream) => createUIMessageStreamResponse({ stream })),
+    Effect.catchTag('RunMissing', () =>
+      Effect.succeed(new Response('No run made these tool calls', { status: 409 })),
+    ),
+    Effect.catchTag('ConversationMissing', () =>
+      Effect.succeed(new Response('Conversation not found', { status: 404 })),
+    ),
+    Effect.catchTag('PartUnsupported', () =>
+      Effect.succeed(new Response('Unsupported file; use an inline base64 image', { status: 400 })),
+    ),
+    Effect.catchTag('PartTooLarge', () =>
+      Effect.succeed(new Response('File part too large', { status: 413 })),
     ),
   )
+}
 
 /** Read JSON text once; failed reads/decodes are invalid turns. Resumes must name the current run
  * message to settle anything. Outputs require call-id uniqueness within that run; approvals do not. */
@@ -126,6 +127,7 @@ export async function respond(
   context: Context,
 ): Promise<Response> {
   const { request, options } = 'request' in input ? input : { request: input, options: {} }
+  const limit = await Effect.runPromise(inputLimit(options))
   // AI SDK HttpChatTransport.reconnectToStream sends a bodyless GET and treats 204 as idle.
   if (request.method === 'GET') {
     return Effect.runPromise(
@@ -157,7 +159,11 @@ export async function respond(
     }).pipe(Effect.flatMap(decodeRequest), Effect.mapError(turnFailure), Effect.result),
   )
   if (Result.isFailure(turn)) return new Response(turn.failure.message, { status: 400 })
-  return respondTurn(harness, conversationId, { turn: turn.success, options }, context)
+  return Effect.runPromise(
+    turnResponse(
+      respondWithPolicy(harness, conversationId, { turn: turn.success, limit }, context),
+    ),
+  )
 }
 
 export {
@@ -173,6 +179,7 @@ export {
   RejoinInvalid,
   PartUnsupported,
   PartTooLarge,
+  LimitInvalid,
   RunMissing,
   ToolSchemaFailed,
   ToolFailed,
