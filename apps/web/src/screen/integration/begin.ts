@@ -1,5 +1,5 @@
-import { ConnectionStep, type Service } from '@vivid/contracts'
-import { Data, Result } from 'effect'
+import { ConnectionStep, type AccountName, type Service } from '@vivid/contracts'
+import { Data, Option, Result } from 'effect'
 import { change } from '../../data/live'
 import type { Keying } from './Key'
 import { showSignIn } from './signin'
@@ -52,19 +52,25 @@ export function follow(step: ConnectionStep, tab: Window | null): Began {
   })
 }
 
-/** Starts a Connection to a service from the catalog, for this Person or for their Company. */
+/** Who a Connection is being begun for, and what the Person calls the account when they said. */
+export interface Beginning {
+  /** For the Person's Company (an admin's choice) and not for the Person alone. */
+  readonly shared: boolean
+  /** The Person's name for the account being added; none leaves it unnamed. */
+  readonly name: Option.Option<AccountName>
+}
+
+/**
+ * Starts a Connection to a service from the catalog, for this Person or for their Company. A
+ * service the Person already connected is begun the same way: that adds one more account.
+ */
 export async function begin(
-  service: Pick<Service, 'id' | 'name'>,
+  service: Pick<Service, 'id'>,
   tab: Window | null,
-  shared: boolean,
+  { shared, name }: Beginning,
 ): Promise<Began> {
   const result = await change((client) =>
-    client.BeginConnection({
-      service: service.id,
-      // A Connection's label is at most 40 characters; the service's name is the default one.
-      label: service.name.slice(0, 40),
-      shared,
-    }),
+    client.BeginConnection({ service: service.id, name: Option.getOrNull(name), shared }),
   )
   if (Result.isFailure(result)) {
     if (tab !== null) tab.close()

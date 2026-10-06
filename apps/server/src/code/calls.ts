@@ -1,12 +1,10 @@
 import {
   BrowseOutcome,
   BrowseRequest,
-  CommandOutcome,
   CodeCallKind,
   FindToolsRequest,
   ReadPageOutcome,
   ReadPageRequest,
-  RunCommandRequest,
   ToolOutcome,
 } from '@vivid/contracts'
 import { Context, Effect, Layer, Schema } from 'effect'
@@ -20,7 +18,7 @@ import { Executor } from '../connections/executor.ts'
 import { ConnectionStore } from '../connections/store.ts'
 import { findTools, resolveTool, useTool } from '../connections/tools.ts'
 import { DeviceRegistry } from '../computers/device.ts'
-import { ComputerStore, computerBrowse, computerRunCommand } from '../computers/store.ts'
+import { ComputerStore, computerBrowse } from '../computers/store.ts'
 import { Database } from '../database/client.ts'
 import { CodeAuthority, type CodeBoundary } from './authority.ts'
 import { PageReader } from './page.ts'
@@ -38,7 +36,6 @@ const UseNamedTool = Schema.Struct({
 })
 const decodeUse = Schema.decodeUnknownEffect(UseNamedTool)
 const decodeFind = Schema.decodeUnknownEffect(FindToolsRequest)
-const decodeCommand = Schema.decodeUnknownEffect(RunCommandRequest)
 const decodeBrowse = Schema.decodeUnknownEffect(BrowseRequest)
 const decodePage = Schema.decodeUnknownEffect(ReadPageRequest)
 
@@ -99,50 +96,6 @@ const connection = Effect.fn('Code.useConnection')(function* (actor: Actor, inpu
       returned({ ok: false, reason: 'The account needs connecting.' }, request.summary, 'refused'),
     Rejected: ({ message, problems }) =>
       returned({ ok: false, reason: message, problems }, request.summary, 'refused'),
-  })
-})
-
-/** Computer distinguishes refusal before dispatch from a lost execution receipt. Only the latter stops the guest. */
-const command = Effect.fn('Code.runCommand')(function* (actor: Actor, input: Schema.Json) {
-  const request = yield* decodeCommand(input, { onExcessProperty: 'error' })
-  if (
-    request.timeoutSeconds !== undefined &&
-    (request.timeoutSeconds < 1 || request.timeoutSeconds > 30)
-  )
-    return yield* refused(
-      'run_command',
-      { ok: false, reason: 'Command timeout must be between 1 and 30 seconds.' },
-      request.summary,
-    )
-  const outcome = yield* computerRunCommand(actor, request)
-  return yield* CommandOutcome.match<Effect.Effect<CallOutcome>>(outcome, {
-    Completed: ({ result }) =>
-      Effect.succeed(
-        returned(
-          {
-            ok: true,
-            result: {
-              exitCode: result.exitCode,
-              output: result.output,
-              truncated: result.truncated,
-            },
-          },
-          request.summary,
-        ),
-      ),
-    ApprovalRequired: ({ approvalId, summary }) =>
-      Effect.succeed(CallOutcome.cases.ApprovalRequired.make({ approvalId, summary })),
-    Blocked: ({ rule }) =>
-      Effect.succeed(CallOutcome.cases.Blocked.make({ rule, summary: request.summary })),
-    // Command unavailability has no lower refusal receipt; the code reply decides it here.
-    Unavailable: () =>
-      refused(
-        'run_command',
-        { ok: false, reason: 'The Computer is unavailable. No action was sent.' },
-        request.summary,
-      ),
-    OutcomeUnknown: () =>
-      Effect.succeed(CallOutcome.cases.Unknown.make({ summary: request.summary })),
   })
 })
 
@@ -252,7 +205,7 @@ const browse = Effect.fn('Code.browse')(function* (actor: Actor, input: Schema.J
   })
 })
 
-/** Only these five tools exist. Payload ownership fields are excess properties and rejected at ingress. */
+/** Only these four tools exist. Payload ownership fields are excess properties and rejected at ingress. */
 const dispatch = Effect.fn('Code.dispatch')(function* (
   boundary: CodeBoundary,
   call: typeof WorkerMessage.cases.Call.Type,
@@ -265,8 +218,6 @@ const dispatch = Effect.fn('Code.dispatch')(function* (
     }
     case 'use_tool':
       return yield* connection(actor, call.input)
-    case 'run_command':
-      return yield* command(actor, call.input)
     case 'browse':
       return yield* browse(actor, call.input)
     case 'read_page': {

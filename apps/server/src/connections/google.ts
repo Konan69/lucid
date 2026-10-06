@@ -44,6 +44,13 @@ const GoogleService = Schema.Struct({
 export type GoogleService = typeof GoogleService.Type
 
 const identity = ['openid', 'email', 'profile'] as const
+
+/**
+ * Where Google says who an access token belongs to: the `userinfo_endpoint` of its OpenID
+ * metadata (`https://accounts.google.com/.well-known/openid-configuration`). Every Google service
+ * here asks for the `email` scope, so the answer carries the account's address.
+ */
+const googleUserinfo = 'https://openidconnect.googleapis.com/v1/userinfo'
 const definition = (name: string) => `https://integrations.sh/specs/google/google-${name}.json`
 
 export const googleServices: readonly GoogleService[] = [
@@ -130,6 +137,12 @@ export function googleService(service: ServiceId) {
  *   `access_type: offline` with `prompt: consent` because Google issues a refresh token only then.
  * - No `withApprovals`: Vivid's own Approval gates a consequential action before Executor is
  *   called, and an Executor approval has no request Vivid could resume.
+ * - `health` says whose account it is. A Person may connect two Google accounts to one service,
+ *   and the address is what tells them apart, so the app asks Google's userinfo endpoint for it
+ *   and answers with `accountInfo.email` (the guide's "Check an account"). Executor runs it when
+ *   the server asks (`Executor.identity`), and keeps only that field. The token is a handle here
+ *   too, so the userinfo host is in `hosts` beside the API's. `decodeJson` turns Google's 401 into
+ *   "credentials refused" by itself.
  *
  * Every value enters the source as a JSON literal, so none of them can become syntax.
  */
@@ -152,8 +165,9 @@ export function googleFiles(google: GoogleService) {
     resource: null,
     authorizationParams: { access_type: 'offline', prompt: 'consent' },
   }
-  const provider = `import { defineProvider, oauth2 } from "apps";
-export const provider = defineProvider({ name: ${JSON.stringify(google.name)}, hosts: [${JSON.stringify(new URL(google.origin).host)}], auth: { ${googleMethod}: oauth2(${JSON.stringify(sign)}) } });
+  const hosts = [...new Set([new URL(google.origin).host, new URL(googleUserinfo).host])]
+  const provider = `import { decodeJson, defineProvider, oauth2, object, string } from "apps";
+export const provider = defineProvider({ name: ${JSON.stringify(google.name)}, hosts: ${JSON.stringify(hosts)}, auth: { ${googleMethod}: oauth2(${JSON.stringify(sign)}) }, async health({ account, fetch, signal }) { const response = await fetch(${JSON.stringify(googleUserinfo)}, { signal, headers: { Authorization: "Bearer " + account.fields.access_token } }); const user = await decodeJson(response, object({ email: string() })); return { accountInfo: { email: user.email } }; } });
 `
   const index = `import { defineApp } from "apps";
 import { liveOpenapiRouter } from "apps/openapi";
@@ -180,6 +194,10 @@ export default defineApp({ accounts: { google: provider } }, async ({ accounts, 
  * running the same source shares one app, and a server whose source changed installs a new app
  * beside the old one: a Connection made earlier keeps the app it names, and nothing is edited in
  * place. Executor bounds a name at 120 characters; this is under 40.
+ *
+ * So a Google account connected before the source learned to ask who it is (6 October 2026) stays
+ * on an app with no `health` and has no `identity` until it is connected again; a Person can
+ * name it meanwhile.
  */
 export function googleAppName(google: GoogleService) {
   const revision = NodeCrypto.createHash('sha256')

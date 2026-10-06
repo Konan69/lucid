@@ -114,7 +114,7 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
             console.info(JSON.stringify({ source: source.name, added }))
             expect(AddIntegrationOutcome.guards.Added(added)).toBe(true)
             const rows = yield* store.records(personalActor)
-            const row = rows.find((entry) => entry.label === source.name)
+            const row = rows.find((entry) => entry.name === source.name)
             if (row === undefined) return yield* Effect.die('Public registration did not persist')
             const discovery = yield* store.tools(personalActor, row)
             const tools = ToolDiscovery.match(discovery, {

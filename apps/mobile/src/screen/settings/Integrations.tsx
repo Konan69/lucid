@@ -1,5 +1,6 @@
 import { useAtom, useAtomRefresh, useAtomValue } from '@effect/atom-react'
 import {
+  ConnectionOwnership,
   ConnectionState,
   ServiceCatalog,
   Workspace,
@@ -17,6 +18,7 @@ import { useTheme } from '../../theme'
 import { Live } from '../../ui/Live'
 import { Sheet } from '../../ui/Sheet'
 import { Field, GUTTER, Label, Notice, Segmented, Skeleton } from '../../ui/ui'
+import { ManageAccount, NameNew } from '../integration/Account'
 import { Catalog } from '../integration/Catalog'
 import { Connected } from '../integration/Connected'
 import { useFlow, type Flow } from '../integration/flow'
@@ -195,11 +197,9 @@ function Lists({
       <Catalog
         found={found}
         searching={query.trim().length > 0}
-        connected={connections
-          .filter((item) => ConnectionState.guards.Ready(item.state))
-          .map((item) => item.service)}
+        ready={connections.filter((item) => ConnectionState.guards.Ready(item.state))}
         presses={flow.presses}
-        onConnect={(service) => flow.connect(service, admin && forCompany)}
+        onConnect={(service, accounts) => flow.connect(service, accounts, admin && forCompany)}
         onAgain={onAgain}
         whose={
           admin && Option.isSome(company) ? (
@@ -211,7 +211,62 @@ function Lists({
           ) : null
         }
       />
+      <Managed connections={connections} flow={flow} />
+      <Naming connections={connections} flow={flow} />
     </>
+  )
+}
+
+/**
+ * The form that asks what to call an account before it is begun, while the flow is waiting on one
+ * (`flow.naming`). It knows the accounts already on that service, so it can say a name is taken
+ * before anything is sent.
+ */
+function Naming({ connections, flow }: { connections: ReadonlyArray<Connection>; flow: Flow }) {
+  if (Option.isNone(flow.naming)) return null
+  const { service, serviceName } = flow.naming.value
+  return (
+    <NameNew
+      serviceName={serviceName}
+      others={connections.filter((item) => item.service === service)}
+      onClose={flow.closeNaming}
+      onName={flow.named}
+    />
+  )
+}
+
+/**
+ * The sheet of the account whose row was pressed. It is drawn from the live list, so it shows the
+ * name the account has now, and it is gone the moment the account is (disconnected here, or on
+ * another device). One more account is offered only for a service from the catalog
+ * (`Connection.origin`): a server added by its address cannot be added a second time yet.
+ */
+function Managed({ connections, flow }: { connections: ReadonlyArray<Connection>; flow: Flow }) {
+  const connection = Option.flatMap(flow.managing, (id) =>
+    Option.fromUndefinedOr(connections.find((item) => item.id === id)),
+  )
+  if (Option.isNone(connection)) return null
+  const managed = connection.value
+  const accounts = connections.filter((item) => item.service === managed.service)
+  return (
+    <ManageAccount
+      // One sheet for one account: what was typed for one is never shown for another.
+      key={managed.id}
+      connection={managed}
+      accounts={accounts}
+      onClose={flow.closeManage}
+      onRename={(name) => flow.rename(managed, name)}
+      onAdd={
+        managed.origin === 'Catalogue'
+          ? Option.some((name) =>
+              // The sheet has already asked for a name where one was needed. The new account
+              // goes where this one is: the Person's own, or the Company's.
+              flow.add(managed.service, ConnectionOwnership.guards.Shared(managed.ownership), name),
+            )
+          : Option.none()
+      }
+      onDisconnect={() => flow.disconnect(managed)}
+    />
   )
 }
 

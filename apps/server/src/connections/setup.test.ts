@@ -148,7 +148,7 @@ describe.skipIf(!testDatabaseConfigured)('setup-required public discovery', () =
             )
             if (service === undefined) expect.fail('Expected the unknown-auth service')
             const error = yield* connectionHandlers
-              .OfferConnection({ service: service.id, reason: 'Read calendar' })
+              .OfferConnection({ service: service.id, reason: 'Read calendar', wanted: 'Service' })
               .pipe(Effect.flip)
             expect(error._tag).toBe('InvalidRequest')
             expect(error.message).toBe(connectionSetupMessage)
@@ -213,7 +213,7 @@ describe.skipIf(!testDatabaseConfigured)('catalogue Begin without auth hints', (
             )
             const step = yield* store.begin(ownerActor, {
               service: hostedService,
-              label: 'Work',
+              name: 'Work',
               shared: false,
             })
             expect(step._tag).toBe(expected)

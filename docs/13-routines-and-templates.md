@@ -54,8 +54,11 @@ trigger; a one-off does not silently repeat.
 
 ## Integration events (backend)
 
-A Routine can react to new items in an Integration named by its account label, such as
-“Gmail (Work)”. The server keeps the Connection reference private. `find_events` discovers actual
+A Routine can react to new items in an Integration named by its account name, such as
+“Gmail (Work)”: the service, then what the Person called the account or who the service says it
+is. A Person can have several accounts on one Integration, and can rename one; the Routine stays
+on the account it was made for, because the server keeps the Connection reference private and
+finds the account by it, not by its name. `find_events` discovers actual
 provider read operations and their configuration; Vivid can offer “when this happens, I’ll do
 that” and create the Routine in its Thread.
 

@@ -65,7 +65,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
                 Effect.provideService(AuthContext, auth),
                 Effect.provideService(ConnectionAddress, address),
               )
-          yield* store.begin(ownerActor, { service: serviceId, label: 'Catalogue', shared: false })
+          yield* store.begin(ownerActor, { service: serviceId, name: 'Catalogue', shared: false })
           expect(
             AddIntegrationOutcome.guards.Added(
               yield* add('https://server.example/mcp', 'Records', false),
@@ -254,7 +254,8 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             {
               ...row,
               id: crypto.randomUUID(),
-              label: 'Older Ready',
+              name: 'Older Ready',
+              identity: null,
               serviceName: 'Records',
               references: encodeReferences(row.references),
               status: 'ready',
@@ -264,7 +265,8 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             {
               ...row,
               id: crypto.randomUUID(),
-              label: 'Newest Ready',
+              name: 'Newest Ready',
+              identity: null,
               serviceName: 'Records',
               references: encodeReferences(row.references),
               status: 'ready',
@@ -274,7 +276,8 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             {
               ...row,
               id: crypto.randomUUID(),
-              label: 'Newest Pending',
+              name: 'Newest Pending',
+              identity: null,
               references: encodeReferences(row.references),
               status: 'needs-authorization',
               reason: null,
@@ -296,7 +299,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           )
         expect(result).toEqual(
           AddIntegrationOutcome.cases.AlreadyConnected.make({
-            account: 'Newest Ready',
+            account: 'Records (Newest Ready)',
             name: 'Records',
           }),
         )
@@ -418,12 +421,12 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           const store = yield* ConnectionStore
           yield* store.begin(ownerActor, {
             service: serviceId,
-            label: 'Shared Records',
+            name: 'Shared Records',
             shared: true,
           })
           yield* store.begin(ownerActor, {
             service: serviceId,
-            label: 'Private Records',
+            name: 'Private Records',
             shared: false,
           })
           const auth = AuthState.Vivid({
@@ -435,7 +438,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             .FindIntegrations({ query: 'Records' })
             .pipe(Effect.provideService(AuthContext, auth))
           expect(response.integrations).toMatchObject([
-            { name: 'Records', account: 'Shared Records', connected: true, shared: true },
+            { name: 'Records', account: 'Records (Shared Records)', connected: true, shared: true },
             { name: 'Records', connected: true },
           ])
           expect(JSON.stringify(response)).not.toContain('Private Records')
@@ -445,7 +448,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           expect(unrelated.integrations.filter(ConnectionMatch.guards.Account)).toHaveLength(1)
           expect(unrelated.integrations[0]).toMatchObject({
             name: 'Records',
-            account: 'Shared Records',
+            account: 'Records (Shared Records)',
             connected: true,
             shared: true,
           })
@@ -467,7 +470,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           for (let index = 0; index < 25; index++) {
             yield* store.begin(ownerActor, {
               service: serviceId,
-              label: `Account ${index}`,
+              name: `Account ${index}`,
               shared: false,
             })
             yield* TestClock.adjust(1)
@@ -484,7 +487,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           )
           const accounts = response.integrations.filter(ConnectionMatch.guards.Account)
           expect(accounts.map((entry) => entry.account)).toEqual(
-            Array.from({ length: 24 }, (_, index) => `Account ${24 - index}`),
+            Array.from({ length: 24 }, (_, index) => `Records (Account ${24 - index})`),
           )
           expect(response.omittedAccounts).toBe(1)
           const narrowed = yield* connectionHandlers.FindIntegrations({ query: '0' }).pipe(
@@ -499,11 +502,11 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           )
           const narrowedAccounts = narrowed.integrations.filter(ConnectionMatch.guards.Account)
           expect(narrowedAccounts.slice(0, 3).map((entry) => entry.account)).toEqual([
-            'Account 20',
-            'Account 10',
-            'Account 0',
+            'Records (Account 20)',
+            'Records (Account 10)',
+            'Records (Account 0)',
           ])
-          expect(narrowedAccounts[3]).toMatchObject({ account: 'Account 24' })
+          expect(narrowedAccounts[3]).toMatchObject({ account: 'Records (Account 24)' })
           expect(narrowed.omittedAccounts).toBe(1)
           expect(response.integrations).toHaveLength(25)
           expect(response.integrations.slice(0, 24).every(ConnectionMatch.guards.Account)).toBe(
@@ -526,7 +529,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             workspace: personalActor.workspace,
             threadId,
           })
-          yield* store.begin(ownerActor, { service: serviceId, label: 'Read test', shared: false })
+          yield* store.begin(ownerActor, { service: serviceId, name: 'Read test', shared: false })
           yield* Ref.set(probe.tools, [
             ExecutorTool.make({
               name: 'delete',
@@ -543,11 +546,11 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           ])
           const test = () =>
             connectionHandlers
-              .TestIntegration({ account: 'Read test' })
+              .TestIntegration({ account: 'Records (Read test)' })
               .pipe(Effect.provideService(AuthContext, auth))
           yield* Ref.set(probe.decision, 'Allowed')
           expect(yield* test()).toMatchObject({
-            account: 'Read test',
+            account: 'Records (Read test)',
             tool: 'health',
             tools: ['delete', 'health'],
           })

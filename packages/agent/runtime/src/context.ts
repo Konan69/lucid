@@ -88,10 +88,12 @@ const loadTimezone = Effect.fn('Context.loadTimezone')(
 )
 
 /**
- * The names of the services this Person can use now. A Connection that still needs authorization
- * or has failed is left out, because naming it would promise tools that find_tools will not
- * return. One service connected twice is named once; the accounts are find_tools' to tell apart.
- * A failed read names nothing rather than failing the response.
+ * The names of the accounts this Person can use now, as the server names them ("Gmail (Work)",
+ * "Gmail (ada@example.com)", `Connection.account`): the same names find_tools returns and
+ * use_tool takes. It was the services' names, one for a service connected twice, so Vivid began a
+ * response not knowing a Person had two accounts on one service. A Connection that still needs
+ * authorization or has failed is left out, because naming it would promise tools that find_tools
+ * will not return. A failed read names nothing rather than failing the response.
  */
 const loadIntegrations = Effect.fn('Context.loadIntegrations')(
   function* (acting: Option.Option<Acting>) {
@@ -99,7 +101,7 @@ const loadIntegrations = Effect.fn('Context.loadIntegrations')(
     const ready = response.connections.filter((connection) =>
       ConnectionState.guards.Ready(connection.state),
     )
-    return [...new Set(ready.map((connection) => connection.serviceName))]
+    return ready.map((connection) => connection.account)
   },
   Effect.catch(() => Effect.succeed([])),
 )

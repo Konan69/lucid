@@ -82,7 +82,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           database.delete(personTable).where(eq(personTable.id, ownerActor.person.id)),
         )
         const failure = yield* (yield* ConnectionStore)
-          .begin(ownerActor, { service: serviceId, label: 'Rejected insert', shared: false })
+          .begin(ownerActor, { service: serviceId, name: 'Rejected insert', shared: false })
           .pipe(Effect.flip)
         expect(failure._tag).toBe('DatabaseConstraintViolation')
         expect(yield* Ref.get(probe.removals)).toBe(removals + 1)
@@ -136,7 +136,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const failure = yield* Effect.gen(function* () {
           return yield* (yield* ConnectionStore).begin(ownerActor, {
             service: serviceId,
-            label: 'Rejected',
+            name: 'Rejected',
             shared: false,
           })
         }).pipe(
@@ -174,7 +174,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         yield* Ref.set(probe.step, 'OpenSignIn')
         const begun = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Shared',
+          name: 'Shared',
           shared: true,
         })
         const original = yield* store.get(ownerActor, begun.connection.id)
@@ -252,7 +252,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         yield* Ref.set(probe.step, 'OpenSignIn')
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Shared',
+          name: 'Shared',
           shared: true,
         })
         yield* store.resume(admin, step.connection.id)
@@ -282,12 +282,12 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         yield* Ref.set(probe.step, 'OpenSignIn')
         const first = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'First',
+          name: 'First',
           shared: false,
         })
         const second = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Second',
+          name: 'Second',
           shared: false,
         })
         const executor = yield* Executor
@@ -333,7 +333,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           const store = yield* ConnectionStore
           const step = yield* store.begin(ownerActor, {
             service: serviceId,
-            label: 'Personal account',
+            name: 'Personal account',
             shared: false,
           })
           expect((yield* store.list(personalActor)).connections.map((row) => row.id)).toContain(
@@ -358,13 +358,13 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const before = yield* Ref.get(probe.begins)
         expect(
           yield* store
-            .begin(memberActor, { service: serviceId, label: 'Shared account', shared: true })
+            .begin(memberActor, { service: serviceId, name: 'Shared account', shared: true })
             .pipe(Effect.flip),
         ).toBeInstanceOf(Forbidden)
         expect(yield* Ref.get(probe.begins)).toBe(before)
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Shared account',
+          name: 'Shared account',
           shared: true,
         })
         expect((yield* store.list(memberActor)).connections).toHaveLength(1)
@@ -387,7 +387,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const store = yield* ConnectionStore
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Offline catalog',
+          name: 'Offline catalog',
           shared: false,
         })
         const executor = yield* Executor
@@ -425,7 +425,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const { ownerActor } = yield* fixture()
         const step = yield* (yield* ConnectionStore).begin(ownerActor, {
           service: serviceId,
-          label: 'Shared catalog',
+          name: 'Shared catalog',
           shared: false,
         })
         const executor = yield* Executor
@@ -450,7 +450,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           // so this tracer signal puts the second reader at the shared cache before interruption.
           const tracer = Tracer.make({
             span(options) {
-              if (options.name === 'Connections.public')
+              if (options.name === 'Connections.connectionOf')
                 Deferred.doneUnsafe(secondStarted, Effect.void)
               return new Tracer.NativeSpan(options)
             },
@@ -480,7 +480,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const { ownerActor } = yield* fixture()
         const step = yield* (yield* ConnectionStore).begin(ownerActor, {
           service: serviceId,
-          label: 'Catalog recovery',
+          name: 'Catalog recovery',
           shared: false,
         })
         const executor = yield* Executor
@@ -602,7 +602,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
               yield* store
                 .begin(ownerActor, {
                   service: serviceId,
-                  label: 'Setup unavailable',
+                  name: 'Setup unavailable',
                   shared: false,
                 })
                 .pipe(Effect.flip),
@@ -666,7 +666,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           yield* Ref.set(probe.step, 'OpenSignIn')
           const step = yield* store.begin(ownerActor, {
             service: serviceId,
-            label: 'Company sign-in',
+            name: 'Company sign-in',
             shared: true,
           })
           expect(step._tag).toBe('OpenSignIn')
@@ -700,7 +700,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         yield* Ref.set(probe.step, 'OpenSignIn')
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Shared sign-in',
+          name: 'Shared sign-in',
           shared: true,
         })
         const row = yield* store.get(ownerActor, step.connection.id)
@@ -744,12 +744,12 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           yield* Ref.set(probe.step, 'OpenSignIn')
           const shared = yield* store.begin(ownerActor, {
             service: serviceId,
-            label: 'Shared sign-in',
+            name: 'Shared sign-in',
             shared: true,
           })
           const personal = yield* store.begin(ownerActor, {
             service: serviceId,
-            label: 'Personal sign-in',
+            name: 'Personal sign-in',
             shared: false,
           })
           const database = yield* Database
@@ -804,7 +804,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const failure = yield* Effect.gen(function* () {
           return yield* (yield* ConnectionStore).begin(ownerActor, {
             service: serviceId,
-            label: 'Unavailable sign-in',
+            name: 'Unavailable sign-in',
             shared: false,
           })
         }).pipe(
@@ -846,7 +846,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const failure = yield* Effect.gen(function* () {
           return yield* (yield* ConnectionStore).begin(ownerActor, {
             service: serviceId,
-            label: 'Unavailable sign-in',
+            name: 'Unavailable sign-in',
             shared: false,
           })
         }).pipe(
@@ -868,7 +868,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         yield* Ref.set(probe.step, 'EnterKey')
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Key account',
+          name: 'Key account',
           shared: false,
         })
         expect(step._tag).toBe('EnterKey')
