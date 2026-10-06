@@ -1,3 +1,4 @@
+import type * as DurableErrors from './errors.ts'
 import type { Context } from '@earendil-works/chord'
 import type { UserMessage, TextContent, ImageContent } from '@earendil-works/pi-ai'
 import {
@@ -317,15 +318,26 @@ const pageDesk = Effect.fn('Durable.historyDesk')(function* (
  * round is parallel. Live streams and early attachments follow admission. Pi's startToolRound stores
  * provider order and finishToolRound removes live.tools; reader presentation order is not retained.
  */
-export const history = Effect.fn('Durable.history')(function* (
+export const history: (
+  harness: Harness,
+  conversationId: ConversationId,
+  page: HistoryRequest,
+  context: Context,
+) => Effect.Effect<
+  HistoryPage,
+  | DurableErrors.ConversationMissing
+  | HistoryCursorInvalid
+  | HistoryPageInvalid
+  | DurableErrors.PiFailed
+> = Effect.fn('Durable.history')(function* (
   harness: Harness,
   conversationId: ConversationId,
   page: HistoryRequest,
   context: Context,
 ): Effect.fn.Return<
   HistoryPage,
-  | import('./errors.ts').ConversationMissing
-  | import('./errors.ts').PiFailed
+  | DurableErrors.ConversationMissing
+  | DurableErrors.PiFailed
   | HistoryCursorInvalid
   | HistoryPageInvalid
 > {

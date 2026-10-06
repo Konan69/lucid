@@ -9,13 +9,28 @@ import type {
   TaskId,
 } from '@earendil-works/pi-durable'
 import { Effect, Option, Predicate, Schema } from 'effect'
-import { type Chunk, initialRunState, replay, replayAfter, runMessageId } from './chunks.ts'
+import {
+  type Chunk,
+  type Step,
+  initialRunState,
+  replay,
+  replayAfter,
+  runMessageId,
+} from './chunks.ts'
 import type { Reader } from './desk.ts'
-import { RunMissing } from './errors.ts'
+import { RunMissing, type PiFailed } from './errors.ts'
 import * as Pi from './pi.ts'
 
 /** A resume names the assistant run as well as the tool parts that the client already holds. */
 export type ResumeInput = { readonly messageId: string; readonly known: ReadonlySet<string> }
+/** A replay prefix owns its complete translator state and per-chunk task provenance. */
+export type Prefix = {
+  readonly step: Step
+  readonly live: boolean
+  readonly known: ReadonlySet<string>
+  readonly origins: ReadonlyMap<Chunk, TaskId>
+}
+
 const SubmissionIdentity = Schema.declare<SubmissionId>(
   (value): value is SubmissionId =>
     Predicate.isNumber(value) && Number.isSafeInteger(value) && value > 0,
@@ -55,30 +70,33 @@ const entriesOf = Effect.fn('Durable.resumeEntries')(function* (
 })
 
 /** Bound whole-run attachment to its first placed input, never the newest steer or an older run. */
-export const captureRun = Effect.fn('Durable.captureRun')(function* (
+export const captureRun: (
   reader: Reader,
   snapshot: SnapshotEvent,
-) {
-  if (snapshot.run === undefined) return snapshot
-  const first = Option.getOrThrow(Option.fromNullishOr(snapshot.run.inputs[0]))
-  const handle = yield* Pi.submission(reader.harness, first, reader.context)
-  if (Option.isNone(handle))
-    return yield* new RunMissing({ conversationId: reader.conversation.id })
-  const receipt = yield* Pi.status(handle.value, reader.context)
-  if (!placedFor(receipt, reader.conversation.id))
-    return yield* new RunMissing({ conversationId: reader.conversation.id })
-  // Usually the atomic model view contains the whole run. Compaction can remove its first input;
-  // recover raw entries only then, bounded by the snapshot's tail so the prefix cannot outrun events.
-  if (snapshot.entries.some((entry) => entry.id === receipt.entry))
-    return { ...snapshot, entries: snapshot.entries.filter((entry) => entry.id >= receipt.entry) }
-  const tail = Option.fromNullishOr(snapshot.entries.at(-1))
-  if (Option.isNone(tail)) return yield* new RunMissing({ conversationId: reader.conversation.id })
-  const entries = yield* entriesOf(reader, {
-    first: receipt.entry,
-    last: Option.some(tail.value.id),
-  })
-  return { ...snapshot, entries }
-})
+) => Effect.Effect<SnapshotEvent, RunMissing | PiFailed> = Effect.fn('Durable.captureRun')(
+  function* (reader: Reader, snapshot: SnapshotEvent) {
+    if (snapshot.run === undefined) return snapshot
+    const first = Option.getOrThrow(Option.fromNullishOr(snapshot.run.inputs[0]))
+    const handle = yield* Pi.submission(reader.harness, first, reader.context)
+    if (Option.isNone(handle))
+      return yield* new RunMissing({ conversationId: reader.conversation.id })
+    const receipt = yield* Pi.status(handle.value, reader.context)
+    if (!placedFor(receipt, reader.conversation.id))
+      return yield* new RunMissing({ conversationId: reader.conversation.id })
+    // Usually the atomic model view contains the whole run. Compaction can remove its first input;
+    // recover raw entries only then, bounded by the snapshot's tail so the prefix cannot outrun events.
+    if (snapshot.entries.some((entry) => entry.id === receipt.entry))
+      return { ...snapshot, entries: snapshot.entries.filter((entry) => entry.id >= receipt.entry) }
+    const tail = Option.fromNullishOr(snapshot.entries.at(-1))
+    if (Option.isNone(tail))
+      return yield* new RunMissing({ conversationId: reader.conversation.id })
+    const entries = yield* entriesOf(reader, {
+      first: receipt.entry,
+      last: Option.some(tail.value.id),
+    })
+    return { ...snapshot, entries }
+  },
+)
 
 /**
  * Each generation owns one turn, never the whole run (generation.js:516,535). An aborted run may
@@ -96,7 +114,11 @@ function closedEntries(entries: readonly EntryRecord[]) {
 }
 
 /** Idempotent admission of a terminal input returns its stored run instead of awaiting an old run_start. */
-export const inputReplay = Effect.fn('Durable.inputReplay')(function* (
+export const inputReplay: (
+  reader: Reader,
+  receipt: Extract<SubmissionRecord, { type: 'input' }>,
+  snapshot: SnapshotEvent,
+) => Effect.Effect<Prefix, PiFailed> = Effect.fn('Durable.inputReplay')(function* (
   reader: Reader,
   receipt: Extract<SubmissionRecord, { type: 'input' }>,
   snapshot: SnapshotEvent,
@@ -140,7 +162,14 @@ function ownsActiveRun(snapshot: SnapshotEvent, messageId: string) {
 
 /** Resolve the exact first input and its stored run before matching calls. Closed runs cannot
  * borrow a successor generation's parts; the terminal acknowledgement owns the closed response. */
-export const selectRun = Effect.fn('Durable.selectResumeRun')(function* (
+export const selectRun: (
+  reader: Reader,
+  input: ResumeInput,
+  snapshot: SnapshotEvent,
+  intent: 'Replay' | 'Complete',
+) => Effect.Effect<Option.Option<Prefix>, RunMissing | PiFailed> = Effect.fn(
+  'Durable.selectResumeRun',
+)(function* (
   reader: Reader,
   input: ResumeInput,
   snapshot: SnapshotEvent,

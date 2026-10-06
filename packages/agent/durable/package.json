@@ -8,26 +8,57 @@
     "./core": "./src/core.ts",
     "./client": "./src/client.ts"
   },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/main.d.ts",
+        "default": "./dist/main.js"
+      },
+      "./core": {
+        "types": "./dist/core.d.ts",
+        "default": "./dist/core.js"
+      },
+      "./client": {
+        "types": "./dist/client.d.ts",
+        "default": "./dist/client.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
+    "build": "node scripts/build.mjs",
+    "check:package": "node scripts/consumer.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --type-aware src",
     "test": "vitest run"
   },
-  "dependencies": {
+  "peerDependencies": {
     "@earendil-works/chord": "1.0.4",
     "@earendil-works/pi-ai": "1.0.4",
     "@earendil-works/pi-durable": "1.0.4",
     "ai": "7.0.127",
-    "effect": "catalog:"
+    "effect": "4.0.0-rc.116"
   },
   "devDependencies": {
     "@ai-sdk/react": "4.0.130",
+    "@earendil-works/chord": "1.0.4",
+    "@earendil-works/pi-ai": "1.0.4",
+    "@earendil-works/pi-durable": "1.0.4",
     "@effect/vitest": "catalog:",
     "@opentelemetry/api": "1.9.0",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@typescript/native": "catalog:",
+    "ai": "7.0.127",
+    "effect": "catalog:",
     "jsdom": "30.1.2",
     "react": "catalog:",
     "react-dom": "catalog:",

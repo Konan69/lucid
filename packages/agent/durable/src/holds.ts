@@ -1,3 +1,4 @@
+import type * as DurableErrors from './errors.ts'
 import { copyJson, type Context, type JsonValue } from '@earendil-works/chord'
 import {
   type ConversationId,
@@ -540,7 +541,15 @@ export type Answer = { readonly holdId: HoldId; readonly output: JsonValue }
  * the hold and attempt, so a withdrawn follow-up can retry. The first output of each delivery attempt is reserved durably;
  * queued/placed repeats return it unchanged. Every successful answer returns its settlement.
  */
-export const answer = Effect.fn('Durable.answer')(function* (
+export const answer: (
+  harness: Harness,
+  conversationId: ConversationId,
+  given: Answer,
+  context: Context,
+) => Effect.Effect<
+  Settlement,
+  CallNotWaiting | DurableErrors.ConversationMissing | DurableErrors.PiFailed
+> = Effect.fn('Durable.answer')(function* (
   harness: Harness,
   conversationId: ConversationId,
   given: Answer,

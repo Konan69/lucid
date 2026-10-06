@@ -1,3 +1,4 @@
+import type * as DurableErrors from './errors.ts'
 import { copyJson, type Context, type JsonValue } from '@earendil-works/chord'
 import type { Conversation, Harness } from '@earendil-works/pi-durable'
 import { Effect, Option, Predicate } from 'effect'
@@ -18,7 +19,12 @@ const receipt = Effect.fn('Durable.answerReceipt')(function* (
 })
 
 /** Queued/placed answers are closed to changes; withdrawal reopens the same question for resubmission. */
-export const questionOpen = Effect.fn('Durable.questionOpen')(function* (
+export const questionOpen: (
+  harness: Harness,
+  conversation: Conversation,
+  question: Question,
+  context: Context,
+) => Effect.Effect<boolean, DurableErrors.PiFailed> = Effect.fn('Durable.questionOpen')(function* (
   harness: Harness,
   conversation: Conversation,
   question: Question,
@@ -176,12 +182,19 @@ const admit = Effect.fn('Durable.admitAnswer')(function* (
 })
 
 /** A withdrawn follow-up accepts the next answer under a fresh key; queued and placed repeats remain first-wins. */
-export const deliver = Effect.fn('Durable.deliverAnswer')(function* (
+export const deliver: (
   harness: Harness,
   conversation: Conversation,
   given: Answer,
   context: Context,
-): Effect.fn.Return<Settlement, import('./errors.ts').PiFailed | CallNotWaiting> {
+) => Effect.Effect<Settlement, CallNotWaiting | DurableErrors.PiFailed> = Effect.fn(
+  'Durable.deliverAnswer',
+)(function* (
+  harness: Harness,
+  conversation: Conversation,
+  given: Answer,
+  context: Context,
+): Effect.fn.Return<Settlement, DurableErrors.PiFailed | CallNotWaiting> {
   const holds = yield* Pi.snapshot(harness, Holds, conversation.id, context)
   const question = Option.flatMapNullishOr(holds, (document) => document.asked[given.holdId])
   if (Option.isNone(question)) {
@@ -230,7 +243,7 @@ const deliverReserved = Effect.fn('Durable.deliverReserved')(function* (
     readonly delivery: typeof Delivery.cases.Reserved.Type
   },
   context: Context,
-): Effect.fn.Return<Settlement, import('./errors.ts').PiFailed | CallNotWaiting> {
+): Effect.fn.Return<Settlement, DurableErrors.PiFailed | CallNotWaiting> {
   const submitted = yield* admit(conversation, input, context)
   const status = yield* receipt(harness, submitted, context)
   if (status.entry !== undefined)

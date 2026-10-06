@@ -5,6 +5,12 @@ import {
   type UIMessage,
 } from 'ai'
 
+/** The two SDK ingress callbacks share one retained-message record without a platform dependency. */
+export type Resumption = {
+  readonly prepare: PrepareReconnectToStreamRequest
+  readonly onFinish: ChatOnFinishCallback<UIMessage>
+}
+
 type State = { record?: Rejoin }
 
 type Rejoin = { readonly messageId: string; readonly steps: number }
@@ -37,7 +43,7 @@ function reconnectUrl(api: string, id: string, record: Rejoin): string {
  * An empty override is required by PrepareReconnectToStreamRequest's return type and leaves the
  * stock reconnect URL untouched. This transport helper has no platform or Effect dependency.
  */
-export function resumption() {
+export function resumption(): Resumption {
   const state: State = {}
   const onFinish: ChatOnFinishCallback<UIMessage> = ({ message, isDisconnect }) => {
     if (isDisconnect)

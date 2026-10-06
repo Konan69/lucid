@@ -1,3 +1,6 @@
+import type { Stream } from 'effect'
+import type { UIMessageChunk } from 'ai'
+import type * as DurableErrors from './errors.ts'
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
 import {
@@ -16,14 +19,7 @@ import { answerObserved, decideObserved } from './holds.ts'
 import { runMessageId } from './chunks.ts'
 import * as Pi from './pi.ts'
 import { LiveDoc } from '@earendil-works/pi-durable'
-import {
-  attachRun,
-  completeTurn,
-  continueRun,
-  prepareInput,
-  prepareRun,
-  rejoinRun,
-} from './stream.ts'
+import { attachRun, completeTurn, continueRun, prepareInput, rejoinRun } from './stream.ts'
 import { waiting } from './waiting.ts'
 import { InputPart, InputParts, type InputOptions, inputLimit, type PartLimit } from './input.ts'
 
@@ -38,7 +34,15 @@ const RejoinQuery = Schema.Union([
 const decodeRejoin = Schema.decodeUnknownEffect(RejoinQuery)
 
 /** Decode the GET query once, then choose whole-run or retained-step observation. */
-export const reconnectRequest = Effect.fn('Durable.reconnectRequest')(function* (
+export const reconnectRequest: (
+  harness: Harness,
+  conversationId: ConversationId,
+  url: URL,
+  context: Context,
+) => Effect.Effect<
+  Effect.Success<ReturnType<typeof attachRun>>,
+  Effect.Error<ReturnType<typeof attachRun>> | RejoinInvalid
+> = Effect.fn('Durable.reconnectRequest')(function* (
   harness: Harness,
   conversationId: ConversationId,
   url: URL,
@@ -267,14 +271,31 @@ const settleHolds = Effect.fn('Durable.settleHolds')(function* (
 })
 
 type ResponseEffect = Effect.Effect<
-  Effect.Success<ReturnType<typeof prepareRun>>,
-  Effect.Error<ReturnType<typeof prepareRun>> | RunMissing
+  Effect.Success<ReturnType<typeof prepareInput>>,
+  Effect.Error<ReturnType<typeof prepareInput>> | RunMissing
 >
 
 /** Authorize before calling. A stale assistant message settles nothing and still resumes observation.
  * Client outputs match call ids and require uniqueness within one run; approvals are task-scoped.
  * Ordered input parts are validated before admission; unsupported files fail without a Pi input. */
-export const respond = Effect.fn('Durable.respond')(function* (
+export const respond: (
+  harness: Harness,
+  conversationId: ConversationId,
+  input: TurnInput,
+  context: Context,
+) => Effect.Effect<
+  Stream.Stream<
+    UIMessageChunk,
+    DurableErrors.PiFailed | DurableErrors.WatchClosed | DurableErrors.WatchOverflowed
+  >,
+  | DurableErrors.ConversationMissing
+  | DurableErrors.LimitInvalid
+  | DurableErrors.PartTooLarge
+  | DurableErrors.PartUnsupported
+  | DurableErrors.PiFailed
+  | RunMissing
+  | TurnInvalid
+> = Effect.fn('Durable.respond')(function* (
   harness: Harness,
   conversationId: ConversationId,
   input: TurnInput,
@@ -286,7 +307,15 @@ export const respond = Effect.fn('Durable.respond')(function* (
 })
 
 /** Request ingress can validate the host policy before reading its body and pass the trusted state. */
-export const respondWithPolicy = Effect.fn('Durable.respondWithPolicy')(function* (
+export const respondWithPolicy: (
+  harness: Harness,
+  conversationId: ConversationId,
+  input: { readonly turn: ChatTurn; readonly limit: PartLimit },
+  context: Context,
+) => Effect.Effect<
+  Effect.Success<ReturnType<typeof respond>>,
+  Exclude<Effect.Error<ReturnType<typeof respond>>, DurableErrors.LimitInvalid>
+> = Effect.fn('Durable.respondWithPolicy')(function* (
   harness: Harness,
   conversationId: ConversationId,
   input: { readonly turn: ChatTurn; readonly limit: PartLimit },

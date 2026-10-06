@@ -107,7 +107,12 @@ function toContent(
 }
 
 /** Validate the complete input before opening observation or submitting anything to Pi. */
-export const inputContent = Effect.fn('Durable.inputContent')(function* (
+export const inputContent: (
+  content: string | readonly InputPart[],
+  options: PartLimit,
+) => Effect.Effect<UserInput, PartUnsupported | PartTooLarge | TurnInvalid> = Effect.fn(
+  'Durable.inputContent',
+)(function* (
   content: string | readonly InputPart[],
   options: PartLimit,
 ): Effect.fn.Return<UserInput, PartUnsupported | PartTooLarge | TurnInvalid> {

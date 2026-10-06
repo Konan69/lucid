@@ -1,3 +1,4 @@
+// Explicit function contracts make published error-union changes fail at their signatures.
 export {
   HistoryCursorInvalid,
   HistoryPageInvalid,

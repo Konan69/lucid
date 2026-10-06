@@ -1,3 +1,4 @@
+import type * as DurableErrors from './errors.ts'
 import type { Context } from '@earendil-works/chord'
 import type {
   AgentEvent,
@@ -6,7 +7,6 @@ import type {
   SnapshotEvent,
   SubmissionId,
   LiveState,
-  TaskId,
 } from '@earendil-works/pi-durable'
 import type { UIMessageChunk } from 'ai'
 import { Data, Effect, Exit, Option, Scope, Stream } from 'effect'
@@ -17,7 +17,6 @@ import {
   replay,
   type RunState,
   type Step,
-  type Chunk,
   type Rebuilt,
   translate,
 } from './chunks.ts'
@@ -30,7 +29,7 @@ import {
 } from './errors.ts'
 import { readDesk, noDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
-import { captureRun, inputReplay, selectRun, type ResumeInput } from './resume.ts'
+import { captureRun, inputReplay, selectRun, type Prefix, type ResumeInput } from './resume.ts'
 import {
   inputContent,
   inputLimit,
@@ -50,7 +49,7 @@ export type RunInput = {
 /** The public optional wire policy is normalized before any watch or Pi admission. */
 type PreparedInput = Omit<RunInput, 'options'> & { readonly options: PartLimit }
 
-type WatchFailure = PiFailed | WatchClosed | WatchOverflowed
+export type WatchFailure = PiFailed | WatchClosed | WatchOverflowed
 
 type State = {
   readonly state: RunState
@@ -171,7 +170,11 @@ function matching(events: Stream.Stream<AgentEvent, WatchFailure>, submissionId:
  * Start the watch before admission, then process its buffered events after the submission id is
  * known. A consumer interruption closes observation only; it never aborts the durable run.
  */
-export function streamRun(harness: Harness, input: RunInput, context: Context) {
+export function streamRun(
+  harness: Harness,
+  input: RunInput,
+  context: Context,
+): Stream.Stream<UIMessageChunk, WatchFailure | Effect.Error<ReturnType<typeof prepareRun>>> {
   return Stream.unwrap(prepareRun(harness, input, context))
 }
 
@@ -179,7 +182,20 @@ export function streamRun(harness: Harness, input: RunInput, context: Context) {
  * Admit before returning a transport stream so missing conversations and submission failures reject
  * the Promise facade. The captured watch scope transfers to consumption, as in reconnection.
  */
-export const prepareRun = Effect.fn('Durable.prepareRun')(function* (
+export const prepareRun: (
+  harness: Harness,
+  input: RunInput,
+  context: Context,
+) => Effect.Effect<
+  Stream.Stream<UIMessageChunk, WatchFailure>,
+  | DurableErrors.ConversationMissing
+  | DurableErrors.LimitInvalid
+  | RunMissing
+  | DurableErrors.PartTooLarge
+  | DurableErrors.PartUnsupported
+  | PiFailed
+  | DurableErrors.TurnInvalid
+> = Effect.fn('Durable.prepareRun')(function* (
   harness: Harness,
   input: RunInput,
   context: Context,
@@ -189,7 +205,14 @@ export const prepareRun = Effect.fn('Durable.prepareRun')(function* (
 })
 
 /** Already-decoded byte policy is carried explicitly throughout internal admission. */
-export const prepareInput = Effect.fn('Durable.prepareInput')(function* (
+export const prepareInput: (
+  harness: Harness,
+  input: PreparedInput,
+  context: Context,
+) => Effect.Effect<
+  Stream.Stream<UIMessageChunk, WatchFailure>,
+  Exclude<Effect.Error<ReturnType<typeof prepareRun>>, DurableErrors.LimitInvalid>
+> = Effect.fn('Durable.prepareInput')(function* (
   harness: Harness,
   input: PreparedInput,
   context: Context,
@@ -238,13 +261,6 @@ export const prepareInput = Effect.fn('Durable.prepareInput')(function* (
     ).pipe(Stream.ensuring(Scope.close(scope, Exit.void)))
   }).pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))))
 })
-
-type Prefix = {
-  readonly step: Step
-  readonly live: boolean
-  readonly known: ReadonlySet<string>
-  readonly origins: ReadonlyMap<Chunk, TaskId>
-}
 
 /** Replay the captured state, then either follow the same live run or finish the stored run. */
 const resume = Effect.fn('Durable.resumeStream')(function* (
@@ -318,7 +334,14 @@ function attachedPrefix(found: Option.Option<Rebuilt>): Option.Option<Prefix> {
 }
 
 /** Whole-run attachment and retained-step rejoin share the same live-prefix contract. */
-export const attachRun = Effect.fn('Durable.attachRun')(function* (
+export const attachRun: (
+  harness: Harness,
+  conversationId: ConversationId,
+  context: Context,
+) => Effect.Effect<
+  Option.Option<Stream.Stream<UIMessageChunk, WatchFailure>>,
+  DurableErrors.ConversationMissing | PiFailed | RunMissing
+> = Effect.fn('Durable.attachRun')(function* (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,
@@ -362,7 +385,15 @@ function rejoinPrefix(snapshot: SnapshotEvent, input: Rejoin) {
 }
 
 /** Idle returns None; a retained current step resumes without duplicating earlier durable steps. */
-export const rejoinRun = Effect.fn('Durable.rejoinRun')(function* (
+export const rejoinRun: (
+  harness: Harness,
+  conversationId: ConversationId,
+  input: Rejoin,
+  context: Context,
+) => Effect.Effect<
+  Effect.Success<ReturnType<typeof attachRun>>,
+  Effect.Error<ReturnType<typeof attachRun>> | RejoinInvalid
+> = Effect.fn('Durable.rejoinRun')(function* (
   harness: Harness,
   conversationId: ConversationId,
   input: Rejoin,
@@ -381,7 +412,15 @@ export const rejoinRun = Effect.fn('Durable.rejoinRun')(function* (
 })
 
 /** A resume names an assistant entry or fails RunMissing. Its one-shot Stream has an already-open watch. */
-export const continueRun = Effect.fn('Durable.continueRun')(function* (
+export const continueRun: (
+  harness: Harness,
+  conversationId: ConversationId,
+  input: ResumeInput,
+  context: Context,
+) => Effect.Effect<
+  Stream.Stream<UIMessageChunk, WatchFailure>,
+  DurableErrors.ConversationMissing | PiFailed | RunMissing
+> = Effect.fn('Durable.continueRun')(function* (
   harness: Harness,
   conversationId: ConversationId,
   input: ResumeInput,
@@ -391,7 +430,15 @@ export const continueRun = Effect.fn('Durable.continueRun')(function* (
 })
 
 /** A request without settlements may acknowledge a stored terminal message with an empty step. */
-export const completeTurn = Effect.fn('Durable.completeTurn')(function* (
+export const completeTurn: (
+  harness: Harness,
+  conversationId: ConversationId,
+  input: ResumeInput,
+  context: Context,
+) => Effect.Effect<
+  Stream.Stream<UIMessageChunk, WatchFailure>,
+  DurableErrors.ConversationMissing | PiFailed | RunMissing
+> = Effect.fn('Durable.completeTurn')(function* (
   harness: Harness,
   conversationId: ConversationId,
   input: ResumeInput,

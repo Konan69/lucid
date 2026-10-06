@@ -141,7 +141,7 @@ it.live('acknowledges a finished message without another automatic tool POST', (
       {
         pay: tool({
           inputSchema: z.object({}),
-          execute: async () => {
+          execute: async (): Promise<number> => {
             throw new Error('Payment refused')
           },
         }),
