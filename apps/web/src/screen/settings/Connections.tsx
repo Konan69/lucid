@@ -436,9 +436,12 @@ function ServiceCard({
   )
   return (
     <li className={cn('rounded-card bg-surface-3 edge', ENTER, stagger(place))}>
-      <div className="flex min-h-16 items-center gap-3 px-3 py-2.5">
+      {/* The line wraps: where it is too narrow for the name and the actions side by side (the
+          web app on a phone), the actions drop under the name and keep to the trailing edge.
+          Before this they squeezed the name down to its first letter. */}
+      <div className="flex min-h-16 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5">
         <Mark service={{ name: group.serviceName, mark: group.mark }} size={40} />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-40 flex-1">
           <h4 className="truncate text-title font-title text-ink">{group.serviceName}</h4>
           {Option.isSome(adding) && (
             <p role="status" className="truncate text-label text-ink-3">
@@ -452,8 +455,10 @@ function ServiceCard({
             <AccountWords {...told(only)} alone />
           )}
         </div>
-        {others.length === 0 && only !== undefined && <RowActions {...told(only)} />}
-        {add}
+        <div className="ms-auto flex shrink-0 items-center gap-1">
+          {others.length === 0 && only !== undefined && <RowActions {...told(only)} />}
+          {add}
+        </div>
       </div>
       {others.length > 0 && (
         // The rows start under the service's name: the card's 12, the logo's 40 and its 12.
