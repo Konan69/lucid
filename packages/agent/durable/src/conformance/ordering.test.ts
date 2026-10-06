@@ -7,7 +7,7 @@ import {
   type UIMessage,
 } from 'ai'
 import { Effect } from 'effect'
-import { LiveDoc, watchEvents } from '@earendil-works/pi-durable'
+import { LiveDoc, watchEvents, type AgentEvent } from '@earendil-works/pi-durable'
 import { onTestFinished } from 'vitest'
 import { runForPi } from '../pi.ts'
 import { z } from 'zod'
@@ -199,7 +199,7 @@ it.live('records the ordering limit for a parallel round of a sequential-capable
 
 /** Observe committed identities, including a throttled first partial already holding several blocks. */
 function observeIdentities(
-  event: import('@earendil-works/pi-durable').AgentEvent,
+  event: AgentEvent,
   observed: ReturnType<typeof signal>,
   revealed: ReturnType<typeof signal>,
 ) {

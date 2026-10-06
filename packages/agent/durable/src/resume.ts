@@ -1,6 +1,15 @@
-import type { Cursor, EntryRecord, SnapshotEvent, SubmissionId } from '@earendil-works/pi-durable'
+import type {
+  ConversationId,
+  Cursor,
+  EntryId,
+  EntryRecord,
+  SnapshotEvent,
+  SubmissionId,
+  SubmissionRecord,
+  TaskId,
+} from '@earendil-works/pi-durable'
 import { Effect, Option, Predicate, Schema } from 'effect'
-import { initialRunState, replayAfter, runMessageId } from './chunks.ts'
+import { type Chunk, initialRunState, replayAfter, runMessageId } from './chunks.ts'
 import type { Reader } from './desk.ts'
 import { RunMissing } from './errors.ts'
 import * as Pi from './pi.ts'
@@ -23,8 +32,8 @@ function inputOf(messageId: string) {
 const entriesOf = Effect.fn('Durable.resumeEntries')(function* (
   reader: Reader,
   bounds: {
-    readonly first: import('@earendil-works/pi-durable').EntryId
-    readonly last: Option.Option<import('@earendil-works/pi-durable').EntryId>
+    readonly first: EntryId
+    readonly last: Option.Option<EntryId>
   },
 ) {
   let cursor = Option.none<Cursor>()
@@ -71,25 +80,27 @@ export const captureRun = Effect.fn('Durable.captureRun')(function* (
   return { ...snapshot, entries }
 })
 
-/** Unanswered runs have no answer bound. transaction.js stamps assistant entries with the generation
- * task id; all responses of that run share it, including recovered attempts and steer extensions.
- * Stop before another generation's assistant rather than borrowing its reused call ids. A parked
- * abort need not append an aborted partial, so stopReason alone cannot locate this run. */
-function abortedEntries(entries: readonly EntryRecord[]) {
-  const first = entries.find((entry) => entry.kind === 'pi.assistant')
-  if (first === undefined || first.byTaskId === undefined) return []
+/**
+ * Each generation owns one turn, never the whole run (generation.js:516,535). An aborted run may
+ * contain several such tasks and task-attributed steer entries. The next idle host input is a
+ * non-task-attributed pi.user (submissions.js:165–173); abort withdraws all queued inputs rather than
+ * handing them to another generation (inbox.js:85–93). A reset marker also ends this stored range.
+ */
+function closedEntries(entries: readonly EntryRecord[]) {
   const next = entries.findIndex(
-    (entry) => entry.kind === 'pi.assistant' && entry.byTaskId !== first.byTaskId,
+    (entry, index) =>
+      index > 0 &&
+      ((entry.kind === 'pi.user' && entry.byTaskId === undefined) || entry.kind === 'pi.reset'),
   )
   return next === -1 ? entries : entries.slice(0, next)
 }
 
 /** A placed input belongs to this conversation and retains its authoritative entry through settlement. */
 function placedFor(
-  receipt: import('@earendil-works/pi-durable').SubmissionRecord,
-  conversationId: import('@earendil-works/pi-durable').ConversationId,
-): receipt is Extract<import('@earendil-works/pi-durable').SubmissionRecord, { type: 'input' }> & {
-  readonly entry: import('@earendil-works/pi-durable').EntryId
+  receipt: SubmissionRecord,
+  conversationId: ConversationId,
+): receipt is Extract<SubmissionRecord, { type: 'input' }> & {
+  readonly entry: EntryId
 } {
   return (
     receipt.conversationId === conversationId &&
@@ -99,10 +110,7 @@ function placedFor(
 }
 
 /** A stored run may be acknowledged after successful completion or explicit abort. */
-function resumable(
-  receipt: import('@earendil-works/pi-durable').SubmissionRecord,
-  active: boolean,
-) {
+function resumable(receipt: SubmissionRecord, active: boolean) {
   return active || receipt.status === 'done' || receipt.status === 'unanswered'
 }
 
@@ -111,9 +119,8 @@ function ownsActiveRun(snapshot: SnapshotEvent, messageId: string) {
   return snapshot.run !== undefined && messageId === runMessageId(snapshot.run.inputs)
 }
 
-/** Closed aborts retain the client's error part and emit an empty terminal step: SDK start/finish
- * alone preserve that completed tool step and its stock predicate would POST again indefinitely.
- * Resolve the exact first input through Pi's public receipt before matching any known tool call. */
+/** Resolve the exact first input and its stored run before matching calls. Closed runs cannot
+ * borrow a successor generation's parts; the terminal acknowledgement owns the closed response. */
 export const selectRun = Effect.fn('Durable.selectResumeRun')(function* (
   reader: Reader,
   input: ResumeInput,
@@ -133,7 +140,7 @@ export const selectRun = Effect.fn('Durable.selectResumeRun')(function* (
     first: receipt.entry,
     last: receipt.status === 'done' ? Option.some(receipt.answer) : Option.none(),
   })
-  const entries = receipt.status === 'unanswered' ? abortedEntries(placed) : placed
+  const entries = receipt.status === 'unanswered' ? closedEntries(placed) : placed
   // A completed run must not borrow the newer run's generation or live continuation.
   const { run: _run, generation: _generation, ...stored } = snapshot
   const captured = active ? { ...snapshot, entries } : { ...stored, entries }
@@ -148,7 +155,7 @@ export const selectRun = Effect.fn('Durable.selectResumeRun')(function* (
 /** An empty terminal step stops stock automatic predicates while preserving the finished parts.
  * SDK start-step/finish-step do not write Chat state; the second identity-only start publishes it. */
 function completed(input: ResumeInput) {
-  const chunks: import('./chunks.ts').Chunk[] = [
+  const chunks: Chunk[] = [
     { type: 'start', messageId: input.messageId },
     { type: 'start-step' },
     { type: 'finish-step' },
@@ -158,6 +165,6 @@ function completed(input: ResumeInput) {
     step: { state: initialRunState, chunks },
     live: false,
     known: input.known,
-    origins: new Map<import('./chunks.ts').Chunk, import('@earendil-works/pi-durable').TaskId>(),
+    origins: new Map<Chunk, TaskId>(),
   }
 }
