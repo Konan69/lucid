@@ -9,7 +9,7 @@ import { context, host } from './fixtures/host.ts'
 
 /**
  * generation.js startToolRound reads runtime.settings.toolExecution, supplied from HarnessImpl's
- * private #options. agent.js resolveAgent returns unmodified registrations, not modes defaulted
+ * private #options. agent.js resolveAgent returns registrations, not modes defaulted
  * from settings. Prove the public agents cannot distinguish the two global modes before a round.
  */
 it.live('does not expose the global execution mode through the public agent', () =>
@@ -29,7 +29,7 @@ it.live('does not expose the global execution mode through the public agent', ()
     expect(first.tools.map((entry) => ({ name: entry.name, mode: entry.executionMode }))).toEqual(
       second.tools.map((entry) => ({ name: entry.name, mode: entry.executionMode })),
     )
-    expect(first.tools.map((entry) => entry.executionMode)).toEqual([undefined])
+    expect(first.tools.map((entry) => entry.executionMode)).toEqual(['parallel'])
     expect(await sequential.harness.snapshot(LiveDoc, sequential.root.id, context)).toEqual(
       await parallel.harness.snapshot(LiveDoc, parallel.root.id, context),
     )
@@ -38,7 +38,7 @@ it.live('does not expose the global execution mode through the public agent', ()
 
 /**
  * Capture the observable failing precondition without hanging sendMessage or adding it.fails:
- * both starts are visible while the global-sequential response still has no committed tool slots.
+ * a host omitting execution declares parallel, so both starts are visible while its global-sequential response still has no committed tool slots.
  * Cancel observation and explicitly abort the isolated run after this bounded prefix.
  */
 it.live('shows the unobservable-mode gap during slow sequential generation', () =>

@@ -40,7 +40,7 @@ async function main() {
           execute: async ({ amount }) => amount,
         }),
       },
-      { approval: { pay: true } },
+      { execution: 'sequential', approval: { pay: true } },
     ),
   )
   const harness = await Harness.open(

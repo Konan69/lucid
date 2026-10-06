@@ -314,6 +314,8 @@ export type Source = 'server' | 'wait' | 'later'
 
 /** What the bridge decided for one tool: whether a call needs approval, and where its result comes from. */
 export type Plan = {
+  /** The host's declared global mode, used for native registrations without an explicit mode. */
+  readonly execution: 'parallel' | 'sequential'
   readonly approval: (input: JsonValue) => boolean
   readonly source: Source
 }

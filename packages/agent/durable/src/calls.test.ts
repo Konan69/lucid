@@ -15,7 +15,8 @@ const ready = (callId: string) =>
     callId,
   })
 const desk: Desk = {
-  plan: () => Option.some({ approval: () => true, source: 'server' }),
+  sequential: false,
+  plan: () => Option.some({ approval: () => true, source: 'server', execution: 'parallel' }),
   call: ready,
   origin: () => Option.none(),
   hold: () => CallLookup.cases.Missing.make({}),

@@ -270,7 +270,7 @@ it('the stock approval predicate advances after withholding an unstarted sequent
         },
       }),
     },
-    { approval: { pay: true } },
+    { execution: 'sequential', approval: { pay: true } },
     { toolExecution: 'sequential' },
   )
   const opened = await fixture.open()

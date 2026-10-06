@@ -30,6 +30,14 @@ import { Delivery } from './delivery.ts'
 export type Replay = 'safe' | 'unsafe'
 
 export type ToolsOptions = {
+  /**
+   * Must equal the host's HarnessSettings.toolExecution; Pi Durable does not expose that setting.
+   * Default parallel. Every bridged registration states its mode explicitly instead of inheriting
+   * the hidden default. Presentation reads this host declaration from the registration's plan.
+   */
+  readonly execution?: 'parallel' | 'sequential'
+  /** These tools force a sequential round even in a parallel host; Pi sequences the whole round. */
+  readonly sequential?: readonly string[]
   /** Only explicitly named server tools may rerun after a crash; the default protects side effects. */
   readonly replay?: Readonly<Record<string, Replay>>
   /** Pure predicates see Pi-validated JSON arguments before the SDK applies transformations. */
@@ -39,6 +47,8 @@ export type ToolsOptions = {
 }
 
 type Lookups = {
+  readonly execution: NonNullable<ToolsOptions['execution']>
+  readonly sequential: ReadonlySet<string>
   readonly replay: NonNullable<ToolsOptions['replay']>
   readonly approval: NonNullable<ToolsOptions['approval']>
   readonly answers: NonNullable<ToolsOptions['answers']>
@@ -193,10 +203,16 @@ const asked = Effect.fn('Durable.askedTool')(function* (
   return result({ text: JSON.stringify(output), output })
 })
 
-type Bridged = { readonly plan: Plan; readonly replay: Replay; readonly execute: Execute }
+type Bridged = {
+  readonly plan: Plan
+  readonly replay: Replay
+  readonly execute: Execute
+  readonly executionMode: NonNullable<ToolsOptions['execution']>
+}
 
 /** Normalize every absent option once; the lookup then has an explicit default for every tool name. */
 function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
+  const executionMode = lookups.sequential.has(name) ? 'sequential' : lookups.execution
   const rule = lookups.approval[name] ?? false
   const approval = Predicate.isFunction(rule) ? rule : () => rule
   if (tool.execute !== undefined) {
@@ -206,7 +222,8 @@ function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
       execute: tool.execute.bind(tool),
     }
     return {
-      plan: { approval, source: 'server' },
+      plan: { approval, source: 'server', execution: lookups.execution },
+      executionMode,
       replay: lookups.replay[name] ?? 'unsafe',
       execute: executeForPi((args, api, context) => invoke(server, args, api, context)),
     }
@@ -216,7 +233,12 @@ function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
     source === 'later'
       ? (_args, api, context) => asked(name, api, context)
       : (_args, api, context) => answered(name, api, context)
-  return { plan: { approval: () => false, source }, replay: 'safe', execute: executeForPi(program) }
+  return {
+    plan: { approval: () => false, source, execution: lookups.execution },
+    executionMode,
+    replay: 'safe',
+    execute: executeForPi(program),
+  }
 }
 
 /** JSON Schema generation is lazy in the SDK; rejection is a registration failure naming the tool. */
@@ -238,6 +260,7 @@ const registration = Effect.fn('Durable.registerTool')(function* (
       description: Predicate.isString(tool.description) ? tool.description : '',
       parameters,
       replay: bridged.replay,
+      executionMode: bridged.executionMode,
       execute: bridged.execute,
     },
     bridged.plan,
@@ -293,6 +316,8 @@ export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* (
   options: ToolsOptions,
 ) {
   const lookups: Lookups = {
+    execution: options.execution ?? 'parallel',
+    sequential: new Set(options.sequential ?? []),
     replay: options.replay ?? {},
     approval: options.approval ?? {},
     answers: options.answers ?? {},

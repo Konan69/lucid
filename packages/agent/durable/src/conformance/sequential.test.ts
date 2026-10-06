@@ -1,4 +1,4 @@
-import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
+import { fauxAssistantMessage, fauxText, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import {
   defineExtension,
   hook,
@@ -27,6 +27,7 @@ import { z } from 'zod'
 
 import { decide, streamRun, waiting } from '../main.ts'
 import { consume, context, hold, host, signal } from './fixtures/host.ts'
+import type { ProviderFamily } from '../fixtures/provider.ts'
 
 /**
  * Pi 1.0.4 generation.tools allocates c2 in a separate commit after c1 ends, but events.translate
@@ -45,7 +46,7 @@ it('exposes sequential task allocation on document watches but not watchEvents',
         execute: async ({ amount }) => amount,
       }),
     },
-    { approval: { pay: true } },
+    { execution: 'sequential', approval: { pay: true } },
     { toolExecution: 'sequential' },
   )
   const opened = await fixture.open([
@@ -236,7 +237,7 @@ it.each(['held-held', 'held-plain', 'plain-held', 'denied-held'] as const)(
     })
     const fixture = await host(
       { pay: payment, plain: payment },
-      { approval: { pay: true } },
+      { execution: 'sequential', approval: { pay: true } },
       { toolExecution: 'sequential' },
     )
     const opened = await fixture.open()
@@ -279,6 +280,94 @@ it.each(['held-held', 'held-plain', 'plain-held', 'denied-held'] as const)(
   },
 )
 
+const families: readonly ProviderFamily[] = ['anthropic', 'openai', 'bedrock', 'mistral']
+const streamingRounds = [
+  { kind: 'held-held', execution: 'sequential', override: false, round: 'sequential' },
+  { kind: 'held-plain', execution: 'sequential', override: false, round: 'sequential' },
+  { kind: 'plain-held', execution: 'sequential', override: false, round: 'sequential' },
+  { kind: 'held-held', execution: 'parallel', override: true, round: 'sequential' },
+  { kind: 'held-held', execution: 'parallel', override: false, round: 'parallel' },
+] as const
+
+/** Slow provider scratch updates must never expose a queued successor to the stock predicate. */
+for (const partialFamily of families)
+  it.each(streamingRounds)(
+    `streams $execution $kind with override=$override through ${partialFamily} in one assistant`,
+    async ({ kind, execution, override, round }) => {
+      const paid: number[] = []
+      const payment = tool({
+        inputSchema: z.object({ amount: z.number() }),
+        execute: async ({ amount }) => {
+          paid.push(amount)
+          return amount
+        },
+      })
+      const fixture = await host(
+        { pay: payment, plain: payment },
+        { execution, sequential: override ? ['pay'] : [], approval: { pay: true } },
+        { toolExecution: execution, progress: { partialIntervalMs: 1 } },
+        { partialFamily, tokensPerSecond: 1500, tokenSize: { min: 1, max: 1 } },
+      )
+      const opened = await fixture.open()
+      expect((await opened.root.agent(context)).tools.map((entry) => entry.executionMode)).toEqual([
+        override ? 'sequential' : execution,
+        execution,
+      ])
+      opened.faux.setResponses([
+        fauxAssistantMessage(
+          [
+            fauxText('Before '.repeat(20)),
+            fauxToolCall(kind === 'plain-held' ? 'plain' : 'pay', { amount: 1 }, { id: 'c1' }),
+            fauxToolCall(kind === 'held-plain' ? 'plain' : 'pay', { amount: 2 }, { id: 'c2' }),
+            fauxText('After '.repeat(20)),
+          ],
+          { stopReason: 'toolUse' },
+        ),
+        fauxAssistantMessage('Done.'),
+      ])
+      const { chat, next } = chatClient(opened.transport)
+      await chat.sendMessage({ text: 'Pay both' })
+      if (round === 'parallel') {
+        expect(callParts(chat).map((part) => part.toolCallId)).toEqual(['c1', 'c2'])
+        const message = chat.lastMessage
+        if (message === undefined) throw new Error('Expected an assistant message')
+        expect(message.parts.map((part) => part.type)).toEqual([
+          'step-start',
+          'text',
+          'tool-pay',
+          'tool-pay',
+          'text',
+        ])
+        const done = next()
+        await chat.addToolApprovalResponse({ id: approval(chat, 'c1'), approved: true })
+        await chat.addToolApprovalResponse({ id: approval(chat, 'c2'), approved: true })
+        await done
+      } else {
+        if (kind !== 'plain-held') {
+          expect(callParts(chat).map((part) => part.toolCallId)).toEqual(['c1'])
+          const done = next()
+          await chat.addToolApprovalResponse({ id: approval(chat, 'c1'), approved: true })
+          await done
+        }
+        if (kind !== 'held-plain') {
+          expect(callParts(chat)).toMatchObject([
+            { toolCallId: 'c1', state: 'output-available' },
+            { toolCallId: 'c2', state: 'approval-requested' },
+          ])
+          const done = next()
+          await chat.addToolApprovalResponse({ id: approval(chat, 'c2'), approved: true })
+          await done
+        }
+      }
+      expect(paid).toEqual([1, 2])
+      expect(callParts(chat).map((part) => part.toolCallId)).toEqual(['c1', 'c2'])
+      expect(callParts(chat).map((part) => part.state)).toEqual([
+        'output-available',
+        'output-available',
+      ])
+    },
+  )
+
 // HttpChatTransport.reconnectToStream GET and AbstractChat.resumeStream use the captured live snapshot.
 it('GET reconnect withholds c2 while c1 waits and presents c1 result while c2 waits', async () => {
   const fixture = await host(
@@ -288,7 +377,7 @@ it('GET reconnect withholds c2 while c1 waits and presents c1 result while c2 wa
         execute: async ({ amount }) => amount,
       }),
     },
-    { approval: { pay: true } },
+    { execution: 'sequential', approval: { pay: true } },
     { toolExecution: 'sequential' },
   )
   const opened = await fixture.open()
@@ -335,7 +424,7 @@ it('recovers c2 after a crash without repeating c1', async () => {
         },
       }),
     },
-    { approval: { pay: true } },
+    { execution: 'sequential', approval: { pay: true } },
     { toolExecution: 'sequential' },
   )
   const child = NodeChildProcess.spawn(

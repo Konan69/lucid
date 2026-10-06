@@ -16,6 +16,7 @@ import {
 import * as Pi from './pi.ts'
 
 export const noDesk: Desk = {
+  sequential: false,
   plan: () => Option.none(),
   origin: () => Option.none(),
   call: () => CallLookup.cases.Missing.make({}),
@@ -45,6 +46,13 @@ export const readDesk = Effect.fn('Durable.readDesk')(function* (
       return Option.isNone(plan) ? [] : [[tool.name, plan.value] as const]
     }),
   )
+  // Pi generation.js:436 combines the hidden host default with offered tool registrations. The
+  // bridge makes both readable: plans declare the default and registrations state their modes.
+  // Conservatively inspect the whole agent, since a later generated call cannot be un-shown.
+  const execution = [...plans.values()].some((plan) => plan.execution === 'sequential')
+    ? 'sequential'
+    : 'parallel'
+  const sequential = agent.tools.some((tool) => (tool.executionMode ?? execution) === 'sequential')
   const holds = yield* Pi.snapshot(reader.harness, Holds, reader.conversation.id, reader.context)
   const live = Option.isSome(observedLive)
     ? observedLive
@@ -83,6 +91,7 @@ export const readDesk = Effect.fn('Durable.readDesk')(function* (
     }
   }
   return {
+    sequential,
     plan: (toolName: string) => Option.fromNullishOr(plans.get(toolName)),
     call: (callId: string) => calls.get(callId) ?? CallLookup.cases.Missing.make({}),
     origin: (chunk: Extract<Chunk, { toolCallId: string }>) =>

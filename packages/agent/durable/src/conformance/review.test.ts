@@ -277,7 +277,7 @@ it('ignores an unstarted sequential decision instead of rejecting the resume', a
         },
       }),
     },
-    { approval: { pay: true } },
+    { execution: 'sequential', approval: { pay: true } },
     { toolExecution: 'sequential' },
   )
   const opened = await fixture.open()

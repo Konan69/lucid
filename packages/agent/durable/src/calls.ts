@@ -6,6 +6,8 @@ import { CallLookup, holdKind, type Plan } from './holds.ts'
 
 /** What the stream must know about a conversation's tools to present their calls. */
 export type Desk = {
+  /** Any sequential-capable agent conservatively admits only its first generating call. */
+  readonly sequential: boolean
   /** The plan of a bridged tool, by name; `undefined` for any other Pi Durable tool. */
   readonly plan: (toolName: string) => Option.Option<Plan>
   /** Every presentation uses the same task/provenance lookup as hooks and admission. */
@@ -163,11 +165,21 @@ function showVisible(round: Round, chunk: Chunk, desk: Desk): Shown {
   )
 }
 
-/** A task or a stored result admits presentation; queued generation/sequential inputs stay private. */
-const visible = (chunk: Extract<Chunk, { toolCallId: string }>, desk: Desk) =>
-  !CallLookup.isAnyOf(['Queued', 'Missing'])(
-    Option.getOrElse(desk.origin(chunk), () => desk.call(chunk.toolCallId)),
+/**
+ * Pi generation.js startToolRound sequences all calls if any offered tool is sequential. A later
+ * generating call cannot be un-shown when that round commits, so sequential-capable agents keep it
+ * private until a task/result admits it. Parallel agents retain every generating call in order.
+ */
+function visible(chunk: Extract<Chunk, { toolCallId: string }>, desk: Desk, round: Round): boolean {
+  const found = Option.getOrElse(desk.origin(chunk), () => desk.call(chunk.toolCallId))
+  if (CallLookup.isAnyOf(['Queued', 'Missing'])(found)) return false
+  return (
+    !CallLookup.guards.Generating(found) ||
+    !desk.sequential ||
+    round.started.size === 0 ||
+    round.started.has(chunk.toolCallId)
   )
+}
 
 /** Deduplicate each input phase and update the finite tool round before its result can close it. */
 function showInput(round: Round, chunk: InputStart | InputAvailable, desk: Desk): Shown {
@@ -190,11 +202,12 @@ type InputStart = Extract<Chunk, { type: 'tool-input-start' }>
 
 /** Buffer complete input phases in provider order. A result itself admits and flushes its input first. */
 function show(round: Round, chunk: Chunk, desk: Desk): Shown {
-  if (chunk.type === 'start-step') return { round: emptyRound, chunks: [chunk] }
+  if (chunk.type === 'start-step' || chunk.type === 'reset-step')
+    return { round: emptyRound, chunks: [chunk] }
   if (chunk.type === 'tool-input-start' || chunk.type === 'tool-input-available') {
     const id = chunk.toolCallId
     if (round.completed.has(id)) return { round, chunks: [] }
-    if (!visible(chunk, desk))
+    if (!visible(chunk, desk, round))
       return {
         round: {
           ...round,
@@ -255,7 +268,8 @@ function refresh(shown: Shown, desk: Desk): Shown {
     const input = (shown.round.withheld.get(id) ?? []).find(
       (chunk) => chunk.type === 'tool-input-start',
     )
-    if (input === undefined || input.type !== 'tool-input-start' || !visible(input, desk)) continue
+    if (input === undefined || input.type !== 'tool-input-start' || !visible(input, desk, round))
+      continue
     const next = release(round, id, desk)
     round = next.round
     chunks.push(...next.chunks)
