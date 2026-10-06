@@ -138,6 +138,12 @@ it.each(['text', 'reasoning', 'approval', 'answer', 'denial', 'retry'] as const)
       if (stream === undefined) throw new Error('Expected a continuation')
       const result = await consume(stream, first.message)
       expect(texts(result.message)).toEqual(['Done.'])
+      if (kind === 'answer')
+        expect(
+          result.chunks.filter(
+            (chunk) => chunk.type === 'tool-output-available' && chunk.toolCallId === 'held',
+          ),
+        ).toHaveLength(1)
     } else expect(texts(first.message)).toEqual(['Done.'])
     expect(first.chunks.at(0)).toMatchObject({ type: 'start' })
     expect(first.chunks.at(-1)).toMatchObject({ type: 'finish' })

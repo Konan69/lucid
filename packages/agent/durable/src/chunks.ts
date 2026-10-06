@@ -7,6 +7,7 @@ import type {
   SnapshotEvent,
   TaskId,
   SubmissionId,
+  EntryId,
 } from '@earendil-works/pi-durable'
 import type { UIMessageChunk } from 'ai'
 import { Array as Arr, Data, Match, Option, Schema } from 'effect'
@@ -39,6 +40,8 @@ const Reported = Data.taggedEnum<Reported>()
  * AI SDK assistant message; each turn becomes one AI SDK step.
  */
 export type RunState = {
+  /** Durable result entries reported by this reader, across step changes and snapshot/live overlap. */
+  readonly results: ReadonlySet<EntryId>
   /** Turns started in this run. */
   readonly turn: number
   /**
@@ -55,7 +58,13 @@ export type RunState = {
   readonly failure: readonly string[]
 }
 
-export const initialRunState: RunState = { turn: 0, response: 0, blocks: new Map(), failure: [] }
+export const initialRunState: RunState = {
+  turn: 0,
+  response: 0,
+  blocks: new Map(),
+  failure: [],
+  results: new Set(),
+}
 
 type Block = AssistantMessage['content'][number]
 export type Step = { readonly state: RunState; readonly chunks: readonly Chunk[] }
@@ -338,6 +347,17 @@ function toolEnd(toolCallId: string, entry: Option.Option<EntryRecord>): readonl
   ]
 }
 
+/** Snapshot and live events can carry the same result. Entry identity spans steps without hiding reused call ids. */
+function resultStep(state: RunState, callId: string, entry: Option.Option<EntryRecord>): Step {
+  if (Option.isSome(entry) && state.results.has(entry.value.id)) return { state, chunks: [] }
+  return {
+    state: Option.isNone(entry)
+      ? state
+      : { ...state, results: new Set([...state.results, entry.value.id]) },
+    chunks: toolEnd(callId, entry),
+  }
+}
+
 /** The output a bridged tool stored in its result details: `{ output }` and nothing else. */
 const BridgedOutput = Schema.Struct({ output: Schema.Unknown })
 const decodeBridgedOutput = Schema.decodeUnknownOption(BridgedOutput, { onExcessProperty: 'error' })
@@ -417,10 +437,9 @@ export function translate(state: RunState, event: AgentEvent): Step {
         }),
       ),
     ),
-    Match.when({ type: 'tool_execution_end' }, (ended) => ({
-      state,
-      chunks: toolEnd(ended.toolCallId, Option.fromNullishOr(ended.entry)),
-    })),
+    Match.when({ type: 'tool_execution_end' }, (ended) =>
+      resultStep(state, ended.toolCallId, Option.fromNullishOr(ended.entry)),
+    ),
     Match.orElse((other) => untranslated(state, other)),
   )
 }
@@ -444,7 +463,7 @@ export function replayEntry(state: RunState, entry: EntryRecord): Step {
     return join(turn, assistantEnd(response, message))
   }
   if (message.role === 'toolResult')
-    return { state, chunks: toolEnd(message.toolCallId, Option.some(entry)) }
+    return resultStep(state, message.toolCallId, Option.some(entry))
   return { state, chunks: [] }
 }
 
