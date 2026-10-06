@@ -20,6 +20,7 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { commit } from '../data/haptics'
@@ -32,9 +33,11 @@ import { endingOf, newestRun } from '../data/outcome'
 import { Stand, standIn } from '../data/stand'
 import { conversation, say, UNDELIVERED, UNTITLED } from '../data/threads'
 import { Composer } from '../ui/Composer'
-import { BarRoom, NO_ACTIONS, NOBODY, VividBar, type BarAction } from '../ui/Bar'
+import { BarRoom, NO_ACTIONS, NOBODY, VividAtTop, VividBar, type BarAction } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
+import { HANG } from '../ui/Presence'
+import { Thinking } from '../ui/Thinking'
 import {
   Button,
   EDGE,
@@ -51,6 +54,7 @@ import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 import { useFront, useMe } from '../workspace'
 import { Message } from './chat/Message'
+import { Opening } from './home/First'
 import { Share } from './chat/Share'
 
 /**
@@ -123,12 +127,8 @@ function Gone() {
   const front = useFront()
   return (
     <Screen>
-      <VividBar
-        stand={Stand.Resting({ mood: 'happy' })}
-        inverted={false}
-        present={NOBODY}
-        actions={NO_ACTIONS}
-      />
+      <VividBar inverted={false} present={NOBODY} actions={NO_ACTIONS} />
+      <VividAtTop stand={Stand.Resting({ mood: 'happy' })} />
       {/* A scroller, so the system keeps these words clear of a glass bar as it does a list. */}
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
@@ -156,11 +156,15 @@ const audienceWords = (thread: Thread): string =>
   })
 
 /**
- * The top of a Thread (`VividBar`): Vivid in the middle, saying how it is doing right now
- * (thinking, waiting for the Person, or simply there), or who else is writing (`standIn`). At
- * the end of the bar: who else is looking, who the Thread is shared with, and the way to call
- * Vivid. The way to a new Thread and to Vivid's computer are in Vivid's own menu, under its
- * capsule (`ui/Presence.tsx`); a new Thread is also in the menu the bar starts with.
+ * The top of a Thread: the bar (`VividBar`) and, floating in its middle, Vivid's avatar with how
+ * it stands under it (`VividAtTop`): waiting for the Person, simply there, or who else is
+ * writing (`standIn`). At the end of the bar: who else is looking, who the Thread is shared
+ * with, and the way to call Vivid. The way to a new Thread and to Vivid's computer are in
+ * Vivid's own menu, under its avatar (`ui/Presence.tsx`); a new Thread is also in the menu the
+ * bar starts with.
+ *
+ * A Thread with nothing in it yet has Vivid in the middle of the page instead (`opening`), as
+ * the first screen has, so it is not also drawn up here.
  *
  * The Thread's title is not here. The bar's middle is Vivid's, as the owner asked, and the title
  * is where the Person chose the Thread: its row in the menu.
@@ -169,10 +173,13 @@ function Top({
   thread,
   present,
   working,
+  opening,
   onShare,
 }: {
   thread: Option.Option<Thread>
   present: ThreadDetail['present']
+  /** The Thread has no words yet, so the page is Vivid's greeting and the avatar is in it. */
+  opening: boolean
   /** Vivid is answering on this phone right now, which the Thread's record may not say yet. */
   working: boolean
   onShare: () => void
@@ -199,19 +206,25 @@ function Top({
     },
   )
   return (
-    <VividBar
-      stand={standIn(
-        attention,
-        typing.map((seen) => seen.person.name),
+    <>
+      <VividBar
+        // A Thread's list is upside down, which the system's edge effect cannot be given.
+        inverted
+        present={others.map((seen) => seen.person)}
+        actions={Option.match(sharing, {
+          onNone: () => NO_ACTIONS,
+          onSome: (share) => [share],
+        })}
+      />
+      {!opening && (
+        <VividAtTop
+          stand={standIn(
+            attention,
+            typing.map((seen) => seen.person.name),
+          )}
+        />
       )}
-      // A Thread's list is upside down, which the system's edge effect cannot be given.
-      inverted
-      present={others.map((seen) => seen.person)}
-      actions={Option.match(sharing, {
-        onNone: () => NO_ACTIONS,
-        onSome: (share) => [share],
-      })}
-    />
+    </>
   )
 }
 
@@ -412,10 +425,11 @@ function Conversation({
       <Top
         thread={thread}
         present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
-        // What was just sent is being thought about from the moment it leaves, and the capsule
-        // says so at once; the composer's own button waits for Vivid to have really started
+        // What was just sent is being thought about from the moment it leaves, so Vivid's face
+        // thinks at once; the composer's own button waits for Vivid to have really started
         // before it becomes the way to stop.
         working={working || sending.pending}
+        opening={agent.historyReady && shown.length === 0 && !(working || sending.pending)}
         onShare={() => setSharing(true)}
       />
       <View ref={wake} style={{ flex: 1 }}>
@@ -423,6 +437,7 @@ function Conversation({
           messages={shown}
           ready={agent.historyReady}
           working={working}
+          thinking={working || sending.pending}
           ended={ended}
           trouble={trouble}
           around={around}
@@ -476,6 +491,11 @@ interface MessagesProps {
   readonly messages: ReadonlyArray<FlueConversationMessage>
   readonly ready: boolean
   readonly working: boolean
+  /**
+   * Vivid is thinking about what was sent here: from the moment of the send, which is before
+   * the Thread's record says it is working.
+   */
+  readonly thinking: boolean
   readonly ended: Option.Option<Ended>
   readonly trouble: Option.Option<Trouble>
   readonly around: Around
@@ -490,7 +510,7 @@ interface MessagesProps {
  * list (`Transcript`). The two are separate components so the list can hold state of its own.
  */
 function Messages(props: MessagesProps) {
-  if (props.messages.length === 0 && !props.working) return <Blank ready={props.ready} />
+  if (props.messages.length === 0 && !props.thinking) return <Blank ready={props.ready} />
   return <Transcript {...props} />
 }
 
@@ -502,12 +522,26 @@ const FOLLOWING = 80
  * by itself as they stream in, and holds the Person's place when they have scrolled up to read.
  * Nothing runs per token.
  *
- * The list sits in a box of its own that clips it. The composer under it is a sibling, not an
- * overlay, so the list's viewport is exactly what is left above the composer and the keyboard; a
+ * The list sits in a box of its own that clips it, between the bar and the composer. Both are
+ * siblings of the box, not overlays, so the list's viewport is exactly what is left under the bar
+ * and above the composer and the keyboard; a
  * card taller than that scrolls inside it and can never be drawn behind the composer. When the
  * viewport changes size (the keyboard opening or closing, the composer growing a line) and the
  * Person is at the newest words, they are put back on them, so the newest card is not left half
  * above the edge.
+ *
+ * The box starts under the bar, not behind it. The list used to run up behind the glass bar with
+ * the bar's room as its last row, and on the owner's iPhone that did two things (his screenshots
+ * of 6 October 2026, iOS 26, dark): the words ran through Vivid's capsule and the bar's buttons,
+ * and the whole conversation was drawn at about a fifth of its strength. The second is the
+ * system's scroll edge effect, which takes an upside-down list behind a bar to be under that bar
+ * from end to end (`NO_SCROLL_EDGES`, `ui/stack.ts`). Switching the effect off through the screen
+ * did not hold: react-native-screens sets it once, when the option changes, on the scroll view
+ * that is there at that moment (`RNSScreen.mm`, `updateContentScrollViewEdgeEffectsIfExists`),
+ * and this list is mounted later, after the Thread's outline. A list that is never behind the
+ * bar has nothing for the system to soften. Where it meets the bar it fades out over a few
+ * points (`TopFade`), so words leave softly instead of being cut. Not seen on an iPhone from
+ * here: there is no iOS device or simulator to run it on.
  *
  * When the Person has scrolled away and words arrive, their place is held and a "Latest messages"
  * action with the real count of arrivals brings them back. Whether they are away is kept as the
@@ -542,39 +576,78 @@ function Transcript(props: MessagesProps) {
   }
 
   return (
-    <View style={{ flex: 1, overflow: 'hidden' }} onLayout={resized}>
-      <FlatList
-        ref={list}
-        inverted
-        // Newest first is what an inverted list draws at the bottom.
-        data={messages.toReversed()}
-        keyExtractor={(message) => message.id}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="interactive"
-        onScroll={follow}
-        scrollEventThrottle={32}
-        contentContainerStyle={[
-          styles.column,
-          { paddingHorizontal: GUTTER - 4, paddingVertical: 16, gap: 22 },
-        ]}
-        // The last thing in an inverted list is the first thing on screen: the room the glass
-        // bar stands over, so the oldest words are not left under it (`BarRoom`).
-        ListFooterComponent={<BarRoom />}
-        // The first thing in an inverted list is the last thing on screen.
-        ListHeaderComponent={<Tail ended={props.ended} trouble={props.trouble} />}
-        renderItem={({ item, index }) => (
-          <Message
-            message={item}
-            around={props.around}
-            detail={props.detail}
-            working={working}
-            latest={index === 0}
-            unsent={props.unsent}
-            onContinue={props.onContinue}
-          />
-        )}
-      />
-      {arrived > 0 && <LatestButton count={arrived} onPress={latest} />}
+    <View style={{ flex: 1 }}>
+      <BarRoom />
+      <View style={{ flex: 1, overflow: 'hidden' }} onLayout={resized}>
+        <FlatList
+          ref={list}
+          inverted
+          // Newest first is what an inverted list draws at the bottom.
+          data={messages.toReversed()}
+          keyExtractor={(message) => message.id}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          onScroll={follow}
+          scrollEventThrottle={32}
+          contentContainerStyle={[
+            styles.column,
+            { paddingHorizontal: GUTTER - 4, paddingVertical: 16, gap: 22 },
+          ]}
+          // The last thing in an inverted list is the first thing on screen: the room Vivid's
+          // avatar hangs into, so the oldest words rest under its name and not behind it.
+          ListFooterComponent={<View style={{ height: HANG }} />}
+          // The first thing in an inverted list is the last thing on screen.
+          ListHeaderComponent={
+            <Tail thinking={props.thinking} ended={props.ended} trouble={props.trouble} />
+          }
+          renderItem={({ item, index }) => (
+            <Message
+              message={item}
+              around={props.around}
+              detail={props.detail}
+              working={working}
+              latest={index === 0}
+              unsent={props.unsent}
+              onContinue={props.onContinue}
+            />
+          )}
+        />
+        <TopFade />
+        {arrived > 0 && <LatestButton count={arrived} onPress={latest} />}
+      </View>
+    </View>
+  )
+}
+
+/**
+ * How far under the bar the conversation fades out, in points: as far as Vivid's avatar and its
+ * name hang below the bar (`HANG`), and a little more for the words to come back in.
+ */
+const FADE = HANG + 28
+
+/**
+ * The top edge of the conversation: the page's own colour, strong behind Vivid's avatar and its
+ * name and gone a little under them, so a line scrolling up leaves softly and is never read
+ * through the name. It is a picture and takes no touches.
+ */
+function TopFade() {
+  const { colors: c } = useTheme()
+  return (
+    <View
+      pointerEvents="none"
+      style={{ position: 'absolute', top: 0, left: 0, right: 0, height: FADE }}
+    >
+      <Svg width="100%" height={FADE}>
+        <Defs>
+          <LinearGradient id="conversation-top" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={c.screen} stopOpacity={1} />
+            {/* Solid as far as the name reaches, so no line is read through or beside it. */}
+            <Stop offset={HANG / FADE} stopColor={c.screen} stopOpacity={1} />
+            <Stop offset="1" stopColor={c.screen} stopOpacity={0} />
+          </LinearGradient>
+        </Defs>
+        <Rect width="100%" height={FADE} fill="url(#conversation-top)" />
+      </Svg>
     </View>
   )
 }
@@ -631,30 +704,31 @@ function Blank({ ready }: { ready: boolean }) {
     return (
       <View>
         <BarRoom />
-        <View style={[styles.column, { paddingHorizontal: GUTTER, paddingTop: 28 }]}>
+        {/* Clear of Vivid's avatar and its name, which hang below the bar. */}
+        <View style={[styles.column, { paddingHorizontal: GUTTER, paddingTop: HANG + 20 }]}>
           <Skeleton rows={4} />
         </View>
       </View>
     )
   }
   return (
-    <View style={{ flex: 1, justifyContent: 'flex-end', paddingHorizontal: 28, paddingBottom: 8 }}>
-      <Label size="title" tone="ink-2" style={{ fontWeight: '400' }}>
-        What should I take off your plate?
-      </Label>
+    <View style={{ flex: 1 }}>
+      <BarRoom />
+      <Opening mood="happy" title="What should I take off your plate?" />
     </View>
   )
 }
 
 /**
- * What sits under the newest message: that Vivid's last Run came to nothing, or that something
- * did not arrive. That Vivid is thinking is not said here: it is at the top of the screen, in
- * Vivid's capsule (`ui/Presence.tsx`), where what the Person sends goes.
+ * What sits under the newest message, just above the composer: that Vivid's last Run came to
+ * nothing, that something did not arrive, or that Vivid is thinking (`ui/Thinking.tsx`).
  */
 function Tail({
+  thinking,
   ended,
   trouble,
 }: {
+  thinking: boolean
   ended: Option.Option<Ended>
   trouble: Option.Option<Trouble>
 }) {
@@ -684,6 +758,7 @@ function Tail({
           />
         </View>
       )}
+      {thinking && <Thinking />}
     </View>
   )
 }

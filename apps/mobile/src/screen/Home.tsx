@@ -8,11 +8,11 @@ import { arrivalOf, homeShows, Showing, type HomeScreen } from '../data/arrival'
 import { draft, useDraft } from '../data/drafts'
 import { Front } from '../data/front'
 import { LiveState, useLive, useLiveData } from '../data/live'
-import { Stand } from '../data/stand'
 import { Start, startThread } from '../data/threads'
 import { BarRoom, NO_ACTIONS, NOBODY, VividBar } from '../ui/Bar'
 import { Composer } from '../ui/Composer'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
+import { Thinking } from '../ui/Thinking'
 import { Label, Notice, styles } from '../ui/ui'
 import { useFront, useGo, useMe, useShowing } from '../workspace'
 import { Chat } from './Chat'
@@ -61,22 +61,23 @@ function Fresh() {
   const working =
     LiveState.$is('Ready')(threads) &&
     threads.value.threads.some((thread) => thread.attention === 'Working')
-  // While a first message is on its way Vivid is thinking about what is on this screen, so the
-  // capsule says so. Work in some other Thread is not this screen's: it shows only in the mood
-  // of Vivid's face.
-  const elsewhere = working || Showing.$is('Waiting')(showing) ? 'thinking' : 'happy'
+  // Vivid's face thinks while it is at work anywhere: on the first message sent from here, on a
+  // first Thread being opened, or in some other Thread.
+  const mood = start.sending || working || Showing.$is('Waiting')(showing) ? 'thinking' : 'happy'
 
   return (
     <AboveKeyboardBelowBar>
-      <VividBar
-        stand={start.sending ? Stand.Thinking() : Stand.Resting({ mood: elsewhere })}
-        inverted={false}
-        present={NOBODY}
-        actions={NO_ACTIONS}
-      />
+      {/* No avatar at the top here: it is in the middle of the page, over the greeting. */}
+      <VividBar inverted={false} present={NOBODY} actions={NO_ACTIONS} />
       <BarRoom />
       <Reconnecting />
-      <Under showing={showing} me={me} start={start} placeholder={`Message ${vivid.name}`} />
+      <Under
+        showing={showing}
+        me={me}
+        mood={mood}
+        start={start}
+        placeholder={`Message ${vivid.name}`}
+      />
     </AboveKeyboardBelowBar>
   )
 }
@@ -105,9 +106,10 @@ function useArrival() {
   return useSyncExternalStore(attend, arrival.standing)
 }
 
-/** What `Writing` needs: who is writing, their words and the send. */
+/** What `Writing` needs: who is writing, how Vivid's face looks, their words and the send. */
 interface WritingProps {
   me: ReturnType<typeof useMe>
+  mood: 'happy' | 'thinking'
   start: ReturnType<typeof useStart>
   placeholder: string
 }
@@ -126,20 +128,26 @@ function Under({ showing, ...writing }: WritingProps & { showing: Showing }) {
 }
 
 /**
- * For someone Vivid has met: the greeting, anything the last send was refused for, and the
- * composer. The words and the send are `Fresh`'s (`useStart`), because Vivid's capsule at the top
- * thinks while a first message is on its way.
+ * For someone Vivid has met: the greeting in the middle of the page, that Vivid is thinking
+ * while a first message is on its way, anything the last send was refused for, and the composer.
+ * The words and the send are `Fresh`'s (`useStart`), because the face at the top thinks too.
  */
-function Writing({ me, start, placeholder }: WritingProps) {
+function Writing({ me, mood, start, placeholder }: WritingProps) {
   return (
     <>
       <ScrollView
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
-        contentContainerStyle={[styles.column, { flexGrow: 1, justifyContent: 'flex-end' }]}
+        contentContainerStyle={[styles.column, { flexGrow: 1 }]}
       >
-        <First me={me} />
+        <First me={me} mood={mood} />
       </ScrollView>
+      {/* Just above the composer, where it is in a Thread too (`ui/Thinking.tsx`). */}
+      {start.sending && (
+        <View style={[styles.column, { paddingHorizontal: 28, paddingBottom: 6 }]}>
+          <Thinking />
+        </View>
+      )}
       {Option.isSome(start.refusal) && (
         <View style={{ paddingHorizontal: 12, paddingBottom: 4 }}>
           <Notice message={start.refusal.value} />

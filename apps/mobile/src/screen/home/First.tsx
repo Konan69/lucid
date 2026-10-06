@@ -4,18 +4,94 @@ import { View } from 'react-native'
 import Animated from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useNow } from '../../data/foreground'
+import { useAppearance } from '../../data/vivid'
 import { APPEAR } from '../../ui/motion/morph'
+import { ON_GREETING, VividMenu, type Menu } from '../../ui/Presence'
 import { Face, Label } from '../../ui/ui'
+import { useFront, useGo } from '../../workspace'
 
 /** The Person's first name, when their name has one to take. */
 const firstName = (me: MeResponse): string => me.person.name.trim().split(/\s+/u, 1).join('')
 
+/** Vivid's face over the greeting: large enough to be the page's picture, not a row's mark. */
+const FACE = 56
+
 /**
- * The inset of everything written on this screen. The composer under it is 12 points from the
- * glass with 16 of padding inside, so its words start at 28; the greeting starts there too, and
- * the screen reads as one column down to the keyboard.
+ * A page with no conversation on it yet: Vivid's face, a line in the opening type and, under it,
+ * a quieter one, all centred in the room the page has. It is the first screen's greeting and an
+ * empty Thread's invitation, so the two read as the same place.
+ *
+ * The arrangement is the owner's reference for an empty first screen, the Claude iPhone app (its
+ * mark over "Happy Tuesday, Konan", centred, with the composer at the foot; his screenshot of
+ * 6 October 2026). It used to be type alone, set at the foot of the page above the composer, with
+ * the rest of the screen bare. Vivid's face is also in its capsule at the top; this one is the
+ * greeting's own, as the reference's mark is.
+ *
+ * The face is the way to Vivid's own menu here, as its avatar at the top of a Thread is: its
+ * computer and what it knows. A new Thread is not offered, because this page is one being started.
+ *
+ * Nothing here moves: the page is drawn whole. `mood` is the face's expression.
  */
-const INSET = 28
+export function Opening({
+  mood,
+  title,
+  line,
+}: {
+  mood: 'happy' | 'thinking'
+  title: string
+  line?: string
+}) {
+  const vivid = useAppearance()
+  const go = useGo()
+  const front = useFront()
+  const menu: Menu = {
+    places: ON_GREETING,
+    onGo: (place) => {
+      if (place === 'Fresh') front.fresh()
+      else go.navigate(place)
+    },
+  }
+  return (
+    <View
+      style={{
+        flexGrow: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 28,
+        // A little above the middle of the room, which is where a lone block reads as centred.
+        paddingBottom: 48,
+      }}
+    >
+      <VividMenu menu={menu}>
+        <View
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={vivid.name}
+          accessibilityHint={`Opens ${vivid.name}’s menu`}
+        >
+          <Face size={FACE} mood={mood} label="" />
+        </View>
+      </VividMenu>
+      <Label
+        accessibilityRole="header"
+        size="opening"
+        style={{ marginTop: 20, textAlign: 'center' }}
+      >
+        {title}
+      </Label>
+      {line !== undefined && (
+        <Label
+          size="title"
+          tone="ink-2"
+          textBreakStrategy="balanced"
+          style={{ marginTop: 6, fontWeight: '400', textAlign: 'center', maxWidth: 320 }}
+        >
+          {line}
+        </Label>
+      )}
+    </View>
+  )
+}
 
 /**
  * Home's whole content for someone Vivid has met: a greeting for the hour and one question. There
@@ -25,31 +101,23 @@ const INSET = 28
  * first there, for real (`data/arrival.ts`); until that Thread is open Home is `Waiting`. This
  * greeting is what Home is afterwards, and what it is if that Thread could not be opened.
  *
- * It is type alone. Vivid's face is in its capsule at the top of this screen, beside its name
- * (`ui/Presence.tsx`), so a second, larger face here would be decoration; the light it used to
- * sit in is gone for the same reason. Suggestion cards were removed by the owner on 3 October
- * 2026.
- *
- * Nothing here moves: the screen is drawn whole.
+ * Suggestion cards were removed by the owner on 3 October 2026.
  */
-export function First({ me }: { me: MeResponse }) {
+export function First({ me, mood }: { me: MeResponse; mood: 'happy' | 'thinking' }) {
   const name = firstName(me)
   // The hour is the one the app was last brought to the front in, not a ticking clock: a greeting
   // that changed under someone reading it would be a glitch, and one left open overnight should
   // not still say "Evening" when the phone is picked up in the morning.
   const hello = greetingAt(new Date(useNow()).getHours())
   return (
-    <View style={{ paddingHorizontal: INSET, paddingBottom: 14 }}>
-      <Label accessibilityRole="header" size="opening">
-        {name.length === 0 ? `${hello}.` : `${hello}, ${name}.`}
-      </Label>
-      <Label size="title" tone="ink-2" style={{ marginTop: 6, fontWeight: '400' }}>
-        {Workspace.match(me.workspace, {
-          Personal: () => 'What should I take off your plate?',
-          Company: ({ company }) => `What should I take off your plate at ${company.name}?`,
-        })}
-      </Label>
-    </View>
+    <Opening
+      mood={mood}
+      title={name.length === 0 ? `${hello}.` : `${hello}, ${name}.`}
+      line={Workspace.match(me.workspace, {
+        Personal: () => 'What should I take off your plate?',
+        Company: ({ company }) => `What should I take off your plate at ${company.name}?`,
+      })}
+    />
   )
 }
 
