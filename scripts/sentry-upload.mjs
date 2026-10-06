@@ -27,31 +27,31 @@
  * the map's address and the sources stay unlisted. Injection adds the debug ID into the bundle
  * text itself, which does not depend on that comment.
  */
-import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import NodePath from 'node:path'
-import NodeURL from 'node:url'
-import process from 'node:process'
+import * as NodeChildProcess from 'node:child_process'
+import * as NodeFS from 'node:fs'
+import * as NodePath from 'node:path'
+import * as NodeURL from 'node:url'
+import * as NodeProcess from 'node:process'
 
-const [project, ...directories] = process.argv.slice(2)
+const [project, ...directories] = NodeProcess.argv.slice(2)
 if (project === undefined || directories.length === 0) {
   console.error('Usage: node scripts/sentry-upload.mjs <project> <directory> [<directory> ...]')
-  process.exit(1)
+  NodeProcess.exit(1)
 }
 
 /** The org every Vivid Sentry project lives in (`~/agency/vivid-lanes/sentry-account.env`). */
 const org = 'vivid-7t'
 
-if (process.env.SENTRY_AUTH_TOKEN === undefined) {
+if (NodeProcess.env.SENTRY_AUTH_TOKEN === undefined) {
   console.log(`sentry-upload: no SENTRY_AUTH_TOKEN, skipping the upload for ${project}`)
-  process.exit(0)
+  NodeProcess.exit(0)
 }
 
 // Only directories that exist take part, so a build whose output layout misses one does not fail.
-const uploaded = directories.filter((directory) => existsSync(directory))
+const uploaded = directories.filter((directory) => NodeFS.existsSync(directory))
 if (uploaded.length === 0) {
   console.log(`sentry-upload: none of [${directories.join(', ')}] exists, nothing to upload`)
-  process.exit(0)
+  NodeProcess.exit(0)
 }
 
 /**
@@ -70,11 +70,11 @@ const sentryCli = NodePath.join(
  * maps is visible instead of silent. The CLI reads `SENTRY_AUTH_TOKEN` itself.
  */
 function sentry(args) {
-  const result = spawnSync(existsSync(sentryCli) ? sentryCli : 'sentry-cli', args, {
+  const result = NodeChildProcess.spawnSync(NodeFS.existsSync(sentryCli) ? sentryCli : 'sentry-cli', args, {
     stdio: 'inherit',
   })
   if (result.error !== undefined) throw result.error
-  if (result.status !== 0) process.exit(result.status ?? 1)
+  if (result.status !== 0) NodeProcess.exit(result.status ?? 1)
 }
 
 // `inject` stamps the debug ID into the bundles that have a map beside them (an artifact already
