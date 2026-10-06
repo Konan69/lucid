@@ -119,13 +119,13 @@ const metadata = JSON.parse(NodeFS.readFileSync(NodePath.join(directory, 'metada
 /**
  * Every path `metadata.json` names for the platform, the shape the server also decodes
  * (`apps/server/src/updates/release.ts`): the launch bundle at `bundle` as one path, then the
- * assets, each carrying its own `path`. Anything the platform entry names but does not carry a
- * path for cannot be served, so it is left to the map sweep below like everything else unnamed.
+ * assets, each carrying its own `path`. The metadata is machine-written by `expo export` in the
+ * same process, so it is read as-is; an export that deviates from the server's contract fails
+ * loudly here, and anything the platform entry does not name stays for the map sweep below.
  */
 const named = new Set(
   Object.values(metadata.fileMetadata)
     .flatMap((platform) => [platform.bundle, ...platform.assets.map((asset) => asset.path)])
-    .filter((path) => typeof path === 'string')
     .map((path) => NodePath.resolve(directory, path)),
 )
 for (const file of findMaps(directory)) {
