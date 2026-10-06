@@ -1,9 +1,16 @@
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from 'vitest'
+import { Effect, Option } from 'effect'
+import { defineExtension, hook, LiveDoc, ToolTask, type TaskId } from '@earendil-works/pi-durable'
+import { tool } from 'ai'
+import { z } from 'zod'
+import * as Pi from '../pi.ts'
 
-import { HoldId } from '../core.ts'
+import type { HoldId } from '../main.ts'
 import {
   CallNotWaiting,
+  attachRun,
+  holdId as parseHoldId,
   answer,
   continueRun,
   decide,
@@ -11,7 +18,7 @@ import {
   streamRun,
   waiting,
 } from '../main.ts'
-import { call, consume, context, hold, modelText, shop, signal } from './fixtures/host.ts'
+import { call, consume, context, hold, host, modelText, shop, signal } from './fixtures/host.ts'
 
 type Opened = Awaited<ReturnType<Awaited<ReturnType<typeof shop>>['open']>>
 
@@ -31,11 +38,12 @@ async function park(opened: Opened, requestId: string) {
 }
 
 /** Keep exactly the SDK approval wire shape, including its echoed task identity. */
-function approvalBody(holdId: HoldId) {
+function approvalBody(holdId: HoldId, messageId: string) {
   return JSON.stringify({
     messages: [
       {
         role: 'assistant',
+        id: messageId,
         parts: [
           {
             type: 'tool-pay',
@@ -69,7 +77,7 @@ it('replaying the identical approval POST leaves a same-run successor unpaid and
   expect(first.chunks.find((chunk) => chunk.type === 'tool-approval-request')).toMatchObject({
     approvalId: firstHold,
   })
-  const body = approvalBody(firstHold)
+  const body = approvalBody(firstHold, first.message.id)
   const response = await respond(
     opened.harness,
     opened.root.id,
@@ -116,6 +124,117 @@ it('replaying the identical approval POST leaves a same-run successor unpaid and
   } finally {
     release.resolve()
   }
+})
+
+/** J6: a hook can leave a plain task pending, but possessing its task id never creates a hold. */
+it('rejects a pending plain tool task used as a hold id', async () => {
+  const entered = signal()
+  const release = signal()
+  let task = Option.none<TaskId>()
+  const fixture = await host(
+    { plain: tool({ inputSchema: z.object({}), execute: async () => 'done' }) },
+    {},
+  )
+  const opened = await fixture.open([
+    defineExtension({
+      name: 'observe-plain',
+      hooks: [
+        hook(ToolTask, {
+          beforeTool: (_call, api, callbackContext) =>
+            Pi.runForPi(
+              Effect.sync(() => {
+                task = Option.some(api.taskId)
+                entered.resolve()
+              }).pipe(Effect.andThen(Effect.promise(() => release.promise)), Effect.as(undefined)),
+              callbackContext.abortSignal,
+            ),
+        }),
+      ],
+    }),
+  ])
+  opened.faux.setResponses([call('plain', {}, 'plain'), fauxAssistantMessage('Done.')])
+  const observing = consume(
+    await streamRun(
+      opened.harness,
+      { conversationId: opened.root.id, content: 'Act', requestId: 'plain-task' },
+      context,
+    ),
+  )
+  try {
+    await entered.promise
+    const id = Option.getOrThrow(task)
+    const live = await opened.harness.snapshot(LiveDoc, opened.root.id, context)
+    if (live === undefined) throw new Error('Expected pending live task')
+    expect(live.tools).toMatchObject([{ taskId: id, status: 'pending' }])
+    expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
+    await expect(
+      decide(
+        opened.harness,
+        opened.root.id,
+        { holdId: parseHoldId(`hold:${id}`), approved: true },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(CallNotWaiting)
+    await expect(
+      answer(
+        opened.harness,
+        opened.root.id,
+        { holdId: parseHoldId(`hold:${id}`), output: 'wrong' },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(CallNotWaiting)
+  } finally {
+    release.resolve()
+    await observing
+  }
+})
+
+/** J6: snapshot presentation retains each generation's own result-task provenance for reused ids. */
+it('replays reused call generations with their own approval ids', async () => {
+  const fixture = await shop()
+  const started = signal()
+  let rounds = 0
+  const opened = await fixture.open([
+    defineExtension({
+      name: 'observe-reused',
+      hooks: [
+        hook(ToolTask, {
+          beforeTool: (_call, _api, callbackContext) =>
+            Pi.runForPi(
+              Effect.sync(() => {
+                rounds++
+                if (rounds === 2) started.resolve()
+                return undefined
+              }),
+              callbackContext.abortSignal,
+            ),
+        }),
+      ],
+    }),
+  ])
+  opened.faux.setResponses([
+    call('pay', { amount: 100 }, 'same'),
+    call('pay', { amount: 999 }, 'same'),
+    fauxAssistantMessage('Done.'),
+  ])
+  await park(opened, 'replay-generations')
+  const first = await hold(opened.harness, opened.root.id, 'same')
+  await decide(opened.harness, opened.root.id, { holdId: first, approved: false }, context)
+  await started.promise
+  const second = await hold(opened.harness, opened.root.id, 'same')
+  expect(second).not.toBe(first)
+  const attached = await attachRun(opened.harness, opened.root.id, context)
+  if (attached.status !== 'running') throw new Error('Expected waiting second generation')
+  const replayed = await consume(attached.stream)
+  expect(replayed.chunks.filter((chunk) => chunk.type === 'tool-approval-request')).toEqual([
+    { type: 'tool-approval-request', toolCallId: 'same', approvalId: first },
+    { type: 'tool-approval-request', toolCallId: 'same', approvalId: second },
+  ])
+  expect(replayed.chunks.filter((chunk) => chunk.type === 'tool-approval-response')).toEqual([
+    { type: 'tool-approval-response', approvalId: first, approved: false },
+  ])
+  expect(replayed.chunks.filter((chunk) => chunk.type === 'tool-output-denied')).toHaveLength(1)
+  expect(fixture.paid).toEqual([])
 })
 
 /** Separate tasks with a reused call id must each admit their own late-answer submission. */
@@ -264,7 +383,7 @@ it.each(['missing', 'wrong-call', 'unknown-task'])('skips a %s approval identity
   const opened = await fixture.open()
   // Separate rounds keep this focused on ownership, independent of Pi's duplicate-id guard.
   opened.faux.setResponses([call('pay', { amount: 100 }, 'reused')])
-  await park(opened, 'bad-identity')
+  const first = await park(opened, 'bad-identity')
   const holdId = await hold(opened.harness, opened.root.id, 'reused')
   const approval =
     kind === 'missing'
@@ -279,6 +398,7 @@ it.each(['missing', 'wrong-call', 'unknown-task'])('skips a %s approval identity
         messages: [
           {
             role: 'assistant',
+            id: first.message.id,
             parts: [
               {
                 type: 'tool-pay',

@@ -6,6 +6,7 @@ import type {
   MessageChange,
   SnapshotEvent,
   TaskId,
+  SubmissionId,
 } from '@earendil-works/pi-durable'
 import type { UIMessageChunk } from 'ai'
 import { Array as Arr, Match, Option, Schema } from 'effect'
@@ -296,7 +297,7 @@ export function translate(state: RunState, event: AgentEvent): Step {
   return Match.value(event).pipe(
     Match.when({ type: 'run_start' }, (started): Step => ({
       state: initialRunState,
-      chunks: [{ type: 'start', messageId: `run:${started.inputs.join('+')}` }],
+      chunks: [{ type: 'start', messageId: runMessageId(started.inputs) }],
     })),
     Match.when({ type: 'run_end' }, (): Step => ({
       state,
@@ -383,7 +384,7 @@ export function replay(snapshot: SnapshotEvent): Option.Option<Rebuilt> {
     // SDK chat.ts retains the streaming state after a network error. Its start chunk only
     // changes identity; process-ui-message-stream.ts reset-step clears the retained current step.
     chunks: [
-      { type: 'start', messageId: `run:${snapshot.run.inputs.join('+')}` },
+      { type: 'start', messageId: runMessageId(snapshot.run.inputs) },
       { type: 'reset-step' },
     ],
   }
@@ -570,4 +571,9 @@ export function rebuild(entries: readonly EntryRecord[]): Rebuilt {
     { state: initialRunState, chunks: [] },
   )
   return { ...step, origins: originsFor(entries, step.chunks) }
+}
+
+/** Pi events.js changes runs by their first input; steer inputs never change assistant identity. */
+export function runMessageId(inputs: readonly SubmissionId[]) {
+  return `run:${Option.getOrThrow(Arr.head(inputs))}`
 }

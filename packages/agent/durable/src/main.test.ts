@@ -1,4 +1,4 @@
-import { HoldId } from './core.ts'
+import { holdId as parseHoldId } from './main.ts'
 import * as NodeEvents from 'node:events'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import type { Message } from '@earendil-works/pi-ai'
@@ -26,6 +26,7 @@ import {
   decodeTurn,
   respondTurn,
   TurnInvalid,
+  HoldIdInvalid,
   toolsExtension,
   ConversationMissing,
   decide,
@@ -200,7 +201,7 @@ it.live('preserves ConversationMissing as the Promise rejection', () =>
         decide(
           empty,
           conversation.id,
-          { holdId: HoldId.make('hold:99999999'), approved: true },
+          { holdId: parseHoldId('hold:99999999'), approved: true },
           context,
         ),
       ).rejects.toBeInstanceOf(ConversationMissing),
@@ -427,6 +428,7 @@ it.live('keeps an approval decision whose reason is not a string', () =>
         messages: [
           {
             role: 'assistant',
+            id: Option.getOrThrow(Option.fromNullishOr(chat.lastMessage)).id,
             parts: [
               false,
               {
@@ -472,5 +474,14 @@ it.live('accepts only GET and POST at chat ingress', () =>
       expect(response.status).toBe(405)
       expect(response.headers.get('Allow')).toBe('GET, POST')
     }
+  }),
+)
+
+/** A Promise-only consumer validates task identity without importing the core schema. */
+it.live('constructs a wire hold id and rejects malformed identities with the tagged class', () =>
+  Effect.sync(() => {
+    expect(parseHoldId('hold:123')).toBe('hold:123')
+    expect(() => parseHoldId('call-123')).toThrow(HoldIdInvalid)
+    expect(() => parseHoldId('hold:0')).toThrow(HoldIdInvalid)
   }),
 )

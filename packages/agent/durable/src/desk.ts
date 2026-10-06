@@ -50,7 +50,9 @@ export const readDesk = Effect.fn('Durable.readDesk')(function* (
     ? observedLive
     : yield* Pi.snapshot(reader.harness, LiveDoc, reader.conversation.id, reader.context)
   const callIds = new Set(
-    chunks.flatMap((chunk) => ('toolCallId' in chunk ? [chunk.toolCallId] : [])),
+    chunks.flatMap((chunk) =>
+      'toolCallId' in chunk && !origins.has(chunk) ? [chunk.toolCallId] : [],
+    ),
   )
   // A slot, an in-flight generation call, or the hold previously shown to this reader can
   // answer without a transcript scan. Only a truly missing completed call needs provenance.

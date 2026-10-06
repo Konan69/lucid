@@ -24,6 +24,7 @@ import {
   withPlan,
 } from './holds.ts'
 import * as Pi from './pi.ts'
+import { Delivery } from './delivery.ts'
 
 /** Whether an interrupted call may run again after a crash. Pi's own default is unsafe. */
 export type Replay = 'safe' | 'unsafe'
@@ -172,10 +173,14 @@ const asked = Effect.fn('Durable.askedTool')(function* (
       token: Holds,
       conversationId: api.conversationId,
       change: (document) => {
-        document.asked[holdIdOf(api.taskId)] = {
+        const holdId = holdIdOf(api.taskId)
+        // Safe replay of this tool task must preserve an output already reserved by a person.
+        if (document.asked[holdId] !== undefined || document.settled[holdId] !== undefined) return
+        document.asked[holdId] = {
           taskId: api.taskId,
           callId: api.callId,
           toolName: name,
+          delivery: Delivery.cases.Open.make({}),
         }
       },
     },

@@ -1,4 +1,4 @@
-import { HoldId } from '../core.ts'
+import { holdId as parseHoldId } from '../main.ts'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from 'vitest'
 
@@ -244,7 +244,7 @@ it('rejects an answer for a call that is not waiting', async () => {
     answer(
       opened.harness,
       opened.root.id,
-      { holdId: HoldId.make('hold:99999999'), output: 'unsolicited' },
+      { holdId: parseHoldId('hold:99999999'), output: 'unsolicited' },
       context,
     ),
   ).rejects.toThrow()
@@ -252,7 +252,7 @@ it('rejects an answer for a call that is not waiting', async () => {
     answer(
       opened.harness,
       opened.root.id,
-      { holdId: HoldId.make('hold:99999999'), output: 'unsolicited' },
+      { holdId: parseHoldId('hold:99999999'), output: 'unsolicited' },
       context,
     ),
   ).rejects.toBeInstanceOf(CallNotWaiting)

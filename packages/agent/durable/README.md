@@ -16,7 +16,7 @@ The host opens its Pi Harness, registers an extension from `toolsExtension`, and
 
 ## Promise server
 
-[Complete, type-checked HTTP handler](src/examples/main.ts). It serves chat POST/GET, GET history/waiting, and POST abort/decide/answer. The host's HTTP framework maps schema rejection to 400 and records other failures. Decision and answer bodies decode once with the exported HoldId contract before reaching the durable API.
+[Complete, type-checked HTTP handler](src/examples/main.ts). It serves chat POST/GET, GET history/waiting, and POST abort/decide/answer. The host's HTTP framework maps schema rejection to 400 and records other failures. Decision and answer bodies decode once and validate their opaque task ids with the Promise entry's `holdId` before reaching the durable API.
 
 This is the handler excerpt; imports and compiled body decoders are in the linked source:
 
@@ -39,20 +39,21 @@ export async function route(
     return new Response(null, { status: 204 })
   }
   if (path === '/decide') {
-    const decision = await decodeDecision(await request.text())
+    const body = await decodeDecision(await request.text())
+    const decision = { ...body, holdId: holdId(body.holdId) }
     return Response.json(await decide(harness, conversationId, decision, context))
   }
   if (path === '/answer') {
-    const output = await decodeAnswer(await request.text())
+    const body = await decodeAnswer(await request.text())
+    const output = { ...body, holdId: holdId(body.holdId) }
     const delivered = await answer(harness, conversationId, output, context)
-    if (delivered === undefined) return new Response(null, { status: 204 })
     return Response.json(delivered)
   }
   return new Response(null, { status: 404 })
 }
 ```
 
-Chat `respond` accepts a Request; GET reconnects and returns 204 when idle, POST reads and decodes JSON text. Unsupported methods return 405, missing conversations 404, invalid turns 400 and missing resume runs 409. Other adapter failures reject with the original tagged error class. `decodeTurn` and `respondTurn` support hosts that already decoded an object body.
+Chat `respond` accepts a Request; GET reconnects and returns 204 when idle, POST reads and decodes JSON text. Unsupported methods return 405, missing conversations 404, invalid turns 400 and missing resume runs 409. Other adapter failures reject with the original tagged error class. `decodeTurn` and `respondTurn` support hosts that already decoded an object body. `holdId(text)` validates an opaque hold id received over another wire and throws `HoldIdInvalid` for malformed values, without requiring a core Schema import.
 
 ## Effect server
 
@@ -96,9 +97,9 @@ A React hook/component example must be supplied by the frontend owner; the check
 
 ## Guarantees
 
-A held call parks the client response with finish-step/finish while Pi's run remains alive. A decision can arrive with no client attached, after a process restart, or more than once: the first settlement for that hold wins. Direct `decide` and `answer` accept the `holdId` returned by `waiting`, and reject wrong-kind or never-waiting holds with `CallNotWaiting`. Unanswered late questions survive unrelated tasks that reuse a provider call id; their answer submissions deduplicate on `answer:<holdId>`.
+A held call parks the client response with finish-step/finish while Pi's run remains alive. A decision can arrive with no client attached, after a process restart, or more than once: the first settlement for that hold wins. Direct `decide` and `answer` accept the `holdId` returned by `waiting`, and reject wrong-kind or never-waiting holds with `CallNotWaiting`. Unanswered late questions survive unrelated tasks that reuse a provider call id. A late answer reserves its first output before admission and keeps its question and submission receipt until placement. Abort reopens a withdrawn follow-up; a repeat resubmits the first output under a fresh `answer:<holdId>:<attempt>` key. Queued/placed repeats cannot change it, and every successful `answer` returns the settlement.
 
-A stale approval POST cannot approve a successor task, even within the same run. Client tool outputs carry only a tool call id, so replayed client outputs rely on provider ids being unique within a run; approvals do not. Duplicate ids in one tool round are blocked before execution, omitted from waiting and never receive approval requests.
+A stale approval POST cannot approve a successor task, even within the same run. The assistant message id is stable from the run's first input; a resume naming an older run settles nothing, while still resuming observation. Client tool outputs carry only a tool call id, so replayed client outputs rely on provider ids being unique within a run; approvals do not. Duplicate ids in one tool round are blocked before execution, omitted from waiting and never receive approval requests.
 
 Observation opens before admission. Slow readers do not block Pi delivery. A replacement snapshot fails with `WatchOverflowed`; a cancelled or closed watch fails with `WatchClosed`. Reconnect through `attachRun` or GET to rebuild from a snapshot. Returned attached/continued streams are one-shot and already have their watches open; cancelling them only detaches. Explicit abort interrupts held waits, retains generated partial text and withdraws queued follow-up inputs. Tool replay follows Pi's stored and current policy and does not promise exactly-once external side effects.
 

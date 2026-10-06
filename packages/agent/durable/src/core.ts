@@ -1,4 +1,5 @@
 export {
+  HoldIdInvalid,
   HoldId,
   CallNotWaiting,
   WatchClosed,

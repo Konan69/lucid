@@ -1,9 +1,21 @@
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
-import { Array as Arr, Effect, Option, Predicate, Schema, SchemaGetter, SchemaIssue } from 'effect'
+import {
+  Array as Arr,
+  Effect,
+  Function,
+  Option,
+  Predicate,
+  Schema,
+  SchemaGetter,
+  SchemaIssue,
+} from 'effect'
 
 import { HoldId, TurnInvalid } from './errors.ts'
-import { answer, decide } from './holds.ts'
+import { answerObserved, decideObserved } from './holds.ts'
+import { runMessageId } from './chunks.ts'
+import * as Pi from './pi.ts'
+import { LiveDoc } from '@earendil-works/pi-durable'
 import { continueRun, prepareRun } from './stream.ts'
 import { waiting } from './waiting.ts'
 
@@ -11,6 +23,7 @@ import { waiting } from './waiting.ts'
 export const ChatTurn = Schema.TaggedUnion({
   Input: { messageId: Schema.String, text: Schema.String.check(Schema.isMinLength(1)) },
   Resume: {
+    messageId: Schema.optionalKey(Schema.String),
     known: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
     decisions: Schema.Array(
       Schema.Struct({
@@ -64,27 +77,28 @@ const Part = Schema.Union([
   // Unknown part types carry no input/settlement semantics and are intentionally discarded.
   Schema.Struct({ type: Schema.String }),
 ])
-const decodePart = Schema.decodeUnknownOption(Part)
+const decodePart = Function.compose(Schema.decodeUnknownOption(Part), Option.toArray)
 /** Malformed and unsupported parts carry no turn semantics; decode meaningful parts independently. */
 const Parts = Schema.Array(Schema.Unknown).pipe(
   Schema.decodeTo(Schema.Array(Schema.toType(Part)), {
-    decode: SchemaGetter.transform((parts) =>
-      parts.flatMap((part) =>
-        Option.match(decodePart(part), { onNone: () => [], onSome: (decoded) => [decoded] }),
-      ),
-    ),
+    decode: SchemaGetter.transform((parts) => parts.flatMap(decodePart)),
     encode: SchemaGetter.passthroughSupertype(),
   }),
 )
 const Message = Schema.Union([
   Schema.Struct({ role: Schema.Literal('user'), id: Schema.String, parts: Parts }),
-  Schema.Struct({ role: Schema.Literal('assistant'), parts: Parts }),
+  Schema.Struct({
+    role: Schema.Literal('assistant'),
+    id: Schema.optionalKey(Schema.String),
+    parts: Parts,
+  }),
 ])
 const Body = Schema.Struct({ messages: Schema.Array(Schema.Unknown) })
 const decodeMessage = Schema.decodeUnknownEffect(Message)
 
 /** Derive only settlements with the complete decoded payload; generic tool parts merely name known calls. */
-function resumed(parts: (typeof Message.Type)['parts']) {
+function resumed(message: Extract<typeof Message.Type, { role: 'assistant' }>) {
+  const { parts } = message
   const tools = parts.filter(
     (part): part is Extract<typeof Part.Type, { toolCallId: string }> => 'toolCallId' in part,
   )
@@ -96,11 +110,14 @@ function resumed(parts: (typeof Message.Type)['parts']) {
   const outputs = tools.flatMap((part) =>
     'output' in part ? [{ callId: part.toolCallId, output: part.output }] : [],
   )
-  return ChatTurn.cases.Resume.makeEffect({
+  const resume = {
     known: tools.map((part) => part.toolCallId),
     decisions,
     outputs,
-  })
+  }
+  return message.id === undefined
+    ? ChatTurn.cases.Resume.makeEffect(resume)
+    : ChatTurn.cases.Resume.makeEffect({ ...resume, messageId: message.id })
 }
 
 /** Validate only the newest message; the historical client transcript is neither trusted nor required. */
@@ -112,7 +129,7 @@ const toTurn = Effect.fn('Durable.decodeTurn')(function* (body: typeof Body.Type
     const text = message.parts.flatMap((part) => ('text' in part ? [part.text] : [])).join('\n')
     return yield* ChatTurn.cases.Input.makeEffect({ messageId: message.id, text })
   }
-  return yield* resumed(message.parts)
+  return yield* resumed(message)
 })
 
 /** One chat-body contract yields a decoded turn for both object and JSON-text ingress. */
@@ -137,20 +154,29 @@ export const TurnBody = Body.pipe(
 /** Compiled ingress accepts untrusted chat bodies without an untyped application function parameter. */
 export const decodeTurn = Schema.decodeUnknownEffect(TurnBody)
 
-/** Only currently waiting calls accept client settlements; finished and unstarted parts are ignored. */
+/** Only the current run message accepts settlements; stale resumes settle nothing. Outputs match call
+ * ids and rely on provider ids remaining unique within one run; approvals are task-scoped. Read waiting
+ * once for the whole batch; finished and unstarted parts are ignored, with atomic task revalidation. */
 const settleHolds = Effect.fn('Durable.settleHolds')(function* (
   harness: Harness,
   conversationId: ConversationId,
   turn: typeof ChatTurn.cases.Resume.Type,
   context: Context,
 ) {
+  const live = yield* Pi.snapshot(harness, LiveDoc, conversationId, context)
+  if (
+    Option.isNone(live) ||
+    live.value.run === undefined ||
+    turn.messageId !== runMessageId(live.value.run.inputs)
+  )
+    return
   const held = yield* waiting(harness, conversationId, context)
   const approvable = new Map(
     held.filter((each) => each.kind === 'approval').map((each) => [each.holdId, each.callId]),
   )
   for (const decision of turn.decisions) {
     if (approvable.get(decision.holdId) === decision.callId)
-      yield* decide(harness, conversationId, decision, context).pipe(
+      yield* decideObserved(harness, conversationId, { decision, held }, context).pipe(
         // A task can settle between observation and admission; stale POSTs do not authorize successors.
         Effect.catchTag('CallNotWaiting', () => Effect.void),
       )
@@ -163,13 +189,17 @@ const settleHolds = Effect.fn('Durable.settleHolds')(function* (
   for (const output of turn.outputs) {
     const holdId = answerable.get(output.callId)
     if (holdId !== undefined)
-      yield* answer(harness, conversationId, { holdId, output: output.output }, context).pipe(
-        Effect.catchTag('CallNotWaiting', () => Effect.void),
-      )
+      yield* answerObserved(
+        harness,
+        conversationId,
+        { given: { holdId, output: output.output }, held },
+        context,
+      ).pipe(Effect.catchTag('CallNotWaiting', () => Effect.void))
   }
 })
 
-/** Authorize the conversation outside this module; the decoded turn then starts or resumes its run. */
+/** Authorize before calling. A stale assistant message settles nothing and still resumes observation.
+ * Client outputs match call ids and require uniqueness within one run; approvals are task-scoped. */
 export const respond = Effect.fn('Durable.respond')(function* (
   harness: Harness,
   conversationId: ConversationId,

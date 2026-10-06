@@ -15,8 +15,10 @@ import type { Message } from '@earendil-works/pi-ai'
 import { Deferred, Effect, Match, Option, Predicate, Schema } from 'effect'
 
 import * as Pi from './pi.ts'
+import { type Question } from './delivery.ts'
+import { deliver } from './answers.ts'
 import { CallNotWaiting, HoldId } from './errors.ts'
-import { waiting } from './waiting.ts'
+import { waiting, type Waiting } from './waiting.ts'
 
 /**
  * How one held tool call was settled by whoever it waited for.
@@ -38,16 +40,16 @@ export type Settled = { taskId: TaskId; callId: string; settlement: Settlement }
  *
  * `settled` and `asked` are keyed by opaque hold ids derived from Pi tasks. Receipts and
  * unanswered questions survive provider call-id reuse and transcript compaction independently.
- * `asked` lists the calls of answer-later tools that already
- * returned to the model and still expect an answer, with the tool's name for the message that
- * delivers it. Latest-only: a hold belongs to a run in progress, never to a rewound transcript.
+ * `asked` retains answer-later calls through durable output reservation and submission admission;
+ * only placement retires them to settled receipts. Withdrawal reopens a submitted question without
+ * discarding its first output. The tool's name supplies the late-answer user message. Latest-only: a hold belongs to a run in progress, never to a rewound transcript.
  */
 export const Holds = defineDoc<{
   settled: Record<string, Settled>
-  asked: Record<string, { taskId: TaskId; callId: string; toolName: string }>
+  asked: Record<string, Question>
 }>({
   kind: 'durable.holds',
-  version: 4,
+  version: 5,
   scope: 'conversation',
   history: 'latest',
   fork: 'initial',
@@ -97,7 +99,7 @@ export type CallLookup = typeof CallLookup.Type
 
 type HoldState = {
   settled: Record<string, Settled>
-  asked: Record<string, { taskId: TaskId; callId: string; toolName: string }>
+  asked: Record<string, Question>
 }
 
 /** The newest assistant entry owns the call; an older run's result is never evidence for a new invocation. */
@@ -425,7 +427,11 @@ export const settlement = Effect.fn('Durable.settlement')(function* (
 const settle = Effect.fn('Durable.settle')(function* (
   harness: Harness,
   conversationId: ConversationId,
-  input: { readonly holdId: HoldId; readonly next: Settlement },
+  input: {
+    readonly holdId: HoldId
+    readonly next: Settlement
+    readonly admission: Option.Option<readonly Waiting[]>
+  },
   context: Context,
 ) {
   const conversation = yield* Pi.conversation(harness, conversationId, context)
@@ -440,7 +446,9 @@ const settle = Effect.fn('Durable.settle')(function* (
     return yield* new CallNotWaiting({ conversationId, holdId: input.holdId })
   // Arguments are absent from pending slots. Read the context once through waiting only for new
   // admission; repeats and the atomic revalidation need no transcript at all.
-  const held = yield* waiting(harness, conversationId, context)
+  const held = Option.isSome(input.admission)
+    ? input.admission.value
+    : yield* waiting(harness, conversationId, context)
   const kind = input.next.kind === 'answered' ? 'answer' : 'approval'
   const allowed = held.some((call) => call.holdId === input.holdId && call.kind === kind)
   if (!allowed) return yield* new CallNotWaiting({ conversationId, holdId: input.holdId })
@@ -509,18 +517,16 @@ export function decide(
   decision: Decision,
   context: Context,
 ) {
-  const next: Settlement = decision.approved
-    ? { kind: 'approved' }
-    : { kind: 'denied', reason: decision.reason ?? 'The person denied this call' }
-  return settle(harness, conversationId, { holdId: decision.holdId, next }, context)
+  return settle(
+    harness,
+    conversationId,
+    { holdId: decision.holdId, next: decisionSettlement(decision), admission: Option.none() },
+    context,
+  )
 }
 
 /** The result of a tool call that a person supplies. */
 export type Answer = { readonly holdId: HoldId; readonly output: JsonValue }
-
-/** The message that delivers a late answer to the model. */
-const answerText = (toolName: string, output: JsonValue) =>
-  `[answer to ${toolName}] ${Predicate.isString(output) ? output : JSON.stringify(output)}`
 
 /**
  * Supply the result of a tool call that has no server `execute`.
@@ -528,7 +534,8 @@ const answerText = (toolName: string, output: JsonValue) =>
  * A `wait` call is settled in place and the model continues from the tool result. A `later` call
  * already returned, so the answer is submitted as a new user message: a follow-up, which starts a
  * run when the conversation is idle and otherwise waits for the current answer. The request id contains
- * the hold id, so answering twice delivers once without swallowing a later task's answer.
+ * the hold and attempt, so a withdrawn follow-up can retry. The first output is reserved durably;
+ * queued/placed repeats return it unchanged. Every successful answer returns its settlement.
  */
 export const answer = Effect.fn('Durable.answer')(function* (
   harness: Harness,
@@ -551,37 +558,55 @@ export const answer = Effect.fn('Durable.answer')(function* (
       {
         holdId: given.holdId,
         next: { kind: 'answered', output: given.output },
+        admission: Option.none(),
       },
       context,
     )
-  yield* Pi.submit(
-    conversation,
-    {
-      type: 'input',
-      content: answerText(found.toolName, given.output),
-      requestId: `answer:${given.holdId}`,
-      whenBusy: 'followUp',
-    },
-    context,
-  )
-  // Delete only after admission: retry keeps the same task-scoped deduplication key after a crash.
-  yield* Pi.commitWithLive(
-    conversation,
-    {
-      token: Holds,
-      conversationId,
-      change: (document, live) => {
-        const latest = lookup(live, document, identity)
-        if (!CallLookup.guards.Asked(latest)) return
-        document.settled[given.holdId] = {
-          taskId: latest.taskId,
-          callId: latest.callId,
-          settlement: { kind: 'answered', output: copyJson(given.output) },
-        }
-        delete document.asked[given.holdId]
-      },
-    },
-    context,
-  )
-  return undefined
+  return yield* deliver(harness, conversation, given, context)
 })
+
+/** HTTP batch admission reuses the one waiting observation; settle still validates the live task atomically. */
+export function decideObserved(
+  harness: Harness,
+  conversationId: ConversationId,
+  observed: { readonly decision: Decision; readonly held: readonly Waiting[] },
+  context: Context,
+) {
+  const { decision } = observed
+  return settle(
+    harness,
+    conversationId,
+    {
+      holdId: decision.holdId,
+      next: decisionSettlement(decision),
+      admission: Option.some(observed.held),
+    },
+    context,
+  )
+}
+
+/** Client tool outputs can only answer wait holds from the batch's single observation. */
+export function answerObserved(
+  harness: Harness,
+  conversationId: ConversationId,
+  observed: { readonly given: Answer; readonly held: readonly Waiting[] },
+  context: Context,
+) {
+  return settle(
+    harness,
+    conversationId,
+    {
+      holdId: observed.given.holdId,
+      next: { kind: 'answered', output: observed.given.output },
+      admission: Option.some(observed.held),
+    },
+    context,
+  )
+}
+
+/** Direct and batch admission share one decision-to-settlement rule and model-visible denial text. */
+function decisionSettlement(decision: Decision): Settlement {
+  return decision.approved
+    ? { kind: 'approved' }
+    : { kind: 'denied', reason: decision.reason ?? 'The person denied this call' }
+}

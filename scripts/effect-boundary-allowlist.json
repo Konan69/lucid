@@ -136,5 +136,10 @@
     "file": "packages/agent/durable/src/reading.ts",
     "classification": "third-party-adapter",
     "symbols": ["readMessage", "readForSdk"]
+  },
+  {
+    "file": "packages/agent/durable/src/fixtures/answer.ts",
+    "classification": "test-process-entrypoint",
+    "symbols": ["<module>", "execute", "harness", "root", "question"]
   }
 ]

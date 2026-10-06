@@ -14,6 +14,7 @@ import {
 } from './holds.ts'
 import { HoldId } from './errors.ts'
 import * as Pi from './pi.ts'
+import { questionOpen } from './answers.ts'
 
 /**
  * A tool call that waits for a person.
@@ -53,17 +54,18 @@ export const waiting = Effect.fn('Durable.waiting')(function* (
       onSome: (document) => (document.tools ?? []).map((slot) => slot.callId),
     }),
   )
-  const later = Option.match(holds, {
-    onNone: (): Waiting[] => [],
-    onSome: (document) =>
-      Object.keys(document.asked).flatMap((key): Waiting[] => {
-        const holdId = HoldId.make(key)
-        const found = lookupSnapshots(live, holds, CallIdentity.cases.Hold.make({ holdId }))
-        return CallLookup.guards.Asked(found)
-          ? [{ kind: 'later', holdId, callId: found.callId, toolName: found.toolName }]
-          : []
-      }),
-  })
+  const later: Waiting[] = []
+  if (Option.isSome(holds)) {
+    for (const [key, question] of Object.entries(holds.value.asked)) {
+      const holdId = HoldId.make(key)
+      const found = lookupSnapshots(live, holds, CallIdentity.cases.Hold.make({ holdId }))
+      if (
+        CallLookup.guards.Asked(found) &&
+        (yield* questionOpen(harness, conversation, question, context))
+      )
+        later.push({ kind: 'later', holdId, callId: found.callId, toolName: found.toolName })
+    }
+  }
   const ready = [...callIds].flatMap((callId) => {
     const found = lookupSnapshots(
       live,

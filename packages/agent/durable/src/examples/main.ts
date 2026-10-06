@@ -2,13 +2,12 @@ import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
 import { Schema } from 'effect'
 
-import { HoldId } from '@vivid/durable/core'
-import { abort, answer, decide, history, respond, waiting } from '@vivid/durable'
+import { abort, answer, decide, history, holdId, respond, waiting } from '@vivid/durable'
 
 const decodeDecision = Schema.decodeUnknownPromise(
   Schema.fromJsonString(
     Schema.Struct({
-      holdId: HoldId,
+      holdId: Schema.String,
       approved: Schema.Boolean,
       reason: Schema.optionalKey(Schema.String),
     }),
@@ -17,7 +16,7 @@ const decodeDecision = Schema.decodeUnknownPromise(
 const decodeAnswer = Schema.decodeUnknownPromise(
   Schema.fromJsonString(
     Schema.Struct({
-      holdId: HoldId,
+      holdId: Schema.String,
       output: Schema.MutableJson,
     }),
   ),
@@ -46,13 +45,14 @@ export async function route(
     return new Response(null, { status: 204 })
   }
   if (path === '/decide') {
-    const decision = await decodeDecision(await request.text())
+    const body = await decodeDecision(await request.text())
+    const decision = { ...body, holdId: holdId(body.holdId) }
     return Response.json(await decide(harness, conversationId, decision, context))
   }
   if (path === '/answer') {
-    const output = await decodeAnswer(await request.text())
+    const body = await decodeAnswer(await request.text())
+    const output = { ...body, holdId: holdId(body.holdId) }
     const delivered = await answer(harness, conversationId, output, context)
-    if (delivered === undefined) return new Response(null, { status: 204 })
     return Response.json(delivered)
   }
   return new Response(null, { status: 404 })

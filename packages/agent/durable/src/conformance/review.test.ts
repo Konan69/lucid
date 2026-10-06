@@ -1,4 +1,4 @@
-import { HoldId } from '../core.ts'
+import { holdId } from '../main.ts'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { tool } from 'ai'
 import { expect, it } from 'vitest'
@@ -42,7 +42,7 @@ it('blocks every duplicate id in a round without requesting approval or paying',
     decide(
       opened.harness,
       opened.root.id,
-      { holdId: HoldId.make('hold:99999999'), approved: true },
+      { holdId: holdId('hold:99999999'), approved: true },
       context,
     ),
   ).rejects.toBeInstanceOf(CallNotWaiting)
@@ -118,7 +118,7 @@ it('does not apply a stale denial to a failing unheld task with the same id', as
     decide(
       opened.harness,
       opened.root.id,
-      { holdId: HoldId.make(`hold:${failedTask}`), approved: true },
+      { holdId: holdId(`hold:${failedTask}`), approved: true },
       context,
     ),
   ).rejects.toBeInstanceOf(CallNotWaiting)
@@ -306,11 +306,12 @@ it('ignores an unstarted sequential decision instead of rejecting the resume', a
     messages: [
       {
         role: 'assistant',
+        id: first.message.id,
         parts: ['c1', 'c2'].map((id) => ({
           type: 'tool-pay',
           toolCallId: id,
           state: 'approval-responded',
-          approval: { id: id === 'c1' ? firstHold : HoldId.make('hold:99999999'), approved: true },
+          approval: { id: id === 'c1' ? firstHold : holdId('hold:99999999'), approved: true },
         })),
       },
     ],
@@ -326,8 +327,8 @@ it('ignores an unstarted sequential decision instead of rejecting the resume', a
   )
   expect(response.status).toBe(200)
   if (response.body === null) throw new Error('Expected the second approval response')
-  // B stops at Pi's source-proven missing task-admission event. Detach the response instead of claiming
-  // a second automatic round trip; Pi keeps c2 held until cleanup cancels the isolated harness.
+  // This probe sends an unsolicited c2 decision. It is ignored; the sequential suite separately
+  // proves c2's live-watch presentation and its next stock automatic round trip.
   await response.body.cancel()
   await executed.promise
   expect(paid).toEqual([1])

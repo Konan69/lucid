@@ -5,6 +5,7 @@ import {
 } from '@earendil-works/pi-ai/providers/faux'
 import {
   createUIMessageStreamResponse,
+  isToolUIPart,
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithApprovalResponses,
   lastAssistantMessageIsCompleteWithToolCalls,
@@ -50,6 +51,17 @@ function client(
     return completion.promise
   }
   return { chat, next }
+}
+
+/** The stock app echoes the approval identity supplied in its actual SDK message part. */
+function approvalId(chat: PlainChat, callId: string) {
+  if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
+  const part = chat.lastMessage.parts.find(
+    (candidate) => isToolUIPart(candidate) && candidate.toolCallId === callId,
+  )
+  if (part === undefined || !isToolUIPart(part) || part.state !== 'approval-requested')
+    throw new Error('Expected approval request')
+  return part.approval.id
 }
 
 // AI SDK packages/ai/src/ui-message-stream/ui-message-chunks.test.ts: returns UI message chunks; accepts reset-step chunks.
@@ -150,7 +162,7 @@ it('addToolApprovalResponse automatically resumes one assistant message', async 
   expect(fixture.paid).toEqual([])
   const finished = next()
   await chat.addToolApprovalResponse({
-    id: await hold(opened.harness, opened.root.id, 'pay'),
+    id: approvalId(chat, 'pay'),
     approved: true,
   })
   await finished
@@ -217,7 +229,7 @@ it('the stock approval predicate waits for both decisions before posting', async
   )
   await chat.sendMessage({ text: 'Pay both' })
   await chat.addToolApprovalResponse({
-    id: await hold(opened.harness, opened.root.id, 'one'),
+    id: approvalId(chat, 'one'),
     approved: true,
   })
   expect(chat.status).toBe('ready')
@@ -225,7 +237,7 @@ it('the stock approval predicate waits for both decisions before posting', async
   expect(await waiting(opened.harness, opened.root.id, context)).toHaveLength(2)
   const finished = next()
   await chat.addToolApprovalResponse({
-    id: await hold(opened.harness, opened.root.id, 'two'),
+    id: approvalId(chat, 'two'),
     approved: false,
     reason: 'Budget',
   })
@@ -279,7 +291,7 @@ it('the stock approval predicate advances after withholding an unstarted sequent
   ).toBeUndefined()
   const completed = next()
   await chat.addToolApprovalResponse({
-    id: await hold(opened.harness, opened.root.id, 'c1'),
+    id: approvalId(chat, 'c1'),
     approved: true,
   })
   await completed
@@ -289,7 +301,7 @@ it('the stock approval predicate advances after withholding an unstarted sequent
   ).toMatchObject({ state: 'approval-requested' })
   const finished = next()
   await chat.addToolApprovalResponse({
-    id: await hold(opened.harness, opened.root.id, 'c2'),
+    id: approvalId(chat, 'c2'),
     approved: true,
   })
   await finished

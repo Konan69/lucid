@@ -165,3 +165,15 @@ export class CallNotWaiting extends Schema.TaggedError<CallNotWaiting>()(
     return `Hold ${this.holdId} in conversation ${this.conversationId} is not waiting`
   }
 }
+
+/** A wire value cannot identify a durable tool task. */
+export class HoldIdInvalid extends Schema.TaggedError<HoldIdInvalid>()(
+  'HoldIdInvalid',
+  {},
+  { title: 'HoldIdInvalid' },
+) {
+  /** Avoid echoing supplied wire input in diagnostics. */
+  override get message() {
+    return 'Invalid hold id'
+  }
+}

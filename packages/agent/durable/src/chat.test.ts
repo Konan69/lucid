@@ -86,6 +86,7 @@ it.live('approves a call and continues the same message', () =>
       harness,
       root.id,
       ChatTurn.cases.Resume.make({
+        messageId: before.message.id,
         known: ['call-pay'],
         decisions: [
           {
@@ -137,6 +138,7 @@ it.live('answers a tool that has no server execute', () =>
       harness,
       root.id,
       ChatTurn.cases.Resume.make({
+        messageId: before.message.id,
         known: ['call-ask'],
         decisions: [],
         outputs: [{ callId: 'call-ask', output: 'savings' }],

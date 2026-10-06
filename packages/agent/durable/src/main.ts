@@ -1,10 +1,10 @@
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
 import { createUIMessageStreamResponse, type UIMessageChunk } from 'ai'
-import { Effect, Function, Option, Schema, Stream } from 'effect'
+import { Effect, Function, Option, Result, Schema, Stream } from 'effect'
 
 import * as Core from './core.ts'
-import { TurnInvalid } from './errors.ts'
+import { HoldIdInvalid, TurnInvalid } from './errors.ts'
 import { prepareRun } from './stream.ts'
 import { TurnBody } from './respond.ts'
 import type { ToolsOptions } from './tools.ts'
@@ -72,7 +72,8 @@ export const continueRun = (...args: Parameters<typeof Core.continueRun>) =>
     ),
   )
 
-/** A decoded turn shares the core implementation and maps only the chat protocol failures. */
+/** A decoded turn shares the core and maps chat failures. Stale run message ids settle nothing.
+ * Client outputs match call ids, requiring provider uniqueness within one run; approvals are task-scoped. */
 export const respondTurn = (
   harness: Harness,
   conversationId: ConversationId,
@@ -92,7 +93,8 @@ export const respondTurn = (
     ),
   )
 
-/** Read JSON text through the compiled schema; a failed read or decode is an invalid turn. */
+/** Read JSON text once; failed reads/decodes are invalid turns. Resumes must name the current run
+ * message to settle anything. Outputs require call-id uniqueness within that run; approvals do not. */
 export async function respond(
   harness: Harness,
   conversationId: ConversationId,
@@ -136,6 +138,7 @@ export async function respond(
 }
 
 export {
+  HoldIdInvalid,
   CallNotWaiting,
   WatchClosed,
   WatchOverflowed,
@@ -191,3 +194,11 @@ export const history = (
       })
     }),
   )
+
+const decodeHoldId = Schema.decodeUnknownResult(Core.HoldId)
+/** Promise consumers validate their own opaque wire identity without importing the Effect contract. */
+export function holdId(text: string): Core.HoldId {
+  const result = decodeHoldId(text)
+  if (Result.isFailure(result)) throw new HoldIdInvalid({})
+  return result.success
+}
