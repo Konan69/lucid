@@ -51,6 +51,8 @@ export type RunState = {
   readonly response: number
   /** Blocks of the current response already reported, by `contentIndex`. */
   readonly blocks: ReadonlyMap<number, Reported>
+  /** Calls opened in this response; rejected anonymous calls cannot emit orphan result chunks. */
+  readonly calls: ReadonlySet<string>
   /**
    * Error text of the newest response when it failed. Pi Durable retries a failed request, so a
    * failure is reported only if the run ends with it still standing. Empty when there is none.
@@ -62,6 +64,7 @@ export const initialRunState: RunState = {
   turn: 0,
   response: 0,
   blocks: new Map(),
+  calls: new Set(),
   failure: [],
   results: new Set(),
 }
@@ -157,9 +160,16 @@ const mark = (state: RunState, contentIndex: number, reported: Reported): RunSta
   blocks: new Map(state.blocks).set(contentIndex, reported),
 })
 
+/** Record presentation identity separately from Pi result entry deduplication. */
+function recordCall(state: RunState, block: Block): RunState {
+  return block.type === 'toolCall'
+    ? { ...state, calls: new Set([...state.calls, block.id]) }
+    : state
+}
+
 /** A new turn: one AI SDK step. */
 const startTurn = (state: RunState): Step => ({
-  state: { ...state, turn: state.turn + 1, blocks: new Map() },
+  state: { ...state, turn: state.turn + 1, blocks: new Map(), calls: new Set() },
   chunks: [{ type: 'start-step' }],
 })
 
@@ -169,7 +179,13 @@ const startTurn = (state: RunState): Step => ({
  */
 function startResponse(state: RunState, partial: AssistantMessage): Step {
   const reset: readonly Chunk[] = state.blocks.size > 0 ? [{ type: 'reset-step' }] : []
-  const fresh: RunState = { ...state, response: state.response + 1, blocks: new Map(), failure: [] }
+  const fresh: RunState = {
+    ...state,
+    response: state.response + 1,
+    blocks: new Map(),
+    calls: new Set(),
+    failure: [],
+  }
   return partial.content.reduce<Step>(
     (step, block, contentIndex) => join(step, updateBlock(step.state, contentIndex, block)),
     { state: fresh, chunks: reset },
@@ -181,7 +197,9 @@ function startResponse(state: RunState, partial: AssistantMessage): Step {
  * before closing, opening the block first when nothing was streamed. Never duplicate its prefix.
  */
 function finishBlock(state: RunState, contentIndex: number, block: Block): Step {
-  if (!identified(block)) return { state, chunks: [] }
+  // generation.js startToolRound executes offered names even with an empty id. It rejects an
+  // empty name as tool_unavailable without a task. At the terminal entry use the id Pi recorded.
+  if (block.type === 'toolCall' && block.name.length === 0) return { state, chunks: [] }
   const reported = state.blocks.get(contentIndex)
   if (reported !== undefined && Reported.$is('Closed')(reported)) return { state, chunks: [] }
   const chunks =
@@ -191,7 +209,7 @@ function finishBlock(state: RunState, contentIndex: number, block: Block): Step 
           ...closeBlock(state, contentIndex, block),
         ]
       : wholeBlock(state, contentIndex, block)
-  return { state: mark(state, contentIndex, Reported.Closed()), chunks }
+  return { state: mark(recordCall(state, block), contentIndex, Reported.Closed()), chunks }
 }
 
 /**
@@ -207,7 +225,14 @@ function updateBlock(state: RunState, contentIndex: number, block: Block): Step 
     reported === undefined
       ? [...openBlock(state, contentIndex, block), ...blockBody(state, contentIndex, block, 0)]
       : blockBody(state, contentIndex, block, reported.length)
-  return { state: mark(state, contentIndex, Reported.Open({ length: bodyLength(block) })), chunks }
+  return {
+    state: mark(
+      recordCall(state, block),
+      contentIndex,
+      Reported.Open({ length: bodyLength(block) }),
+    ),
+    chunks,
+  }
 }
 
 /** Whole-message replacements update every partial block without implying a provider end. */
@@ -349,6 +374,7 @@ function toolEnd(toolCallId: string, entry: Option.Option<EntryRecord>): readonl
 
 /** Snapshot and live events can carry the same result. Entry identity spans steps without hiding reused call ids. */
 function resultStep(state: RunState, callId: string, entry: Option.Option<EntryRecord>): Step {
+  if (!state.calls.has(callId)) return { state, chunks: [] }
   if (Option.isSome(entry) && state.results.has(entry.value.id)) return { state, chunks: [] }
   return {
     state: Option.isNone(entry)
@@ -541,17 +567,18 @@ export function replayAfter(
   if (at === -1) return Option.none()
   const rest = snapshot.entries.slice(at + 1)
   const live = snapshot.run !== undefined
+  const called = replayEntry(
+    initialRunState,
+    Option.getOrThrow(Option.fromNullishOr(snapshot.entries[at])),
+  )
   const stored = rest.reduce<Step>(
     (step, entry) => join(step, replayEntry(step.state, entry)),
     // No message id: the client continues the assistant message it already has.
     {
-      state: initialRunState,
+      state: called.state,
       chunks: [
         { type: 'start' },
-        ...replayEntry(
-          initialRunState,
-          Option.getOrThrow(Option.fromNullishOr(snapshot.entries[at])),
-        ).chunks.filter(
+        ...called.chunks.filter(
           (chunk) => chunk.type === 'tool-input-start' || chunk.type === 'tool-input-available',
         ),
       ],

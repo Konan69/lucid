@@ -21,7 +21,7 @@ export const providerFamilies = [
   'late',
   'responses',
 ] as const
-export type ProviderFamily = (typeof providerFamilies)[number] | 'custom'
+export type ProviderFamily = (typeof providerFamilies)[number] | 'custom' | 'end' | 'never'
 export type ProviderOptions = RegisterFauxProviderOptions & {
   readonly partialFamily?: ProviderFamily
 }
@@ -67,6 +67,9 @@ function partial(message: AssistantMessage, state: PartialState): AssistantMessa
 
 /** Family-specific scratch fields follow the installed provider rather than faux's empty arguments. */
 function toolPartial(block: ToolCall, index: number, state: PartialState): ToolCall {
+  // Some providers reveal identity only in the terminal result; never uses the scripted empty
+  // fields unchanged, matching Bedrock's absent id/name with no subsequent filling branch.
+  if (state.family === 'end') return { ...block, id: '', name: '' }
   const text = state.arguments.get(index)
   if (text === undefined) return block
   const arguments_ = decodeArguments(parseStreamingJson(text))
@@ -75,7 +78,7 @@ function toolPartial(block: ToolCall, index: number, state: PartialState): ToolC
       ? { id: text.length < 2 ? '' : block.id, name: text.length < 6 ? '' : block.name }
       : { id: block.id, name: block.name }
   return Match.value(state.family).pipe(
-    Match.whenOr('anthropic', 'bedrock', 'responses', () => ({
+    Match.whenOr('anthropic', 'bedrock', 'responses', 'never', () => ({
       ...block,
       arguments: arguments_,
       partialJson: text,
