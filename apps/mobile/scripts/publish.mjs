@@ -115,14 +115,27 @@ NodeChildProcess.spawnSync(
 // such files an export leaves (`--source-maps external` above): a map is for the server's Sentry
 // upload only, never for a phone. Keeping the export to what `metadata.json` names keeps the
 // server's release directory honest, and sources are not shipped where they are not used.
-const metadata = JSON.parse(NodeFS.readFileSync(NodePath.join(directory, 'metadata.json'), 'utf8'))
+
 /**
- * Every path `metadata.json` names for the platform, the shape the server also decodes
- * (`apps/server/src/updates/release.ts`): the launch bundle at `bundle` as one path, then the
- * assets, each carrying its own `path`. The metadata is machine-written by `expo export` in the
- * same process, so it is read as-is; an export that deviates from the server's contract fails
- * loudly here, and anything the platform entry does not name stays for the map sweep below.
+ * The metadata shape `expo export` writes, mirroring what the server decodes
+ * (`apps/server/src/updates/release.ts`): per platform, the launch bundle at `bundle` and the
+ * assets each carrying `path`; the other platform's key may be absent. Decoding here means an
+ * export that deviates from the server's contract fails the publish loudly instead of being
+ * read as-is, and anything the platform entry does not name stays for the map sweep below.
  */
+const ExportedFiles = Schema.Struct({
+  bundle: Schema.String,
+  assets: Schema.Array(Schema.Struct({ path: Schema.String, ext: Schema.String })),
+})
+const Metadata = Schema.Struct({
+  fileMetadata: Schema.Struct({
+    ios: Schema.optionalKey(ExportedFiles),
+    android: Schema.optionalKey(ExportedFiles),
+  }),
+})
+const metadata = Schema.decodeSync(Schema.fromJsonString(Metadata))(
+  NodeFS.readFileSync(NodePath.join(directory, 'metadata.json'), 'utf8'),
+)
 const named = new Set(
   Object.values(metadata.fileMetadata)
     .flatMap((platform) => [platform.bundle, ...platform.assets.map((asset) => asset.path)])
