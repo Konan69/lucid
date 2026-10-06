@@ -99,7 +99,10 @@ export function connectionTools(runTool: RunTool) {
             }
             const service = yield* Effect.fromResult(
               named(
-                catalog(another ? [...found.connected, ...found.unconnected] : found.unconnected, name),
+                catalog(
+                  another ? [...found.connected, ...found.unconnected] : found.unconnected,
+                  name,
+                ),
                 data.service,
               ),
             )

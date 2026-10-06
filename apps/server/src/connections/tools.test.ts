@@ -479,7 +479,10 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         const specific = yield* findTools(ownerActor, { query: 'Records read' })
         expect(specific.tools.map((tool) => tool.name)).toEqual(['read', 'read', 'write'])
         const account = yield* findTools(ownerActor, { query: 'Work' })
-        expect(account.tools.map((tool) => tool.account)).toEqual(['Records (Work)', 'Records (Work)'])
+        expect(account.tools.map((tool) => tool.account)).toEqual([
+          'Records (Work)',
+          'Records (Work)',
+        ])
         expect((yield* findTools(ownerActor, { query: 'unrelated' })).tools).toEqual([])
       }),
     )
@@ -603,7 +606,8 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           second.connection.id,
         ])
         expect(
-          (yield* resolveTool(ownerActor, { account: 'Records (Gmail (Gmail))', tool: 'read' })).connectionId,
+          (yield* resolveTool(ownerActor, { account: 'Records (Gmail (Gmail))', tool: 'read' }))
+            .connectionId,
         ).toBe(first.connection.id)
         expect(
           (yield* resolveTool(ownerActor, { account: 'Records (Gmail (Gmail)) (2)', tool: 'read' }))
@@ -623,12 +627,15 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             .connectionId,
         ).toBe(first.connection.id)
         expect(
-          (yield* resolveTool(ownerActor, { account: ' RECORDS (GMAIL (gmail)) (2) ', tool: 'read' }))
-            .connectionId,
+          (yield* resolveTool(ownerActor, {
+            account: ' RECORDS (GMAIL (gmail)) (2) ',
+            tool: 'read',
+          })).connectionId,
         ).toBe(second.connection.id)
         expect(
-          (yield* Effect.flip(resolveTool(ownerActor, { account: 'records (gmail (gmail))', tool: 'READ' })))
-            ._tag,
+          (yield* Effect.flip(
+            resolveTool(ownerActor, { account: 'records (gmail (gmail))', tool: 'READ' }),
+          ))._tag,
         ).toBe('NotFound')
         const writes = yield* findTools(ownerActor, { query: 'write', limit: 25 })
         expect(writes.tools.map((tool) => tool.account)).toEqual(['Records (Gmail (Gmail))'])
@@ -971,7 +978,8 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             ),
           ).toEqual(['read'])
           expect(
-          (yield* resolveTool(ownerActor, { account: 'Records (Wiki)', tool: 'ask_question' })).effect,
+            (yield* resolveTool(ownerActor, { account: 'Records (Wiki)', tool: 'ask_question' }))
+              .effect,
           ).toBe('read')
           yield* useTool(ownerActor, {
             connectionId: connection.connection.id,

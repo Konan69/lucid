@@ -128,13 +128,15 @@ const executorLabel = (serviceName: string) => serviceName.slice(0, 40)
 const identify = Effect.fn('Connections.identify')(function* (row: ConnectionRecord) {
   if (row.status !== 'ready') return row
   const executor = yield* Executor
-  const identity = yield* executor.identity(row.references).pipe(
-    Effect.catch((failure) =>
-      Effect.logWarning('Integration identity unavailable', failure._tag).pipe(
-        Effect.as(Option.none<typeof row.identity & string>()),
+  const identity = yield* executor
+    .identity(row.references)
+    .pipe(
+      Effect.catch((failure) =>
+        Effect.logWarning('Integration identity unavailable', failure._tag).pipe(
+          Effect.as(Option.none<typeof row.identity & string>()),
+        ),
       ),
-    ),
-  )
+    )
   if (Option.isNone(identity) || identity.value === row.identity) return row
   return yield* saveIdentity(row, identity.value).pipe(
     Effect.catchTag('Conflict', () => Effect.succeed(row)),
