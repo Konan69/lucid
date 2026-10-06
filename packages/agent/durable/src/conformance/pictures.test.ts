@@ -9,6 +9,7 @@ import { PlainChat } from '../fixtures/chat.ts'
 import type { ProviderOptions } from '../fixtures/provider.ts'
 import { decodeTurn, history, respond, streamRun, PartUnsupported, TurnInvalid } from '../main.ts'
 import { context, host } from './fixtures/host.ts'
+import { consume } from './fixtures/host.ts'
 
 // A valid one-pixel PNG, not a URL that a test or server could fetch.
 const data =
@@ -20,6 +21,70 @@ const picture: FileUIPart = {
   filename: 'picture.png',
 }
 const images: ProviderOptions = { models: [{ id: 'faux-1', input: ['text', 'image'] }] }
+
+/** Large base64 input with the PNG signature; validation never decodes/copies the full binary. */
+function largePicture(megabytes: number, malformed: boolean): Core.InputPart {
+  const length = megabytes * 1024 * 1024
+  const payload = 'iVBORw0KGgoA' + 'AAAA'.repeat(length / 4 - 4)
+  return {
+    type: 'file',
+    mediaType: 'image/png',
+    url: `data:image/png;base64,${payload}${malformed ? 'AAA!' : 'AAAA'}`,
+  }
+}
+
+/** Exercise public admission and HTTP rejection at sizes that overflowed Schema.isBase64. */
+for (const megabytes of [8, 32]) {
+  it.live(`admits ${megabytes} MB base64 without a regex stack overflow`, () =>
+    Effect.promise(async () => {
+      const fixture = await host({}, {}, {}, images)
+      const opened = await fixture.open()
+      opened.faux.setResponses([fauxAssistantMessage('Accepted.')])
+      const part = largePicture(megabytes, false)
+      const stream = await streamRun(
+        opened.harness,
+        { conversationId: opened.root.id, content: [part], requestId: 'large-image' },
+        context,
+      )
+      const result = await consume(stream)
+      expect(result.message.parts).toContainEqual({
+        type: 'text',
+        text: 'Accepted.',
+        state: 'done',
+      })
+      expect(opened.faux.state.callCount).toBe(1)
+    }),
+  )
+  it.live(`rejects malformed ${megabytes} MB base64 with tagged core failure and HTTP 400`, () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(() => host({}, {}, {}, images))
+      const opened = yield* Effect.promise(() => fixture.open())
+      const parts = [largePicture(megabytes, true)]
+      const result = yield* Core.prepareRun(
+        opened.harness,
+        { conversationId: opened.root.id, content: parts, requestId: 'invalid-large-image' },
+        context,
+      ).pipe(Effect.flip)
+      expect(result).toBeInstanceOf(PartUnsupported)
+      const response = yield* Effect.promise(() =>
+        respond(
+          opened.harness,
+          opened.root.id,
+          new Request('http://durable.test/chat', {
+            method: 'POST',
+            body: JSON.stringify({ messages: [{ role: 'user', id: 'bad-image', parts }] }),
+          }),
+          context,
+        ),
+      )
+      expect(response.status).toBe(400)
+      expect(opened.faux.state.callCount).toBe(0)
+      expect(
+        (yield* Effect.promise(() => opened.root.entries({}, 10, undefined, context))).items,
+      ).toEqual([])
+    }),
+  )
+}
 
 /** Assert a real user entry exists before comparing what the provider received. */
 function userContent(messages: readonly Message[]) {

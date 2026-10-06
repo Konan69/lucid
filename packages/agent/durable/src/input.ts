@@ -1,8 +1,9 @@
 import type { UserInput } from '@earendil-works/pi-durable'
 import type { TextContent, ImageContent } from '@earendil-works/pi-ai'
-import { Effect, Predicate, Schema } from 'effect'
+import { Effect, Option, Predicate, Schema } from 'effect'
 
 import { PartUnsupported, TurnInvalid } from './errors.ts'
+import { base64Size } from './base64.ts'
 
 /** Ordered SDK user content; a file remains explicit until admission validates its representation. */
 export const InputPart = Schema.Union([
@@ -43,14 +44,15 @@ export const decodeStoredImage = Schema.decodeUnknownSync(StoredImage)
 
 const ImageData = Schema.Struct({
   mimeType: Schema.String.check(Schema.isPattern(/^image\/[a-zA-Z0-9.+-]+$/u)),
-  data: Schema.String.check(Schema.isBase64(), Schema.isMinLength(1)),
+  data: Schema.String,
 })
 type FilePart = Extract<InputPart, { type: 'file' }>
 
 /** Only inline base64 images map to Pi's input. Never fetch a URL or discard unsupported files. */
 const image = Effect.fn('Durable.imageInput')(function* (part: FilePart) {
   const prefix = `data:${part.mediaType};base64,`
-  if (!part.url.startsWith(prefix)) return yield* new PartUnsupported({ mediaType: part.mediaType })
+  if (!part.url.startsWith(prefix) || Option.isNone(base64Size(part.url, prefix.length)))
+    return yield* new PartUnsupported({ mediaType: part.mediaType })
   const data = yield* ImageData.makeEffect({
     mimeType: part.mediaType,
     data: part.url.slice(prefix.length),
