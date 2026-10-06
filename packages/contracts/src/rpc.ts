@@ -74,6 +74,7 @@ import {
 import { UseWindowRequest, WindowOutcome } from './windows.js'
 import { DraftListResponse, DraftSaved, SaveDraftRequest } from './drafts.js'
 import {
+  ACCOUNT_HANDLE_MAX,
   AddIntegrationRequest,
   AddIntegrationOutcome,
   FindIntegrationsRequest,
@@ -642,7 +643,7 @@ const FindTools = Rpc.make('FindTools', {
 const ResolveTool = Rpc.make('ResolveTool', {
   ...call,
   payload: {
-    account: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+    account: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(ACCOUNT_HANDLE_MAX)),
     tool: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
   },
   success: ConnectionTool,

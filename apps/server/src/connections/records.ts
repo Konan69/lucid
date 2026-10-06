@@ -23,6 +23,8 @@ import { connectionLogo, IMPORTED } from './logo.ts'
 import { namedAccounts } from './names.ts'
 import { connections } from './tables.ts'
 
+/** A stored Connection. The retired `label` column (`tables.ts`) is read by nothing, so it is
+ * left out of the record here, once, and no caller ever sees it. */
 const rowSchema = createSelectSchema(connections, {
   id: ConnectionId,
   service: ServiceId,
@@ -32,7 +34,7 @@ const rowSchema = createSelectSchema(connections, {
   companyId: Schema.NullOr(CompanyId),
   references: ExecutorReferences,
   status: Schema.Literals(['ready', 'needs-authorization', 'failed']),
-})
+}).mapFields(({ label: _retired, ...fields }) => fields)
 export type ConnectionRecord = typeof rowSchema.Type
 const decodeConnectionId = Schema.decodeUnknownEffect(ConnectionId)
 const decodeRow = decodeStored(rowSchema, 'Connection')
@@ -222,9 +224,14 @@ export const saveState = Effect.fn('Connections.saveState')(function* (
 })
 
 /**
- * Writes who the service says signed in, once Executor has said. It changes nothing else, so a
- * state change that happened meanwhile is kept; the row's revision moves with it, and the caller
- * gets the row as it now is.
+ * Writes who the service says signed in, once Executor has said. It is written only onto the row
+ * the service was asked about: `updated_at` is the revision of a Connection's authorization
+ * (`saveState` compares it), so a row whose authorization changed while the service was being
+ * asked is left alone, and its identity is asked for again when it next becomes ready.
+ *
+ * The revision is compared and never moved. An identity is not part of the authorization, and a
+ * write that moved the revision would make a sign-in that is completing at that moment fail its
+ * own comparison after the service had already accepted it.
  */
 export const saveIdentity = Effect.fn('Connections.saveIdentity')(function* (
   row: ConnectionRecord,
@@ -234,7 +241,7 @@ export const saveIdentity = Effect.fn('Connections.saveIdentity')(function* (
   const rows = yield* database.run(
     database
       .update(connections)
-      .set({ identity, updatedAt: yield* Clock.currentTimeMillis })
+      .set({ identity })
       .where(and(eq(connections.id, row.id), eq(connections.updatedAt, row.updatedAt)))
       .returning(),
   )
@@ -248,6 +255,11 @@ export const saveIdentity = Effect.fn('Connections.saveIdentity')(function* (
 /**
  * Writes what the Person calls the account, or takes the name away with null. Scoped to the row's
  * own owner like every other write here; the row's state and references are left alone.
+ *
+ * `updated_at` is left alone too. It is the revision `saveState` compares, and a name is not
+ * part of the authorization: a Person naming an account while its sign-in is completing would
+ * otherwise make that completion fail its comparison after the service had accepted it, and the
+ * account would stay "not finished".
  */
 export const saveName = Effect.fn('Connections.saveName')(function* (
   row: ConnectionRecord,
@@ -257,7 +269,7 @@ export const saveName = Effect.fn('Connections.saveName')(function* (
   const rows = yield* database.run(
     database
       .update(connections)
-      .set({ name, updatedAt: yield* Clock.currentTimeMillis })
+      .set({ name })
       .where(
         and(
           eq(connections.id, row.id),

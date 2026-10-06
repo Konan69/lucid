@@ -13,9 +13,13 @@ import { companyColumn, epoch, personColumn } from '../database/owner.ts'
  * One Person may hold several rows for one `service`: each is one more account, and nothing here
  * makes a service unique. Two columns tell such rows apart and are never mixed. `name` is what the
  * Person called the account ("Work"), null until they call it anything. `identity` is who the
- * service says signed in ("ada@example.com"), null when the service does not say. There was one
- * `label` column for both; every client filled it with the service's own name, so it told no two
- * accounts apart.
+ * service says signed in ("ada@example.com"), null when the service does not say.
+ *
+ * `label` is retired: no code reads or writes it. There was one `label` for both facts, and every
+ * client filled it with the service's own name, so it told no two accounts apart. The column
+ * stays, without its NOT NULL, for one release: a deploy applies migrations while the previous
+ * server is still answering, and that server selects and inserts `label`. Drop it in the release
+ * after this one (6 October 2026).
  */
 export const connections = pgTable(
   'vivid_connections',
@@ -25,6 +29,7 @@ export const connections = pgTable(
     serviceName: text('service_name').notNull(),
     name: text('name'),
     identity: text('identity'),
+    label: text('label'),
     personId: personColumn().notNull(),
     companyId: companyColumn(),
     references: jsonb('references').notNull(),

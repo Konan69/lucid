@@ -29,6 +29,14 @@ export type ConnectionState = typeof ConnectionState.Type
 export const ACCOUNT_NAME_MAX = 40
 
 /**
+ * The most characters an account's whole name may have ("Gmail (ada@example.com)"). Discovery,
+ * resolution, a program's call and the runtime's tool input all take a name of this length and no
+ * longer, so a name Vivid is shown is always one it can act through. A name that is longer is not
+ * shown to Vivid at all.
+ */
+export const ACCOUNT_HANDLE_MAX = 300
+
+/**
  * What a Person calls one of their accounts, to tell it from their others on the same service:
  * "Work", "Personal". 1 to 40 characters with no space at either end, on one line. It is said to
  * the model as plain text and drawn in one line of a row, so a line break has no honest meaning in
@@ -438,7 +446,7 @@ export type AddIntegrationOutcome = typeof AddIntegrationOutcome.Type
 
 /** The server chooses a safe call; the model supplies only an accessible account name. */
 export const TestIntegrationRequest = Schema.Struct({
-  account: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(300)),
+  account: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(ACCOUNT_HANDLE_MAX)),
 })
 export interface TestIntegrationRequest extends Schema.Schema.Type<typeof TestIntegrationRequest> {}
 

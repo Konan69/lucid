@@ -643,11 +643,15 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         expect(
           again.tools.filter((tool) => tool.name === 'read').map((tool) => tool.account),
         ).toEqual(labels.map((tool) => tool.account))
-        yield* store.begin(ownerActor, { service: serviceId, name: 'Owner only', shared: false })
-        expect(
-          (yield* Effect.flip(resolveTool(memberActor, { account: 'Owner only', tool: 'read' })))
-            ._tag,
-        ).toBe('NotFound')
+        const mine = yield* store.begin(ownerActor, {
+          service: serviceId,
+          name: 'Owner only',
+          shared: false,
+        })
+        // The owner acts through the account under its name; another Person cannot find it.
+        const owned = { account: 'Records (Owner only)', tool: 'read' }
+        expect((yield* resolveTool(ownerActor, owned)).connectionId).toBe(mine.connection.id)
+        expect((yield* Effect.flip(resolveTool(memberActor, owned)))._tag).toBe('NotFound')
       }),
     )
 

@@ -20,6 +20,7 @@ import {
   BeginConnectionRequest,
   CompanyId,
   CompleteConnectionRequest,
+  Conflict,
   Connection,
   ConnectionId,
   ConnectionState,
@@ -138,9 +139,47 @@ const identify = Effect.fn('Connections.identify')(function* (row: ConnectionRec
       ),
     )
   if (Option.isNone(identity) || identity.value === row.identity) return row
+  // Not being able to keep the answer is the same as not having one: the Connection is ready
+  // either way, and what follows (publishing it, the audit entry) must still happen.
   return yield* saveIdentity(row, identity.value).pipe(
-    Effect.catchTag('Conflict', () => Effect.succeed(row)),
+    Effect.catch((failure) =>
+      Effect.logWarning('Integration identity not saved', failure._tag).pipe(Effect.as(row)),
+    ),
   )
+})
+
+/**
+ * A name is given once among the accounts it could be confused with: a Person's own accounts on
+ * a service, or the accounts a Company shares on it. Two of those that were both called "Work"
+ * would have to be told apart by a number on the later one, and a number moves when the earlier
+ * account is renamed or removed: Vivid, still holding the old name, would then act through the
+ * other account. So a name another account of the same owner already has on the service is
+ * refused. Case and the spaces around it do not make a name different.
+ *
+ * A Person's own account and their Company's may still share a name: whoever names the Company's
+ * cannot see what each member called their own. Those two are told apart by the number.
+ */
+const requireFreeName = Effect.fn('Connections.requireFreeName')(function* (
+  actor: Actor,
+  target: Pick<ConnectionRecord, 'service' | 'name' | 'companyId'> & {
+    /** The account being renamed, which does not clash with itself; null for a new account. */
+    readonly except: ConnectionId | null
+  },
+) {
+  if (target.name === null) return
+  const wanted = target.name.trim().toLowerCase()
+  const taken = (yield* listRecords(actor)).some(
+    (row) =>
+      row.service === target.service &&
+      row.companyId === target.companyId &&
+      row.id !== target.except &&
+      row.name !== null &&
+      row.name.trim().toLowerCase() === wanted,
+  )
+  if (taken)
+    return yield* Effect.fail(
+      new Conflict({ message: 'Another account on this integration already has that name.' }),
+    )
 })
 
 /** Persist authorization state before auditing readiness; provider calls remain outside transactions. */
@@ -208,6 +247,13 @@ const begin = Effect.fn('Connections.begin')(function* (
   if (request.shared) companyId = (yield* requireAdmin(actor.workspace)).company.id
   if (ServiceAuthorization.guards.SetupRequired(service.authorization))
     return yield* Effect.fail(new InvalidRequest({ message: connectionSetupMessage }))
+  // Refused before anything is allocated at the service: a name is Vivid's own.
+  yield* requireFreeName(actor, {
+    service: service.id,
+    name: request.name,
+    companyId,
+    except: null,
+  })
   const id = ConnectionId.make(crypto.randomUUID())
   const config = yield* ServerConfig
   const owner = ExecutorOwnerId.make(companyId === null ? `p-${actor.person.id}` : `c-${companyId}`)
@@ -746,6 +792,14 @@ const makeManagement = (input: {
     ) {
       const row = yield* get(actor, request.id)
       yield* mayManage(actor, row)
+      yield* provide(
+        requireFreeName(actor, {
+          service: row.service,
+          name: request.name,
+          companyId: row.companyId,
+          except: row.id,
+        }),
+      )
       const saved = yield* provide(saveName(row, request.name))
       yield* provide(recordChanged(actor, saved))
       return yield* provide(publicConnection(actor, saved))

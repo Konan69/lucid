@@ -214,6 +214,17 @@ const fakeWatchLayer = Layer.effectContext(
           }),
         ),
       ),
+      // A watch that exists keeps its Connection and its trigger; only its baseline is new.
+      rebase: Effect.fn('Test.IntegrationWatch.rebase')((_actor, watch) =>
+        Effect.succeed(
+          Watch.make({
+            connectionId: watch.connectionId,
+            trigger: watch.trigger,
+            cursor: WatchCursor.cases.Empty.make({}),
+            intervalMillis: watch.intervalMillis,
+          }),
+        ),
+      ),
       newItems: Effect.fn('Test.IntegrationWatch.newItems')(function* () {
         yield* Ref.update(reads, (count) => count + 1)
         if (yield* Ref.get(revoked))

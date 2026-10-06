@@ -30,7 +30,7 @@ import {
 import { connectionHandlers } from './handlers.ts'
 import { namedAccounts } from './names.ts'
 import type { ConnectionRecord } from './records.ts'
-import { connectionStoreLayer } from './store.ts'
+import { ConnectionStore, connectionStoreLayer } from './store.ts'
 import {
   ConnectionProbe,
   connectionTestLayer,
@@ -220,24 +220,86 @@ describe.skipIf(!testDatabaseConfigured)('several accounts on one Integration', 
       }),
     )
 
-    test.effect('tells two accounts apart by a number when neither has a name or an identity', () =>
+    test.effect(
+      'numbers an account by its place on the service, so a name is never handed on',
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor, threadId } = yield* fixture()
+          const first = yield* connect(ownerActor, Option.none())
+          const second = yield* connect(ownerActor, Option.none())
+          expect([first.account, second.account]).toEqual(['Records', 'Records (2)'])
+          const vivid = AuthState.Vivid({
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
+            threadId,
+          })
+          // Vivid was shown the first account as "Records". The Person then names that account.
+          const renamed = yield* connectionHandlers
+            .RenameConnection({ id: first.id, name: 'Work' })
+            .pipe(Effect.provideService(AuthContext, person(ownerActor)))
+          expect(renamed.connection.account).toBe('Records (Work)')
+          const listed = yield* connectionHandlers
+            .ListConnections()
+            .pipe(Effect.provideService(AuthContext, person(ownerActor)))
+          // The second account keeps its own name. It does not become "Records".
+          expect(listed.connections.map((item) => item.account).toSorted()).toEqual([
+            'Records (2)',
+            'Records (Work)',
+          ])
+          // So the name Vivid still holds for the first account reaches no account at all, and
+          // never the second one.
+          expect(
+            (yield* connectionHandlers
+              .ResolveTool({ account: 'Records', tool: 'read' })
+              .pipe(Effect.provideService(AuthContext, vivid), Effect.flip))._tag,
+          ).toBe('NotFound')
+          const stillSecond = yield* connectionHandlers
+            .ResolveTool({ account: 'Records (2)', tool: 'read' })
+            .pipe(Effect.provideService(AuthContext, vivid))
+          expect(stillSecond.connectionId).toBe(second.id)
+        }),
+    )
+
+    test.effect('refuses a name another account on the same service already has', () =>
       Effect.gen(function* () {
         const { ownerActor } = yield* fixture()
         const first = yield* connect(ownerActor, Option.none())
         const second = yield* connect(ownerActor, Option.none())
-        expect([first.account, second.account]).toEqual(['Records', 'Records (2)'])
-        // Naming the first one is what the Person does about it.
-        const renamed = yield* connectionHandlers
-          .RenameConnection({ id: first.id, name: 'Work' })
+        const rename = (id: ConnectionId, name: string | null) =>
+          connectionHandlers
+            .RenameConnection({ id, name })
+            .pipe(Effect.provideService(AuthContext, person(ownerActor)))
+        yield* rename(first.id, 'Work')
+        // Case and spaces do not make it a different name.
+        expect((yield* rename(second.id, 'work').pipe(Effect.flip))._tag).toBe('Conflict')
+        // Saving the name an account already has is not a clash with itself.
+        expect((yield* rename(first.id, 'Work')).connection.name).toBe('Work')
+        // A third account cannot be added under it either, and nothing is begun for it.
+        const probe = yield* ConnectionProbe
+        const begins = yield* Ref.get(probe.begins)
+        expect(
+          (yield* connectionHandlers
+            .BeginConnection({ service: serviceId, name: 'Work', shared: false })
+            .pipe(Effect.provideService(AuthContext, person(ownerActor)), Effect.flip))._tag,
+        ).toBe('Conflict')
+        expect(yield* Ref.get(probe.begins)).toBe(begins)
+      }),
+    )
+
+    test.effect('does not move an account’s authorization revision when it is named', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const connected = yield* connect(ownerActor, Option.some(identityOf('ada@work.example')))
+        const store = yield* ConnectionStore
+        const before = yield* store.get(ownerActor, connected.id)
+        yield* TestClock.adjust('1 minute')
+        yield* connectionHandlers
+          .RenameConnection({ id: connected.id, name: 'Work' })
           .pipe(Effect.provideService(AuthContext, person(ownerActor)))
-        expect(renamed.connection.account).toBe('Records (Work)')
-        const listed = yield* connectionHandlers
-          .ListConnections()
-          .pipe(Effect.provideService(AuthContext, person(ownerActor)))
-        expect(listed.connections.map((item) => item.account).toSorted()).toEqual([
-          'Records',
-          'Records (Work)',
-        ])
+        const after = yield* store.get(ownerActor, connected.id)
+        // `saveState` compares this revision: a sign-in completing while the Person names the
+        // account must still find the revision it read.
+        expect([after.name, after.updatedAt]).toEqual(['Work', before.updatedAt])
       }),
     )
 
@@ -380,7 +442,7 @@ describe('the name an account has among a Person’s accounts', () => {
   const row = (
     id: string,
     createdAt: number,
-    said: Partial<Pick<ConnectionRecord, 'serviceName' | 'name' | 'identity'>>,
+    said: Partial<Pick<ConnectionRecord, 'service' | 'serviceName' | 'name' | 'identity'>>,
   ): ConnectionRecord => ({
     id: ConnectionId.make(id),
     service: ServiceId.make('google/gmail'),
@@ -403,17 +465,30 @@ describe('the name an account has among a Person’s accounts', () => {
     ...said,
   })
 
+  const wiki = { service: ServiceId.make('curated/deepwiki'), serviceName: 'DeepWiki' }
+
   it('leads with the service, then what the Person called it, else who the service says it is', () => {
     const named = namedAccounts([
       row('a', 1, { name: accountName('Work'), identity: identityOf('ada@work.example') }),
       row('b', 2, { identity: identityOf('ada@home.example') }),
-      row('c', 3, { serviceName: 'DeepWiki' }),
+      row('c', 3, wiki),
     ])
     expect(named.map((entry) => entry.account)).toEqual([
       'Gmail (Work)',
       'Gmail (ada@home.example)',
       'DeepWiki',
     ])
+  })
+
+  it('counts an unnamed account’s place over every account on its service', () => {
+    const named = namedAccounts([
+      row('first', 1, { name: accountName('Work') }),
+      row('second', 2, {}),
+      row('other', 3, wiki),
+    ])
+    // The second Gmail account is the second whatever the first is called; the account on
+    // another service is the first there.
+    expect(named.map((entry) => entry.account)).toEqual(['Gmail (Work)', 'Gmail (2)', 'DeepWiki'])
   })
 
   it('numbers the later of two names that read the same, without colliding with a real name', () => {

@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "4d79c343-31a7-4658-a7a7-69b2a3cce924",
+  "id": "942fab09-60be-4cbb-aa29-f8842fd2d353",
   "prevIds": [
     "145e3db0-7d3d-4213-b99a-d6701c1dc13d"
   ],
@@ -1089,6 +1089,19 @@
       "generated": null,
       "identity": null,
       "name": "identity",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "vivid_connections"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "label",
       "entityType": "columns",
       "schema": "public",
       "table": "vivid_connections"

@@ -312,16 +312,40 @@ const makeCreate = (database: DatabaseService, watch: IntegrationWatch['Service'
     return routineView(yield* decodeRoutine(yield* returned(rows, 'Routine')), [])
   })
 
-/** Trigger changes replace the binding; metadata-only patches retain the established cursor. */
+/**
+ * Trigger changes replace the binding; metadata-only patches retain the established cursor. A
+ * Routine switched on again keeps its binding and takes a fresh baseline on it, and its trigger
+ * then names the account as it is called now.
+ */
 function patchedTrigger(current: RoutineRecord, input: PatchInput, prepared: Watch | null) {
+  if (prepared !== null) return { trigger: prepared.trigger, integration: prepared }
   if (input.trigger === undefined)
-    return {
-      trigger: current.routine.trigger,
-      integration: prepared === null ? current.integration : prepared,
-    }
-  if (prepared === null) return { trigger: input.trigger, integration: null }
-  return { trigger: prepared.trigger, integration: prepared }
+    return { trigger: current.routine.trigger, integration: current.integration }
+  return { trigger: input.trigger, integration: null }
 }
+
+/**
+ * The watch a patch leaves the Routine with, when the patch needs a new baseline. A new trigger
+ * is resolved by the account it names. Switching the Routine on again with the trigger it has is
+ * not: it goes back to the Connection the watch is already bound to (`rebase`), because the
+ * account may have been renamed since, and its old name may now be another account's.
+ */
+const preparedWatch = Effect.fn('RoutineStore.preparedWatch')(function* (
+  watch: IntegrationWatch['Service'],
+  actor: Actor,
+  authorized: RoutineRecord,
+  input: PatchInput,
+) {
+  if (input.trigger !== undefined)
+    return RoutineTrigger.guards.Integration(input.trigger)
+      ? yield* watch.prepare(actor, input.trigger)
+      : null
+  if (input.enabled !== true) return null
+  if (authorized.integration !== null) return yield* watch.rebase(actor, authorized.integration)
+  return RoutineTrigger.guards.Integration(authorized.routine.trigger)
+    ? yield* watch.prepare(actor, authorized.routine.trigger)
+    : null
+})
 
 /** Resume schedules a future observation; editing the prompt does not reset the provider baseline. */
 const patchedDue = Effect.fn('RoutineStore.patchedDue')(function* (change: {
@@ -381,12 +405,7 @@ const makePatch = (
     // Authorize before the read-only baseline call; network I/O never runs under a row lock.
     const authorized = yield* makeGet(database)(actor, id)
     yield* requireStandingPerson(actor, authorized.routine.prompt)
-    const selected = input.trigger === undefined ? authorized.routine.trigger : input.trigger
-    const rebaseline = input.trigger !== undefined || input.enabled === true
-    const prepared =
-      rebaseline && RoutineTrigger.guards.Integration(selected)
-        ? yield* watch.prepare(actor, selected)
-        : null
+    const prepared = yield* preparedWatch(watch, actor, authorized, input)
     const updated = yield* database.transaction((tx) =>
       Effect.gen(function* () {
         const rows = yield* tx
