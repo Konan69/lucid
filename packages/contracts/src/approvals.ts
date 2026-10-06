@@ -22,7 +22,6 @@ export const ActionTarget = Schema.TaggedUnion({
     tool: Schema.String,
     input: Schema.Json,
   },
-  Command: { command: Schema.String },
   Browser: { action: BrowserAction, target: DefaultBrowseTarget },
   /** One pointer or keyboard action on the Computer's desktop. */
   Desktop: { action: DesktopAction },

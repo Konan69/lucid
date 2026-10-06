@@ -35,7 +35,6 @@ export const actionDigest = (
 export const auditAction = (action: ProposedAction) =>
   ActionTarget.match(action.target, {
     Connection: ({ account, tool }) => ({ service: account, tool }),
-    Command: () => ({ service: 'Computer', tool: 'command' }),
     Browser: ({ target }) => ({
       service: BrowseTarget.guards.Person(target) ? 'Person browser' : 'Computer',
       tool: 'browser',

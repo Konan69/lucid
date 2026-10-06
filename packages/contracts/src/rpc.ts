@@ -54,9 +54,7 @@ import {
   BrowseRequest,
   DesktopOutcome,
   UseDesktopRequest,
-  CommandOutcome,
   ComputerResponse,
-  RunCommandRequest,
   ComputerShellRequest,
   ComputerShellOutcome,
   ComputerFileReadRequest,
@@ -706,11 +704,6 @@ const HoldComputer = Rpc.make('HoldComputer', {
   payload: { held: Schema.Boolean },
   success: ComputerResponse,
 })
-const RunCommand = Rpc.make('RunCommand', {
-  ...call,
-  payload: RunCommandRequest,
-  success: CommandOutcome,
-})
 /** Vivid's own shell and files on the acting Person's Computer; runtime-only at the handler. */
 const ComputerShell = Rpc.make('ComputerShell', {
   ...call,
@@ -952,7 +945,6 @@ export const VividRpc = RpcGroup.make(
   StartComputer,
   StopComputer,
   HoldComputer,
-  RunCommand,
   ComputerShell,
   ComputerFileRead,
   ComputerFileWrite,

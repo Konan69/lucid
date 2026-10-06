@@ -17,7 +17,7 @@ import {
 import { Option, Predicate, Result, Schema } from 'effect'
 import { APPROVAL_EFFECT_WORDS, browserStep, desktopStep } from '@vivid/state'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
-import { Check, Globe, Link2, MousePointer2, ShieldQuestion, Terminal, X } from 'lucide-react'
+import { Check, Globe, Link2, MousePointer2, ShieldQuestion, X } from 'lucide-react'
 import { BorderBeam } from 'border-beam'
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { change, live, useLiveValue } from '../../data/live'
@@ -80,7 +80,6 @@ export function cardFor(
 
 const TARGET_ICON = {
   Connection: <Link2 className="size-4" />,
-  Command: <Terminal className="size-4" />,
   Browser: <Globe className="size-4" />,
   Desktop: <MousePointer2 className="size-4" />,
 } satisfies Record<ActionTarget['_tag'], ReactNode>
@@ -177,7 +176,6 @@ function Exactly({ target }: { target: ActionTarget }) {
       <span className="min-w-0 font-mono wrap-break-word whitespace-pre-wrap">
         {ActionTarget.match(target, {
           Connection: ({ account, tool }) => `${account} · ${tool}`,
-          Command: ({ command }) => command,
           Browser: ({ action }) => browserStep(action),
           Desktop: ({ action }) => desktopStep(action),
         })}

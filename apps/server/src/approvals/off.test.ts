@@ -14,7 +14,7 @@ import { RuleStore } from '../rules/store.ts'
 import { Runtime } from '../runtime/client.ts'
 import { Gate, GateDecision, gateLayer } from './gate.ts'
 import { reviewerLayer } from './review.ts'
-import { commandAction, connectionAction, fixture, stores } from './testing.ts'
+import { desktopAction, connectionAction, fixture, stores } from './testing.ts'
 
 /**
  * The gate over the production Reviewer and RuleJudge with decisions switched off, which is how
@@ -93,7 +93,7 @@ describe.skipIf(!testDatabaseConfigured)('The gate with decisions switched off',
         decision: 'Never',
         scope: RuleScope.cases.Personal.make({}),
       })
-      for (const action of [connectionAction, commandAction])
+      for (const action of [connectionAction, desktopAction])
         expect(
           GateDecision.guards.ApprovalRequired(yield* gate.check(test.vivid, action, 'Ordinary')),
         ).toBe(true)

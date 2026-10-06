@@ -989,11 +989,11 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         const { first } = yield* accounts()
         const store = yield* ComputerStore
         const evidence = yield* Evidence
-        const command = { command: 'echo receipt', timeoutSeconds: 10 }
+        const look = DesktopAction.cases.Look.make({})
         yield* Ref.set(evidence.state, 'archived')
         yield* Ref.set(evidence.free, new Set<Size>())
         // Vivid needs the Computer for a Run; Boat has no machine of any size.
-        const refused = yield* store.exec(first.id, command).pipe(Effect.flip)
+        const refused = yield* store.desktop(first.id, look).pipe(Effect.flip)
         // The provider's own reason, not "the Computer is stopped": the start handed it on.
         expect(refused).toBeInstanceOf(MachineNoCapacity)
         expect(
@@ -1001,7 +1001,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         ).toBe('Stopped')
         // Nobody presses Start: the next Run asks Boat again and gets the next size up.
         yield* Ref.set(evidence.free, new Set<Size>(['large']))
-        expect((yield* store.exec(first.id, command)).exitCode).toBe(0)
+        expect((yield* store.desktop(first.id, look)).width).toBeGreaterThan(0)
         expect(
           (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
         ).toBe('Running')
@@ -1022,11 +1022,11 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         const store = yield* ComputerStore
         const saved = yield* bindings()
         const evidence = yield* Evidence
-        const command = { command: 'echo receipt', timeoutSeconds: 10 }
+        const look = DesktopAction.cases.Look.make({})
         const held = 'Vivid’s computer is already in use by another account.'
 
         // The first account uses its Computer: the machine becomes its own.
-        expect((yield* store.exec(first.id, command)).exitCode).toBe(0)
+        expect((yield* store.desktop(first.id, look)).width).toBeGreaterThan(0)
         expect(
           (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
         ).toBe('Running')
@@ -1036,7 +1036,8 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
 
         // The second account asks for the same thing through its own RPC, then through Vivid.
         yield* computerHandlers.StartComputer().pipe(asAccount(second))
-        const refused = yield* store.exec(second.id, command).pipe(Effect.flip)
+        const sent = (yield* Ref.get(evidence.commands)).length
+        const refused = yield* store.desktop(second.id, look).pipe(Effect.flip)
         expect(refused).toMatchObject({ reason: held })
         const shown = (yield* computerHandlers.GetComputer().pipe(asAccount(second))).computer.state
         expect(ComputerState.guards.Failed(shown) && shown.reason).toBe(held)
@@ -1047,15 +1048,13 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         expect(Option.map(holder, (binding) => binding.key)).toEqual(
           Option.some(computerMachineKey(first.id)),
         )
-        expect(
-          (yield* Ref.get(evidence.commands)).filter((sent) => sent === command.command),
-        ).toHaveLength(1)
+        expect(yield* Ref.get(evidence.commands)).toHaveLength(sent)
         // The refusal names nobody: not the holder, not the one refused.
         expect(JSON.stringify(refused)).not.toContain(first.id)
         expect(JSON.stringify(shown)).not.toContain(first.id)
 
         // The first account's Computer is exactly as it was.
-        expect((yield* store.exec(first.id, command)).exitCode).toBe(0)
+        expect((yield* store.desktop(first.id, look)).width).toBeGreaterThan(0)
         expect(
           (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
         ).toBe('Running')

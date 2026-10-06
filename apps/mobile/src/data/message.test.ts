@@ -238,7 +238,7 @@ describe('what Vivid did', () => {
   })
 
   it('offers Watch only for the current computer step while the reply is working', () => {
-    const computer = ['run_command', 'browse', 'use_desktop'].map((toolName): ToolPart => ({
+    const computer = ['bash', 'browse', 'use_desktop'].map((toolName): ToolPart => ({
       type: 'dynamic-tool',
       toolName,
       toolCallId: `call-${toolName}`,
@@ -259,7 +259,7 @@ describe('what Vivid did', () => {
         stepsOf([
           {
             type: 'dynamic-tool',
-            toolName: 'run_command',
+            toolName: 'bash',
             toolCallId: 'failed',
             state: 'output-error',
             input: {},

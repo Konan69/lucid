@@ -11,7 +11,6 @@ import {
   type DeviceId,
   type EnrolDeviceRequest,
   type UseDesktopRequest,
-  type RunCommandRequest,
   type ComputerShellRequest,
   type ComputerFileReadRequest,
   type ComputerFileWriteRequest,
@@ -24,7 +23,6 @@ import { computerWindow } from './windows.ts'
 import { DeviceRegistry } from './device.ts'
 import {
   ComputerStore,
-  computerRunCommand,
   computerBrowse,
   computerDesktop,
   computerShell,
@@ -172,10 +170,6 @@ export const computerHandlers = {
     const auth = yield* requirePerson()
     const store = yield* ComputerStore
     return ComputerResponse.make({ computer: yield* store.hold(auth.person.id, held) })
-  }),
-  RunCommand: Effect.fn('Rpc.RunCommand')(function* (request: RunCommandRequest) {
-    yield* requireVivid()
-    return yield* computerRunCommand(yield* requireActor(), request)
   }),
   ComputerShell: Effect.fn('Rpc.ComputerShell')(function* (request: ComputerShellRequest) {
     yield* requireVivid()

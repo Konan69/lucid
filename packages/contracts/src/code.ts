@@ -50,7 +50,6 @@ export interface RunCodeRequest extends Schema.Schema.Type<typeof RunCodeRequest
 export const CodeCallKind = Schema.Literals([
   'find_tools',
   'use_tool',
-  'run_command',
   'browse',
   'read_page',
 ] as const)

@@ -241,7 +241,7 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           const dispatch: Dispatch = Effect.fn('Test.composedCall')(function* (call) {
             yield* Ref.update(seen, (items) => items.concat(call.kind))
             const value =
-              call.kind === 'run_command'
+              call.kind === 'browse'
                 ? { exitCode: 0 }
                 : Array.from({ length: 100 }, (_, index) => ({ value: index }))
             return CallOutcome.cases.Returned.make({
@@ -253,17 +253,12 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           const outcome = yield* run(
             `const first = await tools.find_tools({query:"records"});
         const [left, right] = await Promise.all([tools.use_tool({source:first[0].value}), tools.use_tool({source:first[1].value})]);
-        const computer = await tools.run_command({command:"pwd"});
+        const computer = await tools.browse({});
         return {selected:left.filter(x=>x.value>97).map(x=>x.value), count:right.length, exitCode:computer.exitCode};`,
             dispatch,
           )
           check(outcome, 'Completed', { result: { selected: [98, 99], count: 100, exitCode: 0 } })
-          expect(yield* Ref.get(seen)).toEqual([
-            'find_tools',
-            'use_tool',
-            'use_tool',
-            'run_command',
-          ])
+          expect(yield* Ref.get(seen)).toEqual(['find_tools', 'use_tool', 'use_tool', 'browse'])
           expect(outcome.calls.map((call) => call.end)).toEqual([
             'completed',
             'completed',
@@ -327,7 +322,7 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
             })
           })
           const outcome = yield* run(
-            `try {await Promise.allSettled([tools.use_tool({}),tools.use_tool({}),tools.run_command({})]);}
+            `try {await Promise.allSettled([tools.use_tool({}),tools.use_tool({}),tools.browse({})]);}
         catch(e){await tools.use_tool({});} finally {await tools.use_tool({});} return "continued";`,
             dispatch,
           )
