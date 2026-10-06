@@ -224,3 +224,84 @@ it.live('persists null for a void tool and gives the model explicit null text', 
     expect(message.parts.at(-1)).toMatchObject({ type: 'text', text: 'Notified.' })
   }),
 )
+
+/** Refuse SDK features whose behavior cannot be represented by Pi's native tool registration. */
+for (const sample of [
+  {
+    name: 'provider-executed',
+    value: tool({
+      type: 'provider',
+      id: 'test.remote',
+      args: {},
+      isProviderExecuted: true,
+      inputSchema: z.object({}),
+      outputSchema: z.object({}),
+      supportsDeferredResults: true,
+    }),
+  },
+  {
+    name: 'provider-defined',
+    value: tool({
+      type: 'provider',
+      id: 'test.local',
+      args: {},
+      isProviderExecuted: false,
+      inputSchema: z.object({}),
+      execute: async () => 'local',
+    }),
+  },
+  {
+    name: 'dynamic',
+    value: tool({ type: 'dynamic', inputSchema: z.object({}), execute: async () => 'dynamic' }),
+  },
+  {
+    name: 'functional-description',
+    value: tool({
+      description: () => 'Scoped description',
+      inputSchema: z.object({}),
+      execute: async () => 'done',
+    }),
+  },
+  {
+    name: 'deferred-discovery',
+    value: tool({ deferLoading: true, inputSchema: z.object({}), execute: async () => 'done' }),
+  },
+  {
+    name: 'strict-sampling',
+    value: tool({ strict: true, inputSchema: z.object({}), execute: async () => 'done' }),
+  },
+  {
+    name: 'provider-options',
+    value: tool({
+      providerOptions: { openai: { cacheControl: 'required' } },
+      inputSchema: z.object({}),
+      execute: async () => 'done',
+    }),
+  },
+  {
+    name: 'input-start',
+    value: tool({ onInputStart: () => {}, inputSchema: z.object({}), execute: async () => 'done' }),
+  },
+  {
+    name: 'input-delta',
+    value: tool({ onInputDelta: () => {}, inputSchema: z.object({}), execute: async () => 'done' }),
+  },
+  {
+    name: 'input-available',
+    value: tool({
+      onInputAvailable: () => {},
+      inputSchema: z.object({}),
+      execute: async () => 'done',
+    }),
+  },
+  { name: 'answer-approval', value: tool({ needsApproval: true, inputSchema: z.object({}) }) },
+])
+  it.live(`refuses ${sample.name} tools at registration`, () =>
+    Effect.gen(function* () {
+      const failed = yield* Effect.flip(
+        toolsExtension('unsupported', { [sample.name]: sample.value }, {}),
+      )
+      expect(failed).toBeInstanceOf(ToolSchemaFailed)
+      expect(failed.toolName).toBe(sample.name)
+    }),
+  )

@@ -1,13 +1,14 @@
 import type { Message } from '@earendil-works/pi-ai'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import type { Tool } from 'ai'
-import { tool } from 'ai'
+import { lastAssistantMessageIsCompleteWithToolCalls, tool } from 'ai'
+import { PlainChat } from '../fixtures/chat.ts'
 import { expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { z } from 'zod'
 
 import { history, streamRun } from '../main.ts'
-import { call, consume, context, host, texts } from './fixtures/host.ts'
+import { call, consume, context, host, signal, texts } from './fixtures/host.ts'
 
 type ModelOutput = Awaited<
   ReturnType<NonNullable<Tool<unknown, unknown, unknown>['toModelOutput']>>
@@ -148,6 +149,16 @@ for (const sample of supported)
   )
 
 const unsupported: { name: string; output: ModelOutput }[] = [
+  { name: 'model error text', output: { type: 'error-text', value: 'model-only failure' } },
+  {
+    name: 'model error JSON',
+    output: { type: 'error-json', value: { error: 'model-only failure' } },
+  },
+  {
+    name: 'model-only execution denial',
+    output: { type: 'execution-denied', reason: 'model-only denial' },
+  },
+
   {
     name: 'non-image file',
     output: { type: 'content', value: [{ type: 'file-data', data, mediaType: 'application/pdf' }] },
@@ -273,3 +284,44 @@ for (const sample of unsupported)
       expect(texts(result.message)).toEqual(['Recovered.'])
     }),
   )
+
+/** Person-supplied output uses the same model projection as execute, preserving the original answer. */
+it.live('projects a person-supplied answer through SDK Chat', () =>
+  Effect.promise(async () => {
+    let model: readonly Message[] = []
+    const fixture = await host(
+      {
+        ask: tool({
+          inputSchema: z.object({}),
+          outputSchema: z.object({ answer: z.string() }),
+          toModelOutput: ({ output }) => ({ type: 'text', value: `Answer: ${output.answer}` }),
+        }),
+      },
+      {},
+    )
+    const opened = await fixture.open()
+    opened.faux.setResponses([
+      call('ask', {}, 'answer'),
+      (request) => {
+        model = request.messages
+        return fauxAssistantMessage('Done.')
+      },
+    ])
+    let completion = signal()
+    const chat = new PlainChat({
+      transport: opened.transport,
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+      onFinish: () => completion.resolve(),
+      onError: (error) => completion.reject(error),
+    })
+    await chat.sendMessage({ text: 'Ask' })
+    completion = signal()
+    await chat.addToolOutput({ tool: 'ask', toolCallId: 'answer', output: { answer: 'savings' } })
+    await completion.promise
+    expect(model.at(-1)).toMatchObject({ content: [{ type: 'text', text: 'Answer: savings' }] })
+    if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
+    expect(chat.lastMessage.parts.find((part) => part.type === 'tool-ask')).toMatchObject({
+      output: { answer: 'savings' },
+    })
+  }),
+)

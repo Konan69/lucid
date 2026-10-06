@@ -11,7 +11,7 @@ import {
   ToolTask,
 } from '@earendil-works/pi-durable'
 import { asSchema, type Tool, type ToolSet } from 'ai'
-import { Effect, Option, Predicate, Schema, Stream } from 'effect'
+import { Data, Effect, Option, Predicate, Schema, Stream } from 'effect'
 
 import {
   ToolApprovalUnsupported,
@@ -29,6 +29,7 @@ import {
   holdKind,
   Holds,
   type Plan,
+  type Source,
   settlement,
   withPlan,
 } from './holds.ts'
@@ -95,7 +96,7 @@ const decodeJsonText = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.M
 /** SDK execute is an untyped ingress; recognize its async-iterator protocol before JSON encoding. */
 const isAsyncOutput = Schema.is(
   Schema.declare<AsyncIterable<SdkValue>>(
-    (value) =>
+    (value): value is AsyncIterable<SdkValue> =>
       Predicate.hasProperty(value, Symbol.asyncIterator) &&
       Predicate.isFunction(value[Symbol.asyncIterator]),
   ),
@@ -130,11 +131,11 @@ function modelPart(
   value: typeof ModelPart.Type,
 ): NonNullable<ToolExecutionResult['content']>[number] {
   return ModelPart.match(value, {
-    text: (part) => ({ type: 'text', text: part.text }),
-    'image-data': (part) => ({ type: 'image', data: part.data, mimeType: part.mediaType }),
-    'file-data': (part) => ({ type: 'image', data: part.data, mimeType: part.mediaType }),
+    text: (part) => ({ type: 'text' as const, text: part.text }),
+    'image-data': (part) => ({ type: 'image' as const, data: part.data, mimeType: part.mediaType }),
+    'file-data': (part) => ({ type: 'image' as const, data: part.data, mimeType: part.mediaType }),
     file: (part) => ({
-      type: 'image',
+      type: 'image' as const,
       data: Predicate.isString(part.data.data)
         ? part.data.data
         : Buffer.from(new Uint8Array(part.data.data)).toString('base64'),
@@ -146,8 +147,8 @@ function modelPart(
 /** Pi has text/image blocks; JSON output variants use the SDK providers' JSON.stringify representation. */
 function modelContent(value: typeof ModelOutput.Type): NonNullable<ToolExecutionResult['content']> {
   return ModelOutput.match(value, {
-    text: (output) => [{ type: 'text', text: output.value }],
-    json: (output) => [{ type: 'text', text: JSON.stringify(output.value) }],
+    text: (output) => [{ type: 'text' as const, text: output.value }],
+    json: (output) => [{ type: 'text' as const, text: JSON.stringify(output.value) }],
     content: (output) => output.value.map(modelPart),
   })
 }
@@ -157,14 +158,14 @@ type Output = { readonly text: string; readonly output: JsonValue }
 
 /** A bridged result preserves the tool's JSON output beside the text the model reads. */
 const result = (output: Output): ToolExecutionResult => ({
-  content: [{ type: 'text', text: output.text }],
+  content: [{ type: 'text' as const, text: output.text }],
   details: { output: output.output },
 })
 
 /** Validation and missing answers are existing tool-error values, rather than infrastructure failures. */
 const failure = (text: string): ToolExecutionResult => ({
   isError: true,
-  content: [{ type: 'text', text }],
+  content: [{ type: 'text' as const, text }],
 })
 
 /** Every execute callback runs exactly one Effect through the single Pi runtime ingress. */
@@ -174,10 +175,18 @@ function executeForPi(program: Program): Execute {
   }
 }
 
+/** A tool either executes locally or receives its durable person-supplied answer. */
+type Execution = Data.TaggedEnum<{
+  Server: { readonly execute: NonNullable<Tool<unknown, unknown, unknown>['execute']> }
+  Wait: {}
+  Later: {}
+}>
+const Execution = Data.taggedEnum<Execution>()
+
 type Server = {
   readonly name: string
   readonly schema: ReturnType<typeof asSchema>
-  readonly execute: NonNullable<Tool<unknown, unknown, unknown>['execute']>
+  readonly execution: Execution
   readonly contextSchema: Option.Option<ReturnType<typeof asSchema>>
   readonly context: Lookups['context']
   readonly toModelOutput: Option.Option<
@@ -244,16 +253,23 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
         ),
       ),
   })
-  const executed = yield* Effect.tryPromise({
-    try: async function executeForSdk() {
-      return server.execute(checked.value, {
-        toolCallId: api.callId,
-        messages: [],
-        abortSignal: context.abortSignal,
-        context: toolContext,
+  const executed = yield* Execution.$match(server.execution, {
+    Server: function executeForSdk(execution) {
+      return Effect.tryPromise({
+        try: () =>
+          Promise.resolve(
+            execution.execute(checked.value, {
+              toolCallId: api.callId,
+              messages: [],
+              abortSignal: context.abortSignal,
+              context: toolContext,
+            }),
+          ),
+        catch: (cause) => new ToolFailed({ toolName: server.name, cause }),
       })
     },
-    catch: (cause) => new ToolFailed({ toolName: server.name, cause }),
+    Wait: () => answered(server.name, api, context),
+    Later: () => asked(server.name, api, context),
   })
   const output = yield* isAsyncOutput(executed)
     ? Stream.runLast(
@@ -319,9 +335,11 @@ const answered = Effect.fn('Durable.answeredTool')(function* (
     }),
   )
   if (!CallLookup.guards.Settled(found) || found.settlement.kind !== 'answered')
-    return failure(`Tool ${name} was not answered`)
-  const output = found.settlement.output
-  return result({ text: Predicate.isString(output) ? output : JSON.stringify(output), output })
+    return yield* new ToolFailed({
+      toolName: name,
+      cause: new Error(`Tool ${name} was not answered`),
+    })
+  return found.settlement.output
 })
 
 /** Persist the open question before returning; the later answer is submitted separately and deduplicated. */
@@ -353,7 +371,7 @@ const asked = Effect.fn('Durable.askedTool')(function* (
     status: 'asked',
     note: 'The answer will arrive later as a new message. Continue with other work.',
   }
-  return result({ text: JSON.stringify(output), output })
+  return output
 })
 
 type Bridged = {
@@ -385,7 +403,7 @@ function approvalOptions(name: string): import('ai').ToolExecutionOptions<SdkVal
 /** Input-only predicates are synchronous replay rules; a Promise is never interpreted as true. */
 function approvalForTool(
   name: string,
-  tool: Tool<unknown, unknown, unknown>,
+  tool: Pick<Tool<unknown, unknown, unknown>, 'needsApproval'>,
   lookups: Lookups,
 ): Plan['approval'] {
   if (Object.hasOwn(lookups.approval, name)) {
@@ -410,39 +428,61 @@ function approvalForTool(
   }
 }
 
+/** Keep the execute/answer distinction explicit rather than assembling partially executable tools. */
+function executionForTool(tool: Tool, source: Source): Execution {
+  if (tool.execute !== undefined) return Execution.Server({ execute: tool.execute.bind(tool) })
+  if (source === 'later') return Execution.Later()
+  return Execution.Wait()
+}
+
 /** Normalize every absent option once; the lookup then has an explicit default for every tool name. */
 function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
   const executionMode = lookups.sequential.has(name) ? 'sequential' : lookups.execution
   const approval = approvalForTool(name, tool, lookups)
-  if (tool.execute !== undefined) {
-    const server: Server = {
-      name,
-      schema: asSchema(tool.inputSchema),
-      execute: tool.execute.bind(tool),
-      contextSchema: Option.map(Option.fromNullishOr(tool.contextSchema), asSchema),
-      context: lookups.context,
-      toModelOutput: Option.map(Option.fromNullishOr(tool.toModelOutput), (convert) =>
-        convert.bind(tool),
-      ),
-    }
-    return {
-      plan: { approval, source: 'server', execution: lookups.execution },
-      executionMode,
-      replay: lookups.replay[name] ?? 'unsafe',
-      execute: executeForPi((args, api, context) => invoke(server, args, api, context)),
-    }
+  const source = tool.execute === undefined ? (lookups.answers[name] ?? 'wait') : 'server'
+  const execution = executionForTool(tool, source)
+  const server: Server = {
+    name,
+    schema: asSchema(tool.inputSchema),
+    execution,
+    contextSchema: Option.map(Option.fromNullishOr(tool.contextSchema), asSchema),
+    context: lookups.context,
+    toModelOutput: Option.map(Option.fromNullishOr(tool.toModelOutput), (convert) =>
+      convert.bind(tool),
+    ),
   }
-  const source = lookups.answers[name] ?? 'wait'
-  const program: Program =
-    source === 'later'
-      ? (_args, api, context) => asked(name, api, context)
-      : (_args, api, context) => answered(name, api, context)
   return {
-    plan: { approval: () => false, source, execution: lookups.execution },
+    plan: {
+      approval: source === 'server' ? approval : () => false,
+      source,
+      execution: lookups.execution,
+    },
     executionMode,
-    replay: 'safe',
-    execute: executeForPi(program),
+    replay: source === 'server' ? (lookups.replay[name] ?? 'unsafe') : 'safe',
+    execute: executeForPi((args, api, context) => invoke(server, args, api, context)),
   }
+}
+
+/** Pi Tool lacks SDK lifecycle, discovery and kind contracts; refuse behavior that would silently change. */
+function unsupported(name: string, tool: Tool, lookups: Lookups): Option.Option<string> {
+  if (tool.type === 'provider') return Option.some('provider-defined and provider-executed tools')
+  if (tool.type === 'dynamic') return Option.some('dynamic SDK UI tool parts')
+  if (Predicate.isFunction(tool.description)) return Option.some('context-dependent descriptions')
+  if (tool.deferLoading === true) return Option.some('deferred tool discovery')
+  if (tool.strict === true) return Option.some('strict provider sampling')
+  if (tool.providerOptions !== undefined) return Option.some('provider-specific tool options')
+  const callback = (['onInputStart', 'onInputDelta', 'onInputAvailable'] as const).find(
+    (field) => tool[field] !== undefined,
+  )
+  if (callback !== undefined) return Option.some(callback)
+  return unsupportedApproval(name, tool, lookups)
+}
+
+/** A host override retains existing answer semantics; otherwise refuse an unrepresentable second hold. */
+function unsupportedApproval(name: string, tool: Tool, lookups: Lookups): Option.Option<string> {
+  if (tool.execute !== undefined || Object.hasOwn(lookups.approval, name)) return Option.none()
+  if (tool.needsApproval === undefined || tool.needsApproval === false) return Option.none()
+  return Option.some('approval before person-supplied output')
 }
 
 /** JSON Schema generation is lazy in the SDK; rejection is a registration failure naming the tool. */
@@ -450,7 +490,14 @@ const registration = Effect.fn('Durable.registerTool')(function* (
   name: string,
   tool: Tool,
   bridged: Bridged,
+  lookups: Lookups,
 ) {
+  const unsupportedField = unsupported(name, tool, lookups)
+  if (Option.isSome(unsupportedField))
+    return yield* new ToolSchemaFailed({
+      toolName: name,
+      cause: new Error(`Pi Durable cannot represent ${unsupportedField.value}`),
+    })
   const parameters = yield* Effect.tryPromise({
     try: async function schemaForSdk() {
       return asSchema(tool.inputSchema).jsonSchema
@@ -538,7 +585,7 @@ export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* (
   )
   const registrations = yield* Effect.forEach(
     bridged,
-    (each) => registration(each.toolName, each.tool, each.bridged),
+    (each) => registration(each.toolName, each.tool, each.bridged, lookups),
     { concurrency: 'unbounded' },
   )
   const plans = new Map(bridged.map((each) => [each.toolName, each.bridged.plan]))
