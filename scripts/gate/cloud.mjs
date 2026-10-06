@@ -65,7 +65,7 @@ if [ "$(cat .cache/gate/installed 2>/dev/null)" != "$stamp" ]; then
 fi
 capped=""
 if systemd-run --user --scope -q --slice=vividgate true 2>/dev/null; then
-  systemctl --user set-property --runtime vividgate.slice MemoryMax=11G 2>/dev/null || true
+  systemctl --user set-property --runtime vividgate.slice MemoryHigh=9G MemoryMax=11G 2>/dev/null || true
   capped="systemd-run --user --scope -q --slice=vividgate -p MemoryMax=8G"
 fi
 $capped node scripts/gate.mjs "$@" --here --sha "$label"

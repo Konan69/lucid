@@ -20,6 +20,35 @@ workspace source + shared rules/configs → Turbo task hash
 - Keep automatic Turbo worktree cache sharing. Do not add a cacheDir that would disable it. Persist `.turbo/cache` in CI; no remote cache provider is configured.
 - Fix commands always execute and are never cached.
 
+## The gate
+
+`pnpm gate` (`scripts/gate.mjs`) is the one definition of the checks. Its stages are in `scripts/gate/stages.mjs`, the lint ratchets in `scripts/gate/ratchets.mjs`; the push hook, a run on another machine and each GitHub job select stages from it.
+
+```text
+policy (5 checks, together, always run)
+checks lane: lint, format, typecheck, tooling tests   one Turbo task at a time
+tests lane:  test per package                         beside the checks lane
+```
+
+- Tests run through Turbo, one task per package. A test task hashes its package, its dependencies' production source (`checkinputs`), the explicit integration edges, and every test setting except the database address; it needs no build. A package nothing reached is replayed with its counts, so the verdict always reports the whole suite.
+- A task for one package replaces the generic task, and so does a package's own `turbo.json`; Turbo merges neither. Each such task repeats the generic inputs, outputs and environment, and `scripts/gate.test.mjs` fails when one drifts. Before this, the server, runtime, skills and mobile lint did not rerun when the lint configuration changed.
+- Every run creates one empty database and gives it to the suites. The server's migrated template is named by a digest of the migrations and kept on the test server; each test file clones it under the run's prefix, and the run drops everything with its prefix at the end. Without a database server the gate fails.
+- `--host` runs in a warm tree on another machine: a worktree per branch of one repository there, moved by git, with dependencies and build info kept and one Turbo cache for all trees. The client follows the run by its identifier.
+- At most one gate per four cores does work at once on a machine, across checkouts. Lint and typecheck stay serialized as designed above; the measured peak for one typed lint process is still about 3.6 GiB.
+- `affected` gives each package's Vitest the commit where the branch left the default branch (`--changed`), so only test files whose imports reach a changed file run. A file a test reads without importing is outside that graph; the full gate is the merge gate.
+
+Measured on the eight-core Cloudbox on 6 October 2026, same repository state, other threads' gates running beside it:
+
+| Run                                               |                                               Before |                                                           After |
+| ------------------------------------------------- | ---------------------------------------------------: | --------------------------------------------------------------: |
+| Full gate, nothing changed                        | 7 min (fresh tree, 0 cached, queued behind one lock) |                  4 to 17 s from command (all 53 tasks replayed) |
+| Full gate after a server source change            |                                                7 min |                                         56 to 88 s from command |
+| Named test files with the database                |                                         not possible |                                               10 s from command |
+| Two full gates at once, each with a server change |                           second waits for the first |                                   both pass, 88 s each, no wait |
+| Server suite alone (164 files)                    |                                 226 s at two workers | 134 s at four workers under load; about 60 s on a quiet machine |
+
+A tree with a deliberate lint finding, type error, format error and failing test fails in exactly those four stages. The old hook's serial sequence, run against the new tree, also passes.
+
 ## Reference and limits
 
 The VCOS reference (`apps/web/TYPECHECK.md` and its shared/server/agent configs) splits a combined program into declaration-producing projects and checks consumers against those outputs. Separate Vivid workspace configs are not equivalent boundaries: source exports pull shared implementation into consumers, and tests import implementation across server/runtime/skills packages. The first cache/concurrency change repairs repeat runs but does not complete this graph optimization.
