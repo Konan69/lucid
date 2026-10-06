@@ -8,7 +8,7 @@ import * as v from 'valibot'
 import { askTools } from '../../tools/ask.ts'
 import { documentTools } from '../../tools/documents.ts'
 import { codeTools } from '../../tools/code.ts'
-import { commandDefinition, pictureTools } from '../../tools/computer.ts'
+import { pictureTools } from '../../tools/computer.ts'
 import { connectionTools } from '../../tools/connections.ts'
 import { memoryTools } from '../../tools/memory.ts'
 import { routineTools } from '../../tools/routines.ts'
@@ -23,7 +23,6 @@ const tools = [
   ...askTools(unavailable),
   ...codeTools(unavailable),
   ...documentTools(unavailable),
-  commandDefinition(unavailable),
   ...connectionTools(unavailable),
   ...memoryTools(unavailable),
   ...routineTools(unavailable),

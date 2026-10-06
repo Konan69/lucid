@@ -113,7 +113,7 @@ function failure(message: string) {
 export const warnFailure = (tool: string, tag: string) =>
   Effect.logWarning(`Tool failed tool=${tool} tag=${tag}`)
 
-const computerTools = new Set(['browse', 'run_command', 'use_desktop'])
+const computerTools = new Set(['browse', 'use_desktop'])
 const session = Schema.encodeSync(ComputerSession)(
   ComputerSession.make({
     active: true,

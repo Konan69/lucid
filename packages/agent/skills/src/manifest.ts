@@ -188,14 +188,7 @@ const definitions = [
     about:
       'Looks at finished work the way you will see it and fixes what is wrong before handing it over.',
     starter: false,
-    needs: [
-      'read_document',
-      'write_document',
-      'browse',
-      'use_desktop',
-      'run_command',
-      'ask_person',
-    ],
+    needs: ['read_document', 'write_document', 'browse', 'use_desktop', 'bash', 'ask_person'],
     connections: [],
   },
   {
