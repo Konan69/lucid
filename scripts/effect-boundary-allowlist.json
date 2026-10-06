@@ -54,7 +54,8 @@
       "openWatch",
       "stop",
       "closed",
-      "commitWithLive"
+      "commitWithLive",
+      "abort"
     ]
   },
   {
@@ -82,7 +83,8 @@
       "attachRun",
       "continueRun",
       "respond",
-      "respondTurn"
+      "respondTurn",
+      "abort"
     ]
   },
   {

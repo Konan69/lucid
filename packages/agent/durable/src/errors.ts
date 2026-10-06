@@ -31,6 +31,7 @@ export class PiFailed extends Schema.TaggedError<PiFailed>()(
       'agent',
       'context',
       'doc',
+      'abort',
     ]),
     cause: Schema.Defect(),
   },

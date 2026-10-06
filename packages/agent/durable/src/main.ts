@@ -153,3 +153,7 @@ export type { Replay, ToolsOptions } from './tools.ts'
 export type { RunInput } from './stream.ts'
 export type { RunState, Step, Chunk } from './chunks.ts'
 export type { ChatTurn } from './respond.ts'
+
+/** Explicit run cancellation is distinct from a fetch abort or a detached stream reader. */
+export const abort = (...args: Parameters<typeof Core.abort>) =>
+  Effect.runPromise(Core.abort(...args))

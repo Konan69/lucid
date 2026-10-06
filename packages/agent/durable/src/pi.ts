@@ -224,3 +224,10 @@ export function observed<E>(conversationId: ConversationId, events: Stream.Strea
     ),
   )
 }
+
+/** Pi withdraws queued inputs, interrupts ordinary live work, and waits for durable settlement. */
+export const abort = (owner: Conversation, context: Context) =>
+  Effect.tryPromise({
+    try: () => owner.abort(context),
+    catch: (cause) => new PiFailed({ operation: 'abort', cause }),
+  })
