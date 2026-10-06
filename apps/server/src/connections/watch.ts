@@ -1,10 +1,9 @@
 import { and, eq, isNull, or } from 'drizzle-orm'
-import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import { FindEventsResponse, InvalidRequest, RoutineTrigger } from '@vivid/contracts'
 import { Array as Arr, Effect, Layer, Option, Result, Schema } from 'effect'
 import { FetchHttpClient } from 'effect/unstable/http'
 import type { Actor } from '../auth/access.ts'
-import { Database, decodeStored } from '../database/client.ts'
+import { Database } from '../database/client.ts'
 import {
   IntegrationWatch,
   IntegrationRevoked,
@@ -28,8 +27,8 @@ import {
   type ExecutorTool,
 } from './executor.ts'
 import { executorFailure } from './errors.ts'
-import { listRecords } from './records.ts'
-import { namedAccounts } from './tools.ts'
+import { decodeRow, listRecords, type ConnectionRecord } from './records.ts'
+import { namedAccounts } from './names.ts'
 import { connections } from './tables.ts'
 
 /** Output paths describe a provider list; only metadata-classified reads may ever be selected.
@@ -55,8 +54,6 @@ const ToolBranch = Schema.Struct({
 })
 const decodeEnvelope = Schema.decodeUnknownOption(ToolEnvelope)
 const decodeBranch = Schema.decodeUnknownResult(ToolBranch)
-const StoredConnection = createSelectSchema(connections, { references: ExecutorReferences })
-const decodeConnection = decodeStored(StoredConnection, 'Integration watch Connection')
 
 /** Account-operation wrappers are selected privately; their account constants never enter discovery. */
 function providerInput(tool: typeof ExecutorTool.Type, references: ExecutorReferences) {
@@ -165,7 +162,7 @@ const observationFailure = (connectionId: Watch['connectionId']) => (error: Exec
 /** One read-only call per observation, with current metadata and authorization rechecked each time. */
 const read = (executor: Executor['Service']) =>
   Effect.fn('IntegrationWatch.read')(function* (
-    row: typeof StoredConnection.Type,
+    row: ConnectionRecord,
     trigger: typeof RoutineTrigger.cases.Integration.Type,
   ) {
     const connectionId = Watch.fields.connectionId.make(row.id)
@@ -271,6 +268,47 @@ export const integrationPollingServiceLayer = Layer.effect(
     const database = yield* Database
     const executor = yield* Executor
     const observe = read(executor)
+    /**
+     * Binds a trigger to one account: checks the filter and the event against what the account
+     * offers now, reads what is already there so only later items count as new, and answers with
+     * the watch. The trigger it keeps names the account as it is called now.
+     */
+    const bind = Effect.fn('IntegrationWatch.bind')(function* (
+      { row, account }: ReturnType<typeof namedAccounts>[number],
+      trigger: typeof RoutineTrigger.cases.Integration.Type,
+    ) {
+      const filter = yield* decodeFilter(trigger.filter).pipe(
+        Effect.mapError(
+          () =>
+            new InvalidRequest({
+              message: 'Use the event filter schema returned by find_events.',
+            }),
+        ),
+      )
+      const tools = yield* executor.tools(row.references).pipe(Effect.mapError(executorFailure))
+      const tool = tools.find(
+        (item) =>
+          item.effect === 'read' &&
+          (item.name === trigger.event || eventDescription(item) === trigger.event),
+      )
+      if (tool === undefined)
+        return yield* Effect.fail(
+          new InvalidRequest({ message: 'Select a read-only event returned by find_events.' }),
+        )
+      const selected = RoutineTrigger.cases.Integration.make({
+        account,
+        event: tool.name,
+        filter: trigger.filter,
+      })
+      const items = yield* observe(row, selected)
+      return Watch.make({
+        connectionId: row.id,
+        trigger: selected,
+        cursor: cursorOf(items),
+        intervalMillis:
+          (filter.intervalMinutes === undefined ? 5 : filter.intervalMinutes) * 60_000,
+      })
+    })
     return IntegrationWatch.of({
       /** Every event name is an actual provider read operation; discovery does not claim native events. */
       discover: Effect.fn('IntegrationWatch.discover')(function* (actor, account) {
@@ -287,40 +325,21 @@ export const integrationPollingServiceLayer = Layer.effect(
       }),
       /** Baseline excludes existing provider records; a new Routine reacts only to subsequent items. */
       prepare: Effect.fn('IntegrationWatch.prepare')(function* (actor, trigger) {
-        const { row, account } = yield* accountOf(actor, trigger.account).pipe(
+        const found = yield* accountOf(actor, trigger.account).pipe(
           Effect.provideService(Database, database),
         )
-        const filter = yield* decodeFilter(trigger.filter).pipe(
-          Effect.mapError(
-            () =>
-              new InvalidRequest({
-                message: 'Use the event filter schema returned by find_events.',
-              }),
-          ),
-        )
-        const tools = yield* executor.tools(row.references).pipe(Effect.mapError(executorFailure))
-        const tool = tools.find(
-          (item) =>
-            item.effect === 'read' &&
-            (item.name === trigger.event || eventDescription(item) === trigger.event),
-        )
-        if (tool === undefined)
+        return yield* bind(found, trigger)
+      }),
+      /** The same baseline for a watch that exists, found by the Connection it is bound to. */
+      rebase: Effect.fn('IntegrationWatch.rebase')(function* (actor, watch) {
+        const found = namedAccounts(
+          yield* listRecords(actor).pipe(Effect.provideService(Database, database)),
+        ).find((item) => item.row.id === watch.connectionId)
+        if (found === undefined)
           return yield* Effect.fail(
-            new InvalidRequest({ message: 'Select a read-only event returned by find_events.' }),
+            new InvalidRequest({ message: 'Integration account not found.' }),
           )
-        const selected = RoutineTrigger.cases.Integration.make({
-          account,
-          event: tool.name,
-          filter: trigger.filter,
-        })
-        const items = yield* observe(row, selected)
-        return Watch.make({
-          connectionId: row.id,
-          trigger: selected,
-          cursor: cursorOf(items),
-          intervalMillis:
-            (filter.intervalMinutes === undefined ? 5 : filter.intervalMinutes) * 60_000,
-        })
+        return yield* bind(found, watch.trigger)
       }),
       /** Binding authorization follows the stored Connection, never a later reused/renamed label. */
       newItems: Effect.fn('IntegrationWatch.newItems')(function* (input: WatchInput) {
@@ -342,7 +361,7 @@ export const integrationPollingServiceLayer = Layer.effect(
         const raw = rows[0]
         if (raw === undefined)
           return yield* Effect.fail(new IntegrationRevoked({ connectionId: watch.connectionId }))
-        const items = yield* observe(yield* decodeConnection(raw), watch.trigger)
+        const items = yield* observe(yield* decodeRow(raw), watch.trigger)
         return yield* newBatch(watch, items)
       }),
     })

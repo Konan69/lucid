@@ -1,14 +1,13 @@
 import {
   ConnectionAuthorization,
-  ConnectionOwnership,
   ConnectionState,
   ConnectionStep,
   ServiceAuthorization,
   type Connection,
   type ConnectionId,
-  type ConnectionRequestMessage,
   type Service,
 } from '@vivid/contracts'
+import { whichAccount } from '@vivid/state'
 import { Data, Option } from 'effect'
 
 /**
@@ -74,25 +73,6 @@ export const finishOf = (
   Option.orElse(latest, () => Option.map(authorization, finishOfAuthorization))
 
 /**
- * Whether the Integration a card stands for can be used. The one Vivid started is that account
- * exactly, so another ready account on the same service does not finish it; a service offered
- * from the catalogue is satisfied by any ready account on it.
- */
-export const isReady = (
-  connections: ReadonlyArray<Connection>,
-  request: ConnectionRequestMessage,
-  authorization: Option.Option<Authorization>,
-): boolean =>
-  connections.some(
-    (connection) =>
-      ConnectionState.guards.Ready(connection.state) &&
-      Option.match(authorization, {
-        onNone: () => connection.service === request.service,
-        onSome: (started) => connection.id === started.connectionId,
-      }),
-  )
-
-/**
  * The Integrations sheet (`screen/settings/Integrations.tsx`): the pure readings behind its rows.
  * The rules and the words are the web screen's (`apps/web/src/screen/settings/Connections.tsx`);
  * what differs on the phone is said beside each.
@@ -152,53 +132,65 @@ export const standingOf = (connection: Connection): Standing =>
     Failed: ({ reason }): Standing => ({ tone: 'status-danger', words: `Not working: ${reason}` }),
   })
 
-/**
- * Which account a row is, when the service's name alone does not say: what the Person called it,
- * when they called it anything, else the day it was added, so two accounts on one service can be
- * told apart before one of them is disconnected. The day is written by the caller's formatter.
- */
-export const whichOf = (connection: Connection, added: (moment: number) => string): string =>
-  connection.label === connection.serviceName
-    ? `Added ${added(connection.createdAt)}`
-    : connection.label
-
 /** Whether a name answers to what is typed in the search, whatever its case. */
 export const named = (name: string, query: string): boolean =>
   name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
 
-/** The Person's own accounts first, then the Company's; each keeps the server's order. */
-export const ownFirst = (connections: ReadonlyArray<Connection>): ReadonlyArray<Connection> => [
-  ...connections.filter((item) => ConnectionOwnership.guards.Personal(item.ownership)),
-  ...connections.filter((item) => ConnectionOwnership.guards.Shared(item.ownership)),
-]
+/** What a row is told about the account it draws, beyond the account itself. */
+export interface RowFacts {
+  /** Whether it is the only account on its service, which then needs nothing to tell it apart. */
+  readonly alone: boolean
+  /** The Company the account is shared with, when it is not the Person's own. */
+  readonly sharedWith: Option.Option<string>
+  readonly pressed: Option.Option<Pressed>
+}
 
 /**
- * The line under a connected account's name: where a press stands while one is in flight, else
- * how the account stands, with which account it is once it works.
+ * The line under a connected account's service: where a press stands while one is in flight, else
+ * which account it is (what the Person called it, who the service says it is), else how it
+ * stands. An account that does not work says both, and one a Company shares says with whom, in
+ * words: a phone has no hover to explain a small mark.
+ *
+ * It was the day the account was added, because every account carried the service's name as its
+ * label and nothing else told two apart.
  */
-export const accountLine = (
-  connection: Connection,
-  pressed: Option.Option<Pressed>,
-  added: (moment: number) => string,
-): string =>
-  Option.match(pressed, {
+export const accountLine = (connection: Connection, facts: RowFacts): string =>
+  Option.match(facts.pressed, {
     onSome: (value) => PRESSED[value],
     onNone: () => {
-      const { words } = standingOf(connection)
-      return ConnectionState.guards.Ready(connection.state)
-        ? `${words} · ${whichOf(connection, added)}`
-        : words
+      const which = whichAccount(connection, facts.alone)
+      // An account that works and is told apart by something says only that; "Connected" is
+      // then what the dot on its logo already says.
+      const standing =
+        ConnectionState.guards.Ready(connection.state) && Option.isSome(which)
+          ? Option.none<string>()
+          : Option.some(standingOf(connection).words)
+      const shared = Option.map(facts.sharedWith, (company) => `Shared with ${company}`)
+      return [which, standing, shared].flatMap((word) => Option.toArray(word)).join(' · ')
     },
   })
 
-/** What a catalog row says under the service's name: where a press stands, else how it is entered. */
+/**
+ * What a catalog row says under the service's name: where a press stands, else what pressing it
+ * does when the service is already connected, else how it is entered. A connected service said
+ * only "Connected", and nothing told a Person that pressing it again adds one more account.
+ */
 export const noteOf = (
   service: Service,
   connected: boolean,
   pressed: Option.Option<Pressed>,
 ): Option.Option<string> => {
-  if (connected) return Option.some('Connected')
   if (Option.isSome(pressed)) return Option.some(PRESSED[pressed.value])
+  if (connected) {
+    // One more account is offered only where a sign-in can still be begun. A service that was
+    // connected before its sign-in was taken off this Vivid is not a row to press, and said
+    // "Add another account" all the same.
+    return Option.some(
+      ServiceAuthorization.guards.SetupRequired(service.authorization)
+        ? 'Connected'
+        : 'Connected · Add another account',
+    )
+  }
   // A catalog entry's description is written by whoever published it, often for another product
   // by name, so the row says only what Vivid knows to be true: how the service is entered.
   return ServiceAuthorization.match(service.authorization, {

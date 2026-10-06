@@ -72,6 +72,7 @@ import {
 import { UseWindowRequest, WindowOutcome } from './windows.js'
 import { DraftListResponse, DraftSaved, SaveDraftRequest } from './drafts.js'
 import {
+  ACCOUNT_HANDLE_MAX,
   AddIntegrationRequest,
   AddIntegrationOutcome,
   FindIntegrationsRequest,
@@ -81,7 +82,7 @@ import {
   BeginConnectionRequest,
   CompleteConnectionRequest,
   ConnectionListResponse,
-  ConnectionRequestMessage,
+  ConnectionOffer,
   ConnectionResponse,
   ConnectionStep,
   ConnectionTool,
@@ -89,6 +90,7 @@ import {
   FindToolsRequest,
   FindToolsResponse,
   OfferConnectionRequest,
+  RenameConnectionRequest,
   ServiceCatalog,
   ToolOutcome,
   UseToolRequest,
@@ -615,6 +617,15 @@ const ResumeConnection = Rpc.make('ResumeConnection', {
   success: ConnectionStep,
 })
 const RemoveConnection = Rpc.make('RemoveConnection', { ...call, payload: { id: ConnectionId } })
+/**
+ * A Person naming one of their accounts ("Work"), so they and Vivid can tell it from their others
+ * on the same service. Only whoever may remove the Connection may name it.
+ */
+const RenameConnection = Rpc.make('RenameConnection', {
+  ...call,
+  payload: RenameConnectionRequest,
+  success: ConnectionResponse,
+})
 /** Vivid looking for what it can do, limited to what the acting Person may use in this Thread. */
 const FindTools = Rpc.make('FindTools', {
   ...call,
@@ -630,7 +641,7 @@ const FindTools = Rpc.make('FindTools', {
 const ResolveTool = Rpc.make('ResolveTool', {
   ...call,
   payload: {
-    account: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
+    account: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(ACCOUNT_HANDLE_MAX)),
     tool: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
   },
   success: ConnectionTool,
@@ -641,7 +652,7 @@ const UseTool = Rpc.make('UseTool', { ...call, payload: UseToolRequest, success:
 const OfferConnection = Rpc.make('OfferConnection', {
   ...call,
   payload: OfferConnectionRequest,
-  success: ConnectionRequestMessage,
+  success: ConnectionOffer,
 })
 
 // ── Memory ─────────────────────────────────────────────────────────────────
@@ -921,6 +932,7 @@ export const VividRpc = RpcGroup.make(
   CompleteConnection,
   ResumeConnection,
   RemoveConnection,
+  RenameConnection,
   FindTools,
   ResolveTool,
   UseTool,

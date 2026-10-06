@@ -169,12 +169,12 @@ describe.skipIf(!testDatabaseConfigured)('Google fixed callback', () => {
             const store = yield* ConnectionStore
             const first = yield* store.begin(ownerActor, {
               service: serviceId,
-              label: 'First',
+              name: 'First',
               shared: false,
             })
             const second = yield* store.begin(ownerActor, {
               service: serviceId,
-              label: 'Second',
+              name: 'Second',
               shared: false,
             })
             if (

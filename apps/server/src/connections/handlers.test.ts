@@ -66,7 +66,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection transport authentication', 
           expect(found.unconnected).toEqual([])
           expect(
             yield* connectionHandlers
-              .OfferConnection({ service: serviceId, reason: 'Read records' })
+              .OfferConnection({ service: serviceId, reason: 'Read records', wanted: 'Service' })
               .pipe(Effect.flip),
           ).toEqual(new InvalidRequest({ message: connectionSetupMessage }))
         }).pipe(
@@ -127,7 +127,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
             sessionId: SessionId.make('resume-session'),
           })
           const begun = yield* connectionHandlers
-            .BeginConnection({ service: serviceId, label: 'Resume', shared: false })
+            .BeginConnection({ service: serviceId, name: null, shared: false })
             .pipe(Effect.provideService(AuthContext, auth))
           const store = yield* ConnectionStore
           const before = yield* store.get(ownerActor, begun.connection.id)
@@ -159,7 +159,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
           yield* Ref.set(probe.step, 'OpenSignIn')
           const begun = yield* (yield* ConnectionStore).begin(ownerActor, {
             service: serviceId,
-            label: 'Setup required',
+            name: 'Setup required',
             shared: false,
           })
           const executor = yield* Executor
@@ -205,7 +205,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
           const store = yield* ConnectionStore
           const begun = yield* store.begin(ownerActor, {
             service: serviceId,
-            label: 'Lost renewal',
+            name: 'Lost renewal',
             shared: false,
           })
           const row = yield* store.get(ownerActor, begun.connection.id)
@@ -261,12 +261,12 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
         yield* Ref.set(probe.step, 'OpenSignIn')
         const personal = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Private',
+          name: 'Private',
           shared: false,
         })
         const shared = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Shared',
+          name: 'Shared',
           shared: true,
         })
         const auth = AuthState.Person({
@@ -294,7 +294,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
         const store = yield* ConnectionStore
         const begun = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Completed',
+          name: 'Completed',
           shared: false,
         })
         yield* Ref.set(probe.step, 'Done')
@@ -322,7 +322,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         const store = yield* ConnectionStore
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Failed',
+          name: 'Failed',
           shared: false,
         })
         yield* store.failed(
@@ -350,7 +350,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         const probe = yield* ConnectionProbe
         const begun = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Unavailable discovery',
+          name: 'Unavailable discovery',
           shared: false,
         })
         const executor = yield* Executor
@@ -387,7 +387,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         const probe = yield* ConnectionProbe
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Private',
+          name: 'Private',
           shared: false,
         })
         const calls = yield* Ref.get(probe.calls)
@@ -417,7 +417,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         yield* Ref.set(probe.decision, 'Allowed')
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Shared',
+          name: 'Shared',
           shared: true,
         })
         const auth = AuthState.Vivid({
@@ -440,7 +440,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
           .FindTools({ query: 'records' })
           .pipe(Effect.provideService(AuthContext, auth))
         expect(found.tools.map((tool) => tool.name)).toEqual(['read'])
-        expect(found.tools[0]).toMatchObject({ account: 'Shared', effect: 'read' })
+        expect(found.tools[0]).toMatchObject({ account: 'Records (Shared)', effect: 'read' })
       }),
     )
     it.effect('asks for personal exposure and never dispatches blocked or pending actions', () =>
@@ -450,7 +450,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         const probe = yield* ConnectionProbe
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Personal',
+          name: 'Personal',
           shared: false,
         })
         const auth = AuthState.Vivid({
@@ -489,7 +489,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         yield* Ref.set(probe.outcome, ExecutorCallOutcome.cases.NotReady.make({}))
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Revoked',
+          name: 'Revoked',
           shared: false,
         })
         const auth = AuthState.Vivid({
@@ -535,7 +535,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
           yield* Ref.set(probe.decision, 'Allowed')
           const step = yield* store.begin(ownerActor, {
             service: serviceId,
-            label: 'Deleted resource',
+            name: 'Deleted resource',
             shared: false,
           })
           const auth = AuthState.Vivid({
@@ -582,7 +582,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
 
           const ready = yield* store.begin(ownerActor, {
             service: serviceId,
-            label: 'Misconfigured installation',
+            name: 'Misconfigured installation',
             shared: false,
           })
           const denied = Executor.of({
@@ -609,7 +609,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         const probe = yield* ConnectionProbe
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Approved account',
+          name: 'Approved account',
           shared: false,
         })
         const auth = AuthState.Vivid({
