@@ -158,6 +158,11 @@ it('exposes sequential task allocation on document watches but not watchEvents',
         change.ops.some((op) => JSON.stringify(op[1]).includes('taskId')),
     ),
   ).toBe(true)
+  expect(batches.map((batch) => batch.map((event) => event.type))).toEqual([
+    ['tool_execution_start'],
+    ['tool_execution_end', 'message_start', 'message_end'],
+    ['entry_appended'],
+  ])
   const delivered = batches.flat()
   expect(
     delivered

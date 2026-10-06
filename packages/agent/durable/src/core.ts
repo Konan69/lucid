@@ -31,7 +31,7 @@ export {
   translate,
 } from './chunks.ts'
 export { type Replay, type ToolsOptions, toolsExtension } from './tools.ts'
-export { ChatTurn, decodeTurn, respond } from './respond.ts'
+export { ChatTurn, TurnBody, decodeTurn, respond } from './respond.ts'
 export { attachRun, continueRun, type RunInput, prepareRun, streamRun } from './stream.ts'
 
 export { abort } from './abort.ts'

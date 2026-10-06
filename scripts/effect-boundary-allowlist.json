@@ -111,5 +111,15 @@
     "file": "packages/agent/durable/src/fixtures/task.ts",
     "classification": "test-process-entrypoint",
     "symbols": ["harness", "root", "<module>"]
+  },
+  {
+    "file": "packages/agent/durable/src/examples/main.ts",
+    "classification": "http-framework-entrypoint",
+    "symbol": "route"
+  },
+  {
+    "file": "packages/agent/durable/src/examples/effect.ts",
+    "classification": "third-party-adapter",
+    "symbol": "readBody"
   }
 ]
