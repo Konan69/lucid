@@ -11,12 +11,7 @@ import {
   WindowId,
 } from '@vivid/contracts'
 import { Effect } from 'effect'
-import {
-  browseOutcome,
-  desktopOutcome,
-  toolOutcome,
-  windowOutcome,
-} from './outcomes.ts'
+import { browseOutcome, desktopOutcome, toolOutcome, windowOutcome } from './outcomes.ts'
 
 const approval = { approvalId: ApprovalId.make('approval-1'), summary: 'Send the draft.' }
 
@@ -148,9 +143,7 @@ describe('outcome mapping', () => {
   it.effect('explains a Person holding the Computer without suggesting a bypass', () =>
     Effect.sync(() => {
       const reason = 'The person holds the keyboard'
-      for (const result of [
-        browseOutcome(BrowseOutcome.cases.Unavailable.make({ reason })),
-      ]) {
+      for (const result of [browseOutcome(BrowseOutcome.cases.Unavailable.make({ reason }))]) {
         expect(result.output).toEqual({
           ok: false,
           reason,
