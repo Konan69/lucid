@@ -2,9 +2,10 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { createProvider, envApiKeyAuth, Type } from '@earendil-works/pi-ai'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 import { createModels } from '@earendil-works/pi-ai/models'
+import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter'
 import { createRegistry, defineExtension, defineTool } from '@earendil-works/pi-durable'
 import { expect, it } from '@effect/vitest'
-import { Effect, Option } from 'effect'
+import { Config, Effect, Match, Option, Stream } from 'effect'
 
 import { continueRun, decide, HoldId, streamRun, toolsExtension } from './core.ts'
 import { tool } from 'ai'
@@ -18,7 +19,7 @@ const context = BACKGROUND_CONTEXT
 const baseUrl = 'https://api.experientiallabs.ai/v1'
 
 /** Reuse the opt-in provider configuration for both real transport and held-input claims. */
-function liveModels() {
+function explabsModels() {
   const models = createModels()
   models.setProvider(
     createProvider({
@@ -47,14 +48,41 @@ function liveModels() {
 }
 
 /**
+ * Default EXPLABS uses openai-completions. OpenRouter owns auth and chooses the pinned catalogue's
+ * API per model: Claude's anthropic-messages keeps partialJson; OpenAI's openai-completions keeps
+ * partialArgs. Never choose the API from a name prefix or read/log credentials in this fixture.
+ */
+const liveConfiguration = Effect.fn('Test.liveConfiguration')(function* () {
+  const provider = yield* Config.Literals(['explabs', 'openrouter'], 'DURABLE_LIVE_PROVIDER').pipe(
+    Config.withDefault('explabs'),
+  )
+  const selected = yield* Match.value(provider).pipe(
+    Match.when('explabs', () => Effect.succeed({ models: explabsModels(), id: 'glm-5.3-flash' })),
+    Match.when('openrouter', () =>
+      Effect.gen(function* () {
+        const id = yield* Config.NonEmptyString('DURABLE_LIVE_MODEL')
+        const models = createModels()
+        models.setProvider(openrouterProvider())
+        return { models, id }
+      }),
+    ),
+    Match.exhaustive,
+  )
+  const model = selected.models.getModel(provider, selected.id)
+  if (model === undefined)
+    throw new Error('DURABLE_LIVE_MODEL is absent from the selected provider catalogue')
+  return { models: selected.models, model }
+})
+
+/**
  * Claim: a real provider's streamed response, with a real tool round, arrives as a valid AI SDK
- * message. Opt in with DURABLE_LIVE=1 and EXPLABS_API_KEY; skipped otherwise.
+ * message. Opt in with DURABLE_LIVE=1 and the selected provider credentials; skipped otherwise.
  */
 it.live.skipIf(process.env['DURABLE_LIVE'] !== '1')(
   'a real model calls a tool and answers through the stream',
   () =>
     Effect.gen(function* () {
-      const models = liveModels()
+      const { models, model } = yield* liveConfiguration()
       const registry = createRegistry()
       registry.install(
         defineExtension({
@@ -76,7 +104,7 @@ it.live.skipIf(process.env['DURABLE_LIVE'] !== '1')(
       const harness = yield* memory(models, registry)
       const root = yield* Effect.promise(() =>
         harness.root(context, {
-          agent: { model: { provider: 'explabs', modelId: 'glm-5.3-flash' } },
+          agent: { model: { provider: model.provider, modelId: model.id } },
         }),
       )
 
@@ -106,13 +134,13 @@ it.live.skipIf(process.env['DURABLE_LIVE'] !== '1')(
 
 /**
  * Claim: approval is requested only for the final multi-field input recorded by a real provider.
- * Opt in with DURABLE_LIVE=1 and EXPLABS_API_KEY; no tool executes before approval or more than once.
+ * Opt in with DURABLE_LIVE=1 and the selected provider credentials; no tool executes before approval or more than once.
  */
 it.live.skipIf(process.env['DURABLE_LIVE'] !== '1')(
   'a real model approval presents the exact recorded arguments before executing once',
   () =>
     Effect.gen(function* () {
-      const models = liveModels()
+      const { models, model } = yield* liveConfiguration()
       const registry = createRegistry()
       const paid: { account: string; amount: number }[] = []
       registry.install(
@@ -131,12 +159,13 @@ it.live.skipIf(process.env['DURABLE_LIVE'] !== '1')(
           { approval: { pay: true } },
         ),
       )
-      const harness = yield* memory(models, registry)
+      const harness = yield* memory(models, registry, { progress: { partialIntervalMs: 1 } })
       const root = yield* Effect.promise(() =>
         harness.root(context, {
-          agent: { model: { provider: 'explabs', modelId: 'glm-5.3-flash' } },
+          agent: { model: { provider: model.provider, modelId: model.id } },
         }),
       )
+      const watched = yield* Pi.watch(harness, root.id, context)
       const first = yield* consume(
         streamRun(
           harness,
@@ -160,6 +189,24 @@ it.live.skipIf(process.env['DURABLE_LIVE'] !== '1')(
         .find((block) => block.type === 'toolCall' && block.id === input.toolCallId)
       if (recorded === undefined || recorded.type !== 'toolCall')
         throw new Error('Expected recorded call')
+      // OpenRouter runs must actually expose truncated block updates, otherwise they do not prove N1.
+      const observed = yield* Stream.runCollect(
+        watched.stream.pipe(Stream.takeUntil((event) => event.type === 'message_end')),
+      )
+      const partials = observed
+        .flatMap((event) => (event.type === 'message_update' ? event.changes : []))
+        .flatMap((change) =>
+          change.type === 'block' && change.block.type === 'toolCall' ? [change.block] : [],
+        )
+      if (model.provider === 'openrouter')
+        expect(
+          partials.some(
+            (block) =>
+              block.id === input.toolCallId &&
+              (block.arguments.account !== recorded.arguments.account ||
+                block.arguments.amount !== recorded.arguments.amount),
+          ),
+        ).toBe(true)
       expect(input.input).toEqual(recorded.arguments)
       expect(input.input).toEqual({ account: 'savings', amount: 12345 })
       const approval = first.chunks.find((chunk) => chunk.type === 'tool-approval-request')
