@@ -21,7 +21,7 @@ import {
   translate,
 } from './chunks.ts'
 import { RunMissing, type PiFailed, type WatchClosed, type WatchOverflowed } from './errors.ts'
-import { CallLookup, identify, lookupSnapshots, Holds, planOf } from './holds.ts'
+import { CallIdentity, CallLookup, identitiesFor, lookupSnapshots, Holds, planOf } from './holds.ts'
 import * as Pi from './pi.ts'
 
 /** A retried input retains its client request id and therefore Pi's submission identity. */
@@ -31,7 +31,11 @@ export type RunInput = {
   readonly requestId: string
 }
 
-const noDesk: Desk = { plan: () => Option.none(), call: () => CallLookup.cases.Missing.make({}) }
+const noDesk: Desk = {
+  plan: () => Option.none(),
+  call: () => CallLookup.cases.Missing.make({}),
+  hold: () => CallLookup.cases.Missing.make({}),
+}
 
 type WatchFailure = PiFailed | WatchClosed | WatchOverflowed
 
@@ -44,7 +48,11 @@ type State = { readonly state: RunState; readonly round: Round }
 type Written = State & { readonly chunks: readonly UIMessageChunk[]; readonly ended: boolean }
 
 /** Resolve tool plans at the point of presentation, since the registry can change between turns. */
-const readDesk = Effect.fn('Durable.readDesk')(function* (reader: Reader) {
+const readDesk = Effect.fn('Durable.readDesk')(function* (
+  reader: Reader,
+  chunks: Step['chunks'],
+  shownHolds: Round['holds'],
+) {
   const agent = yield* Pi.agent(reader.conversation, reader.context)
   const plans = new Map(
     agent.tools.flatMap((tool) => {
@@ -54,10 +62,36 @@ const readDesk = Effect.fn('Durable.readDesk')(function* (reader: Reader) {
   )
   const holds = yield* Pi.snapshot(reader.harness, Holds, reader.conversation.id, reader.context)
   const live = yield* Pi.snapshot(reader.harness, LiveDoc, reader.conversation.id, reader.context)
-  const view = yield* Pi.view(reader.conversation, reader.context)
+  const callIds = new Set(
+    chunks.flatMap((chunk) => ('toolCallId' in chunk ? [chunk.toolCallId] : [])),
+  )
+  const slots = Option.match(live, { onNone: () => [], onSome: (document) => document.tools ?? [] })
+  const needsHistory = [...callIds].some(
+    (id) => !slots.some((slot) => slot.callId === id) && !shownHolds.has(id),
+  )
+  const identities = needsHistory
+    ? identitiesFor((yield* Pi.view(reader.conversation, reader.context)).entries)
+    : new Map<string, typeof CallIdentity.cases.Public.Type>()
+  const calls = new Map(
+    [...callIds].map((callId) => {
+      const shownHold = shownHolds.get(callId)
+      if (shownHold !== undefined && !slots.some((slot) => slot.callId === callId))
+        return [
+          callId,
+          lookupSnapshots(live, holds, CallIdentity.cases.Hold.make({ holdId: shownHold })),
+        ] as const
+      const identity = slots.some((slot) => slot.callId === callId)
+        ? CallIdentity.cases.Public.make({ callId, resultTask: Option.none(), duplicate: false })
+        : (identities.get(callId) ??
+          CallIdentity.cases.Public.make({ callId, resultTask: Option.none(), duplicate: false }))
+      return [callId, lookupSnapshots(live, holds, identity)] as const
+    }),
+  )
   return {
     plan: (toolName: string) => Option.fromNullishOr(plans.get(toolName)),
-    call: (callId: string) => lookupSnapshots(live, holds, identify(view.entries, callId)),
+    call: (callId: string) => calls.get(callId) ?? CallLookup.cases.Missing.make({}),
+    hold: (holdId: import('./errors.ts').HoldId) =>
+      lookupSnapshots(live, holds, CallIdentity.cases.Hold.make({ holdId })),
   } satisfies Desk
 })
 
@@ -79,7 +113,14 @@ const apply = Effect.fn('Durable.streamEvent')(function* (
 ) {
   const translated = translate(current.state, event)
   const needsRefresh = event.type === 'message_end' && current.round.unrequested.size > 0
-  const desk = needsDesk(translated.chunks) || needsRefresh ? yield* readDesk(reader) : noDesk
+  const desk =
+    needsDesk(translated.chunks) || needsRefresh
+      ? yield* readDesk(
+          reader,
+          [...translated.chunks, ...current.round.unrequested.values()],
+          current.round.holds,
+        )
+      : noDesk
   const roundSettled = event.type === 'message_end' || event.type === 'tool_execution_end'
   const written = writeStep(current, translated, roundSettled, desk)
   return { ...written, ended: written.ended || event.type === 'run_end' }
@@ -148,7 +189,9 @@ const resume = Effect.fn('Durable.resumeStream')(function* (
   watched: Effect.Success<ReturnType<typeof Pi.watch>>,
   prefix: Prefix,
 ) {
-  const desk = needsDesk(prefix.step.chunks) ? yield* readDesk(reader) : noDesk
+  const desk = needsDesk(prefix.step.chunks)
+    ? yield* readDesk(reader, prefix.step.chunks, emptyRound.holds)
+    : noDesk
   const settled =
     watched.snapshot.generation === undefined || watched.snapshot.generation.message === undefined
   const written = writeStep(

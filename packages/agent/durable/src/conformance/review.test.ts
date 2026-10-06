@@ -1,10 +1,11 @@
+import { HoldId } from '../core.ts'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { tool } from 'ai'
 import { expect, it } from 'vitest'
 import { z } from 'zod'
 
 import { CallNotWaiting, continueRun, decide, respond, streamRun, waiting } from '../main.ts'
-import { call, consume, context, host, modelText, shop, signal } from './fixtures/host.ts'
+import { hold, call, consume, context, host, modelText, shop, signal } from './fixtures/host.ts'
 
 // Review dup.test.ts: Pi generation.startToolRound accepts duplicate ids but public decisions cannot distinguish them.
 it('blocks every duplicate id in a round without requesting approval or paying', async () => {
@@ -38,7 +39,12 @@ it('blocks every duplicate id in a round without requesting approval or paying',
   expect(result.chunks.filter((chunk) => chunk.type === 'tool-approval-request')).toEqual([])
   expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
   await expect(
-    decide(opened.harness, opened.root.id, { callId: 'dup', approved: true }, context),
+    decide(
+      opened.harness,
+      opened.root.id,
+      { holdId: HoldId.make('hold:99999999'), approved: true },
+      context,
+    ),
   ).rejects.toBeInstanceOf(CallNotWaiting)
   await opened.root.waitForIdle(context)
   expect(reason).toContain('duplicate tool call id')
@@ -80,7 +86,7 @@ it('does not apply a stale denial to a failing unheld task with the same id', as
   await decide(
     opened.harness,
     opened.root.id,
-    { callId: 'same', approved: false, reason: 'no' },
+    { holdId: await hold(opened.harness, opened.root.id, 'same'), approved: false, reason: 'no' },
     context,
   )
   await opened.root.waitForIdle(context)
@@ -100,8 +106,21 @@ it('does not apply a stale denial to a failing unheld task with the same id', as
     toolCallId: 'same',
     errorText: expect.stringContaining('exploded'),
   })
+  const entries = (await opened.root.context(context)).entries
+  const resultEntry = entries.findLast((entry) =>
+    (entry.model ?? []).some(
+      (message) => message.role === 'toolResult' && message.toolCallId === 'same',
+    ),
+  )
+  const failedTask = resultEntry === undefined ? undefined : resultEntry.byTaskId
+  if (failedTask === undefined) throw new Error('Expected failed task provenance')
   await expect(
-    decide(opened.harness, opened.root.id, { callId: 'same', approved: true }, context),
+    decide(
+      opened.harness,
+      opened.root.id,
+      { holdId: HoldId.make(`hold:${failedTask}`), approved: true },
+      context,
+    ),
   ).rejects.toBeInstanceOf(CallNotWaiting)
 })
 
@@ -146,7 +165,12 @@ it('requests a fresh approval for a reused id in a later run with streamed parti
       context,
     ),
   )
-  await decide(opened.harness, opened.root.id, { callId: 'reused', approved: true }, context)
+  await decide(
+    opened.harness,
+    opened.root.id,
+    { holdId: await hold(opened.harness, opened.root.id, 'reused'), approved: true },
+    context,
+  )
   await opened.root.waitForIdle(context)
   const result = await consume(
     await streamRun(
@@ -165,7 +189,12 @@ it('requests a fresh approval for a reused id in a later run with streamed parti
     { callId: 'reused', input: { amount: 200 } },
   ])
   expect(paid).toEqual([100])
-  await decide(opened.harness, opened.root.id, { callId: 'reused', approved: false }, context)
+  await decide(
+    opened.harness,
+    opened.root.id,
+    { holdId: await hold(opened.harness, opened.root.id, 'reused'), approved: false },
+    context,
+  )
   await opened.root.waitForIdle(context)
   expect(paid).toEqual([100])
 })
@@ -196,7 +225,12 @@ it('requires a fresh decision when a later round of the same run reuses an id', 
       context,
     ),
   )
-  await decide(opened.harness, opened.root.id, { callId: 'reused', approved: true }, context)
+  await decide(
+    opened.harness,
+    opened.root.id,
+    { holdId: await hold(opened.harness, opened.root.id, 'reused'), approved: true },
+    context,
+  )
   try {
     await entered.promise
     const stream = await continueRun(opened.harness, opened.root.id, new Set(['reused']), context)
@@ -209,7 +243,12 @@ it('requires a fresh decision when a later round of the same run reuses an id', 
       { callId: 'reused', input: { amount: 200 } },
     ])
     expect(fixture.paid).toEqual([100])
-    await decide(opened.harness, opened.root.id, { callId: 'reused', approved: false }, context)
+    await decide(
+      opened.harness,
+      opened.root.id,
+      { holdId: await hold(opened.harness, opened.root.id, 'reused'), approved: false },
+      context,
+    )
     await opened.root.waitForIdle(context)
     expect(fixture.paid).toEqual([100])
   } finally {
@@ -262,6 +301,7 @@ it('ignores an unstarted sequential decision instead of rejecting the resume', a
     { toolCallId: 'c1' },
   ])
   expect(await waiting(opened.harness, opened.root.id, context)).toMatchObject([{ callId: 'c1' }])
+  const firstHold = await hold(opened.harness, opened.root.id, 'c1')
   const body = {
     messages: [
       {
@@ -270,7 +310,7 @@ it('ignores an unstarted sequential decision instead of rejecting the resume', a
           type: 'tool-pay',
           toolCallId: id,
           state: 'approval-responded',
-          approval: { id, approved: true },
+          approval: { id: id === 'c1' ? firstHold : HoldId.make('hold:99999999'), approved: true },
         })),
       },
     ],
@@ -286,7 +326,7 @@ it('ignores an unstarted sequential decision instead of rejecting the resume', a
   )
   expect(response.status).toBe(200)
   if (response.body === null) throw new Error('Expected the second approval response')
-  // B stops at the source-proven stock-client limitation. Detach the response instead of claiming
+  // B stops at Pi's source-proven missing task-admission event. Detach the response instead of claiming
   // a second automatic round trip; Pi keeps c2 held until cleanup cancels the isolated harness.
   await response.body.cancel()
   await executed.promise

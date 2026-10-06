@@ -2,7 +2,7 @@ import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from 'vitest'
 
 import { abort, attachRun, CallNotWaiting, decide, streamRun, waiting } from '../main.ts'
-import { call, consume, context, host, shop, signal, texts } from './fixtures/host.ts'
+import { hold, call, consume, context, host, shop, signal, texts } from './fixtures/host.ts'
 
 /** A real partial receipt arms cancellation; no clock wait is used to guess provider progress. */
 it('aborts producing text, emits abort, and retains the committed partial', async () => {
@@ -65,10 +65,11 @@ it('aborts a parked approval and rejects a late decision', async () => {
     ),
   )
   expect(await waiting(opened.harness, opened.root.id, context)).toHaveLength(1)
+  const holdId = await hold(opened.harness, opened.root.id, 'held')
   await abort(opened.harness, opened.root.id, context)
   expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
   await expect(
-    decide(opened.harness, opened.root.id, { callId: 'held', approved: true }, context),
+    decide(opened.harness, opened.root.id, { holdId, approved: true }, context),
   ).rejects.toBeInstanceOf(CallNotWaiting)
   expect(await attachRun(opened.harness, opened.root.id, context)).toEqual({ status: 'idle' })
   expect(fixture.paid).toEqual([])

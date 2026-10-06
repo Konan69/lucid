@@ -1,3 +1,4 @@
+import { HoldId } from './core.ts'
 import * as NodeEvents from 'node:events'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import type { Message } from '@earendil-works/pi-ai'
@@ -35,7 +36,7 @@ import {
   continueRun,
 } from './main.ts'
 import { memory } from './fixtures/harness.ts'
-import { read } from './fixtures/reading.ts'
+import { read, hold } from './fixtures/reading.ts'
 
 const context = BACKGROUND_CONTEXT
 
@@ -107,7 +108,7 @@ const lastText = (messages: readonly Message[]) => {
 it.live('lets an AI SDK chat client approve a call and continues the same message', () =>
   Effect.gen(function* () {
     const paid: { amount: number }[] = []
-    const { faux, transport } = yield* server(paid)
+    const { faux, transport, harness, root } = yield* server(paid)
     faux.setResponses([
       fauxAssistantMessage([fauxToolCall('pay', { amount: 500 }, { id: 'call-pay' })], {
         stopReason: 'toolUse',
@@ -130,9 +131,8 @@ it.live('lets an AI SDK chat client approve a call and continues the same messag
 
     // What an Approve button does. The client resubmits by itself and reads the continuation.
     const continued = finished()
-    yield* Effect.promise(async () =>
-      chat.addToolApprovalResponse({ id: 'call-pay', approved: true }),
-    )
+    const holdId = yield* hold(harness, root.id, 'call-pay', context)
+    yield* Effect.promise(async () => chat.addToolApprovalResponse({ id: holdId, approved: true }))
     yield* Effect.promise(() => continued)
 
     expect(paid).toEqual([{ amount: 500 }])
@@ -197,7 +197,12 @@ it.live('preserves ConversationMissing as the Promise rejection', () =>
     const conversation = yield* Effect.promise(() => owner.root(context))
     yield* Effect.promise(() =>
       expect(
-        decide(empty, conversation.id, { callId: 'missing', approved: true }, context),
+        decide(
+          empty,
+          conversation.id,
+          { holdId: HoldId.make('hold:99999999'), approved: true },
+          context,
+        ),
       ).rejects.toBeInstanceOf(ConversationMissing),
     )
     yield* Effect.promise(() =>
@@ -416,6 +421,7 @@ it.live('keeps an approval decision whose reason is not a string', () =>
     ])
     const { chat } = client(transport, () => false)
     yield* Effect.promise(() => chat.sendMessage({ text: 'Pay' }))
+    const holdId = yield* hold(harness, root.id, 'reason', context)
     const turn = yield* Effect.promise(() =>
       decodeTurn({
         messages: [
@@ -427,7 +433,7 @@ it.live('keeps an approval decision whose reason is not a string', () =>
                 type: 'tool-pay',
                 toolCallId: 'reason',
                 state: 'approval-responded',
-                approval: { approved: true, reason: 9 },
+                approval: { id: holdId, approved: true, reason: 9 },
               },
             ],
           },
@@ -435,7 +441,7 @@ it.live('keeps an approval decision whose reason is not a string', () =>
       }),
     )
     expect(turn).toMatchObject({
-      decisions: [{ callId: 'reason', approved: true }],
+      decisions: [{ callId: 'reason', holdId, approved: true }],
     })
     expect('decisions' in turn && turn.decisions[0]).not.toHaveProperty('reason')
     const response = yield* Effect.promise(() => respondTurn(harness, root.id, turn, context))

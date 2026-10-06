@@ -1,3 +1,5 @@
+import { waiting } from '../core.ts'
+
 import { readUIMessageStream, type UIMessage, type UIMessageChunk } from 'ai'
 import { Array as Arr, Effect, Option, Stream } from 'effect'
 
@@ -25,4 +27,18 @@ export const read = Effect.fn('Test.readMessage')(function* (
     Stream.fromAsyncIterable(readUIMessageStream(options), (cause) => cause),
   )
   return Option.getOrThrow(Arr.last(messages))
+})
+
+/** Tests resolve a real waiting task; callers retain this id to repeat that exact interaction. */
+export const hold = Effect.fn('Test.hold')(function* (
+  harness: import('@earendil-works/pi-durable').Harness,
+  conversationId: import('@earendil-works/pi-durable').ConversationId,
+  callId: string,
+  context: import('@earendil-works/chord').Context,
+) {
+  const rows = (yield* waiting(harness, conversationId, context)).filter(
+    (row) => row.callId === callId,
+  )
+  if (rows.length !== 1 || rows[0] === undefined) throw new Error(`Expected one waiting ${callId}`)
+  return rows[0].holdId
 })

@@ -1,8 +1,9 @@
+import { HoldId } from '../core.ts'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from 'vitest'
 
 import { CallNotWaiting, answer, continueRun, decide, streamRun, waiting } from '../main.ts'
-import { call, consume, context, modelText, shop, signal, texts } from './fixtures/host.ts'
+import { hold, call, consume, context, modelText, shop, signal, texts } from './fixtures/host.ts'
 
 /** Run through the public stream until a complete tool round parks for a person. */
 async function park(opened: Awaited<ReturnType<Awaited<ReturnType<typeof shop>>['open']>>) {
@@ -23,9 +24,20 @@ it('approval runs the tool once and clears its hold', async () => {
   const parked = await park(opened)
   expect(fixture.paid).toEqual([])
   expect(await waiting(opened.harness, opened.root.id, context)).toEqual([
-    { kind: 'approval', callId: 'pay', toolName: 'pay', input: { amount: 500 } },
+    {
+      holdId: expect.stringMatching(/^hold:/u),
+      kind: 'approval',
+      callId: 'pay',
+      toolName: 'pay',
+      input: { amount: 500 },
+    },
   ])
-  await decide(opened.harness, opened.root.id, { callId: 'pay', approved: true }, context)
+  await decide(
+    opened.harness,
+    opened.root.id,
+    { holdId: await hold(opened.harness, opened.root.id, 'pay'), approved: true },
+    context,
+  )
   const stream = await continueRun(opened.harness, opened.root.id, new Set(['pay']), context)
   if (stream === undefined) throw new Error('Expected the held run')
   const result = await consume(stream, parked.message)
@@ -55,7 +67,11 @@ it('denial never executes and gives the model the reason', async () => {
   await decide(
     opened.harness,
     opened.root.id,
-    { callId: 'pay', approved: false, reason: 'Budget exceeded' },
+    {
+      holdId: await hold(opened.harness, opened.root.id, 'pay'),
+      approved: false,
+      reason: 'Budget exceeded',
+    },
     context,
   )
   const stream = await continueRun(opened.harness, opened.root.id, new Set(['pay']), context)
@@ -79,7 +95,12 @@ it('a decision with no client attached completes the durable run', async () => {
   ])
   await park(opened)
   // The stream has ended; deciding must drive the run without continueRun or another HTTP request.
-  await decide(opened.harness, opened.root.id, { callId: 'pay', approved: true }, context)
+  await decide(
+    opened.harness,
+    opened.root.id,
+    { holdId: await hold(opened.harness, opened.root.id, 'pay'), approved: true },
+    context,
+  )
   await opened.root.waitForIdle(context)
   expect(fixture.paid).toEqual([500])
   expect(
@@ -99,7 +120,7 @@ it('repeated decisions return the first settlement and execute once', async () =
   const opened = await fixture.open()
   opened.faux.setResponses([call('pay', { amount: 500 }, 'pay'), fauxAssistantMessage('Once.')])
   await park(opened)
-  const decision = { callId: 'pay', approved: true }
+  const decision = { holdId: await hold(opened.harness, opened.root.id, 'pay'), approved: true }
   expect(await decide(opened.harness, opened.root.id, decision, context)).toEqual({
     kind: 'approved',
   })
@@ -107,7 +128,7 @@ it('repeated decisions return the first settlement and execute once', async () =
   const conflicting = await decide(
     opened.harness,
     opened.root.id,
-    { callId: 'pay', approved: false, reason: 'Late denial' },
+    { holdId: decision.holdId, approved: false, reason: 'Late denial' },
     context,
   )
   await opened.root.waitForIdle(context)
@@ -123,7 +144,7 @@ it('concurrent decisions return usable settlements and execute once', async () =
   const opened = await fixture.open()
   opened.faux.setResponses([call('pay', { amount: 500 }, 'pay'), fauxAssistantMessage('Once.')])
   await park(opened)
-  const decision = { callId: 'pay', approved: true }
+  const decision = { holdId: await hold(opened.harness, opened.root.id, 'pay'), approved: true }
   const results = await Promise.all([
     decide(opened.harness, opened.root.id, decision, context),
     decide(opened.harness, opened.root.id, decision, context),
@@ -145,7 +166,12 @@ it('a decision after restart settles the original hold', async () => {
   expect(await waiting(after.harness, after.root.id, context)).toMatchObject([
     { callId: 'pay', kind: 'approval' },
   ])
-  await decide(after.harness, after.root.id, { callId: 'pay', approved: true }, context)
+  await decide(
+    after.harness,
+    after.root.id,
+    { holdId: await hold(after.harness, after.root.id, 'pay'), approved: true },
+    context,
+  )
   await after.root.waitForIdle(context)
   expect(fixture.paid).toEqual([500])
   expect(await waiting(after.harness, after.root.id, context)).toEqual([])
@@ -175,14 +201,23 @@ it('two holds in one round settle independently', async () => {
   const parked = await park(opened)
   expect(await waiting(opened.harness, opened.root.id, context)).toHaveLength(2)
   expect(parked.message.parts.filter((part) => part.type === 'tool-pay')).toHaveLength(2)
-  await decide(opened.harness, opened.root.id, { callId: 'one', approved: true }, context)
+  await decide(
+    opened.harness,
+    opened.root.id,
+    { holdId: await hold(opened.harness, opened.root.id, 'one'), approved: true },
+    context,
+  )
   expect(await waiting(opened.harness, opened.root.id, context)).toMatchObject([
     { callId: 'two', kind: 'approval' },
   ])
   await decide(
     opened.harness,
     opened.root.id,
-    { callId: 'two', approved: false, reason: 'Only one' },
+    {
+      holdId: await hold(opened.harness, opened.root.id, 'two'),
+      approved: false,
+      reason: 'Only one',
+    },
     context,
   )
   const stream = await continueRun(opened.harness, opened.root.id, new Set(['one', 'two']), context)
@@ -209,7 +244,7 @@ it('rejects an answer for a call that is not waiting', async () => {
     answer(
       opened.harness,
       opened.root.id,
-      { callId: 'never-called', output: 'unsolicited' },
+      { holdId: HoldId.make('hold:99999999'), output: 'unsolicited' },
       context,
     ),
   ).rejects.toThrow()
@@ -217,7 +252,7 @@ it('rejects an answer for a call that is not waiting', async () => {
     answer(
       opened.harness,
       opened.root.id,
-      { callId: 'never-called', output: 'unsolicited' },
+      { holdId: HoldId.make('hold:99999999'), output: 'unsolicited' },
       context,
     ),
   ).rejects.toBeInstanceOf(CallNotWaiting)
@@ -235,7 +270,12 @@ it('a reused call id in a new run needs its own approval', async () => {
     fauxAssistantMessage('Second paid.'),
   ])
   await park(opened)
-  await decide(opened.harness, opened.root.id, { callId: 'reused', approved: true }, context)
+  await decide(
+    opened.harness,
+    opened.root.id,
+    { holdId: await hold(opened.harness, opened.root.id, 'reused'), approved: true },
+    context,
+  )
   await opened.root.waitForIdle(context)
   expect(fixture.paid).toEqual([100])
   await consume(
@@ -273,8 +313,9 @@ it('a detached late answer creates one follow-up model turn across redelivery', 
     ),
   )
   await opened.root.waitForIdle(context)
-  await answer(opened.harness, opened.root.id, { callId: 'later', output: 'savings' }, context)
-  await answer(opened.harness, opened.root.id, { callId: 'later', output: 'savings' }, context)
+  const holdId = await hold(opened.harness, opened.root.id, 'later')
+  await answer(opened.harness, opened.root.id, { holdId, output: 'savings' }, context)
+  await answer(opened.harness, opened.root.id, { holdId, output: 'savings' }, context)
   await opened.root.waitForIdle(context)
   expect(prompts).toHaveLength(1)
   expect(prompts[0]).toContain('[answer to later] savings')
@@ -311,7 +352,12 @@ it('a detached late answer waits behind the active run', async () => {
     context,
   )
   await entered.promise
-  await answer(opened.harness, opened.root.id, { callId: 'later', output: 'savings' }, context)
+  await answer(
+    opened.harness,
+    opened.root.id,
+    { holdId: await hold(opened.harness, opened.root.id, 'later'), output: 'savings' },
+    context,
+  )
   expect(order).toEqual([])
   release.resolve()
   const result = await consume(stream)

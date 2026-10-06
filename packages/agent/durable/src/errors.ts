@@ -6,6 +6,12 @@ const ConversationId = Schema.declare<PiConversationId>((value): value is PiConv
   Predicate.isNumber(value),
 )
 
+/** Opaque durable tool-task identity; callers obtain it from Waiting or an approval request. */
+export const HoldId = Schema.String.check(Schema.isPattern(/^hold:[1-9][0-9]*$/u)).pipe(
+  Schema.brand('Durable.HoldId'),
+)
+export type HoldId = typeof HoldId.Type
+
 /** The harness owns conversation identity; errors retain the requested identifier verbatim. */
 export class ConversationMissing extends Schema.TaggedError<ConversationMissing>()(
   'ConversationMissing',
@@ -148,11 +154,11 @@ export class WatchClosed extends Schema.TaggedError<WatchClosed>()(
 /** An unsolicited or stale settlement cannot authorize a tool task. */
 export class CallNotWaiting extends Schema.TaggedError<CallNotWaiting>()(
   'CallNotWaiting',
-  { conversationId: ConversationId, callId: Schema.String },
+  { conversationId: ConversationId, holdId: HoldId },
   { title: 'CallNotWaiting' },
 ) {
   /** Preserve the call and conversation that require a refreshed waiting view. */
   override get message() {
-    return `Call ${this.callId} in conversation ${this.conversationId} is not waiting`
+    return `Hold ${this.holdId} in conversation ${this.conversationId} is not waiting`
   }
 }

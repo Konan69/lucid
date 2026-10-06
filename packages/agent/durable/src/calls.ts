@@ -1,6 +1,7 @@
 import type { Chunk } from './chunks.ts'
 import { Match, Option } from 'effect'
 
+import type { HoldId } from './errors.ts'
 import { CallLookup, holdKind, type Plan } from './holds.ts'
 
 /** What the stream must know about a conversation's tools to present their calls. */
@@ -9,6 +10,7 @@ export type Desk = {
   readonly plan: (toolName: string) => Option.Option<Plan>
   /** Every presentation uses the same task/provenance lookup as hooks and admission. */
   readonly call: (callId: string) => CallLookup
+  readonly hold: (holdId: HoldId) => CallLookup
 }
 
 /**
@@ -17,10 +19,16 @@ export type Desk = {
 export type Round = {
   readonly awaiting: ReadonlySet<string>
   readonly running: ReadonlySet<string>
+  readonly holds: ReadonlyMap<string, HoldId>
   readonly unrequested: ReadonlyMap<string, InputAvailable>
 }
 
-export const emptyRound: Round = { awaiting: new Set(), running: new Set(), unrequested: new Map() }
+export const emptyRound: Round = {
+  awaiting: new Set(),
+  running: new Set(),
+  unrequested: new Map(),
+  holds: new Map(),
+}
 
 /**
  * Every open call waits for a person and nothing else runs, so the run cannot move until someone
@@ -35,6 +43,7 @@ const without = (set: ReadonlySet<string>, id: string) =>
   new Set([...set].filter((each) => each !== id))
 
 const close = (round: Round, id: string): Round => ({
+  holds: new Map([...round.holds].filter(([callId]) => callId !== id)),
   unrequested: new Map([...round.unrequested].filter(([callId]) => callId !== id)),
   awaiting: without(round.awaiting, id),
   running: without(round.running, id),
@@ -58,36 +67,38 @@ function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown 
   const { dynamic: _dynamic, ...typed } = chunk
   const kind = holdKind(plan.value, chunk.input)
   const found = desk.call(chunk.toolCallId)
-  const settled = CallLookup.guards.Settled(found) ? Option.some(found.settlement) : Option.none()
   const request: readonly Chunk[] =
     Option.contains(kind, 'approval') && CallLookup.isAnyOf(['Ready', 'Settled'])(found)
       ? [
           {
             type: 'tool-approval-request',
-            approvalId: chunk.toolCallId,
+            approvalId: found.holdId,
             toolCallId: chunk.toolCallId,
           },
         ]
       : []
   const response: readonly Chunk[] =
-    Option.contains(kind, 'approval') && Option.isSome(settled)
+    Option.contains(kind, 'approval') && CallLookup.guards.Settled(found)
       ? [
           {
             type: 'tool-approval-response',
-            approvalId: chunk.toolCallId,
-            approved: settled.value.kind !== 'denied',
+            approvalId: found.holdId,
+            approved: found.settlement.kind !== 'denied',
           },
         ]
       : []
   const waits = Option.isSome(kind) && CallLookup.isAnyOf(['Ready', 'Queued'])(found)
+  const holds = new Map(round.holds)
+  if (CallLookup.isAnyOf(['Ready', 'Settled', 'Asked', 'Executing', 'Done'])(found))
+    holds.set(chunk.toolCallId, found.holdId)
   const unrequested = new Map(round.unrequested)
   if (Option.isSome(kind) && CallLookup.guards.Queued(found))
     unrequested.set(chunk.toolCallId, typed)
   else unrequested.delete(chunk.toolCallId)
   return {
     round: waits
-      ? { ...round, unrequested, awaiting: new Set([...round.awaiting, chunk.toolCallId]) }
-      : { ...round, unrequested, running: new Set([...round.running, chunk.toolCallId]) },
+      ? { ...round, holds, unrequested, awaiting: new Set([...round.awaiting, chunk.toolCallId]) }
+      : { ...round, holds, unrequested, running: new Set([...round.running, chunk.toolCallId]) },
     chunks: [typed, ...request, ...response],
   }
 }
@@ -107,7 +118,8 @@ function show(round: Round, chunk: Chunk, desk: Desk): Shown {
     })),
     Match.when({ type: 'tool-output-error' }, (output): Shown => {
       // Pi's blocked result becomes the AI SDK denial state only when the durable decision denied it.
-      const found = desk.call(output.toolCallId)
+      const holdId = round.holds.get(output.toolCallId)
+      const found = holdId === undefined ? desk.call(output.toolCallId) : desk.hold(holdId)
       const denied = CallLookup.guards.Settled(found) && found.settlement.kind === 'denied'
       return {
         round: close(round, output.toolCallId),

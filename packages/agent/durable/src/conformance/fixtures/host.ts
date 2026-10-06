@@ -11,7 +11,12 @@ import {
   fauxProvider,
   fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux'
-import { createRegistry, Harness, type HarnessSettings } from '@earendil-works/pi-durable'
+import {
+  createRegistry,
+  Harness,
+  type HarnessSettings,
+  type Extension,
+} from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import {
   DefaultChatTransport,
@@ -25,7 +30,7 @@ import {
 import { onTestFinished } from 'vitest'
 import { z } from 'zod'
 
-import { respond, toolsExtension, type ToolsOptions } from '../../main.ts'
+import { respond, toolsExtension, waiting, type ToolsOptions } from '../../main.ts'
 
 export const context = BACKGROUND_CONTEXT
 
@@ -112,11 +117,12 @@ export async function host(
     }
   })
   /** Open a fresh process-equivalent host on the same durable transcript. */
-  async function open() {
+  async function open(observers: readonly Extension[] = []) {
     const faux = fauxProvider(fauxOptions)
     const models = createModels()
     models.setProvider(faux.provider)
     const registry = createRegistry()
+    for (const extension of observers) registry.install(extension)
     registry.install(await toolsExtension('conformance', tools, options))
     const storage = await openNodeSqliteStorage(file)
     onTestFinished(() => storage.close(context))
@@ -144,7 +150,7 @@ export async function host(
 }
 
 /** Approval and person-answered tools shared by the HITL and actual SDK consumer suites. */
-export async function shop() {
+export async function shop(settings: Partial<HarnessSettings> = {}) {
   const paid: number[] = []
   const fixture = await host(
     {
@@ -163,6 +169,20 @@ export async function shop() {
       }),
     },
     { approval: { pay: true }, answers: { later: 'later' } },
+    settings,
   )
   return { ...fixture, paid }
+}
+
+/** Resolve the public task identity from an actual waiting row, never from a provider call id. */
+export async function hold(
+  harness: Harness,
+  conversationId: Parameters<typeof waiting>[1],
+  callId: string,
+) {
+  const rows = (await waiting(harness, conversationId, context)).filter(
+    (row) => row.callId === callId,
+  )
+  if (rows.length !== 1 || rows[0] === undefined) throw new Error(`Expected one waiting ${callId}`)
+  return rows[0].holdId
 }

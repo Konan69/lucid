@@ -14,6 +14,7 @@ import { Effect, Option, Predicate, Schema } from 'effect'
 import { ToolFailed, ToolOutputFailed, ToolSchemaFailed } from './errors.ts'
 import {
   CallIdentity,
+  holdIdOf,
   CallLookup,
   lookupSnapshots,
   holdKind,
@@ -171,7 +172,11 @@ const asked = Effect.fn('Durable.askedTool')(function* (
       token: Holds,
       conversationId: api.conversationId,
       change: (document) => {
-        document.asked[api.callId] = { taskId: api.taskId, toolName: name }
+        document.asked[holdIdOf(api.taskId)] = {
+          taskId: api.taskId,
+          callId: api.callId,
+          toolName: name,
+        }
       },
     },
     context,

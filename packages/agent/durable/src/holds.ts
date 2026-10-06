@@ -11,10 +11,11 @@ import {
   type ToolSlot,
   type ToolRegistration,
 } from '@earendil-works/pi-durable'
+import type { Message } from '@earendil-works/pi-ai'
 import { Deferred, Effect, Match, Option, Predicate, Schema } from 'effect'
 
 import * as Pi from './pi.ts'
-import { CallNotWaiting } from './errors.ts'
+import { CallNotWaiting, HoldId } from './errors.ts'
 import { waiting } from './waiting.ts'
 
 /**
@@ -30,22 +31,23 @@ export type Settlement =
   | { kind: 'answered'; output: JsonValue }
 
 /** A provider's call id may be reused; Pi's durable task id identifies the exact held invocation. */
-export type Settled = { taskId: TaskId; settlement: Settlement }
+export type Settled = { taskId: TaskId; callId: string; settlement: Settlement }
 
 /**
  * Durable hold state of one conversation.
  *
- * `settled` records the owning Pi task so reused provider call ids never inherit approval.
+ * `settled` and `asked` are keyed by opaque hold ids derived from Pi tasks. Receipts and
+ * unanswered questions survive provider call-id reuse and transcript compaction independently.
  * `asked` lists the calls of answer-later tools that already
  * returned to the model and still expect an answer, with the tool's name for the message that
  * delivers it. Latest-only: a hold belongs to a run in progress, never to a rewound transcript.
  */
 export const Holds = defineDoc<{
   settled: Record<string, Settled>
-  asked: Record<string, { taskId: TaskId; toolName: string }>
+  asked: Record<string, { taskId: TaskId; callId: string; toolName: string }>
 }>({
   kind: 'durable.holds',
-  version: 3,
+  version: 4,
   scope: 'conversation',
   history: 'latest',
   fork: 'initial',
@@ -62,6 +64,7 @@ const SettlementValue = Schema.Union([
 
 /** Hooks address their exact task; public calls require unique ids and completed-entry provenance. */
 export const CallIdentity = Schema.TaggedUnion({
+  Hold: { holdId: HoldId },
   Public: {
     callId: Schema.String,
     resultTask: Schema.Option(TaskIdentity),
@@ -76,40 +79,73 @@ export const CallLookup = Schema.TaggedUnion({
   Duplicate: {},
   Missing: {},
   Queued: {},
-  Ready: { taskId: TaskIdentity },
-  Executing: { taskId: TaskIdentity },
-  Done: { taskId: TaskIdentity },
-  Settled: { taskId: TaskIdentity, settlement: SettlementValue },
-  Asked: { taskId: TaskIdentity, toolName: Schema.String },
+  Ready: { taskId: TaskIdentity, holdId: HoldId, callId: Schema.String },
+  Executing: { taskId: TaskIdentity, holdId: HoldId, callId: Schema.String },
+  Done: { taskId: TaskIdentity, holdId: HoldId, callId: Schema.String },
+  Settled: {
+    taskId: TaskIdentity,
+    holdId: HoldId,
+    callId: Schema.String,
+    settlement: SettlementValue,
+  },
+  Asked: { taskId: TaskIdentity, holdId: HoldId, callId: Schema.String, toolName: Schema.String },
 })
 export type CallLookup = typeof CallLookup.Type
 
 type HoldState = {
   settled: Record<string, Settled>
-  asked: Record<string, { taskId: TaskId; toolName: string }>
+  asked: Record<string, { taskId: TaskId; callId: string; toolName: string }>
 }
 
 /** The newest assistant entry owns the call; an older run's result is never evidence for a new invocation. */
 export function identify(entries: readonly EntryRecord[], callId: string) {
-  const at = entries.findLastIndex((entry) => callsIn(entry, callId).length > 0)
-  if (at === -1)
-    return CallIdentity.cases.Public.make({ callId, resultTask: Option.none(), duplicate: false })
-  const owner = entries[at]
-  const duplicate = owner !== undefined && callsIn(owner, callId).length > 1
-  const result = entries.slice(at + 1).find((entry) => {
-    const messages = entry.model
-    return (
-      messages !== undefined &&
-      messages.some((message) => message.role === 'toolResult' && message.toolCallId === callId)
-    )
-  })
-  return CallIdentity.cases.Public.make({
-    callId,
-    duplicate,
-    resultTask: Option.fromNullishOr(result).pipe(
-      Option.flatMapNullishOr((entry) => entry.byTaskId),
-    ),
-  })
+  return (
+    identitiesFor(entries).get(callId) ??
+    CallIdentity.cases.Public.make({ callId, resultTask: Option.none(), duplicate: false })
+  )
+}
+
+/** Index the one observed transcript in append order; a new call replaces only its own provider-id context. */
+export function identitiesFor(entries: readonly EntryRecord[]) {
+  const identities = new Map<string, typeof CallIdentity.cases.Public.Type>()
+  for (const entry of entries) {
+    for (const message of entry.model ?? [])
+      indexMessage(identities, message, Option.fromNullishOr(entry.byTaskId))
+  }
+  return identities
+}
+
+/** An assistant opens a generation of each call; its following tool result supplies task provenance. */
+function indexMessage(
+  identities: Map<string, typeof CallIdentity.cases.Public.Type>,
+  message: Message,
+  resultTask: Option.Option<TaskId>,
+) {
+  if (message.role === 'assistant') {
+    const calls = message.content.filter((block) => block.type === 'toolCall')
+    const counts = new Map<string, number>()
+    for (const call of calls) counts.set(call.id, (counts.get(call.id) ?? 0) + 1)
+    for (const call of calls)
+      identities.set(
+        call.id,
+        CallIdentity.cases.Public.make({
+          callId: call.id,
+          resultTask: Option.none(),
+          duplicate: counts.get(call.id) !== 1,
+        }),
+      )
+  } else if (message.role === 'toolResult') {
+    const identity = identities.get(message.toolCallId)
+    if (identity !== undefined)
+      identities.set(
+        message.toolCallId,
+        CallIdentity.cases.Public.make({
+          callId: identity.callId,
+          duplicate: identity.duplicate,
+          resultTask,
+        }),
+      )
+  }
 }
 
 /** The SDK's transcript is typed; select calls without flattening duplicate ids into a Map. */
@@ -134,19 +170,22 @@ function taskState(
 ) {
   const taskId = slot.taskId
   if (taskId === undefined) return CallLookup.cases.Queued.make({})
-  const recorded = holds.settled[callId]
+  const holdId = holdIdOf(taskId)
+  const recorded = holds.settled[holdId]
   if (recorded !== undefined && recorded.taskId === taskId)
     return CallLookup.cases.Settled.make({
       taskId,
+      holdId,
+      callId,
       settlement: copySettlement(recorded.settlement),
     })
-  const asked = holds.asked[callId]
+  const asked = holds.asked[holdId]
   if (asked !== undefined && asked.taskId === taskId)
-    return CallLookup.cases.Asked.make({ taskId, toolName: asked.toolName })
+    return CallLookup.cases.Asked.make({ taskId, holdId, callId, toolName: asked.toolName })
   return Match.value(slot.status).pipe(
-    Match.when('pending', () => CallLookup.cases.Ready.make({ taskId })),
-    Match.when('running', () => CallLookup.cases.Executing.make({ taskId })),
-    Match.when('done', () => CallLookup.cases.Done.make({ taskId })),
+    Match.when('pending', () => CallLookup.cases.Ready.make({ taskId, holdId, callId })),
+    Match.when('running', () => CallLookup.cases.Executing.make({ taskId, holdId, callId })),
+    Match.when('done', () => CallLookup.cases.Done.make({ taskId, holdId, callId })),
     Match.exhaustive,
   )
 }
@@ -161,43 +200,76 @@ export function lookup(
   holds: Readonly<HoldState>,
   identity: CallIdentity,
 ): CallLookup {
+  if (CallIdentity.guards.Hold(identity)) return lookupHold(live, holds, identity.holdId)
   const slots = live.tools ?? []
   const matching = slots.filter((slot) => slot.callId === identity.callId)
   if (matching.length > 1) return CallLookup.cases.Duplicate.make({})
-  const slot = CallIdentity.match(identity, {
-    Public: () => Option.fromNullishOr(matching[0]),
-    Task: (task) =>
-      Option.fromNullishOr(
+  const slot = CallIdentity.guards.Public(identity)
+    ? Option.fromNullishOr(matching[0])
+    : Option.fromNullishOr(
         slots.find(
-          (candidate) => candidate.taskId === task.taskId && candidate.callId === task.callId,
+          (candidate) =>
+            candidate.taskId === identity.taskId && candidate.callId === identity.callId,
         ),
-      ),
-  })
+      )
   if (Option.isSome(slot)) return taskState(holds, identity.callId, slot.value)
   if (matching.length > 0) return CallLookup.cases.Missing.make({})
-  const generation = live.generation
-  if (
-    generation !== undefined &&
-    generation.message !== undefined &&
-    generation.message.content.some(
-      (block) => block.type === 'toolCall' && block.id === identity.callId,
-    )
-  )
-    return CallLookup.cases.Queued.make({})
-  return CallIdentity.match(identity, {
-    Public: (call) =>
-      call.duplicate
-        ? CallLookup.cases.Duplicate.make({})
-        : Option.match(call.resultTask, {
-            onNone: () => CallLookup.cases.Missing.make({}),
-            onSome: (taskId) => taskState(holds, call.callId, { taskId, status: 'done' }),
-          }),
-    Task: (task) =>
-      Option.contains(task.resultTask, task.taskId)
-        ? taskState(holds, task.callId, { taskId: task.taskId, status: 'done' })
-        : CallLookup.cases.Missing.make({}),
-  })
+  if (generatingCall(live, identity.callId)) return CallLookup.cases.Queued.make({})
+  if (CallIdentity.guards.Public(identity)) {
+    if (identity.duplicate) return CallLookup.cases.Duplicate.make({})
+    return Option.match(identity.resultTask, {
+      onNone: () => CallLookup.cases.Missing.make({}),
+      onSome: (taskId) => taskState(holds, identity.callId, { taskId, status: 'done' }),
+    })
+  }
+  return Option.contains(identity.resultTask, identity.taskId)
+    ? taskState(holds, identity.callId, { taskId: identity.taskId, status: 'done' })
+    : CallLookup.cases.Missing.make({})
 }
+
+/** Streamed arguments precede the tool-round commit and therefore have no task identity yet. */
+function generatingCall(live: Readonly<LiveState>, callId: string) {
+  const generation = live.generation
+  if (generation === undefined || generation.message === undefined) return false
+  return generation.message.content.some(
+    (block) => block.type === 'toolCall' && block.id === callId,
+  )
+}
+
+/** A hold keeps its own receipt and question even after another task reuses the provider's call id. */
+function lookupHold(
+  live: Readonly<LiveState>,
+  holds: Readonly<HoldState>,
+  holdId: HoldId,
+): CallLookup {
+  const recorded = holds.settled[holdId]
+  if (recorded !== undefined)
+    return CallLookup.cases.Settled.make({
+      holdId,
+      callId: recorded.callId,
+      taskId: recorded.taskId,
+      settlement: copySettlement(recorded.settlement),
+    })
+  const asked = holds.asked[holdId]
+  if (asked !== undefined)
+    return CallLookup.cases.Asked.make({
+      holdId,
+      callId: asked.callId,
+      taskId: asked.taskId,
+      toolName: asked.toolName,
+    })
+  const slots = live.tools ?? []
+  const slot = slots.find(
+    (candidate) => candidate.taskId !== undefined && holdIdOf(candidate.taskId) === holdId,
+  )
+  if (slot === undefined) return CallLookup.cases.Missing.make({})
+  if (slots.filter((candidate) => candidate.callId === slot.callId).length > 1)
+    return CallLookup.cases.Duplicate.make({})
+  return taskState(holds, slot.callId, slot)
+}
+
+/** Construction from Pi's trusted task identity, without parsing or inventing a new task. */
+export const holdIdOf = (taskId: TaskId): HoldId => HoldId.make(`hold:${taskId}`)
 
 /** Normalize genuine document absence to Pi's declared initial value, then use the same pure lookup. */
 export function lookupSnapshots(
@@ -272,7 +344,7 @@ export function holdKind(plan: Plan, input: JsonValue): Option.Option<'approval'
 }
 
 /**
- * In-process wake-ups for waits on a settlement, keyed by conversation and call.
+ * In-process wake-ups for waits on a settlement, keyed by conversation and hold.
  *
  * Only the wake-up lives here. A waiter always rereads the durable document after it wakes, so a
  * wake-up for the same key from another harness in this process is harmless.
@@ -305,7 +377,7 @@ const readSettlement = Effect.fn('Durable.readSettlement')(function* (
   callId: string,
   context: Context,
 ) {
-  const key = wakeKey(api.conversationId, callId)
+  const key = wakeKey(api.conversationId, holdIdOf(api.taskId))
   const woken = yield* Deferred.make<void>()
   return yield* Effect.gen(function* () {
     yield* Effect.sync(() => {
@@ -354,32 +426,40 @@ export const settlement = Effect.fn('Durable.settlement')(function* (
 const settle = Effect.fn('Durable.settle')(function* (
   harness: Harness,
   conversationId: ConversationId,
-  input: { readonly callId: string; readonly next: Settlement },
+  input: { readonly holdId: HoldId; readonly next: Settlement },
   context: Context,
 ) {
   const conversation = yield* Pi.conversation(harness, conversationId, context)
-  const observed = yield* readCall(harness, conversation, input.callId, context)
+  const identity = CallIdentity.cases.Hold.make({ holdId: input.holdId })
+  const found = yield* readHold(harness, conversationId, identity, context)
+  if (CallLookup.guards.Settled(found)) {
+    if (!sameKind(found.settlement, input.next))
+      return yield* new CallNotWaiting({ conversationId, holdId: input.holdId })
+    return copySettlement(found.settlement)
+  }
+  if (!CallLookup.guards.Ready(found))
+    return yield* new CallNotWaiting({ conversationId, holdId: input.holdId })
+  // Arguments are absent from pending slots. Read the context once through waiting only for new
+  // admission; repeats and the atomic revalidation need no transcript at all.
   const held = yield* waiting(harness, conversationId, context)
   const kind = input.next.kind === 'answered' ? 'answer' : 'approval'
-  const allowed = held.some((call) => call.callId === input.callId && call.kind === kind)
-  const identity = CallLookup.guards.Ready(observed.found)
-    ? CallIdentity.cases.Task.make({
-        callId: input.callId,
-        taskId: observed.found.taskId,
-        resultTask: observed.identity.resultTask,
-      })
-    : observed.identity
+  const allowed = held.some((call) => call.holdId === input.holdId && call.kind === kind)
+  if (!allowed) return yield* new CallNotWaiting({ conversationId, holdId: input.holdId })
   const winner = yield* Pi.commitWithLive(
     conversation,
     {
       token: Holds,
       conversationId,
-      change: (holds, live) => {
-        const found = lookup(live, holds, identity)
-        if (CallLookup.guards.Settled(found)) return Option.some(copySettlement(found.settlement))
-        if (!allowed || !CallLookup.guards.Ready(found)) return Option.none<Settlement>()
-        holds.settled[input.callId] = {
-          taskId: found.taskId,
+      change: (document, live) => {
+        const latest = lookup(live, document, identity)
+        if (CallLookup.guards.Settled(latest))
+          return sameKind(latest.settlement, input.next)
+            ? Option.some(copySettlement(latest.settlement))
+            : Option.none<Settlement>()
+        if (!CallLookup.guards.Ready(latest)) return Option.none<Settlement>()
+        document.settled[input.holdId] = {
+          taskId: latest.taskId,
+          callId: latest.callId,
           settlement: copySettlement(input.next),
         }
         return Option.some(copySettlement(input.next))
@@ -387,34 +467,32 @@ const settle = Effect.fn('Durable.settle')(function* (
     },
     context,
   )
-  if (Option.isNone(winner)) {
-    // A concurrent winner can finish before our commit. Reread its result provenance once;
-    // this is idempotency validation, never a retry that authorizes a different task.
-    const current = yield* readCall(harness, conversation, input.callId, context)
-    const found = lookup(
-      current.live,
-      current.holds,
-      CallIdentity.match(identity, {
-        Public: (): CallIdentity => current.identity,
-        Task: (task): CallIdentity =>
-          CallIdentity.cases.Task.make({
-            callId: task.callId,
-            taskId: task.taskId,
-            resultTask: current.identity.resultTask,
-          }),
-      }),
-    )
-    if (CallLookup.guards.Settled(found)) return copySettlement(found.settlement)
-    return yield* new CallNotWaiting({ conversationId, callId: input.callId })
-  }
+  if (Option.isNone(winner))
+    return yield* new CallNotWaiting({ conversationId, holdId: input.holdId })
   yield* Effect.sync(() => harness.resume())
-  yield* wake(wakeKey(conversationId, input.callId))
+  yield* wake(wakeKey(conversationId, input.holdId))
   return winner.value
+})
+
+/** A different kind of interaction cannot reuse another kind's receipt. */
+const sameKind = (left: Settlement, right: Settlement) =>
+  (left.kind === 'answered') === (right.kind === 'answered')
+
+/** Direct admission starts with its durable hold id; no call-id provenance scan is needed. */
+const readHold = Effect.fn('Durable.readHold')(function* (
+  harness: Harness,
+  conversationId: ConversationId,
+  identity: typeof CallIdentity.cases.Hold.Type,
+  context: Context,
+) {
+  const live = yield* Pi.snapshot(harness, LiveDoc, conversationId, context)
+  const holds = yield* Pi.snapshot(harness, Holds, conversationId, context)
+  return lookupSnapshots(live, holds, identity)
 })
 
 /** A person's decision on a tool call that waits for approval. */
 export type Decision = {
-  readonly callId: string
+  readonly holdId: HoldId
   readonly approved: boolean
   /** Shown to the model when denied. */
   readonly reason?: string
@@ -435,11 +513,11 @@ export function decide(
   const next: Settlement = decision.approved
     ? { kind: 'approved' }
     : { kind: 'denied', reason: decision.reason ?? 'The person denied this call' }
-  return settle(harness, conversationId, { callId: decision.callId, next }, context)
+  return settle(harness, conversationId, { holdId: decision.holdId, next }, context)
 }
 
 /** The result of a tool call that a person supplies. */
-export type Answer = { readonly callId: string; readonly output: JsonValue }
+export type Answer = { readonly holdId: HoldId; readonly output: JsonValue }
 
 /** The message that delivers a late answer to the model. */
 const answerText = (toolName: string, output: JsonValue) =>
@@ -450,8 +528,8 @@ const answerText = (toolName: string, output: JsonValue) =>
  *
  * A `wait` call is settled in place and the model continues from the tool result. A `later` call
  * already returned, so the answer is submitted as a new user message: a follow-up, which starts a
- * run when the conversation is idle and otherwise waits for the current answer. The request id is
- * the call id, so answering twice delivers once.
+ * run when the conversation is idle and otherwise waits for the current answer. The request id contains
+ * the hold id, so answering twice delivers once without swallowing a later task's answer.
  */
 export const answer = Effect.fn('Durable.answer')(function* (
   harness: Harness,
@@ -460,35 +538,34 @@ export const answer = Effect.fn('Durable.answer')(function* (
   context: Context,
 ) {
   const conversation = yield* Pi.conversation(harness, conversationId, context)
-  const current = yield* readCall(harness, conversation, given.callId, context)
-  const found = current.found
-  if (CallLookup.guards.Settled(found)) return copySettlement(found.settlement)
+  const identity = CallIdentity.cases.Hold.make({ holdId: given.holdId })
+  const found = yield* readHold(harness, conversationId, identity, context)
+  if (CallLookup.guards.Settled(found)) {
+    if (found.settlement.kind !== 'answered')
+      return yield* new CallNotWaiting({ conversationId, holdId: given.holdId })
+    return copySettlement(found.settlement)
+  }
   if (!CallLookup.guards.Asked(found))
     return yield* settle(
       harness,
       conversationId,
       {
-        callId: given.callId,
+        holdId: given.holdId,
         next: { kind: 'answered', output: given.output },
       },
       context,
     )
-  const identity = CallIdentity.cases.Task.make({
-    callId: given.callId,
-    taskId: found.taskId,
-    resultTask: current.identity.resultTask,
-  })
   yield* Pi.submit(
     conversation,
     {
       type: 'input',
       content: answerText(found.toolName, given.output),
-      requestId: `answer:${given.callId}`,
+      requestId: `answer:${given.holdId}`,
       whenBusy: 'followUp',
     },
     context,
   )
-  // Delete only after admission: a crash leaves the question open and retry deduplicates the input.
+  // Delete only after admission: retry keeps the same task-scoped deduplication key after a crash.
   yield* Pi.commitWithLive(
     conversation,
     {
@@ -497,33 +574,15 @@ export const answer = Effect.fn('Durable.answer')(function* (
       change: (document, live) => {
         const latest = lookup(live, document, identity)
         if (!CallLookup.guards.Asked(latest)) return
-        document.settled[given.callId] = {
+        document.settled[given.holdId] = {
           taskId: latest.taskId,
+          callId: latest.callId,
           settlement: { kind: 'answered', output: copyJson(given.output) },
         }
-        delete document.asked[given.callId]
+        delete document.asked[given.holdId]
       },
     },
     context,
   )
   return undefined
-})
-
-/** Resolve current provenance once for public admission; the serialized mutation revalidates it. */
-const readCall = Effect.fn('Durable.readCall')(function* (
-  harness: Harness,
-  conversation: import('@earendil-works/pi-durable').Conversation,
-  callId: string,
-  context: Context,
-) {
-  const live = Option.getOrElse(
-    yield* Pi.snapshot(harness, LiveDoc, conversation.id, context),
-    () => LiveDoc.definition.initial(),
-  )
-  const holds = Option.getOrElse(yield* Pi.snapshot(harness, Holds, conversation.id, context), () =>
-    Holds.definition.initial(),
-  )
-  const view = yield* Pi.view(conversation, context)
-  const identity = identify(view.entries, callId)
-  return { live, holds, identity, found: lookup(live, holds, identity) }
 })

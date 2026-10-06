@@ -3,7 +3,16 @@ import { type ConversationId, type Harness, LiveDoc } from '@earendil-works/pi-d
 
 import { Array as Arr, Effect, Option } from 'effect'
 
-import { CallLookup, callsIn, identify, lookupSnapshots, holdKind, Holds, planOf } from './holds.ts'
+import {
+  CallIdentity,
+  CallLookup,
+  callsIn,
+  lookupSnapshots,
+  holdKind,
+  Holds,
+  planOf,
+} from './holds.ts'
+import { HoldId } from './errors.ts'
 import * as Pi from './pi.ts'
 
 /**
@@ -15,6 +24,7 @@ import * as Pi from './pi.ts'
  */
 export type Waiting = {
   readonly kind: 'approval' | 'answer' | 'later'
+  readonly holdId: HoldId
   readonly callId: string
   readonly toolName: string
   /** The call's arguments. Absent for a `later` call, whose round is over. */
@@ -39,16 +49,29 @@ export const waiting = Effect.fn('Durable.waiting')(function* (
   const live = yield* Pi.snapshot(harness, LiveDoc, conversationId, context)
   const agent = yield* Pi.agent(conversation, context)
   const view = yield* Pi.view(conversation, context)
-  const callIds = new Set([
-    ...Option.match(live, {
+  const callIds = new Set(
+    Option.match(live, {
       onNone: () => [],
       onSome: (document) => (document.tools ?? []).map((slot) => slot.callId),
     }),
-    ...Option.match(holds, { onNone: () => [], onSome: (document) => Object.keys(document.asked) }),
-  ])
-  return Array.from(callIds).flatMap((callId): Waiting[] => {
-    const found = lookupSnapshots(live, holds, identify(view.entries, callId))
-    if (CallLookup.guards.Asked(found)) return [{ kind: 'later', callId, toolName: found.toolName }]
+  )
+  const later = Option.match(holds, {
+    onNone: (): Waiting[] => [],
+    onSome: (document) =>
+      Object.keys(document.asked).flatMap((key): Waiting[] => {
+        const holdId = HoldId.make(key)
+        const found = lookupSnapshots(live, holds, CallIdentity.cases.Hold.make({ holdId }))
+        return CallLookup.guards.Asked(found)
+          ? [{ kind: 'later', holdId, callId: found.callId, toolName: found.toolName }]
+          : []
+      }),
+  })
+  const current = Array.from(callIds).flatMap((callId): Waiting[] => {
+    const found = lookupSnapshots(
+      live,
+      holds,
+      CallIdentity.cases.Public.make({ callId, resultTask: Option.none(), duplicate: false }),
+    )
     if (!CallLookup.guards.Ready(found)) return []
     const entry = view.entries.findLast((candidate) => callsIn(candidate, callId).length > 0)
     if (entry === undefined) return []
@@ -61,6 +84,7 @@ export const waiting = Effect.fn('Durable.waiting')(function* (
     const kind = holdKind(plan.value, input)
     return Option.isNone(kind)
       ? []
-      : [{ kind: kind.value, callId, toolName: call.value.name, input }]
+      : [{ kind: kind.value, holdId: found.holdId, callId, toolName: call.value.name, input }]
   })
+  return [...current, ...later]
 })

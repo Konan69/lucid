@@ -18,7 +18,7 @@ import { Array as Arr, Effect, Option, Predicate } from 'effect'
 import { z } from 'zod'
 
 import { answer, decide, waiting, continueRun, streamRun, toolsExtension } from './core.ts'
-import { consume } from './fixtures/reading.ts'
+import { consume, hold } from './fixtures/reading.ts'
 
 const context = BACKGROUND_CONTEXT
 
@@ -117,11 +117,17 @@ it.live('holds a call for approval across a restart, then runs it once', () =>
     expect(parkedRun.message.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
       state: 'approval-requested',
       input: { amount: 500 },
-      approval: { id: 'call-pay' },
+      approval: { id: expect.stringMatching(/^hold:/u) },
     })
     expect(paid).toEqual([])
     expect(yield* waiting(before.harness, before.root.id, context)).toEqual([
-      { kind: 'approval', callId: 'call-pay', toolName: 'pay', input: { amount: 500 } },
+      {
+        holdId: expect.stringMatching(/^hold:/u),
+        kind: 'approval',
+        callId: 'call-pay',
+        toolName: 'pay',
+        input: { amount: 500 },
+      },
     ])
 
     // The process stops with the approval open. A new process builds everything again.
@@ -131,9 +137,20 @@ it.live('holds a call for approval across a restart, then runs it once', () =>
     const after = yield* second.open(file)
 
     expect(yield* waiting(after.harness, after.root.id, context)).toEqual([
-      { kind: 'approval', callId: 'call-pay', toolName: 'pay', input: { amount: 500 } },
+      {
+        holdId: expect.stringMatching(/^hold:/u),
+        kind: 'approval',
+        callId: 'call-pay',
+        toolName: 'pay',
+        input: { amount: 500 },
+      },
     ])
-    yield* decide(after.harness, after.root.id, { callId: 'call-pay', approved: true }, context)
+    yield* decide(
+      after.harness,
+      after.root.id,
+      { holdId: yield* hold(after.harness, after.root.id, 'call-pay', context), approved: true },
+      context,
+    )
     const stream = yield* continueRun(after.harness, after.root.id, new Set(['call-pay']), context)
     const finished = yield* consume(stream, Option.some(parkedRun.message))
 
@@ -192,7 +209,11 @@ it.live('never runs a denied call and tells the model why', () =>
     yield* decide(
       harness,
       root.id,
-      { callId: 'call-deny', approved: false, reason: 'Too much' },
+      {
+        holdId: yield* hold(harness, root.id, 'call-deny', context),
+        approved: false,
+        reason: 'Too much',
+      },
       context,
     )
     const stream = yield* continueRun(harness, root.id, new Set(['call-deny']), context)
@@ -226,7 +247,12 @@ it.live('keeps the model inside a call until a person answers it', () =>
       { kind: 'answer', callId: 'call-ask' },
     ])
 
-    yield* answer(harness, root.id, { callId: 'call-ask', output: 'savings' }, context)
+    yield* answer(
+      harness,
+      root.id,
+      { holdId: yield* hold(harness, root.id, 'call-ask', context), output: 'savings' },
+      context,
+    )
     const stream = yield* continueRun(harness, root.id, new Set(['call-ask']), context)
     const finished = yield* consume(stream, Option.some(parkedRun.message))
 
@@ -264,12 +290,18 @@ it.live('lets the model finish its answer and delivers a late answer as a new ru
     ])
     yield* Effect.promise(() => root.waitForIdle(context))
     expect(yield* waiting(harness, root.id, context)).toEqual([
-      { kind: 'later', callId: 'call-later', toolName: 'ask_later' },
+      {
+        holdId: expect.stringMatching(/^hold:/u),
+        kind: 'later',
+        callId: 'call-later',
+        toolName: 'ask_later',
+      },
     ])
 
-    // Answering twice delivers once: the request id is the call id.
-    yield* answer(harness, root.id, { callId: 'call-later', output: 'savings' }, context)
-    yield* answer(harness, root.id, { callId: 'call-later', output: 'savings' }, context)
+    // Repeating this exact hold delivers once; a successor task has its own request id.
+    const holdId = yield* hold(harness, root.id, 'call-later', context)
+    yield* answer(harness, root.id, { holdId, output: 'savings' }, context)
+    yield* answer(harness, root.id, { holdId, output: 'savings' }, context)
     yield* Effect.promise(() => root.waitForIdle(context))
 
     expect(late).toBe('[answer to ask_later] savings')

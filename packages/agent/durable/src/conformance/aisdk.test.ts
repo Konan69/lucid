@@ -17,7 +17,17 @@ import { z } from 'zod'
 
 import { PlainChat } from '../fixtures/chat.ts'
 import { answer, attachRun, continueRun, decide, respond, streamRun, waiting } from '../main.ts'
-import { call, consume, context, host, modelText, shop, signal, texts } from './fixtures/host.ts'
+import {
+  hold,
+  call,
+  consume,
+  context,
+  host,
+  modelText,
+  shop,
+  signal,
+  texts,
+} from './fixtures/host.ts'
 
 /**
  * As in src/chat.test.ts and upstream chat.test.ts, drive AbstractChat rather than a mock client.
@@ -90,12 +100,21 @@ it.each(['text', 'reasoning', 'approval', 'answer', 'denial', 'retry'] as const)
     )
     if (kind === 'approval' || kind === 'denial' || kind === 'answer') {
       if (kind === 'answer')
-        await answer(opened.harness, opened.root.id, { callId: 'held', output: 'savings' }, context)
+        await answer(
+          opened.harness,
+          opened.root.id,
+          { holdId: await hold(opened.harness, opened.root.id, 'held'), output: 'savings' },
+          context,
+        )
       else
         await decide(
           opened.harness,
           opened.root.id,
-          { callId: 'held', approved: kind === 'approval', reason: 'No budget' },
+          {
+            holdId: await hold(opened.harness, opened.root.id, 'held'),
+            approved: kind === 'approval',
+            reason: 'No budget',
+          },
           context,
         )
       const stream = await continueRun(opened.harness, opened.root.id, new Set(['held']), context)
@@ -130,7 +149,10 @@ it('addToolApprovalResponse automatically resumes one assistant message', async 
   const id = parked.id
   expect(fixture.paid).toEqual([])
   const finished = next()
-  await chat.addToolApprovalResponse({ id: 'pay', approved: true })
+  await chat.addToolApprovalResponse({
+    id: await hold(opened.harness, opened.root.id, 'pay'),
+    approved: true,
+  })
   await finished
   expect(chat.status).toBe('ready')
   expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
@@ -194,12 +216,19 @@ it('the stock approval predicate waits for both decisions before posting', async
     lastAssistantMessageIsCompleteWithApprovalResponses,
   )
   await chat.sendMessage({ text: 'Pay both' })
-  await chat.addToolApprovalResponse({ id: 'one', approved: true })
+  await chat.addToolApprovalResponse({
+    id: await hold(opened.harness, opened.root.id, 'one'),
+    approved: true,
+  })
   expect(chat.status).toBe('ready')
   expect(fixture.paid).toEqual([])
   expect(await waiting(opened.harness, opened.root.id, context)).toHaveLength(2)
   const finished = next()
-  await chat.addToolApprovalResponse({ id: 'two', approved: false, reason: 'Budget' })
+  await chat.addToolApprovalResponse({
+    id: await hold(opened.harness, opened.root.id, 'two'),
+    approved: false,
+    reason: 'Budget',
+  })
   await finished
   expect(fixture.paid).toEqual([100])
   if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')
@@ -241,7 +270,10 @@ it('the stock approval predicate cannot advance an unstarted sequential call', a
   const { chat } = client(opened.transport, lastAssistantMessageIsCompleteWithApprovalResponses)
   await chat.sendMessage({ text: 'Pay both' })
   expect(await waiting(opened.harness, opened.root.id, context)).toMatchObject([{ callId: 'c1' }])
-  await chat.addToolApprovalResponse({ id: 'c1', approved: true })
+  await chat.addToolApprovalResponse({
+    id: await hold(opened.harness, opened.root.id, 'c1'),
+    approved: true,
+  })
   if (chat.lastMessage === undefined) throw new Error('Expected the sequential message')
   expect(
     chat.lastMessage.parts.find((part) => 'toolCallId' in part && part.toolCallId === 'c1'),
@@ -485,7 +517,9 @@ it('reconnectToStream returns the in-progress run through respond', async () => 
 // Review step.mjs: the server replays start(messageId), reset-step, then the whole run. Installed
 // ai/src/ui/process-ui-message-stream.ts:144–156,938–963 resets only the current step; start changes
 // identity without replacing older parts. chat.ts:852–882 retains resumable state in this Chat;
-// a fresh page instead constructs a new message. No server chunk replaces the earlier steps.
+// chat.ts:852–858 also snapshots the last assistant when it has an input-streaming tool part.
+// A reload must replace partial state with settled history before reconnecting; merely creating a
+// fresh Chat is insufficient in that case. No server chunk replaces the earlier steps.
 // This is the one permitted expected failure: applications reload history before reconnecting.
 it.fails('step 2 snapshot reconnect into a retained partial message duplicates earlier text and tools', async () => {
   const entered = signal()

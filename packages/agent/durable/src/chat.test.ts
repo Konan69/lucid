@@ -14,7 +14,7 @@ import { z } from 'zod'
 
 import { ChatTurn, respond, toolsExtension } from './core.ts'
 import { memory } from './fixtures/harness.ts'
-import { consume } from './fixtures/reading.ts'
+import { consume, hold } from './fixtures/reading.ts'
 
 const context = BACKGROUND_CONTEXT
 
@@ -87,7 +87,13 @@ it.live('approves a call and continues the same message', () =>
       root.id,
       ChatTurn.cases.Resume.make({
         known: ['call-pay'],
-        decisions: [{ callId: 'call-pay', approved: true }],
+        decisions: [
+          {
+            callId: 'call-pay',
+            holdId: yield* hold(harness, root.id, 'call-pay', context),
+            approved: true,
+          },
+        ],
         outputs: [],
       }),
       context,

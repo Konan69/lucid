@@ -4,7 +4,7 @@ import { expect, it } from 'vitest'
 import { z } from 'zod'
 
 import { continueRun, decide, streamRun } from '../main.ts'
-import { call, consume, context, host, shop, texts } from './fixtures/host.ts'
+import { hold, call, consume, context, host, shop, texts } from './fixtures/host.ts'
 
 // Flue packages/runtime/src/test-utils/define-conversation-stream-store-contract-tests.ts:
 // appends one ordered canonical batch when the producer is current.
@@ -59,7 +59,12 @@ it('replays only the suffix after known calls once the run has completed', async
       context,
     ),
   )
-  await decide(opened.harness, opened.root.id, { callId: 'pay', approved: true }, context)
+  await decide(
+    opened.harness,
+    opened.root.id,
+    { holdId: await hold(opened.harness, opened.root.id, 'pay'), approved: true },
+    context,
+  )
   await opened.root.waitForIdle(context)
   const stream = await continueRun(opened.harness, opened.root.id, new Set(['pay']), context)
   if (stream === undefined) throw new Error('Expected the completed suffix')

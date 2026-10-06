@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
 import { Array as Arr, Effect, Option, Predicate, Schema, SchemaGetter, SchemaIssue } from 'effect'
 
-import { TurnInvalid } from './errors.ts'
+import { HoldId, TurnInvalid } from './errors.ts'
 import { answer, decide } from './holds.ts'
 import { continueRun, prepareRun } from './stream.ts'
 import { waiting } from './waiting.ts'
@@ -15,6 +15,7 @@ export const ChatTurn = Schema.TaggedUnion({
     decisions: Schema.Array(
       Schema.Struct({
         callId: Schema.String,
+        holdId: HoldId,
         approved: Schema.Boolean,
         reason: Schema.optionalKey(Schema.String),
       }),
@@ -26,19 +27,21 @@ export type ChatTurn = typeof ChatTurn.Type
 
 const ToolName = Schema.String.check(Schema.isPattern(/^(?:tool-|dynamic-tool$)/u))
 const ApprovalValue = Schema.Struct({
+  id: HoldId,
   approved: Schema.Boolean,
   reason: Schema.optionalKey(Schema.String),
 })
 /** An invalid reason does not undo a valid decision; only string reasons have protocol meaning. */
 const Approval = Schema.Struct({
+  id: HoldId,
   approved: Schema.Boolean,
   reason: Schema.optionalKey(Schema.Unknown),
 }).pipe(
-  Schema.decodeTo(ApprovalValue, {
+  Schema.decodeTo(Schema.toType(ApprovalValue), {
     decode: SchemaGetter.transform((approval) =>
       Predicate.isString(approval.reason)
-        ? { approved: approval.approved, reason: approval.reason }
-        : { approved: approval.approved },
+        ? { id: approval.id, approved: approval.approved, reason: approval.reason }
+        : { id: approval.id, approved: approval.approved },
     ),
     encode: SchemaGetter.passthroughSupertype(),
   }),
@@ -85,9 +88,11 @@ function resumed(parts: (typeof Message.Type)['parts']) {
   const tools = parts.filter(
     (part): part is Extract<typeof Part.Type, { toolCallId: string }> => 'toolCallId' in part,
   )
-  const decisions = tools.flatMap((part) =>
-    'approval' in part ? [{ callId: part.toolCallId, ...part.approval }] : [],
-  )
+  const decisions = tools.flatMap((part) => {
+    if (!('approval' in part)) return []
+    const { id, ...decision } = part.approval
+    return [{ callId: part.toolCallId, holdId: id, ...decision }]
+  })
   const outputs = tools.flatMap((part) =>
     'output' in part ? [{ callId: part.toolCallId, output: part.output }] : [],
   )
@@ -140,20 +145,25 @@ const settleHolds = Effect.fn('Durable.settleHolds')(function* (
   context: Context,
 ) {
   const held = yield* waiting(harness, conversationId, context)
-  const approvable = new Set(
-    held.flatMap((each) => (each.kind === 'approval' ? [each.callId] : [])),
+  const approvable = new Map(
+    held.filter((each) => each.kind === 'approval').map((each) => [each.holdId, each.callId]),
   )
   for (const decision of turn.decisions) {
-    if (approvable.has(decision.callId))
+    if (approvable.get(decision.holdId) === decision.callId)
       yield* decide(harness, conversationId, decision, context).pipe(
-        // Another request can settle between observation and admission; the resume remains usable.
+        // A task can settle between observation and admission; stale POSTs do not authorize successors.
         Effect.catchTag('CallNotWaiting', () => Effect.void),
       )
   }
-  const answerable = new Set(held.flatMap((each) => (each.kind === 'answer' ? [each.callId] : [])))
+  // AI SDK addToolOutput carries no task identity. Resolve only a currently waiting unique call;
+  // replayed outputs rely on the provider's call ids being unique within a run. Approvals do not.
+  const answerable = new Map(
+    held.filter((each) => each.kind === 'answer').map((each) => [each.callId, each.holdId]),
+  )
   for (const output of turn.outputs) {
-    if (answerable.has(output.callId))
-      yield* answer(harness, conversationId, output, context).pipe(
+    const holdId = answerable.get(output.callId)
+    if (holdId !== undefined)
+      yield* answer(harness, conversationId, { holdId, output: output.output }, context).pipe(
         Effect.catchTag('CallNotWaiting', () => Effect.void),
       )
   }

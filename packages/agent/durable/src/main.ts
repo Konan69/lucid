@@ -157,3 +157,5 @@ export type { ChatTurn } from './respond.ts'
 /** Explicit run cancellation is distinct from a fetch abort or a detached stream reader. */
 export const abort = (...args: Parameters<typeof Core.abort>) =>
   Effect.runPromise(Core.abort(...args))
+
+export type { HoldId } from './errors.ts'
