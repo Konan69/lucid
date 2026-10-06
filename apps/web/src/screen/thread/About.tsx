@@ -323,7 +323,8 @@ function Integrations({ onOpen }: { onOpen: () => void }) {
           key={connection.id}
           entry={{
             icon: <Plug className="size-4" />,
-            title: `${connection.serviceName} · ${connection.label}`,
+            // The account's own name ("Gmail (Work)"), which is also what Vivid calls it.
+            title: connection.account,
             detail: integrationStanding(connection),
             lit: ConnectionState.guards.Ready(connection.state),
           }}

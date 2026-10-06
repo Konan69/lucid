@@ -304,6 +304,7 @@ function ToolCards({
             id={tool.toolCallId}
             request={wanted.request}
             authorization={wanted.authorization}
+            awaited={wanted.awaited}
             current={live}
             onContinue={onContinue}
           />

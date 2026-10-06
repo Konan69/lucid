@@ -1,4 +1,5 @@
 import { ConnectionStep, type ConnectionId, type ConnectionRequestMessage } from '@vivid/contracts'
+import { answered, Awaited, awaitedWords } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { useState } from 'react'
 import { View } from 'react-native'
@@ -8,7 +9,6 @@ import {
   Finish,
   finishOf,
   finishOfStep,
-  isReady,
   type Authorization,
   type KeyFields,
 } from '../../data/integration'
@@ -36,17 +36,26 @@ import { Returning, showSignIn, Trip } from './Trip'
  * Whether it is ready is read live, so the card turns to "Carry on" by itself, on this phone or
  * because the sign-in was finished on another device.
  *
+ * Which accounts make it ready is `awaited`. A service Vivid offered is answered by any ready
+ * account on it; an Integration Vivid began, by that one. One more account, which Vivid asks for
+ * when the Person wants an account that is not among theirs (their work Gmail), is answered only
+ * by an account begun after Vivid asked. That card is headed "Another Gmail account" and offers
+ * "Add account" although the service is already connected; the Integrations sheet it opens says
+ * "Add another account" on that service's row.
+ *
  * Adapted from the web's card (`ConnectionCard` and `Finish` in
  * `apps/web/src/screen/thread/Cards.tsx`).
  */
 export function IntegrationCard({
   request,
   authorization,
+  awaited,
   onContinue,
 }: {
   request: ConnectionRequestMessage
   /** What finishing it takes, when Vivid has already begun adding it. */
   authorization: Option.Option<Authorization>
+  awaited: Awaited
   onContinue: (message: string) => void
 }) {
   const data = useLiveData()
@@ -56,10 +65,12 @@ export function IntegrationCard({
   // when a key was taken. Until it has said anything, the card's own payload is what is left.
   const [latest, setLatest] = useState<Option.Option<Finish>>(Option.none())
   const finish = finishOf(authorization, latest)
+  const words = awaitedWords(awaited, request.serviceName)
+  // A request for one more account is never ready when it is made, whatever the card was told.
   const ready =
-    request.ready ||
+    (Awaited.$is('Service')(awaited) && request.ready) ||
     Option.exists(finish, Finish.$is('Done')) ||
-    Option.exists(connections, (value) => isReady(value.connections, request, authorization))
+    Option.exists(connections, (value) => answered(value.connections, request, awaited))
   return (
     <View
       style={{
@@ -75,7 +86,7 @@ export function IntegrationCard({
         <ServiceMark service={request.service} size={32} />
         <View style={{ flex: 1, minWidth: 0 }}>
           <Label numberOfLines={1} size="footnote">
-            {request.serviceName}
+            {words.title}
           </Label>
           <Label size="label" tone="ink-2">
             {request.reason}
@@ -89,11 +100,16 @@ export function IntegrationCard({
           onPress={() => {
             // It says something in the Thread, and sending is felt.
             commit()
-            onContinue(`${request.serviceName} is connected. Carry on.`)
+            onContinue(words.carryOn)
           }}
         />
       ) : (
-        left(request.serviceName, finish, (next) => setLatest(Option.some(next)))
+        left({
+          name: request.serviceName,
+          another: Awaited.$is('Another')(awaited),
+          finish,
+          onFinish: (next) => setLatest(Option.some(next)),
+        })
       )}
     </View>
   )
@@ -103,14 +119,21 @@ export function IntegrationCard({
  * The one thing left to do to connect it: sign in, give it a key, or pick it from the catalog. A
  * projection of what is left onto the control that advances it; it holds nothing itself.
  */
-const left = (
-  name: string,
-  finish: Option.Option<Finish>,
+const left = ({
+  name,
+  another,
+  finish,
+  onFinish,
+}: {
+  name: string
+  /** Whether Vivid asked for one more account on a service that is already connected. */
+  another: boolean
+  finish: Option.Option<Finish>
   /** The server has said what is left now. */
-  onFinish: (finish: Finish) => void,
-) =>
+  onFinish: (finish: Finish) => void
+}) =>
   Option.match(finish, {
-    onNone: () => <Connect />,
+    onNone: () => <Connect label={another ? 'Add account' : 'Connect'} />,
     onSome: (next) =>
       Finish.$match(next, {
         SignIn: ({ id }) => <SignIn id={id} name={name} onFinish={onFinish} />,
@@ -128,11 +151,11 @@ const left = (
  * app for it. Whether it worked is not this button's to hear: the card reads the live list and
  * turns to "Carry on" by itself.
  */
-function Connect() {
+function Connect({ label }: { label: string }) {
   const [open, setOpen] = useState(false)
   return (
     <>
-      <Button icon={Link2} label="Connect" onPress={() => setOpen(true)} />
+      <Button icon={Link2} label={label} onPress={() => setOpen(true)} />
       {open && <Integrations onClose={() => setOpen(false)} />}
     </>
   )

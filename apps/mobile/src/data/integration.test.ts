@@ -8,7 +8,6 @@ import {
   ServiceAuthorization,
   ServiceId,
   type Connection,
-  type ConnectionRequestMessage,
   type Service,
 } from '@vivid/contracts'
 import { Option } from 'effect'
@@ -20,7 +19,6 @@ import {
   Finish,
   finishOf,
   finishOfStep,
-  isReady,
   marksOf,
   named,
   noteOf,
@@ -30,24 +28,20 @@ import {
 
 const ada = { id: PersonId.make('ada'), name: 'Ada Obi', image: null }
 
+/** An account on Linear the Person called "Work"; the service does not say who signed in. */
 const account = (id: string, state: ConnectionState): Connection => ({
   id: ConnectionId.make(id),
   service: ServiceId.make('linear'),
   serviceName: 'Linear',
   mark: null,
-  label: 'Work',
+  name: 'Work',
+  identity: null,
+  account: 'Linear (Work)',
+  origin: 'Catalogue',
   ownership: ConnectionOwnership.cases.Personal.make({ owner: ada }),
   state,
   createdAt: 1,
 })
-
-const request: ConnectionRequestMessage = {
-  kind: 'connection-request',
-  service: ServiceId.make('linear'),
-  serviceName: 'Linear',
-  reason: 'To read the issue',
-  ready: false,
-}
 
 /** What a card carries for an Integration Vivid began adding, which here wants a key. */
 const started = ConnectionAuthorization.cases.EnterKey.make({
@@ -92,32 +86,6 @@ describe('what is left to do to finish an Integration', () => {
   })
 })
 
-describe('whether the Integration a card stands for is ready', () => {
-  const other = account('other', ConnectionState.cases.Ready.make({}))
-
-  it('takes any ready account on the service when Vivid only offered the service', () => {
-    expect(isReady([other], request, Option.none())).toBe(true)
-    expect(
-      isReady(
-        [account('other', ConnectionState.cases.NeedsAuthorization.make({}))],
-        request,
-        Option.none(),
-      ),
-    ).toBe(false)
-  })
-
-  it('takes only the account Vivid started, not another on the same service', () => {
-    expect(isReady([other], request, Option.some(started))).toBe(false)
-    expect(
-      isReady(
-        [other, account('started', ConnectionState.cases.Ready.make({}))],
-        request,
-        Option.some(started),
-      ),
-    ).toBe(true)
-  })
-})
-
 /** One catalog entry, entered the given way. */
 const offered = (
   name: string,
@@ -131,51 +99,75 @@ const offered = (
   authorization,
 })
 
-/** A working account on Linear, called and owned as given. */
-const held = (id: string, label: string, ownership: ConnectionOwnership): Connection => ({
-  id: ConnectionId.make(id),
-  service: ServiceId.make('linear'),
-  serviceName: 'Linear',
-  mark: null,
-  label,
-  ownership,
-  state: ConnectionState.cases.Ready.make({}),
-  createdAt: 1,
-})
-const mine = ConnectionOwnership.cases.Personal.make({ owner: ada })
-
 const ready = ConnectionState.cases.Ready.make({})
 const unfinished = ConnectionState.cases.NeedsAuthorization.make({})
-/** A date written without a clock or a locale, so the line reads the same wherever this runs. */
-const added = (moment: number) => `day ${moment}`
+
+/** A working account on Linear as the server names it: what the Person and the service said. */
+const held = (
+  id: string,
+  said: Pick<Connection, 'name' | 'identity' | 'account'>,
+  ownership: ConnectionOwnership,
+): Connection => ({ ...account(id, ready), ...said, ownership })
+const mine = ConnectionOwnership.cases.Personal.make({ owner: ada })
+const unnamed = { name: null, identity: null, account: 'Linear (2)' }
+
+/** A row with nothing pressed, for the only account on its service unless said otherwise. */
+const facts = { alone: true, sharedWith: Option.none<string>(), pressed: Option.none() }
 
 describe('a connected account’s row on the Integrations sheet', () => {
-  it('says which account it is once it works: its label, or the day it was added', () => {
-    expect(accountLine(account('a', ready), Option.none(), added)).toBe('Connected · Work')
-    expect(accountLine(held('a', 'Linear', mine), Option.none(), added)).toBe(
-      'Connected · Added day 1',
+  it('says which account it is once it works: its name, and who the service says it is', () => {
+    expect(accountLine(account('a', ready), facts)).toBe('Work')
+    expect(
+      accountLine(
+        held('a', { name: 'Work', identity: 'ada@example.com', account: 'Linear (Work)' }, mine),
+        facts,
+      ),
+    ).toBe('Work · ada@example.com')
+    expect(
+      accountLine(
+        held('a', { name: null, identity: 'ada@example.com', account: 'Linear' }, mine),
+        facts,
+      ),
+    ).toBe('ada@example.com')
+  })
+
+  it('says it is connected when nothing tells it apart and it is the only one', () => {
+    expect(accountLine(held('a', unnamed, mine), facts)).toBe('Connected')
+  })
+
+  it('is called what Vivid calls it when it is one of several with nothing to tell it apart', () => {
+    expect(accountLine(held('a', unnamed, mine), { ...facts, alone: false })).toBe(
+      'Linear (2) · Connected',
     )
   })
 
-  it('says only how it stands while it does not work', () => {
-    expect(accountLine(account('a', unfinished), Option.none(), added)).toBe('Sign-in not finished')
-    expect(
-      accountLine(
-        account('a', ConnectionState.cases.Failed.make({ reason: 'the key was revoked' })),
-        Option.none(),
-        added,
-      ),
-    ).toBe('Not working: the key was revoked')
+  it('says how it stands as well while it does not work', () => {
+    expect(accountLine(account('a', unfinished), facts)).toBe('Work · Sign-in not finished')
+    const revoked = ConnectionState.cases.Failed.make({ reason: 'the key was revoked' })
+    expect(accountLine({ ...held('a', unnamed, mine), state: revoked }, facts)).toBe(
+      'Not working: the key was revoked',
+    )
+  })
+
+  it('says in words whom a Company’s account is shared with', () => {
+    expect(accountLine(account('a', ready), { ...facts, sharedWith: Option.some('Acme') })).toBe(
+      'Work · Shared with Acme',
+    )
   })
 
   it('says where a press stands instead, while one is in flight', () => {
-    expect(accountLine(account('a', unfinished), Option.some('waiting'), added)).toBe(
-      'Finish signing in, then come back',
-    )
+    expect(
+      accountLine(account('a', unfinished), { ...facts, pressed: Option.some('waiting') }),
+    ).toBe('Finish signing in, then come back')
   })
 
   it('lists the Person’s own accounts before the Company’s, each in the server’s order', () => {
-    const shared = (id: string) => held(id, 'Work', ConnectionOwnership.cases.Shared.make({}))
+    const shared = (id: string) =>
+      held(
+        id,
+        { name: 'Work', identity: null, account: 'Linear (Work)' },
+        ConnectionOwnership.cases.Shared.make({}),
+      )
     expect(
       ownFirst([shared('s1'), account('m1', ready), shared('s2'), account('m2', ready)]).map(
         (item) => item.id,
@@ -218,12 +210,18 @@ describe('a service’s row in the catalog', () => {
     ).toEqual(Option.some('Not set up on this Vivid'))
   })
 
-  it('says a press before how it is entered, and connected before either', () => {
+  it('says a press before anything else, so adding one more account answers the press too', () => {
     expect(noteOf(offered('Linear', key), false, Option.some('refused'))).toEqual(
       Option.some('Did not start. Try again'),
     )
     expect(noteOf(offered('Linear', key), true, Option.some('starting'))).toEqual(
-      Option.some('Connected'),
+      Option.some('Connecting…'),
+    )
+  })
+
+  it('says a connected service can be pressed for one more account', () => {
+    expect(noteOf(offered('Linear', key), true, Option.none())).toEqual(
+      Option.some('Connected · Add another account'),
     )
   })
 

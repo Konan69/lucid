@@ -73,7 +73,7 @@ export const AccountIdentity = Schema.String.check(
   Schema.isPattern(/^[^\r\n]*$/),
 )
 export type AccountIdentity = typeof AccountIdentity.Type
-const decodeIdentity = Schema.decodeUnknownOption(AccountIdentity)
+const decodeAccountIdentity = Schema.decodeUnknownOption(AccountIdentity)
 
 const referenceFields = {
   service: ServiceId,
@@ -1206,7 +1206,9 @@ function makeIdentity(http: ExecutorHttp) {
     )
     if (health.info === null) return Option.none<AccountIdentity>()
     const { email, username, displayName } = health.info
-    return Arr.findFirst([email, username, displayName], (candidate) => decodeIdentity(candidate))
+    return Arr.findFirst([email, username, displayName], (candidate) =>
+      decodeAccountIdentity(candidate),
+    )
   })
 }
 

@@ -6,15 +6,25 @@ import {
   ServiceAuthorization,
   ServiceCatalog,
   Workspace,
+  type AccountName,
   type ChannelLink,
   type Connection,
   type MeResponse,
   type Service,
 } from '@vivid/contracts'
-import { channelWords, composerOf, liveStateOf, textLink } from '@vivid/state'
+import {
+  asksName,
+  byService,
+  channelWords,
+  composerOf,
+  liveStateOf,
+  textLink,
+  whichAccount,
+  type ServiceAccounts,
+} from '@vivid/state'
 import { Option, Result } from 'effect'
-import { Building2, Search, Unplug } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { Building2, Pencil, Plus, Search, Unplug } from 'lucide-react'
+import { useState, type ReactElement, type ReactNode } from 'react'
 import {
   change,
   live,
@@ -32,6 +42,7 @@ import { Segmented } from '../../ui/Segmented'
 import { Began, begin, follow } from '../integration/begin'
 import { EnterKey, type Keying } from '../integration/Key'
 import { Mark } from '../integration/Mark'
+import { NameAccount } from '../integration/Name'
 import { byPurpose } from '../integration/purpose'
 import { DRAW, ENTER, PRESS, stagger } from '../motion'
 import { Awaiting } from './Parts'
@@ -66,8 +77,6 @@ const pressedOf = (began: Began): Option.Option<Pressed> =>
     Refused: () => Option.some<Pressed>('refused'),
   })
 
-const added = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
-
 /** How a Connection stands, as the colour of its dot and the words beside it. */
 const STANDING = (connection: Connection) =>
   ConnectionState.match(connection.state, {
@@ -77,14 +86,31 @@ const STANDING = (connection: Connection) =>
   })
 
 /**
- * Which account a tile is, when the service's name alone does not say: what the Person called it,
- * when they called it anything, else the day it was added, so two accounts on one service can be
- * told apart before one of them is disconnected.
+ * What one account's row says: which account it is, and how it stands when that is not simply
+ * "working". An account that works and has something to be told apart by says only that; one
+ * with nothing to tell it apart says it is connected; one that does not work says both.
  */
-const WHICH = (connection: Connection) =>
-  connection.label === connection.serviceName
-    ? `Added ${added.format(connection.createdAt)}`
-    : connection.label
+const rowWords = (connection: Connection, alone: boolean) => {
+  const standing = STANDING(connection).words
+  const which = whichAccount(connection, alone)
+  if (Option.isNone(which)) return standing
+  return ConnectionState.guards.Ready(connection.state)
+    ? which.value
+    : `${which.value} · ${standing}`
+}
+
+/** What a Person can do to the accounts on this screen; each is one call to the server. */
+interface Acts {
+  /** One more account on a service that is already connected, named when a name was asked for. */
+  readonly onAdd: (group: ServiceAccounts, name: Option.Option<AccountName>) => void
+  readonly onRename: (connection: Connection, name: Option.Option<AccountName>) => void
+  readonly onResume: (connection: Connection) => void
+  readonly onDisconnect: (connection: Connection) => void
+}
+
+/** Why a Person is asked for a name before one more account is added to this service. */
+const whyName = (serviceName: string) =>
+  `${serviceName} does not say who signs in. A name is how you and Vivid tell your accounts apart.`
 
 const named = (name: string, query: string) =>
   name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
@@ -129,15 +155,20 @@ export function Connections({ me }: { me: MeResponse }) {
     if (Began.$is('NeedsKey')(began)) setKeying(Option.some(began.keying))
   }
 
-  async function connect(service: Service) {
-    // A sign-in tab is opened by the click itself, before the server is asked anything. A service
-    // whose way in is known only after install may turn out to want a sign-in, so it gets the tab
-    // too; `follow` closes a tab the answer does not need.
-    const tab = ServiceAuthorization.isAnyOf(['SignIn', 'KnownAfterInstall'])(service.authorization)
-      ? window.open('about:blank', '_blank')
-      : null
-    mark(service.id, Option.some('starting'))
-    settle(service.id, await begin(service, tab, admin && forCompany))
+  /**
+   * Begins one account on a service: the first, or one more on a service that is already
+   * connected. `signIn` says a sign-in may be coming, and then the tab for it is opened by the
+   * click itself, before the server is asked anything; `follow` closes a tab the answer does not
+   * need.
+   */
+  async function connect(
+    service: Service['id'],
+    signIn: boolean,
+    name: Option.Option<AccountName>,
+  ) {
+    const tab = signIn ? window.open('about:blank', '_blank') : null
+    mark(service, Option.some('starting'))
+    settle(service, await begin({ id: service }, tab, { shared: admin && forCompany, name }))
   }
 
   /**
@@ -160,6 +191,24 @@ export function Connections({ me }: { me: MeResponse }) {
       `${connection.serviceName} could not be disconnected. Try again.`,
     )
 
+  /** Gives an account the Person's own name for it, or takes that name away with none. */
+  const rename = (connection: Connection, name: Option.Option<AccountName>) =>
+    void orSay(
+      change((client) =>
+        client.RenameConnection({ id: connection.id, name: Option.getOrNull(name) }),
+      ),
+      'That name was not saved. Try again.',
+    )
+
+  const acts: Acts = {
+    // How a connected service is entered is not on its accounts, so a sign-in is allowed for:
+    // a tab the answer does not need is closed again.
+    onAdd: (group, name) => void connect(group.service, true, name),
+    onRename: rename,
+    onResume: (connection) => void resume(connection),
+    onDisconnect: disconnect,
+  }
+
   return (
     <div className="flex flex-col gap-6 pt-1">
       <Find query={query} onQuery={setQuery} />
@@ -169,16 +218,19 @@ export function Connections({ me }: { me: MeResponse }) {
         company={Option.map(company, (workspace) => workspace.company.name)}
         admin={admin}
         presses={presses}
-        onResume={(connection) => void resume(connection)}
-        onDisconnect={disconnect}
+        acts={acts}
       />
       <TextVivid query={query} />
       <Catalog
-        connected={connections
-          .filter((item) => ConnectionState.guards.Ready(item.state))
-          .map((item) => item.service)}
+        ready={connections.filter((item) => ConnectionState.guards.Ready(item.state))}
         presses={presses}
-        onConnect={(service) => void connect(service)}
+        onConnect={(service, name) =>
+          void connect(
+            service.id,
+            ServiceAuthorization.isAnyOf(['SignIn', 'KnownAfterInstall'])(service.authorization),
+            name,
+          )
+        }
         whose={
           admin && Option.isSome(company) ? (
             <Segmented
@@ -255,6 +307,10 @@ const BEGIN_WITH = ['Gmail', 'Google Calendar', 'Slack', 'Notion', 'Google Drive
  * What is connected, first on the screen. With nothing connected it is the one sentence that
  * says how connecting works, under the logos a Person is most likely looking for; while the
  * Person is searching for something else, an empty answer here is left out.
+ *
+ * It is one card for each service and one row in it for each account, because a Person can have
+ * several accounts on one service (two Gmail accounts). It was one tile for each account, all
+ * called by the service's name, and nothing on the screen said a second account could be added.
  */
 function Connected({
   connections,
@@ -262,8 +318,7 @@ function Connected({
   company,
   admin,
   presses,
-  onResume,
-  onDisconnect,
+  acts,
 }: {
   connections: ReadonlyArray<Connection>
   searching: boolean
@@ -271,13 +326,9 @@ function Connected({
   company: Option.Option<string>
   admin: boolean
   presses: Presses
-  onResume: (connection: Connection) => void
-  onDisconnect: (connection: Connection) => void
+  acts: Acts
 }) {
   if (connections.length === 0) return searching ? null : <NothingConnected />
-  // The Person's own accounts first, then the Company's; each keeps the server's order.
-  const mine = connections.filter((item) => ConnectionOwnership.guards.Personal(item.ownership))
-  const shared = connections.filter((item) => ConnectionOwnership.guards.Shared(item.ownership))
   return (
     <section>
       {/* The count is of accounts that work now. A sign-in that was started and never finished is
@@ -286,21 +337,18 @@ function Connected({
         title="Connected"
         count={connections.filter((item) => ConnectionState.guards.Ready(item.state)).length}
       />
-      <ul className="grid gap-2.5 sm:grid-cols-2">
-        {[...mine, ...shared].map((connection, place) => {
-          const own = ConnectionOwnership.guards.Personal(connection.ownership)
-          return (
-            <ConnectedTile
-              key={connection.id}
-              place={place}
-              connection={connection}
-              sharedWith={own ? Option.none() : company}
-              pressed={Option.fromUndefinedOr(presses.get(connection.id))}
-              // A Company's Connection is finished or removed by an admin, never by a member.
-              actions={own || admin ? Option.some({ onResume, onDisconnect }) : Option.none()}
-            />
-          )
-        })}
+      <ul className="flex flex-col gap-2.5">
+        {byService(connections).map((group, place) => (
+          <ServiceCard
+            key={group.service}
+            place={place}
+            group={group}
+            company={company}
+            admin={admin}
+            presses={presses}
+            acts={acts}
+          />
+        ))}
       </ul>
       {Option.isSome(company) && (
         <p className="mt-2.5 px-0.5 text-meta font-meta text-pretty text-ink-3">
@@ -339,101 +387,209 @@ function NothingConnected() {
 }
 
 /**
- * One connected account as a large tile: the service's logo, its name, how it stands and which
- * account it is. A ready one offers "Disconnect" in words; an unfinished one leads with
- * "Reconnect" and keeps disconnecting as the icon beside it.
+ * One connected service: its logo and name, the way to add one more account, and a row for every
+ * account the Person can see on it. "Add account" is in words on the card itself, so a Person
+ * with one Gmail account can see that a second one is possible.
+ *
+ * A server someone added by its address has no "Add account": adding one a second time is not
+ * something the Integration layer has been shown to do (`Connection.origin`).
  */
-function ConnectedTile({
+function ServiceCard({
   place,
-  connection,
-  sharedWith,
-  pressed,
-  actions,
+  group,
+  company,
+  admin,
+  presses,
+  acts,
 }: {
   place: number
-  connection: Connection
-  /** The Company this account is shared with, when it is not the Person's own. */
-  sharedWith: Option.Option<string>
-  pressed: Option.Option<Pressed>
-  /** Present for whoever may finish or remove this Connection. */
-  actions: Option.Option<{
-    readonly onResume: (connection: Connection) => void
-    readonly onDisconnect: (connection: Connection) => void
-  }>
+  group: ServiceAccounts
+  company: Option.Option<string>
+  admin: boolean
+  presses: Presses
+  acts: Acts
 }) {
-  const ready = ConnectionState.guards.Ready(connection.state)
-  const standing = STANDING(connection)
-  const words = Option.match(pressed, {
-    onNone: () => standing.words,
-    onSome: (value) => PRESSED[value],
+  const pressed = Option.fromUndefinedOr(presses.get(group.service))
+  const several = group.accounts.length > 1
+  const under = Option.match(pressed, {
+    onSome: (value) => Option.some(PRESSED[value]),
+    onNone: () => (several ? Option.some(`${group.accounts.length} accounts`) : Option.none()),
   })
   return (
-    <li
-      className={cn(
-        'flex min-h-18 items-center gap-3 rounded-card bg-surface-3 p-3 edge',
-        ENTER,
-        stagger(place),
-      )}
-    >
-      <Mark service={{ name: connection.serviceName, mark: connection.mark }} size={44} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="truncate text-title font-title text-ink">{connection.serviceName}</span>
-          {Option.isSome(sharedWith) && (
-            <span
-              title={`Shared with everyone at ${sharedWith.value}`}
-              className="inline-flex shrink-0 items-center text-ink-3"
-            >
-              <Building2 aria-label={`Shared with ${sharedWith.value}`} className="size-3.5" />
-            </span>
+    <li className={cn('rounded-card bg-surface-3 edge', ENTER, stagger(place))}>
+      <div className="flex min-h-16 items-center gap-3 px-3 pt-3">
+        <Mark service={{ name: group.serviceName, mark: group.mark }} size={40} />
+        <div className="min-w-0 flex-1">
+          <h4 className="truncate text-title font-title text-ink">{group.serviceName}</h4>
+          {Option.isSome(under) && (
+            <p role="status" className="truncate text-label text-ink-3">
+              {under.value}
+            </p>
           )}
         </div>
-        <div className="flex items-center gap-1.5 text-label text-ink-3" title={words}>
-          <i aria-hidden className={cn('size-1.5 shrink-0 rounded-full', standing.dot)} />
-          <span className="truncate">
-            {words}
-            {ready && Option.isNone(pressed) && ` · ${WHICH(connection)}`}
-          </span>
-        </div>
+        {group.accounts.some((account) => account.origin === 'Catalogue') && (
+          <AddAccount
+            group={group}
+            // One press is one account: nothing more is begun while a press is on its way.
+            busy={Option.contains(pressed, 'starting')}
+            onAdd={(name) => acts.onAdd(group, name)}
+          />
+        )}
       </div>
-      {Option.isSome(actions) && (
-        <ConnectedActions
-          connection={connection}
-          ready={ready}
-          onResume={() => actions.value.onResume(connection)}
-          onDisconnect={() => actions.value.onDisconnect(connection)}
-        />
-      )}
+      {/* The rows start under the service's name: the card's 12, the logo's 40 and its 12. */}
+      <ul className="flex flex-col pt-1 pr-3 pb-2 pl-16">
+        {group.accounts.map((connection) => {
+          const own = ConnectionOwnership.guards.Personal(connection.ownership)
+          return (
+            <AccountRow
+              key={connection.id}
+              connection={connection}
+              alone={!several}
+              sharedWith={own ? Option.none() : company}
+              pressed={Option.fromUndefinedOr(presses.get(connection.id))}
+              // A Company's account is named, finished or removed by an admin, never a member.
+              acts={own || admin ? Option.some(acts) : Option.none()}
+            />
+          )
+        })}
+      </ul>
     </li>
   )
 }
 
-function ConnectedActions({
-  connection,
-  ready,
-  onResume,
-  onDisconnect,
+/**
+ * The way to add one more account to a connected service. A service that says who signed in
+ * (a Google account's address) is begun at once and the new account is named by that. One that
+ * does not is asked a name for first, because a name is then the only thing that will tell the
+ * new account from the ones already there (`asksName`).
+ */
+function AddAccount({
+  group,
+  busy,
+  onAdd,
 }: {
-  connection: Connection
-  ready: boolean
-  onResume: () => void
-  onDisconnect: () => void
+  group: ServiceAccounts
+  busy: boolean
+  onAdd: (name: Option.Option<AccountName>) => void
 }) {
-  if (ready) {
+  const label = `Add another ${group.serviceName} account`
+  const face = (
+    <>
+      <Plus />
+      Add account
+    </>
+  )
+  if (!asksName(group.accounts)) {
     return (
-      <Button size="sm" variant="ghost" onClick={onDisconnect}>
-        Disconnect
+      <Button
+        variant="outline"
+        size="sm"
+        aria-label={label}
+        disabled={busy}
+        onClick={() => onAdd(Option.none())}
+      >
+        {face}
       </Button>
     )
   }
   return (
+    <NameAccount
+      trigger={
+        <Button variant="outline" size="sm" aria-label={label} disabled={busy}>
+          {face}
+        </Button>
+      }
+      title="Name the new account"
+      why={whyName(group.serviceName)}
+      action="Add account"
+      current={Option.none()}
+      optional={false}
+      onName={onAdd}
+    />
+  )
+}
+
+/**
+ * One account on a connected service: a dot for how it stands, the words that say which account
+ * it is, and what can be done to it. A ready one can be named and disconnected; an unfinished one
+ * leads with "Reconnect" and keeps disconnecting as the icon beside it.
+ */
+function AccountRow({
+  connection,
+  alone,
+  sharedWith,
+  pressed,
+  acts,
+}: {
+  connection: Connection
+  /** Whether it is the only account on its service, which then needs nothing to tell it apart. */
+  alone: boolean
+  /** The Company this account is shared with, when it is not the Person's own. */
+  sharedWith: Option.Option<string>
+  pressed: Option.Option<Pressed>
+  /** Present for whoever may name, finish or remove this account. */
+  acts: Option.Option<Acts>
+}) {
+  const words = Option.match(pressed, {
+    onNone: () => rowWords(connection, alone),
+    onSome: (value) => PRESSED[value],
+  })
+  return (
+    <li className="flex min-h-9 items-center gap-2">
+      <i aria-hidden className={cn('size-1.5 shrink-0 rounded-full', STANDING(connection).dot)} />
+      {/* The whole line is also its title: a long address is cut here and read on hover. */}
+      <span title={words} className="min-w-0 flex-1 truncate text-label text-ink-2">
+        {words}
+      </span>
+      {Option.isSome(sharedWith) && (
+        <span
+          title={`Shared with everyone at ${sharedWith.value}`}
+          className="inline-flex shrink-0 items-center text-ink-3"
+        >
+          <Building2 aria-label={`Shared with ${sharedWith.value}`} className="size-3.5" />
+        </span>
+      )}
+      {Option.isSome(acts) && <AccountActions connection={connection} acts={acts.value} />}
+    </li>
+  )
+}
+
+/** What whoever manages an account can do to it, at the trailing edge of its row. */
+function AccountActions({ connection, acts }: { connection: Connection; acts: Acts }) {
+  const naming = connection.name === null ? 'Name this account' : 'Rename this account'
+  return (
     <div className="flex shrink-0 items-center gap-1">
-      <Button variant="outline" size="sm" onClick={onResume}>
-        Reconnect
-      </Button>
-      <IconButton label={`Disconnect ${connection.serviceName}`} onClick={onDisconnect}>
-        <Unplug className="size-4" />
-      </IconButton>
+      <NameAccount
+        trigger={
+          <IconButton size="icon-sm" label={naming}>
+            <Pencil />
+          </IconButton>
+        }
+        title={naming}
+        why="Your own name for it, such as Work. Vivid uses it too. Leave it empty to remove the name."
+        action="Save"
+        current={Option.fromNullOr(connection.name)}
+        optional
+        onName={(name) => acts.onRename(connection, name)}
+      />
+      {ConnectionState.guards.Ready(connection.state) ? (
+        <Button size="sm" variant="ghost" onClick={() => acts.onDisconnect(connection)}>
+          Disconnect
+        </Button>
+      ) : (
+        <>
+          <Button variant="outline" size="sm" onClick={() => acts.onResume(connection)}>
+            Reconnect
+          </Button>
+          <IconButton
+            size="icon-sm"
+            label={`Disconnect ${connection.serviceName}`}
+            onClick={() => acts.onDisconnect(connection)}
+          >
+            <Unplug />
+          </IconButton>
+        </>
+      )}
     </div>
   )
 }
@@ -588,15 +744,16 @@ function ConnectedChannelTile({
  * blink between keystrokes.
  */
 function Catalog({
-  connected,
+  ready,
   presses,
   onConnect,
   whose,
 }: {
-  /** The services this Person already has a ready Connection to. */
-  connected: ReadonlyArray<Service['id']>
+  /** The accounts this Person can use now; a service with one of them is already connected. */
+  ready: ReadonlyArray<Connection>
   presses: Presses
-  onConnect: (service: Service) => void
+  /** Begins an account on a service, under the name the Person gave when one was asked for. */
+  onConnect: (service: Service, name: Option.Option<AccountName>) => void
   /** The admin's choice of who the next Connection is for, when there is one to make. */
   whose: ReactNode
 }) {
@@ -655,9 +812,9 @@ function Catalog({
                   // Typing is a keyboard action, and a grid that re-entered on every keystroke
                   // would be noise: tiles arrive in a stagger only on the unsearched view.
                   place={searching ? Option.none() : Option.some(place)}
-                  connected={connected.includes(service.id)}
+                  accounts={ready.filter((item) => item.service === service.id)}
                   pressed={Option.fromUndefinedOr(presses.get(service.id))}
-                  onConnect={() => onConnect(service)}
+                  onConnect={(name) => onConnect(service, name)}
                 />
               </li>
             ))}
@@ -668,10 +825,16 @@ function Catalog({
   )
 }
 
-/** What a tile says under the service's name: where a press stands, else how it is entered. */
+/**
+ * What a tile says under the service's name: where a press stands, else what pressing it does
+ * when the service is already connected, else how it is entered.
+ *
+ * A connected service said only "Connected", and nothing told a Person that pressing it again
+ * adds one more account. It says so now, in the words the card above uses.
+ */
 function noteOf(service: Service, connected: boolean, pressed: Option.Option<Pressed>) {
-  if (connected) return Option.some('Connected')
   if (Option.isSome(pressed)) return Option.some(PRESSED[pressed.value])
+  if (connected) return Option.some('Add another account')
   // A catalog entry's description is written by whoever published it, often for another product
   // by name, so the tile says only what Vivid knows to be true: how the service is entered.
   return ServiceAuthorization.match(service.authorization, {
@@ -684,24 +847,30 @@ function noteOf(service: Service, connected: boolean, pressed: Option.Option<Pre
 }
 
 /**
- * One service in the catalog: a tile to press, a settled fact once connected, or plainly not on
- * offer. A service nobody can connect on this installation (its sign-in was never registered by
- * whoever runs this Vivid) is still shown, says so, and is not a button.
+ * One service in the catalog: a tile to press, or plainly not on offer. A service nobody can
+ * connect on this installation (its sign-in was never registered by whoever runs this Vivid) is
+ * still shown, says so, and is not a button.
+ *
+ * A connected service stays a tile to press: it carries the check, says "Add another account",
+ * and pressing it adds one. Where the service does not say who signs in, the press first asks
+ * what to call the new account, the same way "Add account" on its card does.
  */
 function ServiceTile({
   service,
   place,
-  connected,
+  accounts,
   pressed,
   onConnect,
 }: {
   service: Service
   /** Its place in a group that arrives in a stagger; none when the grid is a search's answer. */
   place: Option.Option<number>
-  connected: boolean
+  /** The ready accounts this Person already has on the service. */
+  accounts: ReadonlyArray<Connection>
   pressed: Option.Option<Pressed>
-  onConnect: () => void
+  onConnect: (name: Option.Option<AccountName>) => void
 }) {
+  const connected = accounts.length > 0
   const note = noteOf(service, connected, pressed)
   const arriving = Option.match(place, {
     onNone: () => '',
@@ -716,32 +885,45 @@ function ServiceTile({
           <span className="block truncate text-meta font-meta text-ink-3">{note.value}</span>
         )}
       </span>
+      {/* The check draws itself only on a tile this Person pressed on this visit: that is a
+          thing that has just happened. One that was connected all along is simply checked. */}
+      {connected && <Done drawn={Option.isSome(pressed)} />}
     </>
   )
   if (ServiceAuthorization.guards.SetupRequired(service.authorization)) {
     return <div className={cn(TILE, 'cursor-default opacity-60', arriving)}>{body}</div>
   }
-  return (
+  const asks = asksName(accounts)
+  const tile: ReactElement = (
     <button
       type="button"
-      onClick={onConnect}
+      onClick={asks ? undefined : () => onConnect(Option.none())}
       // One press is one Connection: the tile is not pressed again while its first press is
       // still on its way to the server.
       disabled={Option.contains(pressed, 'starting')}
       aria-busy={Option.contains(pressed, 'starting')}
-      aria-label={connected ? `${service.name}, connected` : `Connect ${service.name}`}
+      aria-label={connected ? `Add another ${service.name} account` : `Connect ${service.name}`}
       className={cn(
         TILE,
-        'cursor-pointer outline-none hover:bg-surface-2 focus-visible:edge-primary disabled:cursor-default',
+        'cursor-pointer outline-none hover:bg-surface-2 focus-visible:edge-primary disabled:cursor-default aria-expanded:bg-surface-2',
         PRESS,
         arriving,
       )}
     >
       {body}
-      {/* The check draws itself only on a tile this Person pressed on this visit: that is a
-          thing that has just happened. One that was connected all along is simply checked. */}
-      {connected && <Done drawn={Option.isSome(pressed)} />}
     </button>
+  )
+  if (!asks) return tile
+  return (
+    <NameAccount
+      trigger={tile}
+      title="Name the new account"
+      why={whyName(service.name)}
+      action="Add account"
+      current={Option.none()}
+      optional={false}
+      onName={onConnect}
+    />
   )
 }
 

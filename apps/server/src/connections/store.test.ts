@@ -450,7 +450,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           // so this tracer signal puts the second reader at the shared cache before interruption.
           const tracer = Tracer.make({
             span(options) {
-              if (options.name === 'Connections.public')
+              if (options.name === 'Connections.connectionOf')
                 Deferred.doneUnsafe(secondStarted, Effect.void)
               return new Tracer.NativeSpan(options)
             },

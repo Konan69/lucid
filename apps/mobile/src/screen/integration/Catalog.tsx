@@ -1,4 +1,9 @@
-import { ServiceAuthorization, ServiceCatalog, type Service } from '@vivid/contracts'
+import {
+  ServiceAuthorization,
+  ServiceCatalog,
+  type Connection,
+  type Service,
+} from '@vivid/contracts'
 import { LiveState } from '@vivid/state'
 import { Option } from 'effect'
 import type { ReactNode } from 'react'
@@ -27,7 +32,7 @@ const SLOTS = ['a', 'b', 'c', 'd', 'e', 'f'] as const
 export function Catalog({
   found,
   searching,
-  connected,
+  ready,
   presses,
   onConnect,
   onAgain,
@@ -35,10 +40,11 @@ export function Catalog({
 }: {
   found: LiveState<ServiceCatalog>
   searching: boolean
-  /** The services this Person already has a ready Integration with. */
-  connected: ReadonlyArray<Service['id']>
+  /** The accounts this Person can use now; a service with one of them is already connected. */
+  ready: ReadonlyArray<Connection>
   presses: Presses
-  onConnect: (service: Service) => void
+  /** Adds an account on a service, given the accounts the Person already has on it. */
+  onConnect: (service: Service, accounts: ReadonlyArray<Connection>) => void
   /** Asks the catalog again, after it could not be reached. */
   onAgain: () => void
   /** The admin's choice of who the next Integration is for, when there is one to make. */
@@ -79,9 +85,14 @@ export function Catalog({
             <ServiceRow
               key={service.id}
               service={service}
-              connected={connected.includes(service.id)}
+              connected={ready.some((item) => item.service === service.id)}
               pressed={Option.fromUndefinedOr(presses.get(service.id))}
-              onConnect={() => onConnect(service)}
+              onConnect={() =>
+                onConnect(
+                  service,
+                  ready.filter((item) => item.service === service.id),
+                )
+              }
             />
           ))}
         </Section>
@@ -129,7 +140,9 @@ function Placeholder() {
  * whoever runs this Vivid) is still shown, says so, steps back, and is not a button.
  *
  * Pressing connects there and then, so the row's trailing mark is a plus and not the chevron of
- * a row that goes somewhere. A connected service can be pressed again: that adds another account.
+ * a row that goes somewhere. A connected service can be pressed again, and that adds another
+ * account: its row says so under the name, beside the check that says it is connected, and keeps
+ * the plus, because pressing it still adds something.
  */
 function ServiceRow({
   service,
@@ -152,19 +165,18 @@ function ServiceRow({
       </View>
     )
   }
-  const Mark = connected ? Check : Plus
   return (
     <Row
       leading={leading}
       title={service.name}
       detail={detail}
       trailing={
-        <Mark
-          pointerEvents="none"
-          size={18}
-          strokeWidth={connected ? 2 : 1.7}
-          color={connected ? c['status-success'] : c.chevron}
-        />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {connected && (
+            <Check pointerEvents="none" size={18} strokeWidth={2} color={c['status-success']} />
+          )}
+          <Plus pointerEvents="none" size={18} strokeWidth={1.7} color={c.chevron} />
+        </View>
       }
       onPress={onConnect}
     />

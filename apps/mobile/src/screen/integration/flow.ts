@@ -1,6 +1,12 @@
 import type { VividRpcClient } from '@vivid/client-runtime'
-import { ConnectionStep, type Connection, type ConnectionId, type Service } from '@vivid/contracts'
-import type { ProductFailure } from '@vivid/state'
+import {
+  ConnectionStep,
+  type AccountName,
+  type Connection,
+  type ConnectionId,
+  type Service,
+} from '@vivid/contracts'
+import { asksName, type ProductFailure } from '@vivid/state'
 import { Option, Result, type Effect } from 'effect'
 import { useState } from 'react'
 import { commit, warn } from '../../data/haptics'
@@ -22,8 +28,38 @@ interface Asking {
   readonly keying: Keying
 }
 
+/**
+ * The account that is being named before it is begun: one more on a service that does not say
+ * who signs in, where a name is what will tell it from the accounts already there.
+ */
+interface Naming {
+  readonly service: Service['id']
+  readonly serviceName: string
+  /** For the Person's Company (an admin's choice) and not for the Person alone. */
+  readonly shared: boolean
+}
+
 /** One question put to the server whose answer is what an Integration needs next. */
 type Ask = (client: VividRpcClient['Service']) => Effect.Effect<ConnectionStep, ProductFailure>
+
+/**
+ * Gives an account the Person's own name for it, or takes that name away with none. It answers
+ * with nothing when the name was saved, or with the sentence to show when it was not. Nothing is
+ * asked of the service: the name is Vivid's own.
+ */
+const renameWith =
+  (data: ReturnType<typeof useLiveData>) =>
+  async (
+    connection: Connection,
+    name: Option.Option<AccountName>,
+  ): Promise<Option.Option<string>> => {
+    const result = await data.change((client) =>
+      client.RenameConnection({ id: connection.id, name: Option.getOrNull(name) }),
+    )
+    return Result.isFailure(result)
+      ? Option.some('That name was not saved. Try again.')
+      : Option.none()
+  }
 
 /**
  * Everything the Integrations sheet does to an Integration: start one from the catalog, pick one
@@ -40,6 +76,8 @@ type Ask = (client: VividRpcClient['Service']) => Effect.Effect<ConnectionStep, 
  *   where the Integration stands (`returned`), exactly as the card in a Thread does. Only one
  *   sign-in can be away at a time, because there is only one front.
  * - Disconnecting asks first, with the system's own alert.
+ * - A name is asked for in a sheet (`naming`), and an account is named, added to and disconnected
+ *   from its own sheet (`managing`), where the web uses a popover and buttons on a row.
  */
 export function useFlow() {
   const data = useLiveData()
@@ -47,6 +85,8 @@ export function useFlow() {
   const [asking, setAsking] = useState<Option.Option<Asking>>(Option.none())
   const [away, setAway] = useState<Option.Option<Away>>(Option.none())
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
+  const [naming, setNaming] = useState<Option.Option<Naming>>(Option.none())
+  const [managing, setManaging] = useState<Option.Option<ConnectionId>>(Option.none())
 
   /** Keeps where one press stands beside the row that was pressed. */
   const mark = (key: PressKey, pressed: Option.Option<Pressed>) =>
@@ -98,6 +138,12 @@ export function useFlow() {
     settle(key, result.success)
   }
 
+  /** Begins one account on a service, under the Person's name for it when they gave one. */
+  const begin = (service: Service['id'], shared: boolean, name: Option.Option<AccountName>) =>
+    void press(service, (client) =>
+      client.BeginConnection({ service, name: Option.getOrNull(name), shared }),
+    )
+
   /** Removes an Integration once the Person has said yes; a refusal is said in the sheet. */
   async function remove(connection: Connection) {
     warn()
@@ -121,16 +167,40 @@ export function useFlow() {
     /** The one sentence about something that did not happen, shown at the top of the sheet. */
     refused,
 
-    /** Starts an Integration with a service from the catalog, for this Person or their Company. */
-    connect: (service: Service, shared: boolean) =>
-      void press(service.id, (client) =>
-        client.BeginConnection({
-          service: service.id,
-          // An Integration's label is at most 40 characters; the service's name is the default.
-          label: service.name.slice(0, 40),
-          shared,
-        }),
-      ),
+    /** Begins one account on a service at once, under the name the Person gave when they did. */
+    add: begin,
+    /** The account being named before it is begun, when one is; its sheet is open. */
+    naming,
+    /** The account whose own sheet is open, when one is. */
+    managing,
+    manage: (connection: Connection) => setManaging(Option.some(connection.id)),
+    closeManage: () => setManaging(Option.none()),
+    closeNaming: () => setNaming(Option.none()),
+
+    /**
+     * Adds an account on a service, for this Person or their Company: the first, or one more on a
+     * service that is already connected. `accounts` are the ones the Person has there now. Where
+     * none of them says who it is, the new one is asked a name first (`asksName`), and it is begun
+     * once the Person has given one (`named`); otherwise it is begun at once.
+     */
+    connect: (
+      service: Pick<Service, 'id' | 'name'>,
+      accounts: ReadonlyArray<Connection>,
+      shared: boolean,
+    ) =>
+      asksName(accounts)
+        ? setNaming(Option.some({ service: service.id, serviceName: service.name, shared }))
+        : begin(service.id, shared, Option.none()),
+
+    /** The Person named the account that was waiting for a name: it is begun under that name. */
+    named: (name: AccountName) => {
+      if (Option.isNone(naming)) return
+      const { service, shared } = naming.value
+      setNaming(Option.none())
+      begin(service, shared, Option.some(name))
+    },
+
+    rename: renameWith(data),
 
     /**
      * Picks an Integration up where it stopped: the provider's page was left, the key was never
@@ -172,7 +242,11 @@ export function useFlow() {
         title: `Disconnect ${connection.serviceName}?`,
         detail: 'Vivid will stop using this account. You can connect it again whenever you like.',
         action: 'Disconnect',
-        onConfirm: () => void remove(connection),
+        onConfirm: () => {
+          // The account's own sheet, when that is where this was asked, has nothing left to show.
+          setManaging(Option.none())
+          void remove(connection)
+        },
       }),
   }
 }

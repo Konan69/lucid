@@ -410,6 +410,9 @@ interface HostedState {
   readonly paginated: Ref.Ref<boolean>
   readonly redirectUri: Ref.Ref<string>
   readonly result: Ref.Ref<Schema.Json>
+  /** What the app's own check says the account is (`AccountHealth.info`); null is an app with
+   * no check, which is what most of the catalogue is. */
+  readonly identity: Ref.Ref<Schema.Json>
 }
 
 /** Each installation has its own foreign identity; the remote app's provider declaration drives Vivid's form and OAuth method selection. */
@@ -494,6 +497,14 @@ const hostedWrite = Effect.fn('Executor.HostedTest.write')(function* (
       expiresAt: '2026-10-04T00:00:00Z',
     }
   if (/^POST \/apps\/[^/]+\/tools\/call$/u.test(request.path)) return yield* Ref.get(state.result)
+  // HostedAccounts.check: runs the app's check and answers with the account's health.
+  if (request.path === 'POST /accounts/account/health')
+    return {
+      account: 'account',
+      info: yield* Ref.get(state.identity),
+      infoCheckedAt: null,
+      apps: [],
+    }
   return hostedProfile
 })
 
@@ -574,6 +585,7 @@ export const hostedExecutorFixture = Effect.fn('Executor.HostedTest.fixture')(fu
       structuredContent: { ok: true },
       isError: false,
     }),
+    identity: yield* Ref.make<Schema.Json>(null),
   }
   const server = yield* NodeHttpServer.make(() => NodeHttp.createServer(), {
     host: '127.0.0.1',
@@ -650,6 +662,7 @@ function hostedRoute(path: string) {
       'POST /apps/deploy',
       'POST /apps/import',
       'POST /accounts/account/connections',
+      'POST /accounts/account/health',
       'POST /connections/authorization/submit',
       'POST /connections/authorization/oauth/start',
       'POST /connections/authorization/oauth/complete',

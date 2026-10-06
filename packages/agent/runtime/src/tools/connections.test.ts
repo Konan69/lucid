@@ -103,6 +103,93 @@ describe('connected tool execution', () => {
       })
     }).pipe(Effect.scoped),
   )
+  /** Drives `connect` for a service the Person already has an account on. */
+  const connectHeld = Effect.fn('ConnectionToolsTest.connectHeld')(function* (another: boolean) {
+    const { requests, rpc, tools } = yield* fixture()
+    const [, , connect] = tools
+    const asked = {
+      summary: 'Ask for the work Mail account',
+      service: 'Mail',
+      reason: 'To send it from your work address',
+    }
+    const call = yield* Effect.promise(() =>
+      Promise.resolve(
+        connect.run({
+          data: another ? { ...asked, another: true } : asked,
+          signal: new AbortController().signal,
+          toolCallId: 'MARK-call',
+          log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
+        }),
+      ),
+    ).pipe(Effect.forkScoped)
+    const discovery = yield* Queue.take(requests)
+    if (!Predicate.isTagged(discovery, 'Request')) return expect.fail('Expected discovery')
+    yield* rpc.write({
+      // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK wire envelopes have no schema constructor.
+      _tag: 'Exit',
+      clientId: 0,
+      requestId: discovery.id,
+      exit: Exit.succeed({
+        tools: [],
+        unconnected: [],
+        connected: [
+          {
+            id: ServiceId.make('mail'),
+            name: 'Mail',
+            description: 'Your mail',
+            mark: null,
+            authorization: ServiceAuthorization.cases.SignIn.make({}),
+          },
+        ],
+      }),
+    })
+    return { requests, rpc, call }
+  })
+
+  it.effect('asks for one more account on a service that is already connected', () =>
+    Effect.gen(function* () {
+      const { requests, rpc, call } = yield* connectHeld(true)
+      const offer = yield* Queue.take(requests)
+      if (!Predicate.isTagged(offer, 'Request')) return expect.fail('Expected offer')
+      expect(offer.tag).toBe('OfferConnection')
+      // The server is told this is a request for one more account, not for the service.
+      expect(offer.payload).toMatchObject({ service: 'mail', wanted: 'Another' })
+      yield* rpc.write({
+        // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK wire envelopes have no schema constructor.
+        _tag: 'Exit',
+        clientId: 0,
+        requestId: offer.id,
+        exit: Exit.succeed({
+          kind: 'connection-request',
+          service: ServiceId.make('mail'),
+          serviceName: 'Mail',
+          reason: 'To send it from your work address',
+          ready: false,
+          another: { askedAt: 1_000 },
+        }),
+      })
+      // The card keeps when Vivid asked, so it is not settled by the account already there, and
+      // the turn ends to wait for the Person.
+      expect(yield* Fiber.join(call)).toMatchObject({
+        terminate: true,
+        output: { kind: 'connection-request', ready: false, another: { askedAt: 1_000 } },
+      })
+    }).pipe(Effect.scoped),
+  )
+
+  it.effect('shows no card for a connected service unless one more account was asked for', () =>
+    Effect.gen(function* () {
+      const { requests, call } = yield* connectHeld(false)
+      const result = yield* Fiber.join(call)
+      // No card, no end of turn: the model is told to use an account or to ask for another.
+      expect(result).toMatchObject({ output: { connected: true } })
+      expect(result).not.toHaveProperty('terminate', true)
+      expect(JSON.stringify(result)).toContain('another set to true')
+      // Nothing was offered: the server was asked only what is connected.
+      expect(Option.isNone(yield* Queue.poll(requests))).toBe(true)
+    }).pipe(Effect.scoped),
+  )
+
   it.effect(
     'registers a personal integration through the real runtime RPC seam using names only',
     () =>

@@ -103,8 +103,13 @@ function Drawn({
         onNone: () => null,
         onSome: (request) => <InputCard request={request} me={me} />,
       }),
-    Connection: ({ request, authorization }) => (
-      <IntegrationCard request={request} authorization={authorization} onContinue={onContinue} />
+    Connection: ({ request, authorization, awaited }) => (
+      <IntegrationCard
+        request={request}
+        authorization={authorization}
+        awaited={awaited}
+        onContinue={onContinue}
+      />
     ),
   })
 }
