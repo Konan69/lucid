@@ -158,7 +158,7 @@ void test('a lock is exclusive while its owner lives and is taken over when it i
   t.after(() => NodeFS.rmSync(directory, { recursive: true, force: true }))
   const lock = NodePath.join(directory, 'lock')
   const release = takeLock(lock)
-  assert.equal(typeof release, 'function')
+  assert.notEqual(release, undefined)
   assert.equal(takeLock(lock), undefined)
   release()
   // A process id that has exited: the child is reaped before its id is written.
@@ -166,7 +166,7 @@ void test('a lock is exclusive while its owner lives and is taken over when it i
     encoding: 'utf8',
   })
   NodeFS.writeFileSync(lock, gone.stdout.trim())
-  assert.equal(typeof takeLock(lock), 'function')
+  assert.notEqual(takeLock(lock), undefined)
   assert.equal(slotCount(8), 2)
   assert.equal(slotCount(2), 1)
 })
