@@ -17,6 +17,7 @@ import {
   ComputerShellOutcome,
 } from '@vivid/contracts'
 import { Effect, Option } from 'effect'
+import { warnFailure } from './result.ts'
 import { Scope, type RunScoped } from './scope.ts'
 
 /** Where Vivid's commands start and relative paths resolve: the home of the Computer's user. Boat
@@ -28,6 +29,16 @@ const DEFAULT_SECONDS = 120
 const LONGEST_SECONDS = 600
 
 const word = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`
+
+/**
+ * A Computer that could not be used, said in the runtime's log before the model is told.
+ *
+ * These verbs answer Flue by throwing, which no other log sees: on 6 October 2026 the Computer
+ * refused every command for seven hours and this log held nothing about it. A refusal by the
+ * machine's own file system (no such file, not permitted) is an ordinary answer and is not logged.
+ */
+const unusable = (verb: string, tag: string, reason: string) =>
+  warnFailure(verb, tag).pipe(Effect.andThen(Effect.fail(new Error(reason))))
 
 /** Environment for one command, as assignments before it: names are checked, values are quoted. */
 const assignments = (env: Readonly<Record<string, string>>) =>
@@ -99,12 +110,12 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
               exitCode: done.exitCode,
             })
           },
-          Unavailable: ({ reason }) => Effect.fail(new Error(reason)),
+          Unavailable: ({ reason }) => unusable('bash', 'Unavailable', reason),
           OutcomeUnknown: () =>
-            Effect.fail(
-              new Error(
-                'The connection to the Computer was lost while the command ran. It may have run: check before running it again.',
-              ),
+            unusable(
+              'bash',
+              'OutcomeUnknown',
+              'The connection to the Computer was lost while the command ran. It may have run: check before running it again.',
             ),
         })
       }),
@@ -119,7 +130,7 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
         return yield* ComputerFileReadOutcome.match<Effect.Effect<Uint8Array, Error>>(outcome, {
           Read: ({ content }) => Effect.succeed(content),
           Refused: ({ reason }) => Effect.fail(new Error(`${path}: ${reason}`)),
-          Unavailable: ({ reason }) => Effect.fail(new Error(reason)),
+          Unavailable: ({ reason }) => unusable('read', 'Unavailable', reason),
         })
       }),
       Option.none(),
@@ -139,7 +150,7 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
           return yield* ComputerFileWriteOutcome.match<Effect.Effect<void, Error>>(outcome, {
             Written: () => Effect.void,
             Refused: ({ reason }) => Effect.fail(new Error(`${path}: ${reason}`)),
-            Unavailable: ({ reason }) => Effect.fail(new Error(reason)),
+            Unavailable: ({ reason }) => unusable('write', 'Unavailable', reason),
           })
         }),
         Option.none(),

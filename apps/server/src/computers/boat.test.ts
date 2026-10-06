@@ -48,9 +48,12 @@ import { computerHandlers } from './handlers.ts'
 import {
   isOutage,
   Machine,
+  MachineExecutionUnknown,
   MachineKey,
   MachineNoCapacity,
   MachineOperationFailed,
+  MachineRequestRejected,
+  type MachineFailure,
 } from './machine.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { machineBindings } from './tables.ts'
@@ -62,7 +65,7 @@ import { transport, type Transport } from './boat/transport.ts'
 import { guestCommand } from './boat/guest.ts'
 import { bindings } from './boat/bindings.ts'
 import { lifecycle } from './boat/lifecycle.ts'
-import { HELD, UNSETTLED } from './boat/holder.ts'
+import { HELD, UNSETTLED, holding, wake } from './boat/holder.ts'
 import {
   ComputerStore,
   computerMachineKey,
@@ -942,6 +945,39 @@ const stepped = Effect.fn('BoatTest.stepped')(function* () {
     (_, identity) => Effect.succeed(identity),
   )
   return { machine, waits }
+})
+
+/**
+ * The holder record's server side over a Boat that calls the machine running before a command can
+ * reach it (`boat/holder.ts`, `unheard`): `refuse` says what each command meets, by its number,
+ * and none when the machine takes it. A refused command is told on `asked` by the caller's own
+ * fiber, just before it waits to ask again, so a test moves the clock only once the wait is real.
+ */
+const unready = Effect.fn('BoatTest.unready')(function* (
+  key: MachineKey,
+  refuse: (sent: number) => Effect.Effect<Option.Option<MachineFailure>>,
+) {
+  const saved = yield* bindings()
+  const real = yield* transport()
+  const asked = yield* Queue.unbounded<number>()
+  const sent = yield* Ref.make(0)
+  const api: Transport = {
+    ...real,
+    command: Effect.fn('BoatTest.unreadyCommand')(function* (
+      ...input: Parameters<Transport['command']>
+    ) {
+      const count = yield* Ref.updateAndGet(sent, (value) => value + 1)
+      const refusal = yield* refuse(count)
+      if (Option.isNone(refusal)) return yield* real.command(...input)
+      yield* Queue.offer(asked, count)
+      return yield* Effect.fail(refusal.value)
+    }),
+  }
+  const intent = yield* saved.intend(key, real.create)
+  const providerId = Protocol.ProviderId.make(id)
+  const binding = yield* saved.bind(key, intent.binding.intent, providerId)
+  const holder = holding(api, saved, () => undefined)
+  return { holder, identity: { binding, id: providerId }, asked, sent }
 })
 
 /** Register cleanup before provisioning; only this fixture's private binding is removed. */
@@ -1881,6 +1917,70 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       expect(yield* Ref.get(evidence.stops)).toBe(stops)
       expect(yield* Ref.get(evidence.resumes)).toEqual([])
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('asks a machine that has just woken again until it takes its first command', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const evidence = yield* Evidence
+      // As production saw it on 6 October 2026: Boat calls the machine running, and for the next
+      // half minute a command is answered 409 or 502. Sent once, that failed every wake.
+      const refusals: ReadonlyArray<MachineFailure> = [
+        new MachineRequestRejected({ status: 409 }),
+        new MachineExecutionUnknown({ key }),
+        new MachineExecutionUnknown({ key }),
+        new MachineExecutionUnknown({ key }),
+      ]
+      const boat = yield* unready(key, (sent) =>
+        Effect.succeed(Option.fromUndefinedOr(refusals[sent - 1])),
+      )
+      const settling = yield* boat.holder.settle(key, boat.identity, wake).pipe(Effect.forkChild)
+      expect(yield* Queue.take(boat.asked)).toBe(1)
+      yield* TestClock.adjust('2 seconds')
+      expect(yield* Queue.take(boat.asked)).toBe(2)
+      yield* TestClock.adjust('2 seconds')
+      expect(yield* Queue.take(boat.asked)).toBe(3)
+      yield* TestClock.adjust('2 seconds')
+      expect(yield* Queue.take(boat.asked)).toBe(4)
+      yield* TestClock.adjust('2 seconds')
+      expect((yield* Fiber.join(settling)).id).toBe(id)
+      expect(yield* Ref.get(boat.sent)).toBe(5)
+      // The machine took it once: one record, one desktop opened.
+      expect((yield* Ref.get(evidence.holders)).get(id)).toBe(
+        `${id} ${boat.identity.binding.intent}`,
+      )
+      expect(yield* Ref.get(evidence.launches)).toBe(1)
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect(
+    'a machine that never takes its first command is an outage, and works once it does',
+    () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const evidence = yield* Evidence
+        const answering = yield* Ref.make(false)
+        const boat = yield* unready(key, () =>
+          Ref.get(answering).pipe(
+            Effect.map((ready) =>
+              ready ? Option.none() : Option.some(new MachineExecutionUnknown({ key })),
+            ),
+          ),
+        )
+        const settling = yield* boat.holder
+          .settle(key, boat.identity, wake)
+          .pipe(Effect.flip, Effect.forkChild)
+        expect(yield* Queue.take(boat.asked)).toBe(1)
+        yield* TestClock.adjust('75 seconds')
+        const failure = yield* Fiber.join(settling)
+        // An outage is told and never recorded as the Computer's state: the uncertain receipt it
+        // used to be was recorded as a failed Computer.
+        expect(failure._tag).toBe('MachineUnreachable')
+        expect(isOutage(failure)).toBe(true)
+        expect(yield* Ref.get(evidence.launches)).toBe(0)
+        yield* Ref.set(answering, true)
+        expect((yield* boat.holder.admit(key, boat.identity)).id).toBe(id)
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
 
   it.effect('status never reconciles an unresolved create or resumes a stopped machine', () =>

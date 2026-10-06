@@ -1128,7 +1128,25 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
 
-  it.effect('bounds wake readiness at 90 seconds and never retries a failed start', () =>
+  it.effect('waits for a start that takes as long as a real one does', () =>
+    Effect.gen(function* () {
+      const { first } = yield* fixture()
+      const store = yield* ComputerStore
+      const evidence = yield* ProviderEvidence
+      const boot = yield* Deferred.make<void>()
+      yield* Ref.set(evidence.boot, Option.some(boot))
+      const action = yield* store.run(first.id, request).pipe(Effect.forkScoped)
+      yield* Queue.take(evidence.started)
+      // A healthy start on the production machine took 95 seconds on 6 October 2026: the old
+      // 90 second deadline ended it and recorded the Computer as failed.
+      yield* TestClock.adjust('95 seconds')
+      yield* Deferred.succeed(boot, undefined)
+      expect((yield* Fiber.join(action)).stdout).toBe('hello')
+      expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('gives a start up after three minutes, and the next action starts it again', () =>
     Effect.gen(function* () {
       const { first } = yield* fixture()
       const store = yield* ComputerStore
@@ -1137,26 +1155,25 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
       yield* Ref.set(evidence.boot, Option.some(boot))
       const action = yield* store.run(first.id, request).pipe(Effect.result, Effect.forkScoped)
       yield* Queue.take(evidence.started)
-      yield* TestClock.adjust('90 seconds')
+      yield* TestClock.adjust('3 minutes')
       const result = yield* Fiber.join(action)
-      expect(result._tag).toBe('Failure')
-      if (Result.isFailure(result)) expect(result.failure._tag).toBe('ComputerWakeTimedOut')
-      const changes = yield* Changes
-      const moved = yield* changes.subscribe([Topic.person(first.id)])
-      yield* Stream.concat(Stream.make(undefined), moved).pipe(
-        Stream.mapEffect(() => store.get(first.id)),
-        Stream.filter((computer) => ComputerState.guards.Failed(computer.state)),
-        Stream.runHead,
+      // The action waited for the start and hears how it ended.
+      expect(Result.isFailure(result) && result.failure._tag).toBe('ComputerStartFailed')
+      const recorded = (yield* store.get(first.id)).state
+      expect(ComputerState.guards.Failed(recorded) && recorded.reason).toBe(
+        'The Computer did not become ready within 3 minutes.',
       )
-      expect((yield* store.run(first.id, request).pipe(Effect.flip))._tag).toBe(
-        'ComputerStartFailed',
-      )
-      expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
       expect(yield* Ref.get(evidence.calls)).toEqual([])
+      // Nobody presses Start. The record says the last start failed; the next action starts the
+      // Computer again and runs.
+      yield* Ref.set(evidence.boot, Option.none())
+      expect((yield* store.run(first.id, request)).stdout).toBe('hello')
+      expect(yield* Ref.get(evidence.ensures)).toHaveLength(2)
+      expect((yield* store.get(first.id)).state._tag).toBe('Running')
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
 
-  it.effect('keeps failed starts and keyboard takeover distinct without retrying either', () =>
+  it.effect('starts a failed Computer again for every action, while takeover still refuses', () =>
     Effect.gen(function* () {
       const { first } = yield* fixture()
       const store = yield* ComputerStore
@@ -1168,13 +1185,49 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
       expect(
         (yield* store.desktop(first.id, DesktopAction.cases.Look.make({})).pipe(Effect.flip))._tag,
       ).toBe('ComputerStartFailed')
-      expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
+      // Each action asked the provider again, once: a failed start never ends the trying, and
+      // nothing is retried inside one action.
+      expect(yield* Ref.get(evidence.ensures)).toHaveLength(2)
+      expect(yield* Ref.get(evidence.calls)).toEqual([])
       yield* Ref.set(evidence.bootFailed, false)
-      yield* start(first)
+      expect((yield* store.run(first.id, request)).stdout).toBe('hello')
+      expect(yield* Ref.get(evidence.ensures)).toHaveLength(3)
       yield* store.hold(first.id, true)
       expect((yield* store.run(first.id, request).pipe(Effect.flip))._tag).toBe('ComputerHeld')
-      expect(yield* Ref.get(evidence.calls)).toEqual([])
-      expect(yield* Ref.get(evidence.ensures)).toHaveLength(2)
+      expect(yield* Ref.get(evidence.calls)).toHaveLength(1)
+      expect(yield* Ref.get(evidence.ensures)).toHaveLength(3)
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('counts a machine’s idle time from when it is first seen running', () =>
+    Effect.gen(function* () {
+      const { first } = yield* fixture()
+      const store = yield* ComputerStore
+      const evidence = yield* ProviderEvidence
+      const key = computerMachineKey(first.id)
+      yield* start(first)
+      yield* store.stop(first.id)
+      yield* Queue.clear(evidence.stopped)
+      // Hours later someone else starts the machine: another caller over SSH, or the provider.
+      yield* TestClock.adjust('3 hours')
+      yield* Ref.update(evidence.states, (states) =>
+        new Map(states).set(
+          key,
+          ComputerState.cases.Running.make({
+            since: 300,
+            screen: ComputerState.cases.Running.fields.screen.cases.Relay.make({
+              address: computerScreenAddress,
+            }),
+          }),
+        ),
+      )
+      // Vivid notices it. Counted from the record's old activity the idle period ended hours ago
+      // and the machine would be stopped at once, under whoever started it.
+      expect((yield* store.get(first.id)).state._tag).toBe('Running')
+      yield* TestClock.adjust('19 minutes')
+      expect(Option.isNone(yield* Queue.poll(evidence.stopped))).toBe(true)
+      yield* TestClock.adjust('1 minute')
+      expect(yield* Queue.take(evidence.stopped)).toBe(key)
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
 
