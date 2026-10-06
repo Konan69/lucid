@@ -14,6 +14,7 @@ export default defineConfig({
       'src/computers/held.live.test.ts',
       'src/connections/named.live.test.ts',
       'src/connections/another.live.test.ts',
+      'src/connections/told.live.test.ts',
     ],
     maxWorkers: 1,
     fileParallelism: false,

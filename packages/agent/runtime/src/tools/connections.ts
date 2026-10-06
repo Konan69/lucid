@@ -56,7 +56,7 @@ export function connectionTools(runTool: RunTool) {
     defineTool({
       name: 'connect',
       description:
-        'Offer an integration as a secure connect card for the person. Use it for a service named in unconnected by find_tools. A person can have several accounts on one integration: to ask for one more account on a service they already connected (a second Gmail, their work GitHub), set another to true and say in reason which account you need.',
+        'Offer an integration as a secure connect card for the person. Use it for a service named in unconnected by find_tools. A person can have several accounts on one integration: to add one more account on a service they already connected (a second Gmail, their work GitHub), whether they told you to connect it or the account they asked for is not among theirs, set another to true and say in reason which account it is.',
       input: v.object({
         summary,
         service: text(
