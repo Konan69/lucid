@@ -307,8 +307,9 @@ const pageDesk = Effect.fn('Durable.historyDesk')(function* (
  * A steer placed after that assistant stays out until settlement: reconnect cannot show it in order.
  * Known submission placements locate the run without a submissions scan or Storage requirement.
  * Late-answer user entries are ordinary users for now, without answerTo metadata.
- * Settled assistant content follows provider block order. Sequential live streams and early
- * attachments can append a later queued call after trailing text. Pi's startToolRound stores
+ * Settled assistant content follows provider block order. Any multi-call response of a
+ * sequential-capable agent can append a withheld call after trailing text, even when its actual
+ * round is parallel. Live streams and early attachments follow admission. Pi's startToolRound stores
  * provider order and finishToolRound removes live.tools; reader presentation order is not retained.
  */
 export const history = Effect.fn('Durable.history')(function* (

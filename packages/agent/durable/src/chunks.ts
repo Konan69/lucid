@@ -27,10 +27,10 @@ export type Chunk =
 /**
  * How far one content block of the in-flight assistant message has been reported.
  *
- * Pi Durable reports a block three ways: streamed (`*_start`, `*_delta`, then `block`), whole in one
- * `block` change, or only inside the final entry at `message_end` (a provider that does not stream,
- * and every recovered partial). The translator must emit exactly one start and one end per block in
- * all three, so it records what it has already sent.
+ * Pi Durable reports starts/deltas, non-terminal block/message replacements, and the terminal entry
+ * at message_end. Recovered partials are open blocks too. Replacements never imply completion;
+ * only the terminal entry closes a block. Record the emitted prefix so each identified block gets
+ * one start and one terminal chunk (input error for aborted tools, never executable partial input).
  */
 type Reported = Data.TaggedEnum<{ Open: { readonly length: number }; Closed: {} }>
 const Reported = Data.taggedEnum<Reported>()

@@ -7,6 +7,7 @@ import {
   type UIMessage,
 } from 'ai'
 import { Effect } from 'effect'
+import { LiveDoc } from '@earendil-works/pi-durable'
 import { z } from 'zod'
 
 import { PlainChat } from '../fixtures/chat.ts'
@@ -28,6 +29,7 @@ function approval(chat: PlainChat) {
   const part = chat.lastMessage.parts.find(
     (candidate) => isToolUIPart(candidate) && candidate.state === 'approval-requested',
   )
+
   if (part === undefined || !isToolUIPart(part) || part.state !== 'approval-requested')
     throw new Error('Expected approval')
   return part.approval.id
@@ -116,3 +118,79 @@ for (const path of ['live', 'attach'] as const)
       ])
     }),
   )
+
+/** An unused sequential registration conservatively withholds c2 even though Pi executes this round in parallel. */
+it.live('records the ordering limit for a parallel round of a sequential-capable agent', () =>
+  Effect.promise(async () => {
+    const paid: number[] = []
+    const payment = tool({
+      inputSchema: z.object({ amount: z.number() }),
+      execute: async ({ amount }) => {
+        paid.push(amount)
+        return amount
+      },
+    })
+    const fixture = await host(
+      { pay: payment, slow: payment },
+      { execution: 'parallel', sequential: ['slow'], approval: { pay: true } },
+      { toolExecution: 'parallel', progress: { partialIntervalMs: 1 } },
+      { tokensPerSecond: 1500, tokenSize: { min: 1, max: 1 } },
+    )
+    const opened = await fixture.open()
+    const before = 'Before '.repeat(20)
+    const after = 'After '.repeat(20)
+    opened.faux.setResponses([
+      fauxAssistantMessage(
+        [
+          fauxText(before),
+          fauxToolCall('pay', { amount: 1 }, { id: 'c1' }),
+          fauxToolCall('pay', { amount: 2 }, { id: 'c2' }),
+          fauxText(after),
+        ],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('Done.'),
+    ])
+    let completion = signal()
+    const chat = new PlainChat({
+      transport: opened.transport,
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+      onFinish: () => completion.resolve(),
+      onError: (error) => completion.reject(error),
+    })
+    await chat.sendMessage({ text: 'Pay' })
+    if (chat.lastMessage === undefined) throw new Error('Expected assistant')
+    expect(order(chat.lastMessage)).toEqual([
+      `text:${before}`,
+      'call:c1',
+      `text:${after}`,
+      'call:c2',
+    ])
+    const live = await opened.harness.snapshot(LiveDoc, opened.root.id, context)
+    if (live === undefined || live.tools === undefined) throw new Error('Expected tool round')
+    expect(live.tools).toHaveLength(2)
+    expect(live.tools.every((slot) => slot.taskId !== undefined)).toBe(true)
+    completion = signal()
+    await chat.addToolApprovalResponse({ id: approval(chat), approved: true })
+    await chat.addToolApprovalResponse({ id: approval(chat), approved: true })
+    await completion.promise
+    expect(paid.toSorted((left, right) => left - right)).toEqual([1, 2])
+    expect(order(chat.lastMessage)).toEqual([
+      `text:${before}`,
+      'call:c1',
+      `text:${after}`,
+      'call:c2',
+      'text:Done.',
+    ])
+    const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+    const assistant = page.messages.find((message) => message.role === 'assistant')
+    if (assistant === undefined) throw new Error('Expected historical assistant')
+    expect(order(assistant)).toEqual([
+      `text:${before}`,
+      'call:c1',
+      'call:c2',
+      `text:${after}`,
+      'text:Done.',
+    ])
+  }),
+)

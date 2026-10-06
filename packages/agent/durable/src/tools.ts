@@ -33,7 +33,9 @@ export type ToolsOptions = {
   /**
    * Must equal the host's HarnessSettings.toolExecution; Pi Durable does not expose that setting.
    * Default parallel. Every bridged registration states its mode explicitly instead of inheriting
-   * the hidden default. Presentation reads this host declaration from the registration's plan.
+   * the hidden default. Pi generation.js ORs the harness setting with per-tool modes: explicit
+   * parallel cannot override a sequential harness; only sequential forces a round's mode.
+   * Presentation reads this host declaration from the registration's plan.
    */
   readonly execution?: 'parallel' | 'sequential'
   /** These tools force a sequential round even in a parallel host; Pi sequences the whole round. */
