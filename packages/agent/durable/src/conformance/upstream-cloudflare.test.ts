@@ -3,7 +3,7 @@ import {
   fauxThinking,
   fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux'
-import { isToolUIPart, readUIMessageStream, tool, type UIMessage } from 'ai'
+import { dynamicTool, isToolUIPart, readUIMessageStream, tool, type UIMessage } from 'ai'
 import { expect, it } from 'vitest'
 import { z } from 'zod'
 import { Predicate } from 'effect'
@@ -299,58 +299,65 @@ it.fails('does not fire onToolCall for a server tool that is still executing (#2
 // Cloudflare packages/ai-chat/src/tests/client-tool-duplicate-message.test.ts:480-566;
 // client-tools-continuation.test.ts:1799. Durable answers replace WebSocket result frames.
 // Ports packages/ai-chat/src/tests/client-tool-duplicate-message.test.ts:480 — Client-side tool duplicate message prevention > waits for ALL parallel client-tool results before continuing (#1649).
-it('waits for ALL parallel client-tool results before continuing (#1649)', async () => {
-  const fixture = await shop()
-  const opened = await fixture.open()
-  opened.faux.setResponses([
-    fauxAssistantMessage(
-      [
-        fauxToolCall('ask', { question: 'One?' }, { id: 'one' }),
-        fauxToolCall('ask', { question: 'Two?' }, { id: 'two' }),
-      ],
-      { stopReason: 'toolUse' },
-    ),
-    fauxAssistantMessage('Both answered.'),
-  ])
-  const parked = await consume(
-    await streamRun(
-      opened.harness,
-      { conversationId: opened.root.id, content: 'Ask twice', requestId: 'parallel' },
-      context,
-    ),
-  )
-  await answer(
-    opened.harness,
-    opened.root.id,
-    { holdId: await hold(opened.harness, opened.root.id, 'one'), output: 'First' },
-    context,
-  )
-  expect(await waiting(opened.harness, opened.root.id, context)).toMatchObject([
-    { callId: 'two', kind: 'answer' },
-  ])
-  expect(opened.faux.state.callCount).toBe(1)
-  await answer(
-    opened.harness,
-    opened.root.id,
-    { holdId: await hold(opened.harness, opened.root.id, 'two'), output: 'Second' },
-    context,
-  )
-  const result = await consume(
-    await continueRun(
+// Cloudflare client-tool-duplicate-message.test.ts:568 — holds the barrier when a settled dynamic-tool sits beside a pending tool (#1649).
+// Batch completion does not require correct dynamic UI identity; that separate producer gap remains.
+it.each(['static', 'dynamic'] as const)(
+  'waits for ALL parallel results with a %s first tool (#1649)',
+  async (kind) => {
+    const registration = { inputSchema: z.object({ question: z.string() }) }
+    const first = kind === 'dynamic' ? dynamicTool(registration) : tool(registration)
+    const fixture = await host({ ask: first, other: tool(registration) }, {})
+    const opened = await fixture.open()
+    opened.faux.setResponses([
+      fauxAssistantMessage(
+        [
+          fauxToolCall('ask', { question: 'One?' }, { id: 'one' }),
+          fauxToolCall('other', { question: 'Two?' }, { id: 'two' }),
+        ],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('Both answered.'),
+    ])
+    const parked = await consume(
+      await streamRun(
+        opened.harness,
+        { conversationId: opened.root.id, content: 'Ask twice', requestId: 'parallel' },
+        context,
+      ),
+    )
+    await answer(
       opened.harness,
       opened.root.id,
-      { messageId: parked.message.id, known: new Set(['one', 'two']) },
+      { holdId: await hold(opened.harness, opened.root.id, 'one'), output: 'First' },
       context,
-    ),
-    parked.message,
-  )
-  expect(result.message.parts.filter(isToolUIPart)).toMatchObject([
-    { toolCallId: 'one', state: 'output-available', output: 'First' },
-    { toolCallId: 'two', state: 'output-available', output: 'Second' },
-  ])
-  expect(texts(result.message)).toEqual(['Both answered.'])
-  expect(opened.faux.state.callCount).toBe(2)
-})
+    )
+    expect(await waiting(opened.harness, opened.root.id, context)).toMatchObject([
+      { callId: 'two', kind: 'answer' },
+    ])
+    expect(opened.faux.state.callCount).toBe(1)
+    await answer(
+      opened.harness,
+      opened.root.id,
+      { holdId: await hold(opened.harness, opened.root.id, 'two'), output: 'Second' },
+      context,
+    )
+    const result = await consume(
+      await continueRun(
+        opened.harness,
+        opened.root.id,
+        { messageId: parked.message.id, known: new Set(['one', 'two']) },
+        context,
+      ),
+      parked.message,
+    )
+    expect(result.message.parts.filter(isToolUIPart)).toMatchObject([
+      { toolCallId: 'one', state: 'output-available', output: 'First' },
+      { toolCallId: 'two', state: 'output-available', output: 'Second' },
+    ])
+    expect(texts(result.message)).toEqual(['Both answered.'])
+    expect(opened.faux.state.callCount).toBe(2)
+  },
+)
 
 // Cloudflare packages/ai-chat/src/tests/client-tools-continuation.test.ts:822/982.
 // Ports packages/think/src/tests/actions-durable-pause.test.ts:728 — resolving a durable pause drops pending-state generation (#2054) > keeps text in later steps that answer other tools.
