@@ -142,7 +142,8 @@ const named = new Set(
     .map((path) => NodePath.resolve(directory, path)),
 )
 for (const file of findMaps(directory)) {
-  if (!named.has(NodePath.resolve(directory, file))) NodeFS.rmSync(NodePath.resolve(directory, file))
+  if (!named.has(NodePath.resolve(directory, file)))
+    NodeFS.rmSync(NodePath.resolve(directory, file))
 }
 
 /** Every `.map` below `directory`, through the relative paths this script and the server both use. */

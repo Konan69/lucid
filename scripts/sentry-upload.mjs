@@ -70,9 +70,13 @@ const sentryCli = NodePath.join(
  * maps is visible instead of silent. The CLI reads `SENTRY_AUTH_TOKEN` itself.
  */
 function sentry(args) {
-  const result = NodeChildProcess.spawnSync(NodeFS.existsSync(sentryCli) ? sentryCli : 'sentry-cli', args, {
-    stdio: 'inherit',
-  })
+  const result = NodeChildProcess.spawnSync(
+    NodeFS.existsSync(sentryCli) ? sentryCli : 'sentry-cli',
+    args,
+    {
+      stdio: 'inherit',
+    },
+  )
   if (result.error !== undefined) throw result.error
   if (result.status !== 0) NodeProcess.exit(result.status ?? 1)
 }
