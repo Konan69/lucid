@@ -1,0 +1,275 @@
+import type { Message } from '@earendil-works/pi-ai'
+import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
+import type { Tool } from 'ai'
+import { tool } from 'ai'
+import { expect, it } from '@effect/vitest'
+import { Effect } from 'effect'
+import { z } from 'zod'
+
+import { history, streamRun } from '../main.ts'
+import { call, consume, context, host, texts } from './fixtures/host.ts'
+
+type ModelOutput = Awaited<
+  ReturnType<NonNullable<Tool<unknown, unknown, unknown>['toModelOutput']>>
+>
+const data =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jZioAAAAASUVORK5CYII='
+const image = { type: 'image' as const, data, mimeType: 'image/png' }
+const bytes = Uint8Array.from(Buffer.from(data, 'base64'))
+const supported: {
+  name: string
+  output: ModelOutput
+  content: NonNullable<Extract<Message, { role: 'toolResult' }>['content']>
+}[] = [
+  {
+    name: 'text',
+    output: { type: 'text', value: 'Model-facing summary' },
+    content: [{ type: 'text', text: 'Model-facing summary' }],
+  },
+  {
+    name: 'json',
+    output: { type: 'json', value: { visible: 7 } },
+    content: [{ type: 'text', text: '{"visible":7}' }],
+  },
+  {
+    name: 'image-data',
+    output: {
+      type: 'content',
+      value: [
+        { type: 'text', text: 'Picture' },
+        { type: 'image-data', data, mediaType: 'image/png' },
+      ],
+    },
+    content: [{ type: 'text', text: 'Picture' }, image],
+  },
+  {
+    name: 'file-data',
+    output: { type: 'content', value: [{ type: 'file-data', data, mediaType: 'image/png' }] },
+    content: [image],
+  },
+  {
+    name: 'inline base64',
+    output: {
+      type: 'content',
+      value: [{ type: 'file', data: { type: 'data', data }, mediaType: 'image/png' }],
+    },
+    content: [image],
+  },
+  {
+    name: 'inline bytes',
+    output: {
+      type: 'content',
+      value: [{ type: 'file', data: { type: 'data', data: bytes }, mediaType: 'image/png' }],
+    },
+    content: [image],
+  },
+  {
+    name: 'inline buffer',
+    output: {
+      type: 'content',
+      value: [
+        {
+          type: 'file',
+          data: { type: 'data', data: Buffer.from(data, 'base64') },
+          mediaType: 'image/png',
+        },
+      ],
+    },
+    content: [image],
+  },
+  {
+    name: 'inline ArrayBuffer',
+    output: {
+      type: 'content',
+      value: [{ type: 'file', data: { type: 'data', data: bytes.buffer }, mediaType: 'image/png' }],
+    },
+    content: [image],
+  },
+]
+
+/** Observe the next actual Pi model request, the stock SDK reader and public persisted history. */
+for (const sample of supported)
+  it.live(`converts ${sample.name} for the model while preserving JSON`, () =>
+    Effect.promise(async () => {
+      let model: readonly Message[] = []
+      const conversion: {
+        toolCallId: string
+        input: { amount: number }
+        output: { private: string }
+      }[] = []
+      const fixture = await host(
+        {
+          project: tool({
+            inputSchema: z.object({ amount: z.number().transform((value) => value * 2) }),
+            execute: async () => ({ private: 'retained JSON' }),
+            toModelOutput: (options) => {
+              conversion.push(options)
+              return sample.output
+            },
+          }),
+        },
+        {},
+        {},
+        { models: [{ id: 'faux-1', input: ['text', 'image'] }] },
+      )
+      const opened = await fixture.open()
+      opened.faux.setResponses([
+        call('project', { amount: 3 }, 'projection'),
+        (request) => {
+          model = request.messages
+          return fauxAssistantMessage('Done.')
+        },
+      ])
+      const result = await consume(
+        await streamRun(
+          opened.harness,
+          { conversationId: opened.root.id, content: 'Project', requestId: sample.name },
+          context,
+        ),
+      )
+      expect(model.at(-1)).toMatchObject({ role: 'toolResult', content: sample.content })
+      const final = model.at(-1)
+      if (final === undefined) throw new Error('Expected model tool result')
+      expect(JSON.stringify(final.content)).not.toContain('retained JSON')
+      expect(conversion).toEqual([
+        { toolCallId: 'projection', input: { amount: 6 }, output: { private: 'retained JSON' } },
+      ])
+      expect(result.message.parts.find((part) => part.type === 'tool-project')).toMatchObject({
+        state: 'output-available',
+        output: { private: 'retained JSON' },
+      })
+      const stored = await history(opened.harness, opened.root.id, { limit: 20 }, context)
+      expect(
+        stored.messages
+          .flatMap((message) => message.parts)
+          .find((part) => part.type === 'tool-project'),
+      ).toMatchObject({ output: { private: 'retained JSON' } })
+    }),
+  )
+
+const unsupported: { name: string; output: ModelOutput }[] = [
+  {
+    name: 'non-image file',
+    output: { type: 'content', value: [{ type: 'file-data', data, mediaType: 'application/pdf' }] },
+  },
+  {
+    name: 'modern non-image file',
+    output: {
+      type: 'content',
+      value: [{ type: 'file', data: { type: 'data', data }, mediaType: 'audio/wav' }],
+    },
+  },
+  {
+    name: 'file URL',
+    output: {
+      type: 'content',
+      value: [
+        { type: 'file-url', url: 'https://durable.test/remote.pdf', mediaType: 'application/pdf' },
+      ],
+    },
+  },
+  {
+    name: 'image URL',
+    output: {
+      type: 'content',
+      value: [{ type: 'image-url', url: 'https://durable.test/remote.png' }],
+    },
+  },
+  {
+    name: 'modern URL',
+    output: {
+      type: 'content',
+      value: [
+        {
+          type: 'file',
+          data: { type: 'url', url: new URL('https://durable.test/remote.png') },
+          mediaType: 'image/png',
+        },
+      ],
+    },
+  },
+  { name: 'file id', output: { type: 'content', value: [{ type: 'file-id', fileId: 'remote' }] } },
+  {
+    name: 'image id',
+    output: { type: 'content', value: [{ type: 'image-file-id', fileId: 'remote' }] },
+  },
+  {
+    name: 'file reference',
+    output: {
+      type: 'content',
+      value: [{ type: 'file-reference', providerReference: { openai: 'remote' } }],
+    },
+  },
+  {
+    name: 'image reference',
+    output: {
+      type: 'content',
+      value: [{ type: 'image-file-reference', providerReference: { openai: 'remote' } }],
+    },
+  },
+  {
+    name: 'modern reference',
+    output: {
+      type: 'content',
+      value: [
+        {
+          type: 'file',
+          data: { type: 'reference', reference: { openai: 'remote' } },
+          mediaType: 'image/png',
+        },
+      ],
+    },
+  },
+  {
+    name: 'inline text document',
+    output: {
+      type: 'content',
+      value: [{ type: 'file', data: { type: 'text', text: 'document' }, mediaType: 'text/plain' }],
+    },
+  },
+  { name: 'custom part', output: { type: 'content', value: [{ type: 'custom' }] } },
+]
+
+/** Include a valid part before the unsupported one to prove conversion never silently drops a part. */
+for (const sample of unsupported)
+  it.live(`reports ${sample.name} as a tool output error`, () =>
+    Effect.promise(async () => {
+      let model: readonly Message[] = []
+      const fixture = await host(
+        {
+          project: tool({
+            inputSchema: z.object({}),
+            execute: async () => ({ kept: true }),
+            toModelOutput: () =>
+              sample.output.type === 'content'
+                ? {
+                    type: 'content',
+                    value: [{ type: 'text', text: 'Keep me' }, ...sample.output.value],
+                  }
+                : sample.output,
+          }),
+        },
+        {},
+      )
+      const opened = await fixture.open()
+      opened.faux.setResponses([
+        call('project', {}, 'unsupported'),
+        (request) => {
+          model = request.messages
+          return fauxAssistantMessage('Recovered.')
+        },
+      ])
+      const result = await consume(
+        await streamRun(
+          opened.harness,
+          { conversationId: opened.root.id, content: 'Project', requestId: sample.name },
+          context,
+        ),
+      )
+      expect(result.message.parts.find((part) => part.type === 'tool-project')).toMatchObject({
+        state: 'output-error',
+      })
+      expect(model.at(-1)).toMatchObject({ role: 'toolResult', isError: true })
+      expect(texts(result.message)).toEqual(['Recovered.'])
+    }),
+  )

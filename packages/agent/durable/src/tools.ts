@@ -82,6 +82,57 @@ type Program = (
 
 const decodeJsonText = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.MutableJson))
 
+/** Decode only representations Pi can carry; unsupported parts fail the entire conversion. */
+const ImageMedia = Schema.String.check(Schema.isPattern(/^image\/[a-z0-9.+-]+$/iu))
+const ImageData = Schema.Union([
+  Schema.String,
+  Schema.instanceOf(Uint8Array),
+  Schema.instanceOf(ArrayBuffer),
+])
+const ModelPart = Schema.Union([
+  Schema.Struct({ type: Schema.tag('text'), text: Schema.String }),
+  Schema.Struct({ type: Schema.tag('image-data'), data: Schema.String, mediaType: ImageMedia }),
+  Schema.Struct({ type: Schema.tag('file-data'), data: Schema.String, mediaType: ImageMedia }),
+  Schema.Struct({
+    type: Schema.tag('file'),
+    mediaType: ImageMedia,
+    data: Schema.Struct({ type: Schema.tag('data'), data: ImageData }),
+  }),
+]).pipe(Schema.toTaggedUnion('type'))
+const ModelOutput = Schema.Union([
+  Schema.Struct({ type: Schema.tag('text'), value: Schema.String }),
+  Schema.Struct({ type: Schema.tag('json'), value: Schema.MutableJson }),
+  Schema.Struct({ type: Schema.tag('content'), value: Schema.Array(ModelPart) }),
+]).pipe(Schema.toTaggedUnion('type'))
+const decodeModelOutput = Schema.decodeUnknownEffect(ModelOutput)
+
+/** AI SDK convert-to-language-model-prompt.ts preserves base64 strings and encodes byte payloads. */
+function modelPart(
+  value: typeof ModelPart.Type,
+): NonNullable<ToolExecutionResult['content']>[number] {
+  return ModelPart.match(value, {
+    text: (part) => ({ type: 'text', text: part.text }),
+    'image-data': (part) => ({ type: 'image', data: part.data, mimeType: part.mediaType }),
+    'file-data': (part) => ({ type: 'image', data: part.data, mimeType: part.mediaType }),
+    file: (part) => ({
+      type: 'image',
+      data: Predicate.isString(part.data.data)
+        ? part.data.data
+        : Buffer.from(new Uint8Array(part.data.data)).toString('base64'),
+      mimeType: part.mediaType,
+    }),
+  })
+}
+
+/** Pi has text/image blocks; JSON output variants use the SDK providers' JSON.stringify representation. */
+function modelContent(value: typeof ModelOutput.Type): NonNullable<ToolExecutionResult['content']> {
+  return ModelOutput.match(value, {
+    text: (output) => [{ type: 'text', text: output.value }],
+    json: (output) => [{ type: 'text', text: JSON.stringify(output.value) }],
+    content: (output) => output.value.map(modelPart),
+  })
+}
+
 /** The SDK result's serialized text and JSON envelope are validated at its unsafe boundary. */
 type Output = { readonly text: string; readonly output: JsonValue }
 
@@ -110,6 +161,9 @@ type Server = {
   readonly execute: NonNullable<Tool<unknown, unknown, unknown>['execute']>
   readonly contextSchema: Option.Option<ReturnType<typeof asSchema>>
   readonly context: Lookups['context']
+  readonly toModelOutput: Option.Option<
+    NonNullable<Tool<unknown, unknown, unknown>['toModelOutput']>
+  >
 }
 
 /** SDK validators may be synchronous or Promise-based; normalize only this external operation. */
@@ -195,7 +249,27 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
         )
   // Void tools have no JSON value; expose explicit null in both the durable result and model text.
   const text = serialized.text === undefined ? 'null' : serialized.text
-  return result({ text, output: json })
+  if (Option.isNone(server.toModelOutput)) return result({ text, output: json })
+  // ai/src/prompt/create-tool-model-output.ts:32–33 passes the validated input and original output.
+  const convert = server.toModelOutput.value
+  const model = yield* Effect.tryPromise({
+    try: async function executeForSdk() {
+      return convert({ toolCallId: api.callId, input: checked.value, output })
+    },
+    catch: (cause) => new ToolOutputFailed({ toolName: server.name, cause }),
+  })
+  const projected = yield* decodeModelOutput(model).pipe(
+    Effect.mapError(
+      () =>
+        new ToolOutputFailed({
+          toolName: server.name,
+          cause: new Error(
+            `Tool ${server.name} model output is unsupported; use text, JSON or inline image data with a full image media type`,
+          ),
+        }),
+    ),
+  )
+  return { content: modelContent(projected), details: { output: json } }
 })
 
 /** A wait hook has already received the durable answer before this tool begins. */
@@ -272,6 +346,9 @@ function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
       execute: tool.execute.bind(tool),
       contextSchema: Option.map(Option.fromNullishOr(tool.contextSchema), asSchema),
       context: lookups.context,
+      toModelOutput: Option.map(Option.fromNullishOr(tool.toModelOutput), (convert) =>
+        convert.bind(tool),
+      ),
     }
     return {
       plan: { approval, source: 'server', execution: lookups.execution },

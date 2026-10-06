@@ -190,7 +190,7 @@ it.live('preserves ToolScope after process death and safe replay', () =>
     )
     const child = NodeChildProcess.spawn(
       process.execPath,
-      [NodeURL.fileURLToPath(new URL('./fixtures/toolscrash.ts', import.meta.url)), fixture.file],
+      [NodeURL.fileURLToPath(new URL('./fixtures/toolscrash.mjs', import.meta.url)), fixture.file],
       { stdio: ['ignore', 'pipe', 'inherit'] },
     )
     onTestFinished(async () => {
