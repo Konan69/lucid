@@ -126,7 +126,10 @@ const Message = Schema.Union([
     parts: Parts,
   }),
 ])
-const Body = Schema.Struct({ messages: Schema.Array(Schema.Unknown) })
+const Body = Schema.Struct({
+  messages: Schema.Array(Schema.Unknown),
+  trigger: Schema.optionalKey(Schema.Literals(['submit-message', 'regenerate-message'])),
+})
 const decodeMessage = Schema.decodeUnknownEffect(Message)
 
 /** Derive only settlements with the complete decoded payload; generic tool parts merely name known calls. */
@@ -155,6 +158,8 @@ function resumed(message: Extract<typeof Message.Type, { role: 'assistant' }>) {
 
 /** Validate only the newest message; the historical client transcript is neither trusted nor required. */
 const toTurn = Effect.fn('Durable.decodeTurn')(function* (body: typeof Body.Type) {
+  if (body.trigger === 'regenerate-message')
+    return yield* new TurnInvalid({ reason: 'Regeneration' })
   const last = Arr.last(body.messages)
   if (Option.isNone(last)) return yield* new TurnInvalid({})
   const message = yield* decodeMessage(last.value)
@@ -175,10 +180,7 @@ export const TurnBody = Body.pipe(
       toTurn(body).pipe(
         Effect.mapError((cause) => {
           if (cause instanceof TurnInvalid)
-            return new SchemaIssue.InvalidValue(
-              { message: 'Expected a user message or a message with tool calls' },
-              body,
-            )
+            return new SchemaIssue.InvalidValue({ message: cause.message }, body)
           return cause instanceof Schema.SchemaError ? cause.issue : cause
         }),
       ),
@@ -188,7 +190,30 @@ export const TurnBody = Body.pipe(
 )
 
 /** Compiled ingress accepts untrusted chat bodies without an untyped application function parameter. */
-export const decodeTurn = Schema.decodeUnknownEffect(TurnBody)
+export const decodeTurn = Function.flow(
+  Schema.decodeUnknownEffect(TurnBody),
+  Effect.mapError(turnFailure),
+)
+
+/** Inspect only the typed codec issue tree, preserving our regeneration refusal through JSON codecs. */
+function rejectedRegeneration(issue: SchemaIssue.Issue): boolean {
+  if (Predicate.isTagged(issue, 'InvalidValue'))
+    return (
+      issue.annotations !== undefined &&
+      issue.annotations.message === new TurnInvalid({ reason: 'Regeneration' }).message
+    )
+  if ('issue' in issue) return rejectedRegeneration(issue.issue)
+  if ('issues' in issue) return issue.issues.some(rejectedRegeneration)
+  return false
+}
+
+/** Body-read failures already carry the domain error; schema failures retain the closed refusal reason. */
+export function turnFailure(error: Schema.SchemaError | TurnInvalid): TurnInvalid {
+  if (error instanceof TurnInvalid) return error
+  return new TurnInvalid({
+    reason: rejectedRegeneration(error.issue) ? 'Regeneration' : 'Malformed',
+  })
+}
 
 /** Only the current run message accepts settlements; stale resumes settle nothing. Outputs match call
  * ids and rely on provider ids remaining unique within one run; approvals are task-scoped. Read waiting

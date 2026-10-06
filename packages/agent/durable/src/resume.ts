@@ -9,7 +9,7 @@ import type {
   TaskId,
 } from '@earendil-works/pi-durable'
 import { Effect, Option, Predicate, Schema } from 'effect'
-import { type Chunk, initialRunState, replayAfter, runMessageId } from './chunks.ts'
+import { type Chunk, initialRunState, replay, replayAfter, runMessageId } from './chunks.ts'
 import type { Reader } from './desk.ts'
 import { RunMissing } from './errors.ts'
 import * as Pi from './pi.ts'
@@ -94,6 +94,25 @@ function closedEntries(entries: readonly EntryRecord[]) {
   )
   return next === -1 ? entries : entries.slice(0, next)
 }
+
+/** Idempotent admission of a terminal input returns its stored run instead of awaiting an old run_start. */
+export const inputReplay = Effect.fn('Durable.inputReplay')(function* (
+  reader: Reader,
+  receipt: Extract<SubmissionRecord, { type: 'input' }>,
+  snapshot: SnapshotEvent,
+) {
+  const { run: _run, generation: _generation, ...base } = snapshot
+  const placed =
+    receipt.entry === undefined
+      ? []
+      : yield* entriesOf(reader, {
+          first: receipt.entry,
+          last: receipt.status === 'done' ? Option.some(receipt.answer) : Option.none(),
+        })
+  const entries = receipt.status === 'unanswered' ? closedEntries(placed) : placed
+  const prefix = Option.getOrThrow(replay({ ...base, entries, run: { inputs: [receipt.id] } }))
+  return { step: prefix, live: false, known: new Set<string>(), origins: prefix.origins }
+})
 
 /** A placed input belongs to this conversation and retains its authoritative entry through settlement. */
 function placedFor(

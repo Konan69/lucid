@@ -1,5 +1,5 @@
 import type { ConversationId as PiConversationId } from '@earendil-works/pi-durable'
-import { Predicate, Schema } from 'effect'
+import { Effect, Predicate, Schema } from 'effect'
 
 /** Pi's types.ts Id is an erased numeric brand; retain that identity in the shared error contract. */
 const ConversationId = Schema.declare<PiConversationId>((value): value is PiConversationId =>
@@ -56,12 +56,18 @@ export class PiFailed extends Schema.TaggedError<PiFailed>()(
 /** The latest chat message cannot start or resume a run. */
 export class TurnInvalid extends Schema.TaggedError<TurnInvalid>()(
   'TurnInvalid',
-  {},
+  {
+    reason: Schema.Literals(['Malformed', 'Regeneration']).pipe(
+      Schema.withConstructorDefault(Effect.succeed('Malformed')),
+    ),
+  },
   { title: 'TurnInvalid' },
 ) {
   /** Match the HTTP ingress diagnostic for a malformed turn. */
   override get message() {
-    return 'Expected a user message or a message with tool calls'
+    return this.reason === 'Regeneration'
+      ? 'Regeneration is not supported'
+      : 'Expected a user message or a message with tool calls'
   }
 }
 

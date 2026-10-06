@@ -30,7 +30,7 @@ import {
 } from './errors.ts'
 import { readDesk, noDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
-import { captureRun, selectRun, type ResumeInput } from './resume.ts'
+import { captureRun, inputReplay, selectRun, type ResumeInput } from './resume.ts'
 import { inputContent, type InputPart, type InputOptions } from './input.ts'
 
 /** A retried input retains its client request id and therefore Pi's submission identity. */
@@ -188,6 +188,23 @@ export const prepareRun = Effect.fn('Durable.prepareRun')(function* (
       { type: 'input', content, requestId: input.requestId },
       context,
     )
+    const reader = { harness, conversation, context }
+    const receipt = yield* Pi.status(submission, context)
+    if (receipt.type !== 'input')
+      return yield* Effect.die(new Error('Pi input admission returned a write'))
+    const terminal = receipt.status === 'done' || receipt.status === 'unanswered'
+    const existing =
+      watched.snapshot.run !== undefined && watched.snapshot.run.inputs.includes(submission.id)
+    if (terminal || existing) {
+      const prefix = terminal
+        ? yield* inputReplay(reader, receipt, watched.snapshot)
+        : Option.getOrThrow(attachedPrefix(replay(yield* captureRun(reader, watched.snapshot))))
+      const live = terminal
+        ? Stream.empty
+        : yield* Pi.watchLive(harness, input.conversationId, context).pipe(Scope.provide(scope))
+      const stream = yield* resume(reader, watched, prefix, live)
+      return stream.pipe(Stream.ensuring(Scope.close(scope, Exit.void)))
+    }
     const live = yield* Pi.watchLive(harness, input.conversationId, context).pipe(
       Scope.provide(scope),
     )

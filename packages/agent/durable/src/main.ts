@@ -6,7 +6,7 @@ import { Effect, Function, Option, Result, Schema, Stream } from 'effect'
 import * as Core from './core.ts'
 import { HoldIdInvalid, TurnInvalid } from './errors.ts'
 import { prepareRun } from './stream.ts'
-import { reconnectRequest, TurnBody } from './respond.ts'
+import { reconnectRequest, turnFailure, TurnBody } from './respond.ts'
 import type { ToolsOptions } from './tools.ts'
 import type { InputOptions } from './input.ts'
 
@@ -17,11 +17,7 @@ export type RequestInput = Request | { readonly request: Request; readonly optio
 const decodeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(TurnBody))
 
 /** Compile the object ingress once; reject the original tagged class at the Promise boundary. */
-export const decodeTurn = Function.flow(
-  Core.decodeTurn,
-  Effect.mapError(() => new TurnInvalid({})),
-  (effect) => Effect.runPromise(effect),
-)
+export const decodeTurn = Function.flow(Core.decodeTurn, (effect) => Effect.runPromise(effect))
 
 /** Promise facade; tool registration has one Effect implementation. */
 export const toolsExtension = (
@@ -158,15 +154,10 @@ export async function respond(
     Effect.tryPromise({
       try: () => request.text(),
       catch: () => new TurnInvalid({}),
-    }).pipe(
-      Effect.flatMap(decodeRequest),
-      Effect.mapError(() => new TurnInvalid({})),
-      Effect.option,
-    ),
+    }).pipe(Effect.flatMap(decodeRequest), Effect.mapError(turnFailure), Effect.result),
   )
-  if (Option.isNone(turn))
-    return new Response('Expected a user message or a message with tool calls', { status: 400 })
-  return respondTurn(harness, conversationId, { turn: turn.value, options }, context)
+  if (Result.isFailure(turn)) return new Response(turn.failure.message, { status: 400 })
+  return respondTurn(harness, conversationId, { turn: turn.success, options }, context)
 }
 
 export {
