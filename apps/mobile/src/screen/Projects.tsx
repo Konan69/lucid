@@ -4,7 +4,7 @@ import { randomUUID } from 'expo-crypto'
 import { useState } from 'react'
 import { ScrollView, View } from 'react-native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import { Plus, SquarePen } from 'lucide-react-native'
+import { FolderKanban, FolderSearch, Plus, SquarePen } from 'lucide-react-native'
 import { projects } from '@vivid/state'
 import { useNow } from '../data/foreground'
 import { commit } from '../data/haptics'
@@ -90,8 +90,18 @@ export function Projects() {
           {(value) => {
             const top = projects.projectsIn(value.projects, null)
             return top.length === 0 ? (
-              <Empty line="A project keeps the threads about one piece of work together.">
-                <Button icon={Plus} label="New project" onPress={() => setCreating(true)} />
+              <Empty
+                icon={FolderKanban}
+                title="No projects yet"
+                line="A project keeps the threads about one piece of work together."
+                room="page"
+              >
+                <Button
+                  kind="primary"
+                  icon={Plus}
+                  label="New project"
+                  onPress={() => setCreating(true)}
+                />
               </Empty>
             ) : (
               <Section title="All projects">
@@ -144,7 +154,12 @@ export function Project({ route }: NativeStackScreenProps<Routes, 'Project'>) {
         contentContainerStyle={[styles.page, styles.column]}
       >
         {gone && (
-          <Empty line="This project is not here. It may be in a space you are not working in right now." />
+          <Empty
+            icon={FolderSearch}
+            title="This project is not here"
+            line="It may be in a space you are not working in right now."
+            room="page"
+          />
         )}
         <Live state={list} loading={<Skeleton rows={4} />}>
           {(value) =>

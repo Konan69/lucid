@@ -3,16 +3,15 @@ import type { InvitationId, NotificationId } from '@vivid/contracts'
 import { everyNoticeRead, noticeRows, noticesRead, type NotificationList } from '@vivid/state'
 import { Option } from 'effect'
 import { useState } from 'react'
-import { FlatList, ScrollView, View } from 'react-native'
+import { FlatList, ScrollView } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Bell, CheckCheck } from 'lucide-react-native'
 import { useNow } from '../data/foreground'
 import { commit } from '../data/haptics'
 import { LiveState, useLive, useLiveData, useLiveValue, type LiveData } from '../data/live'
-import { useTheme } from '../theme'
 import { Bar } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
-import { GUTTER, Label, Notice, radius, styles } from '../ui/ui'
+import { Empty, GUTTER, Label, Notice, styles } from '../ui/ui'
 import { useOpenThread } from '../workspace'
 import { Destination } from './notifications/destination'
 import { Invitation } from './notifications/Invitation'
@@ -120,39 +119,22 @@ function readAll(data: LiveData) {
 
 /**
  * Nothing to list, said once the server (or what the phone kept of it) has answered that there
- * is nothing. The words are the web panel's. It is set where every empty screen of the app sets
- * its sentence, at the top of the page on the gutter, under the mark of the place; Vivid's face
- * is not drawn, because an empty list is not Vivid speaking (`ui/ui.tsx` `Empty`).
+ * is nothing. The words are the web panel's, set as every empty place of the app is (`ui/ui.tsx`
+ * `Empty`): the place's mark, what is so, and one line. There is nothing to press, because
+ * nothing here is made by the Person.
  */
 function Quiet() {
-  const { colors: c } = useTheme()
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={[styles.page, styles.column, { paddingTop: 24, gap: 14 }]}
+      contentContainerStyle={[styles.page, styles.column]}
     >
-      <View
-        pointerEvents="none"
-        style={{
-          width: 44,
-          height: 44,
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderRadius: radius.control,
-          borderCurve: 'continuous',
-          backgroundColor: c['wash-hover'],
-        }}
-      >
-        <Bell size={21} strokeWidth={1.7} color={c['ink-3']} />
-      </View>
-      <View style={{ gap: 4 }}>
-        <Label accessibilityRole="header" size="headline">
-          You’re all caught up
-        </Label>
-        <Label tone="ink-2" style={{ maxWidth: 340 }}>
-          Vivid will tell you here.
-        </Label>
-      </View>
+      <Empty
+        icon={Bell}
+        title="You’re all caught up"
+        line="Vivid will tell you here."
+        room="page"
+      />
     </ScrollView>
   )
 }

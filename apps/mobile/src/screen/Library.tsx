@@ -10,11 +10,18 @@ import { Data, Option, Result } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { ScrollView } from 'react-native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import { FileText, Folder as FolderIcon, FolderPlus, Upload } from 'lucide-react-native'
+import {
+  FileText,
+  Folder as FolderIcon,
+  FolderOpen,
+  FolderPlus,
+  Library as LibraryIcon,
+  Upload,
+} from 'lucide-react-native'
 import * as library from '../../../web/src/data/library'
 import { addDocument, openDocument } from '../data/documents'
 import { commit, warn } from '../data/haptics'
-import { refusalOf, useLive, useLiveData } from '../data/live'
+import { LiveState, refusalOf, useLive, useLiveData } from '../data/live'
 import { Start, startThread } from '../data/threads'
 import { useTheme } from '../theme'
 import { Bar } from '../ui/Bar'
@@ -147,6 +154,11 @@ function LevelScreen({
   below: ReactNode
 }) {
   const state = useLive(level.query)
+  // The level has answered and holds nothing: under its bar it is its empty state.
+  const none =
+    LiveState.$is('Ready')(state) &&
+    state.value.folders.length === 0 &&
+    state.value.documents.length === 0
   const [over, setOver] = useState<Over>(Over.Nothing())
   // A delete closes its sheet at once, so a refused one has only the level to be said in.
   const [undeleted, setUndeleted] = useState<Option.Option<string>>(Option.none())
@@ -183,8 +195,9 @@ function LevelScreen({
         contentContainerStyle={[styles.page, styles.column]}
       >
         {/* What this level is, as the page's first line. It was the line under the bar's title;
-            the system's bar has no such line without a native change (`ui/Bar.tsx`). */}
-        {subtitle !== undefined && (
+            the system's bar has no such line without a native change (`ui/Bar.tsx`). With
+            nothing on the level its empty state says it instead (`Empty`). */}
+        {subtitle !== undefined && !none && (
           <Label size="label" tone="ink-2">
             {subtitle}
           </Label>
@@ -251,13 +264,16 @@ function Contents({
   if (list.folders.length === 0 && list.documents.length === 0) {
     return (
       <Empty
+        icon={level.folderId === null ? LibraryIcon : FolderOpen}
+        title={level.folderId === null ? 'No files yet' : 'This folder is empty'}
         line={
           level.shelf === 'Company'
             ? 'Add a file and Vivid can read it in every member’s threads.'
             : 'Add a file and Vivid can read it in your threads.'
         }
+        room="page"
       >
-        <Button icon={Upload} label="Add a file" onPress={onAdd} />
+        <Button kind="primary" icon={Upload} label="Add a file" onPress={onAdd} />
       </Empty>
     )
   }

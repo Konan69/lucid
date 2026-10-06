@@ -3,23 +3,9 @@ import { standingWords } from '@vivid/state'
 import { nativeMetrics as m } from '@vivid/tokens/native'
 import { Option } from 'effect'
 import { ChevronDown } from 'lucide-react-native'
-import { useState, useSyncExternalStore } from 'react'
+import { useSyncExternalStore } from 'react'
 import { Platform, StyleSheet, View } from 'react-native'
-import Animated, {
-  Easing,
-  FadeIn,
-  interpolate,
-  LayoutAnimationConfig,
-  measure,
-  ReduceMotion,
-  useAnimatedReaction,
-  useAnimatedRef,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-  type AnimatedRef,
-  type SharedValue,
-} from 'react-native-reanimated'
+import Animated, { FadeIn, LayoutAnimationConfig, ReduceMotion } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ThinkingOrb } from '../../vendor/orb'
 import { Stand } from '../data/stand'
@@ -32,12 +18,11 @@ import { Face, Label, TARGET, type Tone } from './ui'
 /**
  * Vivid at the top centre of a screen: a capsule of the system's glass holding its face and its
  * name, between the bar's own buttons. It is where a Person looks to see how Vivid is doing, so
- * while Vivid works the capsule widens to the orb and the word for it, and what the Person sends
- * rises to it from the composer. Pressing it opens Vivid's own menu: a new Thread, its computer,
- * and what it knows.
+ * while Vivid works the capsule widens to the orb and the word for it. Pressing it opens Vivid's
+ * own menu: a new Thread, its computer, and what it knows.
  *
  * The buttons either side are the system's bar items (`ui/Bar.tsx`). The capsule is the same
- * material the composer is (`AnimatedGlassMaterial`), placed where the bar's title would be: the
+ * material the composer is (`GlassMaterial`, animated here), placed where the bar's title would be: the
  * owner's reference, the ChatGPT iPhone app, has a round glass button at each end of the bar and
  * a glass capsule in the middle, each floating on its own.
  *
@@ -99,40 +84,9 @@ const TONE = {
 const spokenOf = (name: string, stand: Stand): string =>
   Stand.$is('Resting')(stand) ? name : `${name}. ${wordsOf(name, stand)}`
 
-/**
- * Where "thinking" leaves from: the composer's button, and each time the Person sends with it.
- * A screen makes one (`useOrigin`) and hands it to its composer, which puts `button` on the
- * button's round and counts a send in `sends`, and to its bar, which passes it on to the capsule.
- *
- * It is the send that starts the flight, not Vivid's state. A Thread that opens with Vivid
- * already at work, or that Vivid starts on by itself, has had nothing leave its composer; and the
- * Person's press is felt at once, before any server has said that Vivid is working.
- */
-export interface Origin {
-  /** Which composer this is, as a number a worklet can compare. */
-  readonly id: number
-  readonly button: AnimatedRef<Animated.View>
-  readonly sends: SharedValue<number>
-}
-
-/** How many origins have been made, which is where the next one's `id` comes from. */
-let made = 0
-
-/** One screen's origin. Every part keeps its identity for as long as the screen is mounted. */
-export function useOrigin(): Origin {
-  const [id] = useState(() => {
-    made += 1
-    return made
-  })
-  const button = useAnimatedRef<Animated.View>()
-  const sends = useSharedValue(0)
-  return { id, button, sends }
-}
-
 /** What the screen in front says about Vivid, for the one capsule over the stack to show. */
 export interface Told {
   readonly stand: Stand
-  readonly origin: Origin
   /** The widest the capsule may be between that screen's bar buttons. */
   readonly limit: number
 }
@@ -170,16 +124,18 @@ const listen = (listener: () => void) => {
 }
 const spoken = () => told
 
-/** The orb comes in as the disc that rose from the composer reaches it, never before it. */
-const LAND = FadeIn.duration(180).delay(140).reduceMotion(ReduceMotion.System)
-
 /**
- * New words come in as the old ones have nearly gone. Both start at the same place in the
- * capsule, and fading one in while the other was still strong drew two sentences through each
- * other for a moment (seen frame by frame on a device). The old words leave in 150 ms (`LEAVE`);
- * these wait 90 and take 180, so the change is over in 270.
+ * What takes something's place in the capsule comes in as the old one has nearly gone: the orb
+ * for the face, a sentence for the name. Both stand in the same place as what they replace, and
+ * fading one in while the other was still strong drew two sentences through each other for a
+ * moment (seen frame by frame on a device). What leaves takes 150 ms (`LEAVE`); what arrives
+ * waits 90 and takes 180, so the change is over in 270.
+ *
+ * Nothing travels to the capsule. A disc used to rise to it from the composer's button on every
+ * send; the owner did not like the button moving up into Vivid (6 October 2026), so the capsule
+ * changes where it stands and the composer's button stays where the thumb left it.
  */
-const SPEAK = FadeIn.duration(180).delay(90).reduceMotion(ReduceMotion.System)
+const ARRIVE = FadeIn.duration(180).delay(90).reduceMotion(ReduceMotion.System)
 
 /**
  * What Vivid's menu can hold: a new Thread with it, and the places that are Vivid's own. The
@@ -213,30 +169,18 @@ const rowFor = (place: Place, title: string): MenuAction =>
 /**
  * The capsule itself: glass behind, and in front the face or the orb, the words, and a chevron.
  *
- * It is built as the composer's shape is (`ui/Composer.tsx`, `Surface`; the reference's
- * `ComposerSurface`): an outline that clips, the passive glass material behind, and the content
- * in front as the material's sibling, all on one layout transition, so the capsule widens around
- * its new words instead of showing them outside itself first. The pieces that change (face for
+ * It is built as the reference builds its composer's shape (T3 Code mobile `ComposerSurface`,
+ * `src/features/threads/ThreadComposer.tsx`): an outline that clips, the passive glass material
+ * behind, and the content in front as the material's sibling, all on one layout transition, so
+ * the capsule widens around its new words instead of showing them outside itself first. The pieces that change (face for
  * orb, a name for a sentence) are keyed by what they show, so the old one fades out as the new
  * one fades in.
  *
  * It is a button: pressing it opens the system's own menu, anchored to it (`MenuView`, a real
  * `UIMenu` on iOS and a popup menu on Android), so the menu is the platform's and nothing of it
  * is drawn here. The menu appearing under the finger is the press's feedback.
- *
- * `slot` is where the face or the orb stands, for the disc that flies to it.
  */
-function Capsule({
-  stand,
-  limit,
-  slot,
-  menu,
-}: {
-  stand: Stand
-  limit: number
-  slot: AnimatedRef<Animated.View>
-  menu: Menu
-}) {
+function Capsule({ stand, limit, menu }: { stand: Stand; limit: number; menu: Menu }) {
   const { colors: c, dark } = useTheme()
   const vivid = useAppearance()
   const thinking = Stand.$is('Thinking')(stand)
@@ -290,14 +234,11 @@ function Capsule({
         >
           {/* Drawn whole the first time: the capsule does not fade its own contents in. */}
           <LayoutAnimationConfig skipEntering>
-            <Animated.View
-              ref={slot}
-              // Kept as a view of its own, so there is always something to measure.
-              collapsable={false}
+            <View
               style={{ width: SLOT, height: SLOT, alignItems: 'center', justifyContent: 'center' }}
             >
               {thinking ? (
-                <Animated.View key="orb" entering={LAND} exiting={LEAVE}>
+                <Animated.View key="orb" entering={ARRIVE} exiting={LEAVE}>
                   {/* The words beside it name it, so a screen reader is not told twice. */}
                   <ThinkingOrb
                     state="breathing"
@@ -307,14 +248,14 @@ function Capsule({
                   />
                 </Animated.View>
               ) : (
-                <Animated.View key="face" entering={APPEAR} exiting={LEAVE}>
+                <Animated.View key="face" entering={ARRIVE} exiting={LEAVE}>
                   <Face size={SLOT} mood={mood} label="" />
                 </Animated.View>
               )}
-            </Animated.View>
+            </View>
             <Animated.View
               key={words}
-              entering={SPEAK}
+              entering={ARRIVE}
               exiting={LEAVE}
               // The words give way when the capsule has less room than they need.
               style={{ flexShrink: 1, minWidth: 0 }}
@@ -346,147 +287,30 @@ export interface Menu {
   readonly onGo: (place: Place) => void
 }
 
-/** The round the composer's button is drawn as (`ui/Composer.tsx`), which is what leaves it. */
-const DISC = 30
-
 /**
- * How the disc travels: one timed movement that starts fast and settles, in three tenths of a
- * second, which is the most the design stack gives anything in the interface. Nothing threw it,
- * so it is not on a spring, and it never starts slowly: the Person has just pressed send and is
- * watching. The curve is the strong ease-out the stack names for anything that arrives.
- */
-const FLIGHT = {
-  duration: 300,
-  easing: Easing.bezier(0.23, 1, 0.32, 1),
-  reduceMotion: ReduceMotion.System,
-} as const
-
-/** A point in the window. */
-interface Point {
-  readonly x: number
-  readonly y: number
-}
-const NOWHERE: Point = { x: 0, y: 0 }
-
-/** The disc when it is not flying: not there. */
-const LANDED = { opacity: 0, transform: [{ translateX: 0 }, { translateY: 0 }, { scale: 1 }] }
-
-/**
- * The capsule in its place over the stack, and the disc that carries a send up to it.
- *
- * When the Person sends, a disc in the send button's colour leaves that button, rises to the
- * capsule and lands where the face stands, shrinking from the button's size to the orb's. The
- * screen that sent says Vivid is thinking from the moment of the send, so the orb is what is
- * there as the disc lands. That is the whole morph: what the Person pressed becomes what is now
- * thinking, and it ends at the top centre, where the state stays for the rest of the Run.
- *
- * - It runs on the UI thread and moves by transform and opacity alone; React renders nothing.
- * - It leaves from where the button is at that moment: the composer rides the keyboard.
- * - It lands where the capsule's slot is in the layout of that frame. The capsule widens as
- *   Vivid starts thinking, which moves the slot, and the layout knows the slot's new place as
- *   soon as React has committed it, before the capsule has finished widening. So the place is
- *   read every frame of the flight (about twenty of them) and the disc ends on the orb.
- * - Its sideways travel lags its rise (the square of the progress), so the path curves in toward
- *   the capsule instead of cutting a straight diagonal across the conversation.
- * - With reduced motion nothing travels; the capsule simply shows the orb.
- *
- * The layer takes no touches of its own: only the capsule in it can be pressed.
+ * The capsule in its place over the stack: centred in the bar's own height, under the status
+ * bar. The layer is that strip and no more, and takes no touches of its own, so the bar's buttons
+ * either side of the capsule are still the system's to press.
  */
 function Floating({ said, menu }: { said: Told; menu: Menu }) {
-  const { colors: c } = useTheme()
   const insets = useSafeAreaInsets()
-  const layer = useAnimatedRef<Animated.View>()
-  const slot = useAnimatedRef<Animated.View>()
-  const flight = useSharedValue(0)
-  // Where the flight began, and where the layer itself is, both in the window's own points.
-  const from = useSharedValue(NOWHERE)
-  const ground = useSharedValue(NOWHERE)
-  const { id, button, sends } = said.origin
-
-  useAnimatedReaction(
-    () => ({ id, count: sends.get() }),
-    (now, before) => {
-      // The count is only comparable with the same composer's. This one capsule outlives the
-      // screens under it, and the library keeps the last value it saw when the screen in front
-      // changes (`useAnimatedReaction` makes `previous` once), so without the `id` a Thread
-      // opened after a send from Home would compare its 0 with Home's 1 and fly a disc nobody
-      // sent. A new composer only sets the count to compare the next send with. A disc already
-      // in the air is left to land: it is going to this same capsule.
-      if (before === null || before.id !== now.id || now.count === before.count) return
-      const leaving = measure(button)
-      const frame = measure(layer)
-      if (leaving === null || frame === null) return
-      from.set({ x: leaving.pageX + leaving.width / 2, y: leaving.pageY + leaving.height / 2 })
-      ground.set({ x: frame.pageX, y: frame.pageY })
-      flight.set(0)
-      flight.set(withTiming(1, FLIGHT))
-    },
-    [id, sends, button],
-  )
-
-  const flying = useAnimatedStyle(() => {
-    const progress = flight.get()
-    // At rest, and the one time this runs outside the UI thread, nothing is measured.
-    if (progress <= 0 || progress >= 1) return LANDED
-    const landing = measure(slot)
-    if (landing === null) return LANDED
-    const start = from.get()
-    const base = ground.get()
-    const endX = landing.pageX + landing.width / 2
-    const endY = landing.pageY + landing.height / 2
-    return {
-      // There for the journey only: in over the first steps, and out as it reaches the orb.
-      opacity: interpolate(progress, [0, 0.05, 0.92, 1], [0, 1, 1, 0]),
-      transform: [
-        { translateX: start.x + (endX - start.x) * progress * progress - base.x - DISC / 2 },
-        { translateY: start.y + (endY - start.y) * progress - base.y - DISC / 2 },
-        { scale: interpolate(progress, [0, 1], [1, ORB / DISC]) },
-      ],
-    }
-  })
-
   return (
     <Animated.View
-      ref={layer}
-      collapsable={false}
       pointerEvents="box-none"
       // It arrives and leaves with the screens that have it, quicker going than coming.
       entering={APPEAR}
       exiting={LEAVE}
-      style={StyleSheet.absoluteFill}
+      style={{
+        position: 'absolute',
+        top: insets.top,
+        left: 0,
+        right: 0,
+        height: BAR,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
     >
-      <View
-        pointerEvents="box-none"
-        style={{
-          position: 'absolute',
-          top: insets.top,
-          left: 0,
-          right: 0,
-          height: BAR,
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <Capsule stand={said.stand} limit={said.limit} slot={slot} menu={menu} />
-      </View>
-      <Animated.View
-        // Decoration: the capsule says the state to a screen reader.
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        pointerEvents="none"
-        style={[
-          {
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: DISC,
-            height: DISC,
-            borderRadius: DISC / 2,
-            backgroundColor: c.primary,
-          },
-          flying,
-        ]}
-      />
+      <Capsule stand={said.stand} limit={said.limit} menu={menu} />
     </Animated.View>
   )
 }

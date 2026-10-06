@@ -8,7 +8,7 @@ import { LiveState } from '@vivid/state'
 import { Option } from 'effect'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
-import { Check, Plus } from 'lucide-react-native'
+import { Check, CloudOff, Plus, SearchX } from 'lucide-react-native'
 import { noteOf, type Pressed, type Presses } from '../../data/integration'
 import { useTheme } from '../../theme'
 import { Row, Section } from '../../ui/List'
@@ -66,13 +66,19 @@ export function Catalog({
   }
   if (LiveState.$is('Failed')(found) || ServiceCatalog.guards.Unavailable(found.value)) {
     return (
-      <Empty line="Vivid can’t reach its list of integrations right now. What you have connected still works.">
+      <Empty
+        icon={CloudOff}
+        title="The list is out of reach"
+        line="Vivid can’t reach its list of integrations right now. What you have connected still works."
+        room="section"
+      >
         <Button label="Look again" onPress={onAgain} />
       </Empty>
     )
   }
   const { services } = found.value
-  if (services.length === 0) return <Empty line="No integration by that name." />
+  if (services.length === 0)
+    return <Empty icon={SearchX} title="No integration by that name" room="section" />
   // A search is one answer in the catalog's order; the unsearched view is the same answer in
   // groups, so a Person looking for "something for mail" finds the shelf before the name.
   const groups = searching ? [{ purpose: 'Results', services }] : byPurpose(services)

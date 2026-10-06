@@ -20,7 +20,7 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
-import { Share2, Users } from 'lucide-react-native'
+import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { commit } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
@@ -35,7 +35,6 @@ import { Composer } from '../ui/Composer'
 import { BarRoom, NO_ACTIONS, NOBODY, VividBar, type BarAction } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
-import { useOrigin, type Origin } from '../ui/Presence'
 import {
   Button,
   EDGE,
@@ -122,13 +121,10 @@ function Present({ id }: { id: ThreadId }) {
  */
 function Gone() {
   const front = useFront()
-  // There is no composer here, so nothing is ever sent from this origin.
-  const origin = useOrigin()
   return (
     <Screen>
       <VividBar
         stand={Stand.Resting({ mood: 'happy' })}
-        origin={origin}
         inverted={false}
         present={NOBODY}
         actions={NO_ACTIONS}
@@ -138,8 +134,13 @@ function Gone() {
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ paddingHorizontal: GUTTER }}
       >
-        <Empty line="This thread is not here. It may have been deleted, or it is in a space you are not working in right now.">
-          <Button label="New thread" onPress={() => front.fresh()} />
+        <Empty
+          icon={MessageCircleDashed}
+          title="This thread is not here"
+          line="It may have been deleted, or it is in a space you are not working in right now."
+          room="page"
+        >
+          <Button kind="primary" label="New thread" onPress={() => front.fresh()} />
         </Empty>
       </ScrollView>
     </Screen>
@@ -168,15 +169,12 @@ function Top({
   thread,
   present,
   working,
-  origin,
   onShare,
 }: {
   thread: Option.Option<Thread>
   present: ThreadDetail['present']
   /** Vivid is answering on this phone right now, which the Thread's record may not say yet. */
   working: boolean
-  /** The composer on this screen, where a send leaves from on its way to the top. */
-  origin: Origin
   onShare: () => void
 }) {
   const me = useMe()
@@ -206,7 +204,6 @@ function Top({
         attention,
         typing.map((seen) => seen.person.name),
       )}
-      origin={origin}
       // A Thread's list is upside down, which the system's edge effect cannot be given.
       inverted
       present={others.map((seen) => seen.person)}
@@ -346,7 +343,6 @@ function Conversation({
   const typed = useDraft(place)
   const setTyping = useAtomSet(data.typingIn(id))
   const [sharing, setSharing] = useState(false)
-  const origin = useOrigin()
   const thread = Option.map(detail, (value) => value.thread)
   const sending = useSend(id, thread, agent, place)
   const { shared } = sending
@@ -416,11 +412,10 @@ function Conversation({
       <Top
         thread={thread}
         present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
-        // What was just sent is being thought about from the moment it leaves, which the
-        // capsule shows as the disc from the composer reaches it; the composer's own button
-        // waits for Vivid to have really started before it becomes the way to stop.
+        // What was just sent is being thought about from the moment it leaves, and the capsule
+        // says so at once; the composer's own button waits for Vivid to have really started
+        // before it becomes the way to stop.
         working={working || sending.pending}
-        origin={origin}
         onShare={() => setSharing(true)}
       />
       <View ref={wake} style={{ flex: 1 }}>
@@ -442,7 +437,6 @@ function Conversation({
         </View>
       )}
       <Composer
-        origin={origin}
         value={typed}
         autoFocus={writing}
         placeholder={shared ? `Message everyone and ${vivid.name}` : `Message ${vivid.name}`}
