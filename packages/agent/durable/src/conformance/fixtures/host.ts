@@ -6,11 +6,7 @@ import * as NodePath from 'node:path'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import type { Message } from '@earendil-works/pi-ai'
 import { createModels } from '@earendil-works/pi-ai/models'
-import {
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-} from '@earendil-works/pi-ai/providers/faux'
+import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import {
   createRegistry,
   Harness,
@@ -31,6 +27,7 @@ import { onTestFinished } from 'vitest'
 import { z } from 'zod'
 
 import { respond, toolsExtension, waiting, type ToolsOptions } from '../../main.ts'
+import { streamingProvider, type ProviderOptions } from '../../fixtures/provider.ts'
 
 export const context = BACKGROUND_CONTEXT
 
@@ -104,7 +101,7 @@ export async function host(
   tools: ToolSet,
   options: ToolsOptions,
   settings: Partial<HarnessSettings> = {},
-  fauxOptions: Parameters<typeof fauxProvider>[0] = {},
+  fauxOptions: ProviderOptions = {},
 ) {
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'vivid-conformance-'))
   const file = NodePath.join(directory, 'session.sqlite')
@@ -118,7 +115,7 @@ export async function host(
   })
   /** Open a fresh process-equivalent host on the same durable transcript. */
   async function open(observers: readonly Extension[] = []) {
-    const faux = fauxProvider(fauxOptions)
+    const faux = streamingProvider(fauxOptions)
     const models = createModels()
     models.setProvider(faux.provider)
     const registry = createRegistry()

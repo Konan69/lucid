@@ -1,13 +1,10 @@
+import { streamingProvider } from './fixtures/provider.ts'
 import { holdId as parseHoldId } from './main.ts'
 import * as NodeEvents from 'node:events'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import type { Message } from '@earendil-works/pi-ai'
 import { createModels } from '@earendil-works/pi-ai/models'
-import {
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-} from '@earendil-works/pi-ai/providers/faux'
+import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { createRegistry } from '@earendil-works/pi-durable'
 import {
   DefaultChatTransport,
@@ -43,7 +40,7 @@ const context = BACKGROUND_CONTEXT
 
 /** A harness with one approval tool and one person-answered tool, behind the HTTP handler. */
 const server = Effect.fn('Test.promiseServer')(function* (paid: { amount: number }[]) {
-  const faux = fauxProvider()
+  const faux = streamingProvider()
   const models = createModels()
   models.setProvider(faux.provider)
   const registry = createRegistry()

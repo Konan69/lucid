@@ -1,3 +1,4 @@
+import { streamingProvider } from './fixtures/provider.ts'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
@@ -5,11 +6,7 @@ import * as NodePath from 'node:path'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import type { Message } from '@earendil-works/pi-ai'
 import { createModels } from '@earendil-works/pi-ai/models'
-import {
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-} from '@earendil-works/pi-ai/providers/faux'
+import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { createRegistry, Harness } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { tool } from 'ai'
@@ -36,7 +33,7 @@ const storageFile = Effect.fn('Test.storageFile')(function* () {
  * execution of the tool with a side effect, across restarts.
  */
 const host = Effect.fn('Test.holdHost')(function* (paid: { amount: number }[]) {
-  const faux = fauxProvider()
+  const faux = streamingProvider()
   const models = createModels()
   models.setProvider(faux.provider)
   const registry = createRegistry()

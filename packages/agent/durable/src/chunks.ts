@@ -187,6 +187,29 @@ function finishBlock(state: RunState, contentIndex: number, block: Block): Step 
   return { state: mark(state, contentIndex, Reported.Closed()), chunks }
 }
 
+/**
+ * A document replacement is only a partial update. Provider scratch buffers and signatures cause
+ * Pi events.js messageChanges to emit block/message changes while the block is still streaming.
+ * Keep it open; final tool arguments and approval eligibility belong solely to message_end.
+ */
+function updateBlock(state: RunState, contentIndex: number, block: Block): Step {
+  const reported = state.blocks.get(contentIndex)
+  if (reported !== undefined && Reported.$is('Closed')(reported)) return { state, chunks: [] }
+  const chunks =
+    reported === undefined
+      ? [...openBlock(state, contentIndex, block), ...blockBody(state, contentIndex, block, 0)]
+      : blockBody(state, contentIndex, block, reported.length)
+  return { state: mark(state, contentIndex, Reported.Open({ length: bodyLength(block) })), chunks }
+}
+
+/** Whole-message replacements update every partial block without implying a provider end. */
+function updateMessage(state: RunState, message: AssistantMessage): Step {
+  return message.content.reduce<Step>(
+    (step, block, index) => join(step, updateBlock(step.state, index, block)),
+    { state, chunks: [] },
+  )
+}
+
 /** A document append extends an already-open text/reasoning block's reported prefix. */
 function appendBody(state: RunState, contentIndex: number, delta: string): RunState {
   const reported = state.blocks.get(contentIndex)
@@ -228,15 +251,14 @@ function applyChange(state: RunState, change: MessageChange): Step {
           { type: 'reasoning-delta', id: partId(state, change.contentIndex), delta: change.delta },
         ],
       }
-    // Pi 1.0.4 harness/generation.js streamResponse persists event.partial, discarding raw JSON
-    // fragments. harness/events.js messageChanges emits path-local string-value appends here,
-    // which cannot feed tool-input-delta. Do not synthesize JSON; close with the parsed arguments.
+    // events.js messageChanges uses this for path-local arguments string appends. Provider scratch
+    // JSON also survives in block/message changes; this bridge does not stream tool arguments yet.
     case 'toolcall_delta':
       return { state, chunks: [] }
     case 'block':
-      return finishBlock(state, change.contentIndex, change.block)
+      return updateBlock(state, change.contentIndex, change.block)
     case 'message':
-      return finishMessage(state, change.message)
+      return updateMessage(state, change.message)
   }
   return unreachable(change)
 }

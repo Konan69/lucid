@@ -2,7 +2,7 @@
 
 Read the installed Pi Durable and AI SDK sources before changing their boundaries. Verify pinned APIs. Keep the bridge small. Use public extension points. Never patch Pi internals or SDK methods.
 
-Pi Durable 1.0.4 does not expose raw tool-argument JSON through its watch. Pi AI's provider delta has that text, but `harness/generation.js` `streamResponse` stores only `event.partial`; `harness/events.js` `messageChanges` derives parsed-block changes and path-local string appends from document operations. Do not synthesize JSON text for AI SDK tool-input-delta or replay. The real provider/watch proof is in conformance/arguments.test.ts. An upstream raw-text contract is required before implementing streaming argument presentation.
+Pi Durable 1.0.4 copies the provider's partial message, including growing raw partialJson/partialArgs when retained. The watch can deliver those scratch fields in block/message updates. A block update is not a terminal block: Anthropic/OpenAI/Bedrock/Mistral mutate parsed arguments and scratch fields; Google adds textSignature while text still streams. Only message_end closes blocks and permits final tool-input-available and approval. This library does not stream tool arguments yet. The source-derived provider wrapper and real SQLite proof are in fixtures/provider.ts and conformance/arguments.test.ts. Never approve a partial input or treat a document replacement as a provider end.
 
 `@vivid/durable` is the Promise entry. `@vivid/durable/core` is the Effect entry. Verify the package exports before importing it. Both entries must share contracts and behaviour. Keep React and React Native UI out of this package.
 

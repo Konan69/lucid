@@ -98,6 +98,11 @@
     "symbols": ["harness", "root", "<module>"]
   },
   {
+    "file": "packages/agent/durable/src/fixtures/provider.ts",
+    "classification": "third-party-adapter",
+    "symbol": "relay"
+  },
+  {
     "file": "packages/agent/durable/src/fixtures/harness.ts",
     "classification": "third-party-adapter",
     "symbols": ["memory"]
