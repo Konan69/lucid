@@ -236,3 +236,27 @@ export class ToolContextFailed extends Schema.TaggedError<ToolContextFailed>()(
     return `Tool ${this.toolName} context failed: ${text}`
   }
 }
+
+/** A durable approval rule cannot suspend or produce a truthy value other than a boolean. */
+export class ToolApprovalUnsupported extends Schema.TaggedError<ToolApprovalUnsupported>()(
+  'ToolApprovalUnsupported',
+  { toolName: Schema.String },
+  { title: 'ToolApprovalUnsupported' },
+) {
+  /** Explain the unsupported asynchronous contract without awaiting an unsafe decision. */
+  override get message() {
+    return `Tool ${this.toolName}: an asynchronous approval function is not supported; needsApproval must return a synchronous boolean`
+  }
+}
+
+/** Approval presentation has validated arguments but no execution authority or call options. */
+export class ToolApprovalContextUnavailable extends Schema.TaggedError<ToolApprovalContextUnavailable>()(
+  'ToolApprovalContextUnavailable',
+  { toolName: Schema.String, field: Schema.Literals(['toolCallId', 'messages', 'context']) },
+  { title: 'ToolApprovalContextUnavailable' },
+) {
+  /** Refuse missing context explicitly, so a predicate cannot approve against invented identity. */
+  override get message() {
+    return `Tool ${this.toolName} approval cannot access ${this.field}; only a pure synchronous predicate over validated input is supported`
+  }
+}

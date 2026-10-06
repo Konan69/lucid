@@ -233,3 +233,4 @@ export function holdId(text: string): Core.HoldId {
 }
 export { type ToolScope } from './tools.ts'
 export { ToolContextFailed } from './errors.ts'
+export { ToolApprovalUnsupported, ToolApprovalContextUnavailable } from './errors.ts'

@@ -13,7 +13,14 @@ import {
 import { asSchema, type Tool, type ToolSet } from 'ai'
 import { Effect, Option, Predicate, Schema, Stream } from 'effect'
 
-import { ToolContextFailed, ToolFailed, ToolOutputFailed, ToolSchemaFailed } from './errors.ts'
+import {
+  ToolApprovalUnsupported,
+  ToolApprovalContextUnavailable,
+  ToolContextFailed,
+  ToolFailed,
+  ToolOutputFailed,
+  ToolSchemaFailed,
+} from './errors.ts'
 import {
   CallIdentity,
   holdIdOf,
@@ -55,7 +62,10 @@ export type ToolsOptions = {
   readonly sequential?: readonly string[]
   /** Only explicitly named server tools may rerun after a crash; the default protects side effects. */
   readonly replay?: Readonly<Record<string, Replay>>
-  /** Pure predicates see Pi-validated JSON arguments before the SDK applies transformations. */
+  /**
+   * Pure predicates see Pi-validated JSON arguments before SDK transformations.
+   * A named host option wins over the tool's needsApproval, including explicit false.
+   */
   readonly approval?: Readonly<Record<string, boolean | ((input: JsonValue) => boolean)>>
   /** Tools without execute wait inside the call by default; later delivers an answer as new input. */
   readonly answers?: Readonly<Record<string, 'wait' | 'later'>>
@@ -353,11 +363,57 @@ type Bridged = {
   readonly executionMode: NonNullable<ToolsOptions['execution']>
 }
 
+/**
+ * holds.ts Plan only supplies input during hook, presentation and recovery. Refuse unavailable
+ * SDK options on access rather than manufacture identity or resolve request authority repeatedly.
+ * ai/src/generate-text/resolve-tool-approval.ts:115–123 passes precisely these three fields.
+ */
+function approvalOptions(name: string): import('ai').ToolExecutionOptions<SdkValue> {
+  return {
+    get toolCallId(): string {
+      throw new ToolApprovalContextUnavailable({ toolName: name, field: 'toolCallId' })
+    },
+    get messages(): import('ai').ModelMessage[] {
+      throw new ToolApprovalContextUnavailable({ toolName: name, field: 'messages' })
+    },
+    get context(): SdkValue {
+      throw new ToolApprovalContextUnavailable({ toolName: name, field: 'context' })
+    },
+  }
+}
+
+/** Input-only predicates are synchronous replay rules; a Promise is never interpreted as true. */
+function approvalForTool(
+  name: string,
+  tool: Tool<unknown, unknown, unknown>,
+  lookups: Lookups,
+): Plan['approval'] {
+  if (Object.hasOwn(lookups.approval, name)) {
+    const rule = lookups.approval[name]
+    if (rule !== undefined) return Predicate.isFunction(rule) ? rule : () => rule
+  }
+  const rule = tool.needsApproval
+  if (rule === undefined) return () => false
+  if (!Predicate.isFunction(rule)) return () => rule
+  if (Object.prototype.toString.call(rule) === '[object AsyncFunction]')
+    throw new ToolApprovalUnsupported({ toolName: name })
+  return (input) => {
+    const answer = rule(input, approvalOptions(name))
+    if (Predicate.isBoolean(answer)) return answer
+    // Observe only rejection of the unsupported SDK Promise; never await or accept its boolean.
+    if (Predicate.isPromiseLike(answer))
+      answer.then(
+        () => {},
+        () => {},
+      )
+    throw new ToolApprovalUnsupported({ toolName: name })
+  }
+}
+
 /** Normalize every absent option once; the lookup then has an explicit default for every tool name. */
 function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
   const executionMode = lookups.sequential.has(name) ? 'sequential' : lookups.execution
-  const rule = lookups.approval[name] ?? false
-  const approval = Predicate.isFunction(rule) ? rule : () => rule
+  const approval = approvalForTool(name, tool, lookups)
   if (tool.execute !== undefined) {
     const server: Server = {
       name,
@@ -471,11 +527,15 @@ export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* (
     approval: options.approval ?? {},
     answers: options.answers ?? {},
   }
-  const bridged = Object.entries(tools).map(([toolName, tool]) => ({
-    toolName,
-    tool,
-    bridged: bridge(toolName, tool, lookups),
-  }))
+  const bridged = yield* Effect.forEach(Object.entries(tools), ([toolName, tool]) =>
+    Effect.try({
+      try: () => ({ toolName, tool, bridged: bridge(toolName, tool, lookups) }),
+      catch: (cause) =>
+        cause instanceof ToolApprovalUnsupported
+          ? cause
+          : new ToolSchemaFailed({ toolName, cause }),
+    }),
+  )
   const registrations = yield* Effect.forEach(
     bridged,
     (each) => registration(each.toolName, each.tool, each.bridged),
