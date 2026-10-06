@@ -116,9 +116,17 @@ NodeChildProcess.spawnSync(
 // upload only, never for a phone. Keeping the export to what `metadata.json` names keeps the
 // server's release directory honest, and sources are not shipped where they are not used.
 const metadata = JSON.parse(NodeFS.readFileSync(NodePath.join(directory, 'metadata.json'), 'utf8'))
+/**
+ * Every path `metadata.json` names for the platform: the launch bundle first, then the assets.
+ * `launchAsset` and `assets` are both objects with a `path`, so one read of that field covers
+ * them; anything the platform entry names but does not carry a path for cannot be served, so it
+ * is left to the map sweep below like everything else unnamed.
+ */
 const named = new Set(
   Object.values(metadata.fileMetadata)
-    .flatMap((platform) => [platform.launchAsset.path, ...platform.assets.map((asset) => asset.path)])
+    .flatMap((platform) => [platform.launchAsset, ...platform.assets])
+    .map((file) => file.path)
+    .filter((path) => typeof path === 'string')
     .map((path) => NodePath.resolve(directory, path)),
 )
 for (const file of findMaps(directory)) {
