@@ -35,7 +35,7 @@ import { NoteFile, NoteIndex, NoteLine } from '../notes.ts'
 import { Remembered, SavedProcedures, VividContext } from './snapshots.ts'
 import * as views from './views.ts'
 import { askTools } from './ask.ts'
-import { commandDefinition, pictureTools } from './computer.ts'
+import { pictureTools } from './computer.ts'
 import { connectionTools } from './connections.ts'
 import { libraryTools } from './library.ts'
 import { memoryTools } from './memory.ts'
@@ -144,11 +144,6 @@ describe('model views', () => {
       views.routine(routine, routine.name),
       views.routines([routine]),
       views.routine({ ...routine, trigger: RoutineTrigger.cases.Webhook.make({}) }, routine.name),
-      views.command({
-        exitCode: 0,
-        output: `Saved ${reference}, admin@example.test and https://example.test/screen.png`,
-        truncated: false,
-      }),
       views.browse({
         address: 'https://example.test',
         tabs: [{ title: 'Agreement', address: 'https://example.test', showing: true }],
@@ -219,7 +214,6 @@ describe('model views', () => {
     expect(context).toContain('"apps":["GIMP","LibreOffice Calc"]')
     // Connected services reach the model by name, with any identifier in a name removed.
     expect(context).toContain('"integrations":["DeepWiki","Mail ')
-    expect(json).toContain('admin@example.test')
     expect(views.tools({ tools: [tool], connected: [], unconnected: [] }).tools[0]).toHaveProperty(
       'signature',
       tool.signature,
@@ -349,7 +343,6 @@ it('has no identifier key or UUID validator in any model tool input', () => {
     projectTools,
     skillTools,
   ]
-  inspectSchema(schemaDocument(JSON.stringify(commandDefinition(inspectionOnly).input)))
   for (const native of pictureTools(inspectionOnly))
     inspectSchema(schemaDocument(JSON.stringify(native.parameters)))
   for (const factory of groups)

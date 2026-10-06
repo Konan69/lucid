@@ -257,9 +257,9 @@ the screen union belongs to its own lane. Runtime placement and external state s
 ## Reaching the Computer: one SSH connection
 
 **Status: decided 5 October 2026. Built on `feat/native-computer`: the server holds the connection
-and Vivid has Flue's six file and shell tools on its Computer. Its connection code is proven on a real SSH server and on a Person's Computer; the product path
-(a Thread and a model using the tools) has not yet run on one (see "Not verified").
-`run_command` is still there and goes once that run is done.** This is the step between today and
+and Vivid has Flue's six file and shell tools on its Computer. Its connection code is proven on a real SSH server and on a Person's Computer, and the product path
+(a Thread and a model using the tools) ran on a Person's Computer in production on 6 October 2026.
+`run_command`, the earlier tool that asked for an Approval per command, is removed from the model.** This is the step between today and
 "Runtime on the Computer" below. It is deliberately thin, because it is deleted when the runtime
 moves onto the machine.
 
@@ -508,13 +508,30 @@ with the provider's real key call. It is not the product: no Thread, no model, n
 The machine runs OpenSSH 9.6, which takes the signal a cancelled command is ended with. The times
 are from Lagos and include the provider's key call; from the hosted server the path is shorter.
 
+### The product on a Person's Computer, 6 October 2026
+
+Run in production, signed in as the Person whose Computer it is, in a new Thread in the web app.
+The Computer was already running.
+
+| Asked                                                    | What the Thread showed                                        | Time |
+| -------------------------------------------------------- | ------------------------------------------------------------- | ---- |
+| Write a file, read it back, run a command that counts it | Wrote a file, read a file, worked on its computer; the output | 45 s |
+| Change one word in that file and show it                 | Changed a file, worked on its computer; the new line          | 33 s |
+
+No Approval and no question appeared. Looked at on the machine afterwards: the file held the
+changed line and was the machine user's, and the key file held exactly one line of Vivid's,
+written when the first request opened the connection. The times are from sending to the answer
+being seen, so they include the model. `run_command` was still mounted during this run, and a
+command step reads the same in a Thread for either tool, so which of the two ran the commands is
+not known; the file steps can only have been the new tools.
+
 ### Not verified
 
-- Vivid's own tools in the product on a Person's Computer: a Thread, a real model turn, the
-  runtime's call to the server. After the deploy, check on production, in this order: in a Thread
-  ask Vivid to write a file on its computer and read it back (`write`, `read`); ask for a command
-  (`bash`); stop the Computer, start a conversation that does not need it, and confirm it stays
-  stopped; ask for a file again and confirm it wakes and answers.
+- A conversation in production that does not need the Computer leaving a stopped Computer
+  stopped, and a request for a file waking it. Check: stop the Computer, start a conversation
+  that does not need it, confirm it stays stopped; ask for a file and confirm it wakes and answers.
+- `bash` in production now that `run_command` is gone from the model: ask for a command after
+  the deploy that carries the removal.
 - Whether the provider puts back, after a resume, a key it was given earlier. The removal at each
   opening takes it out either way.
 - Whether cancelling a tool call in the runtime interrupts the server's call. The server ends the

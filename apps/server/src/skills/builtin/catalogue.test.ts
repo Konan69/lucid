@@ -19,10 +19,7 @@ import { memoryTools } from '../../../../../packages/agent/runtime/src/tools/mem
 import { noteTools } from '../../../../../packages/agent/runtime/src/tools/notes.ts'
 import { skillTools } from '../../../../../packages/agent/runtime/src/tools/skills.ts'
 import { routineTools } from '../../../../../packages/agent/runtime/src/tools/routines.ts'
-import {
-  commandDefinition,
-  pictureTools,
-} from '../../../../../packages/agent/runtime/src/tools/computer.ts'
+import { pictureTools } from '../../../../../packages/agent/runtime/src/tools/computer.ts'
 import { documentTools } from '../../../../../packages/agent/runtime/src/tools/documents.ts'
 import { showTools } from '../../../../../packages/agent/runtime/src/tools/show.ts'
 import { codeTools } from '../../../../../packages/agent/runtime/src/tools/code.ts'
@@ -47,7 +44,6 @@ const registered = new Set(
     ...noteTools(runner, 'unused'),
     ...skillTools(runner),
     ...routineTools(runner),
-    commandDefinition(runner),
     ...pictureTools(runner),
     ...codeTools(runner),
     ...documentTools(runner),
@@ -59,6 +55,9 @@ const registered = new Set(
 
 /** Flue injects this native tool for mounts; the package's real-runtime test verifies it and every needs entry. */
 registered.add('activate_skill')
+
+/** Flue's own shell tool, mounted by the Computer's sandbox; the same real-runtime test verifies it. */
+registered.add('bash')
 
 /** Ready and pending accounts demonstrate that a service name alone cannot make an offer runnable. */
 const connection = (serviceName: string, state: ConnectionState) =>

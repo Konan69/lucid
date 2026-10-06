@@ -15,7 +15,7 @@ import { DEFAULT_MODEL } from '../providers/explabs.ts'
 import { namedAs, useVividContext } from '../context.ts'
 import { notesDirectory } from '../settings.ts'
 import { askTools } from '../tools/ask.ts'
-import { computerTools } from '../tools/computer.ts'
+import { mountComputer } from '../tools/computer.ts'
 import { documentTools } from '../tools/documents.ts'
 import { codeTools } from '../tools/code.ts'
 import { connectionTools } from '../tools/connections.ts'
@@ -163,6 +163,7 @@ export function Vivid({ id }: { id: string }) {
   for (const skill of nativeSkillsInOrder) useSkill(skill)
 
   useModel(model)
+  mountComputer(runTool, scopedRunner(scope))
   for (const tools of [
     libraryTools(runTool),
     connectionTools(runTool),
@@ -173,7 +174,6 @@ export function Vivid({ id }: { id: string }) {
     skillTools(runTool),
     routineTools(runTool),
     projectTools(runTool),
-    computerTools(runTool, scopedRunner(scope)),
     codeTools(runTool),
     documentTools(runTool),
     showTools(),

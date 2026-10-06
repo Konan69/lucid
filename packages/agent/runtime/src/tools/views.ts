@@ -3,7 +3,6 @@ import {
   MemoryScope,
   RoutineTrigger,
   type BrowseResult,
-  type CommandResult,
   type DesktopView,
   type ConnectionOffer,
   type FindToolsResponse,
@@ -134,11 +133,6 @@ export function routines(items: readonly Routine[]) {
   return inventory(items, (item) => modelText(item.name)).map(({ item, name }) =>
     routine(item, name),
   )
-}
-
-/** Computer output has no machine/session references; opaque output is filtered at this adapter. */
-export function command(item: CommandResult) {
-  return { exitCode: item.exitCode, output: modelText(item.output), truncated: item.truncated }
 }
 
 /** Browser addresses can contain authority or image URLs; only the readable page is shown. */

@@ -1,6 +1,5 @@
 import {
   BrowseOutcome,
-  CommandOutcome,
   DesktopOutcome,
   ToolOutcome,
   WindowOutcome,
@@ -82,23 +81,6 @@ export function toolOutcome(outcome: ToolOutcome): ToolResult {
         problems: problems.map(views.modelText),
       },
     }),
-    OutcomeUnknown: outcomeUnknown,
-  })
-}
-
-/** Commands share the approval policy but preserve exit status and the server's truncation marker. */
-export function commandOutcome(outcome: CommandOutcome): ToolResult {
-  return CommandOutcome.match(outcome, {
-    Completed: ({ result }) => ({
-      output: {
-        ok: true,
-        result: views.command(result),
-        message: 'The command completed; check its exit code.',
-      },
-    }),
-    ApprovalRequired: approval,
-    Blocked: blocked,
-    Unavailable: unavailable,
     OutcomeUnknown: outcomeUnknown,
   })
 }
