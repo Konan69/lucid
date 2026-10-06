@@ -122,3 +122,72 @@ it('posts a stale output once and restores its own finished run while the succes
   expect(tab.lastMessage.parts.find(isToolUIPart)).toMatchObject({ output: 'Elsewhere' })
   expect(await waiting(opened.harness, opened.root.id, context)).toEqual(held)
 })
+
+/** A placed steer extends the located run: the stock predicate must see its still-waiting later call. */
+it('continues past a steer without repeatedly posting an already answered call', async () => {
+  const fixture = await shop({ steeringMode: 'all' })
+  const opened = await fixture.open()
+  opened.faux.setResponses([
+    call('ask', { question: 'First?' }, 'x'),
+    call('ask', { question: 'After steer?' }, 'y'),
+    fauxAssistantMessage('Finished after steer.'),
+  ])
+  let posts = 0
+  let allowedPosts = 2
+  let completed = signal()
+  const tab = new PlainChat({
+    transport: new DefaultChatTransport<UIMessage>({
+      api: 'http://durable.test/chat',
+      fetch: async (url, init) => {
+        const request = new Request(url, init)
+        if (request.method === 'POST') posts++
+        if (posts > allowedPosts) throw new Error('Steer resume posted more than once')
+        return respond(opened.harness, opened.root.id, request, context)
+      },
+    }),
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    onFinish: () => completed.resolve(),
+    onError: (error) => completed.reject(error),
+  })
+  await tab.sendMessage({ text: 'First' })
+  await opened.root.submit(
+    {
+      type: 'input',
+      content: 'Steer this same run',
+      requestId: 'steer',
+      whenBusy: 'steer',
+    },
+    context,
+  )
+  await answer(
+    opened.harness,
+    opened.root.id,
+    { holdId: await hold(opened.harness, opened.root.id, 'x'), output: 'Elsewhere' },
+    context,
+  )
+  const attached = await attachRun(opened.harness, opened.root.id, context)
+  if (attached.status !== 'running') throw new Error('Expected steer-extended run')
+  await consume(attached.stream)
+  const held = await waiting(opened.harness, opened.root.id, context)
+  expect(held.map((row) => row.callId)).toEqual(['y'])
+  completed = signal()
+  await tab.addToolOutput({ tool: 'ask', toolCallId: 'x', output: 'Stale' })
+  await completed.promise
+  expect(posts).toBe(2)
+  expect(tab.status).toBe('ready')
+  expect(tab.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
+  if (tab.lastMessage === undefined) throw new Error('Expected extended assistant')
+  expect(tab.lastMessage.parts.filter(isToolUIPart)).toMatchObject([
+    { toolCallId: 'x', state: 'output-available', output: 'Elsewhere' },
+    { toolCallId: 'y', state: 'input-available' },
+  ])
+  expect(await waiting(opened.harness, opened.root.id, context)).toEqual(held)
+  allowedPosts = 3
+  completed = signal()
+  await tab.addToolOutput({ tool: 'ask', toolCallId: 'y', output: 'Now' })
+  await completed.promise
+  expect(posts).toBe(3)
+  expect(tab.status).toBe('ready')
+  expect(texts(tab.lastMessage)).toEqual(['Finished after steer.'])
+  expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
+})

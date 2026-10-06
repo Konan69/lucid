@@ -477,9 +477,10 @@ function callsAny(entry: EntryRecord, known: ReadonlySet<string>): boolean {
  * Rebuild what followed a tool round, for a client that already shows the round's calls and comes
  * back after it settled a hold. `known` are the tool call ids the client has.
  *
- * The prefix starts after the newest assistant entry that made one of those calls and stops at the
- * next user input, so it carries the tool results, the later steps, and the partial in flight, and
- * nothing the client already shows. Tool results match the client's parts by call id.
+ * selectRun has bounded these entries to the message's own run. The prefix starts after the newest
+ * assistant entry that made a known call and follows that run's whole tail, including steps after
+ * steer user entries. A steer extends this run; it never ends its continuation or live observation.
+ * Tool results match the client's parts by call id.
  *
  * `live` says the same run is still in progress, so live events continue the prefix. `undefined`
  * means no entry made those calls.
@@ -495,9 +496,8 @@ export function replayAfter(
   const at = snapshot.entries.findLastIndex((entry) => callsAny(entry, known))
   if (at === -1) return Option.none()
   const rest = snapshot.entries.slice(at + 1)
-  const nextInput = rest.findIndex((entry) => entry.kind === 'pi.user')
-  const live = nextInput === -1 && snapshot.run !== undefined
-  const stored = (nextInput === -1 ? rest : rest.slice(0, nextInput)).reduce<Step>(
+  const live = snapshot.run !== undefined
+  const stored = rest.reduce<Step>(
     (step, entry) => join(step, replayEntry(step.state, entry)),
     // No message id: the client continues the assistant message it already has.
     {
@@ -526,10 +526,7 @@ export function replayAfter(
   return Option.some({
     step,
     live,
-    origins: originsFor(
-      snapshot.entries.slice(at, nextInput === -1 ? undefined : at + 1 + nextInput),
-      step.chunks,
-    ),
+    origins: originsFor(snapshot.entries.slice(at), step.chunks),
   })
 }
 
