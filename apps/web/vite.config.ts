@@ -3,6 +3,7 @@ import * as NodeHttps from 'node:https'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { sentryVitePlugin } from '@sentry/vite-plugin'
 import manifest from './package.json' with { type: 'json' }
 
 /**
@@ -83,16 +84,45 @@ export default defineConfig(({ mode }) => {
       ? `vivid-web@${manifest.version}`
       : `vivid-web@${manifest.version}+${commit.slice(0, 12)}`
 
+  // Source maps for Sentry (`src/data/telemetry.ts`). The build emits them hidden (`build.
+  // sourcemap` below): each bundle ships beside its map, but no comment in the bundle names the
+  // map, so a browser never learns where the sources are. The plugin stamps a debug ID into both
+  // the bundle and the map inside the build pipeline and uploads the maps to Sentry; matching
+  // happens by that ID, not by the release name, so this is independent of the release string
+  // above. Without `SENTRY_AUTH_TOKEN` the plugin is left out and the maps are still written, so
+  // a build with no credentials behaves the same otherwise. The upload needs the token only for
+  // `project:write` on `vivid-web`.
+  const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN
+
   return {
     define: { __VIVID_RELEASE__: JSON.stringify(release) },
-    plugins: [react(), tailwindcss(), releaseUpstream(agent)],
+    plugins: [
+      react(),
+      tailwindcss(),
+      releaseUpstream(agent),
+      ...(sentryAuthToken === undefined
+        ? []
+        : [
+            sentryVitePlugin({
+              org: 'vivid-7t',
+              project: 'vivid-web',
+              authToken: sentryAuthToken,
+            }),
+          ]),
+    ],
     // The design-system components import each other as `@/ui/...` (the alias `components.json`
     // gives the shadcn CLI), so Vite resolves the same `paths` the type checker reads.
     resolve: { tsconfigPaths: true },
     // Two documents: the app, and the small notice the desktop app shows on the Person's screen
     // while Vivid works in their apps (`src/notice.tsx`). The notice is its own entry so that
     // window loads the face and the tokens without loading the app.
-    build: { rollupOptions: { input: { main: 'index.html', notice: 'notice.html' } } },
+    build: {
+      rollupOptions: { input: { main: 'index.html', notice: 'notice.html' } },
+      // Hidden maps keep the sources private while still carrying the debug ID the plugin
+      // injects (the plugin writes the ID into both files inside the bundler pipeline, so the
+      // missing comment does not matter; matching happens by debug ID).
+      sourcemap: 'hidden',
+    },
     preview: { port: 4178, host: '127.0.0.1', proxy, allowedHosts: ['.trycloudflare.com'] },
     server: { port: 5178, proxy },
   }

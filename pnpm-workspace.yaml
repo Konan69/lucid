@@ -124,8 +124,10 @@ allowBuilds:
   sharp: true
   workerd: true
   '@google/genai': false
-  # Sentry's command-line tool only uploads symbols and source maps, which no Vivid build does.
-  '@sentry/cli': false
+  # Sentry's command-line tool injects and uploads the source maps the builds produce
+  # (`scripts/sentry-upload.mjs`, `apps/web/vite.config.ts`); its install step fetches the
+  # prebuilt binary the wrapper runs.
+  '@sentry/cli': true
   core-js-pure: false
   msgpackr-extract: false
   protobufjs: false
