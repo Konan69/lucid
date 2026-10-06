@@ -16,7 +16,7 @@ import { answerObserved, decideObserved } from './holds.ts'
 import { runMessageId } from './chunks.ts'
 import * as Pi from './pi.ts'
 import { LiveDoc } from '@earendil-works/pi-durable'
-import { continueRun, prepareRun } from './stream.ts'
+import { completeTurn, continueRun, prepareRun } from './stream.ts'
 import { waiting } from './waiting.ts'
 import { InputPart, InputParts, type InputOptions } from './input.ts'
 
@@ -231,7 +231,9 @@ export const respond = Effect.fn('Durable.respond')(function* (
         Effect.andThen(
           resume.messageId === undefined
             ? Effect.fail(new RunMissing({ conversationId }))
-            : continueRun(
+            : (resume.decisions.length === 0 && resume.outputs.length === 0
+                ? completeTurn
+                : continueRun)(
                 harness,
                 conversationId,
                 { messageId: resume.messageId, known: new Set(resume.known) },

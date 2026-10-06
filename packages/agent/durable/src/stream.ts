@@ -297,13 +297,32 @@ export const continueRun = Effect.fn('Durable.continueRun')(function* (
   input: ResumeInput,
   context: Context,
 ) {
+  return yield* continueWith(harness, conversationId, { input, intent: 'Replay' }, context)
+})
+
+/** A request without settlements may acknowledge a stored terminal message with an empty step. */
+export const completeTurn = Effect.fn('Durable.completeTurn')(function* (
+  harness: Harness,
+  conversationId: ConversationId,
+  input: ResumeInput,
+  context: Context,
+) {
+  return yield* continueWith(harness, conversationId, { input, intent: 'Complete' }, context)
+})
+
+/** Share observation ownership and exact-run validation for continuation and terminal acknowledgement. */
+const continueWith = Effect.fn('Durable.continueWith')(function* (
+  harness: Harness,
+  conversationId: ConversationId,
+  selection: { readonly input: ResumeInput; readonly intent: 'Replay' | 'Complete' },
+  context: Context,
+) {
   const found = yield* reconnect(
     harness,
     conversationId,
-    (snapshot, reader) => selectRun(reader, input, snapshot),
+    (snapshot, reader) => selectRun(reader, selection.input, snapshot, selection.intent),
     context,
   )
-  // The selector cannot return None: retaining that invariant here keeps the shared idle path honest.
   if (Option.isNone(found)) return yield* new RunMissing({ conversationId })
   return found.value
 })

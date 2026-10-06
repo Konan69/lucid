@@ -10,7 +10,7 @@ import {
 } from '@earendil-works/pi-ai/providers/faux'
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream'
 import { parseStreamingJson } from '@earendil-works/pi-ai/utils/json-parse'
-import { Effect, Match, Predicate, Schema, Stream } from 'effect'
+import { Effect, Match, Option, Predicate, Schema, Stream } from 'effect'
 import { runForPi } from '../pi.ts'
 
 export const providerFamilies = [
@@ -30,7 +30,10 @@ export type ProviderFamily =
 export type ProviderOptions = RegisterFauxProviderOptions & {
   readonly partialFamily?: ProviderFamily
   /** Own frame gate for deterministic progress tests; invoked after publishing the captured frame. */
-  readonly onFrame?: (event: AssistantMessageEvent) => Effect.Effect<void>
+  readonly onFrame?: (
+    event: AssistantMessageEvent,
+    signal: Option.Option<AbortSignal>,
+  ) => Effect.Effect<void>
 }
 const decodeArguments = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.MutableJson))
 type PartialState = {
@@ -39,6 +42,22 @@ type PartialState = {
   readonly ended: Set<number>
   firstTool: number
   revealed: boolean
+}
+
+/** A test frame stays gated until its receipt is inspected or Pi cancels the provider invocation.
+ * A non-cancellable gate would deadlock Conversation.abort waiting for the provider to return. */
+export function waitForFrame(released: Effect.Effect<void>, signal: Option.Option<AbortSignal>) {
+  if (Option.isNone(signal)) return released
+  const abortSignal = signal.value
+  if (abortSignal.aborted) return Effect.void
+  return Effect.raceFirst(
+    released,
+    Effect.callback<void>((resume) => {
+      const cancelled = () => resume(Effect.void)
+      abortSignal.addEventListener('abort', cancelled, { once: true })
+      return Effect.sync(() => abortSignal.removeEventListener('abort', cancelled))
+    }),
+  )
 }
 
 /**
@@ -173,7 +192,10 @@ const relay = Effect.fn('Test.providerRelay')(function* (
   source: AssistantMessageEventStream,
   destination: AssistantMessageEventStream,
   family: ProviderFamily,
-  onFrame: (event: AssistantMessageEvent) => Effect.Effect<void>,
+  gate: {
+    readonly onFrame: NonNullable<ProviderOptions['onFrame']>
+    readonly signal: Option.Option<AbortSignal>
+  },
 ) {
   const state: PartialState = {
     family,
@@ -187,7 +209,7 @@ const relay = Effect.fn('Test.providerRelay')(function* (
       Effect.gen(function* () {
         const captured = adapt(event, state)
         destination.push(captured)
-        yield* onFrame(captured)
+        yield* gate.onFrame(captured, gate.signal)
       }),
     ),
   )
@@ -199,9 +221,9 @@ export function streamingProvider(options: ProviderOptions = {}) {
   const { partialFamily = 'late', onFrame = () => Effect.void, ...fauxOptions } = options
   const faux = fauxProvider(fauxOptions)
   /** Pi's provider API is synchronous: return its event stream and run the owned relay at ingress. */
-  const wrap = (source: AssistantMessageEventStream) => {
+  const wrap = (source: AssistantMessageEventStream, signal: Option.Option<AbortSignal>) => {
     const destination = createAssistantMessageEventStream()
-    void runForPi(relay(source, destination, partialFamily, onFrame), undefined)
+    void runForPi(relay(source, destination, partialFamily, { onFrame, signal }), undefined)
     return destination
   }
   return {
@@ -209,9 +231,15 @@ export function streamingProvider(options: ProviderOptions = {}) {
     provider: {
       ...faux.provider,
       stream: (...args: Parameters<typeof faux.provider.stream>) =>
-        wrap(faux.provider.stream(...args)),
+        wrap(
+          faux.provider.stream(...args),
+          Option.fromNullishOr(args[2]).pipe(Option.flatMapNullishOr(({ signal }) => signal)),
+        ),
       streamSimple: (...args: Parameters<typeof faux.provider.streamSimple>) =>
-        wrap(faux.provider.streamSimple(...args)),
+        wrap(
+          faux.provider.streamSimple(...args),
+          Option.fromNullishOr(args[2]).pipe(Option.flatMapNullishOr(({ signal }) => signal)),
+        ),
     },
   }
 }
