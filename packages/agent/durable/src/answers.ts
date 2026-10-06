@@ -18,12 +18,14 @@ const receipt = Effect.fn('Durable.answerReceipt')(function* (
 })
 
 /** Queued/placed answers are closed to changes; withdrawal reopens the same question for resubmission. */
-export const questionOpen = Effect.fn('Durable.questionOpen')(function* (
+export const questionOpen: (
   harness: Harness,
   conversation: Conversation,
   question: Question,
   context: Context,
-) {
+) => Effect.Effect<boolean, import('./errors.ts').PiFailed, never> = Effect.fn(
+  'Durable.questionOpen',
+)(function* (harness: Harness, conversation: Conversation, question: Question, context: Context) {
   return yield* Delivery.match(question.delivery, {
     Open: () => Effect.succeed(true),
     Reserved: () => Effect.succeed(true),
@@ -176,7 +178,14 @@ const admit = Effect.fn('Durable.admitAnswer')(function* (
 })
 
 /** A withdrawn follow-up accepts the next answer under a fresh key; queued and placed repeats remain first-wins. */
-export const deliver = Effect.fn('Durable.deliverAnswer')(function* (
+export const deliver: (
+  harness: Harness,
+  conversation: Conversation,
+  given: Answer,
+  context: Context,
+) => Effect.Effect<Settlement, CallNotWaiting | import('./errors.ts').PiFailed, never> = Effect.fn(
+  'Durable.deliverAnswer',
+)(function* (
   harness: Harness,
   conversation: Conversation,
   given: Answer,

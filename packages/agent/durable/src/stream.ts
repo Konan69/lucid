@@ -34,7 +34,7 @@ export type RunInput = {
   readonly options?: InputOptions
 }
 
-type WatchFailure = PiFailed | WatchClosed | WatchOverflowed
+export type WatchFailure = PiFailed | WatchClosed | WatchOverflowed
 
 type State = {
   readonly state: RunState
@@ -163,7 +163,19 @@ export function streamRun(harness: Harness, input: RunInput, context: Context) {
  * Admit before returning a transport stream so missing conversations and submission failures reject
  * the Promise facade. The captured watch scope transfers to consumption, as in reconnection.
  */
-export const prepareRun = Effect.fn('Durable.prepareRun')(function* (
+export const prepareRun: (
+  harness: Harness,
+  input: RunInput,
+  context: Context,
+) => Effect.Effect<
+  Stream.Stream<UIMessageChunk, WatchFailure, never>,
+  | import('./errors.ts').ConversationMissing
+  | import('./errors.ts').PartTooLarge
+  | import('./errors.ts').PartUnsupported
+  | PiFailed
+  | import('./errors.ts').TurnInvalid,
+  never
+> = Effect.fn('Durable.prepareRun')(function* (
   harness: Harness,
   input: RunInput,
   context: Context,
@@ -267,7 +279,15 @@ const reconnect = Effect.fn('Durable.reconnect')(function* (
 })
 
 /** Idle returns None. The one-shot Stream replays the atomic snapshot; its watch is already open. */
-export const attachRun = Effect.fn('Durable.attachRun')(function* (
+export const attachRun: (
+  harness: Harness,
+  conversationId: ConversationId,
+  context: Context,
+) => Effect.Effect<
+  Option.Option<Stream.Stream<UIMessageChunk, WatchFailure, never>>,
+  import('./errors.ts').ConversationMissing | PiFailed | RunMissing,
+  never
+> = Effect.fn('Durable.attachRun')(function* (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,
@@ -291,7 +311,16 @@ export const attachRun = Effect.fn('Durable.attachRun')(function* (
 })
 
 /** A resume names an assistant entry or fails RunMissing. Its one-shot Stream has an already-open watch. */
-export const continueRun = Effect.fn('Durable.continueRun')(function* (
+export const continueRun: (
+  harness: Harness,
+  conversationId: ConversationId,
+  input: ResumeInput,
+  context: Context,
+) => Effect.Effect<
+  Stream.Stream<UIMessageChunk, WatchFailure, never>,
+  import('./errors.ts').ConversationMissing | PiFailed | RunMissing,
+  never
+> = Effect.fn('Durable.continueRun')(function* (
   harness: Harness,
   conversationId: ConversationId,
   input: ResumeInput,
@@ -301,7 +330,16 @@ export const continueRun = Effect.fn('Durable.continueRun')(function* (
 })
 
 /** A request without settlements may acknowledge a stored terminal message with an empty step. */
-export const completeTurn = Effect.fn('Durable.completeTurn')(function* (
+export const completeTurn: (
+  harness: Harness,
+  conversationId: ConversationId,
+  input: ResumeInput,
+  context: Context,
+) => Effect.Effect<
+  Stream.Stream<UIMessageChunk, WatchFailure, never>,
+  import('./errors.ts').ConversationMissing | PiFailed | RunMissing,
+  never
+> = Effect.fn('Durable.completeTurn')(function* (
   harness: Harness,
   conversationId: ConversationId,
   input: ResumeInput,

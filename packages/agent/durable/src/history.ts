@@ -317,7 +317,19 @@ const pageDesk = Effect.fn('Durable.historyDesk')(function* (
  * round is parallel. Live streams and early attachments follow admission. Pi's startToolRound stores
  * provider order and finishToolRound removes live.tools; reader presentation order is not retained.
  */
-export const history = Effect.fn('Durable.history')(function* (
+export const history: (
+  harness: Harness,
+  conversationId: ConversationId,
+  page: HistoryRequest,
+  context: Context,
+) => Effect.Effect<
+  HistoryPage,
+  | import('./errors.ts').ConversationMissing
+  | HistoryCursorInvalid
+  | HistoryPageInvalid
+  | import('./errors.ts').PiFailed,
+  never
+> = Effect.fn('Durable.history')(function* (
   harness: Harness,
   conversationId: ConversationId,
   page: HistoryRequest,

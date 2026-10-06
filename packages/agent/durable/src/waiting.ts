@@ -40,7 +40,15 @@ export type Waiting = {
  * therefore derived: a unique pending call of the current round with an allocated task id, whose
  * tool's plan holds it, and that has no settlement for that task yet.
  */
-export const waiting = Effect.fn('Durable.waiting')(function* (
+export const waiting: (
+  harness: Harness,
+  conversationId: ConversationId,
+  context: Context,
+) => Effect.Effect<
+  Waiting[],
+  import('./errors.ts').ConversationMissing | import('./errors.ts').PiFailed,
+  never
+> = Effect.fn('Durable.waiting')(function* (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,

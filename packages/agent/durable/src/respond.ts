@@ -212,7 +212,27 @@ type ResponseEffect = Effect.Effect<
 /** Authorize before calling. A stale assistant message settles nothing and still resumes observation.
  * Client outputs match call ids and require uniqueness within one run; approvals are task-scoped.
  * Ordered input parts are validated before admission; unsupported files fail without a Pi input. */
-export const respond = Effect.fn('Durable.respond')(function* (
+export const respond: (
+  harness: Harness,
+  conversationId: ConversationId,
+  input: TurnInput,
+  context: Context,
+) => Effect.Effect<
+  import('effect/Stream').Stream<
+    import('ai').UIMessageChunk,
+    | import('./errors.ts').PiFailed
+    | import('./errors.ts').WatchClosed
+    | import('./errors.ts').WatchOverflowed,
+    never
+  >,
+  | import('./errors.ts').ConversationMissing
+  | import('./errors.ts').PartTooLarge
+  | import('./errors.ts').PartUnsupported
+  | import('./errors.ts').PiFailed
+  | RunMissing
+  | TurnInvalid,
+  never
+> = Effect.fn('Durable.respond')(function* (
   harness: Harness,
   conversationId: ConversationId,
   input: TurnInput,

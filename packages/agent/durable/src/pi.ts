@@ -20,11 +20,13 @@ import { Cause, Effect, Option, Queue, Stream } from 'effect'
 import { ConversationMissing, PiFailed, WatchClosed, WatchOverflowed } from './errors.ts'
 
 /** Absence is a domain failure, distinct from rejection of Harness.conversation itself. */
-export const conversation = Effect.fn('Durable.conversation')(function* (
+export const conversation: (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,
-) {
+) => Effect.Effect<Conversation, ConversationMissing | PiFailed, never> = Effect.fn(
+  'Durable.conversation',
+)(function* (harness: Harness, conversationId: ConversationId, context: Context) {
   const found = yield* Effect.tryPromise({
     try: () => harness.conversation(conversationId, context),
     catch: (cause) => new PiFailed({ operation: 'conversation', cause }),
@@ -202,7 +204,22 @@ const finishWatch = Effect.fn('Durable.finishWatch')(function* <A>(
  * former controller.enqueue behavior. A replacement snapshot signals lost incremental frames;
  * reconnect rather than translate an incomplete history. Detaching never aborts the durable run.
  */
-export const watch = Effect.fn('Durable.watch')(function* (
+export const watch: (
+  harness: Harness,
+  conversationId: ConversationId,
+  context: Context,
+) => Effect.Effect<
+  {
+    snapshot: import('@earendil-works/pi-durable').SnapshotEvent
+    stream: Stream.Stream<
+      Exclude<AgentEvent, import('@earendil-works/pi-durable').SnapshotEvent>,
+      PiFailed | WatchClosed | WatchOverflowed,
+      never
+    >
+  },
+  PiFailed,
+  import('effect/Scope').Scope
+> = Effect.fn('Durable.watch')(function* (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,
@@ -236,7 +253,15 @@ export const abort = (owner: Conversation, context: Context) =>
   })
 
 /** The live document carries sequential task allocations that watchEvents intentionally omits. */
-export const watchLive = Effect.fn('Durable.watchLive')(function* (
+export const watchLive: (
+  harness: Harness,
+  conversationId: ConversationId,
+  context: Context,
+) => Effect.Effect<
+  Stream.Stream<Readonly<LiveState>, PiFailed | WatchClosed, never>,
+  PiFailed,
+  import('effect/Scope').Scope
+> = Effect.fn('Durable.watchLive')(function* (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,
