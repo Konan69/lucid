@@ -18,6 +18,7 @@ import {
   awaitedWords,
   begunFor,
   byService,
+  nameTaken,
   typedAccountName,
   whichAccount,
 } from './accounts.ts'
@@ -114,6 +115,13 @@ describe('asking a Person to name the account they are about to add', () => {
 
   it('does not ask where the service says who signed in', () => {
     expect(asksName([account('a', 'gmail', { identity: 'ada@example.com' })])).toBe(false)
+  })
+
+  it('knows a name another account on the service already has, whatever its case', () => {
+    const others = [account('a', 'github', { name: 'Work' }), account('b', 'github')]
+    expect(nameTaken(others, Option.some('work '))).toBe(true)
+    expect(nameTaken(others, Option.some('Personal'))).toBe(false)
+    expect(nameTaken(others, Option.none())).toBe(false)
   })
 
   it('reads what was typed as a name: trimmed, one line, and none when nothing was typed', () => {

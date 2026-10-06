@@ -419,6 +419,7 @@ function ServiceCard({
     const own = ConnectionOwnership.guards.Personal(connection.ownership)
     return {
       connection,
+      others: group.accounts.filter((account) => account.id !== connection.id),
       sharedWith: own ? Option.none<string>() : company,
       pressed: Option.fromUndefinedOr(presses.get(connection.id)),
       // A Company's account is named, finished or removed by an admin, never a member.
@@ -523,6 +524,7 @@ function AddAccount({
       why={whyName(group.serviceName)}
       action="Add account"
       current={Option.none()}
+      others={group.accounts}
       optional={false}
       onName={onAdd}
     />
@@ -532,6 +534,8 @@ function AddAccount({
 /** What a card says about one of its accounts, and what whoever manages it can do to it. */
 interface Told {
   readonly connection: Connection
+  /** The other accounts on its service: a name one of them has cannot be given to this one. */
+  readonly others: ReadonlyArray<Connection>
   /** The Company this account is shared with, when it is not the Person's own. */
   readonly sharedWith: Option.Option<string>
   readonly pressed: Option.Option<Pressed>
@@ -573,12 +577,22 @@ function AccountWords({
 }
 
 /** The account's own actions, for whoever may take them; nothing for anyone else. */
-function RowActions({ connection, acts }: Told) {
-  return Option.isSome(acts) ? <AccountActions connection={connection} acts={acts.value} /> : null
+function RowActions({ connection, others, acts }: Told) {
+  return Option.isSome(acts) ? (
+    <AccountActions connection={connection} others={others} acts={acts.value} />
+  ) : null
 }
 
 /** What whoever manages an account can do to it, at the trailing edge of its row. */
-function AccountActions({ connection, acts }: { connection: Connection; acts: Acts }) {
+function AccountActions({
+  connection,
+  others,
+  acts,
+}: {
+  connection: Connection
+  others: ReadonlyArray<Connection>
+  acts: Acts
+}) {
   const naming = connection.name === null ? 'Name this account' : 'Rename this account'
   return (
     <div className="flex shrink-0 items-center gap-1">
@@ -592,6 +606,7 @@ function AccountActions({ connection, acts }: { connection: Connection; acts: Ac
         why="Your own name for it, such as Work. Vivid uses it too. Leave it empty to remove the name."
         action="Save"
         current={Option.fromNullOr(connection.name)}
+        others={others}
         optional
         onName={(name) => acts.onRename(connection, name)}
       />
@@ -944,6 +959,7 @@ function ServiceTile({
       why={whyName(service.name)}
       action="Add account"
       current={Option.none()}
+      others={accounts}
       optional={false}
       onName={onConnect}
     />

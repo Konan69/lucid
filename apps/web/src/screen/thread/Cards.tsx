@@ -474,9 +474,8 @@ export function ConnectionCard({
   const carryOn = () => onContinue(words.carryOn)
   // One more account on a service that does not say who signs in is named before it is begun,
   // as "Add account" in Settings does; the accounts already there are what show whether it says.
-  const named =
-    Awaited.$is('Another')(awaited) &&
-    asksName(list.filter((connection) => connection.service === request.service))
+  const held = list.filter((connection) => connection.service === request.service)
+  const named = Awaited.$is('Another')(awaited) && asksName(held)
 
   /** One press: resume what was begun, or begin it, then listen for it to be connected. */
   async function connect(name: Option.Option<AccountName>) {
@@ -542,7 +541,7 @@ export function ConnectionCard({
           </div>
           <ConnectionAction
             label={words.connect}
-            naming={named ? Option.some(request.serviceName) : Option.none()}
+            naming={named ? Option.some({ service: request.serviceName, held }) : Option.none()}
             ready={ready}
             current={current}
             pressed={pressed}
@@ -579,8 +578,11 @@ function ConnectionAction({
 }: {
   /** What the press does, for a screen reader: "Connect Gmail", "Add another Gmail account". */
   label: string
-  /** The service whose new account is asked a name for before it is begun, when one is. */
-  naming: Option.Option<string>
+  /**
+   * The service whose new account is asked a name for before it is begun, when one is, with the
+   * accounts already on it: a name one of them has cannot be given again.
+   */
+  naming: Option.Option<{ readonly service: string; readonly held: ReadonlyArray<Connection> }>
   ready: boolean
   current: boolean
   pressed: Pressed
@@ -625,9 +627,10 @@ function ConnectionAction({
           </Button>
         }
         title="Name the new account"
-        why={`${naming.value} does not say who signs in. A name is how you and Vivid tell your accounts apart.`}
+        why={`${naming.value.service} does not say who signs in. A name is how you and Vivid tell your accounts apart.`}
         action="Connect"
         current={Option.none()}
+        others={naming.value.held}
         optional={false}
         onName={onConnect}
       />

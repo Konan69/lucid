@@ -212,14 +212,26 @@ function Lists({
         }
       />
       <Managed connections={connections} flow={flow} />
-      {Option.isSome(flow.naming) && (
-        <NameNew
-          serviceName={flow.naming.value.serviceName}
-          onClose={flow.closeNaming}
-          onName={flow.named}
-        />
-      )}
+      <Naming connections={connections} flow={flow} />
     </>
+  )
+}
+
+/**
+ * The form that asks what to call an account before it is begun, while the flow is waiting on one
+ * (`flow.naming`). It knows the accounts already on that service, so it can say a name is taken
+ * before anything is sent.
+ */
+function Naming({ connections, flow }: { connections: ReadonlyArray<Connection>; flow: Flow }) {
+  if (Option.isNone(flow.naming)) return null
+  const { service, serviceName } = flow.naming.value
+  return (
+    <NameNew
+      serviceName={serviceName}
+      others={connections.filter((item) => item.service === service)}
+      onClose={flow.closeNaming}
+      onName={flow.named}
+    />
   )
 }
 

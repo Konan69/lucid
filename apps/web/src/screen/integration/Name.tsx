@@ -1,5 +1,5 @@
-import { ACCOUNT_NAME_MAX, type AccountName } from '@vivid/contracts'
-import { typedAccountName } from '@vivid/state'
+import { ACCOUNT_NAME_MAX, type AccountName, type Connection } from '@vivid/contracts'
+import { nameTaken, typedAccountName } from '@vivid/state'
 import { Option } from 'effect'
 import { useId, useState, type ReactElement } from 'react'
 import { Button } from '../../ui/button'
@@ -35,6 +35,7 @@ export function NameAccount({
   why,
   action,
   current,
+  others,
   optional,
   onName,
 }: {
@@ -47,6 +48,8 @@ export function NameAccount({
   action: string
   /** The name the account has now, when it has one. */
   current: Option.Option<string>
+  /** The other accounts on the same service: a name one of them has cannot be given again. */
+  others: ReadonlyArray<Pick<Connection, 'name'>>
   /** Whether sending no name is an answer (it removes the name) or not yet an answer. */
   optional: boolean
   onName: (name: Option.Option<AccountName>) => void
@@ -61,6 +64,7 @@ export function NameAccount({
           why={why}
           action={action}
           current={current}
+          others={others}
           optional={optional}
           onName={(name) => {
             setOpen(false)
@@ -78,6 +82,7 @@ function NameForm({
   why,
   action,
   current,
+  others,
   optional,
   onName,
 }: {
@@ -85,18 +90,22 @@ function NameForm({
   why: string
   action: string
   current: Option.Option<string>
+  others: ReadonlyArray<Pick<Connection, 'name'>>
   optional: boolean
   onName: (name: Option.Option<AccountName>) => void
 }) {
   const [written, setWritten] = useState(Option.getOrElse(current, () => ''))
   const field = useId()
   const name = typedAccountName(written)
+  // Said beside the field while it is typed, so the server is never asked for a name it refuses.
+  const taken = nameTaken(others, name)
+  const ready = !taken && (optional || Option.isSome(name))
   return (
     <form
       className="flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault()
-        if (optional || Option.isSome(name)) onName(name)
+        if (ready) onName(name)
       }}
     >
       <PopoverHeader>
@@ -115,9 +124,16 @@ function NameForm({
         autoComplete="off"
         autoCapitalize="words"
         spellCheck={false}
+        aria-invalid={taken}
+        aria-describedby={taken ? `${field}-taken` : undefined}
       />
+      {taken && (
+        <p id={`${field}-taken`} role="alert" className="text-meta font-meta text-danger">
+          Another account here is already called that. Choose a different name.
+        </p>
+      )}
       <div className="flex justify-end">
-        <Button type="submit" size="sm" disabled={!optional && Option.isNone(name)}>
+        <Button type="submit" size="sm" disabled={!ready}>
           {action}
         </Button>
       </div>

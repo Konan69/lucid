@@ -118,6 +118,24 @@ export const typedAccountName = (written: string): Option.Option<AccountName> =>
 }
 
 /**
+ * Whether a name is already another account's on the service. The server refuses a name twice
+ * among one owner's accounts (two "Work" accounts would be told apart only by a number that
+ * moves), and a form says so beside its field before anything is sent. The check here is over
+ * every account the Person can see on the service, their Company's included, so a Person is not
+ * led into a "Work" and a "Work (2)" either. Case and the spaces around a name do not count.
+ */
+export const nameTaken = (
+  others: ReadonlyArray<Pick<Connection, 'name'>>,
+  name: Option.Option<string>,
+): boolean =>
+  Option.exists(name, (wanted) =>
+    others.some(
+      (account) =>
+        account.name !== null && account.name.trim().toLowerCase() === wanted.trim().toLowerCase(),
+    ),
+  )
+
+/**
  * What a card in a Thread is waiting for.
  *
  * - `Service`: Vivid offered a service. Any ready account the Person has on it answers.
