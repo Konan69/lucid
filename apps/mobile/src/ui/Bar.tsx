@@ -9,15 +9,17 @@ import {
 } from '@react-navigation/native-stack'
 import { Menu as MenuLines, Phone, type LucideIcon } from 'lucide-react-native'
 import { useLayoutEffect, useRef, useState } from 'react'
-import { Animated, Platform, View } from 'react-native'
+import { Animated, Image, Platform, View } from 'react-native'
 import { openDrawer } from '../data/drawer'
+import { menuMark, useMenuMark } from '../data/mark'
 import type { Stand } from '../data/stand'
 import { useAppearance } from '../data/vivid'
+import { useTheme } from '../theme'
 import { Faces } from './Avatar'
 import { GLASS_SUPPORTED } from './Glass'
 import { presence, type Told } from './Presence'
 import { NO_SCROLL_EDGES, SCROLL_EDGES } from './stack'
-import { IconButton, Label, type Tone } from './ui'
+import { IconButton, Label, Press, radius, TARGET, type Tone } from './ui'
 
 /**
  * What a screen puts in the system's navigation bar: its title and at most a couple of actions.
@@ -157,13 +159,62 @@ const endOptions = (end: BarEnd, press: PressAt): NativeStackNavigationOptions =
             : () => <BarButtons {...end} press={press} />,
       }
 
-/** The way to the menu, as the action it is in a bar. */
-const MENU: BarAction = {
-  symbol: 'line.3.horizontal',
-  icon: MenuLines,
-  label: 'Open menu',
-  disabled: false,
+/** What a screen reader says for the way to the menu. */
+const MENU_LABEL = 'Open menu'
+
+/** The mark's own size: the 22 points the image is drawn at (`assets/menu.png`). */
+const MENU_MARK = 22
+
+/**
+ * iOS: the way to the menu as the system's own bar button. Its picture is the app's own mark
+ * once that is known to load (`own`, `data/mark.ts`), and the system's three-line symbol until
+ * then, so the button is never blank.
+ */
+const menuItem = (own: boolean): NativeStackHeaderItem => ({
+  type: 'button',
+  // The picture is the whole button; the name is for assistive technology only.
+  label: '',
+  accessibilityLabel: MENU_LABEL,
+  // The image is tinted, so the system draws it in the bar's own ink as it does a symbol.
+  icon: own
+    ? { type: 'image', source: menuMark, tinted: true }
+    : { type: 'sfSymbol', name: 'line.3.horizontal' },
+  variant: 'plain',
+  glassEffect: false,
+  sharesBackground: true,
+  hidesSharedBackground: false,
   onPress: openDrawer,
+})
+
+/** Android: the same mark, or the three lines until it loads, in a button the app draws. */
+function MenuButton() {
+  const { colors: c } = useTheme()
+  const own = useMenuMark()
+  return (
+    <Press
+      accessibilityRole="button"
+      accessibilityLabel={MENU_LABEL}
+      onPress={openDrawer}
+      style={({ pressed }) => ({
+        width: TARGET,
+        height: TARGET,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: radius.control,
+        backgroundColor: pressed ? c['wash-pressed'] : 'transparent',
+      })}
+    >
+      {own ? (
+        <Image
+          source={menuMark}
+          // The mark is black on clear; the tint draws it in the bar's ink.
+          style={{ width: MENU_MARK, height: MENU_MARK, tintColor: c['ink-2'] }}
+        />
+      ) : (
+        <MenuLines pointerEvents="none" size={21} strokeWidth={1.7} color={c['ink-2']} />
+      )}
+    </Press>
+  )
 }
 
 /**
@@ -173,23 +224,23 @@ const MENU: BarAction = {
  *
  * It is a bar button of its own (the reference's "Show thread sidebar" button,
  * `src/features/layout/workspace-sidebar-toolbar.tsx`), so on iOS 26 the system draws it as round
- * glass like every other bar button. Its picture is the three lines a phone's menu is known by.
- * The reference's is the system's sidebar symbol, a window with a pane, which is how a desktop
- * says it; the owner called that "the pc version" on a phone (6 October 2026). The picture is one
- * of the system's own symbols and not an image of ours, because a bar button's image comes from
- * a file, and one delivered in an update has lost the name that says how dense it is.
+ * glass like every other bar button. Its picture is the mark the owner pointed at, the Claude
+ * iPhone app's (6 October 2026): three lines from one edge, the last about half as long. The
+ * reference's is the system's sidebar symbol, a window with a pane, which he called "the pc
+ * version" on a phone, and the system has no symbol for this one, so it is an image of ours
+ * (`assets/menu.png`, drawn at 22 points for each screen density). The installed
+ * react-native-screens loads a bar button's image with its density and draws it as a template
+ * (`ios/helpers/image/RNSImageLoadingHelper.mm`), so it arrives in an update like any other
+ * asset and needs no new binary. It is used only once it is known to load (`data/mark.ts`).
  *
  * Vivid's face used to be the button; the owner asked for a menu icon here and Vivid in the
- * centre (5 October 2026), and the face is in Vivid's capsule now (`ui/Presence.tsx`).
- * `unstable_headerLeftItems` is iOS's, so Android gets the same button drawn by the app in its
- * solid bar.
+ * centre (5 October 2026). `unstable_headerLeftItems` is iOS's, so Android gets the same mark in
+ * a button drawn by the app in its solid bar.
  */
-const menuOptions = (): NativeStackNavigationOptions =>
+const menuOptions = (own: boolean): NativeStackNavigationOptions =>
   Platform.OS === 'ios'
-    ? { unstable_headerLeftItems: () => barItems([MENU], () => openDrawer()) }
-    : {
-        headerLeft: () => <IconButton icon={MENU.icon} label={MENU.label} onPress={MENU.onPress} />,
-      }
+    ? { unstable_headerLeftItems: () => [menuItem(own)] }
+    : { headerLeft: () => <MenuButton /> }
 
 /** Nobody else is here. One value, for the same reason as `NO_ACTIONS`. */
 export const NOBODY: ReadonlyArray<PersonSummary> = []
@@ -368,14 +419,16 @@ export function VividBar({ inverted, present, actions }: BarEnd & { inverted: bo
   const vivid = useAppearance()
   const end: BarEnd = { present, actions: [...actions, callAction(vivid.name)] }
   const people = present.map((person) => [person.id, person.name, person.image])
+  // Part of what the bar looks like: the options are applied again when the mark is known to load.
+  const own = useMenuMark()
   useBar(
-    JSON.stringify(['vivid', inverted, people, shownOf(end.actions)]),
+    JSON.stringify(['vivid', inverted, own, people, shownOf(end.actions)]),
     end.actions,
     (press) => ({
       title: '',
       ...PLAIN,
       scrollEdgeEffects: edgesFor(inverted),
-      ...menuOptions(),
+      ...menuOptions(own),
       ...endOptions(end, press),
     }),
   )
