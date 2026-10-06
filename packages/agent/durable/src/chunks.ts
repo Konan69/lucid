@@ -259,20 +259,32 @@ function updateBlock(state: RunState, contentIndex: number, block: Block): Step 
   return join(replaced, releaseContent(replaced.state))
 }
 
-/** SDK text/reasoning deltas append; a shorter authoritative replacement needs reset-step.
- * Reset only this response's step, then rebuild its latest content with the same part ids. This
- * removes Responses' streamed trailing summary separator while retaining earlier steps. Replayed
- * partials start from the captured replacement and therefore follow the same content rule. */
+/** Emitted SDK prefixes cannot be retracted with deltas; test the actual sent prefix, not length.
+ * Missing/changed identities also require a rebuild so the client never retains an orphan part. */
+function extendsReported(before: Block, after: Block, reported: Reported): boolean {
+  const length = Reported.$is('Open')(reported) ? reported.length : bodyLength(before)
+  switch (before.type) {
+    case 'text':
+      return after.type === 'text' && after.text.startsWith(before.text.slice(0, length))
+    case 'thinking':
+      return (
+        after.type === 'thinking' && after.thinking.startsWith(before.thinking.slice(0, length))
+      )
+    case 'toolCall':
+      return after.type === 'toolCall' && after.id === before.id && after.name === before.name
+  }
+}
+
+/** An authoritative non-prefix replacement resets this response's SDK step and rebuilds it.
+ * Includes equal/greater-length edits and removed blocks, retaining every earlier durable step.
+ * Buffered anonymous blocks have not been reported and therefore need no client reset. */
 function replaceContent(state: RunState, content: ReadonlyMap<number, Block>): Step {
-  const shortened = [...content].some(([index, block]) => {
-    const reported = state.blocks.get(index)
-    return (
-      reported !== undefined &&
-      Reported.$is('Open')(reported) &&
-      bodyLength(block) < reported.length
-    )
+  const replaced = [...state.blocks].some(([index, reported]) => {
+    const before = state.content.get(index)
+    const after = content.get(index)
+    return before === undefined || after === undefined || !extendsReported(before, after, reported)
   })
-  return shortened
+  return replaced
     ? {
         state: { ...state, content, blocks: new Map(), calls: new Set() },
         chunks: [{ type: 'reset-step' }],
