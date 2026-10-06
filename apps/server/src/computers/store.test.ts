@@ -1439,6 +1439,17 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             reason: 'the Person is using the Computer',
           }),
         )
+        expect(
+          yield* computerRunner({
+            origin: ActionOrigin.cases.RuntimeThread.make({
+              threadId: ThreadId.make('cloud-thread'),
+            }),
+            person: first,
+            target: ActionTarget.cases.Desktop.make({
+              action: DesktopAction.cases.Type.make({ text: 'notes' }),
+            }),
+          }),
+        ).toEqual(ActionOutcome.cases.Failed.make({ reason: 'the Person is using the Computer' }))
         yield* computerHandlers.HoldComputer({ held: false }).pipe(asPerson(first))
         expect((yield* computerHandlers.ComputerShell(request).pipe(asVivid(first)))._tag).toBe(
           'Completed',
@@ -1550,6 +1561,18 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         ])
         yield* Ref.set(evidence.decisions, GateDecision.cases.Allowed.make({}))
         yield* Ref.set(evidence.lost, true)
+        // An approved action whose receipt was lost is unknown, so it is never run a second time.
+        expect(
+          (yield* computerRunner({
+            origin: ActionOrigin.cases.RuntimeThread.make({
+              threadId: ThreadId.make('cloud-thread'),
+            }),
+            person: first,
+            target: ActionTarget.cases.Desktop.make({
+              action: DesktopAction.cases.Type.make({ text: 'notes' }),
+            }),
+          }))._tag,
+        ).toBe('Unknown')
         expect((yield* computerHandlers.ComputerShell(request).pipe(asVivid(first)))._tag).toBe(
           'OutcomeUnknown',
         )

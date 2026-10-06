@@ -11,7 +11,7 @@ export const ActionEffect = Schema.Literals(['read', 'write', 'destructive'] as 
 export type ActionEffect = typeof ActionEffect.Type
 
 /**
- * What the action is done to. A Connection tool runs under one named account; a command, a
+ * What the action is done to. A Connection tool runs under one named account; a
  * browser step and a desktop action run on the acting Person's Computer.
  */
 export const ActionTarget = Schema.TaggedUnion({

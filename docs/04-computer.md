@@ -263,7 +263,7 @@ and Vivid has Flue's six file and shell tools on its Computer. Its connection co
 "Runtime on the Computer" below. It is deliberately thin, because it is deleted when the runtime
 moves onto the machine.
 
-### What is wrong today
+### What was wrong before 5 October 2026
 
 Vivid cannot read or write one file on its own Computer. Its runtime runs beside the server, and
 reaches the machine through one custom tool, `run_command`: the model asks the server, the server

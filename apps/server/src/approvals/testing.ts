@@ -350,10 +350,12 @@ export const connectionAction = ProposedAction.make({
   }),
 })
 export const desktopAction = ProposedAction.make({
-  summary: 'Look at the working files',
+  summary: 'Type the file name',
   rationale: 'Inspect work',
   effect: 'write',
-  target: ActionTarget.cases.Desktop.make({ action: DesktopAction.cases.Look.make({}) }),
+  target: ActionTarget.cases.Desktop.make({
+    action: DesktopAction.cases.Type.make({ text: 'notes' }),
+  }),
 })
 export const JudgmentMode = Judgment
 

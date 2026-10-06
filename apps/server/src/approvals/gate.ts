@@ -125,7 +125,7 @@ export interface ActionRunnerService {
 
 /**
  * Performs approved actions. Composed in `main.ts` from the domains that own each kind of target:
- * Connections for `Connection`, the Computer for `Command` and `Browser`.
+ * Connections for `Connection`, the Computer for `Browser` and `Desktop`.
  */
 export class ActionRunner extends Context.Service<ActionRunner, ActionRunnerService>()(
   'vivid/ActionRunner',
