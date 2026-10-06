@@ -117,15 +117,14 @@ NodeChildProcess.spawnSync(
 // server's release directory honest, and sources are not shipped where they are not used.
 const metadata = JSON.parse(NodeFS.readFileSync(NodePath.join(directory, 'metadata.json'), 'utf8'))
 /**
- * Every path `metadata.json` names for the platform: the launch bundle first, then the assets.
- * `launchAsset` and `assets` are both objects with a `path`, so one read of that field covers
- * them; anything the platform entry names but does not carry a path for cannot be served, so it
- * is left to the map sweep below like everything else unnamed.
+ * Every path `metadata.json` names for the platform, the shape the server also decodes
+ * (`apps/server/src/updates/release.ts`): the launch bundle at `bundle` as one path, then the
+ * assets, each carrying its own `path`. Anything the platform entry names but does not carry a
+ * path for cannot be served, so it is left to the map sweep below like everything else unnamed.
  */
 const named = new Set(
   Object.values(metadata.fileMetadata)
-    .flatMap((platform) => [platform.launchAsset, ...platform.assets])
-    .map((file) => file.path)
+    .flatMap((platform) => [platform.bundle, ...platform.assets.map((asset) => asset.path)])
     .filter((path) => typeof path === 'string')
     .map((path) => NodePath.resolve(directory, path)),
 )
