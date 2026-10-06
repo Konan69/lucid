@@ -9,6 +9,7 @@ import * as Schema from 'effect/Schema'
 import { parse, report, selectStages, withoutRepositoryEnvironment } from './gate.mjs'
 import { shellWord, snapshot, treeName } from './gate/cloud.mjs'
 import { checkRatchets, countFindings, ratchets } from './gate/ratchets.mjs'
+import { slotCount, takeLock } from './gate/slots.mjs'
 import { stageNames, stageOfTask, stages } from './gate/stages.mjs'
 
 const assert = NodeAssert
@@ -150,6 +151,24 @@ void test('a remote argument stays one word whatever it contains', () => {
     })
     assert.equal(echoed.stdout, argument)
   }
+})
+
+void test('a lock is exclusive while its owner lives and is taken over when it is gone', (t) => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-gate-lock-'))
+  t.after(() => NodeFS.rmSync(directory, { recursive: true, force: true }))
+  const lock = NodePath.join(directory, 'lock')
+  const release = takeLock(lock)
+  assert.equal(typeof release, 'function')
+  assert.equal(takeLock(lock), undefined)
+  release()
+  // A process id that has exited: the child is reaped before its id is written.
+  const gone = NodeChildProcess.spawnSync(process.execPath, ['-e', 'console.log(process.pid)'], {
+    encoding: 'utf8',
+  })
+  NodeFS.writeFileSync(lock, gone.stdout.trim())
+  assert.equal(typeof takeLock(lock), 'function')
+  assert.equal(slotCount(8), 2)
+  assert.equal(slotCount(2), 1)
 })
 
 void test('arguments select a mode, and an unknown stage is refused', () => {

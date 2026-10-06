@@ -5,6 +5,7 @@ import { openRunDatabase } from './database.mjs'
 import * as Schema from 'effect/Schema'
 import { logged, readTestCounts, runIdentifier } from './process.mjs'
 import { checkRatchets } from './ratchets.mjs'
+import { holdSlot, takeLock } from './slots.mjs'
 import { stageOfTask, stages } from './stages.mjs'
 
 /** Where Vitest writes each package's counts; a Turbo output, so a cache hit restores it. */
@@ -206,43 +207,24 @@ export async function runLocal(root, selection, environment) {
   const runId = runIdentifier()
   const directory = NodePath.join(root, '.cache/gate/runs', runId)
   NodeFS.mkdirSync(directory, { recursive: true })
-  const release = holdTree(root)
+  const releaseTree = holdTree(root)
+  const releaseSlot = await holdSlot((message) => process.stdout.write(`${message}\n`))
   try {
     return await runStages(root, selection, environment, { runId, directory })
   } finally {
-    release()
+    releaseSlot()
+    releaseTree()
   }
 }
 
 /**
- * One gate at a time in one tree. Two would run Turbo over the same outputs and could each read
- * the other's run summary. The lock is a file holding the owner's process id, created
- * exclusively; a lock whose owner is gone (a killed run) is taken over.
+ * One gate at a time in one tree: two would run Turbo over the same outputs and could each read
+ * the other's run summary.
  */
 function holdTree(root) {
-  const lock = NodePath.join(root, '.cache/gate/lock')
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      NodeFS.writeFileSync(lock, String(process.pid), { flag: 'wx' })
-      return () => NodeFS.rmSync(lock, { force: true })
-    } catch {
-      const owner = Number(NodeFS.readFileSync(lock, 'utf8'))
-      if (ownerAlive(owner))
-        throw new Error(`a gate is already running in this tree (process ${owner})`)
-      NodeFS.rmSync(lock, { force: true })
-    }
-  }
-  throw new Error('could not take the gate lock for this tree')
-}
-
-/** Signal 0 delivers nothing; it only asks whether the process exists. */
-function ownerAlive(pid) {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
+  const release = takeLock(NodePath.join(root, '.cache/gate/lock'))
+  if (release === undefined) throw new Error('a gate is already running in this tree')
+  return release
 }
 
 async function runStages(root, selection, environment, { runId, directory }) {

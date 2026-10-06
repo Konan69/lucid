@@ -81,19 +81,21 @@ const lifetimeFixture = Effect.fn('Computer.screen.test.lifetime')(function* (st
    * immediate child before signaling readiness; suppress automatic yields only in that child
    * so the signal cannot overtake registration (rc.116 TestClock.make.sleep registers first).
    */
-  const tickingClock = {
-    ...clock,
-    sleep: Effect.fn('Computer.screen.test.tick')(function* (duration: Duration.Duration) {
-      const sleeper = yield* clock
-        .sleep(duration)
-        .pipe(
-          Effect.provideService(Scheduler.PreventSchedulerYield, true),
-          Effect.forkChild({ startImmediately: true }),
-        )
-      yield* Deferred.succeed(sleeping, undefined)
-      yield* Fiber.join(sleeper)
-    }),
-  }
+  // SAFETY: Object.create keeps the TestClock as the prototype, so every other Clock method is
+  // the real one; only sleep is overridden below.
+  const tickingClock = Object.create(clock) as Clock.Clock
+  tickingClock.sleep = Effect.fn('Computer.screen.test.tick')(function* (
+    duration: Duration.Duration,
+  ) {
+    const sleeper = yield* clock
+      .sleep(duration)
+      .pipe(
+        Effect.provideService(Scheduler.PreventSchedulerYield, true),
+        Effect.forkChild({ startImmediately: true }),
+      )
+    yield* Deferred.succeed(sleeping, undefined)
+    yield* Fiber.join(sleeper)
+  })
   const store = yield* ComputerStore
   const controlled = ComputerStore.of({
     ...store,

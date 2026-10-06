@@ -8,8 +8,6 @@ const project = {
   test: {
     name: '@vivid/agent-runtime',
     environment: 'node',
-    // Transformed modules are kept on disk, keyed by content, and reused by the next process.
-    fsModuleCache: true,
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     passWithNoTests: true,
     // Worker setup owns database authority; config-time mutation would affect other projects.
