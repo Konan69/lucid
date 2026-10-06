@@ -11,7 +11,7 @@ import {
   ToolTask,
 } from '@earendil-works/pi-durable'
 import { asSchema, type Tool, type ToolSet } from 'ai'
-import { Effect, Option, Predicate, Schema } from 'effect'
+import { Effect, Option, Predicate, Schema, Stream } from 'effect'
 
 import { ToolContextFailed, ToolFailed, ToolOutputFailed, ToolSchemaFailed } from './errors.ts'
 import {
@@ -81,6 +81,15 @@ type Program = (
 >
 
 const decodeJsonText = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.MutableJson))
+
+/** SDK execute is an untyped ingress; recognize its async-iterator protocol before JSON encoding. */
+const isAsyncOutput = Schema.is(
+  Schema.declare<AsyncIterable<SdkValue>>(
+    (value) =>
+      Predicate.hasProperty(value, Symbol.asyncIterator) &&
+      Predicate.isFunction(value[Symbol.asyncIterator]),
+  ),
+)
 
 /** Decode only representations Pi can carry; unsupported parts fail the entire conversion. */
 const ImageMedia = Schema.String.check(Schema.isPattern(/^image\/[a-z0-9.+-]+$/iu))
@@ -183,7 +192,9 @@ const validate = (schema: ReturnType<typeof asSchema>, args: SdkValue, name: str
 
 /**
  * The SDK's execute result is untyped at this third-party ingress. Serialize here, then decode the
- * actual persisted JSON once. Pi requires text content, so unserializable output is a typed failure.
+ * actual persisted JSON once. SDK provider-utils/types/execute-tool.ts:44–50 selects the last yielded
+ * result, ignoring the iterator return value. Earlier preliminary values are not streamed here.
+ * Effect Channel.fromAsyncIterable owns return() on cancellation and closes the iterator scope.
  */
 const invoke = Effect.fn('Durable.invokeTool')(function* (
   server: Server,
@@ -223,7 +234,7 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
         ),
       ),
   })
-  const output = yield* Effect.tryPromise({
+  const executed = yield* Effect.tryPromise({
     try: async function executeForSdk() {
       return server.execute(checked.value, {
         toolCallId: api.callId,
@@ -234,6 +245,14 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
     },
     catch: (cause) => new ToolFailed({ toolName: server.name, cause }),
   })
+  const output = yield* isAsyncOutput(executed)
+    ? Stream.runLast(
+        Stream.fromAsyncIterable(
+          executed,
+          (cause) => new ToolFailed({ toolName: server.name, cause }),
+        ),
+      ).pipe(Effect.map(Option.getOrUndefined))
+    : Effect.succeed(executed)
   const serialized = yield* Effect.try({
     try: () => ({
       text: Predicate.isString(output) ? output : JSON.stringify(output),
