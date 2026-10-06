@@ -37,7 +37,8 @@ const rowSchema = createSelectSchema(connections, {
 }).mapFields(({ label: _retired, ...fields }) => fields)
 export type ConnectionRecord = typeof rowSchema.Type
 const decodeConnectionId = Schema.decodeUnknownEffect(ConnectionId)
-const decodeRow = decodeStored(rowSchema, 'Connection')
+/** The one decoder for a stored Connection; every reader of the table goes through it. */
+export const decodeRow = decodeStored(rowSchema, 'Connection')
 export const encodeReferences = Schema.encodeSync(ExecutorReferences)
 
 /** Personal accounts follow their Person across workspaces; Company accounts stay in their Company. */

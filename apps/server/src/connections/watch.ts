@@ -1,10 +1,9 @@
 import { and, eq, isNull, or } from 'drizzle-orm'
-import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import { FindEventsResponse, InvalidRequest, RoutineTrigger } from '@vivid/contracts'
 import { Array as Arr, Effect, Layer, Option, Result, Schema } from 'effect'
 import { FetchHttpClient } from 'effect/unstable/http'
 import type { Actor } from '../auth/access.ts'
-import { Database, decodeStored } from '../database/client.ts'
+import { Database } from '../database/client.ts'
 import {
   IntegrationWatch,
   IntegrationRevoked,
@@ -28,7 +27,7 @@ import {
   type ExecutorTool,
 } from './executor.ts'
 import { executorFailure } from './errors.ts'
-import { listRecords } from './records.ts'
+import { decodeRow, listRecords, type ConnectionRecord } from './records.ts'
 import { namedAccounts } from './names.ts'
 import { connections } from './tables.ts'
 
@@ -55,8 +54,6 @@ const ToolBranch = Schema.Struct({
 })
 const decodeEnvelope = Schema.decodeUnknownOption(ToolEnvelope)
 const decodeBranch = Schema.decodeUnknownResult(ToolBranch)
-const StoredConnection = createSelectSchema(connections, { references: ExecutorReferences })
-const decodeConnection = decodeStored(StoredConnection, 'Integration watch Connection')
 
 /** Account-operation wrappers are selected privately; their account constants never enter discovery. */
 function providerInput(tool: typeof ExecutorTool.Type, references: ExecutorReferences) {
@@ -165,7 +162,7 @@ const observationFailure = (connectionId: Watch['connectionId']) => (error: Exec
 /** One read-only call per observation, with current metadata and authorization rechecked each time. */
 const read = (executor: Executor['Service']) =>
   Effect.fn('IntegrationWatch.read')(function* (
-    row: typeof StoredConnection.Type,
+    row: ConnectionRecord,
     trigger: typeof RoutineTrigger.cases.Integration.Type,
   ) {
     const connectionId = Watch.fields.connectionId.make(row.id)
@@ -364,7 +361,7 @@ export const integrationPollingServiceLayer = Layer.effect(
         const raw = rows[0]
         if (raw === undefined)
           return yield* Effect.fail(new IntegrationRevoked({ connectionId: watch.connectionId }))
-        const items = yield* observe(yield* decodeConnection(raw), watch.trigger)
+        const items = yield* observe(yield* decodeRow(raw), watch.trigger)
         return yield* newBatch(watch, items)
       }),
     })
