@@ -21,15 +21,24 @@ export const providerFamilies = [
   'late',
   'responses',
 ] as const
-export type ProviderFamily = (typeof providerFamilies)[number] | 'custom' | 'end' | 'never'
+export type ProviderFamily =
+  | (typeof providerFamilies)[number]
+  | 'custom'
+  | 'end'
+  | 'never'
+  | 'interleaved'
 export type ProviderOptions = RegisterFauxProviderOptions & {
   readonly partialFamily?: ProviderFamily
+  /** Own frame gate for deterministic progress tests; invoked after publishing the captured frame. */
+  readonly onFrame?: (event: AssistantMessageEvent) => Effect.Effect<void>
 }
 const decodeArguments = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.MutableJson))
 type PartialState = {
   readonly family: ProviderFamily
   readonly arguments: Map<number, string>
   readonly ended: Set<number>
+  firstTool: number
+  revealed: boolean
 }
 
 /**
@@ -69,7 +78,11 @@ function partial(message: AssistantMessage, state: PartialState): AssistantMessa
 function toolPartial(block: ToolCall, index: number, state: PartialState): ToolCall {
   // Some providers reveal identity only in the terminal result; never uses the scripted empty
   // fields unchanged, matching Bedrock's absent id/name with no subsequent filling branch.
-  if (state.family === 'end') return { ...block, id: '', name: '' }
+  if (
+    state.family === 'end' ||
+    (state.family === 'interleaved' && index === state.firstTool && !state.revealed)
+  )
+    return { ...block, id: '', name: '' }
   const text = state.arguments.get(index)
   if (text === undefined) return block
   const arguments_ = decodeArguments(parseStreamingJson(text))
@@ -84,7 +97,7 @@ function toolPartial(block: ToolCall, index: number, state: PartialState): ToolC
       partialJson: text,
       index,
     })),
-    Match.whenOr('openai', 'late', () => ({
+    Match.whenOr('openai', 'late', 'interleaved', () => ({
       ...block,
       ...identity,
       arguments: arguments_,
@@ -109,10 +122,26 @@ function toolPartial(block: ToolCall, index: number, state: PartialState): ToolC
   )
 }
 
+/** Reveal interleaved identity only after a later text block has reached a distinct frame. */
+function observeIdentity(event: AssistantMessageEvent, state: PartialState) {
+  if (event.type === 'toolcall_start' && state.firstTool === -1)
+    state.firstTool = event.contentIndex
+  if (
+    event.type === 'text_delta' &&
+    event.contentIndex > state.firstTool &&
+    state.firstTool !== -1
+  ) {
+    const block = event.partial.content[event.contentIndex]
+    if (block !== undefined && block.type === 'text' && block.text.length > 32)
+      state.revealed = true
+  }
+}
+
 /** Provider terminal blocks strip scratch fields; every delta has its own captured partial copy. */
 function adapt(event: AssistantMessageEvent, state: PartialState): AssistantMessageEvent {
   if (event.type === 'done') return event
   if (event.type === 'error') return { ...event, error: terminal(event.error, state) }
+  observeIdentity(event, state)
   if (event.type === 'toolcall_start') state.arguments.set(event.contentIndex, '')
   if (event.type === 'toolcall_delta') {
     const text = state.arguments.get(event.contentIndex)
@@ -144,22 +173,35 @@ const relay = Effect.fn('Test.providerRelay')(function* (
   source: AssistantMessageEventStream,
   destination: AssistantMessageEventStream,
   family: ProviderFamily,
+  onFrame: (event: AssistantMessageEvent) => Effect.Effect<void>,
 ) {
-  const state: PartialState = { family, arguments: new Map(), ended: new Set() }
+  const state: PartialState = {
+    family,
+    arguments: new Map(),
+    ended: new Set(),
+    firstTool: -1,
+    revealed: false,
+  }
   yield* Stream.fromAsyncIterable(source, String).pipe(
-    Stream.runForEach((event) => Effect.sync(() => destination.push(adapt(event, state)))),
+    Stream.runForEach((event) =>
+      Effect.gen(function* () {
+        const captured = adapt(event, state)
+        destination.push(captured)
+        yield* onFrame(captured)
+      }),
+    ),
   )
   destination.end(terminal(yield* Effect.promise(() => source.result()), state))
 })
 
 /** Compose a public provider around faux, leaving its scripting, models and deferred APIs intact. */
 export function streamingProvider(options: ProviderOptions = {}) {
-  const { partialFamily = 'late', ...fauxOptions } = options
+  const { partialFamily = 'late', onFrame = () => Effect.void, ...fauxOptions } = options
   const faux = fauxProvider(fauxOptions)
   /** Pi's provider API is synchronous: return its event stream and run the owned relay at ingress. */
   const wrap = (source: AssistantMessageEventStream) => {
     const destination = createAssistantMessageEventStream()
-    void runForPi(relay(source, destination, partialFamily), undefined)
+    void runForPi(relay(source, destination, partialFamily, onFrame), undefined)
     return destination
   }
   return {

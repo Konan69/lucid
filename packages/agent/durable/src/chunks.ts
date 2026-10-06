@@ -51,6 +51,8 @@ export type RunState = {
   readonly response: number
   /** Blocks of the current response already reported, by `contentIndex`. */
   readonly blocks: ReadonlyMap<number, Reported>
+  /** Latest partial blocks, including later content waiting behind an anonymous tool identity. */
+  readonly content: ReadonlyMap<number, Block>
   /** Calls opened in this response; rejected anonymous calls cannot emit orphan result chunks. */
   readonly calls: ReadonlySet<string>
   /**
@@ -64,6 +66,7 @@ export const initialRunState: RunState = {
   turn: 0,
   response: 0,
   blocks: new Map(),
+  content: new Map(),
   calls: new Set(),
   failure: [],
   results: new Set(),
@@ -169,7 +172,13 @@ function recordCall(state: RunState, block: Block): RunState {
 
 /** A new turn: one AI SDK step. */
 const startTurn = (state: RunState): Step => ({
-  state: { ...state, turn: state.turn + 1, blocks: new Map(), calls: new Set() },
+  state: {
+    ...state,
+    turn: state.turn + 1,
+    blocks: new Map(),
+    content: new Map(),
+    calls: new Set(),
+  },
   chunks: [{ type: 'start-step' }],
 })
 
@@ -183,6 +192,7 @@ function startResponse(state: RunState, partial: AssistantMessage): Step {
     ...state,
     response: state.response + 1,
     blocks: new Map(),
+    content: new Map(),
     calls: new Set(),
     failure: [],
   }
@@ -217,7 +227,7 @@ function finishBlock(state: RunState, contentIndex: number, block: Block): Step 
  * Pi events.js messageChanges to emit block/message changes while the block is still streaming.
  * Keep it open; final tool arguments and approval eligibility belong solely to message_end.
  */
-function updateBlock(state: RunState, contentIndex: number, block: Block): Step {
+function reportBlock(state: RunState, contentIndex: number, block: Block): Step {
   if (!identified(block)) return { state, chunks: [] }
   const reported = state.blocks.get(contentIndex)
   if (reported !== undefined && Reported.$is('Closed')(reported)) return { state, chunks: [] }
@@ -235,20 +245,46 @@ function updateBlock(state: RunState, contentIndex: number, block: Block): Step 
   }
 }
 
+/**
+ * Anonymous tools form a content-order barrier across batches. Retain latest blocks rather than
+ * duplicated delta lists: earlier text keeps streaming; later starts and text wait for identity.
+ * The terminal entry resolves the barrier even when Pi rejects the anonymous call.
+ */
+function updateBlock(state: RunState, contentIndex: number, block: Block): Step {
+  const content = new Map(state.content).set(contentIndex, block)
+  return releaseContent({ ...state, content })
+}
+
+/** Release all newly identifiable prefixes without reading state outside the pure translator. */
+function releaseContent(state: RunState): Step {
+  let step: Step = { state, chunks: [] }
+  for (const [index, current] of [...state.content].toSorted(([left], [right]) => left - right)) {
+    if (!identified(current)) break
+    step = join(step, reportBlock(step.state, index, current))
+  }
+  return step
+}
+
 /** Whole-message replacements update every partial block without implying a provider end. */
 function updateMessage(state: RunState, message: AssistantMessage): Step {
-  return message.content.reduce<Step>(
-    (step, block, index) => join(step, updateBlock(step.state, index, block)),
-    { state, chunks: [] },
-  )
+  return releaseContent({
+    ...state,
+    content: new Map(message.content.map((block, index) => [index, block])),
+  })
 }
 
 /** A document append extends an already-open text/reasoning block's reported prefix. */
-function appendBody(state: RunState, contentIndex: number, delta: string): RunState {
-  const reported = state.blocks.get(contentIndex)
-  if (reported === undefined || !Reported.$is('Open')(reported))
-    throw new Error('Pi appended text without an open content block')
-  return mark(state, contentIndex, Reported.Open({ length: reported.length + delta.length }))
+function appendBody(state: RunState, contentIndex: number, delta: string): Step {
+  const block = state.content.get(contentIndex)
+  if (block === undefined || block.type === 'toolCall')
+    throw new Error('Pi appended text without a content block')
+  return updateBlock(
+    state,
+    contentIndex,
+    block.type === 'text'
+      ? { ...block, text: block.text + delta }
+      : { ...block, thinking: block.thinking + delta },
+  )
 }
 
 /** Apply one change to the in-flight assistant message. */
@@ -261,19 +297,8 @@ function applyChange(state: RunState, change: MessageChange): Step {
     case 'toolcall_start':
       return updateBlock(state, change.contentIndex, change.block)
     case 'text_delta':
-      return {
-        state: appendBody(state, change.contentIndex, change.delta),
-        chunks: [
-          { type: 'text-delta', id: partId(state, change.contentIndex), delta: change.delta },
-        ],
-      }
     case 'thinking_delta':
-      return {
-        state: appendBody(state, change.contentIndex, change.delta),
-        chunks: [
-          { type: 'reasoning-delta', id: partId(state, change.contentIndex), delta: change.delta },
-        ],
-      }
+      return appendBody(state, change.contentIndex, change.delta)
     // events.js messageChanges uses this for path-local arguments string appends. Provider scratch
     // JSON also survives in block/message changes; this bridge does not stream tool arguments yet.
     case 'toolcall_delta':
@@ -297,7 +322,10 @@ function finishMessage(state: RunState, message: AssistantMessage): Step {
           : finishBlock(step.state, contentIndex, block)
       return { state: next.state, chunks: [...step.chunks, ...next.chunks] }
     },
-    { state, chunks: [] },
+    {
+      state: { ...state, content: new Map(message.content.map((block, index) => [index, block])) },
+      chunks: [],
+    },
   )
 }
 
@@ -308,7 +336,7 @@ function abortBlock(
   block: Extract<Block, { type: 'toolCall' }>,
 ): Step {
   if (!identified(block)) return { state, chunks: [] }
-  const opened = updateBlock(state, contentIndex, block)
+  const opened = reportBlock(state, contentIndex, block)
   return {
     state: mark(opened.state, contentIndex, Reported.Closed()),
     chunks: [
