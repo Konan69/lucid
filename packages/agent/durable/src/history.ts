@@ -1,3 +1,4 @@
+import type * as DurableErrors from './errors.ts'
 import type { Context } from '@earendil-works/chord'
 import type { UserMessage, TextContent, ImageContent } from '@earendil-works/pi-ai'
 import {
@@ -324,10 +325,10 @@ export const history: (
   context: Context,
 ) => Effect.Effect<
   HistoryPage,
-  | import('./errors.ts').ConversationMissing
+  | DurableErrors.ConversationMissing
   | HistoryCursorInvalid
   | HistoryPageInvalid
-  | import('./errors.ts').PiFailed
+  | DurableErrors.PiFailed
 > = Effect.fn('Durable.history')(function* (
   harness: Harness,
   conversationId: ConversationId,
@@ -335,8 +336,8 @@ export const history: (
   context: Context,
 ): Effect.fn.Return<
   HistoryPage,
-  | import('./errors.ts').ConversationMissing
-  | import('./errors.ts').PiFailed
+  | DurableErrors.ConversationMissing
+  | DurableErrors.PiFailed
   | HistoryCursorInvalid
   | HistoryPageInvalid
 > {

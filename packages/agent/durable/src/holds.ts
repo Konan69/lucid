@@ -1,3 +1,4 @@
+import type * as DurableErrors from './errors.ts'
 import { copyJson, type Context, type JsonValue } from '@earendil-works/chord'
 import {
   type ConversationId,
@@ -547,7 +548,7 @@ export const answer: (
   context: Context,
 ) => Effect.Effect<
   Settlement,
-  CallNotWaiting | import('./errors.ts').ConversationMissing | import('./errors.ts').PiFailed
+  CallNotWaiting | DurableErrors.ConversationMissing | DurableErrors.PiFailed
 > = Effect.fn('Durable.answer')(function* (
   harness: Harness,
   conversationId: ConversationId,

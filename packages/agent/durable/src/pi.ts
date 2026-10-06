@@ -1,3 +1,6 @@
+import type { Scope } from 'effect'
+import type { Op } from '@earendil-works/chord/delta'
+import type { SnapshotEvent } from '@earendil-works/pi-durable'
 import type { Context, Draft } from '@earendil-works/chord'
 import type {
   Conversation,
@@ -210,14 +213,14 @@ export const watch: (
   context: Context,
 ) => Effect.Effect<
   {
-    snapshot: import('@earendil-works/pi-durable').SnapshotEvent
+    snapshot: SnapshotEvent
     stream: Stream.Stream<
-      Exclude<AgentEvent, import('@earendil-works/pi-durable').SnapshotEvent>,
+      Exclude<AgentEvent, SnapshotEvent>,
       PiFailed | WatchClosed | WatchOverflowed
     >
   },
   PiFailed,
-  import('effect/Scope').Scope
+  Scope.Scope
 > = Effect.fn('Durable.watch')(function* (
   harness: Harness,
   conversationId: ConversationId,
@@ -259,7 +262,7 @@ export const watchLive: (
 ) => Effect.Effect<
   Stream.Stream<Readonly<LiveState>, PiFailed | WatchClosed>,
   PiFailed,
-  import('effect/Scope').Scope
+  Scope.Scope
 > = Effect.fn('Durable.watchLive')(function* (
   harness: Harness,
   conversationId: ConversationId,
@@ -287,7 +290,7 @@ export const watchLive: (
 function liveForPi(queue: Queue.Queue<Readonly<LiveState>, PiFailed | WatchClosed | Cause.Done>) {
   return function deliverLive(
     live: Readonly<LiveState> | null,
-    _ops: readonly import('@earendil-works/chord/delta').Op[],
+    _ops: readonly Op[],
     context: Context,
   ) {
     return runForPi(

@@ -1,3 +1,6 @@
+import type { Stream } from 'effect'
+import type { UIMessageChunk } from 'ai'
+import type * as DurableErrors from './errors.ts'
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
 import {
@@ -218,16 +221,14 @@ export const respond: (
   input: TurnInput,
   context: Context,
 ) => Effect.Effect<
-  import('effect/Stream').Stream<
-    import('ai').UIMessageChunk,
-    | import('./errors.ts').PiFailed
-    | import('./errors.ts').WatchClosed
-    | import('./errors.ts').WatchOverflowed
+  Stream.Stream<
+    UIMessageChunk,
+    DurableErrors.PiFailed | DurableErrors.WatchClosed | DurableErrors.WatchOverflowed
   >,
-  | import('./errors.ts').ConversationMissing
-  | import('./errors.ts').PartTooLarge
-  | import('./errors.ts').PartUnsupported
-  | import('./errors.ts').PiFailed
+  | DurableErrors.ConversationMissing
+  | DurableErrors.PartTooLarge
+  | DurableErrors.PartUnsupported
+  | DurableErrors.PiFailed
   | RunMissing
   | TurnInvalid
 > = Effect.fn('Durable.respond')(function* (

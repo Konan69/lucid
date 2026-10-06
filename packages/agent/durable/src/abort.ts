@@ -1,3 +1,4 @@
+import type * as DurableErrors from './errors.ts'
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
 import { Effect } from 'effect'
@@ -13,14 +14,9 @@ export const abort: (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,
-) => Effect.Effect<
-  void,
-  import('./errors.ts').ConversationMissing | import('./errors.ts').PiFailed
-> = Effect.fn('Durable.abort')(function* (
-  harness: Harness,
-  conversationId: ConversationId,
-  context: Context,
-) {
+) => Effect.Effect<void, DurableErrors.ConversationMissing | DurableErrors.PiFailed> = Effect.fn(
+  'Durable.abort',
+)(function* (harness: Harness, conversationId: ConversationId, context: Context) {
   const conversation = yield* Pi.conversation(harness, conversationId, context)
   yield* Pi.abort(conversation, context)
 })

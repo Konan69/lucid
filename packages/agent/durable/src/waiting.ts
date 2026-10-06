@@ -1,3 +1,4 @@
+import type * as Errors from './errors.ts'
 import { copyJson, type Context, type JsonValue } from '@earendil-works/chord'
 import { type ConversationId, type Harness, LiveDoc } from '@earendil-works/pi-durable'
 
@@ -44,14 +45,9 @@ export const waiting: (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,
-) => Effect.Effect<
-  Waiting[],
-  import('./errors.ts').ConversationMissing | import('./errors.ts').PiFailed
-> = Effect.fn('Durable.waiting')(function* (
-  harness: Harness,
-  conversationId: ConversationId,
-  context: Context,
-) {
+) => Effect.Effect<Waiting[], Errors.ConversationMissing | Errors.PiFailed> = Effect.fn(
+  'Durable.waiting',
+)(function* (harness: Harness, conversationId: ConversationId, context: Context) {
   const conversation = yield* Pi.conversation(harness, conversationId, context)
   const holds = yield* Pi.snapshot(harness, Holds, conversationId, context)
   const live = yield* Pi.snapshot(harness, LiveDoc, conversationId, context)

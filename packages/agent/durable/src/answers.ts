@@ -1,3 +1,4 @@
+import type * as DurableErrors from './errors.ts'
 import { copyJson, type Context, type JsonValue } from '@earendil-works/chord'
 import type { Conversation, Harness } from '@earendil-works/pi-durable'
 import { Effect, Option, Predicate } from 'effect'
@@ -23,9 +24,12 @@ export const questionOpen: (
   conversation: Conversation,
   question: Question,
   context: Context,
-) => import('effect/Effect').Effect<boolean, import('./errors.ts').PiFailed> = Effect.fn(
-  'Durable.questionOpen',
-)(function* (harness: Harness, conversation: Conversation, question: Question, context: Context) {
+) => Effect.Effect<boolean, DurableErrors.PiFailed> = Effect.fn('Durable.questionOpen')(function* (
+  harness: Harness,
+  conversation: Conversation,
+  question: Question,
+  context: Context,
+) {
   return yield* Delivery.match(question.delivery, {
     Open: () => Effect.succeed(true),
     Reserved: () => Effect.succeed(true),
@@ -183,14 +187,14 @@ export const deliver: (
   conversation: Conversation,
   given: Answer,
   context: Context,
-) => Effect.Effect<Settlement, CallNotWaiting | import('./errors.ts').PiFailed> = Effect.fn(
+) => Effect.Effect<Settlement, CallNotWaiting | DurableErrors.PiFailed> = Effect.fn(
   'Durable.deliverAnswer',
 )(function* (
   harness: Harness,
   conversation: Conversation,
   given: Answer,
   context: Context,
-): Effect.fn.Return<Settlement, import('./errors.ts').PiFailed | CallNotWaiting> {
+): Effect.fn.Return<Settlement, DurableErrors.PiFailed | CallNotWaiting> {
   const holds = yield* Pi.snapshot(harness, Holds, conversation.id, context)
   const question = Option.flatMapNullishOr(holds, (document) => document.asked[given.holdId])
   if (Option.isNone(question)) {
@@ -239,7 +243,7 @@ const deliverReserved = Effect.fn('Durable.deliverReserved')(function* (
     readonly delivery: typeof Delivery.cases.Reserved.Type
   },
   context: Context,
-): Effect.fn.Return<Settlement, import('./errors.ts').PiFailed | CallNotWaiting> {
+): Effect.fn.Return<Settlement, DurableErrors.PiFailed | CallNotWaiting> {
   const submitted = yield* admit(conversation, input, context)
   const status = yield* receipt(harness, submitted, context)
   if (status.entry !== undefined)
