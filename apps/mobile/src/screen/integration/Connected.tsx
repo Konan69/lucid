@@ -2,7 +2,8 @@ import { ConnectionOwnership, ConnectionState, type Connection } from '@vivid/co
 import { Option } from 'effect'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
-import { accountLine, ownFirst, standingOf, type StandingTone } from '../../data/integration'
+import { byService } from '@vivid/state'
+import { accountLine, standingOf, type StandingTone } from '../../data/integration'
 import { useTheme } from '../../theme'
 import { Row, Section } from '../../ui/List'
 import { Button, Card, Dot, Label } from '../../ui/ui'
@@ -51,30 +52,35 @@ export function Connected({
         ),
       )}
     >
-      {ownFirst(connections).map((connection) => {
-        const own = ConnectionOwnership.guards.Personal(connection.ownership)
-        return (
-          <Account
-            key={connection.id}
-            connection={connection}
-            line={accountLine(connection, {
-              alone: connections.filter((item) => item.service === connection.service).length === 1,
-              sharedWith: own ? Option.none() : company,
-              pressed: Option.fromUndefinedOr(flow.presses.get(connection.id)),
-            })}
-            // One press at a time: nothing is asked again while the server is still being asked.
-            asking={Option.exists(
-              Option.fromUndefinedOr(flow.presses.get(connection.id)),
-              (value) => value === 'starting' || value === 'checking',
-            )}
-            mark={Option.orElse(Option.fromNullishOr(connection.mark), () =>
-              Option.fromUndefinedOr(marks.get(connection.service)),
-            )}
-            // A Company's Integration is named, finished or removed by an admin, never a member.
-            actions={own || admin ? Option.some(flow) : Option.none()}
-          />
-        )
-      })}
+      {/* One service's accounts stay together and in the order they were added, so a second
+          Gmail account lands under the first and nothing above it moves (`byService`). */}
+      {byService(connections).flatMap((group) =>
+        group.accounts.map((connection) => {
+          const own = ConnectionOwnership.guards.Personal(connection.ownership)
+          const pressed = Option.fromUndefinedOr(flow.presses.get(connection.id))
+          return (
+            <Account
+              key={connection.id}
+              connection={connection}
+              line={accountLine(connection, {
+                alone: group.accounts.length === 1,
+                sharedWith: own ? Option.none() : company,
+                pressed,
+              })}
+              // One press at a time: nothing is asked again while the server is still asked.
+              asking={Option.exists(
+                pressed,
+                (value) => value === 'starting' || value === 'checking',
+              )}
+              mark={Option.orElse(Option.fromNullishOr(connection.mark), () =>
+                Option.fromUndefinedOr(marks.get(connection.service)),
+              )}
+              // A Company's Integration is named, finished or removed by an admin, never a member.
+              actions={own || admin ? Option.some(flow) : Option.none()}
+            />
+          )
+        }),
+      )}
     </Section>
   )
 }

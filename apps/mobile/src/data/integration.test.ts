@@ -22,7 +22,6 @@ import {
   marksOf,
   named,
   noteOf,
-  ownFirst,
   type Presses,
 } from './integration.ts'
 
@@ -172,15 +171,6 @@ describe('a connected account’s row on the Integrations sheet', () => {
     expect(
       accountLine(account('a', unfinished), { ...facts, pressed: Option.some('waiting') }),
     ).toBe('Finish signing in, then come back')
-  })
-
-  it('lists the Person’s own accounts before the Company’s, each in the server’s order', () => {
-    const shared = (id: string) => held(id, work, ConnectionOwnership.cases.Shared.make({}), ready)
-    expect(
-      ownFirst([shared('s1'), account('m1', ready), shared('s2'), account('m2', ready)]).map(
-        (item) => item.id,
-      ),
-    ).toEqual(['m1', 'm2', 's1', 's2'])
   })
 
   it('is found by any part of its service’s name, whatever the case, and by an empty search', () => {

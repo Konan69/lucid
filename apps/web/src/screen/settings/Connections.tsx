@@ -387,9 +387,13 @@ function NothingConnected() {
 }
 
 /**
- * One connected service: its logo and name, the way to add one more account, and a row for every
- * account the Person can see on it. "Add account" is in words on the card itself, so a Person
- * with one Gmail account can see that a second one is possible.
+ * One connected service: its logo and name, the way to add one more account, and every account
+ * the Person can see on it. "Add account" is in words on the card itself, so a Person with one
+ * Gmail account can see that a second one is possible.
+ *
+ * A service with one account is one line, as most are: the account is said under the service's
+ * name and its actions sit at the trailing edge, so the list stays as short as it was when a
+ * service could only be shown once. A service with several opens into a row for each.
  *
  * A server someone added by its address has no "Add account": adding one a second time is not
  * something the Integration layer has been shown to do (`Connection.origin`).
@@ -409,56 +413,67 @@ function ServiceCard({
   presses: Presses
   acts: Acts
 }) {
-  const pressed = Option.fromUndefinedOr(presses.get(group.service))
-  const several = group.accounts.length > 1
-  const under = Option.match(pressed, {
-    onSome: (value) => Option.some(PRESSED[value]),
-    onNone: () => (several ? Option.some(`${group.accounts.length} accounts`) : Option.none()),
-  })
+  const adding = Option.fromUndefinedOr(presses.get(group.service))
+  /** What one account's row is told: whose it is, where a press on it stands, who may act. */
+  const told = (connection: Connection) => {
+    const own = ConnectionOwnership.guards.Personal(connection.ownership)
+    return {
+      connection,
+      sharedWith: own ? Option.none<string>() : company,
+      pressed: Option.fromUndefinedOr(presses.get(connection.id)),
+      // A Company's account is named, finished or removed by an admin, never a member.
+      acts: own || admin ? Option.some(acts) : Option.none<Acts>(),
+    }
+  }
+  const [only, ...others] = group.accounts
+  const add = group.accounts.some((account) => account.origin === 'Catalogue') && (
+    <AddAccount
+      group={group}
+      // One press is one account: nothing more is begun while a press is on its way.
+      busy={Option.contains(adding, 'starting')}
+      onAdd={(name) => acts.onAdd(group, name)}
+    />
+  )
   return (
     <li className={cn('rounded-card bg-surface-3 edge', ENTER, stagger(place))}>
-      <div className="flex min-h-16 items-center gap-3 px-3 pt-3">
+      <div className="flex min-h-16 items-center gap-3 px-3 py-2.5">
         <Mark service={{ name: group.serviceName, mark: group.mark }} size={40} />
         <div className="min-w-0 flex-1">
           <h4 className="truncate text-title font-title text-ink">{group.serviceName}</h4>
-          {Option.isSome(under) && (
+          {Option.isSome(adding) && (
             <p role="status" className="truncate text-label text-ink-3">
-              {under.value}
+              {PRESSED[adding.value]}
             </p>
           )}
+          {Option.isNone(adding) && others.length > 0 && (
+            <p className="truncate text-label text-ink-3">{group.accounts.length} accounts</p>
+          )}
+          {Option.isNone(adding) && others.length === 0 && only !== undefined && (
+            <AccountWords {...told(only)} alone />
+          )}
         </div>
-        {group.accounts.some((account) => account.origin === 'Catalogue') && (
-          <AddAccount
-            group={group}
-            // One press is one account: nothing more is begun while a press is on its way.
-            busy={Option.contains(pressed, 'starting')}
-            onAdd={(name) => acts.onAdd(group, name)}
-          />
-        )}
+        {others.length === 0 && only !== undefined && <RowActions {...told(only)} />}
+        {add}
       </div>
-      {/* The rows start under the service's name: the card's 12, the logo's 40 and its 12. */}
-      <ul className="flex flex-col pt-1 pr-3 pb-2 pl-16">
-        {group.accounts.map((connection) => {
-          const own = ConnectionOwnership.guards.Personal(connection.ownership)
-          return (
-            <AccountRow
-              key={connection.id}
-              connection={connection}
-              alone={!several}
-              sharedWith={own ? Option.none() : company}
-              pressed={Option.fromUndefinedOr(presses.get(connection.id))}
-              // A Company's account is named, finished or removed by an admin, never a member.
-              acts={own || admin ? Option.some(acts) : Option.none()}
-            />
-          )
-        })}
-      </ul>
+      {others.length > 0 && (
+        // The rows start under the service's name: the card's 12, the logo's 40 and its 12.
+        <ul className="flex flex-col pr-3 pb-2 pl-16">
+          {group.accounts.map((connection) => (
+            <li key={connection.id} className="flex min-h-9 items-center gap-2">
+              <AccountWords {...told(connection)} alone={false} />
+              <RowActions {...told(connection)} />
+            </li>
+          ))}
+        </ul>
+      )}
     </li>
   )
 }
 
 /**
- * The way to add one more account to a connected service. A service that says who signed in
+ * The way to add one more account to a connected service: quiet words at the card's trailing
+ * edge, so the one outlined button on the screen is the one an account that needs attention
+ * shows ("Reconnect"). A service that says who signed in
  * (a Google account's address) is begun at once and the new account is named by that. One that
  * does not is asked a name for first, because a name is then the only thing that will tell the
  * new account from the ones already there (`asksName`).
@@ -482,7 +497,7 @@ function AddAccount({
   if (!asksName(group.accounts)) {
     return (
       <Button
-        variant="outline"
+        variant="ghost"
         size="sm"
         aria-label={label}
         disabled={busy}
@@ -495,7 +510,7 @@ function AddAccount({
   return (
     <NameAccount
       trigger={
-        <Button variant="outline" size="sm" aria-label={label} disabled={busy}>
+        <Button variant="ghost" size="sm" aria-label={label} disabled={busy}>
           {face}
         </Button>
       }
@@ -509,38 +524,37 @@ function AddAccount({
   )
 }
 
+/** What a card says about one of its accounts, and what whoever manages it can do to it. */
+interface Told {
+  readonly connection: Connection
+  /** The Company this account is shared with, when it is not the Person's own. */
+  readonly sharedWith: Option.Option<string>
+  readonly pressed: Option.Option<Pressed>
+  /** Present for whoever may name, finish or remove this account. */
+  readonly acts: Option.Option<Acts>
+}
+
 /**
- * One account on a connected service: a dot for how it stands, the words that say which account
- * it is, and what can be done to it. A ready one can be named and disconnected; an unfinished one
- * leads with "Reconnect" and keeps disconnecting as the icon beside it.
+ * Which account it is and how it stands: a dot, then the words. It grows to fill its line and is
+ * cut there, with the whole line as its title, so a long address is read on hover.
  */
-function AccountRow({
+function AccountWords({
   connection,
-  alone,
   sharedWith,
   pressed,
-  acts,
-}: {
-  connection: Connection
+  alone,
+}: Told & {
   /** Whether it is the only account on its service, which then needs nothing to tell it apart. */
   alone: boolean
-  /** The Company this account is shared with, when it is not the Person's own. */
-  sharedWith: Option.Option<string>
-  pressed: Option.Option<Pressed>
-  /** Present for whoever may name, finish or remove this account. */
-  acts: Option.Option<Acts>
 }) {
   const words = Option.match(pressed, {
     onNone: () => rowWords(connection, alone),
     onSome: (value) => PRESSED[value],
   })
   return (
-    <li className="flex min-h-9 items-center gap-2">
+    <span className="flex min-w-0 flex-1 items-center gap-1.5 text-label text-ink-2" title={words}>
       <i aria-hidden className={cn('size-1.5 shrink-0 rounded-full', STANDING(connection).dot)} />
-      {/* The whole line is also its title: a long address is cut here and read on hover. */}
-      <span title={words} className="min-w-0 flex-1 truncate text-label text-ink-2">
-        {words}
-      </span>
+      <span className="truncate">{words}</span>
       {Option.isSome(sharedWith) && (
         <span
           title={`Shared with everyone at ${sharedWith.value}`}
@@ -549,9 +563,13 @@ function AccountRow({
           <Building2 aria-label={`Shared with ${sharedWith.value}`} className="size-3.5" />
         </span>
       )}
-      {Option.isSome(acts) && <AccountActions connection={connection} acts={acts.value} />}
-    </li>
+    </span>
   )
+}
+
+/** The account's own actions, for whoever may take them; nothing for anyone else. */
+function RowActions({ connection, acts }: Told) {
+  return Option.isSome(acts) ? <AccountActions connection={connection} acts={acts.value} /> : null
 }
 
 /** What whoever manages an account can do to it, at the trailing edge of its row. */

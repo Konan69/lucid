@@ -30,10 +30,18 @@ export interface ServiceAccounts {
   readonly accounts: ReadonlyArray<Connection>
 }
 
+/** Oldest first, the order accounts are numbered in ("Gmail", "Gmail (2)"). */
+const byAge = (accounts: ReadonlyArray<Connection>) =>
+  accounts.toSorted((one, other) => one.createdAt - other.createdAt)
+
 /**
- * Groups a list of Connections by service, keeping the order services first appear in, so a
- * service does not move when a second account is added to it. Inside a service the Person's own
- * accounts lead and the Company's follow.
+ * Groups a list of Connections by service.
+ *
+ * A service stands where its first account put it: services are ordered by the day their oldest
+ * account was added, newest first, so a service does not move when a second account is added to
+ * it, and a newly connected service appears at the top. Inside a service the Person's own accounts
+ * lead and the Company's follow, each oldest first, so a new account is added at the end of its
+ * list and the rows above it stay where they were.
  */
 export const byService = (
   connections: ReadonlyArray<Connection>,
@@ -44,22 +52,28 @@ export const byService = (
     if (group === undefined) groups.set(connection.service, [connection])
     else group.push(connection)
   }
-  return [...groups.values()].flatMap((group) => {
-    const [first] = group
-    if (first === undefined) return []
-    const marked = group.find((connection) => connection.mark !== null)
-    return [
-      {
-        service: first.service,
-        serviceName: first.serviceName,
-        mark: marked === undefined ? null : marked.mark,
-        accounts: [
-          ...group.filter((item) => ConnectionOwnership.guards.Personal(item.ownership)),
-          ...group.filter((item) => ConnectionOwnership.guards.Shared(item.ownership)),
-        ],
-      },
-    ]
-  })
+  return [...groups.values()]
+    .flatMap((group) => {
+      const [first] = byAge(group)
+      if (first === undefined) return []
+      const marked = group.find((connection) => connection.mark !== null)
+      return [
+        {
+          since: first.createdAt,
+          accounts: {
+            service: first.service,
+            serviceName: first.serviceName,
+            mark: marked === undefined ? null : marked.mark,
+            accounts: [
+              ...byAge(group.filter((item) => ConnectionOwnership.guards.Personal(item.ownership))),
+              ...byAge(group.filter((item) => ConnectionOwnership.guards.Shared(item.ownership))),
+            ],
+          },
+        },
+      ]
+    })
+    .toSorted((one, other) => other.since - one.since)
+    .map((group) => group.accounts)
 }
 
 /**
@@ -219,9 +233,13 @@ export const awaitedWords = (awaited: Awaited, serviceName: string) =>
  * what Vivid calls it ("DeepWiki (2)", `Connection.account`), so a Person can say that to Vivid.
  */
 export const whichAccount = (
-  connection: Pick<Connection, 'name' | 'identity' | 'account'>,
+  connection: Pick<Connection, 'name' | 'identity' | 'account' | 'state'>,
   alone: boolean,
 ): Option.Option<string> =>
   Option.orElse(accountWords(connection), () =>
-    alone ? Option.none() : Option.some(connection.account),
+    // Vivid's own name for an account is for one it can use. A sign-in that was never finished
+    // is no account yet, and "Gmail (3)" on it would name something that does not exist.
+    alone || !ConnectionState.guards.Ready(connection.state)
+      ? Option.none()
+      : Option.some(connection.account),
   )

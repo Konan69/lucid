@@ -1,6 +1,5 @@
 import {
   ConnectionAuthorization,
-  ConnectionOwnership,
   ConnectionState,
   ConnectionStep,
   ServiceAuthorization,
@@ -136,12 +135,6 @@ export const standingOf = (connection: Connection): Standing =>
 /** Whether a name answers to what is typed in the search, whatever its case. */
 export const named = (name: string, query: string): boolean =>
   name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
-
-/** The Person's own accounts first, then the Company's; each keeps the server's order. */
-export const ownFirst = (connections: ReadonlyArray<Connection>): ReadonlyArray<Connection> => [
-  ...connections.filter((item) => ConnectionOwnership.guards.Personal(item.ownership)),
-  ...connections.filter((item) => ConnectionOwnership.guards.Shared(item.ownership)),
-]
 
 /** What a row is told about the account it draws, beyond the account itself. */
 export interface RowFacts {

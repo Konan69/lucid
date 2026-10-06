@@ -46,23 +46,26 @@ const account = (id: string, service: string, said: Partial<Connection> = {}): C
 const request = { service: ServiceId.make('gmail') }
 
 describe('the accounts a Person has, by service', () => {
-  it('keeps two accounts on one service together, where the service first appears', () => {
+  it('keeps a service where its first account put it, and lists its accounts oldest first', () => {
+    // As the server sends them: newest first.
     const groups = byService([
-      account('work', 'gmail'),
-      account('wiki', 'deepwiki'),
-      account('home', 'gmail'),
+      account('home', 'gmail', { createdAt: 30 }),
+      account('wiki', 'deepwiki', { createdAt: 20 }),
+      account('work', 'gmail', { createdAt: 10 }),
     ])
+    // DeepWiki was connected after Gmail, so it leads; Gmail does not jump above it because a
+    // second Gmail account was added later. Inside Gmail the first account stays first.
     expect(groups.map((group) => [group.service, group.accounts.map((item) => item.id)])).toEqual([
-      ['gmail', ['work', 'home']],
       ['deepwiki', ['wiki']],
+      ['gmail', ['work', 'home']],
     ])
   })
 
   it('lists the Person’s own accounts before the Company’s on the same service', () => {
     const shared = ConnectionOwnership.cases.Shared.make({})
     const groups = byService([
-      account('company', 'gmail', { ownership: shared }),
-      account('own', 'gmail'),
+      account('company', 'gmail', { ownership: shared, createdAt: 1 }),
+      account('own', 'gmail', { createdAt: 2 }),
     ])
     expect(groups.map((group) => group.accounts.map((item) => item.id))).toEqual([
       ['own', 'company'],
@@ -91,9 +94,11 @@ describe('the words that say which account a row is', () => {
   })
 
   it('fall back to what Vivid calls the account only when it is one of several', () => {
-    const unnamed = { name: null, identity: null, account: 'DeepWiki (2)' }
+    const unnamed = { name: null, identity: null, account: 'DeepWiki (2)', state: ready }
     expect(whichAccount(unnamed, true)).toEqual(Option.none())
     expect(whichAccount(unnamed, false)).toEqual(Option.some('DeepWiki (2)'))
+    // A sign-in that was never finished is no account yet: it is not given Vivid's name for one.
+    expect(whichAccount({ ...unnamed, state: unfinished }, false)).toEqual(Option.none())
   })
 })
 

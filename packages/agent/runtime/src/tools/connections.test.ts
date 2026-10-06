@@ -123,7 +123,7 @@ describe('connected tool execution', () => {
       ),
     ).pipe(Effect.forkScoped)
     const discovery = yield* Queue.take(requests)
-    if (!Predicate.isTagged(discovery, 'Request')) return expect.fail('Expected discovery')
+    if (!Predicate.isTagged(discovery, 'Request')) expect.fail('Expected discovery')
     yield* rpc.write({
       // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK wire envelopes have no schema constructor.
       _tag: 'Exit',
@@ -150,7 +150,7 @@ describe('connected tool execution', () => {
     Effect.gen(function* () {
       const { requests, rpc, call } = yield* connectHeld(true)
       const offer = yield* Queue.take(requests)
-      if (!Predicate.isTagged(offer, 'Request')) return expect.fail('Expected offer')
+      if (!Predicate.isTagged(offer, 'Request')) expect.fail('Expected offer')
       expect(offer.tag).toBe('OfferConnection')
       // The server is told this is a request for one more account, not for the service.
       expect(offer.payload).toMatchObject({ service: 'mail', wanted: 'Another' })
