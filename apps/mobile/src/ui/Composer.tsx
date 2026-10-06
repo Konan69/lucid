@@ -9,7 +9,7 @@ import { ComposerEditor } from '../native/composer/Editor'
 import type { ComposerEditorHandle } from '../native/composer/types'
 import { useTheme } from '../theme'
 import { BorderBeam } from '../../vendor/beam'
-import { ringed, smooth } from './elevation'
+import { cast, lifted } from './elevation'
 import { GLASS_SUPPORTED, GlassMaterial } from './Glass'
 import { Press, styles, TARGET } from './ui'
 
@@ -126,10 +126,10 @@ export function Composer({
             borderRadius: CORNER,
             borderCurve: 'continuous',
             overflow: 'hidden',
-            // Over the page: the plugin's stack. The system's glass has an edge of its own;
-            // without it the hairline is the stack's ring, and there is no border.
-            boxShadow: GLASS_SUPPORTED ? smooth('md') : ringed('md', c.border),
           },
+          // Over the page: the plugin's stack. The system's glass has an edge of its own; without
+          // it the edge is the stack's ring, and there is no border.
+          GLASS_SUPPORTED ? cast('md') : lifted('md', c.border),
         ]}
       >
         <GlassMaterial

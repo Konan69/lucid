@@ -10,7 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stand } from '../data/stand'
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
-import { ringed, smooth } from './elevation'
+import { cast, lifted } from './elevation'
 import { GLASS_SUPPORTED, GlassMaterial } from './Glass'
 import { APPEAR, LEAVE } from './motion/morph'
 import { Face, Label, TARGET, type Tone } from './ui'
@@ -228,27 +228,24 @@ function Avatar({ stand }: { stand: Stand }) {
     >
       <View
         // A solid disc is its own edge, so it takes the compact tier's stack with no ring.
-        style={{
-          width: AVATAR,
-          height: AVATAR,
-          borderRadius: AVATAR / 2,
-          boxShadow: smooth('sm'),
-        }}
+        style={[{ width: AVATAR, height: AVATAR, borderRadius: AVATAR / 2 }, cast('sm')]}
       >
         <Face size={AVATAR} mood={mood} label="" />
       </View>
       <View
-        style={{
-          marginTop: BETWEEN,
-          height: PILL,
-          // Under the bar's buttons, not between them, so only the window limits it.
-          maxWidth: window - 96,
-          borderRadius: PILL / 2,
-          borderCurve: 'continuous',
-          overflow: 'hidden',
+        style={[
+          {
+            marginTop: BETWEEN,
+            height: PILL,
+            // Under the bar's buttons, not between them, so only the window limits it.
+            maxWidth: window - 96,
+            borderRadius: PILL / 2,
+            borderCurve: 'continuous',
+            overflow: 'hidden',
+          },
           // The system's glass has an edge of its own; without it the ring is the edge.
-          boxShadow: GLASS_SUPPORTED ? smooth('sm') : ringed('sm', c.border),
-        }}
+          GLASS_SUPPORTED ? cast('sm') : lifted('sm', c.border),
+        ]}
       >
         <GlassMaterial
           style={[StyleSheet.absoluteFill, { borderRadius: PILL / 2, borderCurve: 'continuous' }]}

@@ -333,7 +333,7 @@ function Keycap({ children }: { children: ReactNode }) {
  * the top as the others fade where they stood, goes quiet, and its spinner gives way to a check.
  *
  * The press is answered by a fill across the whole row, not by the row sinking (`Press`): a row
- * that shrank inside its container would open gaps at the hairlines.
+ * that shrank inside its container would leave its fill short of the container's edges.
  */
 function Row({
   letter,

@@ -1,3 +1,5 @@
+import { Platform, type ViewStyle } from 'react-native'
+
 /**
  * How far a shape stands off the page, as one `boxShadow`. Nothing in the app writes a shadow by
  * hand: a floating shape names its tier here.
@@ -37,14 +39,26 @@ const STACK = {
 export type Tier = keyof typeof STACK
 
 /**
- * The stack alone (the plugin's `smooth-shadow-*`), for a shape whose material draws its own
- * edge: the system's glass, or a solid disc.
+ * Whether this device draws a shadow cast outside a shape. Android before 9 (API 28) does not:
+ * React Native skips an outset `boxShadow` there (`BackgroundStyleApplicator.setBoxShadow`), and
+ * the app still installs on those versions. A shape whose only edge is its shadow's ring would
+ * have no edge at all there, so it is given a plain hairline instead (`lifted`).
  */
-export const smooth = (tier: Tier): string => STACK[tier].join(', ')
+const CASTS = Platform.OS !== 'android' || Platform.Version >= 28
+
+/**
+ * The stack alone (the plugin's `smooth-shadow-*`), for a shape whose material draws its own
+ * edge: the system's glass, or a solid disc. Where no shadow is cast the shape still has that
+ * edge, so nothing takes the stack's place.
+ */
+export const cast = (tier: Tier): ViewStyle => ({ boxShadow: STACK[tier].join(', ') })
 
 /**
  * The stack with the hairline ring as its last layer (the plugin's `smooth-shadow-ring-*`), for
- * a shape that has no edge of its own. `ring` is the theme's `border`.
+ * a shape that has no edge of its own. `ring` is the theme's `border`. Where no shadow is cast
+ * the ring is drawn as a border, which is the one case a floating shape has one.
  */
-export const ringed = (tier: Tier, ring: string): string =>
-  [...STACK[tier], `0 0 0 1px ${ring}`].join(', ')
+export const lifted = (tier: Tier, ring: string): ViewStyle =>
+  CASTS
+    ? { boxShadow: [...STACK[tier], `0 0 0 1px ${ring}`].join(', ') }
+    : { borderWidth: 1, borderColor: ring }
