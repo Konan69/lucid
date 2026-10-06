@@ -57,7 +57,14 @@ export function Cards({
       onNone: () => null,
       onSome: (card) => (
         <View key={tool.toolCallId} style={{ marginTop: 8, marginBottom: 6 }}>
-          <Drawn card={card} detail={detail} me={me} onContinue={onContinue} />
+          <Drawn
+            call={tool.toolCallId}
+            card={card}
+            detail={detail}
+            me={me}
+            live={live}
+            onContinue={onContinue}
+          />
         </View>
       ),
     })
@@ -82,14 +89,20 @@ const requestOf = (detail: Option.Option<ThreadDetail>, id: InputRequestId) =>
  * draw, so nothing is drawn.
  */
 function Drawn({
+  call,
   card,
   detail,
   me,
+  live,
   onContinue,
 }: {
+  /** The tool call this card stands for, which is what names its one "carry on". */
+  call: string
   card: Card
   detail: Option.Option<ThreadDetail>
   me: PersonId
+  /** Whether this is the newest reply and Vivid has stopped: only then is a card still asking. */
+  live: boolean
   onContinue: (text: string) => void
 }) {
   return Card.$match(card, {
@@ -105,9 +118,11 @@ function Drawn({
       }),
     Connection: ({ request, authorization, awaited }) => (
       <IntegrationCard
+        id={call}
         request={request}
         authorization={authorization}
         awaited={awaited}
+        current={live}
         onContinue={onContinue}
       />
     ),

@@ -73,7 +73,7 @@ export const finishOf = (
   Option.orElse(latest, () => Option.map(authorization, finishOfAuthorization))
 
 /**
- * The Integrations sheet (`screen/settings/Integrations.tsx`): the pure readings behind its rows.
+ * The Integrations page (`screen/settings/Integrations.tsx`): the pure readings behind its rows.
  * The rules and the words are the web screen's (`apps/web/src/screen/settings/Connections.tsx`);
  * what differs on the phone is said beside each.
  */
@@ -114,6 +114,34 @@ export const afterPress = (
   })
   return after
 }
+
+/** The presses still on their way, to the server or through a provider's page; the rest said their last. */
+export const inFlight = (presses: Presses): Presses =>
+  new Map(
+    [...presses].filter(
+      ([, pressed]) => pressed === 'starting' || pressed === 'waiting' || pressed === 'checking',
+    ),
+  )
+
+/**
+ * What the card in a Thread says about its own press: on its button while the server is asked,
+ * and in a line under it otherwise. A row says all of it under the service's name (`PRESSED`); a
+ * card has a button to say the first on, and room to say that Vivid goes on without being told.
+ * `connected` says nothing: the card turns to "Carry on" from the live list.
+ */
+export const CARD_PRESSED = {
+  starting: { button: Option.some('Connecting…'), line: Option.none() },
+  waiting: {
+    button: Option.none(),
+    line: Option.some('Finish signing in, then come back. Vivid carries on by itself.'),
+  },
+  checking: { button: Option.some('Checking…'), line: Option.none() },
+  refused: { button: Option.none(), line: Option.some('That did not start. Try again.') },
+  connected: { button: Option.none(), line: Option.none() },
+} satisfies Record<
+  Pressed,
+  { readonly button: Option.Option<string>; readonly line: Option.Option<string> }
+>
 
 /** The ink a standing's dot is drawn in. A word always stands beside the dot. */
 export type StandingTone = 'status-success' | 'status-approve' | 'status-danger'

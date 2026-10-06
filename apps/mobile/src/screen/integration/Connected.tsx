@@ -3,15 +3,14 @@ import { Option } from 'effect'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
 import { byService } from '@vivid/state'
-import { accountLine, standingOf, type StandingTone } from '../../data/integration'
+import { accountLine, standingOf, type Presses, type StandingTone } from '../../data/integration'
 import { useTheme } from '../../theme'
 import { Row, Section } from '../../ui/List'
 import { Button, Card, Dot, Label } from '../../ui/ui'
-import type { Flow } from './flow'
 import { Logo } from './Logo'
 
 /**
- * What is connected, first in the sheet. With nothing connected it is the one sentence that says
+ * What is connected, first on the page. With nothing connected it is the one sentence that says
  * how connecting works; while the Person is searching for something else, an empty answer here
  * is left out.
  *
@@ -26,7 +25,9 @@ export function Connected({
   company,
   admin,
   marks,
-  flow,
+  presses,
+  onResume,
+  onManage,
 }: {
   /** The accounts whose service answers to the search, in the server's order. */
   connections: ReadonlyArray<Connection>
@@ -36,7 +37,12 @@ export function Connected({
   admin: boolean
   /** The icon address the catalog gives each service, for an account that carries none. */
   marks: ReadonlyMap<Connection['service'], string>
-  flow: Flow
+  /** Where each row's last press stands. */
+  presses: Presses
+  /** Picks up an account whose sign-in was left, or lapsed. */
+  onResume: (connection: Connection) => void
+  /** Opens the account's own sheet. */
+  onManage: (connection: Connection) => void
 }) {
   if (connections.length === 0) return searching ? null : <NothingConnected />
   // The count is of accounts that work now. A sign-in that was started and never finished is
@@ -57,7 +63,7 @@ export function Connected({
       {byService(connections).flatMap((group) =>
         group.accounts.map((connection) => {
           const own = ConnectionOwnership.guards.Personal(connection.ownership)
-          const pressed = Option.fromUndefinedOr(flow.presses.get(connection.id))
+          const pressed = Option.fromUndefinedOr(presses.get(connection.id))
           return (
             <Account
               key={connection.id}
@@ -76,7 +82,7 @@ export function Connected({
                 Option.fromUndefinedOr(marks.get(connection.service)),
               )}
               // A Company's Integration is named, finished or removed by an admin, never a member.
-              actions={own || admin ? Option.some(flow) : Option.none()}
+              actions={own || admin ? Option.some({ onResume, onManage }) : Option.none()}
             />
           )
         }),
@@ -123,7 +129,10 @@ function Account({
   asking: boolean
   mark: Option.Option<string>
   /** Present for whoever may name, finish or remove this Integration. */
-  actions: Option.Option<Pick<Flow, 'resume' | 'manage'>>
+  actions: Option.Option<{
+    readonly onResume: (connection: Connection) => void
+    readonly onManage: (connection: Connection) => void
+  }>
 }) {
   const leading = (
     <Standing tone={standingOf(connection).tone}>
@@ -139,7 +148,7 @@ function Account({
         leading={leading}
         title={connection.serviceName}
         detail={line}
-        onPress={() => actions.value.manage(connection)}
+        onPress={() => actions.value.onManage(connection)}
       />
       {!ConnectionState.guards.Ready(connection.state) && (
         // Under the words, starting where they start (the row's 16, the 40 of the logo, its 12).
@@ -147,7 +156,7 @@ function Account({
           <Button
             label="Reconnect"
             disabled={asking}
-            onPress={() => actions.value.resume(connection)}
+            onPress={() => actions.value.onResume(connection)}
           />
         </View>
       )}

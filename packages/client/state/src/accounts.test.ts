@@ -19,6 +19,8 @@ import {
   awaitedWords,
   begunFor,
   byService,
+  CardPress,
+  cardPress,
   nameTaken,
   typedAccountName,
   whichAccount,
@@ -205,6 +207,28 @@ describe('what a card in a Thread is waiting for', () => {
       Option.some(ConnectionId.make('begun')),
     )
     expect(begunFor([pending], request, Awaited.Service())).toEqual(Option.some(pending.id))
+  })
+
+  it('picks up, names or begins on one press of the card', () => {
+    const another = Awaited.Another({ askedAt: 500 })
+    const before = account('home', 'gmail', { createdAt: 100 })
+    const known = account('home', 'gmail', { createdAt: 100, identity: 'ada@example.com' })
+    const pending = account('work', 'gmail', { createdAt: 900, state: unfinished })
+    // The first account on a service is begun at once: one account needs no name.
+    expect(cardPress([], request, Awaited.Service())).toEqual(CardPress.Begin())
+    // One more, where the service does not say who signs in, is named first.
+    expect(cardPress([before], request, another)).toEqual(CardPress.Name())
+    // Where it does say, the new account is named by the service and begun at once.
+    expect(cardPress([known], request, another)).toEqual(CardPress.Begin())
+    // An account on another service says nothing about this one.
+    expect(cardPress([account('wiki', 'deepwiki')], request, another)).toEqual(CardPress.Begin())
+    // One begun for this card and left is picked up, and no name is asked for a second time.
+    expect(cardPress([before, pending], request, another)).toEqual(
+      CardPress.Resume({ id: pending.id }),
+    )
+    expect(cardPress([pending], request, Awaited.Service())).toEqual(
+      CardPress.Resume({ id: pending.id }),
+    )
   })
 
   it('says it wants another account, where the service is already connected', () => {

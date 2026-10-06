@@ -227,6 +227,44 @@ const found = (
   )
 
 /**
+ * What one press on a card's "Connect" or "Add account" does.
+ *
+ * - `Resume`: an Integration was already begun for this card (by Vivid, or by an earlier press
+ *   that was left unfinished). It is picked up; a second one is never begun.
+ * - `Name`: one more account on a service that does not say who signs in. The Person is asked
+ *   what to call it before anything is begun, as "Add account" in Settings asks.
+ * - `Begin`: an account is begun at once.
+ */
+export type CardPress = Data.TaggedEnum<{
+  Resume: { readonly id: ConnectionId }
+  Name: {}
+  Begin: {}
+}>
+export const CardPress = Data.taggedEnum<CardPress>()
+
+/**
+ * Decides what one press on a card does, from the Person's accounts as they stand at the press.
+ *
+ * Picking up comes first: an account that was begun and left is finished under the name it was
+ * begun with, so asking for a name again would ask for one that is thrown away. A name is asked
+ * for only by a card that wants one more account (`Another`): the first account on a service
+ * needs nothing to tell it apart.
+ */
+export const cardPress = (
+  connections: ReadonlyArray<Connection>,
+  request: Pick<ConnectionRequestMessage, 'service'>,
+  awaited: Awaited,
+): CardPress =>
+  Option.match(begunFor(connections, request, awaited), {
+    onSome: (id): CardPress => CardPress.Resume({ id }),
+    onNone: (): CardPress =>
+      Awaited.$is('Another')(awaited) &&
+      asksName(connections.filter((connection) => connection.service === request.service))
+        ? CardPress.Name()
+        : CardPress.Begin(),
+  })
+
+/**
  * The account that settled a card: the newest ready one that answers it. A card that asked for
  * one more account names it when it tells Vivid to carry on, because Vivid cannot tell which of a
  * Person's accounts is the new one, and guessed wrong when it was only told that there was one.
