@@ -421,7 +421,7 @@ Vivid is a character the Person works with, and the surface is built so that rea
   Thread; a key goes straight to the integration and never into the Thread or the model.
 - **Use a computer.** `browse` drives the browser by what a page says (with tabs, scrolling,
   history and waiting); `use_desktop` works any window by looking at the screen and using the
-  pointer and keys; `run_command` is a shell. The Computer wakes when work needs it and stops
+  pointer and keys; `bash` is a shell. The Computer wakes when work needs it and stops
   when idle. The machine is Boat's (see [The Computer](04-computer.md)); a local container stands
   in for it offline.
 - **Write a program.** `run_code` runs JavaScript Vivid wrote over the tools it already has. The

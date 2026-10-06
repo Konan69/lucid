@@ -193,7 +193,7 @@ const definitions = [
       'write_document',
       'browse',
       'use_desktop',
-      'run_command',
+      'bash',
       'ask_person',
     ],
     connections: [],
