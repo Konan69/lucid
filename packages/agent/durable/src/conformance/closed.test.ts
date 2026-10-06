@@ -138,7 +138,14 @@ for (const predicate of [
 it.live('acknowledges a finished message without another automatic tool POST', () =>
   Effect.promise(async () => {
     const fixture = await host(
-      { pay: tool({ inputSchema: z.object({}), execute: async () => 1 }) },
+      {
+        pay: tool({
+          inputSchema: z.object({}),
+          execute: async () => {
+            throw new Error('Payment refused')
+          },
+        }),
+      },
       {},
     )
     const opened = await fixture.open()
@@ -162,21 +169,11 @@ it.live('acknowledges a finished message without another automatic tool POST', (
         return respond(opened.harness, opened.root.id, new Request(url, init), context)
       },
     })
-    // Output-error carries no client output to settle. The actual durable run is already finished.
-    const message: UIMessage = {
-      ...result.message,
-      parts: result.message.parts.map((part) =>
-        'toolCallId' in part
-          ? {
-              type: 'tool-pay',
-              toolCallId: 'finished',
-              state: 'output-error',
-              errorText: 'client lost the result',
-              input: {},
-            }
-          : part,
-      ),
-    }
+    // This output-error is the real failed tool result consumed by the SDK, not client rewriting.
+    const message = result.message
+    expect(message.parts.find((part) => 'toolCallId' in part)).toMatchObject({
+      state: 'output-error',
+    })
     const chat = new PlainChat({
       messages: [message],
       transport,
