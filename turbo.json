@@ -11,6 +11,8 @@
       "dependsOn": ["types", "^types", "checkinputs"],
       "inputs": [
         "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
         "$TURBO_ROOT$/tsconfig.base.json",
         "$TURBO_ROOT$/scripts/types.mjs"
       ],
@@ -21,6 +23,8 @@
       "dependsOn": ["checkinputs"],
       "inputs": [
         "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
         "$TURBO_ROOT$/.oxlintrc.json",
         "$TURBO_ROOT$/tsconfig*.json",
         "$TURBO_ROOT$/apps/**/tsconfig*.json",
@@ -35,11 +39,13 @@
     },
     "checkinputs": {
       "dependsOn": ["^typeinputs"],
-      "outputs": []
+      "outputs": [],
+      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md"]
     },
     "typeinputs": {
       "dependsOn": ["^typeinputs"],
-      "outputs": []
+      "outputs": [],
+      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md"]
     },
     "//#lint:root": {
       "inputs": [
@@ -51,7 +57,9 @@
         "!**/*.tsbuildinfo",
         "!**/.env*",
         "!**/*.local",
-        "!apps/mobile/{android,ios}/**"
+        "!apps/mobile/{android,ios}/**",
+        "!docs/**",
+        "!**/*.md"
       ],
       "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS"],
       "outputs": []
@@ -65,7 +73,9 @@
         "!**/*.tsbuildinfo",
         "!**/.env*",
         "!**/*.local",
-        "!apps/mobile/{android,ios}/**"
+        "!apps/mobile/{android,ios}/**",
+        "!docs/**",
+        "!**/*.md"
       ],
       "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
       "outputs": [".cache/typescript/root.tsbuildinfo"]
@@ -100,6 +110,8 @@
       "dependsOn": ["^types", "typeinputs"],
       "inputs": [
         "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
         "!src/**/*.test.ts",
         "!src/**/*.test.tsx",
         "!tests/**",
@@ -110,19 +122,54 @@
       "outputs": [".cache/typescript/types/**", ".cache/typescript/types.tsbuildinfo"]
     },
     "@vivid/contracts#typeinputs": {
-      "inputs": ["$TURBO_DEFAULT$", "!src/**/*.test.ts", "!src/**/*.test.tsx", "!tests/**"]
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "!src/**/*.test.ts",
+        "!src/**/*.test.tsx",
+        "!tests/**"
+      ]
     },
     "@vivid/client-runtime#typeinputs": {
-      "inputs": ["$TURBO_DEFAULT$", "!src/**/*.test.ts", "!src/**/*.test.tsx", "!tests/**"]
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "!src/**/*.test.ts",
+        "!src/**/*.test.tsx",
+        "!tests/**"
+      ]
     },
     "@vivid/state#typeinputs": {
-      "inputs": ["$TURBO_DEFAULT$", "!src/**/*.test.ts", "!src/**/*.test.tsx", "!tests/**"]
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "!src/**/*.test.ts",
+        "!src/**/*.test.tsx",
+        "!tests/**"
+      ]
     },
     "@vivid/skills#typeinputs": {
-      "inputs": ["$TURBO_DEFAULT$", "!src/**/*.test.ts", "!src/**/*.test.tsx", "!tests/**"]
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "!src/**/*.test.ts",
+        "!src/**/*.test.tsx",
+        "!tests/**"
+      ]
     },
     "@vivid/agent-runtime#typeinputs": {
-      "inputs": ["$TURBO_DEFAULT$", "!src/**/*.test.ts", "!src/**/*.test.tsx", "!tests/**"]
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "!src/**/*.test.ts",
+        "!src/**/*.test.tsx",
+        "!tests/**"
+      ]
     },
     "@vivid/skills#typecheck": {
       "dependsOn": [
@@ -134,6 +181,8 @@
       ],
       "inputs": [
         "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
         "$TURBO_ROOT$/tsconfig.base.json",
         "$TURBO_ROOT$/scripts/types.mjs"
       ],
@@ -144,6 +193,8 @@
       "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"],
       "inputs": [
         "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
         "$TURBO_ROOT$/.oxlintrc.json",
         "$TURBO_ROOT$/tsconfig*.json",
         "$TURBO_ROOT$/apps/**/tsconfig*.json",
@@ -160,6 +211,8 @@
       "dependsOn": ["types", "^types", "checkinputs", "@vivid/server#checkinputs"],
       "inputs": [
         "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
         "$TURBO_ROOT$/tsconfig.base.json",
         "$TURBO_ROOT$/scripts/types.mjs"
       ],
@@ -170,6 +223,8 @@
       "dependsOn": ["checkinputs", "@vivid/server#checkinputs"],
       "inputs": [
         "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
         "$TURBO_ROOT$/.oxlintrc.json",
         "$TURBO_ROOT$/tsconfig*.json",
         "$TURBO_ROOT$/apps/**/tsconfig*.json",
@@ -192,6 +247,8 @@
       ],
       "inputs": [
         "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
         "$TURBO_ROOT$/tsconfig.base.json",
         "$TURBO_ROOT$/scripts/types.mjs"
       ],
@@ -202,6 +259,8 @@
       "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"],
       "inputs": [
         "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
         "$TURBO_ROOT$/.oxlintrc.json",
         "$TURBO_ROOT$/tsconfig*.json",
         "$TURBO_ROOT$/apps/**/tsconfig*.json",
@@ -218,6 +277,8 @@
       "dependsOn": ["types", "^types", "checkinputs", "@vivid/web#checkinputs"],
       "inputs": [
         "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
         "$TURBO_ROOT$/tsconfig.base.json",
         "$TURBO_ROOT$/scripts/types.mjs"
       ],
@@ -228,6 +289,8 @@
       "dependsOn": ["checkinputs", "@vivid/web#checkinputs"],
       "inputs": [
         "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
         "$TURBO_ROOT$/.oxlintrc.json",
         "$TURBO_ROOT$/tsconfig*.json",
         "$TURBO_ROOT$/apps/**/tsconfig*.json",
@@ -270,7 +333,16 @@
     },
     "//#test:tooling": {
       "inputs": [
-        "$TURBO_DEFAULT$",
+        "*",
+        ".oxlintrc.json",
+        ".gitignore",
+        "scripts/**",
+        ".husky/**",
+        ".github/**",
+        "tools/**",
+        "infra/**",
+        ".agents/skills/infra/**",
+        "docs/19-infrastructure.md",
         "apps/**/package.json",
         "packages/**/package.json",
         "apps/**/tsconfig*.json",
@@ -278,9 +350,11 @@
         "apps/*/drizzle/**",
         "apps/*/product-drizzle/**",
         "packages/**/drizzle/**",
-        "!docs/**",
-        "docs/19-infrastructure.md",
-        "!**/node_modules/**"
+        "apps/web/wrangler.jsonc",
+        "apps/server/src/**",
+        "packages/agent/runtime/src/**",
+        "!**/node_modules/**",
+        "!*.md"
       ],
       "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
       "outputs": []
