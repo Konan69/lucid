@@ -872,7 +872,16 @@ function Catalog({
  */
 function noteOf(service: Service, connected: boolean, pressed: Option.Option<Pressed>) {
   if (Option.isSome(pressed)) return Option.some(PRESSED[pressed.value])
-  if (connected) return Option.some('Add another account')
+  if (connected) {
+    // One more account is offered only where a sign-in can still be begun. A service that was
+    // connected before its sign-in was taken off this Vivid is not a tile to press, and said
+    // "Add another account" all the same.
+    return Option.some(
+      ServiceAuthorization.guards.SetupRequired(service.authorization)
+        ? 'Connected'
+        : 'Add another account',
+    )
+  }
   // A catalog entry's description is written by whoever published it, often for another product
   // by name, so the tile says only what Vivid knows to be true: how the service is entered.
   return ServiceAuthorization.match(service.authorization, {

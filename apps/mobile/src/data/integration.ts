@@ -181,7 +181,16 @@ export const noteOf = (
   pressed: Option.Option<Pressed>,
 ): Option.Option<string> => {
   if (Option.isSome(pressed)) return Option.some(PRESSED[pressed.value])
-  if (connected) return Option.some('Connected · Add another account')
+  if (connected) {
+    // One more account is offered only where a sign-in can still be begun. A service that was
+    // connected before its sign-in was taken off this Vivid is not a row to press, and said
+    // "Add another account" all the same.
+    return Option.some(
+      ServiceAuthorization.guards.SetupRequired(service.authorization)
+        ? 'Connected'
+        : 'Connected · Add another account',
+    )
+  }
   // A catalog entry's description is written by whoever published it, often for another product
   // by name, so the row says only what Vivid knows to be true: how the service is entered.
   return ServiceAuthorization.match(service.authorization, {

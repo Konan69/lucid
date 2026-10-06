@@ -223,6 +223,16 @@ describe('a service’s row in the catalog', () => {
     )
   })
 
+  it('does not offer one more account where a sign-in can no longer be begun', () => {
+    expect(
+      noteOf(
+        offered('Slack', ServiceAuthorization.cases.SetupRequired.make({})),
+        true,
+        Option.none(),
+      ),
+    ).toEqual(Option.some('Connected'))
+  })
+
   it('lends its icon to a connected account only when it has one', () => {
     const drawn = offered('Gmail', key, 'https://icons.example/?domain=gmail.com')
     expect([...marksOf([drawn, offered('Linear', key)])]).toEqual([
