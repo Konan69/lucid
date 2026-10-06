@@ -85,7 +85,11 @@ describe('Project tools', () => {
           const tools = yield* fixture()
           const [result] = yield* Effect.all(
             [
-              tools.create({ name: 'Launch', location: { kind: 'TopLevel' } }),
+              tools.create({
+                summary: 'Launch work',
+                name: 'Launch',
+                location: { kind: 'TopLevel' },
+              }),
               tools.reply(
                 'CreateProject',
                 { name: 'Launch', parentProjectId: null },
@@ -112,7 +116,11 @@ describe('Project tools', () => {
         const parent = project('Launch', null)
         const [result] = yield* Effect.all(
           [
-            tools.create({ name: 'Website', location: { kind: 'Within', project: 'Launch' } }),
+            tools.create({
+              summary: 'Launch work',
+              name: 'Website',
+              location: { kind: 'Within', project: 'Launch' },
+            }),
             Effect.gen(function* () {
               yield* tools.reply('ListProjects', null, Exit.succeed({ projects: [parent] }))
               yield* tools.reply(
@@ -141,7 +149,11 @@ describe('Project tools', () => {
             const tools = yield* fixture()
             const [result] = yield* Effect.all(
               [
-                tools.create({ name: 'Website', location: { kind: 'Within', project: 'Launch' } }),
+                tools.create({
+                  summary: 'Launch work',
+                  name: 'Website',
+                  location: { kind: 'Within', project: 'Launch' },
+                }),
                 tools.reply('ListProjects', null, Exit.succeed({ projects: parents })),
               ],
               { concurrency: 2 },

@@ -1,19 +1,16 @@
 import { describe, expect, it } from '@effect/vitest'
 import {
   ChannelAddress,
-  ChannelLimitReached,
   ChannelProviderFailed,
   ChannelStanding,
   type ChannelListResponse,
 } from '@vivid/contracts'
-import { Deferred, Effect, Fiber, Layer, Option, Queue, Ref, Result, Stream } from 'effect'
+import { Deferred, Effect, Fiber, Option, Queue, Ref, Result, Stream } from 'effect'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { Changes, Topic } from '../live/changes.ts'
-import { Database } from '../database/client.ts'
 import { nextValue } from '../live/testing.ts'
 import { channelHandlers } from './handlers.ts'
-import { ChannelStore, channelStoreLayer } from './store.ts'
-import { unavailableChannelProviderLayer } from './provider.ts'
+import { ChannelStore } from './store.ts'
 import { ChannelControl, channelTestLayer, fixture } from './testing.ts'
 
 /** Every watch must return one entry for each closed channel before its state can be asserted. */
@@ -25,32 +22,20 @@ const firstChannel = (response: ChannelListResponse) => {
 
 /** Refusals are asserted through the public RPC seam, including authenticated personal ownership. */
 describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
-  it.effect(
-    'a server without a configured provider acquires normally and every channel stands Unavailable',
-    () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        const context = yield* Effect.context<Database | Changes>()
-        const channels = yield* Layer.build(
-          Layer.fresh(channelStoreLayer).pipe(
-            Layer.provide(unavailableChannelProviderLayer),
-            Layer.provide(Layer.succeedContext(context)),
-          ),
-        )
-        yield* Effect.gen(function* () {
-          const store = yield* ChannelStore
-          expect((yield* store.list(test.actor)).map((link) => link.standing._tag)).toEqual([
-            'Unavailable',
-            'Unavailable',
-          ])
-          const result = yield* store
-            .connect(test.actor, 'iMessage', test.address)
-            .pipe(Effect.result)
-          expect(Result.isFailure(result) ? result.failure._tag : 'accepted').toBe(
-            'ChannelUnavailable',
-          )
-        }).pipe(Effect.provideContext(channels))
-      }).pipe(Effect.scoped, Effect.provide(channelTestLayer)),
+  it.effect('a channel Vivid does not text on yet stands Unavailable and refuses a number', () =>
+    Effect.gen(function* () {
+      const test = yield* fixture()
+      const store = yield* ChannelStore
+      expect(
+        (yield* store.list(test.actor)).map((link) => [link.channel, link.standing._tag]),
+      ).toEqual([
+        ['iMessage', 'NotConnected'],
+        ['WhatsApp', 'Unavailable'],
+      ])
+      const result = yield* store.connect(test.actor, 'WhatsApp', test.address).pipe(Effect.result)
+      expect(Result.isFailure(result) ? result.failure._tag : 'accepted').toBe('ChannelUnavailable')
+      expect(yield* Ref.get((yield* ChannelControl).enrols)).toEqual([])
+    }).pipe(Effect.scoped, Effect.provide(channelTestLayer)),
   )
   it.effect(
     'rejects local numbers, malformed numbers and email enrolment before provider I/O',
@@ -109,14 +94,11 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
       }).pipe(Effect.scoped, Effect.provide(channelTestLayer)),
   )
 
-  it.effect('preserves limit and provider refusals without creating a link', () =>
+  it.effect('preserves provider refusals without creating a link', () =>
     Effect.gen(function* () {
       const test = yield* fixture()
       const control = yield* ChannelControl
-      for (const failure of [
-        new ChannelLimitReached({ channel: 'iMessage' }),
-        new ChannelProviderFailed({ channel: 'iMessage' }),
-      ]) {
+      for (const failure of [new ChannelProviderFailed({ channel: 'iMessage' })]) {
         yield* Ref.set(control.failure, Option.some(failure))
         const result = yield* channelHandlers
           .ConnectChannel({ channel: 'iMessage', address: test.address })

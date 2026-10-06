@@ -1,6 +1,6 @@
 import type { VividRpcClient } from '@vivid/client-runtime'
 import type { ProductFailure, Settle } from '@vivid/state'
-import { Effect } from 'effect'
+import { Effect, Fiber } from 'effect'
 import { engine } from './runtime'
 
 /**
@@ -27,3 +27,16 @@ export const change = <Value>(
  * thing that must work while the rest is broken, reporting a fault (`fault.ts`).
  */
 export const send = (program: Effect.Effect<void>) => Effect.runPromise(program)
+
+/**
+ * Starts a program that goes on until it ends by itself or is stopped, and hands back the way to
+ * stop it. It is for the one thing in the app that waits on something outside it for minutes: the
+ * desktop app waiting for a Person to choose a Google account in their browser (`handoff.ts`).
+ * Stopping interrupts the program where it stands, in the middle of a wait included.
+ */
+export const start = (program: Effect.Effect<void>) => {
+  const fiber = Effect.runFork(program)
+  return () => {
+    Effect.runFork(Fiber.interrupt(fiber))
+  }
+}

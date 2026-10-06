@@ -1,7 +1,9 @@
 import { VividRpcClient } from '@vivid/client-runtime'
 import { Array as Arr, Data, Effect, Layer, Option, Order, Redacted, Schema } from 'effect'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
+import { auth } from './auth'
 import { deviceName } from './device'
+import { firstArrival, googleAddresses, outcomeOf, type GoogleOutcome } from './google'
 
 /**
  * Signing in and out. These are Better Auth's own routes (`/api/auth/*`), the one part of the
@@ -95,12 +97,127 @@ export const createAccount = (input: {
 export const signIn = (input: { readonly email: string; readonly password: string }) =>
   post('sign-in/email', input)
 
+/** Why Google sign-in did not start, as the outcome the welcome has a sentence for. */
+export class GoogleRefused extends Data.TaggedError('GoogleRefused')<{
+  readonly outcome: GoogleOutcome
+}> {}
+
+/** Better Auth's refusal as its client hands it back: the body's `code`, beside the status. */
+const decodeGoogleRefusal = Schema.decodeUnknownOption(
+  Schema.Struct({ code: Schema.optionalKey(Schema.String) }),
+)
+
+/**
+ * Starts signing in with Google, for a new Person and a returning one alike: Google is one
+ * action, and Better Auth makes the account when there is none.
+ *
+ * This is Better Auth's client doing what it does (`signIn.social`, better-auth 1.7.5): it posts
+ * to `/api/auth/sign-in/social`, the server keeps the state of this attempt in a cookie and
+ * answers with Google's address, and the client's own redirect plugin
+ * (`dist/client/fetch-plugins.mjs`) sends the page there. So on success this page is already on
+ * its way out, and there is nothing more to do here. Coming back is `readAddress` (a failure) or
+ * `adoptFirstArrival` (a new account).
+ *
+ * The one refusal a Person can meet before leaving is a server that was given no Google client.
+ * There is no way to ask a server which sign-in methods it has, so the button is always offered
+ * and this is where a Vivid without Google says so.
+ */
+export const continueWithGoogle = Effect.fn('Account.continueWithGoogle')(function* (
+  destination: string,
+) {
+  const answer = yield* Effect.tryPromise({
+    try: () => auth.signIn.social({ provider: 'google', ...googleAddresses(destination) }),
+    catch: () => new GoogleRefused({ outcome: 'Unreachable' }),
+  })
+  if (answer.error === null) return
+  const code = Option.flatMap(decodeGoogleRefusal(answer.error), (refusal) =>
+    Option.fromUndefinedOr(refusal.code),
+  )
+  yield* Effect.fail(
+    new GoogleRefused({
+      outcome: Option.match(code, { onNone: () => 'Failed', onSome: outcomeOf }),
+    }),
+  )
+})
+
+/**
+ * Gives an account that Google sign-in just made the time zone of this browser, the way
+ * `createAccount` does for one made with a password.
+ *
+ * A Google sign-in leaves the page before there is an account and returns after, so the only
+ * moment to do it is the landing. Better Auth sends a new account, and only a new one, to
+ * `newUserCallbackURL`, which `googleAddresses` marks with `joined=google`. This reads that mark
+ * when the page loads, takes it out of the address bar so a reload does not act on it twice, and
+ * makes the same call. A returning Person lands without the mark, so a zone they chose in
+ * Settings is never overwritten by signing in again.
+ *
+ * Outside a browser (a test drawing a screen) there is no address and nothing is done.
+ */
+export const adoptFirstArrival = Effect.suspend(() => {
+  if (!('location' in globalThis)) return Effect.void
+  return Option.match(firstArrival(`${location.pathname}${location.search}`), {
+    onNone: () => Effect.void,
+    onSome: (address) => {
+      history.replaceState(history.state, '', address)
+      return Effect.andThen(
+        justJoined,
+        Effect.fn(function* (joined) {
+          if (joined) yield* adoptTimeZone
+        }),
+      )
+    },
+  })
+})
+
+/** How long after an account is made its landing still counts as the first one. */
+const FIRST_ARRIVAL_MS = 10 * 60 * 1000
+
+/** The part of Better Auth's session answer that says when this Person's account was made. */
+const Joined = Schema.Struct({ user: Schema.Struct({ createdAt: Schema.String }) })
+
+/**
+ * Whether the account signed in here was made in the last few minutes, as the server says.
+ *
+ * The `joined=google` mark is only an address, and anyone can send a signed-in Person a link that
+ * carries it; acted on alone it let such a link replace a time zone the Person had chosen. The
+ * account's own creation time is the server's, so the mark is now only the reason to ask, and
+ * this is the authority. No session, or an answer that cannot be read, is not a new account.
+ */
+const justJoined = Effect.suspend(() =>
+  read('get-session', Joined).pipe(
+    Effect.map((here) => Date.now() - Date.parse(here.user.createdAt) < FIRST_ARRIVAL_MS),
+    Effect.orElseSucceed(() => false),
+  ),
+)
+
 export const signOut = () => post('sign-out', {})
 
-/** One place this Person is signed in, as Better Auth lists it. Its token is a credential. */
+/** The part of Better Auth's session answer that says when the session ends. */
+const Ending = Schema.Struct({ session: Schema.Struct({ expiresAt: Schema.String }) })
+
+/**
+ * When this browser's session ends, in epoch milliseconds, as the server says (Better Auth's
+ * `get-session`, whose `session.expiresAt` is an ISO date; better-auth 1.7.5
+ * `dist/api/routes/session.mjs`). The browser cannot read its own session cookie, so this is the
+ * only way it knows. None when there is no session, the server cannot be reached, or the answer
+ * does not read as a date: what depends on it (`data/snapshot.ts`) then keeps nothing.
+ */
+export const sessionExpiry = Effect.suspend(() =>
+  read('get-session', Ending).pipe(
+    Effect.map((here) => Date.parse(here.session.expiresAt)),
+    Effect.map((until) => (Number.isFinite(until) ? Option.some(until) : Option.none<number>())),
+    Effect.orElseSucceed(() => Option.none<number>()),
+  ),
+)
+
+/**
+ * One place this Person is signed in, as Better Auth lists it. Its token is a credential, so it
+ * is wrapped as it is read: `RedactedFromValue` decodes the plain string the server sends, where
+ * `Schema.Redacted` accepts only a value that is already wrapped and refused every answer.
+ */
 const Session = Schema.Struct({
   id: Schema.String,
-  token: Schema.Redacted(Schema.String),
+  token: Schema.RedactedFromValue(Schema.String),
   userAgent: Schema.NullOr(Schema.String),
   updatedAt: Schema.String,
 })
@@ -160,18 +277,12 @@ export const signedInDevices = () =>
     )
   })
 
-/** Signs one other device out. It has to sign in, or be paired, again. */
+/** Signs one other device out. It has to sign in again. */
 export const signOutDevice = (device: SignedInDevice) =>
   post('revoke-session', { token: Redacted.value(device.token) })
 
 /** Signs out everywhere except here. */
 export const signOutElsewhere = () => post('revoke-other-sessions', {})
-
-/** Lets a device that is waiting with this code sign in as the Person approving it. */
-export const approveDevice = (userCode: string) => post('device/approve', { userCode })
-
-/** Tells a waiting device it will not be signed in. */
-export const denyDevice = (userCode: string) => post('device/deny', { userCode })
 
 /**
  * The session lives in a cookie the live socket read when it opened, so a change of session means

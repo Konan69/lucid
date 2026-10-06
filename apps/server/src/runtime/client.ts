@@ -21,6 +21,7 @@ import {
   type ThreadOrigin,
 } from '@vivid/contracts'
 import { RuntimeUnavailable } from '@vivid/contracts/rpc'
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { ServerConfig } from '../config.ts'
 import { submissionId } from './identity.ts'
 import { observeRun, type Settlement } from './settlement.ts'
@@ -315,6 +316,10 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
             Effect.fail(AdmissionUncertain.make({ ...attemptOf(input), reason: 'TimedOut' })),
         }),
         Effect.scoped,
+        // Admission classifies refusal here; delivery retries and outward failures only carry it.
+        Effect.tapErrorTag('AdmissionRefused', ({ reason }) =>
+          recordRefusal(Refusal.cases.AdmissionRefused.make({ reason })),
+        ),
       ),
   )
 

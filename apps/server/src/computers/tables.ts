@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm'
 import { boolean, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core'
 import type {
   BrowserAction,
+  WindowAction,
   DeviceAccess,
   DeviceId,
   DeviceRequestId,
@@ -105,7 +106,7 @@ export const deviceRequests = pgTable('vivid_device_requests', {
   subscriptionId: text('subscription_id').$type<DeviceSubscriptionId>().notNull(),
   threadId: threadColumn('thread_id').notNull(),
   runId: text('run_id').$type<RunId>().notNull(),
-  action: text('action').$type<BrowserAction['_tag']>().notNull(),
+  action: text('action').$type<BrowserAction['_tag'] | WindowAction['_tag']>().notNull(),
   receipt: jsonb('receipt').$type<typeof DeviceReceipt.Encoded>().notNull(),
   status: text('status')
     .$type<DeviceReceipt['_tag']>()

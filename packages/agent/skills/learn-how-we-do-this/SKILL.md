@@ -7,7 +7,7 @@ metadata:
     Shipped guidance keeps completion evidence and permission beside the steps.
 ---
 
-Start from work whose result has been verified in the Thread. Identify the repeatable part, the evidence that it succeeded and the decisions that depended on this particular case. Do not convert an untested plan or an uncertain confirmation into a trusted procedure. Use `recall` for relevant working preferences, and separate those facts from executable steps.
+Start from work whose result has been verified in the Thread. Identify the repeatable part, the evidence that it succeeded and the decisions that depended on this particular case. Do not convert an untested plan or an uncertain confirmation into a trusted procedure. Use what you remember for relevant working preferences, and separate those facts from executable steps.
 
 Draft a procedure with a short name, a clear use condition, prerequisites, ordered steps, decision points, failure handling, completion checks and the actions that need Approval. Name only tools Vivid actually has. Describe service-specific operations as tools to discover with `find_tools`; never invent a fixed tool name. If a required integration is not connected, the instructions must offer `connect` and stop dependent work until access is ready. Remove credentials, private record references and details that should not be repeated in another Thread.
 

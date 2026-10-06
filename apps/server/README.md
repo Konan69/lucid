@@ -5,10 +5,23 @@ and invitation concepts use Better Auth's organization-plugin backend, but are c
 physical model names `company` and `membership`. That mapping is internal to the auth boundary;
 the contracts and HTTP routes use only the Vivid glossary terms.
 
-Browser clients and the Electron web renderer use Better Auth's HttpOnly session cookie. Expo
-uses a bearer session token kept in SecureStore on native devices. The device-authorization
-plugin supports pairing; mobile implements the code exchange. The desktop shell currently uses
-the bundled web sign-in, not a separate bearer-token flow.
+Browser clients and the Electron web renderer use Better Auth's HttpOnly session cookie. The
+phone app uses a bearer session token kept in SecureStore.
+
+No app signs in with a code a Person reads, types or approves; the device-authorization grant is
+not installed. Email and password are typed in each app. Google will not sign anyone in inside an
+app's own window, so both apps hand Google to a browser they do not own and get the result back
+the same way (`src/auth/signin.ts`, after `@better-auth/electron` and `@better-auth/expo`; the
+wire contract is `packages/contracts/src/signin.ts`): the app keeps a secret and sends its
+digest, Better Auth's own Google callback issues a one-use code only for the session it has just
+made, and the app trades the code and the secret for a session of its own.
+
+- The desktop shell opens the system browser on `GET /api/auth/desktop/google`. The code comes
+  back on a loopback address the shell listens on, and the window trades it at
+  `POST /api/auth/desktop/session` for a cookie.
+- The phone app opens the system browser on `GET /api/auth/phone/google`. The code comes back
+  on the app's own link (`vivid://signin`), which opens the app again, and the app trades it at
+  `POST /api/auth/phone/session` for the session's token.
 
 ## Configuration
 
@@ -24,12 +37,13 @@ never the supplied value.
 | `VIVID_RUNTIME_TOKEN`  | Yes      | Runtime authority, kept redacted and never sent to clients.                    |
 | `PORT`                 | No       | Integer from 1 through 65535; defaults to `8787`.                              |
 | `PUBLIC_URL`           | No       | If supplied, must be an absolute URL; defaults to `http://localhost:3000`.     |
-| `GOOGLE_CLIENT_ID`     | No       | All three Google OAuth variables must be supplied together or omitted.         |
-| `GOOGLE_CLIENT_SECRET` | No       | Part of the atomic Google OAuth set; kept redacted.                            |
-| `GOOGLE_REDIRECT_URI`  | No       | Required when Google OAuth is enabled and must be an absolute URL.             |
+| `GOOGLE_CLIENT_ID`     | Yes      | The Google client's id, for sign-in and for Google Integrations.               |
+| `GOOGLE_CLIENT_SECRET` | Yes      | That client's secret; kept redacted.                                           |
+| `GOOGLE_REDIRECT_URI`  | Yes      | Must be an absolute URL: the address Google returns a sign-in to Vivid to.     |
 
 Supply configuration in the process environment. The server's `dev` script does not load an
-`.env` file. `.env.example` illustrates values but omits the required runtime URL and token. Local PostgreSQL is
+`.env` file. `.env.example` lists every setting the server does not start without, these and the
+ones under "External capabilities" below. Local PostgreSQL is
 `postgres://vivid:vivid@127.0.0.1:55433/vivid`. Do not put secret values in logs, traces, health
 responses, or error messages.
 
@@ -52,16 +66,32 @@ mutation routes are closed; Company changes go through the audited product RPCs.
 
 ## External capabilities
 
-Integrations use Executor (`VIVID_EXECUTOR_URL` and `VIVID_EXECUTOR_KEY`), with account references
-stored in PostgreSQL and credentials held by Executor. Memory uses HelixDB when
-`VIVID_HELIX_URL` is set; when it is absent, memory calls report unavailable and nothing is learned.
-The Computer provider is selected by `VIVID_COMPUTER_PROVIDER` (`boat` or `docker`); no selection
-means unavailable. Boat was proven against the real service on 3 October 2026. Check the owning
-adapter files and [current status](../../docs/14-product-feature-set-and-grok-bot-parity.md) for
-configuration and limits. Models use the Experiential Labs gateway; Vivid adds no model retry layer.
+Every part of the product is required. The server does not start without the settings of any of
+these, and the failure names the variable (`requiredSetting` in `src/config.ts`):
 
-Google OAuth above is for account sign-in. Google Integrations need their own operator sign-in
-client in Executor; these application credentials do not configure it.
+- **Computer:** Boat. `VIVID_BOAT_API_KEY` and `VIVID_BOAT_TEMPLATE` (`src/computers/README.md`).
+  No SSH key is configured: each connection to a Computer makes its own.
+- **Memory:** HelixDB at `VIVID_HELIX_URL`, with embeddings through the model gateway.
+- **Integrations:** Executor. `VIVID_EXECUTOR_URL`, `VIVID_EXECUTOR_KEY` and
+  `VIVID_EXECUTOR_ORGANIZATION`. Account references are in PostgreSQL; Executor holds credentials.
+- **Texting:** Photon. `VIVID_PHOTON_PROJECT_ID` and `VIVID_PHOTON_PROJECT_SECRET`.
+- **Away notifications:** `VIVID_PUSH_VAPID_PUBLIC`, `VIVID_PUSH_VAPID_PRIVATE` and
+  `VIVID_PUSH_SUBJECT`.
+- **Models:** the Experiential Labs gateway, `EXPLABS_API_KEY`. Vivid adds no model retry layer.
+- **Sign-in with Google:** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_REDIRECT_URI`.
+
+There is no server that runs without one of them, and no local stand-in for any of them. What can
+still happen is the service itself not answering. That is never a mode the server settles into: it
+is a typed failure on the call that met it, the Person or Vivid is told it is not answering right
+now, and the next call tries again, so it is over when the service is back, with no restart. Check
+[current status](../../docs/14-product-feature-set-and-grok-bot-parity.md) for limits.
+
+The Google client above is the installation's one Google client. A Person signs in to Vivid with
+it, and Executor signs a Person in to a Google Integration with it: Gmail, Calendar, Drive, Docs,
+Sheets and Tasks, which the server carries and installs on Executor itself
+(`src/connections/google.ts`). The client must allow two return addresses on the server's public
+address: `/api/auth/callback/google` and `/api/connections/return`
+([One product](../../docs/22-one-product.md), "Google Integrations").
 
 One-off Routines resolve a local date-time using the Person's saved time zone. The existing
 Routine scheduler claims the Occurrence, disables the Routine and clears its next time in one

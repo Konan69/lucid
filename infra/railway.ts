@@ -30,27 +30,83 @@ const privateUrl = (name: string, port: number) => `http://${name}.railway.inter
  */
 const listenHost = '::'
 
+/** Where the runtime's volume is mounted; each Person's notes are one SQLite file in it. */
+const memoryPath = '/var/lib/vivid/memory'
+
 /**
- * Google sign-in is one atomic set: the client's id and secret and the address Google sends a
- * Person back to. `infra/env.ts` already refuses a partial set, so here it is all three or none,
- * and without them the server starts with Google sign-in off.
+ * Sign-in with Google. `infra/env.ts` requires all three, so the hosted server always offers it.
  */
-const googleAccess = (environment: InfrastructureEnvironment) =>
-  Option.match(
-    Option.all({
-      clientId: environment.googleClientId,
-      clientSecret: environment.googleClientSecret,
-      redirectUri: environment.googleRedirectUri,
+const googleAccess = ({ google }: InfrastructureEnvironment) => ({
+  GOOGLE_CLIENT_ID: google.clientId,
+  GOOGLE_CLIENT_SECRET: google.clientSecret,
+  GOOGLE_REDIRECT_URI: google.redirectUri,
+})
+
+/**
+ * The server reaches Executor over the private mesh with a key minted on that Executor.
+ * `infra/env.ts` requires the key and the organization, so the hosted server always has its
+ * Integrations; the server itself refuses to start with any of the three missing.
+ */
+const executorAccess = ({ executor }: InfrastructureEnvironment) => ({
+  VIVID_EXECUTOR_URL: privateUrl(serviceNames.executor, ports.executor),
+  VIVID_EXECUTOR_KEY: executor.key,
+  VIVID_EXECUTOR_ORGANIZATION: executor.organization,
+  /** Lets a Person add an Integration by address; true only with the Executor settings above. */
+  VIVID_EXECUTOR_PUBLIC_ONLY: 'true',
+})
+
+/**
+ * Texting Vivid over iMessage. These two were on the hosted server by hand and in no file here,
+ * so texting worked by accident and a new environment would have had none (found 5 October
+ * 2026). They are part of the graph now: required at deploy and sent like everything else.
+ */
+const textingAccess = ({ texting }: InfrastructureEnvironment) => ({
+  VIVID_PHOTON_PROJECT_ID: texting.projectId,
+  VIVID_PHOTON_PROJECT_SECRET: texting.projectSecret,
+})
+
+/** Notifications while a Person is away, to browser and phone. */
+const pushAccess = ({ push }: InfrastructureEnvironment) => ({
+  VIVID_PUSH_VAPID_PUBLIC: push.publicKey,
+  VIVID_PUSH_VAPID_PRIVATE: push.privateKey,
+  VIVID_PUSH_SUBJECT: push.subject,
+})
+
+/**
+ * Telemetry export is one atomic pair, absent until a backend exists. With it go the two names
+ * the exported resource carries. Railway resolves both references at deploy time; it sets
+ * `RAILWAY_GIT_COMMIT_SHA` only for a deployment built from a commit, and the server reads an
+ * empty value as absent.
+ */
+const observabilityAccess = (environment: InfrastructureEnvironment) =>
+  Option.match(environment.observability, {
+    onNone: () => ({}),
+    onSome: ({ url, headers }) => ({
+      VIVID_OTLP_URL: url,
+      VIVID_OTLP_HEADERS: headers,
+      VIVID_ENVIRONMENT: '${{RAILWAY_ENVIRONMENT_NAME}}',
+      VIVID_COMMIT: '${{RAILWAY_GIT_COMMIT_SHA}}',
     }),
-    {
-      onNone: () => ({}),
-      onSome: (google) => ({
-        GOOGLE_CLIENT_ID: google.clientId,
-        GOOGLE_CLIENT_SECRET: google.clientSecret,
-        GOOGLE_REDIRECT_URI: google.redirectUri,
-      }),
-    },
-  )
+  })
+
+/** A setting the server has its own default for is sent only when the deploy sets it. */
+const whenSet = (name: string, value: Option.Option<string>) =>
+  Option.match(value, { onNone: () => ({}), onSome: (set) => ({ [name]: set }) })
+
+/**
+ * Vivid's Computer on Boat. The key and the template are always sent: `infra/env.ts` refuses a
+ * deploy without them, and the server refuses to start without them, so the hosted server never
+ * runs without its Computer. Boat is the only provider, so there is no selector to set. Boat
+ * itself is not a resource of this graph; the server reaches it over the public internet.
+ */
+const computerAccess = ({ computer }: InfrastructureEnvironment) => ({
+  VIVID_BOAT_API_KEY: computer.key,
+  VIVID_BOAT_TEMPLATE: computer.template,
+  ...whenSet('VIVID_BOAT_ORG', computer.organization),
+  ...whenSet('VIVID_BOAT_SIZE', computer.size),
+  ...whenSet('VIVID_BOAT_LIFETIME_SECONDS', computer.lifetimeSeconds),
+  ...whenSet('VIVID_BOAT_MACHINE', computer.machine),
+})
 
 /**
  * The hosted product on Railway: PostgreSQL, the Flue runtime on the private mesh, and the
@@ -59,8 +115,8 @@ const googleAccess = (environment: InfrastructureEnvironment) =>
  * origin exactly as they do behind the Vite proxy locally.
  *
  * Helix gives Vivid its memory and Executor its Integrations (`docs/24-executor-scale.md`).
- * Program isolation is not part of this graph yet: the server reports that capability as
- * unavailable (`docs/19-infrastructure.md`).
+ * Programs Vivid writes need nothing in this graph: they run on the Person's Computer, which the
+ * server reaches through its Computer provider (`docs/19-infrastructure.md`).
  */
 export const railwayResources = Effect.fn('railwayResources')(function* (
   target: DeploymentTarget,
@@ -120,8 +176,9 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
    * volume at `/app/data` holding its database, app source, builds and generated keys, a public
    * domain because a Person's browser returns from a provider's sign-in through it, `/health` with
    * a 120-second start, and exactly one instance per volume. The image derives its own origin from
-   * `RAILWAY_PUBLIC_DOMAIN`. The tag is the published build the pilot ran; it moves to an image
-   * built from our fork when the fork carries changes.
+   * `RAILWAY_PUBLIC_DOMAIN`. The image is upstream's source at commit `304bf60`, unchanged, built
+   * with upstream's own self-host Dockerfile: the last published tag (`2.0.0-beta.8`) is older and
+   * the store schema and migrations are the same in both, so the tag can go back to it.
    *
    * Every sign-in returns to Vivid, not to Executor's own page, which needs an Executor browser
    * session no Person has. Railway resolves the server's domain in the reference at deploy time.
@@ -129,7 +186,7 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
   const executor = yield* Railway.Service('Executor', {
     project,
     name: serviceNames.executor,
-    image: 'ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.8',
+    image: 'ghcr.io/konan69/executor-selfhost:src-304bf60',
     port: ports.executor,
     publicDomain: true,
     healthcheckPath: '/health',
@@ -137,23 +194,20 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
     env: {
       PORT: String(ports.executor),
       EXECUTOR_OAUTH_CALLBACK_URL: `https://\${{${serviceNames.server}.RAILWAY_PUBLIC_DOMAIN}}/api/connections/return`,
+      /**
+       * Executor fetches an address a Person gives it, from a network that also holds the
+       * database and Helix. These three keep it to public addresses: no loopback, no plain-HTTP
+       * exceptions, no private ranges or internal names for an app's own requests. Upstream
+       * enforces them at connection time, after DNS (`packages/utils/src/url-policy.ts`), so a
+       * name that later resolves inward is refused too. The server may declare
+       * `VIVID_EXECUTOR_PUBLIC_ONLY` only because these are set here.
+       */
+      EXECUTOR_URL_ALLOW_LOOPBACK_HTTP: 'false',
+      EXECUTOR_URL_ALLOW_HTTP_ORIGINS: '[]',
+      EXECUTOR_APPS_ALLOW_PRIVATE_FETCH: 'false',
     },
   })
   yield* Railway.Volume('ExecutorData', { project, service: executor, mountPath: '/app/data' })
-
-  /**
-   * The server reaches Executor over the private mesh with a key minted on that Executor. Until
-   * the key exists the three settings are absent together and Integrations are off; a URL without
-   * its key and organization would stop the server at launch.
-   */
-  const executorAccess = Option.match(environment.executor, {
-    onNone: () => ({}),
-    onSome: ({ key, organization }) => ({
-      VIVID_EXECUTOR_URL: privateUrl(serviceNames.executor, ports.executor),
-      VIVID_EXECUTOR_KEY: key,
-      VIVID_EXECUTOR_ORGANIZATION: organization,
-    }),
-  })
 
   /** Sent only when the deploy sets it; otherwise the server keeps its default (off). */
   const decisionAccess = Option.match(environment.decisions, {
@@ -162,23 +216,16 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
   })
 
   /**
-   * Telemetry export is one atomic pair, absent until a backend exists. With it go the two names
-   * the exported resource carries. Railway resolves both references at deploy time; it sets
-   * `RAILWAY_GIT_COMMIT_SHA` only for a deployment built from a commit, and the server reads an
-   * empty value as absent.
+   * Flue keeps its durable state in PostgreSQL. The one thing the runtime keeps on disk is a
+   * Person's notes: one SQLite file each (`packages/agent/runtime/src/notes.ts`), which sits beside
+   * the runtime because that is the part of Vivid that later runs on the Person's own device. The
+   * volume below holds them across deployments, and `VIVID_MEMORY_DIR` is what turns notes on.
+   *
+   * The image runs as `node` and a fresh Railway volume is owned by root, so `RAILWAY_RUN_UID`
+   * makes the directory writable without changing the image, as it does for Helix. One volume
+   * means exactly one runtime instance.
    */
-  const observabilityAccess = Option.match(environment.observability, {
-    onNone: () => ({}),
-    onSome: ({ url, headers }) => ({
-      VIVID_OTLP_URL: url,
-      VIVID_OTLP_HEADERS: headers,
-      VIVID_ENVIRONMENT: '${{RAILWAY_ENVIRONMENT_NAME}}',
-      VIVID_COMMIT: '${{RAILWAY_GIT_COMMIT_SHA}}',
-    }),
-  })
-
-  /** Flue keeps its durable state in PostgreSQL, so the runtime needs no volume of its own. */
-  yield* Railway.Service('Runtime', {
+  const runtime = yield* Railway.Service('Runtime', {
     project,
     name: serviceNames.runtime,
     context: '.',
@@ -198,8 +245,11 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
       VIVID_SERVER_URL: privateUrl(serviceNames.server, ports.server),
       VIVID_MODEL: environment.model,
+      VIVID_MEMORY_DIR: memoryPath,
+      RAILWAY_RUN_UID: '0',
     },
   })
+  yield* Railway.Volume('RuntimeMemory', { project, service: runtime, mountPath: memoryPath })
 
   /**
    * Server and Runtime are independent graph nodes. Resource.ts:Resource registers them;
@@ -237,9 +287,12 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       VIVID_RUNTIME_TOKEN: environment.runtimeToken,
       EXPLABS_API_KEY: environment.modelGatewayKey,
       VIVID_HELIX_URL: privateUrl(serviceNames.helix, ports.helix),
-      ...executorAccess,
+      ...computerAccess(environment),
+      ...executorAccess(environment),
+      ...textingAccess(environment),
+      ...pushAccess(environment),
       ...decisionAccess,
-      ...observabilityAccess,
+      ...observabilityAccess(environment),
       ...googleAccess(environment),
       /** Where `apps/server/Dockerfile` leaves the built web app; the server serves it itself. */
       VIVID_WEB_DIST: '/app/apps/web/dist',

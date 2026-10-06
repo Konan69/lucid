@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
-    "typecheck": "tsc --noEmit",
-    "lint": "oxlint --type-aware src",
+    "typecheck": "node ../../scripts/types.mjs",
+    "lint": "node ../../scripts/lint.mjs",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:generate:product": "drizzle-kit generate --config product-drizzle.config.ts",
@@ -36,6 +36,7 @@
     "mime": "4.1.0",
     "pg": "catalog:",
     "spectrum-ts": "12.10.1",
+    "ssh2": "1.17.0",
     "tldts": "7.4.13",
     "unpdf": "^1.8.1",
     "web-push": "^3.6.7"
@@ -45,6 +46,7 @@
     "@types/html-to-text": "9.0.4",
     "@types/node": "catalog:",
     "@types/pg": "catalog:",
+    "@types/ssh2": "1.15.6",
     "@types/web-push": "^3.6.4",
     "@typescript/native": "catalog:",
     "@vivid/client-runtime": "workspace:*",

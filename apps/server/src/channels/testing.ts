@@ -3,7 +3,6 @@ import { expect } from '@effect/vitest'
 import { eq, inArray } from 'drizzle-orm'
 import {
   ChannelAddress,
-  ChannelLimitReached,
   ChannelProviderFailed,
   Person,
   PersonId,
@@ -20,7 +19,7 @@ import { type Actor } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseLayer } from '../database/testdb.ts'
 import { changesLayer } from '../live/changes.ts'
-import { silentLearningLayer } from '../memory/learn.ts'
+import { silentLearningLayer } from '../memory/testing.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Admission, Runtime, Settlement } from '../runtime/client.ts'
 import { submissionId } from '../runtime/identity.ts'
@@ -39,6 +38,8 @@ import {
   ChannelMessageId,
   ChannelProvider,
   ChannelDisconnected,
+  ChannelRecipientMissing,
+  ChannelSendUnknown,
 } from './provider.ts'
 import { ChannelReplies, channelRepliesLayer, type ChannelEnding } from './replies.ts'
 import { channelStoreLayer } from './store.ts'
@@ -50,11 +51,13 @@ type Send = Parameters<ChannelProvider['Service']['send']>[0]
 interface ChannelControlService {
   readonly endings: Queue.Queue<ChannelEnding>
   readonly sends: Ref.Ref<ReadonlyArray<Send>>
+  readonly sending: Queue.Queue<Send>
+  readonly dispatch: Ref.Ref<Effect.Effect<void, ChannelRecipientMissing | ChannelSendUnknown>>
   readonly connections: Queue.Queue<void>
   readonly disconnect: Ref.Ref<boolean>
   readonly enrols: Ref.Ref<ReadonlyArray<ChannelAddress>>
   readonly unenrols: Ref.Ref<ReadonlyArray<ChannelEnrolmentId>>
-  readonly failure: Ref.Ref<Option.Option<ChannelLimitReached | ChannelProviderFailed>>
+  readonly failure: Ref.Ref<Option.Option<ChannelProviderFailed>>
   readonly inbound: Queue.Queue<ChannelInbound>
   readonly admitted: Queue.Queue<RuntimeInput>
   readonly admissions: Ref.Ref<ReadonlyArray<RuntimeInput>>
@@ -69,13 +72,15 @@ const ports = Layer.effectContext(
   Effect.gen(function* () {
     const endings = yield* Queue.unbounded<ChannelEnding>()
     const sends = yield* Ref.make<ReadonlyArray<Send>>([])
+    const sending = yield* Queue.unbounded<Send>()
+    const dispatch = yield* Ref.make<
+      Effect.Effect<void, ChannelRecipientMissing | ChannelSendUnknown>
+    >(Effect.void)
     const connections = yield* Queue.unbounded<void>()
     const disconnect = yield* Ref.make(false)
     const enrols = yield* Ref.make<ReadonlyArray<ChannelAddress>>([])
     const unenrols = yield* Ref.make<ReadonlyArray<ChannelEnrolmentId>>([])
-    const failure = yield* Ref.make<Option.Option<ChannelLimitReached | ChannelProviderFailed>>(
-      Option.none(),
-    )
+    const failure = yield* Ref.make<Option.Option<ChannelProviderFailed>>(Option.none())
     const inbound = yield* Queue.unbounded<ChannelInbound>()
     const admitted = yield* Queue.unbounded<RuntimeInput>()
     const admissions = yield* Ref.make<ReadonlyArray<RuntimeInput>>([])
@@ -83,6 +88,8 @@ const ports = Layer.effectContext(
     const control = ChannelControl.of({
       endings,
       sends,
+      sending,
+      dispatch,
       connections,
       disconnect,
       enrols,
@@ -99,7 +106,7 @@ const ports = Layer.effectContext(
       }),
     })
     const provider = ChannelProvider.of({
-      available: (channel) => channel === 'iMessage',
+      channels: ['iMessage'],
       enrol: Effect.fn('Channels.test.enrol')(function* (_channel, address) {
         const refusal = yield* Ref.get(failure)
         if (Option.isSome(refusal)) return yield* refusal.value
@@ -121,7 +128,11 @@ const ports = Layer.effectContext(
             : Stream.fromQueue(inbound)
         }),
       ),
-      send: Effect.fn('Channels.test.send')((input) => Ref.update(sends, (all) => [...all, input])),
+      send: Effect.fn('Channels.test.send')(function* (input) {
+        yield* Queue.offer(sending, input)
+        yield* yield* Ref.get(dispatch)
+        yield* Ref.update(sends, (all) => [...all, input])
+      }),
     })
     const runtime = Runtime.of({
       admit: Effect.fn('Channels.test.admit')(function* (input) {
@@ -257,7 +268,7 @@ export const fixture = Effect.fn('Channels.test.fixture')(function* () {
   /** Wait on the real observer's reply receipt, including app Runs which correctly send nothing. */
   const finish = Effect.fn('Channels.test.observedFinish')(function* (id: RunId, reply: string) {
     const control = yield* ChannelControl
-    yield* control.finish(id, Settlement.cases.Completed.make({ reply }))
+    yield* control.finish(id, Settlement.cases.Completed.make({ reply, responseId: id }))
     const event = yield* Queue.take(control.endings)
     expect(event.runId).toBe(id)
     return event

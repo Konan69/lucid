@@ -6,6 +6,7 @@ import * as HttpClientError from 'effect/unstable/http/HttpClientError'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
 import { LibraryFolderId, PersonId, RunId, RuntimeAdmissionBody, ThreadId } from '@vivid/contracts'
+import { refusalLogs } from '../observability/testlogger.ts'
 import { testConfigLayer, testDatabaseConfigured } from '../database/testdb.ts'
 import {
   AdmissionRefused,
@@ -81,7 +82,8 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission classification', () 
               return HttpClientResponse.fromWeb(request, new Response(receiptBody, { status }))
             }),
           )
-          const result = yield* admitWith(http)
+          const logs = refusalLogs()
+          const result = yield* admitWith(http).pipe(Effect.provide(logs.layer))
           if (Result.isSuccess(result)) expect.fail('Non-202 response was admitted')
           expect(result.failure).toMatchObject({
             _tag: tag,
@@ -89,6 +91,13 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission classification', () 
             threadId: admissionInput.threadId,
             runId: submission,
           })
+          const recorded = logs.recorded()
+          expect(recorded).toHaveLength(tag === 'AdmissionRefused' ? 1 : 0)
+          if (tag === 'AdmissionRefused') {
+            expect(recorded[0]).toContain('vivid.refusal.kind=AdmissionRefused')
+            expect(recorded[0]).toContain(`vivid.refusal.reason=${reason}`)
+            expect(recorded[0]).not.toContain(admissionInput.threadId)
+          }
           expect(yield* Deferred.isDone(cancelled)).toBe(true)
         }).pipe(Effect.scoped),
     )
@@ -96,6 +105,7 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission classification', () 
 
   const requestFailures = [
     { reason: HttpClientError.EncodeError, tag: 'AdmissionRefused', expected: 'Encoding' },
+    { reason: HttpClientError.InvalidUrlError, tag: 'AdmissionRefused', expected: 'Address' },
     { reason: HttpClientError.TransportError, tag: 'AdmissionUncertain', expected: 'Transport' },
   ]
   for (const failure of requestFailures) {
@@ -106,7 +116,8 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission classification', () 
             new HttpClientError.HttpClientError({ reason: new failure.reason({ request }) }),
           ),
         )
-        const result = yield* admitWith(http)
+        const logs = refusalLogs()
+        const result = yield* admitWith(http).pipe(Effect.provide(logs.layer))
         if (Result.isSuccess(result)) expect.fail('Failed request was admitted')
         expect(result.failure).toMatchObject({
           _tag: failure.tag,
@@ -114,6 +125,12 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission classification', () 
           threadId: admissionInput.threadId,
           runId: submission,
         })
+        const recorded = logs.recorded()
+        expect(recorded).toHaveLength(failure.tag === 'AdmissionRefused' ? 1 : 0)
+        if (failure.tag === 'AdmissionRefused') {
+          expect(recorded[0]).toContain('vivid.refusal.kind=AdmissionRefused')
+          expect(recorded[0]).toContain(`vivid.refusal.reason=${failure.expected}`)
+        }
       }).pipe(Effect.scoped),
     )
   }

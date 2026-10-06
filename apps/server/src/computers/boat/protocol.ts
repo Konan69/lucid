@@ -2,10 +2,16 @@ import { Schema } from 'effect'
 
 /** Boat v1 wire vocabulary, from https://docs.boat.dev/openapi/boat-v1.yaml.
  * Deliberately project out machine addresses, provider error messages and inherited credentials. */
+/** The characters Boat makes a machine id from, after `bx_`, and how many of them there are. */
+export const providerAlphabet = '23456789abcdefghjkmnpqrstuvwxyz'
+export const providerLength = 8
 export const ProviderId = Schema.String.check(
-  Schema.isPattern(/^bx_[23456789abcdefghjkmnpqrstuvwxyz]{8}$/),
+  Schema.isPattern(new RegExp(`^bx_[${providerAlphabet}]{${providerLength}}$`, 'u')),
 ).pipe(Schema.brand('BoatMachineId'))
 export type ProviderId = typeof ProviderId.Type
+/** Boat's machine sizes, smallest first. The order is used: a start that finds no machine of its
+ * size free moves to the sizes after it (`transport.ts`, `sizes`), never to a smaller one, which
+ * Boat refuses when the disk does not fit (`type_too_small`). */
 export const Size = Schema.Literals(['small', 'default', 'large'])
 export const Lifetime = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 2592000 }))
 /** Operator-published frozen Computer release; names are versioned and never point at a Person's machine. */
@@ -96,6 +102,23 @@ export const Command = Schema.Struct({
   stderrTruncated: Schema.optionalKey(Schema.Boolean),
 })
 export type Command = typeof Command.Type
+/**
+ * One line of a streamed command (`stream: true`, `application/x-ndjson`): `started`, then output
+ * as the command writes it, then exactly one `exit` or `error`. `oomKilled` is sent by Boat (seen
+ * 5 October 2026) and is not in its published schema, so its absence is not an error.
+ */
+export const CommandFrame = Schema.Union([
+  Schema.Struct({ type: Schema.Literal('started') }),
+  Schema.Struct({ type: Schema.Literals(['stdout', 'stderr']), data: Schema.String }),
+  Schema.Struct({
+    type: Schema.Literal('exit'),
+    exitCode: Schema.NullOr(Schema.Int),
+    timedOut: Schema.Boolean,
+    oomKilled: Schema.optionalKey(Schema.Boolean),
+  }),
+  Schema.Struct({ type: Schema.Literal('error') }),
+])
+export type CommandFrame = typeof CommandFrame.Type
 export const Written = Schema.Struct({
   ok: Schema.Literal(true),
   type: Schema.Literal('file.written'),
@@ -119,3 +142,19 @@ export const ReadFile = Schema.Struct({
   size: Schema.Int,
   content: Schema.String.check(Schema.isNonEmpty()),
 })
+
+/**
+ * What Boat answers when a public key is authorized on a running machine (`POST
+ * /sandboxes/{id}/sshkey`, body `{ key }`). Seen on 5 October 2026 on the trial plan: 200, and 200
+ * again for a key already there. `hostKey` is one OpenSSH public key line, the key of the machine
+ * as it runs now; it changes with every resume, as the address does, so none of this is stored.
+ * `sshEndpoint` ("host:port") is set only when the machine has no public address of its own.
+ */
+export const Authorized = Schema.Struct({
+  ok: Schema.Literal(true),
+  machineIp: Schema.String.check(Schema.isNonEmpty()),
+  sshEndpoint: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  sshUser: Schema.String.check(Schema.isNonEmpty()),
+  hostKey: Schema.String.check(Schema.isPattern(/^\S+ \S+/)),
+})
+export type Authorized = typeof Authorized.Type

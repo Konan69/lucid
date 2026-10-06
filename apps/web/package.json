@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b --checkers 1 --builders 1 && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b",
-    "lint": "oxlint --type-aware src",
+    "typecheck": "node ../../scripts/types.mjs",
+    "lint": "node ../../scripts/lint.mjs",
     "test": "vitest run"
   },
   "dependencies": {
@@ -24,6 +24,7 @@
     "@vivid/marks": "workspace:*",
     "@vivid/state": "workspace:*",
     "@vivid/tokens": "workspace:*",
+    "better-auth": "catalog:",
     "border-beam": "^1.4.1",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.4.0",
@@ -32,7 +33,10 @@
     "react-dom": "catalog:",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "thinking-orbs": "^0.3.2"
+    "thinking-orbs": "^0.3.2",
+    "@sentry/electron": "catalog:",
+    "@sentry/react": "catalog:",
+    "@sentry/core": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

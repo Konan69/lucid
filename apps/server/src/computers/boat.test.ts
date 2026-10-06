@@ -1,11 +1,34 @@
+import { peer, peerAvailable } from './ssh/peer.ts'
+import { KEY_TAG } from './ssh/link.ts'
 import * as NodeCrypto from 'node:crypto'
 import * as NodeBuffer from 'node:buffer'
 import * as NodeHttp from 'node:http'
 import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
-import { BrowserAction, ComputerState, DesktopAction } from '@vivid/contracts'
-import { eq } from 'drizzle-orm'
-import { ConfigProvider, Context, Effect, Layer, Option, Ref, Schema, Predicate } from 'effect'
+import {
+  BrowserAction,
+  ComputerState,
+  DesktopAction,
+  Person,
+  PersonId,
+  SessionId,
+  Workspace,
+} from '@vivid/contracts'
+import { AuthContext, AuthState } from '@vivid/contracts/auth'
+import { eq, inArray } from 'drizzle-orm'
+import {
+  ConfigProvider,
+  Context,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Queue,
+  Ref,
+  Schema,
+  Predicate,
+} from 'effect'
 import {
   FetchHttpClient,
   HttpClient,
@@ -14,29 +37,70 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from 'effect/unstable/http'
+import { Gate, GateDecision } from '../approvals/gate.ts'
+import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
+import { silentChangesLayer } from '../live/changes.ts'
 import { boatMachineLayer } from './boat.ts'
-import { Machine, MachineKey } from './machine.ts'
+import { deviceLayer } from './device.ts'
+import { computerHandlers } from './handlers.ts'
+import {
+  isOutage,
+  Machine,
+  MachineKey,
+  MachineNoCapacity,
+  MachineOperationFailed,
+} from './machine.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { machineBindings } from './tables.ts'
 import * as Protocol from './boat/protocol.ts'
 import { argumentsByTool } from './boat/fixture.ts'
 import { ComputerActionRefused, ComputerToolRefused } from './boat/refusal.ts'
 import { driver } from './boat/driver.ts'
-import { transport } from './boat/transport.ts'
+import { transport, type Transport } from './boat/transport.ts'
 import { guestCommand } from './boat/guest.ts'
+import { bindings } from './boat/bindings.ts'
+import { lifecycle } from './boat/lifecycle.ts'
+import { HELD, UNSETTLED } from './boat/holder.ts'
+import {
+  ComputerStore,
+  computerMachineKey,
+  computerStoreLayer,
+  machineFailureReason,
+} from './store.ts'
 
 // Deliberate PNG fixture, not a claim that the guest was exercised.
 const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j9f8AAAAASUVORK5CYII='
 const id = 'bx_23456789'
+// The installed machine differs from the paid one so switching adoption cannot fake a collision.
+const adoptedId = 'bx_3456789a'
+/** `provisioning` is a resume Boat accepted and has no machine for; the saved disk is still there.
+ * `archiving` is a stop on its way: the read after the one that shows it finds it `archived`. */
+type FixtureState = 'ready' | 'archived' | 'provisioning' | 'archiving'
+type Size = typeof Protocol.Size.Type
 interface EvidenceService {
-  readonly state: Ref.Ref<'ready' | 'archived'>
+  readonly state: Ref.Ref<FixtureState>
+  /** The sizes Boat has a machine free for; a resume on any other is answered `no_ready_machine`. */
+  readonly free: Ref.Ref<ReadonlySet<Size>>
+  /** Every size a resume asked for, in order, refused ones included. */
+  readonly resumes: Ref.Ref<ReadonlyArray<Size>>
+  readonly stops: Ref.Ref<number>
+  /** A waiting resume is given its machine once this many more reads have found it waiting. */
+  readonly placedAfter: Ref.Ref<Option.Option<number>>
+  /** While true Boat fails a resume with a 503 that is not its own "no machine" answer. */
+  readonly breakResume: Ref.Ref<boolean>
+  /** The sizes whose disk the machine's data no longer fits; Boat refuses them `type_too_small`. */
+  readonly outgrown: Ref.Ref<ReadonlySet<Size>>
   readonly created: Ref.Ref<number>
   readonly intents: Ref.Ref<ReadonlyArray<string>>
   readonly commands: Ref.Ref<ReadonlyArray<string>>
   readonly files: Ref.Ref<ReadonlyMap<string, string>>
+  /** Each machine's own `~/.vivid/holder`, by machine id: the disk outlives any server's table. */
+  readonly holders: Ref.Ref<ReadonlyMap<string, string>>
+  /** How many times a desktop was opened: a refused wake must open none. */
+  readonly launches: Ref.Ref<number>
   readonly calls: Ref.Ref<ReadonlyArray<string>>
   readonly address: Ref.Ref<string>
   readonly text: Ref.Ref<string>
@@ -53,20 +117,33 @@ interface EvidenceService {
   readonly viewers: Ref.Ref<number>
   readonly publicViewer: Ref.Ref<boolean>
   readonly malformed: Ref.Ref<boolean>
+  /** While true an edge in front of Boat answers every read with an HTML 502. */
+  readonly edgeDown: Ref.Ref<boolean>
   readonly wrongIdentity: Ref.Ref<boolean>
   /** The organization every request must name as the payer; none when the key's own account pays. */
   readonly org: Ref.Ref<Option.Option<string>>
+  /** Where the fake says a machine is for SSH, and each public key it was asked to let in. */
+  readonly ssh: Ref.Ref<Option.Option<Effect.Success<ReturnType<typeof peer>>>>
+  readonly sshKeys: Ref.Ref<ReadonlyArray<string>>
 }
 class Evidence extends Context.Service<Evidence, EvidenceService>()('vivid/BoatProtocolEvidence') {}
 const evidenceLayer = Layer.effect(
   Evidence,
   Effect.gen(function* () {
     return Evidence.of({
-      state: yield* Ref.make<'ready' | 'archived'>('ready'),
+      state: yield* Ref.make<FixtureState>('ready'),
+      free: yield* Ref.make<ReadonlySet<Size>>(new Set(Protocol.Size.literals)),
+      resumes: yield* Ref.make<ReadonlyArray<Size>>([]),
+      stops: yield* Ref.make(0),
+      placedAfter: yield* Ref.make(Option.none<number>()),
+      breakResume: yield* Ref.make(false),
+      outgrown: yield* Ref.make<ReadonlySet<Size>>(new Set()),
       created: yield* Ref.make(0),
       intents: yield* Ref.make<ReadonlyArray<string>>([]),
       commands: yield* Ref.make<ReadonlyArray<string>>([]),
       files: yield* Ref.make<ReadonlyMap<string, string>>(new Map()),
+      holders: yield* Ref.make<ReadonlyMap<string, string>>(new Map()),
+      launches: yield* Ref.make(0),
       calls: yield* Ref.make<ReadonlyArray<string>>([]),
       address: yield* Ref.make('https://example.com'),
       text: yield* Ref.make(''),
@@ -83,8 +160,11 @@ const evidenceLayer = Layer.effect(
       viewers: yield* Ref.make(0),
       publicViewer: yield* Ref.make(false),
       malformed: yield* Ref.make(false),
+      edgeDown: yield* Ref.make(false),
       wrongIdentity: yield* Ref.make(false),
       org: yield* Ref.make(Option.some('personal')),
+      ssh: yield* Ref.make(Option.none<Effect.Success<ReturnType<typeof peer>>>()),
+      sshKeys: yield* Ref.make<ReadonlyArray<string>>([]),
     })
   }),
 )
@@ -105,20 +185,74 @@ const Viewer = HttpServerRequest.schemaBodyJson(
 )
 const Stop = HttpServerRequest.schemaBodyJson(Schema.Struct({ force: Schema.Literal(false) }))
 const Resume = HttpServerRequest.schemaBodyJson(
-  Schema.Struct({ ttlSeconds: Schema.NullOr(Protocol.Lifetime), noEnv: Schema.Literal(true) }),
+  Schema.Struct({
+    ttlSeconds: Schema.NullOr(Protocol.Lifetime),
+    noEnv: Schema.Literal(true),
+    failFast: Schema.Literal(true),
+    type: Protocol.Size,
+  }),
 )
 const decodeSession = Schema.decodeUnknownEffect(Schema.String.check(Schema.isStartsWith('Vivid-')))
 const decodeAddress = Schema.decodeUnknownEffect(Schema.String)
 const decodeArgs = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
 )
-const record = (state: 'ready' | 'archived') => ({
-  id,
+const record = (state: FixtureState, providerId: string) => ({
+  id: providerId,
   name: 'Fixture',
   state,
   desktopAvailable: state === 'ready',
-  snapshotAvailable: state === 'archived',
+  snapshotAvailable: state !== 'ready',
 })
+/** What Boat reports on this read. A waiting resume turns into a running machine by itself once
+ * `placedAfter` reads have passed, which is Boat finding it a machine while a caller looks on. */
+const reported = Effect.fn('BoatTest.reported')(function* (evidence: EvidenceService) {
+  const state = yield* Ref.get(evidence.state)
+  if (state === 'archiving') yield* Ref.set(evidence.state, 'archived')
+  const left = yield* Ref.get(evidence.placedAfter)
+  if (state !== 'provisioning' || Option.isNone(left)) return state
+  if (left.value > 0) {
+    yield* Ref.set(evidence.placedAfter, Option.some(left.value - 1))
+    return state
+  }
+  yield* Ref.set(evidence.state, 'ready')
+  return 'ready' as const
+})
+/** What Boat says to a resume on one size, and what that does to the machine. A refused start
+ * leaves the machine as it was: stopped. */
+const resumed = Effect.fn('BoatTest.resumed')(function* (evidence: EvidenceService, size: Size) {
+  yield* Ref.update(evidence.resumes, (sizes) => [...sizes, size])
+  if ((yield* Ref.get(evidence.outgrown)).has(size)) return 'too-small' as const
+  if (!(yield* Ref.get(evidence.free)).has(size)) return 'none-free' as const
+  yield* Ref.set(evidence.state, 'ready')
+  return 'started' as const
+})
+/** Boat's refusal of a size the machine's disk does not fit (v1 `ResumeRequest.type`). */
+const typeTooSmall = HttpServerResponse.jsonUnsafe(
+  {
+    ok: false,
+    type: 'sandbox.error',
+    status: 400,
+    code: 'type_too_small',
+    message: 'fixture',
+    requestId: 'fixture',
+    error: { code: 'type_too_small', message: 'fixture', status: 400 },
+  },
+  { status: 400 },
+)
+/** Boat's own answer to a `failFast` start it has no machine for (body seen 5 October 2026). */
+const noReadyMachine = HttpServerResponse.jsonUnsafe(
+  {
+    ok: false,
+    type: 'sandbox.error',
+    status: 503,
+    code: 'no_ready_machine',
+    message: 'No default machine is ready right now. Nothing was started or counted.',
+    requestId: 'fixture',
+    error: { code: 'no_ready_machine', message: 'fixture', status: 503 },
+  },
+  { status: 503 },
+)
 const rejected = (status: number) =>
   HttpServerResponse.jsonUnsafe(
     {
@@ -139,6 +273,60 @@ const commandReply = (stdout: string) =>
     stderr: '',
     timedOut: false,
   })
+
+/** A command that ended with this status and printed nothing. */
+const commandExit = (exitCode: number) =>
+  HttpServerResponse.jsonUnsafe({
+    ok: true,
+    type: 'command.finished',
+    success: false,
+    exitCode,
+    stdout: '',
+    stderr: '',
+    timedOut: false,
+  })
+
+/**
+ * The machine's side of the holder record (`boat/holder.ts`), as its shell behaves: no record or
+ * another machine's record makes the caller the holder, the caller's own record lets it on, and
+ * this machine's record for someone else ends the command with `HELD` before the desktop is
+ * opened. A command that settles the holder and stops there opens no desktop either way.
+ * The shell itself is run for real in `holder.test.ts`; here it is the machine's memory.
+ */
+const launcher = '/opt/vivid/computer/desktop.py start'
+const settled = Effect.fn('BoatTest.holder')(function* (
+  evidence: EvidenceService,
+  command: string,
+) {
+  const mine = /^mine='((bx_[a-z0-9]+) [0-9a-f-]+)'$/mu.exec(command)
+  if (mine === null || mine[1] === undefined || mine[2] === undefined) return commandExit(UNSETTLED)
+  const [, claim, machine] = mine
+  const held = (yield* Ref.get(evidence.holders)).get(machine)
+  // A record that is not one machine id and one intent is damage: nothing is settled on it.
+  if (held !== undefined && !recorded.test(held)) return commandExit(UNSETTLED)
+  if (held !== undefined && held !== claim && held.startsWith(`${machine} `))
+    return commandExit(HELD)
+  yield* Ref.update(evidence.holders, (holders) => new Map(holders).set(machine, claim))
+  if (command.endsWith(launcher)) yield* Ref.update(evidence.launches, (count) => count + 1)
+  return commandReply('')
+})
+
+/** What the machine believes a record to be: a Boat machine id, a space, a UUID. */
+const recorded = new RegExp(
+  `^bx_[${Protocol.providerAlphabet}]{${Protocol.providerLength}} [0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$`,
+  'u',
+)
+
+/** Another table's row for the same machine: an account of its own and an intent of its own. */
+const rebound = (row: typeof machineBindings.$inferSelect, key: MachineKey) => ({
+  key,
+  intent: NodeCrypto.randomUUID(),
+  requestedAt: row.requestedAt,
+  request: row.request,
+  providerId: row.providerId,
+  observedState: row.observedState,
+  since: row.since,
+})
 
 /** The guest fixture speaks actual Cua CLI JSON; unexpected tools fail the fixture. */
 const native = Effect.fn('BoatTest.native')(function* (evidence: EvidenceService, command: string) {
@@ -404,7 +592,7 @@ const create = Effect.fn('BoatTest.create')(function* (
     type: 'sandbox.created',
     status: 'ready',
     ttlSeconds: body.ttlSeconds,
-    sandbox: record('ready'),
+    sandbox: record('ready', id),
   })
 })
 const commands = Effect.fn('BoatTest.commands')(function* (evidence: EvidenceService) {
@@ -429,7 +617,34 @@ const commands = Effect.fn('BoatTest.commands')(function* (evidence: EvidenceSer
       '{"socket":"/run/user/1000/vivid-driver.sock","binary":"/home/user/.local/share/vivid/computer/driver","generation":"0123456789abcdef0123456789abcdef"}',
     )
   if (input.command === 'echo receipt') return commandReply('receipt\n')
+  if (input.command.startsWith("mine='")) return yield* settled(evidence, input.command)
   return yield* native(evidence, input.command)
+})
+
+const decodeSshKey = HttpServerRequest.schemaBodyJson(Schema.Struct({ key: Schema.String }))
+
+/** Boat's `sshkey` call as measured: it lets the given key in on the machine and answers where
+ * the machine is and which host key it presents. The machine here is the real SSH test server. */
+const authorized = Effect.fn('BoatProtocolTest.authorized')(function* (
+  evidence: EvidenceService,
+  request: HttpServerRequest.HttpServerRequest,
+) {
+  const { key: publicKey } = yield* decodeSshKey.pipe(
+    Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+  )
+  const server = yield* Ref.get(evidence.ssh)
+  if (Option.isNone(server)) return rejected(404)
+  yield* Ref.update(evidence.sshKeys, (keys) => [...keys, publicKey])
+  server.value.authorize(publicKey)
+  return yield* HttpServerResponse.json({
+    ok: true,
+    type: 'ssh_key.configured',
+    success: true,
+    machineIp: server.value.host,
+    sshEndpoint: `${server.value.host}:${server.value.port}`,
+    sshUser: server.value.user,
+    hostKey: server.value.hostKey,
+  })
 })
 
 /** Actual ephemeral HTTP, real Effect HttpClient and real durable Drizzle binding. */
@@ -449,38 +664,61 @@ const serverLayer = Layer.effect(
       const path = request.url.split('?')[0]
       if (path === '/api/v1/sandboxes' && request.method === 'POST')
         return yield* create(evidence, request)
-      if (path === `/api/v1/sandboxes/${id}` && request.method === 'GET') {
+      if (
+        (path === `/api/v1/sandboxes/${id}` || path === `/api/v1/sandboxes/${adoptedId}`) &&
+        request.method === 'GET'
+      ) {
+        const requestedId = path === `/api/v1/sandboxes/${adoptedId}` ? adoptedId : id
+        if (yield* Ref.get(evidence.edgeDown))
+          return HttpServerResponse.text('<html><body>502 Bad Gateway</body></html>', {
+            status: 502,
+            contentType: 'text/html',
+          })
         if (yield* Ref.get(evidence.malformed))
           return HttpServerResponse.jsonUnsafe({ ok: true, sandbox: {} })
         return HttpServerResponse.jsonUnsafe({
           ok: true,
           type: 'sandbox.info',
-          sandbox: Object.assign({}, record(yield* Ref.get(evidence.state)), {
-            id: (yield* Ref.get(evidence.wrongIdentity)) ? 'bx_abcdefgh' : id,
+          sandbox: Object.assign({}, record(yield* reported(evidence), requestedId), {
+            id: (yield* Ref.get(evidence.wrongIdentity)) ? 'bx_abcdefgh' : requestedId,
           }),
         })
       }
-      if (path === `/api/v1/sandboxes/${id}/stop`) {
+      // The adopted machine stops and starts like the created one.
+      const stopping = [id, adoptedId].find((known) => path === `/api/v1/sandboxes/${known}/stop`)
+      if (stopping !== undefined) {
         yield* Stop
+        yield* Ref.update(evidence.stops, (count) => count + 1)
         yield* Ref.set(evidence.state, 'archived')
         return HttpServerResponse.jsonUnsafe({
           ok: true,
           type: 'sandbox.stopping',
-          id,
+          id: stopping,
           status: 'archiving',
         })
       }
-      if (path === `/api/v1/sandboxes/${id}/resume`) {
-        yield* Resume
-        yield* Ref.set(evidence.state, 'ready')
+      const resuming = [id, adoptedId].find((known) => path === `/api/v1/sandboxes/${known}/resume`)
+      if (resuming !== undefined) {
+        const asked = yield* Resume
+        if (yield* Ref.get(evidence.breakResume)) {
+          yield* Ref.update(evidence.resumes, (sizes) => [...sizes, asked.type])
+          return rejected(503)
+        }
+        const answer = yield* resumed(evidence, asked.type)
+        if (answer === 'none-free') return noReadyMachine
+        if (answer === 'too-small') return typeTooSmall
         return HttpServerResponse.jsonUnsafe({
           ok: true,
           type: 'sandbox.resuming',
-          id,
+          id: resuming,
           status: 'resuming',
         })
       }
-      if (path === `/api/v1/sandboxes/${id}/desktop`) {
+      // The adopted machine has a screen like the created one.
+      if (
+        path === `/api/v1/sandboxes/${id}/desktop` ||
+        path === `/api/v1/sandboxes/${adoptedId}/desktop`
+      ) {
         yield* Viewer
         yield* Ref.update(evidence.viewers, (count) => count + 1)
         const address = (yield* Ref.get(evidence.publicViewer))
@@ -516,7 +754,13 @@ const serverLayer = Layer.effect(
           size: file.content.length,
         })
       }
-      if (path === `/api/v1/sandboxes/${id}/commands`) return yield* commands(evidence)
+      if (
+        path === `/api/v1/sandboxes/${id}/commands` ||
+        path === `/api/v1/sandboxes/${adoptedId}/commands`
+      )
+        return yield* commands(evidence)
+      if (path === `/api/v1/sandboxes/${id}/sshkey` && request.method === 'POST')
+        return yield* authorized(evidence, request)
       return rejected(404)
     }).pipe(Effect.catch(() => Effect.succeed(rejected(400))))
     yield* server.serve(application)
@@ -535,14 +779,15 @@ const serverLayer = Layer.effect(
     Layer.mergeAll(NodeHttpServer.layer(NodeHttp.createServer, { port: 0 }), FetchHttpClient.layer),
   ),
 )
-/** The provider against the fake Boat, configured the way one deployment would configure it. */
+/** The fake deployment owns every Boat setting, including absent adoption; inherited live
+ * configuration must not turn create tests into adoption. TestDatabaseLayer owns SQL authority separately. */
 const configured = (settings: Readonly<Record<string, string>>) =>
   boatMachineLayer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
         testDatabaseLayer,
         serverLayer,
-        ConfigProvider.layerAdd(ConfigProvider.fromUnknown(settings), { asPrimary: true }),
+        ConfigProvider.layer(ConfigProvider.fromUnknown(settings)),
       ),
     ),
   )
@@ -551,10 +796,148 @@ const testLayer = configured({
   VIVID_BOAT_ORG: 'personal',
   VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
 })
+/** One installation already owns this machine; adopting it must never call paid creation. */
+const adoptedLayer = configured({
+  VIVID_BOAT_API_KEY: 'protocol-test-key',
+  VIVID_BOAT_ORG: 'personal',
+  VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
+  VIVID_BOAT_MACHINE: adoptedId,
+})
 /** An account that belongs to no organization: there is only the key. */
 const accountLayer = configured({
   VIVID_BOAT_API_KEY: 'protocol-test-key',
   VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
+})
+
+/**
+ * The account-facing stack over the real Boat adapter: the production Computer store and its RPC
+ * handlers, on one installation that has one machine. Only Boat itself is played, by the fixture
+ * server above; the binding table, the adoption rule and the store's lifecycle are the real ones.
+ */
+const accountsLayer = computerStoreLayer.pipe(
+  Layer.provideMerge(deviceLayer),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      adoptedLayer,
+      silentChangesLayer,
+      Layer.succeed(
+        Gate,
+        Gate.of({
+          check: Effect.fn('BoatTest.gate')(() =>
+            Effect.succeed(GateDecision.cases.Allowed.make({})),
+          ),
+        }),
+      ),
+    ),
+  ),
+)
+
+/** Two real accounts; their rows, Computers and bindings are removed whatever the test did. */
+const accounts = Effect.fn('BoatTest.accounts')(function* () {
+  const database = yield* Database
+  const people = [1, 2].map(() => {
+    const personId = PersonId.make(NodeCrypto.randomUUID())
+    return Person.make({
+      id: personId,
+      name: 'Holder test',
+      email: `${personId}@example.test`,
+      image: null,
+    })
+  })
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      yield* database.run(
+        database.delete(machineBindings).where(
+          inArray(
+            machineBindings.key,
+            people.map((person) => computerMachineKey(person.id)),
+          ),
+        ),
+      )
+      yield* database.run(
+        database.delete(personTable).where(
+          inArray(
+            personTable.id,
+            people.map((person) => person.id),
+          ),
+        ),
+      )
+    }).pipe(Effect.ignore),
+  )
+  yield* database.run(database.insert(personTable).values(people))
+  const [first, second] = people
+  if (first === undefined || second === undefined) return yield* Effect.die('two accounts')
+  return { first, second }
+})
+
+/** One account's own call, as its signed-in session makes it. */
+const asAccount = (person: Person) =>
+  Effect.provideService(
+    AuthContext,
+    AuthState.Person({
+      person,
+      sessionId: SessionId.make(NodeCrypto.randomUUID()),
+      workspace: Workspace.cases.Personal.make({}),
+    }),
+  )
+
+/**
+ * The lifecycle over a Boat whose reads, stops and resumes are answered in memory, for the one
+ * start that sleeps between looks. The test clock runs a sleeping fiber's next sleep only when
+ * nothing between the two waits on the network, so a look that crossed the fixture server could
+ * not be stepped. Creation and every other call still go through the fixture server. `waits`
+ * receives the state each time the binding records one: the write is the last thing a start does
+ * before it sleeps on a waiting resume, so taking it is knowing the start is asleep.
+ */
+const stepped = Effect.fn('BoatTest.stepped')(function* () {
+  const evidence = yield* Evidence
+  const saved = yield* bindings()
+  const real = yield* transport()
+  const waits = yield* Queue.unbounded<typeof Protocol.State.Type>()
+  const api: Transport = {
+    ...real,
+    get: Effect.fn('BoatTest.steppedGet')(function* (providerId: Protocol.ProviderId) {
+      const state = yield* reported(evidence)
+      return {
+        ok: true as const,
+        type: 'sandbox.info' as const,
+        sandbox: {
+          id: providerId,
+          state,
+          desktopAvailable: state === 'ready',
+          snapshotAvailable: state !== 'ready',
+        },
+      }
+    }),
+    stop: Effect.fn('BoatTest.steppedStop')(function* (providerId: Protocol.ProviderId) {
+      yield* Ref.update(evidence.stops, (count) => count + 1)
+      yield* Ref.set(evidence.state, 'archived')
+      return {
+        ok: true as const,
+        type: 'sandbox.stopping' as const,
+        id: providerId,
+        status: 'archiving',
+      }
+    }),
+    resume: (_, size) => resumed(evidence, size),
+  }
+  const observed = {
+    ...saved,
+    observe: Effect.fn('BoatTest.steppedObserve')(function* (
+      ...input: Parameters<typeof saved.observe>
+    ) {
+      const since = yield* saved.observe(...input)
+      yield* Queue.offer(waits, input[2])
+      return since
+    }),
+  }
+  const machine = yield* lifecycle(
+    api,
+    observed,
+    () => Effect.void,
+    (_, identity) => Effect.succeed(identity),
+  )
+  return { machine, waits }
 })
 
 /** Register cleanup before provisioning; only this fixture's private binding is removed. */
@@ -570,6 +953,526 @@ const fixture = Effect.fn('BoatTest.fixture')(function* () {
 })
 
 describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => {
+  it.effect('adopts for one Person without writing an intent for a refused Person', () =>
+    Effect.gen(function* () {
+      const first = yield* fixture()
+      const second = yield* fixture()
+      const machine = yield* Machine
+      const saved = yield* bindings()
+      const evidence = yield* Evidence
+      expect((yield* machine.ensure(first))._tag).toBe('Running')
+      expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: adoptedId }))
+      const failure = yield* machine.ensure(second).pipe(Effect.flip)
+      expect(failure._tag).toBe('MachineHeld')
+      expect(machineFailureReason(failure)).toBe(
+        'Vivid’s computer is already in use by another account.',
+      )
+      expect(JSON.stringify(failure)).not.toContain(first)
+      expect(JSON.stringify(failure)).not.toContain(second)
+      const refused = yield* saved.load(second)
+      expect(refused).toEqual(Option.none())
+      expect(yield* machine.inspect(second)).toEqual(ComputerState.cases.Absent.make({}))
+      expect(yield* machine.stop(second)).toBeUndefined()
+      expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+      expect(yield* saved.load(second)).toEqual(refused)
+      expect((yield* machine.ensure(first))._tag).toBe('Running')
+      expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: adoptedId }))
+      expect(yield* Ref.get(evidence.created)).toBe(0)
+      expect(yield* Ref.get(evidence.intents)).toEqual([])
+    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  )
+
+  it.effect(
+    'tells a Run that no machine is free, leaves the Computer stopped, and starts it for the next Run',
+    () =>
+      Effect.gen(function* () {
+        const { first } = yield* accounts()
+        const store = yield* ComputerStore
+        const evidence = yield* Evidence
+        const command = { command: 'echo receipt', timeoutSeconds: 10 }
+        yield* Ref.set(evidence.state, 'archived')
+        yield* Ref.set(evidence.free, new Set<Size>())
+        // Vivid needs the Computer for a Run; Boat has no machine of any size.
+        const refused = yield* store.exec(first.id, command).pipe(Effect.flip)
+        // The provider's own reason, not "the Computer is stopped": the start handed it on.
+        expect(refused).toBeInstanceOf(MachineNoCapacity)
+        expect(
+          (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
+        ).toBe('Stopped')
+        // Nobody presses Start: the next Run asks Boat again and gets the next size up.
+        yield* Ref.set(evidence.free, new Set<Size>(['large']))
+        expect((yield* store.exec(first.id, command)).exitCode).toBe(0)
+        expect(
+          (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
+        ).toBe('Running')
+      }).pipe(Effect.scoped, Effect.provide(accountsLayer)),
+    30000,
+  )
+
+  /**
+   * The rule a Person relies on: a machine is one account's. This is the whole account-facing
+   * path, not the adapter alone: each account acts through its own RPC and through the store
+   * Vivid acts through, and the refusal is checked where each of them would meet it.
+   */
+  it.effect(
+    'gives one machine to one account: a second account is refused at every layer and changes nothing',
+    () =>
+      Effect.gen(function* () {
+        const { first, second } = yield* accounts()
+        const store = yield* ComputerStore
+        const saved = yield* bindings()
+        const evidence = yield* Evidence
+        const command = { command: 'echo receipt', timeoutSeconds: 10 }
+        const held = 'Vivid’s computer is already in use by another account.'
+
+        // The first account uses its Computer: the machine becomes its own.
+        expect((yield* store.exec(first.id, command)).exitCode).toBe(0)
+        expect(
+          (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
+        ).toBe('Running')
+        expect(yield* saved.load(computerMachineKey(first.id))).toMatchObject(
+          Option.some({ providerId: adoptedId }),
+        )
+
+        // The second account asks for the same thing through its own RPC, then through Vivid.
+        yield* computerHandlers.StartComputer().pipe(asAccount(second))
+        const refused = yield* store.exec(second.id, command).pipe(Effect.flip)
+        expect(refused).toMatchObject({ reason: held })
+        const shown = (yield* computerHandlers.GetComputer().pipe(asAccount(second))).computer.state
+        expect(ComputerState.guards.Failed(shown) && shown.reason).toBe(held)
+        expect((yield* store.access(second.id))._tag).toBe('Unavailable')
+        // Nothing of the second account holds the machine, and nothing was sent to it.
+        expect(yield* saved.load(computerMachineKey(second.id))).toEqual(Option.none())
+        const holder = yield* saved.holder(Protocol.ProviderId.make(adoptedId))
+        expect(Option.map(holder, (binding) => binding.key)).toEqual(
+          Option.some(computerMachineKey(first.id)),
+        )
+        expect(
+          (yield* Ref.get(evidence.commands)).filter((sent) => sent === command.command),
+        ).toHaveLength(1)
+        // The refusal names nobody: not the holder, not the one refused.
+        expect(JSON.stringify(refused)).not.toContain(first.id)
+        expect(JSON.stringify(shown)).not.toContain(first.id)
+
+        // The first account's Computer is exactly as it was.
+        expect((yield* store.exec(first.id, command)).exitCode).toBe(0)
+        expect(
+          (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
+        ).toBe('Running')
+        expect(yield* Ref.get(evidence.created)).toBe(0)
+      }).pipe(Effect.scoped, Effect.provide(accountsLayer)),
+    30000,
+  )
+
+  /**
+   * Two servers have two binding tables, and neither can see the other's. What both do see is
+   * the machine. The other server is played here by taking the first account's row out of the
+   * table, which is exactly what its table looks like: it has never heard of that account.
+   */
+  it.effect(
+    'the machine keeps its one holder against a second server whose table knows nothing of the first',
+    () =>
+      Effect.gen(function* () {
+        const first = yield* fixture()
+        const second = yield* fixture()
+        const machine = yield* Machine
+        const saved = yield* bindings()
+        const database = yield* Database
+        const evidence = yield* Evidence
+        expect((yield* machine.ensure(first))._tag).toBe('Running')
+        const held = (yield* Ref.get(evidence.holders)).get(adoptedId)
+        const ours = yield* database.run(
+          database.select().from(machineBindings).where(eq(machineBindings.key, first)),
+        )
+        expect(ours.map((row) => `${adoptedId} ${row.intent}`)).toEqual([held])
+
+        // The other server: same machine named in its settings, a table without the first row.
+        yield* database.run(database.delete(machineBindings).where(eq(machineBindings.key, first)))
+        const launched = yield* Ref.get(evidence.launches)
+        const refused = yield* machine.ensure(second).pipe(Effect.flip)
+        expect(refused._tag).toBe('MachineHeld')
+        // Its table let it bind; the machine did not let it in, and no desktop was opened for it.
+        expect(yield* Ref.get(evidence.launches)).toBe(launched)
+        expect((yield* Ref.get(evidence.holders)).get(adoptedId)).toBe(held)
+        // The refused binding is given up, so that table does not claim the machine either.
+        expect(yield* saved.load(second)).toEqual(Option.none())
+        expect(yield* saved.holder(Protocol.ProviderId.make(adoptedId))).toEqual(Option.none())
+        expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+
+        // The first server again, with its own row: the machine still knows it.
+        yield* database.run(database.insert(machineBindings).values(ours))
+        expect((yield* machine.ensure(first))._tag).toBe('Running')
+        expect(yield* Ref.get(evidence.launches)).toBe(launched + 1)
+        expect(yield* Ref.get(evidence.created)).toBe(0)
+      }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+    15000,
+  )
+
+  it.effect('a record that came with a copied disk says nothing about this machine', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const database = yield* Database
+      const evidence = yield* Evidence
+      // A machine made from a template carries the template machine's own record.
+      yield* Ref.set(
+        evidence.holders,
+        new Map([[adoptedId, 'bx_2222222a 99999999-9999-4999-8999-999999999999']]),
+      )
+      expect((yield* machine.ensure(key))._tag).toBe('Running')
+      const rows = yield* database.run(
+        database.select().from(machineBindings).where(eq(machineBindings.key, key)),
+      )
+      expect(rows.map((row) => `${adoptedId} ${row.intent}`)).toEqual([
+        (yield* Ref.get(evidence.holders)).get(adoptedId),
+      ])
+    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  )
+
+  /**
+   * Damage is not a claim. A server that meets a record it cannot read learns nothing about
+   * whose machine it is, so it fails the call and keeps its binding: giving the binding up on
+   * damage would cut the rightful holder off for good.
+   */
+  it.effect('a damaged record fails the call and costs the server no binding', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const saved = yield* bindings()
+      const evidence = yield* Evidence
+      expect((yield* machine.ensure(key))._tag).toBe('Running')
+      const before = yield* saved.load(key)
+      const launched = yield* Ref.get(evidence.launches)
+      yield* Ref.set(evidence.holders, new Map([[adoptedId, 'not a record']]))
+      const failed = yield* machine.ensure(key).pipe(Effect.flip)
+      expect(failed).toEqual(new MachineOperationFailed({ operation: 'holder' }))
+      expect(yield* saved.load(key)).toEqual(before)
+      expect(Option.isSome(before)).toBe(true)
+      expect(yield* Ref.get(evidence.launches)).toBe(launched)
+      expect((yield* Ref.get(evidence.holders)).get(adoptedId)).toBe('not a record')
+      // The machine once said yes to this process. It is asked again all the same, and until it
+      // can answer nothing of this binding's reaches it.
+      const refused = yield* machine
+        .exec({ key, command: 'echo receipt', timeoutSeconds: 10 })
+        .pipe(Effect.flip)
+      expect(refused).toEqual(new MachineOperationFailed({ operation: 'holder' }))
+      expect((yield* Ref.get(evidence.commands)).includes('echo receipt')).toBe(false)
+    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  )
+
+  it.live.skipIf(!peerAvailable)(
+    'asks Boat to let in a different key for every opening of a machine, and reaches it with that key',
+    () =>
+      Effect.gen(function* () {
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        const key = yield* fixture()
+        const server = yield* peer()
+        yield* Ref.set(evidence.ssh, Option.some(server))
+        expect((yield* machine.ensure(key))._tag).toBe('Running')
+        const first = yield* machine.run({
+          key,
+          command: 'echo one',
+          directory: server.home,
+          timeoutSeconds: 10,
+        })
+        expect(first.stdout.trim()).toBe('one')
+        // A second command uses the open connection: Boat is not asked again.
+        yield* machine.run({ key, command: 'true', directory: server.home, timeoutSeconds: 10 })
+        expect(yield* Ref.get(evidence.sshKeys)).toHaveLength(1)
+        // The machine stops and resumes: the connection to the machine it was is closed, and the
+        // next command opens another with a key of its own.
+        yield* machine.stop(key)
+        expect((yield* machine.ensure(key))._tag).toBe('Running')
+        const second = yield* machine.run({
+          key,
+          command: 'echo two',
+          directory: server.home,
+          timeoutSeconds: 10,
+        })
+        expect(second.stdout.trim()).toBe('two')
+        const [one, two, ...more] = yield* Ref.get(evidence.sshKeys)
+        if (one === undefined || two === undefined) expect.fail('Two openings were expected')
+        expect(more).toEqual([])
+        expect(one).not.toBe(two)
+        for (const sent of [one, two]) expect(sent.endsWith(` ${KEY_TAG}`)).toBe(true)
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    40_000,
+  )
+
+  /**
+   * A row can name a machine without a wake having made it: written by hand, or left in a table
+   * from before the machine kept its record. Such a server finds the machine running under its
+   * holder and never wakes it, so the wake's check alone would let it straight in. Each use is
+   * tried against a fresh row here, because the first refusal gives the row up.
+   */
+  it.effect(
+    'a server whose row no wake made cannot use, watch or stop a machine that names another holder',
+    () =>
+      Effect.gen(function* () {
+        const first = yield* fixture()
+        const second = yield* fixture()
+        const machine = yield* Machine
+        const saved = yield* bindings()
+        const database = yield* Database
+        const evidence = yield* Evidence
+        expect((yield* machine.ensure(first))._tag).toBe('Running')
+        const held = (yield* Ref.get(evidence.holders)).get(adoptedId)
+        const ours = yield* database.run(
+          database.select().from(machineBindings).where(eq(machineBindings.key, first)),
+        )
+        // The other server's table: the same machine, its own account, an intent of its own.
+        yield* database.run(database.delete(machineBindings).where(eq(machineBindings.key, first)))
+        const theirs = ours.map((row) => rebound(row, second))
+        expect(theirs).toHaveLength(1)
+        const viewers = yield* Ref.get(evidence.viewers)
+        const uses = [
+          machine.exec({ key: second, command: 'echo receipt', timeoutSeconds: 10 }),
+          machine.desktop({ key: second, action: DesktopAction.cases.Look.make({}) }),
+          machine.status(second),
+          machine.stop(second),
+        ]
+        for (const use of uses) {
+          yield* database.run(database.insert(machineBindings).values(theirs))
+          expect((yield* use.pipe(Effect.flip))._tag).toBe('MachineHeld')
+          expect(yield* saved.load(second)).toEqual(Option.none())
+        }
+        // Nothing of its own reached the machine: no command, no viewer, no stop, no new holder.
+        const sent = yield* Ref.get(evidence.commands)
+        expect(sent.filter((command) => !command.startsWith("mine='"))).toEqual([])
+        expect(sent.filter((command) => command.endsWith(launcher))).toHaveLength(1)
+        expect(yield* Ref.get(evidence.viewers)).toBe(viewers)
+        expect(yield* Ref.get(evidence.state)).toBe('ready')
+        expect((yield* Ref.get(evidence.holders)).get(adoptedId)).toBe(held)
+
+        // The holder's own server after a restart is such a process too: its row, a running
+        // machine, no memory of the wake. It is played by an account whose row the machine's
+        // record names. It asks once, opens no desktop, and is not asked again.
+        const third = yield* fixture()
+        const named = ours.map((row) => rebound(row, third))
+        yield* database.run(database.insert(machineBindings).values(named))
+        yield* Ref.set(
+          evidence.holders,
+          new Map(named.map((row) => [adoptedId, `${adoptedId} ${row.intent}`])),
+        )
+        const receipt = machine.exec({ key: third, command: 'echo receipt', timeoutSeconds: 10 })
+        expect((yield* receipt).output).toBe('receipt\n')
+        expect((yield* receipt).output).toBe('receipt\n')
+        const after = (yield* Ref.get(evidence.commands)).slice(sent.length)
+        expect(after.filter((command) => command.startsWith("mine='"))).toHaveLength(1)
+        expect(after.filter((command) => command.endsWith(launcher))).toEqual([])
+        expect(after.slice(1)).toEqual(['echo receipt', 'echo receipt'])
+      }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+    15000,
+  )
+
+  /** Refusal creates no receipt that could expire while adoption is configured. */
+  it.effect('creates a new paid intent after refused adoption is removed a day later', () =>
+    Effect.gen(function* () {
+      const first = yield* fixture()
+      const second = yield* fixture()
+      const machine = yield* Machine
+      const saved = yield* bindings()
+      yield* machine.ensure(first)
+      expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+      expect(yield* saved.load(second)).toEqual(Option.none())
+      yield* TestClock.adjust('24 hours')
+      const paidLayer = Layer.fresh(boatMachineLayer).pipe(
+        Layer.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              VIVID_BOAT_API_KEY: 'protocol-test-key',
+              VIVID_BOAT_ORG: 'personal',
+              VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
+            }),
+          ),
+        ),
+      )
+      expect(
+        (yield* Effect.gen(function* () {
+          return yield* (yield* Machine).ensure(second)
+        }).pipe(Effect.provide(paidLayer)))._tag,
+      ).toBe('Running')
+      expect(yield* saved.load(second)).toMatchObject(
+        Option.some({
+          requestedAt: 24 * 60 * 60_000,
+          providerId: id,
+        }),
+      )
+      expect(yield* Ref.get((yield* Evidence).created)).toBe(1)
+      expect((yield* machine.ensure(first))._tag).toBe('Running')
+    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  )
+
+  it.effect(
+    'preserves a stale unbound intent and rechecks ownership without the paid-create age limit',
+    () =>
+      Effect.gen(function* () {
+        const first = yield* fixture()
+        const second = yield* fixture()
+        const machine = yield* Machine
+        const saved = yield* bindings()
+        const api = yield* transport()
+        const database = yield* Database
+        yield* machine.ensure(first)
+        yield* saved.intend(second, api.create)
+        yield* database.run(
+          database
+            .update(machineBindings)
+            .set({ requestedAt: -24 * 60 * 60_000 })
+            .where(eq(machineBindings.key, second)),
+        )
+        const original = yield* saved.load(second)
+        expect(original).toMatchObject(
+          Option.some({ providerId: null, requestedAt: -24 * 60 * 60_000 }),
+        )
+        expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+        expect(yield* saved.load(second)).toEqual(original)
+        expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+        expect(yield* saved.load(second)).toEqual(original)
+        expect((yield* machine.inspect(second))._tag).toBe('Failed')
+        expect((yield* machine.stop(second).pipe(Effect.flip))._tag).toBe(
+          'MachineCreationUnresolved',
+        )
+        expect(yield* saved.load(second)).toEqual(original)
+        expect((yield* machine.ensure(first))._tag).toBe('Running')
+        expect(yield* Ref.get((yield* Evidence).created)).toBe(0)
+      }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  )
+
+  it.effect('maps a real provider-id collision without changing either account’s receipt', () =>
+    Effect.gen(function* () {
+      const first = yield* fixture()
+      const second = yield* fixture()
+      const saved = yield* bindings()
+      const api = yield* transport()
+      const { binding: owner } = yield* saved.intend(first, api.create)
+      const { binding: waiting } = yield* saved.intend(second, api.create)
+      yield* saved.bind(first, owner.intent, Protocol.ProviderId.make(id))
+      expect(
+        (yield* saved.bind(second, waiting.intent, Protocol.ProviderId.make(id)).pipe(Effect.flip))
+          ._tag,
+      ).toBe('MachineHeld')
+      expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: id }))
+      expect(yield* saved.load(second)).toEqual(Option.some(waiting))
+      expect(yield* saved.holder(Protocol.ProviderId.make(id))).toMatchObject(
+        Option.some({ key: first }),
+      )
+    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  )
+
+  for (const existing of [false, true]) {
+    /** Two lifecycle instances model separate servers. Real SQL arbitrates the collision;
+     * Deferred gates make both holder checks finish before either bind, with a known winner. */
+    it.effect(
+      `cleans an adoption race loser only when its intent is fresh (existing ${existing})`,
+      () =>
+        Effect.gen(function* () {
+          const first = yield* fixture()
+          const second = yield* fixture()
+          const saved = yield* bindings()
+          const api = yield* transport()
+          if (existing) yield* saved.intend(second, api.create)
+          const before = yield* saved.load(second)
+          const checked = yield* Ref.make(0)
+          const bothChecked = yield* Deferred.make<void>()
+          const ownerBound = yield* Deferred.make<void>()
+          const racing = {
+            ...saved,
+            holder: Effect.fn('BoatTest.racingHolder')(function* (providerId: Protocol.ProviderId) {
+              const held = yield* saved.holder(providerId)
+              if ((yield* Ref.updateAndGet(checked, (count) => count + 1)) === 2)
+                yield* Deferred.succeed(bothChecked, undefined)
+              yield* Deferred.await(bothChecked)
+              return held
+            }),
+            bind: Effect.fn('BoatTest.racingBind')(function* (
+              key: MachineKey,
+              intent: string,
+              providerId: Protocol.ProviderId,
+            ) {
+              if (key === second) yield* Deferred.await(ownerBound)
+              const bound = yield* saved.bind(key, intent, providerId)
+              if (key === first) yield* Deferred.succeed(ownerBound, undefined)
+              return bound
+            }),
+          }
+          const owner = yield* lifecycle(
+            api,
+            racing,
+            () => Effect.void,
+            (_, identity) => Effect.succeed(identity),
+          )
+          const contender = yield* lifecycle(
+            api,
+            racing,
+            () => Effect.void,
+            (_, identity) => Effect.succeed(identity),
+          )
+          const winning = yield* owner.ensure(first).pipe(Effect.forkChild)
+          expect((yield* contender.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+          expect((yield* Fiber.join(winning))._tag).toBe('Running')
+          expect(yield* saved.load(second)).toEqual(before)
+          if (!existing) {
+            expect(yield* contender.inspect(second)).toEqual(ComputerState.cases.Absent.make({}))
+            expect(yield* contender.stop(second)).toBeUndefined()
+          }
+          expect((yield* owner.inspect(first))._tag).toBe('Running')
+          expect(yield* Ref.get((yield* Evidence).created)).toBe(0)
+        }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+    )
+  }
+
+  it.effect('replays the original paid-create receipt after adoption is refused and removed', () =>
+    Effect.gen(function* () {
+      const first = yield* fixture()
+      const second = yield* fixture()
+      const machine = yield* Machine
+      const saved = yield* bindings()
+      const api = yield* transport()
+      const evidence = yield* Evidence
+      const { binding: original } = yield* saved.intend(second, api.create)
+      // Rebuild the Machine layer and replace settings to remove adoption, retaining SQL and HTTP.
+      // A new release must not replace the persisted request when recovering the lost receipt.
+      const paidLayer = Layer.fresh(boatMachineLayer).pipe(
+        Layer.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              VIVID_BOAT_API_KEY: 'protocol-test-key',
+              VIVID_BOAT_ORG: 'personal',
+              VIVID_BOAT_TEMPLATE: 'vivid-computer-new-release',
+            }),
+          ),
+        ),
+      )
+      yield* Ref.set(evidence.breakCreate, true)
+      const lost = yield* Effect.gen(function* () {
+        return yield* (yield* Machine).ensure(second).pipe(Effect.flip)
+      }).pipe(Effect.provide(paidLayer))
+      expect(lost._tag).toBe('MachineRequestRejected')
+      expect(yield* saved.load(second)).toEqual(Option.some(original))
+      expect(yield* Ref.get(evidence.created)).toBe(1)
+      expect(yield* Ref.get(evidence.intents)).toEqual([original.intent])
+      expect((yield* machine.ensure(first))._tag).toBe('Running')
+      expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+      expect(yield* saved.load(second)).toEqual(Option.some(original))
+      expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+      expect(yield* saved.load(second)).toEqual(Option.some(original))
+      expect((yield* machine.ensure(first))._tag).toBe('Running')
+      yield* TestClock.adjust('22 hours')
+      const recovered = yield* Effect.gen(function* () {
+        return yield* (yield* Machine).ensure(second)
+      }).pipe(Effect.provide(paidLayer))
+      expect(recovered._tag).toBe('Running')
+      expect(yield* saved.load(second)).toMatchObject(
+        Option.some({ intent: original.intent, request: original.request, providerId: id }),
+      )
+      expect(yield* Ref.get(evidence.intents)).toEqual([original.intent, original.intent])
+      expect(yield* Ref.get(evidence.created)).toBe(1)
+      expect((yield* machine.ensure(first))._tag).toBe('Running')
+    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+  )
+
   it.effect(
     'proves the sole tab during native-title lag but refuses ambiguous selection among tabs',
     () =>
@@ -802,6 +1705,174 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
     }).pipe(Effect.scoped, Effect.provide(accountLayer)),
   )
 
+  it.effect('starts a stopped Computer on the next size when Boat has no machine of its own', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const evidence = yield* Evidence
+      yield* machine.ensure(key)
+      yield* machine.stop(key)
+      yield* Ref.set(evidence.resumes, [])
+      yield* Ref.set(evidence.free, new Set<Size>(['large']))
+      expect((yield* machine.ensure(key))._tag).toBe('Running')
+      expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
+      // The next start asks for its own size first again, and gets it once Boat has one.
+      yield* machine.stop(key)
+      yield* Ref.set(evidence.resumes, [])
+      yield* Ref.set(evidence.free, new Set<Size>(['default', 'large']))
+      expect((yield* machine.ensure(key))._tag).toBe('Running')
+      expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect(
+    'leaves the Computer stopped when Boat has no machine of any size, then starts it',
+    () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* machine.ensure(key)
+        yield* machine.stop(key)
+        yield* Ref.set(evidence.resumes, [])
+        yield* Ref.set(evidence.free, new Set<Size>())
+        expect((yield* machine.ensure(key).pipe(Effect.flip))._tag).toBe('MachineNoCapacity')
+        // Never a smaller size than its own: Boat refuses one the disk does not fit.
+        expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
+        expect(yield* Ref.get(evidence.state)).toBe('archived')
+        expect((yield* machine.status(key))._tag).toBe('Stopped')
+        yield* Ref.set(evidence.free, new Set<Size>(['default']))
+        expect((yield* machine.ensure(key))._tag).toBe('Running')
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('keeps a failing provider apart from one that has no machine free', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const evidence = yield* Evidence
+      yield* machine.ensure(key)
+      yield* machine.stop(key)
+      yield* Ref.set(evidence.resumes, [])
+      yield* Ref.set(evidence.breakResume, true)
+      const failure = yield* machine.ensure(key).pipe(Effect.flip)
+      // A 503 without Boat's own code is an outage: no other size is tried on its account.
+      expect(failure._tag).toBe('MachineRequestRejected')
+      expect(isOutage(failure)).toBe(true)
+      expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect(
+    'withdraws a start that Boat left waiting for a machine and starts it on a free one',
+    () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* machine.ensure(key)
+        yield* machine.stop(key)
+        // Another caller resumed it without `failFast` and Boat has no machine of its size.
+        yield* Ref.set(evidence.state, 'provisioning')
+        yield* Ref.set(evidence.free, new Set<Size>(['large']))
+        yield* Ref.set(evidence.resumes, [])
+        const stops = yield* Ref.get(evidence.stops)
+        // The status read is where Vivid first sees the wait; it changes nothing at Boat.
+        expect((yield* machine.status(key))._tag).toBe('Starting')
+        expect(yield* Ref.get(evidence.stops)).toBe(stops)
+        yield* TestClock.adjust('10 seconds')
+        expect((yield* machine.ensure(key))._tag).toBe('Running')
+        expect(yield* Ref.get(evidence.stops)).toBe(stops + 1)
+        expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('moves a Computer whose disk has outgrown its size to the next one', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const evidence = yield* Evidence
+      yield* machine.ensure(key)
+      yield* machine.stop(key)
+      yield* Ref.set(evidence.resumes, [])
+      yield* Ref.set(evidence.outgrown, new Set<Size>(['default']))
+      expect((yield* machine.ensure(key))._tag).toBe('Running')
+      expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('withdraws a waiting start within the same start when Vivid had not seen it wait', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const evidence = yield* Evidence
+      const boat = yield* stepped()
+      yield* boat.machine.ensure(key)
+      yield* boat.machine.stop(key)
+      yield* Ref.set(evidence.state, 'provisioning')
+      yield* Ref.set(evidence.free, new Set<Size>(['large']))
+      yield* Ref.set(evidence.resumes, [])
+      const stops = yield* Ref.get(evidence.stops)
+      // What the binding recorded while the machine was made and stopped is not this start's.
+      yield* Queue.clear(boat.waits)
+      const starting = yield* boat.machine.ensure(key).pipe(Effect.forkChild)
+      // The start has seen the wait and sleeps before its next look.
+      expect(yield* Queue.take(boat.waits)).toBe('provisioning')
+      yield* TestClock.adjust('8 seconds')
+      expect(yield* Ref.get(evidence.stops)).toBe(stops)
+      // The fifth look, ten seconds after the first, still finds it waiting.
+      yield* TestClock.adjust('2 seconds')
+      expect((yield* Fiber.join(starting))._tag).toBe('Running')
+      expect(yield* Ref.get(evidence.stops)).toBe(stops + 1)
+      expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('starts a waiting resume that another caller stops while Vivid looks at it', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const evidence = yield* Evidence
+      const boat = yield* stepped()
+      yield* boat.machine.ensure(key)
+      yield* boat.machine.stop(key)
+      yield* Ref.set(evidence.state, 'provisioning')
+      yield* Ref.set(evidence.resumes, [])
+      const stops = yield* Ref.get(evidence.stops)
+      // What the binding recorded while the machine was made and stopped is not this start's.
+      yield* Queue.clear(boat.waits)
+      const starting = yield* boat.machine.ensure(key).pipe(Effect.forkChild)
+      expect(yield* Queue.take(boat.waits)).toBe('provisioning')
+      yield* Ref.set(evidence.state, 'archiving')
+      yield* TestClock.adjust('2 seconds')
+      // Vivid sent no stop of its own, waited for the other one to finish, and started the machine.
+      expect((yield* Fiber.join(starting))._tag).toBe('Running')
+      expect(yield* Ref.get(evidence.stops)).toBe(stops)
+      expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('leaves a waiting start alone when Boat gives it a machine within the grace', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const evidence = yield* Evidence
+      const boat = yield* stepped()
+      yield* boat.machine.ensure(key)
+      yield* boat.machine.stop(key)
+      yield* Ref.set(evidence.state, 'provisioning')
+      // The start's own read and its first look find it waiting; Boat has placed it by the second.
+      yield* Ref.set(evidence.placedAfter, Option.some(2))
+      yield* Ref.set(evidence.resumes, [])
+      const stops = yield* Ref.get(evidence.stops)
+      // What the binding recorded while the machine was made and stopped is not this start's.
+      yield* Queue.clear(boat.waits)
+      const starting = yield* boat.machine.ensure(key).pipe(Effect.forkChild)
+      expect(yield* Queue.take(boat.waits)).toBe('provisioning')
+      yield* TestClock.adjust('4 seconds')
+      expect((yield* Fiber.join(starting))._tag).toBe('Running')
+      expect(yield* Ref.get(evidence.stops)).toBe(stops)
+      expect(yield* Ref.get(evidence.resumes)).toEqual([])
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
   it.effect('status never reconciles an unresolved create or resumes a stopped machine', () =>
     Effect.gen(function* () {
       const key = yield* fixture()
@@ -879,6 +1950,26 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         yield* Ref.set(evidence.malformed, false)
         yield* Ref.set(evidence.wrongIdentity, true)
         expect((yield* Effect.flip(machine.status(key)))._tag).toBe('MachineResponseInvalid')
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    15000,
+  )
+
+  it.effect(
+    'reads a 5xx whose body is not Boat’s as the provider failing, not as an invalid answer',
+    () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* machine.ensure(key)
+        yield* Ref.set(evidence.edgeDown, true)
+        // An invalid answer is recorded as the machine's state; an outage never is. An edge's
+        // HTML page must land on the outage side although nothing in it can be decoded.
+        const failure = yield* Effect.flip(machine.inspect(key))
+        expect(failure._tag).toBe('MachineRequestRejected')
+        expect(isOutage(failure)).toBe(true)
+        yield* Ref.set(evidence.edgeDown, false)
+        expect((yield* machine.inspect(key))._tag).toBe('Running')
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     15000,
   )

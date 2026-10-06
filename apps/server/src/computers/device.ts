@@ -16,6 +16,11 @@ import {
 } from 'effect'
 import {
   BrowseOutcome,
+  DeviceWork,
+  DeviceAbility,
+  WindowOutcome,
+  WindowAction,
+  type ReportDeviceStopRequest,
   RunState,
   DatabaseFailure,
   Device,
@@ -36,10 +41,13 @@ import {
   type PersonId,
   type SessionId,
   type ThreadId,
-  type RunId,
+  RunId,
 } from '@vivid/contracts'
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
 import { NoActingRun, admittedRunState } from '../threads/runs.ts'
+import { stopPersonRun } from '../threads/stop.ts'
+import { Runtime } from '../runtime/client.ts'
 import { DeviceReceipt, DeviceSubscriptionId, receiptOf } from './receipt.ts'
 import { deviceRequests, devices } from './tables.ts'
 
@@ -65,11 +73,20 @@ export class DeviceBusy extends Schema.TaggedError<DeviceBusy>()(
   { title: 'The Person’s computer is busy with an earlier request' },
 ) {}
 
+/** The exact admitted Run settled while its work waited; nothing was sent. */
+class RunNotWorking extends Schema.TaggedError<RunNotWorking>()(
+  'RunNotWorking',
+  { runId: RunId },
+  { title: 'The Run has ended' },
+) {}
+
 /** One desktop app listening: the session that opened it, where its requests go, and its end. */
 interface Subscription {
   readonly id: DeviceSubscriptionId
   readonly device: DeviceId
   readonly sessionId: SessionId
+  readonly ability: DeviceAbility
+  readonly windowRuns: Set<RunId>
   readonly requests: Queue.Queue<DeviceRequest>
   readonly closed: Deferred.Deferred<void>
 }
@@ -77,6 +94,7 @@ interface Subscription {
 /** A request that was sent and is waiting, with the link it went out on. */
 interface Pending {
   readonly subscription: Subscription
+  readonly request: typeof DeviceRequest.cases.Act.Type
   readonly answer: Deferred.Deferred<DeviceAnswer>
 }
 
@@ -117,6 +135,7 @@ export interface DeviceService {
     readonly sessionId: SessionId
     readonly device: DeviceId
     readonly installation: InstallationId
+    readonly ability: DeviceAbility
   }) => Effect.Effect<
     Stream.Stream<DeviceRequest>,
     NotFound | Forbidden | DatabaseInfrastructureError,
@@ -133,11 +152,39 @@ export interface DeviceService {
     BrowseOutcome,
     NoDeviceConnected | NoActingRun | DeviceBusy | DatabaseInfrastructureError
   >
+  /** Device allowance is the whole permission: their own machine, which they allowed. */
+  readonly window: (input: {
+    personId: PersonId
+    threadId: ThreadId
+    runId: RunId
+    action: WindowAction
+  }) => Effect.Effect<WindowOutcome, DatabaseInfrastructureError>
+  /** Ends a native turn once on its original Device link; offline Devices use their own idle timeout. */
+  readonly ended: (runId: RunId) => Effect.Effect<void>
+  /** Desktop Stop must prove Device, installation and Run ownership before runtime abort. */
+  readonly reportStop: (
+    personId: PersonId,
+    input: ReportDeviceStopRequest,
+  ) => Effect.Effect<
+    void,
+    | NotFound
+    | Forbidden
+    | DatabaseInfrastructureError
+    | import('@vivid/contracts').RuntimeUnavailable,
+    Runtime
+  >
   readonly answer: (
     personId: PersonId,
     sessionId: SessionId,
     input: AnswerDeviceRequest,
-  ) => Effect.Effect<void, Forbidden | DatabaseInfrastructureError>
+  ) => Effect.Effect<
+    void,
+    | Forbidden
+    | DatabaseInfrastructureError
+    | NotFound
+    | import('@vivid/contracts').RuntimeUnavailable,
+    Runtime
+  >
 }
 
 /**
@@ -153,8 +200,9 @@ export interface DeviceService {
  * deadline and a ledger; and a Thread can be shared, so a request is tied to the Run that asked
  * and refused unless that Run is acting for the computer's own Person.
  *
- * Who is listening is kept in this process. That is right for one server and wrong behind more
- * than one, where a request could arrive at an instance the computer is not connected to.
+ * Who is listening is kept in this process. The server must stay at one replica until presence
+ * is shared and browse requests route to the replica holding the desktop socket; otherwise a
+ * second replica reports Offline and cannot deliver work to a connected computer.
  */
 export class DeviceRegistry extends Context.Service<DeviceRegistry, DeviceService>()(
   'vivid/DeviceRegistry',
@@ -190,6 +238,8 @@ const outcomeOf = (answer: DeviceAnswer): BrowseOutcome =>
         Match.when('Unsupported', () => BrowseOutcome.cases.Unsupported.make({})),
         Match.exhaustive,
       ),
+    Did: () => BrowseOutcome.cases.OutcomeUnknown.make({}),
+    Declined: () => BrowseOutcome.cases.OutcomeUnknown.make({}),
     Failed: () =>
       BrowseOutcome.cases.Unavailable.make({
         reason: 'The Person’s computer could not complete this action.',
@@ -205,11 +255,17 @@ const makePresence = (links: Map<DeviceId, Subscription>) => {
   /** Ending a link is one signal. Its stream stops and every request waiting on it settles. */
   const close = (subscription: Subscription) => Deferred.succeed(subscription.closed, undefined)
 
-  const open = Effect.fn('Device.open')(function* (device: DeviceId, sessionId: SessionId) {
+  const open = Effect.fn('Device.open')(function* (
+    device: DeviceId,
+    sessionId: SessionId,
+    ability: DeviceAbility,
+  ) {
     const subscription: Subscription = {
       id: DeviceSubscriptionId.make(NodeCrypto.randomUUID()),
       device,
       sessionId,
+      ability,
+      windowRuns: new Set(),
       requests: yield* Queue.unbounded<DeviceRequest>(),
       closed: yield* Deferred.make<void>(),
     }
@@ -233,10 +289,12 @@ const makePresence = (links: Map<DeviceId, Subscription>) => {
     yield* close(subscription)
   })
 
-  const presenceOf = (device: DeviceId): DevicePresence =>
-    links.has(device)
-      ? DevicePresence.cases.Connected.make({})
-      : DevicePresence.cases.Offline.make({})
+  const presenceOf = (device: DeviceId): DevicePresence => {
+    const link = links.get(device)
+    return link === undefined
+      ? DevicePresence.cases.Offline.make({})
+      : DevicePresence.cases.Connected.make({ ability: link.ability })
+  }
 
   return { open, release, end, presenceOf }
 }
@@ -381,7 +439,7 @@ const makeRegistry = (database: DatabaseService, presence: Presence) => {
     return Option.fromUndefinedOr(row)
   })
 
-  return { enrol, list, allow, revoke, allowed }
+  return { enrol, list, allow, revoke, allowed, find }
 }
 
 type Registry = ReturnType<typeof makeRegistry>
@@ -416,7 +474,7 @@ const makeWatch = (database: DatabaseService, presence: Presence): DeviceService
     // computer that has one.
     yield* admit(input)
     const subscription = yield* Effect.acquireRelease(
-      presence.open(input.device, input.sessionId),
+      presence.open(input.device, input.sessionId, input.ability),
       presence.release,
     )
     // Checked again now that the link is registered: a revoke that committed in between has
@@ -453,12 +511,17 @@ const makeLedger = (database: DatabaseService, pending: Map<DeviceRequestId, Pen
     )
       return yield* new Forbidden({ message: 'This request is no longer waiting for an answer' })
     const now = yield* Clock.currentTimeMillis
+    const matches = DeviceWork.match(ticket.request.work, {
+      Page: () => DeviceAnswer.isAnyOf(['Done', 'Refused', 'Failed'])(input.answer),
+      Window: () => DeviceAnswer.isAnyOf(['Did', 'Declined', 'Failed'])(input.answer),
+    })
+    const receipt = matches ? receiptOf(input.answer) : DeviceReceipt.cases.OutcomeUnknown.make({})
     return yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const written = yield* database.run(
           database
             .update(deviceRequests)
-            .set({ receipt: encodeReceipt(receiptOf(input.answer)) })
+            .set({ receipt: encodeReceipt(receipt) })
             .where(
               and(
                 open(input.id),
@@ -474,6 +537,25 @@ const makeLedger = (database: DatabaseService, pending: Map<DeviceRequestId, Pen
           return yield* new Forbidden({
             message: 'This request has expired or was already answered',
           })
+        if (DeviceReceipt.guards.Refused(receipt)) {
+          // A committed answer decides Refused once; replays and outward Browse outcomes do not.
+          yield* recordRefusal(Refusal.cases.DeviceRefused.make({ reason: receipt.reason }))
+        }
+        if (!matches)
+          yield* Effect.logWarning('Device answer vocabulary did not match its work', {
+            requestId: input.id,
+          })
+        // Stop revokes the Run and aborts the runtime before the waiting tool can continue.
+        if (
+          matches &&
+          DeviceWork.guards.Window(ticket.request.work) &&
+          DeviceAnswer.guards.Declined(input.answer) &&
+          input.answer.reason === 'Stopped'
+        )
+          yield* stopPersonRun(personId, ticket.request.runId).pipe(
+            Effect.provideService(Database, database),
+            Effect.ensuring(Deferred.succeed(ticket.answer, input.answer)),
+          )
         yield* Deferred.succeed(ticket.answer, input.answer)
         return undefined
       }),
@@ -501,9 +583,9 @@ const makeLedger = (database: DatabaseService, pending: Map<DeviceRequestId, Pen
     if (row === undefined)
       return yield* new DatabaseFailure({ message: 'Device request not found' })
     const receipt = yield* decodeReceipt(row.receipt)
-    if (DeviceReceipt.isAnyOf(['Done', 'Refused', 'Failed'])(receipt))
-      return outcomeOf(yield* Deferred.await(ticket.answer))
-    return BrowseOutcome.cases.OutcomeUnknown.make({})
+    if (DeviceReceipt.isAnyOf(['Done', 'Refused', 'Did', 'Declined', 'Failed'])(receipt))
+      return Option.some(yield* Deferred.await(ticket.answer))
+    return Option.none<DeviceAnswer>()
   })
 
   /**
@@ -540,7 +622,7 @@ const inTurn = <A, E>(turn: Semaphore.Semaphore, device: DeviceId, work: Effect.
   )
 
 interface Dispatch {
-  readonly request: DeviceRequest
+  readonly request: typeof DeviceRequest.cases.Act.Type
   readonly personId: PersonId
   readonly subscription: Subscription
 }
@@ -553,14 +635,16 @@ const makeSend = (
 ) => {
   /** Hands the request to the link, then waits for whichever comes first: answer, end, deadline. */
   const awaitAnswer = Effect.fn('Device.awaitAnswer')(function* (
-    request: DeviceRequest,
+    request: typeof DeviceRequest.cases.Act.Type,
     ticket: Pending,
   ) {
     const { subscription } = ticket
     // A link that ended while the row was being written is never sent to, and its replacement
     // is never handed a request it did not open with.
-    if (!(yield* Deferred.isDone(subscription.closed)))
+    if (!(yield* Deferred.isDone(subscription.closed))) {
+      if (DeviceWork.guards.Window(request.work)) subscription.windowRuns.add(request.runId)
       yield* Queue.offer(subscription.requests, request)
+    }
     const remaining = Math.max(0, request.expiresAt - (yield* Clock.currentTimeMillis))
     const answered = yield* Deferred.await(ticket.answer).pipe(
       Effect.map(Option.some),
@@ -571,12 +655,12 @@ const makeSend = (
     )
     return yield* Option.match(Option.flatten(answered), {
       onNone: () => ledger.settle(request.id, ticket),
-      onSome: (answer) => Effect.succeed(outcomeOf(answer)),
+      onSome: (answer) => Effect.succeed(Option.some(answer)),
     })
   })
 
   return Effect.fn('Device.send')(function* ({ request, personId, subscription }: Dispatch) {
-    const ticket: Pending = { subscription, answer: yield* Deferred.make<DeviceAnswer>() }
+    const ticket: Pending = { subscription, request, answer: yield* Deferred.make<DeviceAnswer>() }
     // The row is written before anything is sent: a request the computer saw always has a record.
     yield* database.run(
       database.insert(deviceRequests).values({
@@ -587,7 +671,7 @@ const makeSend = (
         subscriptionId: subscription.id,
         threadId: request.threadId,
         runId: request.runId,
-        action: request.action._tag,
+        action: request.work.action._tag,
         receipt: encodeReceipt(DeviceReceipt.cases.Dispatched.make({})),
         dispatchedAt: yield* Clock.currentTimeMillis,
         expiresAt: request.expiresAt,
@@ -597,7 +681,7 @@ const makeSend = (
     return yield* awaitAnswer(request, ticket).pipe(
       // Dispatch has a durable row and may already have reached the page. A failed settlement
       // write cannot turn uncertainty into a retryable refusal; reconcile will close the row.
-      Effect.catch(() => Effect.succeed(BrowseOutcome.cases.OutcomeUnknown.make({}))),
+      Effect.catch(() => Effect.succeed(Option.none<DeviceAnswer>())),
       // A Run that is stopped mid-request has nobody left to tell. The row is still closed here;
       // if that write fails it stays `Dispatched` until its deadline, and `reconcile` closes it.
       Effect.onInterrupt(() =>
@@ -632,9 +716,12 @@ interface Dispatcher {
  * A Run the Person stopped, or one that failed or whose outcome is unknown, authorizes nothing
  * either way: stopping is the Person saying "no more from this".
  */
-const dispatchRun = Effect.fn('Device.dispatchRun')(function* (
-  input: Parameters<DeviceService['browse']>[0],
-) {
+const dispatchRun = Effect.fn('Device.dispatchRun')(function* (input: {
+  personId: PersonId
+  threadId: ThreadId
+  runId: RunId
+  authority: BrowseAuthority
+}) {
   const state = yield* admittedRunState(input)
   return RunState.match(state, {
     Working: () => true,
@@ -653,7 +740,7 @@ const dispatchRun = Effect.fn('Device.dispatchRun')(function* (
  * deadline is fixed before the turn is waited for: time spent queueing is time the request no
  * longer has.
  */
-const makeBrowse = ({ database, registry, links, send }: Dispatcher): DeviceService['browse'] => {
+const makeDispatch = ({ database, registry, links, send }: Dispatcher) => {
   const turns = new Map<DeviceId, Semaphore.Semaphore>()
   const turnOf = (device: DeviceId) => {
     const existing = turns.get(device)
@@ -663,12 +750,23 @@ const makeBrowse = ({ database, registry, links, send }: Dispatcher): DeviceServ
     return created
   }
 
-  return Effect.fn('Device.browse')(function* (input) {
+  return Effect.fn('Device.dispatch')(function* (input: {
+    personId: PersonId
+    threadId: ThreadId
+    runId: RunId
+    work: DeviceWork
+    authority: BrowseAuthority
+  }) {
     if (!(yield* dispatchRun(input).pipe(Effect.provideService(Database, database))))
-      return BrowseOutcome.cases.RunRequired.make({})
+      return yield* new RunNotWorking({ runId: input.runId })
     const device = yield* registry.allowed(input.personId)
     if (Option.isNone(device)) return yield* new NoDeviceConnected({})
     const id = device.value.id
+    if (DeviceWork.guards.Window(input.work)) {
+      const link = links.get(id)
+      if (link === undefined) return yield* new NoDeviceConnected({})
+      if (!link.ability.apps) return yield* new WindowUnavailable({})
+    }
     const expiresAt = (yield* Clock.currentTimeMillis) + REQUEST_BUDGET_MILLIS
     return yield* inTurn(
       turnOf(id),
@@ -676,21 +774,104 @@ const makeBrowse = ({ database, registry, links, send }: Dispatcher): DeviceServ
       Effect.gen(function* () {
         // Stop can arrive while queued; recheck the same Run immediately before dispatch.
         if (!(yield* dispatchRun(input).pipe(Effect.provideService(Database, database))))
-          return BrowseOutcome.cases.RunRequired.make({})
+          return yield* new RunNotWorking({ runId: input.runId })
+        const allowed = yield* registry.allowed(input.personId)
+        if (Option.isNone(allowed) || allowed.value.id !== id)
+          return yield* new NoDeviceConnected({})
         // Read after the turn is taken: the link that was there when the wait began may be gone.
         const subscription = links.get(id)
         if (subscription === undefined) return yield* new NoDeviceConnected({})
-        const request = DeviceRequest.make({
+        const request = DeviceRequest.cases.Act.make({
           id: DeviceRequestId.make(NodeCrypto.randomUUID()),
           threadId: input.threadId,
           runId: input.runId,
-          action: input.action,
+          work: input.work,
           expiresAt,
         })
+        if (DeviceWork.guards.Window(input.work) && !subscription.ability.apps)
+          return yield* new WindowUnavailable({})
         return yield* send({ request, personId: input.personId, subscription })
       }),
     )
   })
+}
+
+/** Native outcomes share transport with pages while retaining their distinct protocol vocabulary. */
+const windowOutcome = (answer: DeviceAnswer): WindowOutcome =>
+  DeviceAnswer.match<WindowOutcome>(answer, {
+    Did: ({ result }) => WindowOutcome.cases.Completed.make({ result }),
+    Declined: ({ reason }) => WindowOutcome.cases.Refused.make({ reason }),
+    Done: () => WindowOutcome.cases.OutcomeUnknown.make({}),
+    Refused: () => WindowOutcome.cases.OutcomeUnknown.make({}),
+    Failed: () =>
+      WindowOutcome.cases.Unavailable.make({
+        reason: 'The Person’s computer could not complete this action.',
+      }),
+  })
+
+/** A connected Device without its Windows helper cannot accept window work. */
+class WindowUnavailable extends Schema.TaggedError<WindowUnavailable>()(
+  'WindowUnavailable',
+  {},
+  { title: 'Windows apps are unavailable' },
+) {}
+
+const windowsUnavailable = () =>
+  WindowOutcome.cases.Unavailable.make({
+    reason: 'The Windows helper is not running on this computer.',
+  })
+
+/** Native admission and lifecycle use the existing page link, semaphore, ledger and deadline. */
+const makeWindows = ({
+  links,
+  dispatch,
+}: {
+  links: Map<DeviceId, Subscription>
+  dispatch: ReturnType<typeof makeDispatch>
+}) => {
+  /** Only links offered Window work receive this signal. Deleting before offering makes it once;
+   * disconnect discards the link and its Runs, so an offline Device simply misses the signal. */
+  const ended = Effect.fn('Device.runEnded')(function* (runId: RunId) {
+    yield* Effect.forEach(
+      links.values(),
+      Effect.fn('Device.endTurn')(function* (link) {
+        if (link.windowRuns.delete(runId) && !(yield* Deferred.isDone(link.closed)))
+          yield* Queue.offer(link.requests, DeviceRequest.cases.RunEnded.make({ runId }))
+      }),
+      { discard: true },
+    )
+  })
+
+  /** No Gate, Approval or app rules: it is the Person's own machine and they allowed it.
+   * Acting authority requires their Working Run both before queueing and before sending. */
+  const window = Effect.fn('Device.window')(function* (
+    input: Parameters<DeviceService['window']>[0],
+  ) {
+    return yield* dispatch({
+      ...input,
+      work: DeviceWork.cases.Window.make({ action: input.action }),
+      authority: BrowseAuthority.cases.Acting.make({}),
+    }).pipe(
+      Effect.map((answer) =>
+        Option.match(answer, {
+          onNone: () => WindowOutcome.cases.OutcomeUnknown.make({}),
+          onSome: windowOutcome,
+        }),
+      ),
+      Effect.catchTag('NoDeviceConnected', () =>
+        Effect.succeed(WindowOutcome.cases.NotConnected.make({})),
+      ),
+      Effect.catchTag('NoActingRun', () =>
+        Effect.succeed(WindowOutcome.cases.RunRequired.make({})),
+      ),
+      Effect.catchTag('RunNotWorking', () =>
+        Effect.succeed(WindowOutcome.cases.RunRequired.make({})),
+      ),
+      Effect.catchTag('DeviceBusy', () => Effect.succeed(WindowOutcome.cases.Busy.make({}))),
+      Effect.catchTag('WindowUnavailable', () => Effect.succeed(windowsUnavailable())),
+    )
+  })
+  return { window, ended }
 }
 
 /**
@@ -748,6 +929,7 @@ const behind = Effect.fn('Device.behind')(function* (missing: ProductMigrationsB
   return yield* new ProductMigrationsBehind({ missing })
 })
 
+/** Single-replica authority: these maps hold presence and the sockets browse requests route to. */
 export const deviceLayer = Layer.effect(
   DeviceRegistry,
   Effect.gen(function* () {
@@ -772,6 +954,14 @@ export const deviceLayer = Layer.effect(
       Effect.forkScoped,
     )
 
+    const dispatch = makeDispatch({
+      database,
+      registry,
+      links,
+      send: makeSend(database, ledger, pending),
+    })
+    const windows = makeWindows({ links, dispatch })
+
     const requireConnected = Effect.fn('Device.requireConnected')(function* (personId: PersonId) {
       const device = yield* registry.allowed(personId)
       if (Option.isNone(device) || !links.has(device.value.id))
@@ -786,13 +976,52 @@ export const deviceLayer = Layer.effect(
       revoke: registry.revoke,
       requireConnected,
       watch: makeWatch(database, presence),
-      answer: ledger.answer,
-      browse: makeBrowse({
-        database,
-        registry,
-        links,
-        send: makeSend(database, ledger, pending),
+      ...windows,
+      reportStop: Effect.fn('Device.reportStop')(function* (personId, input) {
+        const row = yield* registry.find(personId, input.device)
+        if (row.installationId !== input.installation)
+          return yield* new Forbidden({ message: 'This installation does not own this computer' })
+        yield* stopPersonRun(personId, input.runId).pipe(Effect.provideService(Database, database))
+        yield* windows.ended(input.runId)
+        return undefined
       }),
+      answer: Effect.fn('Device.acceptAnswer')(function* (personId, sessionId, input) {
+        const ticket = pending.get(input.id)
+        yield* ledger.answer(personId, sessionId, input)
+        if (
+          ticket !== undefined &&
+          DeviceWork.guards.Window(ticket.request.work) &&
+          DeviceAnswer.guards.Declined(input.answer) &&
+          input.answer.reason === 'Stopped'
+        ) {
+          yield* windows.ended(ticket.request.runId)
+        }
+      }),
+      browse: Effect.fn('Device.browse')(
+        function* (input) {
+          const answer = yield* dispatch({
+            personId: input.personId,
+            threadId: input.threadId,
+            runId: input.runId,
+            work: DeviceWork.cases.Page.make({ action: input.action }),
+            authority: input.authority,
+          }).pipe(
+            Effect.catchTag('WindowUnavailable', () =>
+              Effect.succeed(Option.some(DeviceAnswer.cases.Failed.make({}))),
+            ),
+          )
+          return Option.match(answer, {
+            onNone: () => BrowseOutcome.cases.OutcomeUnknown.make({}),
+            onSome: outcomeOf,
+          })
+        },
+        (effect) =>
+          effect.pipe(
+            Effect.catchTag('RunNotWorking', () =>
+              Effect.succeed(BrowseOutcome.cases.RunRequired.make({})),
+            ),
+          ),
+      ),
     })
   }),
 )

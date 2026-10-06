@@ -10,14 +10,22 @@ import { Data, Option, Result } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { ScrollView } from 'react-native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import { FileText, Folder as FolderIcon, FolderPlus, Upload } from 'lucide-react-native'
+import {
+  FileText,
+  Folder as FolderIcon,
+  FolderOpen,
+  FolderPlus,
+  Library as LibraryIcon,
+  Upload,
+} from 'lucide-react-native'
 import * as library from '../../../web/src/data/library'
 import { addDocument, openDocument } from '../data/documents'
 import { commit, warn } from '../data/haptics'
-import { refusalOf, useLive, useLiveData } from '../data/live'
+import { LiveState, refusalOf, useLive, useLiveData } from '../data/live'
 import { Start, startThread } from '../data/threads'
 import { useTheme } from '../theme'
-import { Header, Screen } from '../ui/Header'
+import { Bar } from '../ui/Bar'
+import { Screen } from '../ui/Screen'
 import { Live } from '../ui/Live'
 import { Row, Section } from '../ui/List'
 import { NameSheet, Sheet } from '../ui/Sheet'
@@ -25,14 +33,13 @@ import {
   Button,
   confirmDestructive,
   Empty,
-  IconButton,
   Label,
   Notice,
   Segmented,
   Skeleton,
   styles,
 } from '../ui/ui'
-import { useGo, useMe, type Routes } from '../workspace'
+import { useGo, useOpenThread, useMe, type Routes } from '../workspace'
 
 /** One level of one shelf: which shelf, which folder on it (or its top), and the query read. */
 interface Level {
@@ -60,7 +67,7 @@ const Over = Data.taggedEnum<Over>()
 export function Library() {
   const me = useMe()
   const data = useLiveData()
-  const go = useGo()
+
   const shelves = library.shelvesOf(me.workspace)
   const [chosen, setChosen] = useState<LibraryShelf>('Mine')
   // Leaving a Company takes its shelf with it; the Person is then looking at their own.
@@ -74,7 +81,6 @@ export function Library() {
         Company: () => 'What Vivid can read, yours and the company’s.',
       })}
       level={level}
-      onBack={go.goBack}
       above={
         shelves.length > 1 ? (
           <Segmented
@@ -93,14 +99,13 @@ export function Library() {
 /** One folder, a level down. Renaming and deleting it live at the foot of its own page. */
 export function Folder({ route }: NativeStackScreenProps<Routes, 'Folder'>) {
   const data = useLiveData()
-  const go = useGo()
+
   const { shelf, id, name } = route.params
   const level: Level = { shelf, folderId: id, query: data.live.folder.get({ shelf, folderId: id }) }
   return (
     <LevelScreen
       title={name}
       level={level}
-      onBack={go.goBack}
       above={null}
       below={<FolderActions id={id} name={name} />}
     />
@@ -139,18 +144,21 @@ function LevelScreen({
   title,
   subtitle,
   level,
-  onBack,
   above,
   below,
 }: {
   title: string
   subtitle?: string
   level: Level
-  onBack: () => void
   above: ReactNode
   below: ReactNode
 }) {
   const state = useLive(level.query)
+  // The level has answered and holds nothing: under its bar it is its empty state.
+  const none =
+    LiveState.$is('Ready')(state) &&
+    state.value.folders.length === 0 &&
+    state.value.documents.length === 0
   const [over, setOver] = useState<Over>(Over.Nothing())
   // A delete closes its sheet at once, so a refused one has only the level to be said in.
   const [undeleted, setUndeleted] = useState<Option.Option<string>>(Option.none())
@@ -163,27 +171,37 @@ function LevelScreen({
   }
   return (
     <Screen>
-      <Header
+      <Bar
         title={title}
-        subtitle={subtitle}
-        onBack={onBack}
-        trailing={
-          <>
-            <IconButton
-              icon={FolderPlus}
-              label="New folder"
-              onPress={() => open(Over.NewFolder())}
-            />
-            <IconButton
-              icon={Upload}
-              label="Add a file"
-              disabled={adding.busy}
-              onPress={() => void adding.add()}
-            />
-          </>
-        }
+        actions={[
+          {
+            symbol: 'folder.badge.plus',
+            icon: FolderPlus,
+            label: 'New folder',
+            disabled: false,
+            onPress: () => open(Over.NewFolder()),
+          },
+          {
+            symbol: 'square.and.arrow.up',
+            icon: Upload,
+            label: 'Add a file',
+            disabled: adding.busy,
+            onPress: () => void adding.add(),
+          },
+        ]}
       />
-      <ScrollView contentContainerStyle={[styles.page, styles.column]}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.page, styles.column]}
+      >
+        {/* What this level is, as the page's first line. It was the line under the bar's title;
+            the system's bar has no such line without a native change (`ui/Bar.tsx`). With
+            nothing on the level its empty state says it instead (`Empty`). */}
+        {subtitle !== undefined && !none && (
+          <Label size="label" tone="ink-2">
+            {subtitle}
+          </Label>
+        )}
         {above}
         {adding.busy && (
           <Label size="label" tone="ink-2">
@@ -246,13 +264,16 @@ function Contents({
   if (list.folders.length === 0 && list.documents.length === 0) {
     return (
       <Empty
+        icon={level.folderId === null ? LibraryIcon : FolderOpen}
+        title={level.folderId === null ? 'No files yet' : 'This folder is empty'}
         line={
           level.shelf === 'Company'
             ? 'Add a file and Vivid can read it in every member’s threads.'
             : 'Add a file and Vivid can read it in your threads.'
         }
+        room="page"
       >
-        <Button icon={Upload} label="Add a file" onPress={onAdd} />
+        <Button kind="primary" icon={Upload} label="Add a file" onPress={onAdd} />
       </Empty>
     )
   }
@@ -382,7 +403,7 @@ function ItemSheet({
   onUndeleted: (message: string) => void
 }) {
   const data = useLiveData()
-  const go = useGo()
+  const openThread = useOpenThread()
   const [renaming, setRenaming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
@@ -397,7 +418,7 @@ function ItemSheet({
     setBusy(false)
     if (Start.$is('Started')(outcome)) {
       onClose()
-      go.navigate('Chat', { id: outcome.id })
+      openThread(outcome.id)
       return
     }
     setRefused(Option.some(outcome.message))

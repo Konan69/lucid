@@ -8,7 +8,7 @@ import { eq } from 'drizzle-orm'
 import { connectionAddressLayer } from './address.ts'
 import { executorLayer } from './executor.ts'
 import { connectionHandlers } from './handlers.ts'
-import { ConnectionStore, connectionStoreLayer } from './store.ts'
+import { ConnectionStore, ToolDiscovery, connectionStoreLayer } from './store.ts'
 import { connectionTestLayer, fixture } from './testing.ts'
 import { auditLayer } from '../audit/record.ts'
 import { trustTestLayer } from '../approvals/testing.ts'
@@ -28,6 +28,8 @@ const liveExecutor = executorLayer.pipe(
   Layer.provide(
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({
+        GOOGLE_CLIENT_ID: 'isolated-test-client',
+        GOOGLE_CLIENT_SECRET: 'isolated-test-secret',
         VIVID_EXECUTOR_URL: executorUrl,
         VIVID_EXECUTOR_KEY: executorKey,
         VIVID_EXECUTOR_PUBLIC_ONLY: true,
@@ -114,7 +116,11 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
             const rows = yield* store.records(personalActor)
             const row = rows.find((entry) => entry.label === source.name)
             if (row === undefined) return yield* Effect.die('Public registration did not persist')
-            const tools = yield* store.tools(personalActor, row)
+            const discovery = yield* store.tools(personalActor, row)
+            const tools = ToolDiscovery.match(discovery, {
+              Ready: ({ tools: catalog }) => catalog,
+              Failed: () => [],
+            })
             console.info(
               JSON.stringify({ source: source.name, tools: tools.map((tool) => tool.name) }),
             )

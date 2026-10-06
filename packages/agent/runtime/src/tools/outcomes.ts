@@ -1,4 +1,12 @@
-import { BrowseOutcome, CommandOutcome, DesktopOutcome, ToolOutcome } from '@vivid/contracts'
+import {
+  BrowseOutcome,
+  DesktopOutcome,
+  ToolOutcome,
+  WindowOutcome,
+  WindowResult,
+  type WindowView,
+  type WindowRefusal,
+} from '@vivid/contracts'
 import * as views from './views.ts'
 import type { ToolResult } from './result.ts'
 
@@ -73,23 +81,6 @@ export function toolOutcome(outcome: ToolOutcome): ToolResult {
         problems: problems.map(views.modelText),
       },
     }),
-    OutcomeUnknown: outcomeUnknown,
-  })
-}
-
-/** Commands share the approval policy but preserve exit status and the server's truncation marker. */
-export function commandOutcome(outcome: CommandOutcome): ToolResult {
-  return CommandOutcome.match(outcome, {
-    Completed: ({ result }) => ({
-      output: {
-        ok: true,
-        result: views.command(result),
-        message: 'The command completed; check its exit code.',
-      },
-    }),
-    ApprovalRequired: approval,
-    Blocked: blocked,
-    Unavailable: unavailable,
     OutcomeUnknown: outcomeUnknown,
   })
 }
@@ -171,6 +162,113 @@ export function desktopOutcome(outcome: DesktopOutcome): ToolResult {
     ApprovalRequired: approval,
     Blocked: blocked,
     Unavailable: unavailable,
+    OutcomeUnknown: outcomeUnknown,
+  })
+}
+
+/** Every native refusal gives a distinct fixed next step; Stop is a termination, never a retry. */
+const windowRefusals = {
+  Stopped: 'The person stopped Vivid on their computer. Stop and do not retry.',
+  Elevated:
+    'Windows does not let Vivid type into an administrator window. Ask the person to do that step.',
+  WindowGone: 'The window is gone. List the windows again.',
+  LookStale: 'This look is stale. Look at the window again before acting.',
+  NotInFront: 'Windows would not bring this window forward. Ask the person to bring it forward.',
+  Unsupported: 'This computer cannot do that action. Ask the person to do it.',
+} satisfies Record<WindowRefusal, string>
+
+/** Only text metadata belongs in JSON; the same native image adapter carries the window picture. */
+const windowView = ({ window, app, look, width, height, outline, truncated }: WindowView) => ({
+  window,
+  app,
+  look,
+  width,
+  height,
+  outline: views.modelText(outline),
+  truncated,
+})
+
+/** Inventories are compact text with IDs; every observed window retains its look ID and outline. */
+const windowResult = (result: WindowResult) =>
+  WindowResult.match<ToolResult>(result, {
+    Apps: ({ apps, skipped }) => ({
+      output: {
+        ok: true,
+        apps: apps.map(({ id, name }) => `${id}: ${name}`).join('\n'),
+        skipped,
+        message: 'The installed apps are listed.',
+      },
+    }),
+    Windows: ({ windows }) => ({
+      output: {
+        ok: true,
+        windows: windows.map(({ id, app, title }) => `${id}: ${app} — ${title}`).join('\n'),
+        message: 'The open windows are listed.',
+      },
+    }),
+    Seen: ({ view }) => ({
+      output: {
+        ok: true,
+        view: windowView(view),
+        message: 'Verify the window picture and outline before acting.',
+      },
+    }),
+    Typed: ({ view, complete, sent }) => ({
+      output: {
+        ok: true,
+        view: windowView(view),
+        complete,
+        sent,
+        message: complete
+          ? 'The text was typed; verify the window.'
+          : 'Typing stopped partway through. Do not type the delivered characters again.',
+      },
+    }),
+    Closed: () => ({ output: { ok: true, message: 'The window closed.' } }),
+    Closing: ({ view }) => ({
+      output: {
+        ok: true,
+        view: windowView(view),
+        message: 'The app is asking a question before closing. Inspect it and answer or leave it.',
+      },
+    }),
+  })
+
+/** Native availability, refusal and uncertainty remain separate outcomes for the model. */
+export function windowOutcome(outcome: WindowOutcome): ToolResult {
+  return WindowOutcome.match<ToolResult>(outcome, {
+    Completed: ({ result }) => windowResult(result),
+    Refused: ({ reason }) => ({
+      output: { ok: false, reason, message: windowRefusals[reason] },
+      terminate: reason === 'Stopped',
+    }),
+    NotConnected: () => ({
+      output: {
+        ok: false,
+        message: 'The person’s desktop app is not connected. Ask them to connect it.',
+      },
+    }),
+    Busy: () => ({
+      output: {
+        ok: false,
+        message: 'The person’s computer is busy with an earlier action. Wait for it to finish.',
+      },
+    }),
+    RunRequired: () => ({
+      output: {
+        ok: false,
+        message:
+          'Nothing was sent because the Run that asked has ended. Stop and ask the person before trying again.',
+      },
+      terminate: true,
+    }),
+    Unavailable: ({ reason }) => ({
+      output: {
+        ok: false,
+        reason: views.modelText(reason),
+        message: `Apps are unavailable on the person’s computer: ${views.modelText(reason)}`,
+      },
+    }),
     OutcomeUnknown: outcomeUnknown,
   })
 }

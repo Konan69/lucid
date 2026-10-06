@@ -1,88 +1,83 @@
 import { describe, expect, it } from '@effect/vitest'
-import { ConnectionId, ServiceId, ServiceUnavailable } from '@vivid/contracts'
 import * as ConfigProvider from 'effect/ConfigProvider'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Redacted from 'effect/Redacted'
 import * as Ref from 'effect/Ref'
+import * as Schema from 'effect/Schema'
 import { hostedExecutorFixture, hostedPrefix, hostedService } from './testing.ts'
 import { DecisionModel } from 'effect/unstable/ai'
 import { ScriptedAnswer } from '../decisions/testing.ts'
+import { ConfigurationError } from '../config.ts'
 import { ToolEffects, toolEffectsLayer } from './effects.ts'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
 import {
   Executor,
   ExecutorAppId,
+  ExecutorAuthorizationId,
   ExecutorOwnerId,
   ExecutorProfileId,
   ExecutorReferences,
   executorLayer,
 } from './executor.ts'
 
-const publicService = ServiceId.make('curated/deepwiki-com-mcp')
+const settings = {
+  GOOGLE_CLIENT_ID: 'isolated-test-client',
+  GOOGLE_CLIENT_SECRET: 'isolated-test-secret',
+  VIVID_EXECUTOR_URL: 'https://executor.example.test',
+  VIVID_EXECUTOR_KEY: 'isolated-test-key',
+  VIVID_EXECUTOR_ORGANIZATION: 'isolated-test-organization',
+}
 
-/** Missing configuration disables the entire authority seam, including every mutation. */
-describe('Executor installation', () => {
-  for (const configuration of [
-    { name: 'both values missing', values: {} },
-    { name: 'key missing', values: { VIVID_EXECUTOR_URL: 'https://vivid.example.test' } },
-    {
-      name: 'URL missing',
-      values: { VIVID_EXECUTOR_KEY: 'isolated-test-configuration-placeholder' },
-    },
-  ]) {
-    const missingLayer = executorLayer.pipe(
-      Layer.provide(FetchHttpClient.layer),
-      Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(configuration.values))),
-    )
-    it.effect(`fails every operation with ServiceUnavailable: ${configuration.name}`, () =>
+/**
+ * Integrations are part of every running Vivid: with any Executor setting missing or malformed the
+ * Layer does not build, so the server does not start, and the failure names the variable without
+ * carrying any supplied value.
+ */
+describe('Executor settings', () => {
+  for (const [name, values, variable] of [
+    [
+      'the address is missing',
+      { ...settings, VIVID_EXECUTOR_URL: undefined },
+      'VIVID_EXECUTOR_URL',
+    ],
+    [
+      'the address is not a URL',
+      { ...settings, VIVID_EXECUTOR_URL: 'executor' },
+      'VIVID_EXECUTOR_URL',
+    ],
+    ['the key is missing', { ...settings, VIVID_EXECUTOR_KEY: undefined }, 'VIVID_EXECUTOR_KEY'],
+    ['the key is blank', { ...settings, VIVID_EXECUTOR_KEY: '' }, 'VIVID_EXECUTOR_KEY'],
+    [
+      'the organization is missing',
+      { ...settings, VIVID_EXECUTOR_ORGANIZATION: undefined },
+      'VIVID_EXECUTOR_ORGANIZATION',
+    ],
+    // Google Integrations sign in with the installation's Google client, so it is required here too.
+    [
+      'the Google client id is missing',
+      { ...settings, GOOGLE_CLIENT_ID: undefined },
+      'GOOGLE_CLIENT_ID',
+    ],
+    [
+      'the Google client secret is blank',
+      { ...settings, GOOGLE_CLIENT_SECRET: '' },
+      'GOOGLE_CLIENT_SECRET',
+    ],
+  ] as const) {
+    it.effect(`does not build when ${name}`, () =>
       Effect.gen(function* () {
-        const executor = yield* Executor
-        const references = ExecutorReferences.cases.Public.make({
-          service: publicService,
-          owner: ExecutorOwnerId.make('unconfigured'),
-          app: ExecutorAppId.make('unconfigured-app'),
-          profile: ExecutorProfileId.make('unconfigured-profile'),
-        })
-        const operations = [
-          executor.catalog(),
-          executor.authorization({
-            service: publicService,
-            returnAddress: 'https://vivid.example.test/',
-          }),
-          executor.begin({
-            connectionId: ConnectionId.make(crypto.randomUUID()),
-            service: publicService,
-            owner: references.owner,
-            subject: 'unconfigured-person',
-            label: 'Test',
-            returnAddress: 'https://vivid.example.test/connections/callback',
-          }),
-          executor.reauthorize({
-            references,
-            connectionId: ConnectionId.make('unconfigured-resume'),
-            service: publicService,
-            owner: references.owner,
-            subject: 'unconfigured-person',
-            label: 'Resume',
-            returnAddress: 'https://vivid.example.test/return',
-          }),
-          executor.complete({ references, fields: {} }),
-          executor.completeSignIn({
-            references,
-            callbackAddress: Redacted.make('https://vivid.example.test/callback'),
-          }),
-          executor.status(references),
-          executor.remove(references),
-          executor.tools(references),
-          executor.call({ references, tool: 'unconfigured', input: {} }),
-        ]
-        for (const operation of operations) {
-          const error = yield* operation.pipe(Effect.flip)
-          expect(error).toBeInstanceOf(ServiceUnavailable)
-          expect(error).toMatchObject({ service: 'connections' })
-        }
-      }).pipe(Effect.provide(missingLayer)),
+        const failure = yield* Layer.build(
+          executorLayer.pipe(
+            Layer.provide(FetchHttpClient.layer),
+            Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(values))),
+          ),
+        ).pipe(Effect.scoped, Effect.flip)
+        expect(failure).toBeInstanceOf(ConfigurationError)
+        expect(failure).toMatchObject({ variable })
+        expect(JSON.stringify(failure)).not.toContain(settings.VIVID_EXECUTOR_KEY)
+        expect(JSON.stringify(failure)).not.toContain(settings.GOOGLE_CLIENT_SECRET)
+      }),
     )
   }
 })
@@ -116,6 +111,7 @@ it.effect('cannot distinguish declared writes from host-defaulted writes', () =>
       app: ExecutorAppId.make('app'),
       profile: ExecutorProfileId.make('profile'),
       owner: ExecutorOwnerId.make('owner'),
+      appOwnership: 'Shared',
     })
     const tools = yield* Effect.flatMap(Executor, (executor) => executor.tools(references)).pipe(
       Effect.provide(hosted.configured),
@@ -154,5 +150,42 @@ it.effect('cannot distinguish declared writes from host-defaulted writes', () =>
       ),
     )
     expect(judged.map((tool) => tool.effect)).toEqual(['read', 'read'])
+  }),
+)
+
+/** Executor may echo rejected secrets in its HTTP payload. Completion exposes only the fixed
+ * domain refusal, never that payload or the encoded key in an Error message or public fields. */
+it.effect('does not echo a token when credential submission fails', () =>
+  Effect.gen(function* () {
+    const hosted = yield* hostedExecutorFixture()
+    const token = 'synthetic-token-that-must-stay-private'
+    yield* Ref.update(hosted.replies, (replies) =>
+      new Map(replies).set(`POST ${hostedPrefix}/connections/authorization/submit`, {
+        status: 422,
+        body: Schema.TaggedStruct('AccountFieldsInvalid', {
+          message: Schema.String,
+          supplied: Schema.String,
+        }).make({ message: token, supplied: token }),
+      }),
+    )
+    const references = ExecutorReferences.cases.EnteringKey.make({
+      service: hostedService,
+      app: ExecutorAppId.make('app'),
+      profile: ExecutorProfileId.make('profile'),
+      owner: ExecutorOwnerId.make('owner'),
+      appOwnership: 'Shared',
+      authorization: ExecutorAuthorizationId.make('authorization'),
+      method: 'pat',
+      label: 'Private',
+    })
+    const error = yield* Effect.gen(function* () {
+      return yield* (yield* Executor).complete({
+        references,
+        fields: { token: Redacted.make(token) },
+      })
+    }).pipe(Effect.provide(hosted.configured), Effect.flip)
+    expect(error._tag).toBe('ExecutorRejected')
+    expect(error.message).not.toContain(token)
+    expect(JSON.stringify(error)).not.toContain(token)
   }),
 )

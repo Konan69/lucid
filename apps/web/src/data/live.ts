@@ -28,21 +28,23 @@ import { theme } from './theme'
  */
 
 const one = engine.query
+/** A query the first screen needs: its last answer is kept on the device (`data/snapshot.ts`). */
+const kept = engine.kept
 const family = engine.family
 
 export const live = {
-  me: one((client) => client.WatchMe()),
-  settings: one((client) => client.WatchSettings()),
+  me: kept((client) => client.WatchMe()),
+  settings: kept((client) => client.WatchSettings()),
   people: one((client) => client.WatchPeople()),
-  threads: one((client) => client.WatchThreads()),
+  threads: kept((client) => client.WatchThreads()),
   thread: family(
     (id: ThreadId) => id,
     (client, id) => client.WatchThread({ id }),
   ),
   inbox: one((client) => client.WatchInbox()),
-  notifications: one((client) => client.WatchNotifications()),
+  notifications: kept((client) => client.WatchNotifications()),
   routines: one((client) => client.WatchRoutines()),
-  projects: one((client) => client.WatchProjects()),
+  projects: kept((client) => client.WatchProjects()),
   library: family(
     (shelf: LibraryShelf) => shelf,
     (client, shelf) => client.WatchLibrary({ shelf }),
@@ -55,6 +57,10 @@ export const live = {
   memory: one((client) => client.WatchMemory()),
   computer: one((client) => client.WatchComputer()),
   suggestions: one((client) => client.WatchSuggestions()),
+  /** The Person's own computers, each with its access and whether its desktop app is listening. */
+  devices: one((client) => client.WatchDevices()),
+  /** What the Person has typed and not sent, on any device, where they are working. */
+  drafts: kept((client) => client.WatchDrafts()),
 }
 
 /** What the Person has typed into the catalog search. Empty asks for the most-used services. */
@@ -134,7 +140,10 @@ const told = new Map<string, ReadonlySet<string>>()
  * open it. What was already waiting when the page opened is not announced, it is in the bell; and
  * nothing is announced about the Thread that is on screen, which the Person is already reading.
  */
-engine.registry.subscribe(live.notifications.atom, (result) => {
+// It listens to the server's own answers, not to what the device kept from its last run: that
+// copy would become the baseline, and everything that arrived while the page was closed would be
+// announced at launch as if it had just happened.
+engine.registry.subscribe(live.notifications.answers, (result) => {
   if (!AsyncResult.isSuccess(result) || lastWhereabouts === 'nowhere') return
   const previous = told.get(lastWhereabouts)
   const fresh = result.value.notifications.filter(

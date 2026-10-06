@@ -158,7 +158,9 @@ describe('Run settlement observation', () => {
           settlements: [{ submissionId: runId, outcome: 'completed' }],
         })
         const result = yield* Fiber.join(run)
-        expect(result).toEqual(Settlement.cases.Completed.make({ reply: 'Hello there' }))
+        expect(result).toEqual(
+          Settlement.cases.Completed.make({ reply: 'Hello there', responseId: runId }),
+        )
         expect(evidence.aborted()).toBe(false)
       }),
   )
@@ -190,7 +192,7 @@ describe('Run settlement observation', () => {
           ],
         })
         expect(yield* Fiber.join(run)).toEqual(
-          Settlement.cases.Completed.make({ reply: 'Host answer' }),
+          Settlement.cases.Completed.make({ reply: 'Host answer', responseId: RunId.make(host) }),
         )
       }),
   )
@@ -319,7 +321,9 @@ describe('Run settlement observation', () => {
           messages: [assistant([{ type: 'text', text: 'Hello', state: 'done' }])],
         })
         evidence.disconnect(new Error('HTTP 503'))
-        expect(yield* Fiber.join(run)).toEqual(Settlement.cases.Completed.make({ reply: 'Hello' }))
+        expect(yield* Fiber.join(run)).toEqual(
+          Settlement.cases.Completed.make({ reply: 'Hello', responseId: runId }),
+        )
       }),
   )
 

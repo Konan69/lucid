@@ -42,7 +42,12 @@ const fixture = Effect.fn('Documents.test.fixture')(function* () {
 describe('document tools', () => {
   it('bounds complete Markdown, preserves whitespace, and rejects model ownership or turn fields', () => {
     const [write, reading] = documentTools(unavailable)
-    const valid = { title: 'Plan', body: '# Plan\n\n  keep indentation', note: 'Added a date' }
+    const valid = {
+      summary: 'Launch plan',
+      title: 'Plan',
+      body: '# Plan\n\n  keep indentation',
+      note: 'Added a date',
+    }
     expect(v.parse(write.input, valid)).toEqual(valid)
     for (const input of [
       { ...valid, title: '' },
@@ -56,8 +61,10 @@ describe('document tools', () => {
       { ...valid, runId: reference },
     ])
       expect(v.safeParse(write.input, input).success).toBe(false)
-    expect(v.safeParse(reading.input, { title: 'Plan' }).success).toBe(true)
-    expect(v.safeParse(reading.input, { title: 'Plan', id: reference }).success).toBe(false)
+    expect(v.safeParse(reading.input, { summary: 'Launch plan', title: 'Plan' }).success).toBe(true)
+    expect(
+      v.safeParse(reading.input, { summary: 'Launch plan', title: 'Plan', id: reference }).success,
+    ).toBe(false)
   })
 
   it('projects creation, revision, Markdown and Missing titles in human words without references', () => {
@@ -116,7 +123,12 @@ describe('document tools', () => {
           Promise.resolve(
             write.run({
               ...context,
-              data: { title: 'Plan', body: '# Plan', note: 'Changed scope' },
+              data: {
+                summary: 'Launch plan',
+                title: 'Plan',
+                body: '# Plan',
+                note: 'Changed scope',
+              },
             }),
           ),
         ).pipe(Effect.forkScoped)
@@ -140,7 +152,9 @@ describe('document tools', () => {
           output: { ok: true, title: 'Plan', version: 2, created: false, changed: true },
         })
         const running = yield* Effect.promise(() =>
-          Promise.resolve(reading.run({ ...context, data: { title: 'Missing' } })),
+          Promise.resolve(
+            reading.run({ ...context, data: { summary: 'Launch plan', title: 'Missing' } }),
+          ),
         ).pipe(Effect.forkScoped)
         const readRequest = yield* Queue.take(requests)
         if (!Predicate.isTagged(readRequest, 'Request'))
@@ -168,7 +182,12 @@ describe('document tools', () => {
         const { requests, rpc, runTool } = yield* fixture()
         const [write] = documentTools(runTool)
         const writing = yield* Effect.promise(() =>
-          Promise.resolve(write.run({ ...context, data: { title: 'Plan', body: '# Plan' } })),
+          Promise.resolve(
+            write.run({
+              ...context,
+              data: { summary: 'Launch plan', title: 'Plan', body: '# Plan' },
+            }),
+          ),
         ).pipe(Effect.forkScoped)
         const request = yield* Queue.take(requests)
         if (!Predicate.isTagged(request, 'Request'))

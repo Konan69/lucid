@@ -3,7 +3,7 @@
     "name": "Vivid",
     "slug": "vivid",
     "scheme": "vivid",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -16,7 +16,18 @@
       "package": "work.vivid.mobile",
       "softwareKeyboardLayoutMode": "resize"
     },
-    "plugins": ["expo-secure-store", "expo-document-picker"],
+    "plugins": [
+      "expo-secure-store",
+      "expo-document-picker",
+      [
+        "@sentry/react-native/expo",
+        {
+          "organization": "vivid-7t",
+          "project": "vivid-mobile",
+          "disableAutoUpload": true
+        }
+      ]
+    ],
     "web": {
       "bundler": "metro"
     },

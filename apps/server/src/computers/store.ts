@@ -4,14 +4,17 @@ import {
   Clock,
   Context,
   Effect,
+  Exit,
   Fiber,
   Layer,
   Match,
   Option,
   Result,
+  Schedule,
   Schema,
   Semaphore,
   Scope,
+  type Stream,
 } from 'effect'
 import {
   ActionTarget,
@@ -27,6 +30,12 @@ import {
   ProposedAction,
   type BrowseRequest,
   type RunCommandRequest,
+  type ComputerShellRequest,
+  ComputerShellOutcome,
+  type ComputerFileReadRequest,
+  ComputerFileReadOutcome,
+  type ComputerFileWriteRequest,
+  ComputerFileWriteOutcome,
   type Person,
   Computer,
   ComputerId,
@@ -41,12 +50,18 @@ import { type Actor } from '../auth/access.ts'
 import { Gate, GateDecision, ActionOutcome, ActionOrigin, actionOrigin } from '../approvals/gate.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import {
+  isOutage,
+  MachineNoCapacity,
   Machine,
   MachineKey,
   MachineState,
   MachineResponseInvalid,
   type MachineFailure,
   type MachineScreen,
+  type MachineOutput,
+  type MachineRun,
+  type MachineFileReason,
+  MachineFileRefused,
 } from './machine.ts'
 import { BrowseAuthority, DeviceRegistry } from './device.ts'
 import { requireThread } from '../threads/access.ts'
@@ -72,22 +87,49 @@ type Stored = typeof Stored.Type
 type StateColumns = Pick<typeof computers.$inferInsert, 'status' | 'since' | 'reason'>
 const decode = decodeStored(Stored, 'Computer')
 
+/**
+ * What a Person and Vivid are told while the provider is down. It says "right now" because it is
+ * true only until the provider answers again: nothing is switched off, and the next call is tried.
+ */
+const notAnswering = 'Vivid’s computer is not answering right now. Try again in a moment.'
+
+/**
+ * The state one call reports when it could not ask the provider. Not being able to ask is not an
+ * answer about the machine, so this is never written to the Computer's record: a record that said
+ * "failed" would outlive the outage, keep saying "right now" after the provider was back, and stop
+ * Vivid waking the Computer until a Person pressed Start (`requireReady` refuses a failed start).
+ */
+const unanswered = (since: number) =>
+  ComputerState.cases.Failed.make({ since, reason: notAnswering })
+
+/** Why a file could not be read or written, as Vivid is told it. */
+const fileRefusals = {
+  missing: 'There is no file at that path.',
+  denied: 'The Computer does not permit that on this path.',
+  directory: 'That path is a directory, not a file.',
+  large: 'The file is larger than 10 MB. Work on it with a command.',
+  other: 'The Computer could not read or write that file.',
+} satisfies Record<typeof MachineFileReason.Type, string>
+
 /** Only the typed provider failure is translated, without leaking commands, credentials or host details. */
 export const machineFailureReason = (failure: MachineFailure): string =>
   Match.value(failure).pipe(
     Match.tagsExhaustive({
-      MachineUnavailable: () => 'No Computer provider is configured on this installation.',
-      MachineConfigurationInvalid: () =>
-        'The Computer provider configuration is incomplete or invalid.',
       MachineAuthenticationFailed: () => 'The Computer provider credentials were refused.',
       MachineCreationUnresolved: () =>
         'The Computer creation receipt needs reconciliation; another machine will not be created.',
-      MachineRequestRejected: () => 'The Computer provider refused the operation.',
+      // A 5xx is the provider failing, not the provider saying no.
+      MachineRequestRejected: ({ status }) =>
+        status >= 500 ? notAnswering : 'The Computer provider refused the operation.',
       MachinePersistenceFailed: () => 'The Computer provider binding could not be saved or read.',
+      MachineNoCapacity: () =>
+        'Vivid’s computer could not start: its provider has no machine free right now. Try again in a few minutes.',
+      MachineHeld: () => 'Vivid’s computer is already in use by another account.',
       MachineCapabilityUnavailable: ({ capability }) =>
         `The configured Computer provider does not support ${capability}.`,
       MachineNotRunning: () => 'The Computer is no longer running.',
       MachineOperationFailed: () => 'The Computer provider could not finish the operation.',
+      MachineUnreachable: () => notAnswering,
       MachineResponseInvalid: () => 'The Computer provider returned an invalid response.',
       MachineInputInvalid: () => 'The command or its time limit is invalid.',
       BrowserAddressRefused: () =>
@@ -95,6 +137,7 @@ export const machineFailureReason = (failure: MachineFailure): string =>
       BrowserStepFailed: () => 'The browser could not complete the requested step.',
       MachineExecutionUnknown: () =>
         'The command receipt was lost; it may have run. Do not retry it automatically.',
+      MachineFileRefused: ({ reason }) => fileRefusals[reason],
     }),
   )
 
@@ -109,7 +152,7 @@ const wire = <State extends MachineState>(row: Stored, state: State) => ({
   state,
 })
 
-/** Absence and disabled installation are distinct even before a record exists. */
+/** A Person who has never needed a Computer has no record; the state still says so. */
 const withoutRow = <State extends MachineState>(state: State) => ({
   id: null,
   state,
@@ -145,10 +188,6 @@ const accessTo = (
       }),
     Failed: ({ reason }) =>
       ComputerAccess.cases.Unavailable.make({ reason: `The Computer failed to start. ${reason}` }),
-    Unavailable: () =>
-      ComputerAccess.cases.Unavailable.make({
-        reason: 'No Computer provider is configured on this installation.',
-      }),
   })
 }
 
@@ -156,7 +195,6 @@ const accessTo = (
 const sameState = (row: Stored, state: MachineState): boolean =>
   MachineState.match(state, {
     Absent: () => false,
-    Unavailable: () => false,
     Starting: ({ since }) => Stored.guards.starting(row) && row.since === since,
     Running: ({ since }) => Stored.guards.running(row) && row.since === since,
     Stopped: ({ since }) => Stored.guards.stopped(row) && row.since === since,
@@ -234,11 +272,6 @@ const persistence = Effect.fn('ComputerStore.persistence')(function* (
       Running: ({ since }) => ({ status: 'running', since, reason: null }),
       Stopped: ({ since }) => ({ status: 'stopped', since, reason: null }),
       Failed: ({ since, reason }) => ({ status: 'failed', since, reason }),
-      Unavailable: () => ({
-        status: 'failed',
-        since: before.since,
-        reason: 'No Computer provider is configured on this installation.',
-      }),
     })
     yield* commitState(
       person,
@@ -303,7 +336,16 @@ const persistence = Effect.fn('ComputerStore.persistence')(function* (
 
 type Persistence = Effect.Success<ReturnType<typeof persistence>>
 
-/** The scope owns the worker; failure is persisted, and stale generations cannot be resurrected. */
+/**
+ * The scope owns the worker; a failed start is persisted, and stale generations cannot be
+ * resurrected. A start that only met a provider outage is not a failed start: the Computer goes
+ * back to stopped, so the next action or the next Start wakes it once the provider answers.
+ *
+ * One case is left to the provider's own rule. When the outage met the creation of a Person's
+ * first machine, Boat's adapter keeps the unanswered creation as an unresolved intent and reports
+ * it as needing an explicit Start (`boat/lifecycle.ts`, `inspect`): a machine may have been
+ * created and paid for, so it is reconciled by a Person's decision, never by a retry on its own.
+ */
 const startMachine = Effect.fn('ComputerStore.boot')(function* (
   machine: typeof Machine.Service,
   rows: Persistence,
@@ -316,23 +358,36 @@ const startMachine = Effect.fn('ComputerStore.boot')(function* (
     !Stored.guards.starting(current.value) ||
     current.value.since !== before.since
   )
-    return
-  const state = yield* machine.ensure(before.machine).pipe(
+    return Option.none<MachineNoCapacity>()
+  const started = yield* machine.ensure(before.machine).pipe(
     Effect.timeout('90 seconds'),
     Effect.catchTag('TimeoutError', () => Effect.fail(new ComputerWakeTimedOut({ person }))),
-    Effect.match({
-      onFailure: (failure) =>
-        ComputerState.cases.Failed.make({
-          since: before.since,
-          reason:
-            failure instanceof ComputerWakeTimedOut
-              ? 'The Computer did not become ready within 90 seconds.'
-              : machineFailureReason(failure),
-        }),
-      onSuccess: (running) => running,
-    }),
+    Effect.result,
   )
+  const state = Result.match(started, {
+    onFailure: (failure): MachineState => {
+      if (failure instanceof ComputerWakeTimedOut)
+        return ComputerState.cases.Failed.make({
+          since: before.since,
+          reason: 'The Computer did not become ready within 90 seconds.',
+        })
+      // No machine was free on any size: the Computer is stopped and whole, which is what the
+      // record says. A failed record would stop Vivid waking it until a Person pressed Start,
+      // and this ends by itself, so the next need simply asks the provider again.
+      if (isOutage(failure) || failure instanceof MachineNoCapacity)
+        return ComputerState.cases.Stopped.make({ since: before.since })
+      return ComputerState.cases.Failed.make({
+        since: before.since,
+        reason: machineFailureReason(failure),
+      })
+    },
+    onSuccess: (running) => running,
+  })
   yield* rows.update(person, before, state)
+  // The record says only "stopped", so the start hands its reason to the call that waited for it.
+  return Result.isFailure(started) && started.failure instanceof MachineNoCapacity
+    ? Option.some(started.failure)
+    : Option.none<MachineNoCapacity>()
 })
 type StoreError = DatabaseInfrastructureError
 export interface ComputerStoreService {
@@ -360,6 +415,53 @@ export interface ComputerStoreService {
     person: PersonId,
     action: BrowserAction,
   ) => Effect.Effect<BrowseResult, StoreError | MachineFailure | ReadinessFailure>
+  /**
+   * The Computer's own shell and files, used as a person uses their machine: woken if asleep,
+   * refused while the Person holds it, and counted as activity. No Approval is asked and no rule
+   * is consulted: the Person allowed Vivid its Computer, and what Vivid does on it is its own.
+   */
+  readonly run: (
+    person: PersonId,
+    input: {
+      readonly command: string
+      readonly directory: string
+      readonly timeoutSeconds: number
+    },
+  ) => Effect.Effect<MachineRun, StoreError | MachineFailure | ReadinessFailure>
+  readonly read: (
+    person: PersonId,
+    path: string,
+  ) => Effect.Effect<Uint8Array, StoreError | MachineFailure | ReadinessFailure>
+  readonly put: (
+    person: PersonId,
+    input: { readonly path: string; readonly content: Uint8Array },
+  ) => Effect.Effect<void, StoreError | MachineFailure | ReadinessFailure>
+  /**
+   * The Person's Computer for work of Vivid's own that lasts: a program. It is woken and checked
+   * like any action, and it stays awake until the scope closes. Unlike an action it does not hold
+   * the Computer: a program asks for commands and browser steps while it runs, and each of those
+   * takes the Computer in the ordinary way. A Person who takes the Computer over after this is
+   * not interrupted by it; the program's later steps are refused as theirs always are.
+   */
+  readonly attach: (
+    person: PersonId,
+  ) => Effect.Effect<
+    ComputerAttachment,
+    StoreError | MachineFailure | ReadinessFailure,
+    Scope.Scope
+  >
+}
+
+/** A running Computer with its machine already chosen; no caller of this names a machine. */
+export interface ComputerAttachment {
+  readonly follow: (input: {
+    readonly command: string
+    readonly timeoutSeconds: number
+  }) => Stream.Stream<MachineOutput, MachineFailure>
+  readonly write: (input: {
+    readonly path: string
+    readonly content: string
+  }) => Effect.Effect<void, MachineFailure>
 }
 
 /** A bounded wake wait is distinct from takeover, provider absence and failed startup. */
@@ -375,24 +477,13 @@ export class ComputerHeld extends Schema.TaggedError<ComputerHeld>()(
   { person: PersonId },
   { title: 'The Person is using the Computer' },
 ) {}
-/** Provider absence is an installation dependency, not failed creation. */
-export class ComputerProviderUnavailable extends Schema.TaggedError<ComputerProviderUnavailable>()(
-  'ComputerProviderUnavailable',
-  { person: PersonId },
-  { title: 'Computer provider unavailable' },
-) {}
 /** A failed startup needs an explicit restart, preserving its recorded failure reason. */
 export class ComputerStartFailed extends Schema.TaggedError<ComputerStartFailed>()(
   'ComputerStartFailed',
   { person: PersonId, reason: Schema.String },
   { title: 'Computer startup failed' },
 ) {}
-type ReadinessFailure =
-  | ComputerHeld
-  | ComputerProviderUnavailable
-  | ComputerStartFailed
-  | ComputerNotReady
-  | ComputerWakeTimedOut
+type ReadinessFailure = ComputerHeld | ComputerStartFailed | ComputerNotReady | ComputerWakeTimedOut
 
 /** Execution refusal is not a provider error and keeps the Person's precise lifecycle reason. */
 export class ComputerNotReady extends Schema.TaggedError<ComputerNotReady>()(
@@ -425,54 +516,73 @@ const observations = (
   pending: ReadonlySet<PersonId>,
 ) => {
   /** Provider absence maps to stopped only for an existing row, never an invented running address. */
-  const read = Effect.fn('ComputerStore.read')(function* <State extends MachineState>(
+  const reconcile = Effect.fn('ComputerStore.reconcile')(function* <State extends MachineState>(
     person: PersonId,
-    observe: (key: MachineKey) => Effect.Effect<State, MachineFailure>,
+    row: Stored,
+    reported: State,
   ) {
-    const row = yield* rows.load(person)
-    const key = Option.match(row, {
-      onNone: () => computerMachineKey(person),
-      onSome: (value) => value.machine,
-    })
-    const recordedSince = Option.isSome(row) ? row.value.since : yield* Clock.currentTimeMillis
-    const reported = yield* observe(key).pipe(
-      Effect.catch((failure) =>
-        Effect.succeed(
-          ComputerState.cases.Failed.make({
-            since: recordedSince,
-            reason: machineFailureReason(failure),
-          }),
-        ),
-      ),
-    )
-    if (MachineState.guards.Unavailable(reported)) return withoutRow(reported)
-    if (Option.isNone(row)) return withoutRow(ComputerState.cases.Absent.make({}))
-    if (pending.has(person) && Stored.guards.starting(row.value))
-      return wire(row.value, ComputerState.cases.Starting.make({ since: row.value.since }))
-    if (Stored.guards.failed(row.value) && !MachineState.guards.Running(reported))
-      return wire(
-        row.value,
-        ComputerState.cases.Failed.make({ since: row.value.since, reason: row.value.reason }),
-      )
+    if (pending.has(person) && Stored.guards.starting(row))
+      return wire(row, ComputerState.cases.Starting.make({ since: row.since }))
+    if (Stored.guards.failed(row) && !MachineState.guards.Running(reported))
+      return wire(row, ComputerState.cases.Failed.make({ since: row.since, reason: row.reason }))
     const actual = MachineState.guards.Absent(reported)
-      ? ComputerState.cases.Stopped.make({ since: row.value.since })
+      ? ComputerState.cases.Stopped.make({ since: row.since })
       : reported
-    const current = wire(row.value, actual)
-    if (sameState(row.value, actual)) return current
-    const updated = yield* rows.update(person, row.value, actual)
+    const current = wire(row, actual)
+    if (sameState(row, actual)) return current
+    const updated = yield* rows.update(person, row, actual)
     return Option.match(updated, {
       onNone: () => withoutRow(ComputerState.cases.Absent.make({})),
       onSome: (value) => wire(value, actual),
     })
   })
+  /**
+   * One read of a Person's Computer: what it is, and the outage that kept the provider from being
+   * asked, when there was one. During an outage the record keeps what was last known and this read
+   * alone says the provider is not answering; the next read asks again.
+   */
+  const read = Effect.fn('ComputerStore.read')(function* <State extends MachineState>(
+    person: PersonId,
+    observe: (key: MachineKey) => Effect.Effect<State, MachineFailure>,
+  ) {
+    const row = yield* rows.load(person)
+    // Nothing was ever started for this Person, so there is no machine to ask the provider about.
+    if (Option.isNone(row))
+      return {
+        computer: withoutRow(ComputerState.cases.Absent.make({})),
+        outage: Option.none<MachineFailure>(),
+      }
+    const observed = yield* observe(row.value.machine).pipe(Effect.result)
+    if (Result.isFailure(observed) && isOutage(observed.failure))
+      return {
+        computer: wire(row.value, unanswered(row.value.since)),
+        outage: Option.some(observed.failure),
+      }
+    const reported = Result.isSuccess(observed)
+      ? observed.success
+      : ComputerState.cases.Failed.make({
+          since: row.value.since,
+          reason: machineFailureReason(observed.failure),
+        })
+    return {
+      computer: yield* reconcile(person, row.value, reported),
+      outage: Option.none<MachineFailure>(),
+    }
+  })
   /** Person reads include the cached viewer; action checks carry lifecycle facts only. */
   const get = Effect.fn('ComputerStore.get')((person: PersonId) =>
-    read(person, (key) => machine.status(key)).pipe(Effect.map((value) => Computer.make(value))),
+    read(person, (key) => machine.status(key)).pipe(
+      Effect.map(({ computer }) => Computer.make(computer)),
+    ),
   )
-  const inspect = Effect.fn('ComputerStore.inspect')((person: PersonId) =>
+  /** The lifecycle facts with the outage, for callers that must refuse rather than report. */
+  const observe = Effect.fn('ComputerStore.observe')((person: PersonId) =>
     read(person, (key) => machine.inspect(key)),
   )
-  return { get, inspect }
+  const inspect = Effect.fn('ComputerStore.inspect')((person: PersonId) =>
+    observe(person).pipe(Effect.map(({ computer }) => computer)),
+  )
+  return { get, inspect, observe }
 }
 
 /** Scoped lifecycle workers and Person locks order start/stop/hold/execution without tying startup to an RPC fiber. */
@@ -482,7 +592,8 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
   const rows = yield* persistence(machine, lock)
   const scope = yield* Effect.scope
   const pending = new Set<PersonId>()
-  const workers = new Map<PersonId, Fiber.Fiber<void>>()
+  /** A worker ends with the reason its start found no machine, when that is how it ended. */
+  const workers = new Map<PersonId, Fiber.Fiber<Option.Option<MachineNoCapacity>>>()
   /** Startup markers precede publication; cleanup removes both ownership records together. */
   const forget = Effect.fn('ComputerStore.forget')((person: PersonId) =>
     Effect.sync(() => {
@@ -490,12 +601,12 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
       workers.delete(person)
     }),
   )
-  const { get, inspect } = observations(rows, machine, pending)
+  const { get, inspect, observe } = observations(rows, machine, pending)
   /** Start returns the persisted starting receipt before its scope-owned worker acquires the lifecycle permit. */
   const begin = Effect.fn('ComputerStore.begin')(
     function* (person: PersonId) {
       const current = yield* inspect(person)
-      if (MachineState.isAnyOf(['Running', 'Unavailable'])(current.state)) return current
+      if (MachineState.guards.Running(current.state)) return current
       pending.add(person)
       const claim = MachineState.guards.Starting(current.state)
         ? rows.load(person)
@@ -510,7 +621,11 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
       }
       const worker = yield* startMachine(machine, rows, person, row.value).pipe(
         (effect) => lock(person).withPermit(effect),
-        Effect.catch(() => Effect.logError('Computer startup state could not be persisted.')),
+        Effect.catch(() =>
+          Effect.logError('Computer startup state could not be persisted.').pipe(
+            Effect.as(Option.none<MachineNoCapacity>()),
+          ),
+        ),
         Effect.ensuring(forget(person)),
         Effect.forkIn(scope, { startImmediately: false }),
       )
@@ -524,15 +639,17 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
     if (pending.has(person)) return yield* inspect(person)
     return yield* begin(person)
   })
-  /** Stop is ordered after startup and records a provider failure rather than claiming the machine stopped. */
+  /** Stop is ordered after startup and records a provider failure rather than claiming the machine stopped. An outage is told and not recorded. */
   const halt = Effect.fn('ComputerStore.halt')(
     function* (person: PersonId) {
       const current = yield* get(person)
-      if (ComputerState.guards.Unavailable(current.state)) return current
       const row = yield* rows.load(person)
       if (Option.isNone(row)) return current
       const stopped = yield* machine.stop(row.value.machine).pipe(Effect.result)
       const now = yield* Clock.currentTimeMillis
+      // Whether the machine stopped is not known; the next read asks the provider again.
+      if (Result.isFailure(stopped) && isOutage(stopped.failure))
+        return wire(row.value, unanswered(now))
       const state = Result.match(stopped, {
         onFailure: (failure) =>
           ComputerState.cases.Failed.make({ since: now, reason: machineFailureReason(failure) }),
@@ -559,7 +676,7 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
     yield* rows.hold(person, held)
     return yield* get(person)
   })
-  return { get, inspect, start, stop, hold, lock, rows, machine, workers }
+  return { get, inspect, observe, start, stop, hold, lock, rows, machine, workers }
 })
 
 /** Actions may wake absent/stopped machines once; failed starts require an explicit Person decision.
@@ -568,10 +685,18 @@ const prepare = Effect.fn('ComputerStore.prepare')(
   function* (state: Effect.Success<ReturnType<typeof lifecycle>>, person: PersonId) {
     const current = yield* state.inspect(person)
     if (current.heldByPerson) return
+    // A start already under way is held here, before anything else is awaited: it forgets itself
+    // when it ends, and an action that joined it must still hear how it ended.
+    const joined = state.workers.get(person)
     if (MachineState.isAnyOf(['Absent', 'Stopped', 'Starting'])(current.state))
       yield* state.start(person)
-    const worker = state.workers.get(person)
-    if (worker !== undefined) yield* Fiber.await(worker)
+    const worker = state.workers.get(person) ?? joined
+    if (worker === undefined) return
+    const ended = yield* Fiber.await(worker)
+    // The start this action waited for found no machine free. The record only says "stopped",
+    // so the action is refused with the provider's own reason, and the next one asks again.
+    if (Exit.isSuccess(ended) && Option.isSome(ended.value))
+      return yield* Effect.fail(ended.value.value)
   },
   (effect, _state, person) =>
     effect.pipe(
@@ -585,19 +710,13 @@ const requireReady = Effect.fn('ComputerStore.requireReady')(function* (
   state: Effect.Success<ReturnType<typeof lifecycle>>,
   person: PersonId,
 ) {
-  const computer = yield* state.inspect(person)
+  const { computer, outage } = yield* state.observe(person)
   if (computer.heldByPerson) return yield* Effect.fail(new ComputerHeld({ person }))
-  const refusal = MachineState.match<
-    Option.Option<ComputerProviderUnavailable | ComputerStartFailed>
-  >(computer.state, {
-    Unavailable: () => Option.some(new ComputerProviderUnavailable({ person })),
-    Failed: ({ reason }) => Option.some(new ComputerStartFailed({ person, reason })),
-    Absent: () => Option.none(),
-    Starting: () => Option.none(),
-    Running: () => Option.none(),
-    Stopped: () => Option.none(),
-  })
-  if (Option.isSome(refusal)) return yield* Effect.fail(refusal.value)
+  // The provider could not be asked: the action is refused with the provider's own failure,
+  // before anything is dispatched, and the next action asks again.
+  if (Option.isSome(outage)) return yield* Effect.fail(outage.value)
+  if (MachineState.guards.Failed(computer.state))
+    return yield* Effect.fail(new ComputerStartFailed({ person, reason: computer.state.reason }))
   const ready = accessTo(computer, computerMachineKey(person))
   if (ComputerAccess.guards.Unavailable(ready))
     return yield* Effect.fail(new ComputerNotReady({ reason: ready.reason }))
@@ -635,16 +754,22 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
     timers.delete(person)
     if (timer !== undefined) yield* Fiber.interrupt(timer)
   })
-  /** Recheck stored activity under the action permit before stopping, so an old deadline cannot win a race. */
+  /**
+   * Recheck stored activity under the action permit before stopping, so an old deadline cannot win
+   * a race. Answers whether the deadline is settled: true when the Computer was stopped, had moved
+   * on, or the stop failed for a reason that is recorded; false only when the provider could not
+   * be asked, so that whether the machine stopped is not known and nothing is recorded.
+   */
   const expire = Effect.fn('ComputerStore.expire')(function* (before: Stored) {
-    timers.delete(before.personId)
-    yield* state.lock(before.personId).withPermit(
+    return yield* state.lock(before.personId).withPermit(
       Effect.gen(function* () {
         const current = yield* state.rows.load(before.personId)
-        if (Option.isNone(current) || current.value.held || watchers.has(before.personId)) return
-        if (!Stored.isAnyOf(['starting', 'running'])(current.value)) return
-        if (current.value.lastActivityAt !== before.lastActivityAt) return
+        if (Option.isNone(current) || current.value.held || watchers.has(before.personId))
+          return true
+        if (!Stored.isAnyOf(['starting', 'running'])(current.value)) return true
+        if (current.value.lastActivityAt !== before.lastActivityAt) return true
         const result = yield* state.machine.stop(current.value.machine).pipe(Effect.result)
+        if (Result.isFailure(result) && isOutage(result.failure)) return false
         const since = yield* Clock.currentTimeMillis
         const next = Result.match(result, {
           onSuccess: () => ComputerState.cases.Stopped.make({ since }),
@@ -652,10 +777,24 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
             ComputerState.cases.Failed.make({ since, reason: machineFailureReason(failure) }),
         })
         yield* state.rows.update(before.personId, current.value, next)
+        return true
       }),
     )
   })
-  /** Timers use the stored epoch deadline, including immediately overdue Computers after a restart. */
+  /**
+   * Timers use the stored epoch deadline, including immediately overdue Computers after a restart.
+   *
+   * An idle stop the provider could not answer is tried again every minute until it can be, so an
+   * outage at the deadline neither leaves the machine running for good nor records a failure that
+   * would outlive it.
+   *
+   * A timer leaves `timers` once, when it wakes and before it writes: its own write arms the next
+   * timer, which cancels whatever the map holds, and would otherwise interrupt itself. It is still
+   * this timer's entry then, because arming a newer one interrupts a timer that is still asleep.
+   * A retry never touches the map again, so it cannot drop the handle of a timer armed since; it
+   * is ended by what `expire` rechecks each time: activity since, a Person holding the Computer,
+   * a watcher, or a state that is no longer running.
+   */
   const arm = Effect.fn('ComputerStore.armIdle')(function* (person: PersonId) {
     yield* cancel(person)
     const row = yield* state.rows.load(person)
@@ -663,8 +802,13 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
     if (!Stored.isAnyOf(['starting', 'running'])(row.value)) return
     const now = yield* Clock.currentTimeMillis
     const delay = Math.max(0, row.value.lastActivityAt + 20 * 60_000 - now)
+    const settle = expire(row.value).pipe(
+      Effect.repeat({ until: (settled) => settled, schedule: Schedule.spaced('1 minute') }),
+    )
     const timer = yield* Effect.sleep(delay).pipe(
-      Effect.andThen(expire(row.value)),
+      Effect.andThen(Effect.sync(() => timers.delete(person))),
+      Effect.andThen(settle),
+      Effect.asVoid,
       Effect.catch(() => Effect.logError('Computer idle stop could not be persisted.')),
       Effect.forkIn(scope, { startImmediately: false }),
     )
@@ -704,6 +848,34 @@ const idle = Effect.fn('ComputerStore.idle')(function* (state: {
   return { activity, arm, watching, cancel }
 })
 
+/**
+ * Presence, not the action permit, is what a program holds: it keeps the idle stop away as a
+ * watching Person does, and the permit is taken only for the final takeover check. Waking that
+ * fails puts the idle deadline back, as it does for an action.
+ */
+const attached = Effect.fn('ComputerStore.attach')(function* (
+  state: Effect.Success<ReturnType<typeof lifecycle>>,
+  person: PersonId,
+) {
+  const inactivity = state.rows.inactivity
+  yield* inactivity.activity(person)
+  yield* prepare(state, person).pipe(
+    Effect.onError(() =>
+      inactivity
+        .arm(person)
+        .pipe(Effect.catch(() => Effect.logError('Computer idle deadline could not be restored.'))),
+    ),
+  )
+  yield* inactivity.watching(person)
+  const key = yield* state.lock(person).withPermit(requireReady(state, person))
+  const attachment: ComputerAttachment = {
+    follow: (input) =>
+      state.machine.follow({ key, command: input.command, timeoutSeconds: input.timeoutSeconds }),
+    write: (input) => state.machine.write({ key, path: input.path, content: input.content }),
+  }
+  return attachment
+})
+
 const decodeBrowserPicture = Schema.decodeUnknownEffect(BrowserPicture)
 
 /** The provider’s browser operation returns an outline only. Cloud Screenshot therefore captures
@@ -731,6 +903,36 @@ const browserReceipt = Effect.fn('ComputerStore.browserReceipt')(function* (
   })
 })
 
+/**
+ * The Computer's own shell and files, each run as an action is: `execute` wakes the Computer,
+ * refuses while the Person holds it and counts the activity.
+ */
+const ownMachine = (
+  machine: Machine['Service'],
+  execute: <A>(
+    person: PersonId,
+    action: (key: MachineKey) => Effect.Effect<A, MachineFailure>,
+  ) => Effect.Effect<A, StoreError | MachineFailure | ReadinessFailure>,
+) => ({
+  run: Effect.fn('ComputerStore.run')(
+    (
+      person: PersonId,
+      input: {
+        readonly command: string
+        readonly directory: string
+        readonly timeoutSeconds: number
+      },
+    ) => execute(person, (key) => machine.run({ key, ...input })),
+  ),
+  read: Effect.fn('ComputerStore.read')((person: PersonId, path: string) =>
+    execute(person, (key) => machine.read({ key, path })),
+  ),
+  put: Effect.fn('ComputerStore.put')(
+    (person: PersonId, input: { readonly path: string; readonly content: Uint8Array }) =>
+      execute(person, (key) => machine.put({ key, ...input })),
+  ),
+})
+
 /** Capture provider and database dependencies once; callers need only the Computer authority. */
 export const computerStoreLayer = Layer.effect(
   ComputerStore,
@@ -740,7 +942,9 @@ export const computerStoreLayer = Layer.effect(
     /** Resolve provider identity only after a current lifecycle and keyboard-ownership check. */
     const access = Effect.fn('ComputerStore.access')(function* (person: PersonId) {
       const row = yield* state.rows.load(person)
-      const computer = yield* state.inspect(person)
+      const { computer, outage } = yield* state.observe(person)
+      if (Option.isSome(outage))
+        return ComputerAccess.cases.Unavailable.make({ reason: notAnswering })
       const result = accessTo(computer, computerMachineKey(person))
       if (ComputerAccess.guards.Unavailable(result)) return result
       if (Option.isNone(row))
@@ -821,6 +1025,7 @@ export const computerStoreLayer = Layer.effect(
     const desktop = Effect.fn('ComputerStore.desktop')((person: PersonId, action: DesktopAction) =>
       execute(person, (key) => state.machine.desktop({ key, action })),
     )
+    const attach = (person: PersonId) => attached(state, person)
     /** Manual lifecycle activity updates the same durable deadline as Vivid's actions. */
     const start = Effect.fn('ComputerStore.startActive')(function* (person: PersonId) {
       const computer = yield* state.start(person)
@@ -856,6 +1061,8 @@ export const computerStoreLayer = Layer.effect(
       probe,
       browse,
       desktop,
+      attach,
+      ...ownMachine(state.machine, execute),
     })
   }),
 )
@@ -871,10 +1078,6 @@ const executionReason = (failure: ExecutionFailure): string =>
       DatabaseConstraintViolation: () => 'The Computer record could not be read or updated.',
     }),
     Match.tag('ComputerHeld', () => 'the Person is using the Computer'),
-    Match.tag(
-      'ComputerProviderUnavailable',
-      () => 'No Computer provider is configured on this installation.',
-    ),
     Match.tag('ComputerStartFailed', ({ reason }) => `The Computer failed to start. ${reason}`),
     Match.tag('ComputerWakeTimedOut', () => 'The Computer did not become ready within 90 seconds.'),
     Match.tag('ComputerNotReady', ({ reason }) => reason),
@@ -886,21 +1089,22 @@ const executionRefusals = <A>(
   handle: (failure: MachineFailure | ReadinessFailure) => Effect.Effect<A>,
 ) => {
   return {
-    MachineUnavailable: handle,
     MachineNotRunning: handle,
     MachineOperationFailed: handle,
+    MachineUnreachable: handle,
     MachineResponseInvalid: handle,
     MachineInputInvalid: handle,
     BrowserAddressRefused: handle,
     BrowserStepFailed: handle,
-    MachineConfigurationInvalid: handle,
     MachineAuthenticationFailed: handle,
     MachineCreationUnresolved: handle,
     MachineRequestRejected: handle,
+    MachineNoCapacity: handle,
     MachinePersistenceFailed: handle,
+    MachineHeld: handle,
     MachineCapabilityUnavailable: handle,
+    MachineFileRefused: handle,
     ComputerHeld: handle,
-    ComputerProviderUnavailable: handle,
     ComputerStartFailed: handle,
     ComputerNotReady: handle,
     ComputerWakeTimedOut: handle,
@@ -976,6 +1180,83 @@ export const computerRunCommand = Effect.fn('Computer.runCommand')(function* (
           ),
     },
   )
+})
+
+/** A refusal by the machine's file system is told apart from a Computer that cannot be used. */
+const fileOutcome = <A, Done>(
+  work: Effect.Effect<A, ExecutionFailure>,
+  outcomes: {
+    readonly done: (value: A) => Done
+    readonly refused: (reason: string) => Done
+    readonly unavailable: (reason: string) => Done
+  },
+) =>
+  work.pipe(
+    Effect.map(outcomes.done),
+    Effect.catchTag('MachineExecutionUnknown', (failure) =>
+      Effect.succeed(outcomes.unavailable(machineFailureReason(failure))),
+    ),
+    Effect.catchTags(
+      executionRefusals((failure) =>
+        Effect.succeed(
+          failure instanceof MachineFileRefused
+            ? outcomes.refused(executionReason(failure))
+            : outcomes.unavailable(executionReason(failure)),
+        ),
+      ),
+    ),
+  )
+
+/**
+ * Vivid's own shell on the acting Person's Computer. There is no Gate here, by the Person's
+ * decision (5 October 2026: once Vivid is allowed its Computer, nothing on it is asked about or
+ * banned). Takeover still refuses it: a Person who is using the Computer is not typed over.
+ */
+export const computerShell = Effect.fn('Computer.shell')(function* (
+  actor: Actor,
+  request: ComputerShellRequest,
+) {
+  const store = yield* ComputerStore
+  return yield* store.run(actor.person.id, request).pipe(
+    Effect.map((run) => ComputerShellOutcome.cases.Completed.make(run)),
+    Effect.catchTag('MachineExecutionUnknown', () =>
+      Effect.succeed(ComputerShellOutcome.cases.OutcomeUnknown.make({})),
+    ),
+    Effect.catchTags(
+      executionRefusals((failure) =>
+        Effect.succeed(
+          ComputerShellOutcome.cases.Unavailable.make({ reason: executionReason(failure) }),
+        ),
+      ),
+    ),
+  )
+})
+
+export const computerFileRead = Effect.fn('Computer.fileRead')(function* (
+  actor: Actor,
+  request: ComputerFileReadRequest,
+) {
+  const store = yield* ComputerStore
+  return yield* fileOutcome<Uint8Array, ComputerFileReadOutcome>(
+    store.read(actor.person.id, request.path),
+    {
+      done: (content) => ComputerFileReadOutcome.cases.Read.make({ content }),
+      refused: (reason) => ComputerFileReadOutcome.cases.Refused.make({ reason }),
+      unavailable: (reason) => ComputerFileReadOutcome.cases.Unavailable.make({ reason }),
+    },
+  )
+})
+
+export const computerFileWrite = Effect.fn('Computer.fileWrite')(function* (
+  actor: Actor,
+  request: ComputerFileWriteRequest,
+) {
+  const store = yield* ComputerStore
+  return yield* fileOutcome<void, ComputerFileWriteOutcome>(store.put(actor.person.id, request), {
+    done: () => ComputerFileWriteOutcome.cases.Written.make({}),
+    refused: (reason) => ComputerFileWriteOutcome.cases.Refused.make({ reason }),
+    unavailable: (reason) => ComputerFileWriteOutcome.cases.Unavailable.make({ reason }),
+  })
 })
 
 /** Device availability is explicit and never grants permission to use the cloud Computer instead. */

@@ -59,7 +59,7 @@ const adopt = (next: Appearance) => {
 }
 
 /** The live query. An expected change (`saveAppearance`) flows through it like a server result. */
-export const appearance = engine.query((client) => client.WatchAppearance())
+export const appearance = engine.kept((client) => client.WatchAppearance())
 
 // Held open for the life of the page, so every face has the answer before it is first drawn. It answers again when the Person changes workspace (`data/live`
 // reopens every query), which is how a Company's Vivid replaces the Person's own.

@@ -15,10 +15,9 @@ import { GUTTER, Label, Press, TARGET } from '../../ui/ui'
  * The front door's steps, each its own screen on one native stack, so going on is the platform's
  * push and going back is its pop and its back swipe.
  *
- * - `Welcome`: Vivid and the way in.
+ * - `Welcome`: Vivid and the two ways in. Google signs in from here, by way of the browser.
  * - `Email`, then `Password`: signing in. The email travels to the next step.
  * - `Create`: a new account, asking only a name and a password for that email.
- * - `Code`: signing in with a code entered on a device that is already signed in.
  * - `Address`: where this phone's Vivid is. Development builds only.
  */
 export type DoorRoutes = {
@@ -26,7 +25,6 @@ export type DoorRoutes = {
   Email: undefined
   Password: { email: string }
   Create: { email: string }
-  Code: undefined
   Address: undefined
 }
 

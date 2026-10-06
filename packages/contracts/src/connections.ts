@@ -31,6 +31,11 @@ export const Connection = Schema.Struct({
   service: ServiceId,
   /** The service's name as people know it: "Gmail". */
   serviceName: Schema.String,
+  /**
+   * The address of the service's icon, without a size, when the server can name one: an added
+   * server's site. Null for a catalog service, which each client draws from its bundled logos.
+   */
+  mark: Schema.NullOr(Schema.String),
   /** What the Person called this account: "Work", "Personal". */
   label: Schema.String,
   ownership: ConnectionOwnership,

@@ -2,7 +2,7 @@ import { defineTool } from '@flue/runtime'
 import { Effect, Option, Schema } from 'effect'
 import { builtinNamed, manifest } from '@vivid/skills'
 import * as v from 'valibot'
-import { text } from './inputs.ts'
+import { summary, text } from './inputs.ts'
 import { savedInventory, named, NameMissing } from './names.ts'
 import { Scope, type RunTool } from './scope.ts'
 import * as views from './views.ts'
@@ -33,7 +33,7 @@ export function skillTools(runTool: RunTool) {
       name: 'read_skill',
       description:
         'Read a saved procedure by its exact name from context before following its steps. Built-ins use activate_skill.',
-      input: v.object({ name: text('The procedure name shown in context.', 100) }),
+      input: v.object({ summary, name: text('The procedure name shown in context.', 100) }),
       /** The catalog and view share names, so duplicates never select an arbitrary procedure. */
       run({ data, signal }) {
         return runTool(
@@ -74,6 +74,7 @@ export function skillTools(runTool: RunTool) {
       description:
         'Save a verified reusable procedure for yourself whenever it will help future work. Do not ask a person to create or manage a skill. Include decisions and approval needs; saving does not create a Routine.',
       input: v.object({
+        summary,
         name: text('A lowercase-hyphen runtime name; built-in names are reserved.', 80),
         about: text('One sentence describing the work this procedure does.', 300),
         useWhen: text('When to use this procedure, in one sentence.', 300),
@@ -102,7 +103,13 @@ export function skillTools(runTool: RunTool) {
                 }),
               )
             const { client } = yield* Scope
-            const response = yield* client.SaveSkill(data)
+            const response = yield* client.SaveSkill({
+              name: data.name,
+              about: data.about,
+              useWhen: data.useWhen,
+              instructions: data.instructions,
+              forCompany: data.forCompany,
+            })
             const { skills } = yield* client.ListSkillSummaries()
             const entry = savedInventory(skills, (item) => views.modelText(item.name)).find(
               ({ item }) => item.id === response.skill.id,

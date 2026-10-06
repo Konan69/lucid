@@ -4,7 +4,7 @@ import { randomUUID } from 'expo-crypto'
 import { useState } from 'react'
 import { ScrollView, View } from 'react-native'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import { Plus, SquarePen } from 'lucide-react-native'
+import { FolderKanban, FolderSearch, Plus, SquarePen } from 'lucide-react-native'
 import { projects } from '@vivid/state'
 import { useNow } from '../data/foreground'
 import { commit } from '../data/haptics'
@@ -12,11 +12,12 @@ import { relativeTime } from '../data/lanes'
 import { LiveState, useLive, useLiveData, useLiveValue } from '../data/live'
 import { UNTITLED } from '../data/threads'
 import { Avatar } from '../ui/Avatar'
-import { Header, Screen } from '../ui/Header'
+import { Bar } from '../ui/Bar'
+import { Screen } from '../ui/Screen'
 import { Row, Section } from '../ui/List'
 import { Live } from '../ui/Live'
-import { Button, Empty, IconButton, Label, Notice, Skeleton, styles } from '../ui/ui'
-import { useGo, type Routes } from '../workspace'
+import { Button, Empty, Label, Notice, Skeleton, styles } from '../ui/ui'
+import { useGo, useOpenThread, type Routes } from '../workspace'
 import { CreateProject } from './project/Create'
 import { Mark } from './project/Mark'
 import { scope } from './project/scope'
@@ -69,18 +70,38 @@ export function Projects() {
   const [creating, setCreating] = useState(false)
   return (
     <Screen>
-      <Header
+      <Bar
         title="Projects"
-        onBack={go.goBack}
-        trailing={<IconButton icon={Plus} label="New project" onPress={() => setCreating(true)} />}
+        actions={[
+          {
+            symbol: 'plus',
+            icon: Plus,
+            label: 'New project',
+            disabled: false,
+            onPress: () => setCreating(true),
+          },
+        ]}
       />
-      <ScrollView contentContainerStyle={[styles.page, styles.column]}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.page, styles.column]}
+      >
         <Live state={list} loading={<Skeleton rows={4} />}>
           {(value) => {
             const top = projects.projectsIn(value.projects, null)
             return top.length === 0 ? (
-              <Empty line="A project keeps the threads about one piece of work together.">
-                <Button icon={Plus} label="New project" onPress={() => setCreating(true)} />
+              <Empty
+                icon={FolderKanban}
+                title="No projects yet"
+                line="A project keeps the threads about one piece of work together."
+                room="page"
+              >
+                <Button
+                  kind="primary"
+                  icon={Plus}
+                  label="New project"
+                  onPress={() => setCreating(true)}
+                />
               </Empty>
             ) : (
               <Section title="All projects">
@@ -120,7 +141,6 @@ export function Projects() {
  */
 export function Project({ route }: NativeStackScreenProps<Routes, 'Project'>) {
   const data = useLiveData()
-  const go = useGo()
   const list = useLive(data.live.projects)
   const { id } = route.params
   const project = LiveState.$is('Ready')(list)
@@ -129,11 +149,17 @@ export function Project({ route }: NativeStackScreenProps<Routes, 'Project'>) {
   const gone = LiveState.$is('Ready')(list) && Option.isNone(project)
   return (
     <Screen>
-      {/* The bar is only the way back: the Project's name is the page's own first line. */}
-      <Header title="" onBack={go.goBack} />
-      <ScrollView contentContainerStyle={[styles.page, styles.column]}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.page, styles.column]}
+      >
         {gone && (
-          <Empty line="This project is not here. It may be in a space you are not working in right now." />
+          <Empty
+            icon={FolderSearch}
+            title="This project is not here"
+            line="It may be in a space you are not working in right now."
+            room="page"
+          />
         )}
         <Live state={list} loading={<Skeleton rows={4} />}>
           {(value) =>
@@ -178,7 +204,7 @@ function Filed({
   hidden: number
   now: number
 }) {
-  const go = useGo()
+  const openThread = useOpenThread()
   if (threads.length === 0 && hidden === 0) {
     return (
       <Label size="label" tone="ink-2">
@@ -196,7 +222,7 @@ function Filed({
               title={thread.title}
               detail={thread.preview.length > 0 ? thread.preview : undefined}
               trailing={<Standing thread={thread} now={now} />}
-              onPress={() => go.navigate('Chat', { id: thread.id })}
+              onPress={() => openThread(thread.id)}
             />
           ))}
         </Section>
@@ -216,6 +242,7 @@ function Filed({
 function Inside({ project, all }: { project: ProjectRecord; all: ReadonlyArray<ProjectRecord> }) {
   const data = useLiveData()
   const go = useGo()
+  const openThread = useOpenThread()
   const now = useNow()
   const threads = useLiveValue(data.live.threads)
   const [creating, setCreating] = useState(false)
@@ -242,7 +269,7 @@ function Inside({ project, all }: { project: ProjectRecord; all: ReadonlyArray<P
       setRefused(Option.some('Unable to start a thread here. Check your connection and try again.'))
       return
     }
-    go.navigate('Chat', { id })
+    openThread(id)
   }
 
   return (

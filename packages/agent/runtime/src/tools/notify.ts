@@ -3,7 +3,7 @@ import { NotifyPersonOutcome, PushOutcome } from '@vivid/contracts'
 import { Effect } from 'effect'
 import * as v from 'valibot'
 import { Scope, type RunTool } from './scope.ts'
-import { text } from './inputs.ts'
+import { summary, text } from './inputs.ts'
 
 /** The model sees delivery evidence, not target credentials, notification ids or recipient identity. */
 const resultOf = (outcome: NotifyPersonOutcome) =>
@@ -23,14 +23,6 @@ const resultOf = (outcome: NotifyPersonOutcome) =>
             status: 'present',
             acceptedTargets: 0,
             message: 'The notification is in the app. The Person is present, so no push was sent.',
-          },
-        }),
-        Unavailable: () => ({
-          output: {
-            ok: true,
-            status: 'unavailable',
-            acceptedTargets: 0,
-            message: 'The notification is in the app. Push is unavailable.',
           },
         }),
         NoTargets: () => ({
@@ -63,6 +55,7 @@ export function notifyTools(runTool: RunTool) {
       description:
         'Tell the Person something worth their attention when they are away: a reminder that came due, an answer they are waiting for, something urgent you noticed; one or two short lines; not for chatter.',
       input: v.object({
+        summary,
         title: text('A short title.', 100),
         body: text('One or two short lines explaining what needs attention.', 280),
       }),
@@ -71,7 +64,7 @@ export function notifyTools(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            return resultOf(yield* client.NotifyPerson(data))
+            return resultOf(yield* client.NotifyPerson({ title: data.title, body: data.body }))
           }),
           { signal, tool: 'notify_person' },
         )

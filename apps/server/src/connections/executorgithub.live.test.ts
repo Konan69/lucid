@@ -12,6 +12,8 @@ const configured = executorLayer.pipe(
   Layer.provide(
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({
+        GOOGLE_CLIENT_ID: 'isolated-test-client',
+        GOOGLE_CLIENT_SECRET: 'isolated-test-secret',
         VIVID_EXECUTOR_URL: NodeProcess.env['VIVID_TEST_EXECUTOR_URL'],
         VIVID_EXECUTOR_KEY: NodeProcess.env['VIVID_TEST_EXECUTOR_KEY'],
         VIVID_EXECUTOR_ORGANIZATION: NodeProcess.env['VIVID_TEST_EXECUTOR_ORGANIZATION'],
@@ -68,7 +70,7 @@ describe.skipIf(!enabled)('GitHub personal credential acceptance', () => {
           })
           const tools = yield* executor.tools(references)
           expect(tools.length).toBeGreaterThan(0)
-          console.log('ok', tools.length)
+          NodeProcess.stdout.write(`GitHub ${entry} tools=${tools.length}\n`)
           return yield* Effect.void
         }).pipe(
           Effect.scoped,
@@ -79,4 +81,41 @@ describe.skipIf(!enabled)('GitHub personal credential acceptance', () => {
       { timeout: 120_000 },
     )
   }
+})
+
+/** Public MCP remains on URL import and returns Done without a credential card. */
+describe.skipIf(!enabled)('public MCP regression', () => {
+  it.live(
+    'adds DeepWiki without requesting a key',
+    () =>
+      Effect.gen(function* () {
+        const executor = yield* Executor
+        const source = yield* (yield* ConnectionAddress).inspect('https://mcp.deepwiki.com/mcp')
+        const step = yield* executor.add({
+          connectionId: ConnectionId.make(crypto.randomUUID()),
+          service: ServiceId.make('deepwiki-proof'),
+          owner: ExecutorOwnerId.make('deepwiki-proof'),
+          subject: 'deepwiki-proof',
+          label: 'DeepWiki',
+          returnAddress: 'https://vivid.example.test/api/connections/return',
+          source,
+        })
+        yield* Effect.addFinalizer(() =>
+          Effect.gen(function* () {
+            const cleanup = yield* executor.remove(step.references).pipe(Effect.exit)
+            expect(cleanup._tag).toBe('Success')
+          }),
+        )
+        expect(ExecutorStep.guards.Done(step)).toBe(true)
+        const tools = yield* executor.tools(step.references)
+        expect(tools.length).toBeGreaterThan(0)
+        NodeProcess.stdout.write(`public tools=${tools.length}\n`)
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(configured),
+        Effect.provide(Logger.layer([])),
+        Effect.provide(connectionAddressLayer),
+      ),
+    { timeout: 120_000 },
+  )
 })

@@ -86,17 +86,27 @@ describe('arranging Threads', () => {
 })
 
 describe('the list as rows', () => {
+  const needs = thread('needs', { attention: 'NeedsYou' })
+  const quiet = thread('quiet', {})
+  const lanes = arrange([needs, quiet], now).lanes
+
   it('counts the attention lanes and not the days', () => {
-    const needs = thread('needs', { attention: 'NeedsYou' })
-    const quiet = thread('quiet', {})
-    const rows = rowsOf(arrange([needs, quiet], now).lanes)
+    const rows = rowsOf(lanes, new Set())
     expect(rows).toEqual([
-      Row.Heading({ label: 'Needs you', count: Option.some(1) }),
-      Row.Entry({ thread: needs, variant: 'card' }),
-      Row.Heading({ label: 'Today', count: Option.none() }),
-      Row.Entry({ thread: quiet, variant: 'line' }),
+      Row.Heading({ label: 'Needs you', count: Option.some(1), folded: false }),
+      Row.Entry({ thread: needs }),
+      Row.Heading({ label: 'Today', count: Option.none(), folded: false }),
+      Row.Entry({ thread: quiet }),
     ])
     expect(rows.map(rowKey)).toEqual(['lane:Needs you', 'needs', 'lane:Today', 'quiet'])
+  })
+
+  it('keeps a folded lane’s heading and count, and lists none of its Threads', () => {
+    expect(rowsOf(lanes, new Set(['Needs you'] as const))).toEqual([
+      Row.Heading({ label: 'Needs you', count: Option.some(1), folded: true }),
+      Row.Heading({ label: 'Today', count: Option.none(), folded: false }),
+      Row.Entry({ thread: quiet }),
+    ])
   })
 })
 

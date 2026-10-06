@@ -46,6 +46,23 @@ describe('a step, in words', () => {
     ).toMatchObject({ label: 'Working on its computer', detail: 'List the downloads' })
   })
 
+  it('says work in the Person’s own apps is on their computer, not Vivid’s', () => {
+    const asked = readAsked({ summary: 'Open the March invoice in Excel' })
+    const use = 'use_person_computer'
+    expect(describeToolCall(use, asked, Option.none(), 'running')).toMatchObject({
+      state: 'running',
+      label: 'Working on your computer',
+      detail: 'Open the March invoice in Excel',
+    })
+    expect(describeToolCall(use, asked, readAnswered({ ok: true }), 'done')).toMatchObject({
+      label: 'Worked on your computer',
+    })
+    expect(describeToolCall(use, asked, readAnswered({ ok: false }), 'done')).toMatchObject({
+      state: 'failed',
+      label: 'Your computer did not do it',
+    })
+  })
+
   it('gives a tool it has not heard of a true line and nothing made up', () => {
     expect(
       describeToolCall('future_tool', readAsked({ anything: 1 }), Option.none(), 'running'),
@@ -53,6 +70,57 @@ describe('a step, in words', () => {
     expect(
       describeToolCall('future_tool', Option.none(), readAnswered('not an object'), 'done'),
     ).toMatchObject({ label: 'Did something' })
+  })
+
+  it('says a built-in way of working like a saved one, and never by its runtime name', () => {
+    expect(
+      describeToolCall(
+        'activate_skill',
+        readAsked({ name: 'first-conversation' }),
+        readAnswered('loaded'),
+        'done',
+      ),
+    ).toEqual({ state: 'done', label: 'Read how it does this' })
+  })
+
+  it('leads every step with what Vivid said it was for', () => {
+    expect(
+      describeToolCall(
+        'search_library',
+        readAsked({ query: 'pricing', summary: 'The price we quoted Dami' }),
+        readAnswered({ results: [{}] }),
+        'done',
+      ),
+    ).toEqual({
+      state: 'done',
+      label: 'Searched the Library',
+      detail: 'The price we quoted Dami · “pricing” · 1 source',
+    })
+  })
+
+  it('says a purpose once, and makes it the line of a tool it has no words for', () => {
+    // The Computer's steps already carry the purpose as their detail.
+    expect(
+      describeToolCall('use_tool', readAsked({ summary: 'Send the NDA' }), Option.none(), 'running')
+        .detail,
+    ).toBe('Send the NDA')
+    expect(
+      describeToolCall(
+        'future_tool',
+        readAsked({ summary: 'Friday’s plan' }),
+        readAnswered({ ok: true }),
+        'done',
+      ),
+    ).toEqual({ state: 'done', label: 'Friday’s plan' })
+    // A step that failed keeps the plain failure line, with the purpose beside it.
+    expect(
+      describeToolCall(
+        'future_tool',
+        readAsked({ summary: 'Friday’s plan' }),
+        readAnswered({ ok: false }),
+        'done',
+      ),
+    ).toEqual({ state: 'failed', label: 'Something did not work', detail: 'Friday’s plan' })
   })
 })
 
@@ -115,9 +183,9 @@ describe('the line a reply’s steps collapse to', () => {
   it('says what was done, with a count of the rest, once nothing is in progress', () => {
     expect(summarizeSteps(steps.slice(0, 1), Option.none())).toBe('Searched the Library')
     expect(summarizeSteps(steps.slice(0, 2), Option.none())).toBe(
-      'Searched the Library and one more thing',
+      'Searched the Library and 1 more step',
     )
-    expect(summarizeSteps(steps, Option.none())).toBe('Searched the Library and 2 more things')
+    expect(summarizeSteps(steps, Option.none())).toBe('Searched the Library and 2 more steps')
   })
 
   it('falls back to what was done when the step it was told about is not among them', () => {

@@ -1,6 +1,6 @@
 import { BlurView } from 'expo-blur'
 import { GlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect'
-import type { ReactNode } from 'react'
+import type { ReactNode, Ref } from 'react'
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
 import { useTheme } from '../theme'
 
@@ -113,6 +113,43 @@ export function Glass({
     <View style={[outline, { overflow: 'hidden' }, style]}>
       <GlassFill opaque={c['card-alt']} />
       {children}
+    </View>
+  )
+}
+
+/**
+ * Glass as a passive material: laid behind content that is its sibling, not its child, and never
+ * touched itself. The composer is this. Its controls stay out of the glass view's own layout, so
+ * a field that grows or a button that appears never relays out the system's effect view.
+ *
+ * It has no tint, no fill and no border of its own where the system draws glass: the material is
+ * exactly what iOS makes of what is behind it. Elsewhere it is the frosted fill every other glass
+ * falls back to, also with no border: the shape it is laid behind carries its own edge, as the
+ * ring of its shadow (`ui/elevation.ts`), and a border beside that ring would be a second line.
+ *
+ * Ported from T3 Code mobile `src/features/threads/ThreadComposer.tsx` (`ComposerSurface`: its
+ * `AnimatedGlassSurface` with `chrome="none"`, `glassEffectStyle="regular"`,
+ * `pointerEvents="none"`, `tintColor="transparent"`, and the fallback's
+ * `border border-border bg-card-translucent`). It takes a `ref` so the caller can make it an
+ * animated component, as the reference does, and move it with the shape around it.
+ */
+export function GlassMaterial({ ref, style }: { ref?: Ref<View>; style?: StyleProp<ViewStyle> }) {
+  const { colors: c, dark } = useTheme()
+  if (GLASS_SUPPORTED) {
+    return (
+      <GlassView
+        ref={ref}
+        pointerEvents="none"
+        glassEffectStyle="regular"
+        tintColor="transparent"
+        colorScheme={dark ? 'dark' : 'light'}
+        style={[{ overflow: 'hidden' }, style]}
+      />
+    )
+  }
+  return (
+    <View ref={ref} pointerEvents="none" style={[{ overflow: 'hidden' }, style]}>
+      <GlassFill opaque={c['card-alt']} />
     </View>
   )
 }

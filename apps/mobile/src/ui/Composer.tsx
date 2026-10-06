@@ -9,46 +9,69 @@ import { ComposerEditor } from '../native/composer/Editor'
 import type { ComposerEditorHandle } from '../native/composer/types'
 import { useTheme } from '../theme'
 import { BorderBeam } from '../../vendor/beam'
-import Animated from 'react-native-reanimated'
-import { Glass } from './Glass'
-import { APPEAR, LEAVE, MORPH } from './motion/morph'
+import { cast, lifted } from './elevation'
+import { GLASS_SUPPORTED, GlassMaterial } from './Glass'
 import { Press, styles, TARGET } from './ui'
 
 /**
- * The editor's height: one line with its inset is exactly the send button's 34 points, so a
- * single line and the button share a centre. It grows to six lines, then scrolls inside itself.
+ * The composer's measures. The one-line shape is T3 Code mobile's capsule
+ * (`src/features/threads/ThreadComposer.tsx`, the resting shape handed to `ComposerSurface`, and
+ * `src/components/ComposerToolbar.tsx`, `ComposerActionButton`): one line of text 36 points high
+ * beside a 44-point target, with 2 points above and below.
  */
 const LINE = MOBILE_TYPOGRAPHY.reading.lineHeight
-const INSET = 5
-const SHORTEST = LINE + INSET * 2
-const TALLEST = LINE * 6 + INSET * 2
-
-/** The pill's corner, shared by the glass and the beam that travels its edge. */
-const RADIUS = 23
+/** The room above and below the text inside the editor: 6, which makes one line 36. */
+const INSET = 6
+const ONE_LINE = LINE + INSET * 2
+/** The most the text is given before it scrolls inside the composer: the reference's 160. */
+const TALLEST = 160
+/** What the dock keeps clear around the shape, and the shape keeps clear around what it holds. */
+const AROUND = 6
+const EDGE_ROOM = 2
+/**
+ * Half the one-line height, so one line is a true capsule. It is also the button's own round
+ * (22, half its target) plus the 2 points between them, so the two curves share a centre, and it
+ * stays this when the text grows: the corner under the button never moves.
+ */
+const CORNER = TARGET / 2 + EDGE_ROOM
+/** The drawn round of the one button, inside its 44-point target. */
+const ROUND = 30
 
 /**
  * Where a Person writes to Vivid: on the first screen to start a Thread, and in a Thread to
  * speak in it. The text is owned by the screen (a suggestion can fill it, a failed send keeps
  * it); this draws the field and the one button beside it.
  *
- * It is floating glass (`Glass`): a bordered pill lifted off the page, the one piece of chrome at
- * the foot of a screen.
+ * It has one shape, and it is the same size whether or not it is being written in: the text and
+ * the button side by side on the system's glass. It grows only when the text does, a line at a
+ * time up to `TALLEST`, after which the text scrolls inside it; the button stays at the foot,
+ * where the thumb is. The reference this was ported from (T3 Code mobile's `ThreadComposer`)
+ * opens a taller card as soon as the field has the keyboard. The owner asked on 6 October 2026
+ * for the composer to "stay the same size unless when the input actually grows", so the card is
+ * not here, and with it went the timed change of shape: a line that wraps is given its room at
+ * once, as typing is never animated.
  *
- * It changes shape with what there is to do. With nothing typed there is no button and the field
- * has the whole pill. Once there are words the send button fades in at the end and the field
- * gives it room; while a send is on its way it stays, dimmed; while Vivid is working it is the
- * way to stop, in the same place, which is exactly where the thumb is. The row is a layout
- * transition and the button an enter and exit, with the timings of T3 Code mobile's composer
- * toolbar (`src/features/voice-input/ComposerDictationControl.tsx`, `DICTATION_LAYOUT`), kept in
- * `ui/motion/morph.ts`. The native editor is not animated: it takes its new width at once.
+ * The glass is a passive material laid under the content, not its parent, so the controls stay
+ * out of the effect view's layout (the reference's `ComposerSurface`). The shadow is not the
+ * reference's (`shadow-[0_6px_28px]`, one wide blur): it is the app's own tier for what floats
+ * over the page (`ui/elevation.ts`), and the shape has no border beside it.
+ *
+ * The button is always there, as the reference's is: dimmed when there is nothing to send, the
+ * way to send when there is, and while Vivid is working the way to stop, in the same place, with
+ * a beam travelling its edge (`Act`). The beam used to travel the whole composer's edge; the
+ * owner asked for it on the send button alone (6 October 2026). The
+ * reference's attachment button, dictation, model control and command popover are things
+ * Vivid's composer does not have, and are not here.
  *
  * It rests on the home indicator's inset when the keyboard is down and directly on the keyboard
- * when it is up. The screen around it moves it there (`KeyboardAvoidingView`).
+ * when it is up. The screen around it moves it there (`KeyboardAvoidingView`). The reference uses
+ * `KeyboardStickyView` from a native keyboard module Vivid does not ship, so that is not ported.
  */
 export function Composer({
   ref,
   value,
   placeholder,
+  autoFocus,
   working,
   disabled,
   onChange,
@@ -58,6 +81,11 @@ export function Composer({
   ref?: Ref<ComposerEditorHandle>
   value: string
   placeholder: string
+  /**
+   * Takes the keyboard as it appears. Only a Thread that has just taken the greeting's place
+   * asks for it (`Front.Thread.writing`), so the keyboard a first message was typed on stays up.
+   */
+  autoFocus: boolean
   /** Vivid is in the middle of a Run here, so the button stops instead of sending. */
   working: boolean
   /** A send is already on its way, so another cannot start. */
@@ -66,10 +94,11 @@ export function Composer({
   onSend: () => void
   onStop: () => void
 }) {
-  const { colors: c, dark } = useTheme()
+  const { colors: c } = useTheme()
   const insets = useSafeAreaInsets()
   const keyboard = useKeyboardShowing()
-  const [height, setHeight] = useState(SHORTEST)
+  // What the editor says its text needs, inset included. One line is `ONE_LINE`.
+  const [needed, setNeeded] = useState(ONE_LINE)
   const empty = value.trim().length === 0
   const idle = !working && (disabled || empty)
 
@@ -80,96 +109,136 @@ export function Composer({
     else onSend()
   }
 
-  // There is something to press: words to send, or a Run to stop.
-  const offered = working || !empty
-
   return (
     <View
       style={{
+        // The reference's dock: 12 at the sides and 6 above and below, over whatever the home
+        // indicator needs when the keyboard is not covering it.
         paddingHorizontal: 12,
-        paddingTop: 8,
-        paddingBottom: keyboard ? 8 : Math.max(insets.bottom, 12),
+        paddingTop: AROUND,
+        paddingBottom: (keyboard ? 0 : insets.bottom) + AROUND,
       }}
     >
-      {/* While Vivid is working, a beam travels the pill's edge: the same one, with the same
-          colours and strength, as the web composer (`apps/web/src/screen/thread/Composer.tsx`).
-          It is drawn only then; at rest nothing repaints. */}
-      <BorderBeam
-        active={working}
-        colorVariant="ocean"
-        strength={0.7}
-        theme={dark ? 'dark' : 'light'}
-        borderRadius={RADIUS}
-        style={styles.column}
+      <View
+        style={[
+          styles.column,
+          {
+            borderRadius: CORNER,
+            borderCurve: 'continuous',
+            overflow: 'hidden',
+          },
+          // Over the page: the plugin's stack. The system's glass has an edge of its own; without
+          // it the edge is the stack's ring, and there is no border.
+          GLASS_SUPPORTED ? cast('md') : lifted('md', c.border),
+        ]}
       >
-        {/* The round button inside is 34 points with 6 around it: 23 is concentric with it. */}
-        <Glass radius={RADIUS} style={styles.column}>
-          <Animated.View
-            layout={MORPH}
+        <GlassMaterial
+          style={{
+            position: 'absolute',
+            top: 0,
+            right: 0,
+            bottom: 0,
+            left: 0,
+            borderRadius: CORNER,
+            borderCurve: 'continuous',
+          }}
+        />
+        {/* The button keeps to the foot as the text grows; one line is centred beside it. */}
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', paddingVertical: EDGE_ROOM }}>
+          <View
             style={{
-              flexDirection: 'row',
-              alignItems: 'flex-end',
-              paddingLeft: 18,
-              paddingRight: 6,
-              paddingVertical: 6,
-              backgroundColor: c['composer-surface'],
+              flex: 1,
+              minWidth: 0,
+              paddingLeft: 16,
+              paddingVertical: (TARGET - ONE_LINE) / 2,
             }}
           >
             <ComposerEditor
               ref={ref}
               value={value}
               placeholder={placeholder}
+              autoFocus={autoFocus}
               multiline
               onChangeText={onChange}
               onSubmit={send}
+              // The text scrolls only once it has more lines than the composer will grow to.
+              scrollEnabled={needed > TALLEST}
+              // Android sets text from the top of its box, which leaves one line a few points
+              // high beside the button (measured on a device); the editor centres it on
+              // request. A point of tolerance, so a rounding difference is not a second line.
+              singleLineCentered={needed <= ONE_LINE + 1}
               contentInsetVertical={INSET}
-              onContentHeightChange={(next) =>
-                setHeight(Math.min(TALLEST, Math.max(SHORTEST, next)))
-              }
-              style={{ flex: 1, height }}
+              onContentHeightChange={setNeeded}
+              style={{ height: Math.min(TALLEST, Math.max(ONE_LINE, needed)) }}
               textStyle={MOBILE_TYPOGRAPHY.reading}
             />
-            {offered && (
-              <Animated.View entering={APPEAR} exiting={LEAVE}>
-                <Press
-                  accessibilityRole="button"
-                  accessibilityLabel={working ? 'Stop Vivid' : 'Send'}
-                  accessibilityState={{ disabled: idle }}
-                  disabled={idle}
-                  // The drawn circle is 34 points; the slop makes what a thumb hits the full 44.
-                  hitSlop={(TARGET - 34) / 2}
-                  onPress={send}
-                  style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 17,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: working ? c['status-danger'] : c.primary,
-                    opacity: idle ? 0.4 : 1,
-                  }}
-                >
-                  {working ? (
-                    <Square
-                      pointerEvents="none"
-                      size={13}
-                      color={c['ink-on-color']}
-                      fill={c['ink-on-color']}
-                    />
-                  ) : (
-                    <ArrowUp
-                      pointerEvents="none"
-                      size={19}
-                      strokeWidth={2.2}
-                      color={c['primary-foreground']}
-                    />
-                  )}
-                </Press>
-              </Animated.View>
-            )}
-          </Animated.View>
-        </Glass>
-      </BorderBeam>
+          </View>
+          <Act working={working} idle={idle} onPress={send} />
+        </View>
+      </View>
     </View>
+  )
+}
+
+/**
+ * The composer's one button: send, or stop while Vivid is working. A 44-point target around a
+ * 30-point round with a 16-point glyph, the reference's `ComposerActionButton`
+ * (`src/components/ComposerToolbar.tsx`). With nothing to do it is dimmed and does not answer.
+ *
+ * While Vivid is working a beam travels the round's edge: the border-beam effect's smallest
+ * type, the one made for a button (`vendor/beam`, `size="sm"`; libraries.dev, from the owner's
+ * bookmarks), in the colours and at the strength the web composer uses. It is drawn only then;
+ * at rest nothing repaints. The round under it is quiet while it stops, a neutral disc with the
+ * square in ink, so the beam is the one colour on it and is read as "at work", not as an alarm.
+ */
+function Act({ working, idle, onPress }: { working: boolean; idle: boolean; onPress: () => void }) {
+  const { colors: c, dark } = useTheme()
+  return (
+    <Press
+      accessibilityRole="button"
+      accessibilityLabel={working ? 'Stop Vivid' : 'Send'}
+      accessibilityState={{ disabled: idle }}
+      disabled={idle}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        width: TARGET,
+        height: TARGET,
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: pressed ? 0.7 : 1,
+      })}
+    >
+      <BorderBeam
+        size="sm"
+        active={working}
+        colorVariant="ocean"
+        strength={0.7}
+        theme={dark ? 'dark' : 'light'}
+        borderRadius={ROUND / 2}
+      >
+        <View
+          style={{
+            width: ROUND,
+            height: ROUND,
+            borderRadius: ROUND / 2,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: working ? c['subtle-strong'] : c.primary,
+            opacity: idle ? 0.4 : 1,
+          }}
+        >
+          {working ? (
+            <Square pointerEvents="none" size={11} color={c.foreground} fill={c.foreground} />
+          ) : (
+            <ArrowUp
+              pointerEvents="none"
+              size={16}
+              strokeWidth={2.4}
+              color={c['primary-foreground']}
+            />
+          )}
+        </View>
+      </BorderBeam>
+    </Press>
   )
 }

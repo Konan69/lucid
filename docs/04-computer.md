@@ -134,8 +134,10 @@ survivable, and the provider is replaceable. Self-run Firecracker is a later cos
 fleet scale, not a starting point.
 
 `Machine` is the owned `Context.Service`: ensure, status, stop, exec, browse, desktop, and the
-local provider's RFB connection. Select Boat with `VIVID_COMPUTER_PROVIDER=boat`; configure its
-Redacted API key (`VIVID_BOAT_API_KEY`), size and lifetime through Effect Config. Name the paying
+provider's screen connection. Boat is the only provider and it is required: the server does not
+start without its Redacted API key (`VIVID_BOAT_API_KEY`) and the name of the prepared template
+(`VIVID_BOAT_TEMPLATE`), and there is no selector and no "no provider" server. Size and lifetime
+have defaults. Name the paying
 organization with `VIVID_BOAT_ORG` whenever the key's account belongs to one; leave it unset for an
 account that belongs to none, and Boat bills that account. The owner chose this recommended scope:
 `sandbox.create`, `sandbox.read`, `sandbox.update`, `sandbox.stop`, `sandbox.resume`, `sandbox.fork`,
@@ -250,13 +252,304 @@ Viewer issuance is proven; embedding and interactive viewing in clients are unte
 Signed-in cookies/profile retention, tab manipulation and provider recovery under concurrent
 servers are not proven by this live suite. Driver mutation receipts
 attest delivery, not the intended effect; fresh state follows every action. Client support for
-the screen union belongs to its own lane. Flue placement and external state sync remain planned.
+the screen union belongs to its own lane. Runtime placement and external state sync remain planned.
+
+## Reaching the Computer: one SSH connection
+
+**Status: decided 5 October 2026. Built on `feat/native-computer`: the server holds the connection
+and Vivid has Flue's six file and shell tools on its Computer. Its connection code is proven on a real SSH server and on a Person's Computer, and the product path
+(a Thread and a model using the tools) ran on a Person's Computer in production on 6 October 2026.
+`run_command`, the earlier tool that asked for an Approval per command, is removed from the model.** This is the step between today and
+"Runtime on the Computer" below. It is deliberately thin, because it is deleted when the runtime
+moves onto the machine.
+
+### What is wrong today
+
+Vivid cannot read or write one file on its own Computer. Its runtime runs beside the server, and
+reaches the machine through one custom tool, `run_command`: the model asks the server, the server
+checks the Approval rules, and the server calls the provider's "run one command" endpoint. The slot
+Flue gives a model for a machine (`useSandbox`) holds an empty stand-in whose file and shell
+operations all refuse; it is there only because Flue lets pictures reach the model through that
+slot, which `use_desktop` and `browse` need. Programs (`run_code`) exist for the same reason: a
+script on the Computer has no other way to an Integration.
+
+That is the opposite of the thesis at the top of this document. The Computer is one machine, and
+Vivid should use it as a person uses theirs.
+
+### Why SSH, and why not a daemon
+
+Flue does not run on the Computer, now or later. Nothing of Vivid runs on the machine in this
+step: the only thing that touches it is the server's SSH connection. The final shape is Vivid's
+runtime running on the Computer, and that runtime is pi Durable, which replaces Flue (decided 4
+October 2026). There the runtime is the always-on process, and its file and shell tools are local
+calls. A service of our own on the machine, built now, would be a second daemon that the runtime
+replaces.
+
+SSH needs nothing installed on the machine and gives what that service would: commands with live
+output and input, real terminals, long-running processes, file transfer, and port forwarding in
+both directions. The provider's own command endpoint cannot send input to a running command, and
+each call through it took 0.3 to 1.9 seconds.
+
+Grok Bot's box, for comparison, runs the process that owns the conversations plus an exec service
+of its own, and the desktop app attaches to the box (`docs/18-grok-bot-machine-and-product-surface.md`).
+That is the final shape here too; SSH is how we get the machine's files and shell before it.
+
+### The design
+
+```
+phone / web / desktop
+        |  unchanged
+hosted: runtime --> server --SSH--> the Person's Computer
+                      |                 one open connection per awake machine
+                      +-- provider API: wake, authorize the key, read the address
+```
+
+- **Direction.** The server dials out to each Computer on port 22. Nothing dials in to the server.
+- **Finding the machine.** The address comes from the provider's answer to the key call, after
+  every wake, and is never stored: the address, the host name and the machine id all change when a
+  machine is stopped and resumed. A machine has either a public IPv4 address of its own or only an
+  IPv6 one; the same machine had each within one hour. For an IPv6-only machine the answer also
+  carries an SSH endpoint, a host and port on IPv4. The hosted server has no IPv6 route, so the
+  rule is: use the SSH endpoint when the answer has one, else the machine's address on port 22.
+- **Keys.** A key pair belongs to one connection to one Computer. When the server opens a
+  connection it makes an ed25519 pair in memory, has the provider let the public half in on that
+  one machine, logs in with the private half, and drops the pair when the connection ends. No key
+  is a setting, none is stored or logged, and none is ever used for a second opening or a second
+  machine: with one key for the installation, whoever held one Person's Computer could have
+  reached every other Person's. The call that lets the key in also returns the machine's host key,
+  which the server checks when it connects. A wrong host is a wrong machine, so that is
+  correctness, not hardening.
+- **Old keys do not pile up.** A key line stays in the machine's authorized keys after its
+  connection ends. So the first thing a new connection does, on the machine, is remove every other
+  line of Vivid's and keep every line that is not (the Person's own keys, the provider's tools).
+  Vivid's lines are known by one comment, `vivid-connection`; the line of the one key an
+  installation used before (comment `vivid`) is removed the same way. This relies on one server
+  holding a machine's connection at a time. An open connection is not affected when its line goes.
+- **A Person never holds a key of Vivid's.** If a Person is ever given SSH access to their own
+  Computer, it is with that Person's own key, on their own machine. Vivid's key is not reused.
+- **One connection per awake Computer,** held by the server, because the server already owns
+  waking, bindings, takeover and the idle stop. It is opened on first use, kept alive, closed when
+  the Computer stops, and reopened after a failure with a fresh address. Commands, files and later
+  port forwards are channels on it.
+- **What the model gets.** Flue stays where it runs today, beside the server, for as long as it is
+  the runtime. Its slot for a machine is pointed at the real Computer through the server's
+  connection, and the model has the six built-in tools on it: `read`, `write`, `edit`, `bash`,
+  `grep`, `glob`. The SSH part knows nothing of Flue, so it stays when Flue goes. Flue replaces its built-in
+  tools when a sandbox supplies its own list, and exports the builders for the six, so the list is
+  those six plus `use_desktop` and `browse`. Pictures keep working and the stand-in is deleted.
+  `run_command` goes with it.
+- **Every Person.** The server already knows which machine is whose. There is no per-machine
+  network setup.
+- **Later, on the same connection.** A port forwarded from the Computer back to the server is how a
+  script on the Computer will call Integrations. `run_code` can be deleted then.
+
+### Measured on 5 October 2026
+
+On a second machine of the same provider account. "Hosted server" means inside the production
+server's container. The same steps on a Person's Computer are in the next section.
+
+| What                                                                                  | Result                                                                                          |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Authorizing a key through the provider, on the trial plan                             | Accepted; repeating it is harmless                                                              |
+| What that call returns                                                                | The address, the user, one ed25519 host key, and the SSH endpoint when the machine is IPv6-only |
+| Hosted server to a machine with its own IPv4: connection to port 22                   | 20 ms, four of four                                                                             |
+| Hosted server to that machine: first bytes of SSH                                     | 51 ms, four of four                                                                             |
+| Hosted server to an IPv6 address                                                      | Refused locally: no route                                                                       |
+| Hosted server to the SSH endpoint of an IPv6-only machine: connection                 | 42 ms                                                                                           |
+| Hosted server to that endpoint: first bytes of SSH                                    | 85 ms twice, 1.1 s and 3.2 s once each                                                          |
+| A whole session from the hosted server through that endpoint: handshake and key login | 1.5 s                                                                                           |
+| In that session: the host key against the one the provider reported                   | Equal                                                                                           |
+| In that session: a command, then the next one                                         | 0.42 s, 0.68 s                                                                                  |
+| In that session: a file written, read back and removed                                | Identical; 2.6 s for the three                                                                  |
+| From a development machine in Lagos, direct IPv4: a first connection, then a command  | 2.6 s, 0.35 s                                                                                   |
+| A 5 MB stream over a connection                                                       | Arrived intact                                                                                  |
+| An SSH session and a provider command                                                 | See the same machine and processes                                                              |
+
+What the numbers say: a machine with its own IPv4 is close to the hosted server, and the path
+through the endpoint is slower and uneven. Which of the two a machine gets is the provider's
+choice at each wake. One held connection pays the handshake once; each command still pays the
+path.
+
+### Measured on a Person's Computer, 5 October 2026
+
+The one production Computer. It had only an IPv6 address that evening, so every connection went
+through the endpoint. Each session used a throwaway key, authorized through the provider and
+removed afterwards.
+
+One wake:
+
+| What                                                    | Result                                                                                  |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| A first resume                                          | "Provisioning" for 18 minutes 37 seconds, then "archived" again, with no error reported |
+| The next resume, until the provider reported an address | 4 minutes 29 seconds                                                                    |
+| The machine's own uptime when SSH first answered        | 298 s: it had booted at the resume, long before the provider reported an address        |
+| From the reported address to an accepted SSH login      | At most 28 s; the probe made other calls first                                          |
+| The provider's command endpoint in those 28 s           | Did not answer                                                                          |
+| The states reported during that start                   | "provisioning", "archived" for half a minute, then "provisioned" with the address       |
+| The provider's stop timer afterwards                    | Two hours after the start, not counted from the last activity                           |
+
+Two whole sessions from the hosted server:
+
+| What                                               | First session    | Second session         |
+| -------------------------------------------------- | ---------------- | ---------------------- |
+| Handshake and key login                            | 0.54 s           | 1.14 s                 |
+| The host key against the one the provider reported | Equal            | Equal                  |
+| First command                                      | 29.4 s           | 0.37 s                 |
+| Three more commands on the held connection         | 0.13 s each      | 0.36 s, 0.36 s, 1.02 s |
+| 256 KB of command output received                  | 0.35 s           | 0.58 s                 |
+| A small file written, read back and removed        | Identical; 1.2 s | Identical; 0.9 s       |
+| A 256 KB file written                              | 4.9 s            | 4.4 s                  |
+| The same 256 KB sent as command input              | Not run          | 4.1 s                  |
+| The same file written with parallel requests       | Not run          | 4.5 s                  |
+| The 256 KB file read back                          | Identical; 1.3 s | Identical; 0.7 s       |
+
+What the numbers say:
+
+- The mechanics hold on a Person's Computer from the hosted server: the key call, the address
+  rule, the host key, commands and files on one held connection.
+- Sending to the machine through the endpoint is slow, about 60 KB a second whichever way the
+  bytes are sent, so it is the path and not the client call. Receiving is about ten times faster.
+- One first command stalled for 29 seconds and the cause is not known. A caller's time limit has
+  to allow for it.
+- The provider's guide says a resume takes a few seconds. That evening one did not finish at all
+  and the next took four and a half minutes. Waiting for a Computer needs an upper bound and a
+  failure the model can read.
+- A state of "archived" in the middle of a start is not proof that the start failed.
+- The machine was running a test suite during both sessions (load 3 on 4 cores), so the command
+  times are not clean.
+
+### What starting a conversation asks of the machine
+
+Read in the installed Flue 2.2.2 (`discoverSessionContext`). When a conversation starts and the
+slot holds a machine, the runtime asks it, at the working directory: whether `AGENTS.md`,
+`CLAUDE.md` and `.agents/skills` exist, and for the directory listing. A failed listing is
+tolerated; a failed "exists" fails the start. Today these are answered by the stand-in and never
+reach a machine, so starting a conversation does not wake the Computer. With the real machine in
+the slot they would, so the rule is: while the Computer is not running, these four questions are
+answered "nothing there" without waking it, and only a tool the model calls wakes it.
+
+### What was built, and where
+
+- `apps/server/src/computers/ssh/link.ts`: one connection; a command, a file read, a file put. It
+  knows SSH only. `ssh/links.ts` keeps one per machine. `ssh/peer.ts` is the SSH server tests use.
+- `apps/server/src/computers/boat.ts`: asks the provider to authorize the key and for the address
+  before every new connection; closes the connection when the machine stops or a call finds it gone.
+- Machine boundary (`machine.ts`): `run`, `read`, `put`. Store (`store.ts`): the same three, which
+  wake the Computer, refuse while the Person holds it, and count as activity. They ask no Approval
+  and consult no rule, by the Person's decision.
+- Calls: `ComputerShell`, `ComputerFileRead`, `ComputerFileWrite` (`packages/contracts`).
+- Runtime: `packages/agent/runtime/src/tools/sandbox.ts` is the machine in Flue's slot.
+- Settings: none. An earlier version of this step had one installation key as a setting; it is
+  deleted, and a server needs only the provider's key and template.
+
+### Decisions the research settled
+
+- **Key pairs come from the library, checked.** `ssh2` 1.17.0 now and then writes an ed25519
+  private key that its own reader refuses (15 of 3,000 tried). A pair is used only after the
+  reader has accepted it; Node's own key format is not one the library reads.
+- **Library: `ssh2` 1.17.0, MIT, pinned.** Read in its installed source: `lib/client.js` (`connect`,
+  `exec`, `sftp`, `hostVerifier`, keepalive) and `lib/protocol/SFTP.js`. One connection carries many
+  channels and the SFTP subsystem. `hostVerifier` receives the host's key bytes, which are compared
+  with the key the provider reported; a different key ends the connection before anything is sent.
+  A keepalive every 15 seconds, three lost, ends a dead connection. It is the most used Node SSH
+  client; its optional native accelerators are not built. Not the `ssh` program: the server image
+  has none, and a program per call would pay the handshake each time.
+- **A command the model cancels.** Closing an SSH channel does not end a command that has no
+  terminal (seen: it ran on). So every command runs under coreutils `timeout`, which makes it a
+  process group: at the deadline the group is signalled and, two seconds later, killed. When the
+  caller stops waiting, `timeout` is sent TERM over the channel and does the same. Tested: the
+  command's child process is gone from the machine in both cases.
+- **Limits.** Kept: a deadline on every command (120 seconds when the model gives none, 600 at
+  most, because one call waits that long), and the Person's takeover. Dropped: the 8,000-character
+  command limit (now 100,000), the 32,768-character output limit (now the last 262,144 bytes of
+  each stream; Flue shows the model the last 50 KB), the Approval check and the rules check. A
+  file read or put in one call is at most 10 MB; larger files are a command's work.
+- **Starting a conversation.** The sandbox does not answer Flue's three discovery questions from
+  the machine: `exists` says no, `stat` and `readdir` refuse. Flue's six tools never call them
+  (they use `readFile`, `writeFile`, `exec`, `resolvePath`). This holds whether the Computer is
+  asleep or awake, for two more reasons than the wake: a file in the Computer's home must not
+  become part of Vivid's instructions, and a skill directory there with the name of one of
+  Vivid's skills would stop every conversation (Flue throws on that at start). Vivid lists and
+  inspects files with `bash`. Tested through Flue itself: a conversation that only looks at the
+  desktop sends the server one call, the desktop one.
+- **A connection that dies.** The link knows when its connection closes: every call waiting on it
+  is told at once, and a call made afterwards is refused without reaching the library. A command
+  whose end was not heard is reported as "may have run", never as ended, and is not run again. The
+  next use of the machine asks the provider where it is now and opens a new connection. The
+  provider's stop timer counts from the resume, not from activity, so a held connection does end.
+- **Slow sending.** Sending to a machine through the provider's endpoint was measured at about
+  60 KB a second, so a 10 MB put takes about three minutes. A put has no deadline of its own, and
+  the keepalive keeps answering during it, so a slow upload is not taken for a dead connection.
+- **Waiting for a woken machine.** The store waits at most 90 seconds for the provider to say the
+  machine runs, and answers "did not become ready within 90 seconds" otherwise. Opening SSH then
+  tries every two seconds while the machine cannot be reached, for at most 75 seconds, and answers
+  "not answering" otherwise. Neither hangs. A wrong host key or a refused key is not retried.
+
+### The built code on a Person's Computer, 6 October 2026
+
+Run with `apps/server/src/computers/ssh/computer.live.test.ts` against the Vivid Computer bound to
+the developer's own account, from a development machine in Lagos. The machine had its own IPv4
+address and was already running; the proof wakes, stops, creates and deletes nothing, binds no
+Person, and removes its files and its key line at the end. It is the server's own connection code
+with the provider's real key call. It is not the product: no Thread, no model, no store.
+
+| What                                                                        | Result                                              |
+| --------------------------------------------------------------------------- | --------------------------------------------------- |
+| Opening: key made, let in by the provider, host key checked, old lines gone | Worked; 7.8 s                                       |
+| A command on the open connection                                            | 0.85 s                                              |
+| A small file put into a directory that did not exist, then read back        | Identical                                           |
+| 256 KB put, then read back                                                  | Identical; 3.2 s, 5.4 s                             |
+| A command the caller stopped waiting for                                    | Gone, with its child                                |
+| A command past its one-second deadline                                      | Ended, reported as timed out                        |
+| A second opening after the first was closed                                 | A different key; one line of Vivid's on the machine |
+| Lines in the key file that are not Vivid's                                  | Same count before and after                         |
+| After the proof                                                             | No file, no key line of Vivid's, file mode 600      |
+
+The machine runs OpenSSH 9.6, which takes the signal a cancelled command is ended with. The times
+are from Lagos and include the provider's key call; from the hosted server the path is shorter.
+
+### The product on a Person's Computer, 6 October 2026
+
+Run in production, signed in as the Person whose Computer it is, in a new Thread in the web app.
+The Computer was already running.
+
+| Asked                                                    | What the Thread showed                                        | Time |
+| -------------------------------------------------------- | ------------------------------------------------------------- | ---- |
+| Write a file, read it back, run a command that counts it | Wrote a file, read a file, worked on its computer; the output | 45 s |
+| Change one word in that file and show it                 | Changed a file, worked on its computer; the new line          | 33 s |
+
+No Approval and no question appeared. Looked at on the machine afterwards: the file held the
+changed line and was the machine user's, and the key file held exactly one line of Vivid's,
+written when the first request opened the connection. The times are from sending to the answer
+being seen, so they include the model. `run_command` was still mounted during this run, and a
+command step reads the same in a Thread for either tool, so which of the two ran the commands is
+not known; the file steps can only have been the new tools.
+
+### Not verified
+
+- A conversation in production that does not need the Computer leaving a stopped Computer
+  stopped, and a request for a file waking it. Check: stop the Computer, start a conversation
+  that does not need it, confirm it stays stopped; ask for a file and confirm it wakes and answers.
+- `bash` in production now that `run_command` is gone from the model: ask for a command after
+  the deploy that carries the removal.
+- Whether the provider puts back, after a resume, a key it was given earlier. The removal at each
+  opening takes it out either way.
+- Whether cancelling a tool call in the runtime interrupts the server's call. The server ends the
+  command when its call is interrupted (tested, also on the Computer); the interruption crossing
+  the RPC was not.
+- Whether the runtime's call to the server waits long enough for a large put on the slow path.
+- How long a normal wake takes. Only the one slow start above was timed.
+- A machine with its own IPv4 address, from the hosted server: only the connection and the first
+  bytes were measured on that path. Every whole session from there went through the endpoint.
+- Why sending is slow through the endpoint, and whether it is as slow on a machine with its own
+  IPv4 address.
 
 ## Runtime on the Computer: planned
 
 **Status: native browser and desktop backend built; runtime placement and external state sync planned.**
-The browser and desktop now share Boat’s shipped guest. Running Vivid’s Flue runtime inside that
-guest remains a separate step. The intended shape follows.
+The browser and desktop now share Boat’s shipped guest. Flue never runs on the Computer. What
+will run there is the runtime that replaces Flue, pi Durable (decided 4 October 2026); moving it
+onto the machine is a separate step. The intended shape follows.
 
 2026-10-04: the runtime that moves into the guest is Pi Durable, not Flue. The decision, the
 comparison and the migration are in [The runtime moves to the Computer](25-runtime-on-computer.md).
@@ -355,3 +648,7 @@ Approval ends the Run's turn; a stopped or failed Run sends nothing, and that is
 not sent. Only a sent action without a known result is OutcomeUnknown.
 Page metadata carries an optional branded PNG attachment, omitted when genuinely absent.
 Each encoded PNG is capped at 8 MiB before device-answer and history retention.
+
+## The Person's own computer: apps
+
+Allowing a Device once lets Vivid work in any app on that Person's Windows computer, including terminals, through the Vivid desktop app. Nothing is asked after that: no per-app Approval, extra switch or app restrictions. A notice stays visible while Vivid works; Escape or Stop ends the Run. When that Run settles, the server tells its connected Device to end the notice. An offline Device simply misses that signal. Dispatch uses the existing 30-second deadline and content-free ledger and is never replayed after a lost answer. Presence and links live in one process, so the server must run as a single replica.

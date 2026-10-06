@@ -38,7 +38,7 @@ export function connectionTools(runTool: RunTool) {
       name: 'find_tools',
       description:
         'Find Integration tools for a concrete request. Returns call expressions and TypeScript signatures, plus Integrations that could be connected to help. The call expression works inside run_code; here, pass the same account and tool to use_tool. withheld counts matching tools on an account whose name cannot be shown; tell the person to rename that Integration if they need it.',
-      input: v.object({ query: text('What you need to do or find.', 200) }),
+      input: v.object({ summary, query: text('What you need to do or find.', 200) }),
       /** Account names are assigned by the server before ranking and limiting discovery. */
       run({ data, signal }) {
         return runTool(
@@ -58,6 +58,7 @@ export function connectionTools(runTool: RunTool) {
       description:
         'Offer the integration named in find_tools as a secure connect card for the person.',
       input: v.object({
+        summary,
         service: text('The integration name shown in unconnected by find_tools.', 200),
         reason: text('Why this request needs the integration.', 400),
       }),
@@ -144,13 +145,13 @@ function integrationTools(runTool: RunTool) {
       name: 'find_integrations',
       description:
         'List up to 24 accessible integration accounts: query matches first, then newest first within each group. omittedAccounts counts accessible accounts left out; narrow the query to surface them. Then list up to 24 catalogue matches, with connected status and whether this Vivid is set up to connect them.',
-      input: v.object({ query: v.pipe(v.string(), v.maxLength(200)) }),
+      input: v.object({ summary, query: v.pipe(v.string(), v.maxLength(200)) }),
       /** Access is rechecked by the server for the injected acting Person. */
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            const response = yield* client.FindIntegrations(data)
+            const response = yield* client.FindIntegrations({ query: data.query })
             if (response.catalog === 'unavailable')
               yield* warnFailure('find_integrations', 'ServiceUnavailable')
             return { output: connectionViews.integrations(response) }
@@ -164,6 +165,7 @@ function integrationTools(runTool: RunTool) {
       description:
         'Add an integration from a public MCP server URL, API documentation URL, or OpenAPI specification URL. Sign-in or key entry uses a secure card; stop and wait when needed. Documentation must publish a specification link.',
       input: v.object({
+        summary,
         address: text('Public MCP or OpenAPI specification URL, without credentials.', 4000),
         name: text('A clear name for this integration account.', 40),
       }),
@@ -172,7 +174,11 @@ function integrationTools(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            const outcome = yield* client.AddIntegration({ ...data, shared: false })
+            const outcome = yield* client.AddIntegration({
+              address: data.address,
+              name: data.name,
+              shared: false,
+            })
             if (AddIntegrationOutcome.isAnyOf(['NotAnIntegration', 'Unreachable'])(outcome))
               yield* warnFailure('add_integration', outcome._tag)
             return {
@@ -193,6 +199,7 @@ function integrationTools(runTool: RunTool) {
       description:
         'List an integration’s tools and test one read-only call when its input can be safely determined. Report the result in a sentence; stop when approval is needed.',
       input: v.object({
+        summary,
         account: text('The exact account name shown by find_integrations or find_tools.', 300),
       }),
       /** Gate decisions and external dispatch remain server-owned. */
@@ -200,7 +207,7 @@ function integrationTools(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            const outcome = yield* client.TestIntegration(data)
+            const outcome = yield* client.TestIntegration({ account: data.account })
             if (TestIntegrationOutcome.isAnyOf(['NotTested', 'Blocked', 'Unreachable'])(outcome))
               yield* warnFailure('test_integration', outcome._tag)
             return {

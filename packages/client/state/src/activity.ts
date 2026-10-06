@@ -19,6 +19,9 @@ const list = Schema.OptionFromOptionalKey(Schema.Array(Schema.Unknown))
 const Asked = Schema.Struct({
   query: text,
   address: text,
+  command: text,
+  path: text,
+  pattern: text,
   summary: text,
   account: text,
   tool: text,
@@ -176,6 +179,17 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.name)],
   },
+  // A built-in way of working is, to a Person, the same thing as one Vivid saved: how it does
+  // something. Its runtime name ("first-conversation") is an implementation word, so the step
+  // has no detail. Without this entry the first step of a first Thread read "Did something".
+  activate_skill: {
+    said: {
+      running: 'Reading how it does this',
+      done: 'Read how it does this',
+      failed: 'Could not read how it does this',
+    },
+    detail: nothing,
+  },
   save_skill: {
     said: {
       running: 'Saving how to do this',
@@ -200,6 +214,54 @@ const STEPS = {
     },
     detail: (_asked, answered) => [counted(answered.routines, 'routine', 'routines')],
   },
+  bash: {
+    said: {
+      running: 'Working on its computer',
+      done: 'Worked on its computer',
+      failed: 'The computer did not do it',
+    },
+    detail: (asked) => [said(asked.command)],
+  },
+  read: {
+    said: {
+      running: 'Reading a file on its computer',
+      done: 'Read a file on its computer',
+      failed: 'Could not read the file',
+    },
+    detail: (asked) => [said(asked.path)],
+  },
+  write: {
+    said: {
+      running: 'Writing a file on its computer',
+      done: 'Wrote a file on its computer',
+      failed: 'Could not write the file',
+    },
+    detail: (asked) => [said(asked.path)],
+  },
+  edit: {
+    said: {
+      running: 'Changing a file on its computer',
+      done: 'Changed a file on its computer',
+      failed: 'Could not change the file',
+    },
+    detail: (asked) => [said(asked.path)],
+  },
+  grep: {
+    said: {
+      running: 'Searching its files',
+      done: 'Searched its files',
+      failed: 'Could not search the files',
+    },
+    detail: (asked) => [said(asked.pattern)],
+  },
+  glob: {
+    said: {
+      running: 'Looking for files',
+      done: 'Looked for files',
+      failed: 'Could not look for files',
+    },
+    detail: (asked) => [said(asked.pattern)],
+  },
   run_command: {
     said: {
       running: 'Working on its computer',
@@ -221,6 +283,16 @@ const STEPS = {
       running: 'Looking on its computer',
       done: 'Used its computer',
       failed: 'The computer did not do it',
+    },
+    detail: (asked) => [said(asked.summary)],
+  },
+  // The Person's own computer, not Vivid's: "your", so the line never reads as the machine
+  // Vivid keeps for itself (`use_desktop` above).
+  use_person_computer: {
+    said: {
+      running: 'Working on your computer',
+      done: 'Worked on your computer',
+      failed: 'Your computer did not do it',
     },
     detail: (asked) => [said(asked.summary)],
   },
@@ -288,6 +360,46 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.question)],
   },
+  create_project: {
+    said: {
+      running: 'Starting a project',
+      done: 'Started a project',
+      failed: 'Could not start the project',
+    },
+    detail: (asked) => [said(asked.name)],
+  },
+  find_events: {
+    said: {
+      running: 'Looking at what can start a routine',
+      done: 'Looked at what can start a routine',
+      failed: 'Could not look at what can start a routine',
+    },
+    detail: (asked) => [said(asked.account)],
+  },
+  notify_person: {
+    said: {
+      running: 'Sending you a notification',
+      done: 'Sent you a notification',
+      failed: 'Could not send the notification',
+    },
+    detail: (asked) => [said(asked.title)],
+  },
+  open_thread: {
+    said: {
+      running: 'Opening a thread for this',
+      done: 'Opened a thread for this',
+      failed: 'Could not open the thread',
+    },
+    detail: (asked) => [said(asked.title)],
+  },
+  show: {
+    said: {
+      running: 'Putting it on screen',
+      done: 'Put it on screen',
+      failed: 'Could not show it',
+    },
+    detail: nothing,
+  },
 } satisfies Record<string, Step>
 
 /** A tool this client has not heard of: still a true line, with nothing made up about it. */
@@ -296,11 +408,25 @@ const UNKNOWN: Step = {
   detail: nothing,
 }
 
+/**
+ * The line for a tool this client has no words for. When Vivid said what the step is for, that is
+ * the line while it runs and once it is done; "Did something" above a sentence saying what was
+ * done would be noise.
+ */
+const unheardOf = (purpose: Option.Option<string>): Step =>
+  Option.match(purpose, {
+    onNone: () => UNKNOWN,
+    onSome: (words) => ({ ...UNKNOWN, said: { ...UNKNOWN.said, running: words, done: words } }),
+  })
+
 const STEP_OF = new Map<string, Step>(Object.entries(STEPS))
 
 const NOTHING_ASKED: Asked = {
   query: Option.none(),
   address: Option.none(),
+  command: Option.none(),
+  path: Option.none(),
+  pattern: Option.none(),
   summary: Option.none(),
   account: Option.none(),
   tool: Option.none(),
@@ -379,8 +505,14 @@ export function describeToolCall(
   answered: Option.Option<Answered>,
   called: ToolState,
 ): ToolCallDescription {
-  const known = Option.getOrElse(Option.fromUndefinedOr(STEP_OF.get(toolName)), () => UNKNOWN)
   const read = Option.getOrElse(asked, () => NOTHING_ASKED)
+  // Vivid says what each step is for when it calls the tool (`summary`, required on every tool's
+  // input in the runtime). Those are the words that tell this call from any other, so they lead
+  // the detail of every step; before, only the Computer's steps showed them.
+  const purpose = said(read.summary)
+  const known = Option.getOrElse(Option.fromUndefinedOr(STEP_OF.get(toolName)), () =>
+    unheardOf(purpose),
+  )
   // A call that names its subject is said with it; the detail function is the step's own.
   const step: Step =
     known.named === undefined
@@ -390,12 +522,18 @@ export function describeToolCall(
   const label = labelOf(toolName, step, answered, state)
   // A reading that is not there (a call with no input, one still running, JSON this client does
   // not recognise) contributes nothing to the line; the other reading still does.
-  const details = step
+  const own = step
     .detail(
       read,
       Option.getOrElse(answered, () => NOTHING_ANSWERED),
     )
     .flatMap((part) => Option.toArray(part))
+  // A step that already says its purpose (the Computer's, an Integration's), or one whose line is
+  // the purpose itself, does not say it twice.
+  const details = Option.match(purpose, {
+    onNone: () => own,
+    onSome: (words) => (own.includes(words) || label === words ? own : [words, ...own]),
+  })
   return details.length === 0 ? { state, label } : { state, label, detail: details.join(' · ') }
 }
 
@@ -419,6 +557,6 @@ export function summarizeSteps(
   if (first === undefined) return ''
   if (rest.length === 0) return first.label
   return rest.length === 1
-    ? `${first.label} and one more thing`
-    : `${first.label} and ${rest.length} more things`
+    ? `${first.label} and 1 more step`
+    : `${first.label} and ${rest.length} more steps`
 }

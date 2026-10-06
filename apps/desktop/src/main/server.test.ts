@@ -16,9 +16,11 @@ import {
   BridgeRequest,
   BridgeResponse,
   InvalidBridgeMessage,
+  SignInEnding,
   encodeBridgeResponse,
 } from '../shared/bridge.ts'
 import { handleBridgeRequest, type BridgeHandlers } from './requests.ts'
+import type { GoogleSignIn } from './signin.ts'
 import { isAllowedBridgeRequest } from './security.ts'
 import { handleAppRequest } from './proxy.ts'
 import { PageUnavailable, PageLimitReached, PagesRequest, PagesResponse } from '../shared/pages.ts'
@@ -67,6 +69,14 @@ const directory = Effect.acquireRelease(
 /** These tests are about the server choice; this computer is simply not linked in them. */
 const unlinked = { state: () => DeviceLink.cases.SignedOut.make({}), wake: () => {} }
 
+/** Nor is anyone signing in with Google in them: no attempt, as the shell answers with none. */
+const noSignIn: GoogleSignIn = {
+  begin: Effect.succeed('unopened'),
+  reopen: Effect.succeed('unopened'),
+  ended: Effect.succeed(SignInEnding.cases.Cancelled.make({})),
+  cancel: Effect.void,
+}
+
 describe('desktop server selection', () => {
   /** A native allocation refusal survives IPC encoding as a renderer-readable domain receipt. */
   it.effect('returns the native page limit through the public bridge', () =>
@@ -79,6 +89,7 @@ describe('desktop server selection', () => {
           settings,
           getAppVersion: () => '1.0.0',
           device: unlinked,
+          signIn: noSignIn,
           openExternal: () => Effect.void,
           pages: () => Effect.fail(reason),
           onServerChanged: () => {},
@@ -98,7 +109,7 @@ describe('desktop server selection', () => {
             }),
           ),
         )
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
   it.effect('denies selected-server documents before shell settings or browsing can change', () =>
@@ -112,6 +123,7 @@ describe('desktop server selection', () => {
           settings,
           getAppVersion: () => '1.0.0',
           device: unlinked,
+          signIn: noSignIn,
           openExternal: () => Effect.sync(() => changes.push('external')),
           onServerChanged: (state) => changes.push(state._tag),
         }
@@ -145,8 +157,73 @@ describe('desktop server selection', () => {
         ).toEqual(BridgeResponse.cases.AppVersion.make({ value: '1.0.0' }))
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
         expect(changes).toEqual([])
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
+  )
+
+  it.effect(
+    'gives Google sign-in to the selected server’s own document, and to no other sender',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* directory
+        yield* Effect.gen(function* () {
+          const settings = yield* DesktopSettings
+          const asked: string[] = []
+          const granted = SignInEnding.cases.Granted.make({
+            code: 'code',
+            state: 'state',
+            verifier: 'verifier',
+          })
+          const handlers: BridgeHandlers = {
+            pages: () => Effect.fail(new PageUnavailable({})),
+            settings,
+            getAppVersion: () => '1.0.0',
+            device: unlinked,
+            openExternal: () => Effect.void,
+            onServerChanged: () => undefined,
+            signIn: {
+              begin: Effect.sync(() => asked.push('begin')).pipe(Effect.as('opened')),
+              reopen: Effect.sync(() => asked.push('reopen')).pipe(Effect.as('unopened')),
+              ended: Effect.sync(() => asked.push('ended')).pipe(Effect.as(granted)),
+              cancel: Effect.sync(() => asked.push('cancel')),
+            },
+          }
+          const server = ServerSettings.cases.Server.make({
+            origin: ServerAddress.make('https://vivid.example'),
+          })
+          const from = (url: string) => (request: BridgeRequest) =>
+            isAllowedBridgeRequest(url, server, 'file:///application/chooser.html', request)
+          const answers = [
+            [
+              BridgeRequest.cases.BeginGoogleSignIn.make({}),
+              BridgeResponse.cases.GoogleSignInBegun.make({ browser: 'opened' }),
+            ],
+            [
+              BridgeRequest.cases.ReopenGoogleSignIn.make({}),
+              BridgeResponse.cases.GoogleSignInBegun.make({ browser: 'unopened' }),
+            ],
+            [
+              BridgeRequest.cases.AwaitGoogleSignIn.make({}),
+              BridgeResponse.cases.GoogleSignInEnded.make({ value: granted }),
+            ],
+            [
+              BridgeRequest.cases.CancelGoogleSignIn.make({}),
+              BridgeResponse.cases.GoogleSignInCancelled.make({}),
+            ],
+          ] as const
+          for (const [request, answer] of answers) {
+            expect(
+              yield* handleBridgeRequest(request, handlers, from('https://vivid.example/')),
+            ).toEqual(answer)
+            for (const sender of ['file:///application/chooser.html', 'https://other.example/'])
+              expect(
+                yield* handleBridgeRequest(request, handlers, from(sender)).pipe(Effect.flip),
+              ).toBeInstanceOf(InvalidBridgeMessage)
+          }
+          // Only the four the server's own document sent reached the sign-in, once each.
+          expect(asked).toEqual(['begin', 'reopen', 'ended', 'cancel'])
+        }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
+      }),
   )
 
   it.live('verifies /health before saving and bridge forget returns to the chooser', () =>
@@ -166,6 +243,7 @@ describe('desktop server selection', () => {
           settings,
           getAppVersion: () => '1.0.0',
           device: unlinked,
+          signIn: noSignIn,
           openExternal: () => Effect.void,
           pages: () => Effect.fail(new PageUnavailable({})),
           onServerChanged: (state) => changes.push(state._tag),
@@ -189,7 +267,7 @@ describe('desktop server selection', () => {
         ).toEqual(BridgeResponse.cases.Forgotten.make({}))
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
         expect(changes).toEqual(['Server', 'NoServer'])
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 
@@ -205,7 +283,7 @@ describe('desktop server selection', () => {
         expect(yield* chooseServer(origin, settings)).toEqual(ServerChoice.cases.NotVivid.make({}))
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
         expect(NodeFS.readdirSync(root)).toEqual([])
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 
@@ -229,7 +307,7 @@ describe('desktop server selection', () => {
         expect(result._tag).toBe('Unreachable')
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
         expect(foreignRequests).toBe(0)
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 
@@ -243,7 +321,7 @@ describe('desktop server selection', () => {
         const before = yield* settings.set(ServerAddress.make('https://vivid.example'))
         expect((yield* chooseServer(origin, settings))._tag).toBe('Unreachable')
         expect(yield* settings.get).toEqual(before)
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 
@@ -268,7 +346,7 @@ describe('desktop server selection', () => {
           }),
         )
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'))))
+      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
     }),
   )
 

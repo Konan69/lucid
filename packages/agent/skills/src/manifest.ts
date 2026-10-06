@@ -149,7 +149,8 @@ const definitions = [
       'read_page',
       'recall',
       'remember',
-      'correct',
+      'read_note',
+      'write_note',
       'ask_person',
       'find_tools',
       'connect',
@@ -161,7 +162,7 @@ const definitions = [
     displayName: 'Remember and correct preferences',
     about: 'Remembers, corrects, or forgets your working preferences at your request.',
     starter: true,
-    needs: ['recall', 'remember', 'correct', 'forget', 'ask_person'],
+    needs: ['recall', 'remember', 'read_note', 'write_note', 'delete_note', 'ask_person'],
     connections: [],
   },
   {
@@ -187,14 +188,7 @@ const definitions = [
     about:
       'Looks at finished work the way you will see it and fixes what is wrong before handing it over.',
     starter: false,
-    needs: [
-      'read_document',
-      'write_document',
-      'browse',
-      'use_desktop',
-      'run_command',
-      'ask_person',
-    ],
+    needs: ['read_document', 'write_document', 'browse', 'use_desktop', 'bash', 'ask_person'],
     connections: [],
   },
   {
@@ -276,7 +270,16 @@ const definitions = [
     displayName: 'Forget something',
     about: 'Removes something you no longer want remembered and stops it from coming back.',
     starter: false,
-    needs: ['recall', 'forget', 'list_routines', 'read_document', 'write_document', 'ask_person'],
+    needs: [
+      'recall',
+      'read_note',
+      'write_note',
+      'delete_note',
+      'list_routines',
+      'read_document',
+      'write_document',
+      'ask_person',
+    ],
     connections: [],
   },
   {

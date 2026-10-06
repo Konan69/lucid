@@ -4,12 +4,11 @@ import {
   codeEnding,
   connectChannel,
   disconnectChannel,
-  makeWhen,
+  FIRST_TEXT,
   MESSENGER,
   messageLink,
   textingSettled,
   textingUnreached,
-  thisReader,
   type Composer,
 } from '@vivid/state'
 import { Option } from 'effect'
@@ -19,8 +18,9 @@ import { useNow } from '../../data/foreground'
 import { confirm, warn } from '../../data/haptics'
 import { useLive, useLiveData, type LiveData } from '../../data/live'
 import { MOBILE_TYPOGRAPHY } from '../../data/typography'
+import { when } from '../../data/when'
 import { Copy } from '../../ui/Copy'
-import { Header, Screen } from '../../ui/Header'
+import { Screen } from '../../ui/Screen'
 import { Section } from '../../ui/List'
 import { Live } from '../../ui/Live'
 import { ServiceMark } from '../../ui/Mark'
@@ -36,9 +36,6 @@ import {
   Skeleton,
   styles,
 } from '../../ui/ui'
-import { useGo } from '../../workspace'
-
-const when = makeWhen(thisReader())
 
 /**
  * Which form of `sms:` link this phone's messaging app reads: Apple's Messages takes the body
@@ -86,14 +83,13 @@ const actsOf = (data: LiveData): TextingActs => {
  */
 export function Texting() {
   const data = useLiveData()
-  const go = useGo()
   const channels = useLive(data.live.channels)
   // One set of actions for the session, so a control's handlers are not rebuilt on every result.
   const acts = useMemo(() => actsOf(data), [data])
   return (
     <Screen>
-      <Header title="Text Vivid" onBack={go.goBack} />
       <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={[styles.page, styles.column]}
       >
@@ -158,9 +154,10 @@ export function ChannelControl({ link, acts }: { link: ChannelLink; acts: Textin
       <View style={{ paddingHorizontal: 16, paddingVertical: 14, gap: 14 }}>
         {ChannelStanding.guards.Unavailable(standing) && (
           <Head channel={channel} quiet words={words}>
-            {/* Shown, not hidden, so a Person looking for iMessage finds it and reads why there
-                is nothing to press: it is text, and looks like text. */}
-            This Vivid is not set up for {channel} yet.
+            {/* A channel Vivid does not text on yet (WhatsApp). Shown, not hidden, so a Person
+                looking for it finds it and reads why there is nothing to press: it is text, and
+                looks like text. */}
+            Vivid cannot text on {channel} yet.
           </Head>
         )}
         {ChannelStanding.guards.NotConnected(standing) && (
@@ -390,8 +387,13 @@ function Figure({ name, value, spent }: { name: string; value: string; spent: bo
 }
 
 /**
- * A connected channel: the number to text, the Person's own number, and since when. Disconnecting
- * stops Vivid answering that phone, so the system asks before it is done.
+ * A connected channel. What a Person does with one is text Vivid, and this is usually the very
+ * phone that does it: the filled button opens the messaging app on a first message (`FIRST_TEXT`)
+ * to Vivid's number, so the first text is one press and "Send". The number is shown large above
+ * it with its copy (the same `Figure` the code is shown in), for a Person who texts from another
+ * phone, and for when the app would not open. Their own number and since when are said in the
+ * head. Disconnecting stops Vivid answering that phone, so it is last, in the danger colour, and
+ * the system asks before it is done.
  */
 function Connected({
   channel,
@@ -424,13 +426,18 @@ function Connected({
         words={`${channelWords(standing)} · ${since}`}
         dot={<Dot tone="status-success" />}
       >
-        Text Vivid at {standing.textTo} from {standing.address}.
+        Vivid answers texts from {standing.address}.
       </Head>
+      <Figure name="Vivid’s number" value={standing.textTo} spent={false} />
       <Button
-        kind="plain"
+        kind="primary"
         label={`Open ${MESSENGER[channel]}`}
         onPress={() =>
-          open(channel, messageLink(channel, COMPOSER, standing.textTo, Option.none()), onUnopened)
+          open(
+            channel,
+            messageLink(channel, COMPOSER, standing.textTo, Option.some(FIRST_TEXT)),
+            onUnopened,
+          )
         }
       />
       <Button

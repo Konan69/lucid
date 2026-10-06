@@ -1,17 +1,24 @@
+import * as NodeCrypto from 'node:crypto'
+import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeURL from 'node:url'
 import * as NodeProcess from 'node:process'
 import * as NodeOS from 'node:os'
-import { DeviceName } from '@vivid/contracts'
+import { DeviceName, DeviceWork } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
+import * as Exit from 'effect/Exit'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
+import * as Scope from 'effect/Scope'
 import { app, net, protocol, screen, session, type BrowserWindow, type Session } from 'electron'
 import { registerBridge } from './bridge.ts'
 import { Browser } from './browser.ts'
 import { executor } from './control.ts'
 import { connectDevice, deviceLink, sessionChanges } from './device.ts'
 import { controlledBrowser } from './driver.ts'
+import { locateComputer } from './computer.ts'
+import { createNotice } from './notice.ts'
+import { turns } from './turn.ts'
 import { installationIdentity } from './installation.ts'
 import { vividMayOpen } from './reach.ts'
 import {
@@ -20,7 +27,7 @@ import {
   vividUrlsFromArguments,
   type VividDeepLink,
 } from './links.ts'
-import { focusMainWindow, installApplicationMenu } from './menu.ts'
+import { focusMainWindow, installApplicationMenu, raiseMainWindow } from './menu.ts'
 import {
   DisplayWorkArea,
   clampWindowPlacement,
@@ -30,7 +37,7 @@ import {
   type WindowPlacement,
 } from './placement.ts'
 import { ColorSchemeController } from './theme.ts'
-import { loadThemeSurfaces } from './tokens.ts'
+import { loadThemeSurfaces, type ThemeSurfaces } from './tokens.ts'
 import { RendererSource, createMainWindow, loadRenderer, openExternalUrl } from './window.ts'
 import {
   AppInfo,
@@ -41,10 +48,16 @@ import {
 } from '../shared/bridge.ts'
 import { PageUnavailable, type Tab } from '../shared/pages.ts'
 import { DesktopSettings, settingsLayer } from './settings.ts'
+import { clearingLeft, storageLeftBehind } from './leaving.ts'
 import { registerAppProxy } from './proxy.ts'
-import { secureSession } from './session.ts'
+import { APP_PARTITION, secureSession } from './session.ts'
 import { isAllowedBridgeRequest } from './security.ts'
-import { ServerSettings } from '../shared/settings.ts'
+import { googleSignIn } from './signin.ts'
+import { ServerAddress, ServerSettings } from '../shared/settings.ts'
+import { startTelemetry } from './telemetry.ts'
+
+// First, before anything that can fail and before any scheme is registered (`telemetry.ts`).
+startTelemetry()
 
 const PLACEMENT_FILE = 'window-placement.json'
 const INSTALLATION_FILE = 'installation.json'
@@ -157,15 +170,18 @@ function createBrowser(
     run: (program) => {
       void Effect.runPromise(program)
     },
+    // The window is asked first: once it is closed, reading `webContents` itself throws
+    // "Object has been destroyed", and closing the app publishes one last change (the browser
+    // resets on `closed`), which showed a JavaScript error dialog on every quit.
     publish: (value) => {
-      if (!window.webContents.isDestroyed())
+      if (!window.isDestroyed() && !window.webContents.isDestroyed())
         window.webContents.send(
           BRIDGE_EVENT_CHANNEL,
           encodeBridgeEvent(BridgeEvent.cases.PagesChanged.make({ value })),
         )
     },
     downloadRefused: (value) => {
-      if (!window.webContents.isDestroyed())
+      if (!window.isDestroyed() && !window.webContents.isDestroyed())
         window.webContents.send(
           BRIDGE_EVENT_CHANNEL,
           encodeBridgeEvent(BridgeEvent.cases.PageDownloadRefused.make({ value })),
@@ -176,8 +192,9 @@ function createBrowser(
 
 /**
  * Vivid using this computer. The executor acts in whichever Browser the open window has; the
- * link enrols this installation, listens while the Person allows it, and hands each action to
- * the executor. The installation identity is read here and goes nowhere else in the app. A
+ * turn keeper works in the Person's apps through Vivid's Computer and owns the notice; the link
+ * enrols this installation, listens while the Person allows it, and hands each piece of work to
+ * the one it is for. The installation identity is read here and goes nowhere else in the app. A
  * computer whose identity cannot be kept, or that has no host name, is not linked at all.
  */
 const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (input: {
@@ -185,6 +202,35 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
   readonly server: () => ServerSettings
   readonly browser: () => Option.Option<Browser>
 }) {
+  // Everything Vivid holds on this computer outside the app's own window lives in this scope:
+  // the Computer process and the fibers around it. Quitting closes it, which kills the Computer;
+  // the Computer also ends by itself when this process does (`--parent-pid`).
+  const held = yield* Scope.make()
+  app.on('before-quit', () => {
+    Effect.runFork(Scope.close(held, Exit.void))
+  })
+  // The notice calls `stop` only while a turn is up, which is after `windows` exists.
+  let stopTurn = (): void => undefined
+  const notice = createNotice({
+    session: input.session,
+    origin: () =>
+      ServerSettings.match(input.server(), {
+        NoServer: () => Option.none(),
+        Server: ({ origin }) => Option.some(origin),
+      }),
+    stop: () => stopTurn(),
+  })
+  const windows = yield* turns({
+    computer: locateComputer({
+      platform: NodeProcess.platform,
+      packaged: app.isPackaged,
+      resources: NodeProcess.resourcesPath,
+      bundle: __dirname,
+      parent: NodeProcess.pid,
+    }),
+    notice: notice.show,
+  }).pipe(Scope.provide(held))
+  stopTurn = windows.stop
   const control = yield* executor({
     browser: controlledBrowser(input.browser),
     mac: platform === 'darwin',
@@ -220,7 +266,17 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
           identity: known,
         }),
     }),
-    execute: control.execute,
+    ability: () => ({ pages: true, apps: windows.apps }),
+    execute: (request) =>
+      DeviceWork.match(request.work, {
+        Page: ({ action }) => control.execute({ action, expiresAt: request.expiresAt }),
+        Window: ({ action }) =>
+          windows.execute({ runId: request.runId, action, expiresAt: request.expiresAt }),
+      }),
+    ended: windows.ended,
+    // The notice window belongs to one server's origin and one session; it goes with the link.
+    unlinked: windows.unlinked.pipe(Effect.andThen(Effect.sync(notice.close))),
+    stops: windows.stops,
   })
   // Signing in or out changes the app session's cookies. A different session ends a link opened
   // as the old one at once, action in progress included; anything else is a cue to look again.
@@ -240,6 +296,75 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
 })
 
 /**
+ * Where the window opens: where it was last, when that was saved and still lies on a display
+ * that is connected now, and the default otherwise. Placement is a convenience, so a file that
+ * cannot be read is the default too, never a startup that fails.
+ */
+const startingPlacement = Effect.fn('DesktopMain.startingPlacement')(function* (path: string) {
+  const stored = Option.getOrElse(
+    yield* readWindowPlacement(path).pipe(Effect.option),
+    () => defaultWindowPlacement,
+  )
+  const workAreas = screen.getAllDisplays().map((display) => DisplayWorkArea.make(display.workArea))
+  return Option.getOrElse(clampWindowPlacement(stored, workAreas), () => defaultWindowPlacement)
+})
+
+/**
+ * Google sign-in through the system browser (`signin.ts`). Its listener on the loopback address
+ * lives in a scope the app closes as it quits, so no port outlives the app that opened it. The
+ * server is the saved one, read when an attempt begins: never an address a document sent.
+ *
+ * An attempt belongs to the server it began on: its code could only be traded there, and the
+ * document waiting for it is replaced when the server changes. So `serverChanged` cancels it.
+ */
+const signInThroughBrowser = Effect.fn('DesktopMain.signIn')(function* (input: {
+  readonly server: () => ServerSettings
+  readonly surfaces: ThemeSurfaces
+}) {
+  const untilQuit = yield* Scope.make()
+  app.once('will-quit', () => {
+    Effect.runFork(Scope.close(untilQuit, Exit.void))
+  })
+  return yield* googleSignIn({
+    server: input.server,
+    open: openExternalUrl,
+    random: (size) => NodeCrypto.randomBytes(size),
+    focus: () => raiseMainWindow(mainWindow),
+    surfaces: input.surfaces,
+  }).pipe(Scope.provide(untilQuit))
+})
+
+const ShippedManifest = Schema.fromJsonString(
+  Schema.Struct({ vividHome: Schema.OptionFromOptionalKey(ServerAddress) }),
+)
+const decodeShippedManifest = Schema.decodeUnknownOption(ShippedManifest)
+
+/** The packaged manifest could not be read; the build then has no home of its own. */
+class ManifestUnreadable extends Schema.TaggedError<ManifestUnreadable>()(
+  'ManifestUnreadable',
+  {},
+  { title: 'Desktop manifest could not be read' },
+) {}
+
+/**
+ * The Vivid address this build ships with, when it ships with one. Packaging writes it into the
+ * app's own `package.json` as `vividHome` (`electron-builder.yml`, `extraMetadata`), which keeps
+ * the address out of the source and out of the web bundle. Development has no packaged manifest
+ * and starts at the chooser. A manifest that cannot be read (absent, not a file, no permission),
+ * or an address that is not a valid server origin, is no home: the chooser is the honest start
+ * then, not a guessed address, and never a startup that dies before its first window.
+ */
+const shippedHome = Effect.fn('DesktopMain.shippedHome')(function* () {
+  if (!app.isPackaged) return Option.none<ServerAddress>()
+  const manifest = NodePath.join(app.getAppPath(), 'package.json')
+  const text = yield* Effect.try({
+    try: () => NodeFS.readFileSync(manifest, 'utf8'),
+    catch: () => new ManifestUnreadable({}),
+  }).pipe(Effect.option)
+  return Option.flatMap(Option.flatMap(text, decodeShippedManifest), (decoded) => decoded.vividHome)
+})
+
+/**
  * Finish startup after Electron is ready: decode configuration and disk state, construct one window,
  * and install bridge handlers. Placement failure is deliberately recoverable because geometry is a
  * convenience cache; renderer, token, and runtime metadata failures stop startup instead.
@@ -255,7 +380,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
     : NodePath.resolve(__dirname, '../renderer')
   const chooserPath = NodePath.join(root, 'chooser.html')
   const chooserUrl = NodeURL.pathToFileURL(chooserPath).href
-  const desktopSession = session.fromPartition('persist:vivid')
+  const desktopSession = session.fromPartition(APP_PARTITION)
   /** Protocol, navigation, permissions, and IPC follow the same durable selection. */
   const renderer = (): RendererSource =>
     ServerSettings.match<RendererSource>(serverSettings, {
@@ -271,15 +396,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
   })
   const information = yield* appInfo()
   const placementPath = NodePath.join(app.getPath('userData'), PLACEMENT_FILE)
-  const storedPlacement = Option.getOrElse(
-    yield* readWindowPlacement(placementPath).pipe(Effect.option),
-    () => defaultWindowPlacement,
-  )
-  const workAreas = screen.getAllDisplays().map((display) => DisplayWorkArea.make(display.workArea))
-  let placement = Option.getOrElse(
-    clampWindowPlacement(storedPlacement, workAreas),
-    () => defaultWindowPlacement,
-  )
+  let placement = yield* startingPlacement(placementPath)
   const colorScheme = new ColorSchemeController(surfaces)
   let browser = Option.none<Browser>()
   const pagesSession = session.fromPartition('persist:vivid-pages')
@@ -290,16 +407,25 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
     browser: () => browser,
   })
 
+  const signIn = yield* signInThroughBrowser({ server: () => serverSettings, surfaces })
   /** A different server, or none: every page closes and the window loads what that means. */
   const serverChanged = (value: ServerSettings): void => {
     Option.map(browser, (available) => available.reset())
+    Effect.runFork(signIn.cancel) // a sign-in belongs to the server it began on
+    // The left server's storage is cleared (`leaving.ts`) only after the window has loaded what
+    // replaces its document: that document writes as it unloads, which would follow the clear.
+    const clearLeft = clearingLeft(storageLeftBehind(serverSettings, value), desktopSession)
     serverSettings = value
     // A link belongs to one server: drop it and start over on the new one, or on none.
     computer.restart()
     // Complete invoke before replacing the document that owns its pending Promise.
     setImmediate(() =>
-      Option.map(mainWindow, (window) =>
-        runNonFatal(loadRenderer(window, renderer()), 'desktop: renderer failed to load'),
+      runNonFatal(
+        Option.match(mainWindow, {
+          onNone: () => clearLeft,
+          onSome: (window) => Effect.ensuring(loadRenderer(window, renderer()), clearLeft),
+        }),
+        'desktop: renderer failed to load',
       ),
     )
   }
@@ -324,6 +450,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
       device: computer,
       settings,
       openExternal: openExternalUrl,
+      signIn,
       onServerChanged: serverChanged,
     },
     runtime: { run: (program) => Effect.runPromise(program) },
@@ -404,9 +531,12 @@ if (!hasSingleInstanceLock) {
     try: () => app.whenReady(),
     catch: () => new DesktopRuntimeInvalid({ field: 'readiness' }),
   }).pipe(
-    Effect.flatMap(() =>
+    Effect.flatMap(shippedHome),
+    Effect.flatMap((home) =>
       boot().pipe(
-        Effect.provide(settingsLayer(NodePath.join(app.getPath('userData'), 'settings.json'))),
+        Effect.provide(
+          settingsLayer(NodePath.join(app.getPath('userData'), 'settings.json'), home),
+        ),
       ),
     ),
     Effect.matchEffect({

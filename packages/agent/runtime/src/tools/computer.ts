@@ -1,22 +1,12 @@
-import {
-  defineTool,
-  useSandbox,
-  SandboxOperationUnsupportedError,
-  type Sandbox,
-  type SandboxFactory,
-  type LlmImageContent,
-  type LlmTextContent,
-} from '@flue/runtime'
+import { useSandbox, type SandboxFactory } from '@flue/runtime'
 import { Type } from '@earendil-works/pi-ai'
 import {
   BrowserAction,
   BrowseTarget,
   RunCommandRequest,
   DesktopOutcome,
-  CommandOutcome,
   BrowseOutcome,
   UseDesktopRequest,
-  type DesktopView,
 } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
@@ -24,11 +14,14 @@ import * as Struct from 'effect/Struct'
 import * as Option from 'effect/Option'
 import * as Result from 'effect/Result'
 import * as Match from 'effect/Match'
+import { pictureResult } from './picture.ts'
+import { personComputerModelTool } from './windows.ts'
 import { warnFailure } from './result.ts'
 import * as v from 'valibot'
-import { Scope, type RunTool } from './scope.ts'
-import { summary, text } from './inputs.ts'
-import { browseOutcome, commandOutcome, desktopOutcome } from './outcomes.ts'
+import { Scope, type RunScoped, type RunTool } from './scope.ts'
+import { COMPUTER_HOME, computerSandbox, machineTools } from './sandbox.ts'
+import { summary } from './inputs.ts'
+import { browseOutcome, desktopOutcome } from './outcomes.ts'
 
 /** The authoritative browser schema uses these model-facing words and text limits. */
 const browserWords = {
@@ -92,9 +85,12 @@ const browseInput = Schema.Struct({
     modelAction(BrowserAction.cases.ShowTab.fields, 'show_tab'),
     modelAction(BrowserAction.cases.CloseTab.fields, 'close_tab'),
   ]),
-  summary: RunCommandRequest.fields.summary.check(Schema.isPattern(/\S/)).annotate({
-    description: 'One sentence describing this action to the person.',
-  }),
+  summary: RunCommandRequest.fields.summary
+    .check(
+      Schema.isPattern(/\S/),
+      Schema.makeFilter((value) => v.is(summary, value)),
+    )
+    .annotate({ description: v.getDescription(summary) }),
 })
 const decodeBrowse = Schema.decodeUnknownResult(browseInput)
 const browserDocument = Schema.toJsonSchemaDocument(browseInput)
@@ -126,7 +122,7 @@ const browseProgram = Effect.fn('ComputerTool.browse')(function* (
       onNone: () => undefined,
       onSome: picture,
     })
-  return browseOutcome(outcome)
+  return { ...browseOutcome(outcome), computer: data.computer }
 })
 
 /** The model vocabulary maps exhaustively to the server's closed BrowserAction contract. */
@@ -150,67 +146,37 @@ function browserAction(input: typeof browseInput.Type.action): BrowserAction {
   )
 }
 
-/** Computer tools propose actions only; availability, takeover and approvals belong to the server. */
-export function computerTools(runTool: RunTool) {
-  useSandbox(desktopToolFactory(runTool))
-  return [commandDefinition(runTool)]
-}
-
-/** The command definition is mounted directly; native browse mounts through the image factory. */
-export function commandDefinition(runTool: RunTool) {
-  return defineTool({
-    name: 'run_command',
-    description:
-      'Run a command on the person’s Computer when needed for their request. If approval is requested, stop and wait.',
-    input: v.object({
-      command: text('The command to run.', 8000),
-      summary,
-      timeoutSeconds: v.optional(
-        v.pipe(
-          v.number(),
-          v.integer(),
-          v.minValue(1),
-          v.description('Maximum seconds to wait for the command.'),
-        ),
-      ),
-    }),
-    /** Flue owns input decoding and cancellation; this boundary executes the attributed RPC Effect. */
-    run({ data, signal }) {
-      const request: Schema.Struct.Mutable<RunCommandRequest> = {
-        command: data.command,
-        summary: data.summary,
-      }
-      if (data.timeoutSeconds !== undefined) request.timeoutSeconds = data.timeoutSeconds
-      return runTool(
-        Effect.gen(function* () {
-          const { client } = yield* Scope
-          const outcome = yield* client.RunCommand(RunCommandRequest.make(request))
-          if (CommandOutcome.isAnyOf(['Blocked', 'Unavailable'])(outcome))
-            yield* warnFailure('run_command', outcome._tag)
-          return commandOutcome(outcome)
-        }),
-        { signal, tool: 'run_command' },
-      )
-    },
-  })
+/**
+ * Mounts Vivid's Computer for this conversation: Flue's own file and shell tools on the real
+ * machine, with `use_desktop`, `browse` and the Person's computer beside them. Nothing else is
+ * registered: the earlier `run_command` tool, which asked for an Approval per command, was removed
+ * on 6 October 2026 once `bash` had run on a Person's Computer in production. Availability and
+ * takeover still belong to the server.
+ */
+export function mountComputer(runTool: RunTool, run: RunScoped) {
+  useSandbox(computerSandboxFactory(runTool, run))
 }
 
 const browseDescription =
   'Open, read or interact with a browser page. Use Vivid’s own computer by default. Choose person for their signed-in sites, something only on their machine, or when they ask to use their computer; their desktop app must be connected. Screenshot returns a picture. If approval is requested, stop and wait.'
 
-const decodeDesktop = Schema.decodeUnknownResult(UseDesktopRequest)
-// The TypeBox schema is derived from the authoritative Effect contract, with runtime decoding
-// below. Type.Unsafe is TypeBox's public bridge for an existing JSON Schema, not an input cast.
-const desktopDocument = Schema.toJsonSchemaDocument(UseDesktopRequest)
-const desktopParameters = Type.Unsafe<typeof UseDesktopRequest.Encoded>(
+/** Native image tools retain the server's action schema but validate and describe display words
+ * with the same Valibot summary as every defineTool input; no second wording or limit is owned here. */
+const desktopInput = UseDesktopRequest.mapFields((fields) => ({
+  action: fields.action,
+  summary: fields.summary
+    .check(
+      Schema.isPattern(/\S/),
+      Schema.makeFilter((value) => v.is(summary, value)),
+    )
+    .annotate({ description: v.getDescription(summary) }),
+}))
+const decodeDesktop = Schema.decodeUnknownResult(desktopInput)
+// Type.Unsafe is TypeBox's public bridge for an existing JSON Schema, not an input cast.
+const desktopDocument = Schema.toJsonSchemaDocument(desktopInput)
+const desktopParameters = Type.Unsafe<typeof desktopInput.Encoded>(
   Object.assign({}, desktopDocument.schema, { $defs: desktopDocument.definitions }),
 )
-
-type DesktopToolResult = {
-  content: Array<LlmTextContent | LlmImageContent>
-  details: Schema.Json
-  terminate: boolean
-}
 
 /** Browse uses the same Flue native image path as use_desktop; screenshots never enter bounded JSON. */
 export function browseModelTool(runTool: RunTool) {
@@ -239,21 +205,7 @@ export function browseModelTool(runTool: RunTool) {
           signal: cancellation,
           tool: 'browse',
         },
-      ).then((result): DesktopToolResult => {
-        const metadata = { type: 'text' as const, text: JSON.stringify(result.output) }
-        return Option.match(picture, {
-          onNone: () => ({
-            content: [metadata],
-            details: result.output,
-            terminate: result.terminate,
-          }),
-          onSome: (bytes) => ({
-            content: [metadata, { type: 'image' as const, mimeType: 'image/png', data: bytes }],
-            details: result.output,
-            terminate: result.terminate,
-          }),
-        })
-      })
+      ).then((result) => pictureResult(result, picture))
     },
   }
 }
@@ -274,81 +226,48 @@ export function desktopModelTool(runTool: RunTool) {
     execute(_call: string, input: unknown, signal?: AbortSignal) {
       const request = decodeDesktop(input)
       if (Result.isFailure(request)) {
-        const refusal: DesktopToolResult = {
+        const refusal = {
           content: [{ type: 'text' as const, text: 'The desktop request is invalid.' }],
           details: { ok: false },
           terminate: false,
         }
         return Promise.resolve(refusal)
       }
-      let picture = Option.none<DesktopView>()
+      let picture = Option.none<string>()
       const cancellation = signal === undefined ? new AbortController().signal : signal
       return runTool(
         Effect.gen(function* () {
           const { client } = yield* Scope
-          const outcome = yield* client.UseDesktop(request.success)
+          const outcome = yield* client.UseDesktop({
+            action: request.success.action,
+            summary: request.success.summary,
+          })
           if (DesktopOutcome.isAnyOf(['Blocked', 'Unavailable'])(outcome))
             yield* warnFailure('use_desktop', outcome._tag)
-          if (DesktopOutcome.guards.Completed(outcome)) picture = Option.some(outcome.view)
+          if (DesktopOutcome.guards.Completed(outcome)) picture = Option.some(outcome.view.picture)
           return desktopOutcome(outcome)
         }),
         { signal: cancellation, tool: 'use_desktop' },
-      ).then((result): DesktopToolResult => {
-        const metadata = { type: 'text' as const, text: JSON.stringify(result.output) }
-        return Option.match(picture, {
-          onNone: () => ({
-            content: [metadata],
-            details: result.output,
-            terminate: result.terminate,
-          }),
-          onSome: (view) => ({
-            content: [
-              metadata,
-              { type: 'image' as const, mimeType: 'image/png', data: view.picture },
-            ],
-            details: result.output,
-            terminate: result.terminate,
-          }),
-        })
-      })
+      ).then((result) => pictureResult(result, picture))
     },
   }
 }
 
-/** Flue exposes image content through SandboxFactory.tools. This factory supplies a tool-only,
- * empty virtual namespace, not the guest filesystem: raw FS/shell cannot bypass Vivid's RPC Gate.
- * Flue resolves it once per submission; the acting Person stays fixed while deliveries join
- * that response (agents/vivid.ts). A later submission gets a newly attributed factory. */
-export function desktopToolFactory(runTool: RunTool) {
+/**
+ * Flue's one machine slot holds the acting Person's real Computer (`sandbox.ts`). A factory's
+ * `tools` replaces Flue's default six, so the list is those six built on that Computer, plus the
+ * tools that return pictures: Flue passes image content to the model only from this list
+ * (reference/sandbox-api, "SandboxToolFactory"). Flue resolves the factory once per submission;
+ * the acting Person stays fixed while deliveries join that response (agents/vivid.ts).
+ */
+export function computerSandboxFactory(runTool: RunTool, run: RunScoped) {
   return {
-    createSandbox: () => Promise.resolve(toolNamespace()),
-    tools: () => [desktopModelTool(runTool), browseModelTool(runTool)],
+    createSandbox: () => Promise.resolve(computerSandbox(run, COMPUTER_HOME)),
+    tools: (sandbox) => [...machineTools(sandbox), ...pictureTools(runTool)],
   } satisfies SandboxFactory
 }
 
-/** The namespace contains only its root; it makes no claim about guest files or provider identity.
- * Writes and raw execution are explicitly unsupported. Existing run_command remains gated RPC. */
-function toolNamespace(): Sandbox {
-  const unsupported = (operation: string) =>
-    Promise.reject(
-      new SandboxOperationUnsupportedError({
-        operation,
-        provider: 'Vivid Computer tools',
-        options: ['raw filesystem or shell access'],
-      }),
-    )
-  return {
-    cwd: '/',
-    resolvePath: (path) => (path.startsWith('/') ? path : `/${path}`),
-    exists: (path) => Promise.resolve(path === '/'),
-    readdir: (path) => (path === '/' ? Promise.resolve([]) : unsupported('readdir')),
-    stat: (path) =>
-      path === '/' ? Promise.resolve({ isDirectory: true, isFile: false }) : unsupported('stat'),
-    exec: () => unsupported('exec'),
-    readFile: () => unsupported('readFile'),
-    readFileBuffer: () => unsupported('readFileBuffer'),
-    writeFile: () => unsupported('writeFile'),
-    mkdir: () => unsupported('mkdir'),
-    rm: () => unsupported('rm'),
-  }
+/** The tools whose results carry a picture. */
+export function pictureTools(runTool: RunTool) {
+  return [desktopModelTool(runTool), browseModelTool(runTool), personComputerModelTool(runTool)]
 }

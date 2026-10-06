@@ -75,13 +75,31 @@ export function isAllowedResponse(input: {
   )
 }
 
-/** Only the chooser changes shell authority; app documents receive the closed page capability. */
+/** Signing in with Google through the system browser: the four requests of `main/signin.ts`. */
+const isSignInRequest = BridgeRequest.isAnyOf([
+  'BeginGoogleSignIn',
+  'ReopenGoogleSignIn',
+  'AwaitGoogleSignIn',
+  'CancelGoogleSignIn',
+])
+
+/**
+ * Only the chooser changes shell authority; app documents receive the closed page capability.
+ *
+ * Google sign-in is decided first, and differently from everything else: it is granted to the
+ * selected server's own document and to nothing else. The chooser is otherwise trusted with
+ * every request, but it has no server to sign in to, so it is refused here before that trust is
+ * consulted, whether or not a server is saved. The requests carry no address, so there is
+ * nothing in them to check: the shell builds the browser's address from the server it saved.
+ */
 export function isAllowedBridgeRequest(
   url: string,
   server: ServerSettings,
   chooser: string,
   request: BridgeRequest,
 ): boolean {
+  if (isSignInRequest(request))
+    return ServerSettings.guards.Server(server) && isTrustedDocument(url, server, chooser)
   if (isTrustedDocument(url, ServerSettings.cases.NoServer.make({}), chooser)) return true
   return (
     BridgeRequest.isAnyOf(['GetAppVersion', 'Pages', 'GetDeviceLink', 'RefreshDeviceLink'])(

@@ -3,7 +3,15 @@ import { createFlueClient, type FlueClient, type FlueConversationState } from '@
 import { NodeHttpClient } from '@effect/platform-node'
 import { expect } from '@effect/vitest'
 import { VividRpcClient } from '@vivid/client-runtime'
-import { PersonId, RunId, RunState, ThreadId, RuntimeUnavailable } from '@vivid/contracts'
+import {
+  OpenFirstThreadResult,
+  PersonId,
+  RunId,
+  RunState,
+  SendMessageRequest,
+  ThreadId,
+  RuntimeUnavailable,
+} from '@vivid/contracts'
 import { Config, Effect, Layer, Option, Queue, Redacted, Schema, Stream } from 'effect'
 import { eq } from 'drizzle-orm'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
@@ -14,15 +22,16 @@ import { observeRun, Settlement } from './settlement.ts'
 
 const Account = Schema.Struct({ user: Schema.Struct({ id: PersonId }) })
 const Receipt = Schema.Struct({ submissionId: RunId })
+const sendBody = HttpClientRequest.schemaBodyJson(SendMessageRequest)
 
 const cleanupFailed = () => Effect.sync(() => expect.fail('Thread proof cleanup failed'))
 export const chainLayer = Layer.mergeAll(testDatabaseLayer, NodeHttpClient.layerUndici)
 
-/** One real signup, private Thread and cookie-authenticated product client. Cleanup is registered
- * before signup and uses only the supplied night test database. A mismatched server/database is
- * rejected before sending any model request. Cookies and network diagnostics never enter logs.
+/** One real signup and its cookie-authenticated product client. Cleanup is registered before
+ * signup and uses only the supplied night test database. A mismatched server/database is rejected
+ * before sending any model request. Cookies and network diagnostics never enter logs.
  */
-export const chainFixture = Effect.fn('ThreadProof.fixture')(function* (title: string) {
+const chainPerson = Effect.fn('ThreadProof.person')(function* () {
   const target = new URL(Redacted.value(yield* Config.Redacted('VIVID_TEST_DATABASE_URL')))
   expect(target.port, 'Proofs require the disposable night PostgreSQL port').toBe('55440')
   // This is an equality guard only, never a fallback connection. Check before creating a
@@ -78,19 +87,30 @@ export const chainFixture = Effect.fn('ThreadProof.fixture')(function* (title: s
     }).pipe(Layer.provide(NodeHttpClient.layerUndici)),
   )
   const rpc = yield* VividRpcClient.pipe(Effect.provideContext(rpcContext))
-  const threadId = ThreadId.make(NodeCrypto.randomUUID())
-  yield* rpc.CreateThread({ id: threadId, title, projectId: null })
+  return { personId: user.id, rpc, server, origin, cookie }
+})
+type ChainPerson = Effect.Success<ReturnType<typeof chainPerson>>
+
+/** One of that Person's Threads: Flue's view of its conversation, and the Person's way to speak in it. */
+const chainThread = Effect.fn('ThreadProof.thread')(function* (
+  person: ChainPerson,
+  threadId: ThreadId,
+) {
+  const { server, cookie } = person
+  const http = yield* HttpClient.HttpClient
   const conversation = createFlueClient({
     url: new URL(`/api/vivid/${threadId}`, server).href,
     headers: { cookie },
   })
   /** The gateway, rather than the runtime token, admits exactly the Person's public message shape. */
   const send = Effect.fn('ThreadProof.send')(function* (body: string) {
-    const sent = yield* HttpClientRequest.bodyJson(
+    // Built from the contract the route decodes: the route answered 400 to every proof once
+    // `kind` became required and this body was still written by hand.
+    const sent = yield* sendBody(
       HttpClientRequest.post(new URL(`/api/vivid/${threadId}`, server)).pipe(
         HttpClientRequest.setHeader('cookie', cookie),
       ),
-      { body, idempotencyKey: NodeCrypto.randomUUID() },
+      SendMessageRequest.make({ kind: 'user', body, idempotencyKey: NodeCrypto.randomUUID() }),
     )
     const accepted = yield* http
       .execute(sent)
@@ -102,9 +122,30 @@ export const chainFixture = Effect.fn('ThreadProof.fixture')(function* (title: s
     expect(accepted.status).toBe(202)
     return (yield* HttpClientResponse.schemaBodyJson(Receipt)(accepted)).submissionId
   })
-  return { personId: user.id, threadId, rpc, conversation, send, server, origin, cookie }
+  return { ...person, threadId, conversation, send }
+})
+
+/** A Person with one private Thread they started themselves, in which nothing has been said. */
+export const chainFixture = Effect.fn('ThreadProof.fixture')(function* (title: string) {
+  const person = yield* chainPerson()
+  const threadId = ThreadId.make(NodeCrypto.randomUUID())
+  yield* person.rpc.CreateThread({ id: threadId, title, projectId: null })
+  return yield* chainThread(person, threadId)
 })
 export type ChainFixture = Effect.Success<ReturnType<typeof chainFixture>>
+
+/**
+ * A Person who has just arrived. They start nothing: the server opens their first Thread and
+ * admits the Run in which Vivid speaks first (`threads/arrival.ts`), exactly as a client's first
+ * launch asks it to. The Thread is the server's, so its id comes from the answer.
+ */
+export const chainArrival = Effect.fn('ThreadProof.arrival')(function* () {
+  const person = yield* chainPerson()
+  const opened = yield* person.rpc.OpenFirstThread()
+  if (!OpenFirstThreadResult.guards.Opened(opened))
+    return yield* Effect.sync(() => expect.fail('A new Person must have a first Thread opened'))
+  return yield* chainThread(person, opened.thread)
+})
 
 /** Wait on Flue's maintained SSE state; no sleeps, HTTP polling or second model submission. */
 export const waitForState = Effect.fn('ThreadProof.waitForState')(function* (

@@ -1,5 +1,6 @@
 import { Effect, Option, Schema } from 'effect'
 import { File, Paths } from 'expo-file-system'
+import { writeAsStringAsync } from 'expo-file-system/legacy'
 import * as SecureStore from 'expo-secure-store'
 import { Platform } from 'react-native'
 
@@ -75,6 +76,47 @@ export const keepFile = Effect.fn('Storage.keepFile')(function* (name: string, v
       const file = new File(Paths.document, name)
       if (!file.exists) file.create()
       file.write(value)
+    },
+    catch: () => new StorageUnavailable({ message: UNWRITABLE }),
+  })
+})
+
+/** Removes a file of the app's own. One that is not there is already removed. */
+export const forgetFile = Effect.fn('Storage.forgetFile')(function* (name: string) {
+  yield* Effect.try({
+    try: () => {
+      if (!onDevice) {
+        localStorage.removeItem(name)
+        return
+      }
+      const file = new File(Paths.document, name)
+      if (file.exists) file.delete()
+    },
+    catch: () => new StorageUnavailable({ message: UNWRITABLE }),
+  })
+})
+
+/**
+ * Keeps a value in a file of the app's own without holding the app up while it is written.
+ *
+ * `keepFile` writes through `File.write`, which the installed expo-file-system (57.0.7) does on
+ * the JavaScript thread: right for a draft, which is a few words and must be down before the app
+ * can be closed, and wrong for something the size of a snapshot written while a list is being
+ * scrolled. The same package's `expo-file-system/legacy` entry has the one write that is handed
+ * to the native side and answered later (`writeAsStringAsync`,
+ * `build/legacy/FileSystem.d.ts`); it is part of the module already in the app's binary.
+ */
+export const keepFileAside = Effect.fn('Storage.keepFileAside')(function* (
+  name: string,
+  value: string,
+) {
+  yield* Effect.tryPromise({
+    try: async () => {
+      if (!onDevice) {
+        localStorage.setItem(name, value)
+        return
+      }
+      await writeAsStringAsync(new File(Paths.document, name).uri, value)
     },
     catch: () => new StorageUnavailable({ message: UNWRITABLE }),
   })

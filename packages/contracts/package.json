@@ -7,12 +7,14 @@
     ".": "./src/index.ts",
     "./auth": "./src/auth.ts",
     "./code": "./src/code.ts",
-    "./rpc": "./src/rpc.ts"
+    "./rpc": "./src/rpc.ts",
+    "./signin": "./src/signin.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "lint": "oxlint --type-aware src",
-    "test": "vitest run"
+    "typecheck": "node ../../scripts/types.mjs tsconfig.tests.json",
+    "lint": "node ../../scripts/lint.mjs",
+    "test": "vitest run",
+    "types": "node ../../scripts/types.mjs tsconfig.types.json"
   },
   "dependencies": {
     "effect": "catalog:"

@@ -26,3 +26,13 @@ export const normalizeChannelAddress = Effect.fn('Channels.normalizeAddress')(fu
     Effect.mapError(() => new InvalidChannelAddress({ channel: input.channel })),
   )
 })
+
+/** Enrolment accepts only decoded phone identities; the contract already validates E.164. */
+export const normalizeChannelPhone = Effect.fn('Channels.normalizePhone')(function* (input: {
+  readonly channel: Channel
+  readonly value: string
+}) {
+  const address = yield* normalizeChannelAddress(input)
+  if (!address.startsWith('+')) return yield* new InvalidChannelAddress({ channel: input.channel })
+  return address
+})

@@ -12,6 +12,10 @@ export function askTools(runTool: RunTool) {
       name: 'ask_person',
       description:
         'Ask the person a question you cannot answer safely yourself. The turn ends immediately until they answer.',
+      // No `summary`, unlike the other tools: the question is already the sentence the Person
+      // reads for this step, and asking for it twice cost a turn. With it required, five of six
+      // first Threads on 5 October 2026 had this call refused for the missing field and made
+      // again, so the first question arrived a model round late behind a failed step.
       input: v.object({
         question: text('One self-contained question.', 400),
         options: v.pipe(
@@ -34,7 +38,11 @@ export function askTools(runTool: RunTool) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
-            const { request } = yield* client.AskInput(data)
+            const { request } = yield* client.AskInput({
+              question: data.question,
+              options: data.options,
+              allowsOwnAnswer: data.allowsOwnAnswer,
+            })
             return { output: views.inputRequest(request), terminate: true }
           }),
           { signal, tool: 'ask_person' },

@@ -35,7 +35,7 @@ it.effect(
       const running = yield* Effect.promise(() =>
         Promise.resolve(
           tool.run({
-            data: { query: 'Google' },
+            data: { summary: 'Google connections', query: 'Google' },
             signal: new AbortController().signal,
             toolCallId: 'fixture-call',
             log: { info: () => void 0, warn: () => void 0, error: () => void 0 },

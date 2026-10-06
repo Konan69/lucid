@@ -15,6 +15,7 @@ import {
   Pause,
   Play,
   Plus,
+  Repeat2,
   Webhook,
   type LucideIcon,
   Plug,
@@ -23,7 +24,8 @@ import { routines } from '@vivid/state'
 import { commit, warn } from '../data/haptics'
 import { LiveState, refusalOf, useLive, useLiveData, useLiveValue } from '../data/live'
 import { useTheme } from '../theme'
-import { Header, Screen } from '../ui/Header'
+import { Bar } from '../ui/Bar'
+import { Screen } from '../ui/Screen'
 import { Row, Section } from '../ui/List'
 import { Live } from '../ui/Live'
 import { Sheet } from '../ui/Sheet'
@@ -34,7 +36,6 @@ import {
   Dot,
   Empty,
   Field,
-  IconButton,
   Label,
   Labelled,
   Notice,
@@ -43,7 +44,7 @@ import {
   Skeleton,
   styles,
 } from '../ui/ui'
-import { useGo } from '../workspace'
+import { useOpenThread } from '../workspace'
 
 /**
  * What is open over the list: nothing, the form for a new Routine, or one Routine. Only this is
@@ -77,7 +78,7 @@ function useZone(): string {
  */
 export function Routines() {
   const data = useLiveData()
-  const go = useGo()
+  const openThread = useOpenThread()
   const list = useLive(data.live.routines)
   const [over, setOver] = useState<Over>(Over.Nothing())
   // A delete closes its sheet at once, so a refused one has only the list to be said in.
@@ -89,6 +90,8 @@ export function Routines() {
     setOver(next)
   }
   const create = () => open(Over.Creating())
+  // The list has answered and holds nothing: the page is its empty state and nothing else.
+  const none = LiveState.$is('Ready')(list) && list.value.routines.length === 0
   // A Routine open here can be deleted from somewhere else; its sheet then simply is not drawn.
   const selected =
     Over.$is('Showing')(over) && LiveState.$is('Ready')(list)
@@ -97,19 +100,35 @@ export function Routines() {
 
   return (
     <Screen>
-      <Header
+      <Bar
         title="Routines"
-        subtitle="What Vivid repeats, so you don’t have to."
-        onBack={go.goBack}
-        trailing={<IconButton icon={Plus} label="New routine" onPress={create} />}
+        actions={[
+          { symbol: 'plus', icon: Plus, label: 'New routine', disabled: false, onPress: create },
+        ]}
       />
-      <ScrollView contentContainerStyle={[styles.page, styles.column]}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.page, styles.column]}
+      >
+        {/* What this place is, as the page's first line. It was the line under the bar's title;
+            the system's bar has no such line without a native change (`ui/Bar.tsx`). With no
+            Routines the page's empty state says it instead (`Empty`). */}
+        {!none && (
+          <Label size="label" tone="ink-2">
+            What Vivid repeats, so you don’t have to.
+          </Label>
+        )}
         {Option.isSome(undeleted) && <Notice message={undeleted.value} />}
         <Live state={list} loading={<Skeleton rows={4} />}>
           {(value) =>
             value.routines.length === 0 ? (
-              <Empty line="Write an instruction once and Vivid follows it on a schedule.">
-                <Button icon={Plus} label="New routine" onPress={create} />
+              <Empty
+                icon={Repeat2}
+                title="No routines yet"
+                line="Write an instruction once and Vivid follows it on a schedule."
+                room="page"
+              >
+                <Button kind="primary" icon={Plus} label="New routine" onPress={create} />
               </Empty>
             ) : (
               <Section title="Yours">
@@ -134,7 +153,7 @@ export function Routines() {
           onUndeleted={(message) => setUndeleted(Option.some(message))}
           onOpenThread={(id) => {
             close()
-            go.navigate('Chat', { id })
+            openThread(id)
           }}
         />
       )}

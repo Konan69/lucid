@@ -19,7 +19,6 @@ import { AuditListResponse } from './audit.js'
 import {
   NotifyPersonOutcome,
   NotifyPersonRequest,
-  PushUnavailable,
   PushKeyResponse,
   PushTargetId,
   PushTargetListResponse,
@@ -49,6 +48,7 @@ import {
   DeviceResponse,
   EnrolDeviceRequest,
   NoDeviceConnected,
+  ReportDeviceStopRequest,
   WatchDeviceRequestsRequest,
   BrowseOutcome,
   BrowseRequest,
@@ -57,6 +57,12 @@ import {
   CommandOutcome,
   ComputerResponse,
   RunCommandRequest,
+  ComputerShellRequest,
+  ComputerShellOutcome,
+  ComputerFileReadRequest,
+  ComputerFileReadOutcome,
+  ComputerFileWriteRequest,
+  ComputerFileWriteOutcome,
 } from './computers.js'
 import {
   Channel,
@@ -65,6 +71,8 @@ import {
   ChannelListResponse,
   ConnectChannelRequest,
 } from './channels.js'
+import { UseWindowRequest, WindowOutcome } from './windows.js'
+import { DraftListResponse, DraftSaved, SaveDraftRequest } from './drafts.js'
 import {
   AddIntegrationRequest,
   AddIntegrationOutcome,
@@ -218,7 +226,6 @@ export const RpcFailure = Schema.Union([
   DatabaseConstraintViolation,
   DatabaseUnavailable,
   DatabaseFailure,
-  PushUnavailable,
 ])
 export type RpcFailure = typeof RpcFailure.Type
 
@@ -704,6 +711,22 @@ const RunCommand = Rpc.make('RunCommand', {
   payload: RunCommandRequest,
   success: CommandOutcome,
 })
+/** Vivid's own shell and files on the acting Person's Computer; runtime-only at the handler. */
+const ComputerShell = Rpc.make('ComputerShell', {
+  ...call,
+  payload: ComputerShellRequest,
+  success: ComputerShellOutcome,
+})
+const ComputerFileRead = Rpc.make('ComputerFileRead', {
+  ...call,
+  payload: ComputerFileReadRequest,
+  success: ComputerFileReadOutcome,
+})
+const ComputerFileWrite = Rpc.make('ComputerFileWrite', {
+  ...call,
+  payload: ComputerFileWriteRequest,
+  success: ComputerFileWriteOutcome,
+})
 const Browse = Rpc.make('Browse', {
   ...call,
   payload: BrowseRequest,
@@ -730,6 +753,18 @@ const DisconnectChannel = Rpc.make('DisconnectChannel', {
   success: ChannelLinkResponse,
   error: Schema.Union([RpcFailure, ChannelFailure]),
 })
+// ── Drafts: unsent words that follow the Person across devices ─────────────
+/** The Person's drafts in this workspace. Emits again whenever any device saves or clears one. */
+const WatchDrafts = Rpc.make('WatchDrafts', { ...live, success: DraftListResponse })
+/**
+ * Keeps, replaces or (with empty text) removes the draft of one place. A Thread the caller cannot
+ * see is `NotFound`, as everywhere.
+ */
+const SaveDraft = Rpc.make('SaveDraft', {
+  ...call,
+  payload: SaveDraftRequest,
+  success: DraftSaved,
+})
 // ── The Person's own computers ─────────────────────────────────────────────
 /** The desktop app naming itself after sign-in. The same installation always gets the same Device. */
 const EnrolDevice = Rpc.make('EnrolDevice', {
@@ -738,6 +773,8 @@ const EnrolDevice = Rpc.make('EnrolDevice', {
   success: DeviceResponse,
 })
 const ListDevices = Rpc.make('ListDevices', { ...call, success: DeviceListResponse })
+/** The same owned list, kept current as access and desktop presence change on any device. */
+const WatchDevices = Rpc.make('WatchDevices', { ...live, success: DeviceListResponse })
 /** Lets Vivid use this computer and, in the same step, no other computer of this Person. */
 const AllowDevice = Rpc.make('AllowDevice', {
   ...call,
@@ -748,6 +785,17 @@ const RevokeDevice = Rpc.make('RevokeDevice', {
   ...call,
   payload: { id: DeviceId },
   success: DeviceResponse,
+})
+/** The desktop app saying its Person stopped Vivid between two actions of a Run. */
+const ReportDeviceStop = Rpc.make('ReportDeviceStop', {
+  ...call,
+  payload: ReportDeviceStopRequest,
+})
+/** One action in an app on the Person's own computer; the answer is the window after it. */
+const UseWindow = Rpc.make('UseWindow', {
+  ...call,
+  payload: UseWindowRequest,
+  success: WindowOutcome,
 })
 /**
  * The desktop app listening for work. Holding this open is what makes its Device `Connected`;
@@ -905,14 +953,22 @@ export const VividRpc = RpcGroup.make(
   StopComputer,
   HoldComputer,
   RunCommand,
+  ComputerShell,
+  ComputerFileRead,
+  ComputerFileWrite,
   Browse,
   WatchChannels,
+  WatchDrafts,
+  SaveDraft,
   ConnectChannel,
   DisconnectChannel,
   EnrolDevice,
   ListDevices,
+  WatchDevices,
   AllowDevice,
   RevokeDevice,
+  ReportDeviceStop,
+  UseWindow,
   WatchDeviceRequests,
   AnswerDeviceRequestRpc,
   UseDesktop,

@@ -8,7 +8,7 @@ import { personTable, sessionTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer, testConfigLayer } from '../database/testdb.ts'
 import { Changes, silentChangesLayer } from '../live/changes.ts'
-import { unavailableMachineLayer } from './machine.ts'
+import { absentMachineLayer } from './testing.ts'
 import { ComputerStore, computerStoreLayer } from './store.ts'
 import { screenLifetime, screenOriginAllowed } from './screen.ts'
 
@@ -32,7 +32,7 @@ describe('Computer screen browser origin', () => {
 const lifetimeDependencies = Layer.mergeAll(testDatabaseLayer, testConfigLayer, silentChangesLayer)
 const lifetimeStores = computerStoreLayer.pipe(
   Layer.provideMerge(lifetimeDependencies),
-  Layer.provide(unavailableMachineLayer),
+  Layer.provide(absentMachineLayer),
 )
 
 /** Session persistence is real; a controlled Computer endpoint isolates lifetime from provider availability. */

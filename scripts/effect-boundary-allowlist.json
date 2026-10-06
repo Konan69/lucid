@@ -22,12 +22,12 @@
   {
     "file": "packages/agent/runtime/src/tools/scope.ts",
     "classification": "third-party-adapter",
-    "symbols": ["runTool"]
+    "symbols": ["runTool", "runScoped"]
   },
   {
-    "file": "apps/server/src/code/worker.ts",
+    "file": "packages/agent/runtime/src/notes.ts",
     "classification": "third-party-adapter",
-    "symbols": ["invokeTool"]
+    "symbols": ["openStore", "opened", "attempt", "noteIndex"]
   },
   {
     "file": "apps/server/src/auth/dialect.ts",
@@ -37,7 +37,7 @@
   {
     "file": "apps/server/src/channels/photon.ts",
     "classification": "third-party-adapter",
-    "symbols": ["connectPhoton", "closePhoton", "makePhoton"]
+    "symbols": ["openPhoton", "connectPhoton", "closePhoton", "makePhoton"]
   },
   {
     "file": "packages/agent/durable/src/pi.ts",

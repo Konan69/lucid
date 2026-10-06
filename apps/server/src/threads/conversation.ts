@@ -3,7 +3,6 @@ import type * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import {
   MessageAttachment,
-  Channel,
   SignalType,
   type Conflict,
   type LibraryFolderId,
@@ -26,7 +25,7 @@ import type { DatabaseInfrastructureError } from '../database/client.ts'
 export const DeliveryMessage = Schema.TaggedUnion({
   Said: { body: Schema.String, attachments: Schema.optionalKey(Schema.Array(MessageAttachment)) },
   /** A linked personal channel supplies a Person's text through server delivery, never an impersonated signal. */
-  ChannelText: { channel: Channel, body: Schema.String },
+  ChannelText: { body: Schema.String },
   FirstConversation: {},
   Signal: {
     type: SignalType,

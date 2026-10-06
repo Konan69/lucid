@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import {
   BRIDGE_NAMESPACE,
   BRIDGE_INVOKE_CHANNEL,
+  REPORTING_ARGUMENT,
   BridgeRequest,
   BridgeResponse,
   type VividDesktopBridge,
@@ -69,6 +70,9 @@ const invoke = Effect.fn('DesktopPreload.invoke')(function* (request: BridgeRequ
     ExternalOpened: answered,
     Pages: answered,
     DeviceLink: answered,
+    GoogleSignInBegun: answered,
+    GoogleSignInEnded: answered,
+    GoogleSignInCancelled: answered,
   })
 })
 
@@ -109,6 +113,38 @@ const openExternal = Effect.fn('DesktopPreload.openExternal')(function* (value: 
   return yield* new UnexpectedBridgeResponse({})
 })
 
+/**
+ * Starts a Google sign-in, or opens the browser again for the one in progress. Both carry no
+ * argument and answer alike: whether the system browser opened. Main builds the address from the
+ * server it has saved, so nothing a document says can send the browser anywhere.
+ */
+const signInBrowser = Effect.fn('DesktopPreload.signInBrowser')(function* (
+  request:
+    | typeof BridgeRequest.cases.BeginGoogleSignIn.Type
+    | typeof BridgeRequest.cases.ReopenGoogleSignIn.Type,
+) {
+  const response = yield* invoke(request)
+  if (BridgeResponse.guards.GoogleSignInBegun(response)) return response.browser
+  return yield* new UnexpectedBridgeResponse({})
+})
+
+/**
+ * Waits for the sign-in in progress to end. The invoke stays pending for as long as the attempt
+ * does. A `Granted` ending crosses here once, as plain text, for the document to trade.
+ */
+const signInEnded = Effect.fn('DesktopPreload.signInEnded')(function* () {
+  const response = yield* invoke(BridgeRequest.cases.AwaitGoogleSignIn.make({}))
+  if (BridgeResponse.guards.GoogleSignInEnded(response)) return response.value
+  return yield* new UnexpectedBridgeResponse({})
+})
+
+/** Stops the sign-in in progress; a pending `ended` then resolves `Cancelled`. */
+const cancelSignIn = Effect.fn('DesktopPreload.cancelSignIn')(function* () {
+  const response = yield* invoke(BridgeRequest.cases.CancelGoogleSignIn.make({}))
+  if (BridgeResponse.guards.GoogleSignInCancelled(response)) return undefined
+  return yield* new UnexpectedBridgeResponse({})
+})
+
 /** What this computer is to Vivid. `refresh` also asks the server again, after a decision. */
 const deviceLink = Effect.fn('DesktopPreload.deviceLink')(function* (
   request:
@@ -122,6 +158,8 @@ const deviceLink = Effect.fn('DesktopPreload.deviceLink')(function* (
 
 /** Promise terminals live only at Electron's isolated context bridge. */
 const bridge: VividDesktopBridge = {
+  // Main says so by an argument on this process (`REPORTING_ARGUMENT`), read here once.
+  reporting: process.argv.includes(REPORTING_ARGUMENT),
   pages: createPagesBridge(invoke, (program) => Effect.runPromise(program)),
   device: {
     get: () => Effect.runPromise(deviceLink(BridgeRequest.cases.GetDeviceLink.make({}))),
@@ -134,6 +172,12 @@ const bridge: VividDesktopBridge = {
   },
   getAppVersion: () => Effect.runPromise(getAppVersion()),
   openExternal: (url) => Effect.runPromise(openExternal(url)),
+  signIn: {
+    begin: () => Effect.runPromise(signInBrowser(BridgeRequest.cases.BeginGoogleSignIn.make({}))),
+    reopen: () => Effect.runPromise(signInBrowser(BridgeRequest.cases.ReopenGoogleSignIn.make({}))),
+    ended: () => Effect.runPromise(signInEnded()),
+    cancel: () => Effect.runPromise(cancelSignIn()),
+  },
 }
 // Preload limits the visible API; main independently checks the actual sender frame on every call.
 const chooserDocument =
@@ -142,5 +186,11 @@ contextBridge.exposeInMainWorld(
   BRIDGE_NAMESPACE,
   chooserDocument
     ? bridge
-    : { getAppVersion: bridge.getAppVersion, pages: bridge.pages, device: bridge.device },
+    : {
+        reporting: bridge.reporting,
+        getAppVersion: bridge.getAppVersion,
+        pages: bridge.pages,
+        device: bridge.device,
+        signIn: bridge.signIn,
+      },
 )

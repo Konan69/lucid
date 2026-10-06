@@ -15,9 +15,12 @@ import type * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
 import { modelText } from './views.ts'
 import type { NameMissing, NameAmbiguous } from './names.ts'
 import type { NobodyToActFor } from '../client.ts'
+import type { NoteMissing, NotesUnavailable } from '../notes.ts'
 
 export interface ToolResult {
   readonly output: Schema.Json
+  /** Only Computer tools supply a source; Person receipts cannot advertise the cloud viewer. */
+  readonly computer?: 'person' | 'vivid'
   readonly terminate?: boolean
 }
 
@@ -27,6 +30,8 @@ export type ToolFailure =
   | NameAmbiguous
   | RpcFailure
   | NobodyToActFor
+  | NoteMissing
+  | NotesUnavailable
   | RpcClientError.RpcClientError
   | Config.ConfigError
 
@@ -98,14 +103,17 @@ function boundDocument(value: Schema.Json): Schema.Json {
 
 /** Product failures are safe sentences; driver payloads and supplied credentials never escape. */
 function failure(message: string) {
-  return Effect.succeed({ output: { ok: false, message: modelText(message) }, terminate: false })
+  return Effect.succeed<ToolResult>({
+    output: { ok: false, message: modelText(message) },
+    terminate: false,
+  })
 }
 
 /** Only tool identity and the declared failure tag reach logs; payloads and causes stay private. */
 export const warnFailure = (tool: string, tag: string) =>
   Effect.logWarning(`Tool failed tool=${tool} tag=${tag}`)
 
-const computerTools = new Set(['browse', 'run_command', 'use_desktop'])
+const computerTools = new Set(['browse', 'use_desktop'])
 const session = Schema.encodeSync(ComputerSession)(
   ComputerSession.make({
     active: true,
@@ -117,17 +125,28 @@ const session = Schema.encodeSync(ComputerSession)(
  * identifies the Thread/Run; the receipt adds no owner handle or provider authority. The relay
  * checks the viewer's own cookie again, including when this receipt is read in a shared Thread.
  */
-function withComputer(output: Schema.Json, tool: string): Schema.Json {
-  return computerTools.has(tool) && isObject(output) && output.ok === true
+function withComputer(
+  output: Schema.Json,
+  tool: string,
+  computer: Option.Option<'person' | 'vivid'>,
+): Schema.Json {
+  return !Option.contains(computer, 'person') &&
+    computerTools.has(tool) &&
+    isObject(output) &&
+    output.ok === true
     ? Object.fromEntries([...Object.entries(output), ['computer', session]])
     : output
 }
 
 /** The server bounds programs to 32 KiB, including logs and up to 100 receipts; preserve that result. */
-function modelOutput(output: Schema.Json, tool: string): Schema.Json {
+function modelOutput(
+  output: Schema.Json,
+  tool: string,
+  computer: Option.Option<'person' | 'vivid'>,
+): Schema.Json {
   if (tool === 'run_code') return output
   if (tool === 'read_document') return boundDocument(output)
-  return boundOutput(withComputer(output, tool))
+  return boundOutput(withComputer(output, tool, computer))
 }
 
 /** Only declared product failures are recovered; transport and configuration have fixed safe wording; defects propagate. */
@@ -153,6 +172,14 @@ export const settle = Effect.fn('Tools.settle')(function* (
         failure('Vivid cannot reach its server right now; try again in a moment.'),
       ConfigError: () => failure('Vivid cannot reach its server right now; try again in a moment.'),
       NobodyToActFor: () => failure('There is no person behind this message to act for.'),
+      NoteMissing: ({ file }) =>
+        failure(
+          `You have no note called ${file}; use a file name from the list of what you remember.`,
+        ),
+      NotesUnavailable: () =>
+        failure(
+          'Your notes cannot be read or changed right now; say so, and do not claim it is saved.',
+        ),
       NotFound: () => failure('It does not exist or the person cannot see it.'),
       Forbidden: () => failure('The person is not allowed to do that here.'),
       Unauthenticated: () => failure('The person needs to sign in before Vivid can do that.'),
@@ -160,7 +187,6 @@ export const settle = Effect.fn('Tools.settle')(function* (
         failure('The request conflicts with the current state; check it before trying again.'),
       InvalidRequest: () => failure('The request is invalid; check the supplied details.'),
       ServiceUnavailable: () => failure('That part of Vivid is not available right now.'),
-      PushUnavailable: () => failure('Push notifications are not configured on this Vivid server.'),
       RuntimeUnavailable: () => failure('Vivid cannot start that work right now.'),
       DatabaseUnavailable: () => failure('Vivid cannot reach its saved records right now.'),
       DatabaseConstraintViolation: () =>
@@ -169,7 +195,7 @@ export const settle = Effect.fn('Tools.settle')(function* (
     }),
   )
   return {
-    output: modelOutput(result.output, tool),
+    output: modelOutput(result.output, tool, Option.fromUndefinedOr(result.computer)),
     terminate: result.terminate === true,
   }
 })

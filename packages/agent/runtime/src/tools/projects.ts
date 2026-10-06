@@ -2,7 +2,7 @@ import { defineTool } from '@flue/runtime'
 import { CreateProjectRequest } from '@vivid/contracts'
 import { Effect, Match, Result } from 'effect'
 import * as v from 'valibot'
-import { text } from './inputs.ts'
+import { summary, text } from './inputs.ts'
 import { named } from './names.ts'
 import { modelText } from './views.ts'
 import { Scope, type RunTool } from './scope.ts'
@@ -50,7 +50,7 @@ export function projectTools(runTool: RunTool) {
       name: 'create_project',
       description:
         'Create a Project when work clearly forms a logical group with its own ongoing goal. Use a short specific name and choose TopLevel or an exact existing parent Project name. Creates it in the acting Person’s current space; does not move this Thread or assign a status, deadline or next step. Do not create a Project for a one-off question or duplicate an existing group.',
-      input: v.strictObject({ name: text('Short specific Project name.', 80), location }),
+      input: v.strictObject({ summary, name: text('Short specific Project name.', 80), location }),
       /** Return the server-confirmed name and relationship, never ownership or storage identifiers. */
       run({ data, signal }) {
         return runTool(

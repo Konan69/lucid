@@ -372,3 +372,21 @@ it('repeats no group without bound in any pattern it runs', () => {
   // ways. This reads the sources, so it is a check on how they are written, not a measurement.
   for (const pattern of redactionPatterns) expect(pattern.source).not.toMatch(/\)(?:[*+]|\{\d+,\})/)
 })
+
+/**
+ * A class's tag is its author's text. One that is not a short code name is reported as `_OTHER`,
+ * so neither the log line nor the span ever carries it.
+ */
+it('names a failure _OTHER when its class tag is not a short code name', () => {
+  // oxlint-disable-next-line vivid/require-schema-class-identifier -- The megabyte tag is the case under test; it cannot be a literal.
+  class Huge extends Schema.TaggedError<Huge>()('H'.repeat(1_000_000), {}, { title: 'Huge' }) {}
+  class Sentence extends Schema.TaggedError<Sentence>()(
+    'token is abc123; see above',
+    {},
+    { title: 'Sentence' },
+  ) {}
+  class Fine extends Schema.TaggedError<Fine>()('ProbeFine', {}, { title: 'Fine' }) {}
+  expect(summarize('expected', new Huge({})).type).toBe('_OTHER')
+  expect(summarize('expected', new Sentence({})).type).toBe('_OTHER')
+  expect(summarize('expected', new Fine({})).type).toBe('ProbeFine')
+})

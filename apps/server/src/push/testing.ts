@@ -5,6 +5,7 @@ import {
   Person,
   PersonId,
   PushDestination,
+  PushOutcome,
   SessionId,
   ThreadId,
   Workspace,
@@ -20,19 +21,19 @@ import { runStoreLayer } from '../threads/runs.ts'
 import { threadStoreLayer } from '../threads/store.ts'
 import { threads } from '../threads/tables.ts'
 import { PushAdapter } from './adapter.ts'
-import { PushConfig, PushConfiguration } from './config.ts'
-import { pushLayer } from './delivery.ts'
+import { PushConfig, type PushConfiguration } from './config.ts'
+import { Push, pushLayer } from './delivery.ts'
 import { PushAcceptance, PushTargetGone, PushUncertain } from './receipts.ts'
 import { pushTargetsLayer } from './targets.ts'
 
 /** Ephemeral keys exist only in this test fixture; no operator credentials are read. */
 const curve = NodeCrypto.createECDH('prime256v1')
 curve.generateKeys()
-export const testPushConfig = PushConfiguration.Configured({
+export const testPushConfig: PushConfiguration = {
   publicKey: curve.getPublicKey().toString('base64url'),
   privateKey: Redacted.make(curve.getPrivateKey().toString('base64url')),
   subject: 'mailto:push@example.test',
-})
+}
 
 export interface PushProbeService {
   readonly sent: Ref.Ref<ReadonlyArray<PushPayload>>
@@ -74,24 +75,34 @@ const adapterLayer = Layer.effect(
   }),
 ).pipe(Layer.provideMerge(fakeAdapterLayer))
 
-/** The same composition starts successfully with configured or unavailable push authority. */
-const testLayers = (config: PushConfiguration) => {
-  const foundation = Layer.mergeAll(
-    testDatabaseLayer,
-    silentChangesLayer,
-    Layer.succeed(PushConfig, config),
-    adapterLayer,
-  )
-  const stores = Layer.mergeAll(
-    pushTargetsLayer,
-    presenceLayer,
-    threadStoreLayer,
-    runStoreLayer,
-  ).pipe(Layer.provideMerge(foundation))
-  return pushLayer.pipe(Layer.provideMerge(stores))
-}
-export const pushTestLayer = testLayers(testPushConfig)
-export const unavailableTestLayer = testLayers(PushConfiguration.Unavailable())
+/** Only the remote send is substituted; targets, sessions, Notifications and the ledger are real. */
+const foundation = Layer.mergeAll(
+  testDatabaseLayer,
+  silentChangesLayer,
+  Layer.succeed(PushConfig, testPushConfig),
+  adapterLayer,
+)
+const stores = Layer.mergeAll(
+  pushTargetsLayer,
+  presenceLayer,
+  threadStoreLayer,
+  runStoreLayer,
+).pipe(Layer.provideMerge(foundation))
+export const pushTestLayer = pushLayer.pipe(Layer.provideMerge(stores))
+
+/**
+ * For suites whose claim is not push: a Notification is still recorded in the app, and delivery
+ * answers as it does for a Person with no device registered, without a database or a network.
+ */
+export const silentPushLayer = Layer.succeed(
+  Push,
+  Push.of({
+    deliver: Effect.fn('PushTest.silentDeliver')(() =>
+      Effect.succeed(PushOutcome.cases.NoTargets.make({})),
+    ),
+    reconcile: Effect.fn('PushTest.silentReconcile')(() => Effect.void),
+  }),
+)
 
 /** Unique People and scopes isolate every test; cascade cleanup is registered before writes. */
 export const fixture = Effect.fn('PushTest.fixture')(function* () {

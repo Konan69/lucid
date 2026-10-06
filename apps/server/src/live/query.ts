@@ -6,6 +6,7 @@ import { Forbidden, type PersonId, type SessionId } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import type { Actor } from '../auth/access.ts'
 import { sessionExpiry, sessionWorkspace } from '../auth/session.ts'
+import { untraced } from '../observability/quiet.ts'
 import { Changes, Topic, topicsOf } from './changes.ts'
 
 /**
@@ -71,8 +72,10 @@ export const live = <A, E, R>(
           by: 'person',
           threadId: Option.none(),
         })),
+        // Read again on every reload for as long as the subscription is open; see `untraced`.
+        untraced,
       )
-      const current = Effect.flatMap(actor, load)
+      const current = Effect.flatMap(actor, load).pipe(untraced)
       // Signing out moves the Person's topic, so the Actor reload above already fails on it.
       // Running out writes nothing and moves no topic, so it needs the timer: without it a
       // subscription whose data never changes again would outlive its session indefinitely.
@@ -96,7 +99,7 @@ export const sessionRanOut = (personId: PersonId, sessionId: SessionId) =>
   Effect.gen(function* () {
     const expiresAt = yield* sessionExpiry(personId, sessionId)
     yield* Effect.sleep(expiresAt - (yield* Clock.currentTimeMillis))
-  }).pipe(Effect.forever)
+  }).pipe(Effect.forever, untraced)
 
 /**
  * Fails, with `Unauthenticated`, the moment a session stops being one. Never succeeds.
@@ -112,8 +115,9 @@ export const sessionRanOut = (personId: PersonId, sessionId: SessionId) =>
  * - It runs out, which `sessionRanOut` waits for.
  */
 export const sessionEnded = (personId: PersonId, sessionId: SessionId) => {
-  const removed = watch([Topic.person(personId)], sessionWorkspace(personId, sessionId)).pipe(
-    Stream.runDrain,
-  )
+  const removed = watch(
+    [Topic.person(personId)],
+    sessionWorkspace(personId, sessionId).pipe(untraced),
+  ).pipe(Stream.runDrain)
   return Effect.raceFirst(removed, sessionRanOut(personId, sessionId))
 }

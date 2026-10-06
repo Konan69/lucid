@@ -22,6 +22,8 @@
   --page-tab-w: 236px;
   --page-tab-min-w: 90px;
   --page-nav-w: 98px;
+  /* Under the machine's screen: the 40 px line of control and the 12 px between the two. */
+  --screen-dock-h: 52px;
   --around-w: 300px;
   --around-reserve-w: 312px;
   /* The primary button under the pointer: its own colour, a step toward the ink. Stated here and
@@ -29,16 +31,130 @@
   --accent-hover: color-mix(in srgb, var(--primary) 88%, var(--foreground));
 }
 
-/* The Computer beside the Thread: as wide as the divider was left, or the whole page in full view. */
+/* ── Glass: the numbers ─────────────────────────────────────
+   The frosted material of everything that floats, ported from T3 Code
+   (`apps/web/src/index.css`: `--glass-blur`, `--glass-opacity`, `--glass-saturation` on `:root`
+   and `.dark`; the rules `.dropdown-glass`, `.dialog-glass`, `.dialog-backdrop`). Dark is the
+   default here as it is in the tokens, so T3's `.dark` values sit on `:root` and its `:root`
+   values under light. They are stated here and not in the tokens because native cannot read
+   `color-mix` or `backdrop-filter`; the phone's glass is `apps/mobile/src/ui/Glass.tsx`.
+
+   Kept from T3: the blur (12px light, 16px dark), the saturation (1.14 light, 1.08 dark, on the
+   modal material only, as `.dropdown-glass` has none), the modal tint (80%), the veil behind a
+   modal (the page's own colour at 60% light and 64% dark, blurred 4px), the 4% inner highlight
+   of a dark dialog and the 6% one of a dark popover (`components/ui/popover.tsx`).
+
+   Changed from T3, each because words failed WCAG AA (4.5:1) over the worst thing that can be
+   under the material, a black picture in light and a white one in dark:
+   - `--glass-regular` is 92% light and 94% dark where `.dropdown-glass` works out to 84%. At 84%
+     `ink-3` read 3.78:1 in light and 3.27:1 in dark; it now reads 4.59 and 4.57.
+     Body words read 15.4 and 14.2. There is no thinner material for a toast or a floating
+     control: even at 86% the toast's action, written in the accent, read 3.86:1 in dark.
+   - the tint is the raised layer (`--surface-3`) for every material. T3 tints a dialog with its
+     page colour; Vivid's page in light (#fcfcfc) at 80% left `ink-3` at 4.47 where white holds
+     4.57. `--glass-modal` holds only over the veil: the veil is what brings a black picture up
+     to mid grey before the dialog's own 80% is laid on it (`ink-3` 4.57 light, 4.56 dark).
+   T3's own edge (the ink at 10%) and shadows are not taken: a layer's edge and lift are Vivid's
+   tokens (`lift`, `lift-lg`). T3 lets a Person set the opacity (40 to 100%); Vivid does not,
+   because below these numbers the words stop being readable. */
+:root {
+  --glass-blur: 16px;
+  --glass-saturation: 1.08;
+  --glass-regular: 94%;
+  --glass-modal: 80%;
+  --glass-veil: 64%;
+  --glass-veil-blur: 4px;
+  --glass-highlight-regular: rgb(255 255 255 / 0.06);
+  --glass-highlight-modal: rgb(255 255 255 / 0.04);
+}
+html[data-theme='light'] {
+  --glass-blur: 12px;
+  --glass-saturation: 1.14;
+  --glass-regular: 92%;
+  --glass-veil: 60%;
+  /* A light surface is already the brightest thing on the page; a highlight on it draws nothing. */
+  --glass-highlight-regular: transparent;
+  --glass-highlight-modal: transparent;
+}
+
+/* Where the popped-out Computer is and how large. They are lengths that do not inherit, so a
+   drag that rewrites them restyles the window and nothing inside it. */
+@property --float-x {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --float-y {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --float-w {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 480px;
+}
+@property --float-h {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 420px;
+}
+/* The light a glass surface catches along its top edge. It does not inherit, so a lifted control
+   inside a glass popover does not take the popover's highlight as its own. */
+@property --glass-highlight {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: transparent;
+}
+/* The Computer, three ways. Beside the Thread it is as wide as the divider was left. In full view
+   it is the whole page. Popped out it is a window over the page: its size and place are written
+   on the element by `screen/computer/place.ts`, the place as `translate` so a drag is not a
+   layout, and it casts the one shadow a floating layer casts. */
 @utility computer-workspace {
   position: relative;
   width: var(--computer-w);
-  &[data-full='true'] {
+  height: 100%;
+  &[data-view='full'] {
     position: absolute;
     inset: 0;
     width: 100%;
     z-index: 30;
   }
+  &[data-view='popout'] {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: var(--float-w);
+    height: var(--float-h);
+    translate: var(--float-x) var(--float-y);
+    z-index: 30;
+    overflow: hidden;
+    border-radius: var(--radius-panel);
+    box-shadow:
+      0 0 0 1px var(--line-3),
+      var(--shadow-modal);
+  }
+}
+/* The room the machine's screen is given, and the largest screen that fits it. The screen keeps
+   the machine's own shape (`--screen-w` by `--screen-h`, read from the stream), is as wide as the
+   room when the room is tall, and as tall as the room less the line of control when the room is
+   wide. The units are the room's own, so the divider, the popped-out window and full view all fit
+   the screen with no script. */
+@utility screen-room {
+  container-type: size;
+}
+@utility screen-fit {
+  width: min(100cqw, calc((100cqh - var(--screen-dock-h)) * var(--screen-w) / var(--screen-h)));
+}
+/* A provider's viewer inside a picture: laid out 1280 wide and as tall as its holder is at that
+   width, then scaled to the holder (`--desk-fit`, written by `fitDesk` in computer/Picture.tsx). */
+@utility picture-desk {
+  width: 1280px;
+  height: calc(100% / var(--desk-fit, 1));
+  scale: var(--desk-fit, 1);
+}
+@utility screen-glass {
+  aspect-ratio: var(--screen-w) / var(--screen-h);
 }
 /* The divider's line, centred in its wider hit area so the hairline stays one pixel. */
 @utility computer-edge {
@@ -173,18 +289,22 @@
    In the page a layer takes `edge` and nothing else: a card in a list is not floating and must not
    look it, and hover is a fill, never a deeper shadow. Over the page it takes `lift` (a menu, a
    popover, the composer, a toast) or `lift-lg` (a dialog, the palette, Settings): the same edge and
-   one soft shadow from the tokens. The edge is the first box-shadow layer, so it never moves layout
-   and never needs a border beside it. `--edge-color` is how a state recolours it. */
+   one soft shadow from the tokens. The edge is a box-shadow layer, so it never moves layout and
+   never needs a border beside it. `--edge-color` is how a state recolours it. The inset layer
+   before it is the highlight a glass material sets (`--glass-highlight`); on anything else it is
+   transparent and paints nothing. */
 @utility edge {
   box-shadow: 0 0 0 1px var(--edge-color, var(--line-3));
 }
 @utility lift {
   box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
     0 0 0 1px var(--edge-color, var(--line-3)),
     var(--shadow-float);
 }
 @utility lift-lg {
   box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
     0 0 0 1px var(--edge-color, var(--line-3)),
     var(--shadow-modal);
 }
@@ -202,21 +322,86 @@
 }
 
 /* ── Glass: for what floats over live content ─────────────── */
-/* 92%: enough of the page comes through to say "this floats", not enough to read through it. At
-   78% the rows under an open menu were legible between its own rows. */
+/* Two materials and the veil, and a surface takes exactly one. The numbers and where they come
+   from are at the top of this file. Each is one backdrop-filter on the surface itself, never on
+   something inside another blurred surface, and each becomes the solid raised layer with the same
+   edge where the browser cannot blur (T3's `@supports not` block) or the Person asked the system
+   for less transparency or more contrast (T3 has no such rule; added).
+   Glass is for what is small or soon gone. A pane that fills the height of the window and
+   scrolls is a solid layer: blurring it is paid again on every frame of the scroll.
+
+   - `glass`        beside the content, with nothing between: a menu, a popover, a select, a
+                    toast, a floating control, the card around Vivid.
+   - `glass-modal`  over `glass-scrim` and nowhere else: a dialog, the palette. */
 @utility glass {
-  background: color-mix(in srgb, var(--surface-3) 92%, transparent);
-  /* No saturation boost: the chrome is neutral, and a boosted backdrop tinted it with whatever
-     colour happened to be underneath. */
-  -webkit-backdrop-filter: blur(20px);
-  backdrop-filter: blur(20px);
-  @supports not (backdrop-filter: blur(1px)) {
+  --glass-highlight: var(--glass-highlight-regular);
+  background: color-mix(in srgb, var(--surface-3) var(--glass-regular), transparent);
+  /* No saturation boost, as T3's `.dropdown-glass` has none: the chrome is neutral, and a boosted
+     backdrop tinted it with whatever colour happened to be underneath. */
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
     background: var(--surface-3);
+  }
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    background: var(--surface-3);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+/* T3's `.dialog-glass`. It is the thinner tint of the two and the only one that boosts
+   saturation, and both are safe only because the veil has already quietened the page under it. */
+@utility glass-modal {
+  --glass-highlight: var(--glass-highlight-modal);
+  background: color-mix(in srgb, var(--surface-3) var(--glass-modal), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    background: var(--surface-3);
+  }
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    background: var(--surface-3);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+/* The veil behind a modal: T3's `.dialog-backdrop`. The page's own colour laid over the page, so
+   the page fades toward the canvas instead of going dark, and a 4px blur that takes the edges off
+   what is behind. Where there is no blur it is the dark scrim of the tokens, because a veil of
+   the page's colour with nothing blurred does not say "behind".
+   While the Computer is on the page the veil is not blurred: the machine's screen is a live
+   picture, and a blur over the whole window would be worked out again on each of its frames. */
+@utility glass-scrim {
+  background: color-mix(in srgb, var(--surface-0) var(--glass-veil), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-veil-blur));
+  backdrop-filter: blur(var(--glass-veil-blur));
+  :where(html:has(.computer-workspace)) & {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    background: var(--scrim);
+  }
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    background: var(--scrim);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 
 /* ── Scroll fades ──────────────────────────────────────────── */
 /* Scrolls without a visible track, for panes whose edge fade already signals overflow. */
+/* A frameless desktop window is moved by whatever is marked as its drag region. `window-drag` is
+   the handle; `window-hold` keeps a control on it out of the region, or a press on the control
+   would start a drag instead. Used by the notice window (`src/notice.tsx`); in a browser tab
+   both do nothing. */
+@utility window-drag {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+@utility window-hold {
+  -webkit-app-region: no-drag;
+}
 @utility scrollbar-hidden {
   scrollbar-width: none;
 }

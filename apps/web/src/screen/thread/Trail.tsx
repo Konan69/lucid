@@ -53,7 +53,17 @@ const stateOf = (tool: ToolPart): StepState => {
 }
 
 /** The steps that happen on Vivid's computer, where there is something to watch. */
-const ON_COMPUTER = new Set(['run_command', 'browse', 'use_desktop'])
+const ON_COMPUTER = new Set([
+  'run_command',
+  'bash',
+  'read',
+  'write',
+  'edit',
+  'grep',
+  'glob',
+  'browse',
+  'use_desktop',
+])
 
 /**
  * The small picture beside each kind of step, so a list of them can be told apart at a glance.
@@ -71,11 +81,18 @@ const ICON = new Map<string, LucideIcon>([
   ['remember', Brain],
   ['forget', Brain],
   ['correct', Brain],
+  ['activate_skill', ListChecks],
   ['read_skill', ListChecks],
   ['save_skill', ListChecks],
   ['create_routine', Repeat2],
   ['list_routines', Repeat2],
   ['run_command', Terminal],
+  ['bash', Terminal],
+  ['read', FileText],
+  ['write', FileText],
+  ['edit', FileText],
+  ['grep', Search],
+  ['glob', Search],
   ['run_code', Code2],
   ['browse', Globe],
   ['read_page', Globe],

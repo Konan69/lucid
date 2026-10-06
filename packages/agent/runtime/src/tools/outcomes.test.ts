@@ -2,13 +2,16 @@ import { describe, expect, it } from '@effect/vitest'
 import {
   ApprovalId,
   BrowseOutcome,
-  CommandOutcome,
   DesktopOutcome,
   ServiceId,
   ToolOutcome,
+  WindowOutcome,
+  WindowResult,
+  AppId,
+  WindowId,
 } from '@vivid/contracts'
 import { Effect } from 'effect'
-import { browseOutcome, commandOutcome, desktopOutcome, toolOutcome } from './outcomes.ts'
+import { browseOutcome, desktopOutcome, toolOutcome, windowOutcome } from './outcomes.ts'
 
 const approval = { approvalId: ApprovalId.make('approval-1'), summary: 'Send the draft.' }
 
@@ -34,10 +37,9 @@ describe('outcome mapping', () => {
     })
   })
 
-  it.effect('uncertain Computer dispatch refuses blind retries for all three tools', () =>
+  it.effect('uncertain Computer dispatch refuses blind retries for both tools', () =>
     Effect.sync(() => {
       const outcomes = [
-        commandOutcome(CommandOutcome.cases.OutcomeUnknown.make({})),
         browseOutcome(BrowseOutcome.cases.OutcomeUnknown.make({})),
         desktopOutcome(DesktopOutcome.cases.OutcomeUnknown.make({})),
       ]
@@ -57,7 +59,6 @@ describe('outcome mapping', () => {
       Effect.sync(() => {
         const results = [
           toolOutcome(ToolOutcome.cases.ApprovalRequired.make(approval)),
-          commandOutcome(CommandOutcome.cases.ApprovalRequired.make(approval)),
           browseOutcome(BrowseOutcome.cases.ApprovalRequired.make(approval)),
         ]
         for (const result of results) {
@@ -71,19 +72,11 @@ describe('outcome mapping', () => {
       }),
   )
 
-  it.effect('preserves completed data and Computer truncation and exit status', () =>
+  it.effect('preserves completed data', () =>
     Effect.sync(() => {
       const output = { subject: 'The signed agreement', messages: [{ text: 'Attached.' }] }
       expect(toolOutcome(ToolOutcome.cases.Completed.make({ output }))).toEqual({
         output: { ok: true, output, message: 'The action completed.' },
-      })
-      const command = { exitCode: 7, output: 'Permission denied.', truncated: true }
-      expect(commandOutcome(CommandOutcome.cases.Completed.make({ result: command }))).toEqual({
-        output: {
-          ok: true,
-          result: command,
-          message: 'The command completed; check its exit code.',
-        },
       })
       const page = {
         address: 'https://example.test',
@@ -107,7 +100,6 @@ describe('outcome mapping', () => {
       const rule = 'Never send a payment.'
       for (const result of [
         toolOutcome(ToolOutcome.cases.Blocked.make({ rule })),
-        commandOutcome(CommandOutcome.cases.Blocked.make({ rule })),
         browseOutcome(BrowseOutcome.cases.Blocked.make({ rule })),
       ]) {
         expect(result.output).toEqual({
@@ -151,10 +143,7 @@ describe('outcome mapping', () => {
   it.effect('explains a Person holding the Computer without suggesting a bypass', () =>
     Effect.sync(() => {
       const reason = 'The person holds the keyboard'
-      for (const result of [
-        commandOutcome(CommandOutcome.cases.Unavailable.make({ reason })),
-        browseOutcome(BrowseOutcome.cases.Unavailable.make({ reason })),
-      ]) {
+      for (const result of [browseOutcome(BrowseOutcome.cases.Unavailable.make({ reason }))]) {
         expect(result.output).toEqual({
           ok: false,
           reason,
@@ -163,4 +152,63 @@ describe('outcome mapping', () => {
       }
     }),
   )
+})
+
+/** Native receipts give operating-system refusals actionable, fixed model instructions. */
+describe('Person window outcomes', () => {
+  it('returns app IDs and window IDs with titles in compact text', () => {
+    expect(
+      windowOutcome(
+        WindowOutcome.cases.Completed.make({
+          result: WindowResult.cases.Apps.make({
+            apps: [{ id: AppId.make('terminal'), name: 'Terminal' }],
+            skipped: 0,
+          }),
+        }),
+      ).output,
+    ).toMatchObject({ apps: 'terminal: Terminal' })
+    expect(
+      windowOutcome(
+        WindowOutcome.cases.Completed.make({
+          result: WindowResult.cases.Windows.make({
+            windows: [{ id: WindowId.make('window'), app: 'Terminal', title: 'Project shell' }],
+          }),
+        }),
+      ).output,
+    ).toMatchObject({ windows: 'window: Terminal — Project shell' })
+  })
+
+  it('explains elevation and recovery from vanished windows or stale looks', () => {
+    for (const [reason, message] of [
+      [
+        'Elevated',
+        'Windows does not let Vivid type into an administrator window. Ask the person to do that step.',
+      ],
+      ['WindowGone', 'The window is gone. List the windows again.'],
+      ['LookStale', 'This look is stale. Look at the window again before acting.'],
+      [
+        'NotInFront',
+        'Windows would not bring this window forward. Ask the person to bring it forward.',
+      ],
+      ['Unsupported', 'This computer cannot do that action. Ask the person to do it.'],
+    ] as const) {
+      const receipt = windowOutcome(WindowOutcome.cases.Refused.make({ reason }))
+      expect(receipt.output).toMatchObject({ ok: false, reason, message })
+      expect(receipt.terminate).toBe(false)
+    }
+  })
+
+  it('keeps missing connection distinct from uncertainty and ends an expired Run', () => {
+    expect(windowOutcome(WindowOutcome.cases.NotConnected.make({})).output).toMatchObject({
+      message: 'The person’s desktop app is not connected. Ask them to connect it.',
+    })
+    expect(windowOutcome(WindowOutcome.cases.OutcomeUnknown.make({})).output).toMatchObject({
+      message: 'The action may or may not have happened; do not retry without asking the person.',
+    })
+    expect(windowOutcome(WindowOutcome.cases.RunRequired.make({})).terminate).toBe(true)
+    expect(windowOutcome(WindowOutcome.cases.Busy.make({})).output).toMatchObject({ ok: false })
+    expect(
+      windowOutcome(WindowOutcome.cases.Unavailable.make({ reason: 'The helper stopped.' })).output,
+    ).toMatchObject({ ok: false, reason: 'The helper stopped.' })
+  })
 })

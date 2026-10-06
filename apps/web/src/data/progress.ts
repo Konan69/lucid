@@ -60,14 +60,14 @@ export function useProgress(me: MeResponse): Option.Option<ReadonlyArray<Step>> 
 }
 
 /**
- * The step for texting Vivid, when this Person can take it. It is iMessage's: that is the one
- * channel with something behind it. While this Vivid is not set up for iMessage the step is left
- * out, not shown undone, for the reason naming is left out above: a step nobody can take makes a
- * list that can never be finished. It appears by itself the day the installation is set up.
+ * The step for texting Vivid. It is iMessage's: that is the one channel Vivid texts on, and every
+ * running Vivid has it, so the step is there as soon as the channels are known. A channel Vivid
+ * does not text on yet (WhatsApp) adds no step, for the reason naming is left out above: a step
+ * nobody can take makes a list that can never be finished.
  */
 const textingStep = (links: ReadonlyArray<ChannelLink>): ReadonlyArray<Step> =>
   links.flatMap((link) =>
-    link.channel === 'iMessage' && !ChannelStanding.guards.Unavailable(link.standing)
+    link.channel === 'iMessage'
       ? [{ kind: 'text', done: ChannelStanding.guards.Connected(link.standing) }]
       : [],
   )

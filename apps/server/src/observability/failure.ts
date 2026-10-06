@@ -11,7 +11,7 @@ import * as Schema from 'effect/Schema'
 import * as SchemaAST from 'effect/SchemaAST'
 import * as HttpClientError from 'effect/unstable/http/HttpClientError'
 import * as HttpServerError from 'effect/unstable/http/HttpServerError'
-import { Message } from './messages.ts'
+import { Message, isCodeName } from './messages.ts'
 
 /**
  * Where a failure stopped being the caller's problem and became an answer: a product call, a plain
@@ -350,7 +350,13 @@ const thrownType = (link: Link): Option.Option<string> =>
  * - Anything else is `_OTHER`, which also bounds how many distinct types the backend can be sent.
  */
 const typeOf = (kind: FailureKind, link: Link): string =>
-  Option.getOrElse(kind === 'expected' ? declaredType(link) : thrownType(link), () => UNTYPED)
+  Option.getOrElse(
+    // A class's tag is whatever its author wrote. One that is not a short code name (a megabyte of
+    // text, a sentence) is not a type anybody can count by, and writing it out would put that text
+    // on the log line and on the span: it is `_OTHER`, by the same rule the export applies.
+    Option.filter(kind === 'expected' ? declaredType(link) : thrownType(link), isCodeName),
+    () => UNTYPED,
+  )
 
 /**
  * A link's own message, unless the link is Effect Drizzle's wrapper error. That wrapper's message

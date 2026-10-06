@@ -24,7 +24,8 @@ const closedRoute = HttpRouter.add(
   HttpServerResponse.jsonUnsafe({ message: 'Not found' }, { status: 404 }),
 )
 
-const authRoute = HttpRouter.add(
+/** Better Auth's own routes, as the server mounts them. Exported so a test can serve exactly this. */
+export const authRoute = HttpRouter.add(
   '*',
   '/api/auth/*',
   Effect.gen(function* () {

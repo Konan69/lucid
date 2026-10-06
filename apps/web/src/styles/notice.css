@@ -1,0 +1,9 @@
+/* The notice window (`src/notice.tsx`). Only that document loads this file.
+
+   The window is transparent and the pill is all there is of it, so the page paints nothing of
+   its own: the app's canvas colour on `body` would be a rectangle around the pill. */
+html,
+body {
+  background: transparent;
+  overflow: hidden;
+}

@@ -2,6 +2,7 @@ import { SkillSummary, VividName, type PersonId, type ThreadId } from '@vivid/co
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import type { Acting } from '../client.ts'
+import { NoteIndex } from '../notes.ts'
 
 /** Creation time is internal naming evidence; instructions remain out of the context catalog. */
 export const ContextSkill = SkillSummary
@@ -22,12 +23,33 @@ export const SavedProcedures = Schema.TaggedUnion({
 })
 export type SavedProcedures = typeof SavedProcedures.Type
 
+/**
+ * What Vivid remembers, as one response sees it.
+ *
+ * - `Off`: nobody is behind the message, so there is nobody whose notes to read.
+ * - `Notes`: the index of the acting Person's notes, which may be empty.
+ * - `Unavailable`: the notes exist but could not be read. This is told to the model as such; it
+ *   is never shown as an empty index, which would read as "you know nothing about this Person".
+ */
+export const Remembered = Schema.TaggedUnion({
+  Off: {},
+  Notes: { index: NoteIndex },
+  Unavailable: {},
+})
+export type Remembered = typeof Remembered.Type
+
 export const VividContext = Schema.Struct({
-  brief: Schema.String,
+  memory: Remembered,
   skills: Schema.Array(ContextSkill),
   timezone: Schema.String,
   /** Names observed on this Computer; an empty list means no current installation proof. */
   apps: Schema.Array(Schema.String),
+  /**
+   * The start of the hour in which this response's context was read, in epoch milliseconds. It is
+   * read once and frozen with the rest of the context, so every model turn of one response sees
+   * the same clock. `None` only for the empty context of a message with nobody behind it.
+   */
+  asOf: Schema.Option(Schema.Number),
   /**
    * The services this Person has connected and that are ready to use, by the name people know
    * them ("Gmail"). Names only: accounts and tools are still resolved through find_tools. Without

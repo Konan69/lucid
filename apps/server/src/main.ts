@@ -1,8 +1,6 @@
 import * as NodeHttp from 'node:http'
-import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
-import * as Option from 'effect/Option'
 import * as PersistedQueue from 'effect/unstable/persistence/PersistedQueue'
 import * as HttpRouter from 'effect/unstable/http/HttpRouter'
 import {
@@ -29,9 +27,10 @@ import { appearanceStoreLayer } from './appearance/store.ts'
 import { companyStoreLayer } from './companies/store.ts'
 import { codeAuthorityLayer } from './code/authority.ts'
 import { codeCallsLayer } from './code/calls.ts'
+import { codeComputerLayer } from './code/computer.ts'
 import { codeProcessLayer } from './code/process.ts'
 import { publicPageLayer } from './code/page.ts'
-import { machineLayer } from './computers/provider.ts'
+import { boatMachineLayer } from './computers/boat.ts'
 import { deviceLayer } from './computers/device.ts'
 import { computerStoreLayer } from './computers/store.ts'
 import { loadServerConfig, ServerConfig } from './config.ts'
@@ -53,12 +52,8 @@ import { memoryModelLayer } from './memory/model.ts'
 import { threadTitlesLayer } from './threads/generation.ts'
 import { memoryExtractionLayer } from './memory/extract.ts'
 import { helixMemoryLayer } from './memory/helix.ts'
-import { learningLayer, silentLearningLayer } from './memory/learn.ts'
-import {
-  memoryAccessLayer,
-  memoryStoreLayer,
-  unavailableMemoryAccessLayer,
-} from './memory/store.ts'
+import { learningLayer } from './memory/learn.ts'
+import { memoryAccessLayer, memoryStoreLayer } from './memory/store.ts'
 import { notifierLayer } from './notifications/notifier.ts'
 import { observabilityLayer } from './observability/export.ts'
 import { notificationStoreLayer } from './notifications/store.ts'
@@ -82,23 +77,16 @@ import { threadStoreLayer } from './threads/store.ts'
 import { updateRoutes } from './updates/routes.ts'
 
 /**
- * Memory is an optional part of an installation. With `VIVID_HELIX_URL` set, Vivid remembers; with
- * it unset, every memory call answers that memory is unavailable and nothing is learned, which is
- * an expected state of a fresh install and not a fault.
+ * Memory is part of every Vivid. `VIVID_HELIX_URL` and the model gateway key are required while
+ * these Layers are built, so a server without them does not start; there is no server that runs
+ * "without memory". Helix not answering, or an index still building, is a typed failure on the
+ * memory call that met it, and the next call tries again (`memory/helix.ts`).
  */
-const memoryLayer = Layer.unwrap(
-  Config.option(Config.String('VIVID_HELIX_URL')).pipe(
-    Effect.map((address) =>
-      Option.isNone(address)
-        ? Layer.mergeAll(unavailableMemoryAccessLayer, silentLearningLayer)
-        : learningLayer.pipe(
-            Layer.provideMerge(memoryAccessLayer),
-            Layer.provide(memoryStoreLayer),
-            Layer.provide(Layer.mergeAll(helixMemoryLayer, embeddingsLayer)),
-            Layer.provideMerge(memoryExtractionLayer),
-          ),
-    ),
-  ),
+const memoryLayer = learningLayer.pipe(
+  Layer.provideMerge(memoryAccessLayer),
+  Layer.provide(memoryStoreLayer),
+  Layer.provide(Layer.mergeAll(helixMemoryLayer, embeddingsLayer)),
+  Layer.provideMerge(memoryExtractionLayer),
 )
 
 /** The process entry point only selects implementations and owns their scoped lifetime. */
@@ -135,8 +123,7 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     skillStoreLayer,
     libraryStoreLayer,
     executorLayer,
-    machineLayer,
-    codeProcessLayer,
+    boatMachineLayer,
     publicPageLayer,
     codeAuthorityLayer,
     deviceLayer,
@@ -169,7 +156,12 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     Layer.provideMerge(accounts),
   )
   const decisions = gateLayer.pipe(Layer.provideMerge(reviewerLayer), Layer.provideMerge(trust))
-  const work = Layer.mergeAll(routineStoreLayer, codeCallsLayer).pipe(Layer.provideMerge(decisions))
+  // A program runs on the Person's Computer, so its supervisor sits above the Computer store.
+  const work = Layer.mergeAll(
+    routineStoreLayer,
+    codeCallsLayer,
+    codeProcessLayer.pipe(Layer.provide(codeComputerLayer)),
+  ).pipe(Layer.provideMerge(decisions))
   const channelHandling = channelReceiverLayer.pipe(Layer.provideMerge(work))
   const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(channelHandling))
   const background = Layer.mergeAll(

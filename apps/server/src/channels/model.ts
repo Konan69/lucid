@@ -10,7 +10,7 @@ export const StoredLink = Schema.Struct({
   textTo: ChannelAddress,
   enrolmentId: ChannelEnrolmentId,
   since: Schema.Number.check(Schema.isFinite()),
-  threadId: Schema.NullOr(ThreadId),
+  threadId: Schema.OptionFromNullOr(ThreadId),
 })
 export type StoredLink = typeof StoredLink.Type
 

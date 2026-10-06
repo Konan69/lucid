@@ -134,6 +134,50 @@ describe('desktop bridge sender authority', () => {
     }
   })
 
+  it('gives Google sign-in to the selected server’s own document and to nothing else', () => {
+    const requests = [
+      BridgeRequest.cases.BeginGoogleSignIn.make({}),
+      BridgeRequest.cases.ReopenGoogleSignIn.make({}),
+      BridgeRequest.cases.AwaitGoogleSignIn.make({}),
+      BridgeRequest.cases.CancelGoogleSignIn.make({}),
+    ]
+    for (const request of requests) {
+      for (const url of ['https://vivid.example/', 'https://vivid.example/thread/123'])
+        expect(isAllowedBridgeRequest(url, server, chooser, request)).toBe(true)
+      for (const url of [
+        // Another origin: a foreign site, a look-alike, another port, another scheme.
+        'https://other.example/',
+        'https://vivid.example.evil.test/',
+        'https://vivid.example:8443/',
+        'http://vivid.example/',
+        // The app's origin on the socket scheme, or with sign-in details in it.
+        'wss://vivid.example/api/live',
+        'https://person:secret@vivid.example/',
+        'file:///application/other.html',
+        'malformed',
+      ])
+        expect(isAllowedBridgeRequest(url, server, chooser, request)).toBe(false)
+    }
+  })
+
+  it('never gives Google sign-in to the chooser, which is trusted with everything else', () => {
+    const requests = [
+      BridgeRequest.cases.BeginGoogleSignIn.make({}),
+      BridgeRequest.cases.ReopenGoogleSignIn.make({}),
+      BridgeRequest.cases.AwaitGoogleSignIn.make({}),
+      BridgeRequest.cases.CancelGoogleSignIn.make({}),
+    ]
+    for (const request of requests) {
+      // With no server chosen there is nowhere to sign in to, for the chooser and for an address
+      // that would be the app's alike.
+      expect(isAllowedBridgeRequest(chooser, absent, chooser, request)).toBe(false)
+      expect(isAllowedBridgeRequest('https://vivid.example/', absent, chooser, request)).toBe(false)
+      // The chooser still showing after a server was saved is refused as well.
+      expect(isAllowedBridgeRequest(chooser, server, chooser, request)).toBe(false)
+      expect(isAllowedBridgeRequest(`${chooser}#server`, server, chooser, request)).toBe(false)
+    }
+  })
+
   it('gives version metadata only to the chooser and chosen server documents', () => {
     const request = BridgeRequest.cases.GetAppVersion.make({})
     expect(isAllowedBridgeRequest(chooser, absent, chooser, request)).toBe(true)

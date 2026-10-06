@@ -10,6 +10,9 @@ apps/mobile/android
 apps/mobile/ios
 apps/desktop/release
 apps/desktop/out
+# Windows helper binaries the desktop app ships (55 MB). No hosted image uses them, and with
+# them a build context is over the deploy provider's 32 MB limit.
+apps/desktop/vendor
 **/build
 
 # Local authority, credentials, research and mutable state never enter an image.

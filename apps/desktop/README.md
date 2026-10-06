@@ -51,7 +51,7 @@ owner. The shell uses the same saved origin and staged assets in development and
 
 Import bridge types from `@vivid/desktop/bridge` (`src/shared/bridge.ts`). The chooser receives
 `window.vivid` with `VividDesktopBridge`; selected-server documents receive `VividAppBridge`,
-containing `getAppVersion()`, `pages` and `device`:
+containing `getAppVersion()`, `pages`, `device` and `signIn`:
 
 ```ts
 interface VividDesktopBridge {
@@ -66,8 +66,24 @@ interface VividDesktopBridge {
   }
   getAppVersion(): Promise<string>
   openExternal(url: string): Promise<void>
+  readonly signIn: VividSignInBridge
+}
+
+interface VividSignInBridge {
+  begin(): Promise<'opened' | 'unopened'>
+  reopen(): Promise<'opened' | 'unopened'>
+  ended(): Promise<
+    | { _tag: 'Granted'; code: string; state: string; verifier: string }
+    | { _tag: 'Failed' }
+    | { _tag: 'Expired' }
+    | { _tag: 'Cancelled' }
+  >
+  cancel(): Promise<void>
 }
 ```
+
+`signIn` is how the app signs in with Google; see "Signing in" below. None of its four calls
+takes an argument, so a document cannot name where the system browser goes.
 
 Invalid arguments and persistence failures reject the call. The chooser should display them and
 stay open; `Chosen` means both probe and durable save succeeded, and main replaces the document.
@@ -80,7 +96,7 @@ The app renderer receives this exact surface on `window.vivid`. Import `Tab`, `P
 The renderer owns the panel, tab row, address input, and sign-out integration.
 
 ```ts
-type VividAppBridge = Pick<VividDesktopBridge, 'getAppVersion' | 'pages' | 'device'>
+type VividAppBridge = Pick<VividDesktopBridge, 'getAppVersion' | 'pages' | 'device' | 'signIn'>
 
 interface VividPagesBridge {
   readonly open: (input: PageInput) => Promise<Tab>
@@ -165,13 +181,51 @@ account creation as the browser. Chromium's cookie-aware application session car
 Auth's HttpOnly session cookie through the selected-origin proxy. Main and preload do not
 handle passwords or store a separate bearer token.
 
-The server supports device authorization and the web Settings → Devices page approves codes,
-but the desktop renderer does not currently request or exchange its own device code. That is
-implemented by mobile. Adding a desktop code flow would require renderer work.
+### Google
+
+Google refuses to sign anyone in inside an embedded window, so that part happens in the Person's
+system browser. There is no code to read or type and no page to approve: press, pick the account,
+and the app is signed in.
+
+1. The window calls `window.vivid.signIn.begin()`. Main (`src/main/signin.ts`) makes a name for
+   the attempt (`state`, 16 letters and digits), a secret (`verifier`, 32 random bytes as
+   base64url) and the secret's SHA-256 digest (`challenge`, PKCE `S256`). It listens on
+   `127.0.0.1` on a port the operating system picks and opens the system browser on the saved
+   server's `/api/auth/desktop/google` with the challenge, the name and the port. The address is
+   built from the server main has saved, never from anything the document sent. `begin()` answers
+   `'opened'` or `'unopened'`; an unopened browser does not end the attempt, and `reopen()` sends
+   it to the same address again.
+2. The server takes the browser through Google and sends it back to
+   `http://127.0.0.1:<port>/?code=…&state=…`, or `?error=…&state=…`.
+3. The listener reads only a `GET` of `/` that names this attempt. It redirects the browser to
+   `/done`, so the code does not stay in the address bar, serves one small page there ("You are
+   in." or "Google sign-in did not finish."), and stops listening. Every other request gets a
+   404 and changes nothing. Every answer carries `Cache-Control: no-store` and
+   `Referrer-Policy: no-referrer`.
+4. Main brings the window to the front and resolves `window.vivid.signIn.ended()` with
+   `Granted { code, state, verifier }`. The window trades those with the server
+   (`/api/auth/desktop/session`) on its own origin, so Chromium keeps the cookie. Main never
+   holds a session.
+
+There is at most one attempt. `begin()` replaces one in progress and `cancel()` stops it; either
+resolves a pending `ended()` with `Cancelled`. An attempt ends `Expired` five minutes after it
+began, which is how long the server keeps a sign-in. A return without a code ends it `Failed`.
+An ending is handed to the window once. Choosing another server, or forgetting this one, cancels
+the attempt, and the listener closes when the app quits. With no server chosen, `begin()` answers
+`'unopened'` and nothing listens.
+
+This follows Better Auth's own desktop integration (`@better-auth/electron` 1.7.5, `requestAuth`
+and `authenticate`), with two differences. The browser returns over a loopback address (RFC 8252
+section 7.3) and not a `vivid://` link, so it shows no "Open this app?" prompt and it works in an
+app run from source. And the trade happens in the window, not in main.
+
+The page the browser ends on (`src/main/landing.ts`) is one static document with no script and
+nothing to fetch. Its colours are the page and ink of the native window, read from the design
+tokens, in the browser's light or dark.
 
 ## Vivid using this computer
 
-Stage 1: the browser only. Once a Person is signed in, the app enrols this installation as one
+Once a Person is signed in, the app enrols this installation as one
 of their computers (`EnrolDevice`, with the machine's host name), and waits. Enrolling grants
 nothing. When the Person allows it (Settings → Devices → Your computers, on any surface), the app
 holds `WatchDeviceRequests` open on the live socket and carries out each `BrowserAction` Vivid
@@ -246,13 +300,55 @@ What running it against real pages changed (each is stated beside its code):
 - A hop stopped by the rule every page obeys (no loopback) is reported to Vivid as
   `NotAllowed`, not answered as the old page.
 
+### Apps on the Person's computer (Windows)
+
+Allowing a computer is the whole permission. Where the Computer is present (Windows, the vendored
+pair shipped under `resources/native/computer`; see `vendor/computer/README.md`), the app says so
+when it starts listening (`ability.apps`) and carries out `Window` work through it: any app, any
+window, nothing asked and nothing banned.
+
+- **The process** (`main/computer.ts`, `main/wire.ts`): the vendored supervisor
+  (`codex-computer-use.exe --parent-pid <pid>`) with the engine beside it, started at the first
+  work in an app, hidden, private pipes, both drained. One request at a time over the
+  supervisor's own JSON-RPC stdio protocol, each with its turn and its budget; every line is
+  decoded with a schema. A reply that never comes, a line that is not the protocol, or a request
+  that outlives its budget by 2 s ends the request as lost, and the last two end the process.
+- **Approvals**: an approval ask is answered by the desktop itself, at once, with the approved
+  app in the re-sent request's `meta` (the reference client's own key). Nothing is ever asked of
+  the Person and nothing is banned here once the computer is allowed.
+- **Turns** (`main/turn.ts`): one turn per Run, the Run's id as the turn's id. It begins at a
+  Run's first work in an app and ends on `RunEnded`, after 60 s with no work, when work of
+  another Run arrives, and when the link ends (which also ends the process). A gone Computer is
+  started anew; never reused.
+- **Stop**: Escape anywhere (the supervisor ends itself with exit 130) or Stop on the notice
+  ends the turn. Work in flight answers `Declined: Stopped`; with nothing in flight the app calls
+  `ReportDeviceStop` at once. That Run is over; a new Run works at once. There is no pause.
+- **Unknown outcomes**: a change that was written and got no answer, or whose failure does not
+  say nothing was sent, is not answered at all. The server records it as unknown; it is never
+  reported as done, declined or failed.
+- **The mapping** (`main/windows.ts`): each `WindowAction` as the supervisor's methods and back.
+  A change answers with a fresh look at the window. Windows get short names of the turn's own
+  (`w1`); the pair's ids never leave the computer.
+- **The notice** (`main/notice.ts`, `apps/web/src/notice.tsx`): a small frameless window, top
+  centre of the primary display, always on top, shown without taking focus, not in the taskbar,
+  and left out of screen captures so it is never in a picture sent to the model. It says
+  "<Vivid's name> is using <app>" with an Esc hint and Stop.
+
+The pair is vendored (`vendor/computer/`) and shipped verbatim by `electron-builder.yml`;
+`scripts/packed.mjs` refuses to package a Windows app without it. On other systems the app
+reports `apps: false`.
+
+The tests run the desktop's side against a stand-in process (`main/fake.mjs`) that speaks the
+same protocol. Not proved here: the real pair, the notice window, and the packaged installer;
+they need Windows.
+
 ### The proof
 
 `scripts/control.ts` runs the real executor inside real Electron against real pages, under
-`xvfb-run`, in a disposable profile; `src/main/driver.test.ts` runs it:
+`xvfb-run`, in a disposable profile; `src/main/driver.live.test.ts` runs it when asked (it needs the public internet, so the push gate skips it):
 
 ```sh
-pnpm --filter @vivid/desktop exec vitest run src/main/driver.test.ts
+VIVID_TEST_DESKTOP_LIVE=1 pnpm --filter @vivid/desktop exec vitest run src/main/driver.live.test.ts
 ```
 
 It needs the public internet (`https://example.com`, and `https://httpbin.org/redirect-to` for a
@@ -281,7 +377,9 @@ and popup destinations open in the system browser only for HTTP(S); other scheme
 Only the main frame may invoke the schema-decoded bridge. Main checks its document URL for every
 request: the bundled chooser alone can choose or forget a server, read settings, or invoke
 external browsing. Selected-server documents can read the app version, drive the isolated
-Browser through validated page requests, and read or refresh this computer's link. No page guest has preload or bridge access.
+Browser through validated page requests, read or refresh this computer's link, and sign in with
+Google. Google sign-in is given to the selected server's own document alone: the chooser is
+refused it. No page guest has preload or bridge access.
 
 Each page uses its own main-owned `WebContentsView` in `persist:vivid-pages`, with sandbox,
 context isolation, web security and no Node integration. Only HTTP(S) page and frame navigation

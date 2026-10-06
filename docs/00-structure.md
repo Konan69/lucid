@@ -102,9 +102,9 @@ routines/       ● Routines, Occurrences, triggers, the scheduler         docs/
 library/        ● Library items, folders, ingest, search                 docs/03
 connections/    ● Integrations on Executor: accounts, sign-in, tools     docs/22
 skills/         ● saved procedures and the ones Vivid ships with         docs/13, 22
-memory/         ● memory on HelixDB: extraction, graph, recall, briefs   docs/22
+memory/         ● memory on HelixDB: extraction, graph, recall, the page docs/25
 computers/      ● a machine per Person: Boat and local providers, browser, desktop  docs/04
-code/           ● programs Vivid writes, run in an isolated interpreter   docs/22
+code/           ● programs Vivid writes, run on the Person's Computer    docs/22
 search/         ● the search palette across a workspace                  docs/03
 live/           ● change topics that keep every client current           docs/09
 rooms/          ○ Vivid-to-Vivid across People and Companies (not built) docs/06

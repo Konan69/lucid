@@ -1,5 +1,4 @@
 import { Effect, Option, Redacted, Schema } from 'effect'
-import { CLIENT_ID, DEVICE_GRANT, Wire, type PairingTransport } from './device'
 import { AccountRefused, AccountUnreachable, type RefusalReason } from './refusal'
 import { accountAddress, type ServerAddress } from './server'
 import type { SignedIn } from './session'
@@ -17,7 +16,7 @@ import { bearer, request } from './transport'
 
 const UNREACHABLE = 'Vivid could not be reached at that address. Check the server and try again.'
 const NO_SESSION =
-  'That server signed you in but gave this device nothing to stay signed in with. Use a code instead.'
+  'That server signed you in but gave this device nothing to stay signed in with. Try again.'
 
 const Refusal = Schema.fromJsonString(Schema.Struct({ message: Schema.optionalKey(Schema.String) }))
 const decodeRefusal = Schema.decodeUnknownOption(Refusal)
@@ -119,31 +118,37 @@ const asPerson = Effect.fn('Account.asPerson')(function* (
 /** Ends the session on the server, so its token stops working everywhere. */
 export const signOut = (session: SignedIn) => asPerson(session, 'sign-out', {})
 
+/** The part of Better Auth's session answer that says when the session ends. */
+const Ending = Schema.fromJsonString(
+  Schema.Struct({ session: Schema.Struct({ expiresAt: Schema.String }) }),
+)
+const decodeEnding = Schema.decodeUnknownOption(Ending)
+
 /**
- * Lets another device that is waiting with this code sign in as the Person holding this phone.
- * The same call the web makes from Settings → Devices, carried by this session's token.
+ * When the session this phone holds ends, in epoch milliseconds, as the server says (Better
+ * Auth's `get-session`, asked with the session's own token; `session.expiresAt` is an ISO date,
+ * better-auth 1.7.5 `dist/api/routes/session.mjs`). The phone keeps a token and nothing about
+ * it, so this is the only way it knows. None when the server cannot be reached or the answer
+ * does not read as a date: what depends on it (`data/snapshot.ts`) then keeps nothing.
  */
-export const approveDevice = (session: SignedIn, userCode: string) =>
-  asPerson(session, 'device/approve', { userCode })
-
-/** One request of the code exchange, with "no answer" kept apart from "an answer that says no". */
-const wire = (posting: Omit<Posting, 'headers'>) =>
-  post({ ...posting, headers: {} }).pipe(
-    Effect.map((answer) => Wire.Answered({ ok: answer.ok, body: answer.body })),
-    Effect.catchTag('AccountUnreachable', () => Effect.succeed(Wire.Unreachable())),
+export const sessionExpiry = (session: SignedIn): Effect.Effect<Option.Option<number>> =>
+  Effect.tryPromise({
+    try: async (signal) => {
+      const response = await request(accountAddress(session.server, 'get-session'), {
+        method: 'GET',
+        headers: bearer(session.token),
+        signal,
+      })
+      return response.ok ? Option.some(await response.text()) : Option.none<string>()
+    },
+    catch: () => new AccountUnreachable({ message: UNREACHABLE }),
+  }).pipe(
+    Effect.map((body) =>
+      body.pipe(
+        Option.flatMap(decodeEnding),
+        Option.map((here) => Date.parse(here.session.expiresAt)),
+        Option.filter((until) => Number.isFinite(until)),
+      ),
+    ),
+    Effect.catchTag('AccountUnreachable', () => Effect.succeed(Option.none<number>())),
   )
-
-/** The code exchange's two requests against one server. See `device.ts` for the protocol. */
-export const pairingTransport = (server: ServerAddress): PairingTransport => ({
-  requestCode: wire({ server, path: 'device/code', fields: { client_id: CLIENT_ID } }),
-  askToken: (deviceCode) =>
-    wire({
-      server,
-      path: 'device/token',
-      fields: {
-        grant_type: DEVICE_GRANT,
-        device_code: Redacted.value(deviceCode),
-        client_id: CLIENT_ID,
-      },
-    }),
-})

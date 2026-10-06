@@ -50,6 +50,14 @@ catalog:
   '@react-native/metro-config': 0.86.3
   '@react-navigation/native': 7.4.1
   '@react-navigation/native-stack': 7.19.2
+  # @sentry/react is held at the core @sentry/electron 8.0.0 is built on (11.1.0): the web bundle
+  # loads both inside the desktop app, and two cores there would mean two clients on one page.
+  # @sentry/core is named for its envelope and event types, at that same version. The phone app
+  # pins its own (10.75.2, the core of @sentry/react-native 8.29.0) in its manifest.
+  '@sentry/core': 11.1.0
+  '@sentry/electron': 8.0.0
+  '@sentry/react': 11.1.0
+  '@sentry/react-native': 8.29.0
   '@tailwindcss/vite': 4.3.3
   '@types/node': 24.13.6
   '@types/pg': 8.23.1
@@ -117,15 +125,22 @@ allowBuilds:
   sharp: true
   workerd: true
   '@google/genai': false
+  # Sentry's command-line tool only uploads symbols and source maps, which no Vivid build does.
+  '@sentry/cli': false
   core-js-pure: false
   msgpackr-extract: false
   protobufjs: false
   # Its install step lays down the prebuilt Skia libraries the native mobile build links.
   '@shopify/react-native-skia': true
+  # ssh2 runs on its JavaScript ciphers; its optional native accelerators are not built.
+  cpu-features: false
+  ssh2: false
 
 patchedDependencies:
   '@react-native-menu/menu@2.0.0': patches/@react-native-menu__menu@2.0.0.patch
+  '@react-navigation/native-stack@7.19.2': patches/@react-navigation__native-stack@7.19.2.patch
   react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
+  react-native-screens@4.26.2: patches/react-native-screens@4.26.2.patch
 minimumReleaseAgeExclude:
   - '@cloudflare/workers-types@5.20260919.1'
   - '@effect/platform-node-shared@4.0.0-rc.116'

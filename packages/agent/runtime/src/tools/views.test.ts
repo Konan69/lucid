@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Predicate, Schema } from 'effect'
+import { Option, Predicate, Schema } from 'effect'
 import {
   LibraryItemId,
   Memory,
@@ -31,10 +31,11 @@ import {
   ConnectionRequestMessage,
 } from '@vivid/contracts'
 import { contextInstruction } from '../context.ts'
-import { SavedProcedures, VividContext } from './snapshots.ts'
+import { NoteFile, NoteIndex, NoteLine } from '../notes.ts'
+import { Remembered, SavedProcedures, VividContext } from './snapshots.ts'
 import * as views from './views.ts'
 import { askTools } from './ask.ts'
-import { commandDefinition, desktopToolFactory } from './computer.ts'
+import { pictureTools } from './computer.ts'
 import { connectionTools } from './connections.ts'
 import { libraryTools } from './library.ts'
 import { memoryTools } from './memory.ts'
@@ -130,9 +131,6 @@ describe('model views', () => {
         { ...memory, scope: MemoryScope.cases.Company.make({}) },
       ]),
       views.remembered(memory),
-      views.forgotten(memory),
-      views.corrected(memory, { ...memory, id: MemoryId.make('MARK-replacement') }),
-      views.memoryChoices([memory, memory]),
       views.passages([
         {
           chunkId: 'MARK-chunk',
@@ -146,11 +144,6 @@ describe('model views', () => {
       views.routine(routine, routine.name),
       views.routines([routine]),
       views.routine({ ...routine, trigger: RoutineTrigger.cases.Webhook.make({}) }, routine.name),
-      views.command({
-        exitCode: 0,
-        output: `Saved ${reference}, admin@example.test and https://example.test/screen.png`,
-        truncated: false,
-      }),
       views.browse({
         address: 'https://example.test',
         tabs: [{ title: 'Agreement', address: 'https://example.test', showing: true }],
@@ -163,9 +156,27 @@ describe('model views', () => {
     expect(json).not.toMatch(/MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/iu)
     const context = contextInstruction(
       VividContext.make({
-        brief: `Review before signing. Legacy note: ${reference}.`,
+        memory: Remembered.cases.Notes.make({
+          index: NoteIndex.make({
+            lines: [
+              NoteLine.make({
+                file: NoteFile.make('review-before-signing.md'),
+                kind: 'preference',
+                description: `Review before signing.\nLegacy note: ${reference}.`,
+              }),
+              NoteLine.make({
+                file: NoteFile.make('invoices-on-fridays.md'),
+                kind: 'decision',
+                description: 'Invoices go out on Fridays',
+              }),
+            ],
+            more: true,
+          }),
+        }),
         skills: [skill, skill],
         timezone: 'Africa/Lagos',
+        // 16:00 UTC is 17:00 in Lagos (UTC+1, no daylight saving).
+        asOf: Option.some(Date.UTC(2026, 9, 4, 16, 0)),
         apps: ['GIMP', 'LibreOffice Calc'],
         integrations: ['DeepWiki', `Mail ${reference}`],
         name: 'Vivid',
@@ -173,10 +184,36 @@ describe('model views', () => {
     )
     expect(context).not.toMatch(/MARK-|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|"id"/iu)
     expect(context).toContain('review-agreement-2')
+    // Each note is one line: its file name, kind and description, with an identifier removed and
+    // a line break inside a description folded so it cannot start a line of its own.
+    expect(context).toContain(
+      '- review-before-signing.md (preference): Review before signing. Legacy note: ',
+    )
+    expect(context).toContain('- invoices-on-fridays.md (decision): Invoices go out on Fridays')
+    expect(context).toContain('Older notes are not listed here.')
+    // A failed read is told to the model as such, never as an empty memory.
+    const unread = contextInstruction(
+      VividContext.make({
+        memory: Remembered.cases.Unavailable.make({}),
+        skills: [],
+        timezone: 'UTC',
+        asOf: Option.none(),
+        apps: [],
+        integrations: [],
+        name: 'Vivid',
+      }),
+    )
+    expect(unread).toContain('Your notes could not be read for this response.')
+    expect(unread).not.toContain('What you remember')
+    // The clock is the last thing in the context: the Person's local hour, and the same instant in UTC.
+    expect(
+      context.endsWith(
+        'Current local date and time (Africa/Lagos, locked to the hour): Sunday, 4 October 2026 at 17:00. UTC instant: 2026-10-04T16:00Z. This is the start of the current hour; the minutes are not known. Use it as the clock for today, tomorrow, deadlines and anything relative to now.',
+      ),
+    ).toBe(true)
     expect(context).toContain('"apps":["GIMP","LibreOffice Calc"]')
     // Connected services reach the model by name, with any identifier in a name removed.
     expect(context).toContain('"integrations":["DeepWiki","Mail ')
-    expect(json).toContain('admin@example.test')
     expect(views.tools({ tools: [tool], unconnected: [] }).tools[0]).toHaveProperty(
       'signature',
       tool.signature,
@@ -306,8 +343,7 @@ it('has no identifier key or UUID validator in any model tool input', () => {
     projectTools,
     skillTools,
   ]
-  inspectSchema(schemaDocument(JSON.stringify(commandDefinition(inspectionOnly).input)))
-  for (const native of desktopToolFactory(inspectionOnly).tools())
+  for (const native of pictureTools(inspectionOnly))
     inspectSchema(schemaDocument(JSON.stringify(native.parameters)))
   for (const factory of groups)
     for (const definition of factory(inspectionOnly))

@@ -65,7 +65,7 @@ function display(phrase: string, shown: Shown): Scene {
     steps: [
       (context) => [
         fauxText('Here’s a rehearsal example.'),
-        call(context, 'show', { show: shown }),
+        call(context, 'show', { summary: 'Rehearsal example', show: shown }),
       ],
       completion,
     ],
@@ -192,6 +192,7 @@ function reminder(context: Context): FauxContentBlock[] {
   tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
   return [
     call(context, 'create_routine', {
+      summary: 'Tomorrow’s review reminder',
       name: 'Rehearsal reminder',
       prompt: 'Tell me it is time to review the rehearsal results.',
       trigger: {
@@ -363,24 +364,37 @@ const examples = [
     }),
   ),
   toolScene('write a document', 'write_document', {
+    summary: 'Rehearsal plan',
     title: 'Rehearsal plan',
     body: '# Rehearsal plan\n\n1. Review the results.\n2. Choose the next step.',
   }),
   toolScene('revise the document', 'write_document', {
+    summary: 'Rehearsal plan revision',
     title: 'Rehearsal plan',
     body: '# Rehearsal plan\n\n1. Review the results.\n2. Ask for a review.\n3. Choose the next step.',
     note: 'Added a review before choosing the next step.',
   }),
-  toolScene('read the document', 'read_document', { title: 'Rehearsal plan' }),
-  toolScene('read example', 'read_page', { address: 'https://example.com' }),
+  toolScene('read the document', 'read_document', {
+    summary: 'Rehearsal plan review',
+    title: 'Rehearsal plan',
+  }),
+  toolScene('read example', 'read_page', {
+    summary: 'Public example page',
+    address: 'https://example.com',
+  }),
   toolScene('run a program', 'run_code', {
     code: 'const numbers = [2, 3, 4]; return numbers.reduce((sum, number) => sum + number, 0);',
     summary: 'Add three example numbers.',
   }),
-  toolScene('find google', 'find_integrations', { query: 'google' }),
-  toolScene('add exa', 'add_integration', { address: 'https://mcp.exa.ai/mcp', name: 'Exa' }),
+  toolScene('find google', 'find_integrations', { summary: 'Google accounts', query: 'google' }),
+  toolScene('add exa', 'add_integration', {
+    summary: 'Exa connection',
+    address: 'https://mcp.exa.ai/mcp',
+    name: 'Exa',
+  }),
   { phrase: 'remind me', steps: [reminder, completion] },
   toolScene('remember that', 'remember', {
+    summary: 'Morning review preference',
     kind: 'preference',
     content: 'Rae prefers reviewing work in the morning.',
     forCompany: false,
@@ -405,7 +419,10 @@ const examples = [
     phrase: 'two things',
     steps: [
       (context: Context) => [
-        call(context, 'read_page', { address: 'https://example.com' }),
+        call(context, 'read_page', {
+          summary: 'Public example page',
+          address: 'https://example.com',
+        }),
         call(
           context,
           'run_code',

@@ -8,51 +8,59 @@ import {
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
-import type { FaceMood } from '@vivid/marks'
-import { draftPlace, standingWords, titleFromMessage, workspaceKey } from '@vivid/state'
+import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useMemo, useRef, useState } from 'react'
-import { FlatList, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
+import {
+  FlatList,
+  ScrollView,
+  View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
-import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import { Monitor, Share2, Users } from 'lucide-react-native'
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
+import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
 import { commit } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
+import { useDrawerOpened } from '../data/drawer'
 import { inFront, onForeground } from '../data/foreground'
 import { LiveState, refusalOf, useLive, useLiveData } from '../data/live'
-import { isShown, isStreaming, lastWordsOf, type Around } from '../data/message'
+import { isShown, lastWordsOf, type Around } from '../data/message'
 import { endingOf, newestRun } from '../data/outcome'
+import { Stand, standIn } from '../data/stand'
 import { conversation, say, UNDELIVERED, UNTITLED } from '../data/threads'
-import { Faces } from '../ui/Avatar'
 import { Composer } from '../ui/Composer'
-import { Header, Screen } from '../ui/Header'
-import { AboveKeyboard } from '../ui/Keyboard'
+import { BarRoom, NO_ACTIONS, NOBODY, VividAtTop, VividBar, type BarAction } from '../ui/Bar'
+import { Screen } from '../ui/Screen'
+import { AboveKeyboardBelowBar } from '../ui/Keyboard'
+import { HANG } from '../ui/Presence'
+import { Thinking } from '../ui/Thinking'
 import {
   Button,
   EDGE,
   Empty,
-  Face,
   GUTTER,
-  IconButton,
   Label,
   Notice,
   Press,
   Skeleton,
   styles,
   TARGET,
-  type Tone,
 } from '../ui/ui'
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
-import { ThinkingOrb } from '../../vendor/orb'
-import { useGo, useMe, type Routes } from '../workspace'
+import { useFront, useMe } from '../workspace'
 import { Message } from './chat/Message'
+import { Opening } from './home/First'
 import { Share } from './chat/Share'
 
 /**
- * One Thread: the conversation with Vivid, and everything live around it.
+ * One Thread: the conversation with Vivid, and everything live around it. It is drawn in the
+ * first screen's place (`screen/Home.tsx`), not as a screen of its own; `writing` says its
+ * composer takes the keyboard over from the one a first message was typed in.
  *
  * Two sources feed this screen. The words come from Flue's stream through the server's gateway,
  * token by token. Everything else (who is in the Thread, who Vivid acted for, what is waiting on
@@ -64,9 +72,8 @@ import { Share } from './chat/Share'
  * marks the Thread read (`seenThread`) then, and the Thread's plain query otherwise: the same
  * detail is drawn either way, and a reply that lands while the screen is covered stays unread.
  */
-export function Chat({ route }: NativeStackScreenProps<Routes, 'Chat'>) {
+export function Chat({ id, writing }: { id: ThreadId; writing: boolean }) {
   const data = useLiveData()
-  const { id } = route.params
   const looking = useLooking()
   const detail = useLive(looking ? data.seenThread(id) : data.live.thread.get(id))
   if (LiveState.$is('Failed')(detail)) return <Gone />
@@ -76,6 +83,7 @@ export function Chat({ route }: NativeStackScreenProps<Routes, 'Chat'>) {
       <Conversation
         key={id}
         id={id}
+        writing={writing}
         detail={LiveState.$is('Ready')(detail) ? Option.some(detail.value) : Option.none()}
       />
     </>
@@ -83,17 +91,21 @@ export function Chat({ route }: NativeStackScreenProps<Routes, 'Chat'>) {
 }
 
 /**
- * Whether the Person is looking at this screen: it is the one on top, and the app is in front.
+ * Whether the Person is looking at this Thread: the first screen, where it is drawn, is the one
+ * on top, and the app is in front.
  *
  * A native stack keeps a screen mounted under whatever is pushed over it, and an app in the
  * background can go on receiving for a while. Being mounted used to be taken for looking, so a
  * Thread the Person had left behind went on marking its replies read and saying they were there,
- * and the server, believing it, sent no notification for work they had not seen.
+ * and the server, believing it, sent no notification for work they had not seen. The open menu
+ * counts as covering it for the same reason.
  */
 function useLooking(): boolean {
   const focused = useIsFocused()
   const front = useAtomValue(inFront)
-  return focused && front
+  // The menu is drawn over the first screen without taking its focus, and it covers the Thread.
+  const covered = useDrawerOpened()
+  return focused && front && !covered
 }
 
 /**
@@ -107,31 +119,33 @@ function Present({ id }: { id: ThreadId }) {
   return null
 }
 
-/** A Thread that is not there, or not this Person's to see. The two look the same on purpose. */
+/**
+ * A Thread that is not there, or not this Person's to see. The two look the same on purpose. The
+ * way on is a new Thread: this is the first screen, so there is nowhere to go back to.
+ */
 function Gone() {
-  const go = useGo()
+  const front = useFront()
   return (
     <Screen>
-      <Header title="Thread" onBack={go.goBack} />
-      <View style={{ paddingHorizontal: GUTTER }}>
-        <Empty line="This thread is not here. It may have been deleted, or it is in a space you are not working in right now.">
-          <Button label="Back" onPress={go.goBack} />
+      <VividBar inverted={false} present={NOBODY} actions={NO_ACTIONS} />
+      <VividAtTop stand={Stand.Resting({ mood: 'happy' })} />
+      {/* A scroller, so the system keeps these words clear of a glass bar as it does a list. */}
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{ paddingHorizontal: GUTTER }}
+      >
+        <Empty
+          icon={MessageCircleDashed}
+          title="This thread is not here"
+          line="It may have been deleted, or it is in a space you are not working in right now."
+          room="page"
+        >
+          <Button kind="primary" label="New thread" onPress={() => front.fresh()} />
         </Empty>
-      </View>
+      </ScrollView>
     </Screen>
   )
 }
-
-/**
- * How Vivid is doing in a Thread, beside the words for it (`standingWords`, shared with the web):
- * the look on its face, and the ink the line under the title is said in.
- */
-const STANDING = {
-  Working: { mood: 'thinking', tone: 'status-working' },
-  NeedsYou: { mood: 'neutral', tone: 'status-attention' },
-  Unread: { mood: 'happy', tone: 'ink-3' },
-  Quiet: { mood: 'neutral', tone: 'ink-3' },
-} as const satisfies Record<Thread['attention'], { mood: FaceMood; tone: Tone }>
 
 /** Who can see a Thread, in a sentence, for whoever cannot see the mark that says so. */
 const audienceWords = (thread: Thread): string =>
@@ -142,68 +156,75 @@ const audienceWords = (thread: Thread): string =>
   })
 
 /**
- * The top of a Thread. Vivid is in it, not just named by it: its face, the Thread's title, and a
- * line saying how it is doing right now (here, working, waiting for the Person). While someone
- * else is writing, the line says that instead, because it is the thing about to change the
- * Thread. On the right: who else is looking, who the Thread is shared with, and the way to
- * Vivid's computer.
+ * The top of a Thread: the bar (`VividBar`) and, floating in its middle, Vivid's avatar with how
+ * it stands under it (`VividAtTop`): waiting for the Person, simply there, or who else is
+ * writing (`standIn`). At the end of the bar: who else is looking, who the Thread is shared
+ * with, and the way to call Vivid. The way to a new Thread and to Vivid's computer are in
+ * Vivid's own menu, under its avatar (`ui/Presence.tsx`); a new Thread is also in the menu the
+ * bar starts with.
+ *
+ * A Thread with nothing in it yet has Vivid in the middle of the page instead (`opening`), as
+ * the first screen has, so it is not also drawn up here.
+ *
+ * The Thread's title is not here. The bar's middle is Vivid's, as the owner asked, and the title
+ * is where the Person chose the Thread: its row in the menu.
  */
 function Top({
   thread,
   present,
   working,
+  opening,
   onShare,
 }: {
   thread: Option.Option<Thread>
   present: ThreadDetail['present']
+  /** The Thread has no words yet, so the page is Vivid's greeting and the avatar is in it. */
+  opening: boolean
   /** Vivid is answering on this phone right now, which the Thread's record may not say yet. */
   working: boolean
   onShare: () => void
 }) {
   const me = useMe()
-  const go = useGo()
   const others = present.filter((seen) => seen.person.id !== me.person.id)
   const typing = others.filter((seen) => seen.typing)
   const attention: Thread['attention'] = working
     ? 'Working'
     : Option.match(thread, { onNone: () => 'Quiet', onSome: (value) => value.attention })
-  const standing = STANDING[attention]
-  const someoneTyping = typing.length > 0
+  // Who can see the Thread is a choice only inside a Company.
+  const sharing = Option.map(
+    Option.filter(thread, () => Workspace.guards.Company(me.workspace)),
+    (value): BarAction => {
+      const alone = ThreadAudience.guards.Private(value.audience)
+      return {
+        symbol: alone ? 'square.and.arrow.up' : 'person.2',
+        icon: alone ? Share2 : Users,
+        label: `${audienceWords(value)}. Choose who can see this thread`,
+        // Only its creator may change who a Thread is shared with.
+        disabled: value.createdBy.id !== me.person.id,
+        onPress: onShare,
+      }
+    },
+  )
   return (
-    <Header
-      leading={<Face size={28} mood={standing.mood} />}
-      title={Option.match(thread, { onNone: () => '', onSome: (value) => value.title })}
-      subtitle={
-        someoneTyping
-          ? `${typing.map((seen) => seen.person.name).join(', ')} typing…`
-          : standingWords[attention]
-      }
-      subtitleTone={someoneTyping ? 'ink-3' : standing.tone}
-      onBack={go.goBack}
-      trailing={
-        <>
-          {others.length > 0 && (
-            <View style={{ marginRight: 4 }}>
-              <Faces people={others.map((seen) => seen.person)} size={20} />
-            </View>
+    <>
+      <VividBar
+        // A Thread's list is upside down, which the system's edge effect cannot be given.
+        inverted
+        present={others.map((seen) => seen.person)}
+        actions={Option.match(sharing, {
+          onNone: () => NO_ACTIONS,
+          onSome: (share) => [share],
+        })}
+      />
+      {!opening && (
+        <VividAtTop
+          stand={standIn(
+            attention,
+            typing.map((seen) => seen.person.name),
           )}
-          {Option.isSome(thread) && Workspace.guards.Company(me.workspace) && (
-            <IconButton
-              icon={ThreadAudience.guards.Private(thread.value.audience) ? Share2 : Users}
-              label={`${audienceWords(thread.value)}. Choose who can see this thread`}
-              // Only its creator may change who a Thread is shared with.
-              disabled={thread.value.createdBy.id !== me.person.id}
-              onPress={onShare}
-            />
-          )}
-          <IconButton
-            icon={Monitor}
-            label="Vivid’s computer"
-            onPress={() => go.navigate('Computer')}
-          />
-        </>
-      }
-    />
+        />
+      )}
+    </>
   )
 }
 
@@ -247,6 +268,11 @@ function useSend(
 ) {
   const data = useLiveData()
   const [unsent, setUnsent] = useState<Option.Option<Unsent>>(Option.none())
+  // A delivery is on its way and has not been answered. In a private Thread the stream says so
+  // itself the moment it is sent. In a shared one the message goes to the server first, and
+  // nothing on this phone says Vivid has it until the Thread's record comes back; for that
+  // moment this is what the top of the screen goes by.
+  const [pending, setPending] = useState(false)
   const shared = Option.exists(thread, (value) => !ThreadAudience.guards.Private(value.audience))
 
   /**
@@ -265,6 +291,7 @@ function useSend(
 
   function send(delivery: Delivery) {
     setUnsent(Option.none())
+    setPending(true)
     // A Thread started without a name takes its first message as one. A refusal is not said: the
     // Person did not ask for this, the Thread keeps the title it had, and the next message tries
     // again because the title is still the unnamed one.
@@ -274,6 +301,7 @@ function useSend(
       )
     }
     return deliver(delivery).then((why) => {
+      setPending(false)
       if (Option.isNone(why)) return true
       setUnsent(Option.some({ ...delivery, why: why.value }))
       // Nothing in a shared Thread shows words that did not arrive, so they go back into the
@@ -286,6 +314,7 @@ function useSend(
 
   return {
     shared,
+    pending,
     unsent,
     /**
      * Sends words: as the delivery still in doubt when they are its words, else as a new one.
@@ -300,7 +329,15 @@ function useSend(
  * is keyed by the Thread (`Chat`), so everything held here, the stream and the delivery that is in
  * doubt included, belongs to that one Thread and to nothing opened after it.
  */
-function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<ThreadDetail> }) {
+function Conversation({
+  id,
+  writing,
+  detail,
+}: {
+  id: ThreadId
+  writing: boolean
+  detail: Option.Option<ThreadDetail>
+}) {
   // The name this Person or their Company gave Vivid, live.
   const vivid = useAppearance()
   const me = useMe()
@@ -333,6 +370,9 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
     runs: Option.match(detail, { onNone: () => [], onSome: (value) => value.runs }),
   }
   const shown = agent.messages.filter(isShown)
+  // Thinking starts at the send; the composer's button waits for Vivid to have really started.
+  const thinking = working || sending.pending
+  const page = pageOf(agent.historyReady, shown.length, thinking)
   // The stream keeps a message it could not send, under the id it showed it with, so the Thread
   // can draw it as not sent instead of as said. Sending again clears the list.
   const undelivered = new Set(agent.failedSends.map((send) => send.id))
@@ -384,17 +424,18 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
   )
 
   return (
-    <AboveKeyboard>
+    <AboveKeyboardBelowBar>
       <Top
         thread={thread}
         present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
-        working={working}
+        working={thinking}
+        opening={page === 'Opening'}
         onShare={() => setSharing(true)}
       />
       <View ref={wake} style={{ flex: 1 }}>
         <Messages
           messages={shown}
-          ready={agent.historyReady}
+          page={page}
           working={working}
           ended={ended}
           trouble={trouble}
@@ -404,13 +445,10 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
           onContinue={speak}
         />
       </View>
-      {stopping.refused && (
-        <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
-          <Notice message="Vivid could not be stopped just now. Try again." />
-        </View>
-      )}
+      <Between refused={stopping.refused} thinking={thinking} />
       <Composer
         value={typed}
+        autoFocus={writing}
         placeholder={shared ? `Message everyone and ${vivid.name}` : `Message ${vivid.name}`}
         working={working}
         disabled={false}
@@ -427,7 +465,7 @@ function Conversation({ id, detail }: { id: ThreadId; detail: Option.Option<Thre
           onClose={() => setSharing(false)}
         />
       )}
-    </AboveKeyboard>
+    </AboveKeyboardBelowBar>
   )
 }
 
@@ -446,7 +484,7 @@ interface Ended {
 
 interface MessagesProps {
   readonly messages: ReadonlyArray<FlueConversationMessage>
-  readonly ready: boolean
+  readonly page: Page
   readonly working: boolean
   readonly ended: Option.Option<Ended>
   readonly trouble: Option.Option<Trouble>
@@ -458,12 +496,55 @@ interface MessagesProps {
 }
 
 /**
+ * What a Thread's page is. It is decided once (`pageOf`) for everything that depends on it: the
+ * list or what stands in its place, and whether Vivid's avatar floats at the top of the screen or
+ * stands in the middle of the page. Decided in two places, the two could disagree, and the page
+ * would then show two avatars or none.
+ *
+ * - `Outline`: the Thread is still opening and nothing is known to be in it.
+ * - `Opening`: it has opened and has no words: Vivid's greeting, with its avatar in the middle.
+ * - `Conversation`: it has words, or Vivid is thinking about the first of them.
+ */
+type Page = 'Outline' | 'Opening' | 'Conversation'
+
+/** `said` is how many messages are shown; `thinking` starts at a send, before the record says so. */
+const pageOf = (ready: boolean, said: number, thinking: boolean): Page => {
+  if (said > 0 || thinking) return 'Conversation'
+  return ready ? 'Opening' : 'Outline'
+}
+
+/**
  * The conversation. A Thread with nothing in it is its outline or its invitation; otherwise the
  * list (`Transcript`). The two are separate components so the list can hold state of its own.
  */
 function Messages(props: MessagesProps) {
-  if (props.messages.length === 0 && !props.working) return <Blank ready={props.ready} />
-  return <Transcript {...props} />
+  if (props.page === 'Conversation') return <Transcript {...props} />
+  return <Blank ready={props.page === 'Opening'} />
+}
+
+/**
+ * What stands between the conversation and the composer: that the last Stop was refused, and
+ * that Vivid is thinking (`ui/Thinking.tsx`).
+ *
+ * The thinking line is here and not a row of the list: reading back up the conversation must not
+ * scroll away the one thing that says Vivid is at work. It stands on the conversation's own
+ * inset, so the orb is where Vivid's face will be beside the answer.
+ */
+function Between({ refused, thinking }: { refused: boolean; thinking: boolean }) {
+  return (
+    <>
+      {refused && (
+        <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
+          <Notice message="Vivid could not be stopped just now. Try again." />
+        </View>
+      )}
+      {thinking && (
+        <View style={[styles.column, { paddingHorizontal: GUTTER - 4, paddingTop: 6 }]}>
+          <Thinking />
+        </View>
+      )}
+    </>
+  )
 }
 
 /** How far from the newest words still counts as reading them, in points. */
@@ -474,12 +555,27 @@ const FOLLOWING = 80
  * by itself as they stream in, and holds the Person's place when they have scrolled up to read.
  * Nothing runs per token.
  *
- * The list sits in a box of its own that clips it. The composer under it is a sibling, not an
- * overlay, so the list's viewport is exactly what is left above the composer and the keyboard; a
+ * The list sits in a box of its own that clips it, between the bar and the composer. Both are
+ * siblings of the box, not overlays, so the list's viewport is exactly what is left under the bar
+ * and above the composer and the keyboard; a
  * card taller than that scrolls inside it and can never be drawn behind the composer. When the
  * viewport changes size (the keyboard opening or closing, the composer growing a line) and the
  * Person is at the newest words, they are put back on them, so the newest card is not left half
  * above the edge.
+ *
+ * The box starts under the bar, not behind it. The list used to run up behind the glass bar with
+ * the bar's room as its last row, and on the owner's iPhone that did two things (his screenshots
+ * of 6 October 2026, iOS 26, dark): the words ran through Vivid's capsule and the bar's buttons,
+ * and the whole conversation was drawn at about a fifth of its strength. The second is the
+ * system's scroll edge effect, which takes an upside-down list behind a bar to be under that bar
+ * from end to end (`NO_SCROLL_EDGES`, `ui/stack.ts`). Switching the effect off through the screen
+ * did not hold: react-native-screens sets it when the option changes and when the screen is put
+ * in its stack, on the scroll view that is there at that moment (`RNSScreen.mm`,
+ * `updateContentScrollViewEdgeEffectsIfExists`, called from the props update and from
+ * `willMoveToParentViewController`), and this list is mounted later, after the Thread's outline. A list that is never behind the
+ * bar has nothing for the system to soften. Where it meets the bar it fades out over a few
+ * points (`TopFade`), so words leave softly instead of being cut. Not seen on an iPhone from
+ * here: there is no iOS device or simulator to run it on.
  *
  * When the Person has scrolled away and words arrive, their place is held and a "Latest messages"
  * action with the real count of arrivals brings them back. Whether they are away is kept as the
@@ -489,7 +585,6 @@ function Transcript(props: MessagesProps) {
   const { messages, working } = props
   const list = useRef<FlatList<FlueConversationMessage>>(null)
   const [awayAt, setAwayAt] = useState<Option.Option<number>>(Option.none())
-  const streaming = messages.some((message) => message.role === 'assistant' && isStreaming(message))
   const arrived = Option.match(awayAt, {
     onNone: () => 0,
     onSome: (seen) => messages.length - seen,
@@ -515,38 +610,76 @@ function Transcript(props: MessagesProps) {
   }
 
   return (
-    <View style={{ flex: 1, overflow: 'hidden' }} onLayout={resized}>
-      <FlatList
-        ref={list}
-        inverted
-        // Newest first is what an inverted list draws at the bottom.
-        data={messages.toReversed()}
-        keyExtractor={(message) => message.id}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="interactive"
-        onScroll={follow}
-        scrollEventThrottle={32}
-        contentContainerStyle={[
-          styles.column,
-          { paddingHorizontal: GUTTER - 4, paddingVertical: 16, gap: 22 },
-        ]}
-        // The first thing in an inverted list is the last thing on screen.
-        ListHeaderComponent={
-          <Tail working={working && !streaming} ended={props.ended} trouble={props.trouble} />
-        }
-        renderItem={({ item, index }) => (
-          <Message
-            message={item}
-            around={props.around}
-            detail={props.detail}
-            working={working}
-            latest={index === 0}
-            unsent={props.unsent}
-            onContinue={props.onContinue}
-          />
-        )}
-      />
-      {arrived > 0 && <LatestButton count={arrived} onPress={latest} />}
+    <View style={{ flex: 1 }}>
+      <BarRoom />
+      <View style={{ flex: 1, overflow: 'hidden' }} onLayout={resized}>
+        <FlatList
+          ref={list}
+          inverted
+          // Newest first is what an inverted list draws at the bottom.
+          data={messages.toReversed()}
+          keyExtractor={(message) => message.id}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          onScroll={follow}
+          scrollEventThrottle={32}
+          contentContainerStyle={[
+            styles.column,
+            { paddingHorizontal: GUTTER - 4, paddingVertical: 16, gap: 22 },
+          ]}
+          // The last thing in an inverted list is the first thing on screen: the room Vivid's
+          // avatar hangs into, so the oldest words rest under its name and not behind it.
+          ListFooterComponent={<View style={{ height: HANG }} />}
+          // The first thing in an inverted list is the last thing on screen.
+          ListHeaderComponent={<Tail ended={props.ended} trouble={props.trouble} />}
+          renderItem={({ item, index }) => (
+            <Message
+              message={item}
+              around={props.around}
+              detail={props.detail}
+              working={working}
+              latest={index === 0}
+              unsent={props.unsent}
+              onContinue={props.onContinue}
+            />
+          )}
+        />
+        <TopFade />
+        {arrived > 0 && <LatestButton count={arrived} onPress={latest} />}
+      </View>
+    </View>
+  )
+}
+
+/**
+ * How far under the bar the conversation fades out, in points: as far as Vivid's avatar and its
+ * name hang below the bar (`HANG`), and a little more for the words to come back in.
+ */
+const FADE = HANG + 28
+
+/**
+ * The top edge of the conversation: the page's own colour, strong behind Vivid's avatar and its
+ * name and gone a little under them, so a line scrolling up leaves softly and is never read
+ * through the name. It is a picture and takes no touches.
+ */
+function TopFade() {
+  const { colors: c } = useTheme()
+  return (
+    <View
+      pointerEvents="none"
+      style={{ position: 'absolute', top: 0, left: 0, right: 0, height: FADE }}
+    >
+      <Svg width="100%" height={FADE}>
+        <Defs>
+          <LinearGradient id="conversation-top" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={c.screen} stopOpacity={1} />
+            {/* Solid as far as the name reaches, so no line is read through or beside it. */}
+            <Stop offset={HANG / FADE} stopColor={c.screen} stopOpacity={1} />
+            <Stop offset="1" stopColor={c.screen} stopOpacity={0} />
+          </LinearGradient>
+        </Defs>
+        <Rect width="100%" height={FADE} fill="url(#conversation-top)" />
+      </Svg>
     </View>
   )
 }
@@ -601,54 +734,37 @@ function LatestButton({ count, onPress }: { count: number; onPress: () => void }
 function Blank({ ready }: { ready: boolean }) {
   if (!ready) {
     return (
-      <View style={[styles.column, { paddingHorizontal: GUTTER, paddingTop: 28 }]}>
-        <Skeleton rows={4} />
+      <View>
+        <BarRoom />
+        {/* Clear of Vivid's avatar and its name, which hang below the bar. */}
+        <View style={[styles.column, { paddingHorizontal: GUTTER, paddingTop: HANG + 20 }]}>
+          <Skeleton rows={4} />
+        </View>
       </View>
     )
   }
   return (
-    <View style={{ flex: 1, justifyContent: 'flex-end', paddingHorizontal: 28, paddingBottom: 8 }}>
-      <Label size="title" tone="ink-2" style={{ fontWeight: '400' }}>
-        What should I take off your plate?
-      </Label>
+    <View style={{ flex: 1 }}>
+      <BarRoom />
+      <Opening mood="happy" title="What should I take off your plate?" />
     </View>
   )
 }
 
 /**
- * What sits under the newest message: that Vivid is thinking, that its last Run came to nothing,
- * or that something did not arrive.
+ * What sits under the newest message: that Vivid's last Run came to nothing, or that something
+ * did not arrive. That Vivid is thinking is not said here but under the list, just above the
+ * composer, where it stays while the conversation is read (`ui/Thinking.tsx`).
  */
 function Tail({
-  working,
   ended,
   trouble,
 }: {
-  working: boolean
   ended: Option.Option<Ended>
   trouble: Option.Option<Trouble>
 }) {
-  // The orb is drawn in Vivid's theme, which a Person can set against the system's.
-  const { dark } = useTheme()
   return (
     <View style={{ gap: 12 }}>
-      {working && (
-        <View
-          accessibilityLiveRegion="polite"
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
-        >
-          <Face size={24} mood="thinking" />
-          {/* The same orb the web shows beside "Thinking…" (`apps/web/src/screen/Thread.tsx`).
-              The words name it, so a screen reader is not told twice. */}
-          <ThinkingOrb
-            state="breathing"
-            size={20}
-            theme={dark ? 'dark' : 'light'}
-            accessibilityLabel=""
-          />
-          <Label tone="ink-2">Thinking…</Label>
-        </View>
-      )}
       {Option.isSome(ended) && (
         <View style={{ gap: 8 }}>
           <Label size="label" tone="ink-2">

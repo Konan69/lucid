@@ -177,6 +177,45 @@ export const routes = Effect.fn('RuntimeTest.routes')(function* () {
           catch: () => new RouteRequestFailed({ path }),
         }),
     ),
+    /** Inspect the real model-visible registry after Vivid and Flue assemble it. Flue 2.2.2
+     * reserves task/activate_skill/read_skill_resource and exposes no schema override; these
+     * framework-owned inputs need upstream support before they can carry Vivid's display words. */
+    inspectTools: Effect.sync(() =>
+      faux.appendResponses([
+        (context) => {
+          // pi 0.87.1 TranscriptContext carries tool declarations on the leading system message.
+          const system = context.messages.find((message) => message.role === 'system')
+          if (system === undefined || system.toolsAdded === undefined)
+            expect.fail('Vivid must register its tools')
+          // Flue's six machine tools are Flue's code and words unchanged (`tools/sandbox.ts`):
+          // like the framework's own three they carry no `summary`, and the clients label their
+          // steps from the path or the command instead.
+          const machine = ['read', 'write', 'edit', 'bash', 'grep', 'glob']
+          expect(system.toolsAdded.map((tool) => tool.name)).toEqual(
+            expect.arrayContaining(machine),
+          )
+          const owned = system.toolsAdded.filter(
+            (tool) =>
+              ![...machine, 'task', 'activate_skill', 'read_skill_resource'].includes(tool.name),
+          )
+          // Counted with notes mounted, as every runtime has them: the three note tools are in,
+          // and the two knowledge-base tools that only a runtime without notes offered are gone.
+          // The Person's computer is ours (`use_person_computer`); `run_command` is gone since
+          // 6 October 2026, when `bash` took its place.
+          expect(owned).toHaveLength(29)
+          expect(owned.map((tool) => tool.name)).toContain('use_person_computer')
+          expect(owned.map((tool) => tool.name)).not.toContain('run_command')
+          // Every tool says its step to the Person in `summary`. `ask_person` is the one that
+          // does not: its `question` is already that sentence (`tools/ask.ts`, 5 October 2026).
+          for (const tool of owned)
+            expect(tool.parameters, tool.name).toHaveProperty(
+              'required',
+              expect.arrayContaining([tool.name === 'ask_person' ? 'question' : 'summary']),
+            )
+          return fauxAssistantMessage('ready')
+        },
+      ]),
+    ),
     /** A missing queued response fails loudly in the installed faux provider. */
     reply: (text: string) => Effect.sync(() => faux.appendResponses([fauxAssistantMessage(text)])),
     hold: (text: string) => heldReply(faux, text),

@@ -10,7 +10,6 @@ import { useTheme } from '../theme'
 import { navigationTheme, pushAnimation } from '../ui/stack'
 import { GUTTER, Label } from '../ui/ui'
 import { Address } from './door/Address'
-import { Code } from './door/Code'
 import { Create } from './door/Create'
 import { Email } from './door/Email'
 import { EntranceProvider, type DoorRoutes } from './door/Frame'
@@ -33,8 +32,9 @@ const serverOf = (session: Outside): Option.Option<ServerAddress> =>
 /**
  * The front door: everything a Person sees before they are signed in. Welcome, then their email,
  * then their password, each a screen on one native stack, so going on and coming back are the
- * platform's own push and pop. Creating an account and signing in with a code are quiet ways off
- * that path, each its own step.
+ * platform's own push and pop. Creating an account is a way off that path, its own step. Signing
+ * in with Google is not a step: it starts on Welcome, and the browser brings the Person back
+ * signed in.
  *
  * Nothing here knows about a session beyond which Vivid to ask: signing in adopts one
  * (`data/signing.ts`), which replaces this whole tree with the Person's Home.
@@ -74,7 +74,6 @@ export function Door({ session }: { session: Outside }) {
           <Stack.Screen name="Email" component={Email} />
           <Stack.Screen name="Password" component={Password} />
           <Stack.Screen name="Create" component={Create} />
-          <Stack.Screen name="Code" component={Code} />
           {__DEV__ && <Stack.Screen name="Address" component={Address} />}
         </Stack.Navigator>
       </EntranceProvider>

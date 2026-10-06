@@ -4,7 +4,7 @@ import { useState, type ReactElement } from 'react'
 import { FlatList, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
 import { ChevronDown, ChevronRight, CircleCheck } from 'lucide-react-native'
 import { useNow } from '../../data/foreground'
-import { arrange, matching, Row, rowKey, rowsOf } from '../../data/lanes'
+import { arrange, matching, Row, rowKey, rowsOf, type Lane } from '../../data/lanes'
 import { LiveState } from '../../data/live'
 import { useTheme } from '../../theme'
 import { GUTTER, Label, Notice, Press, radius, Skeleton } from '../../ui/ui'
@@ -31,25 +31,44 @@ interface ListProps extends ThreadActions {
   readonly onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void
 }
 
-/** A lane's heading. Only the two attention lanes say how many they hold. */
-function Caption({ label, count }: { label: string; count: Option.Option<number> }) {
+/**
+ * A lane's heading, which folds and unfolds the lane. The whole line is pressed, and the chevron
+ * at its far end says which way it stands, as the Done shelf at the foot of the list does. Only
+ * the two attention lanes say how many they hold, and they go on saying it while folded.
+ */
+function Caption({
+  label,
+  count,
+  folded,
+  onFold,
+}: {
+  label: Lane['label']
+  count: Option.Option<number>
+  folded: boolean
+  onFold: (label: Lane['label']) => void
+}) {
+  const { colors: c } = useTheme()
+  const Chevron = folded ? ChevronRight : ChevronDown
   return (
-    <View
-      style={{
+    <Press
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ expanded: !folded }}
+      onPress={() => onFold(label)}
+      containerStyle={{ marginTop: 10 }}
+      style={({ pressed }) => ({
+        // A finger's height, though the words are small: the heading is a control now.
+        minHeight: 40,
+        marginHorizontal: GUTTER - 12,
+        paddingHorizontal: 12,
         flexDirection: 'row',
-        alignItems: 'baseline',
+        alignItems: 'center',
         gap: 6,
-        paddingHorizontal: GUTTER,
-        paddingTop: 18,
-        paddingBottom: 6,
-      }}
+        borderRadius: radius.row,
+        backgroundColor: pressed ? c['row-hover'] : 'transparent',
+      })}
     >
-      <Label
-        accessibilityRole="header"
-        size="caption"
-        tone="drawer-foreground-muted"
-        style={{ fontWeight: '600' }}
-      >
+      <Label size="caption" tone="drawer-foreground-muted" style={{ fontWeight: '600' }}>
         {label}
       </Label>
       {Option.isSome(count) && (
@@ -61,7 +80,9 @@ function Caption({ label, count }: { label: string; count: Option.Option<number>
           {count.value}
         </Label>
       )}
-    </View>
+      <View style={{ flex: 1 }} />
+      <Chevron pointerEvents="none" size={16} strokeWidth={1.7} color={c.chevron} />
+    </Press>
   )
 }
 
@@ -110,9 +131,7 @@ function Shelf({
         <Chevron pointerEvents="none" size={16} strokeWidth={1.7} color={c.chevron} />
       </Press>
       {open &&
-        done.map((thread) => (
-          <ThreadRow key={thread.id} thread={thread} variant="line" now={now} {...actions} />
-        ))}
+        done.map((thread) => <ThreadRow key={thread.id} thread={thread} now={now} {...actions} />)}
     </View>
   )
 }
@@ -137,6 +156,15 @@ function Said({ children }: { children: string }) {
  */
 function Lanes({ threads, ...props }: ListProps & { threads: ReadonlyArray<Thread> }) {
   const now = useNow()
+  // The lanes the Person folded. Kept for as long as the menu is, which is the signed-in app:
+  // a lane folded once stays folded each time the menu is opened.
+  const [folded, setFolded] = useState<ReadonlySet<Lane['label']>>(new Set())
+  const fold = (label: Lane['label']) =>
+    setFolded((was) => {
+      const next = new Set(was)
+      if (!next.delete(label)) next.add(label)
+      return next
+    })
   const searching = props.query.trim().length > 0
   const scrolling = {
     keyboardShouldPersistTaps: 'handled',
@@ -153,7 +181,7 @@ function Lanes({ threads, ...props }: ListProps & { threads: ReadonlyArray<Threa
         data={matching(threads, props.query)}
         keyExtractor={(thread) => thread.id}
         ListEmptyComponent={<Said>No thread matches that.</Said>}
-        renderItem={({ item }) => <ThreadRow thread={item} variant="line" now={now} {...props} />}
+        renderItem={({ item }) => <ThreadRow thread={item} now={now} {...props} />}
       />
     )
   }
@@ -161,7 +189,7 @@ function Lanes({ threads, ...props }: ListProps & { threads: ReadonlyArray<Threa
   return (
     <FlatList
       {...scrolling}
-      data={rowsOf(arrangement.lanes)}
+      data={rowsOf(arrangement.lanes, folded)}
       keyExtractor={rowKey}
       ListHeaderComponent={props.header}
       // A scope with no Threads says so; with no scope the header alone is the empty drawer.
@@ -177,10 +205,10 @@ function Lanes({ threads, ...props }: ListProps & { threads: ReadonlyArray<Threa
       }
       renderItem={({ item }) =>
         Row.$match(item, {
-          Heading: ({ label, count }) => <Caption label={label} count={count} />,
-          Entry: ({ thread, variant }) => (
-            <ThreadRow thread={thread} variant={variant} now={now} {...props} />
+          Heading: ({ label, count, folded: shut }) => (
+            <Caption label={label} count={count} folded={shut} onFold={fold} />
           ),
+          Entry: ({ thread }) => <ThreadRow thread={thread} now={now} {...props} />,
         })
       }
     />

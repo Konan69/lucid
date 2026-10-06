@@ -106,6 +106,23 @@ LLM-behavior live evaluations need real credentials, an explicit opt-in environm
 
 Use the smallest proof that demonstrates the changed behavior: focused tests first, then the narrow lint or typecheck surface. Never use sleeps or polling in tests; wait on a typed signal, an observable receipt, or a controllable clock. A test that needs a timeout to pass is wrong. The primary agent performs one integrated pass in a real client for user-visible work; subagents never launch dev servers.
 
+## Where heavy work runs
+
+The developer's PC is shared by every session at once, and it runs out of processor and memory. On 5 October 2026 its load average stood at twice its core count: a production deploy sat for an hour, gates failed on timeouts in code nobody had touched, and a build waited on all of it. So before starting heavy work, measure: `uptime` against `nproc`, `free -g` for memory in swap, and how many `node`, `tsc` and `vitest` processes are already running. Heavy work is a build, a bundle export, a full gate, a whole test suite, a browser run, or anything else that holds a core for minutes.
+
+When the load average is above the core count, or memory is in swap, do the work on the Cloudbox (the developer's Boat machine, reached over SSH) and not on the PC. Check the Cloudbox the same way first; it is a small machine, so it takes one heavy job at a time. Never add the work to a contended PC and then report the timeout as the result.
+
+Simulators, emulators and testing run on the Cloudbox, not on the developer's PC, contended or not. That covers the Android emulator, driving a browser or the app to test it, a live proof, a gate and a suite. A focused test of the file being changed is small and may run on the PC. An iOS simulator needs macOS, which neither machine has: the iPhone app is checked on the phone itself or on a macOS runner, and its JavaScript, which is all that most fixes change, is built on the Cloudbox.
+
+## Shipping a phone change
+
+A change to the phone app reaches the developer's iPhone one of two ways, and which one is decided by whether the native side changed.
+
+- **JavaScript only** (screens, state, copy, assets; `pnpm-lock.yaml`, `patches/`, the `app.json` plugins and `version` all unchanged): it goes over the air. Merge it; the next production deploy publishes it, and the installed app takes it on its second open. Do not build or hand over an IPA for it.
+- **Native** (a native module added or changed, a config plugin, a patch to a native package, an Expo SDK move): raise `version` in `apps/mobile/app.json`, build the IPA from `main`, and put it in the developer's Downloads folder named with its version, `Vivid-<version>.ipa` (`Vivid-0.3.0.ipa`). Delete the IPA it replaces, there and among the CI artifacts, so there is one build to install and its name says which.
+
+Say in the report which of the two the change was. `apps/mobile/README.md` ("Over-the-air updates") has the mechanism.
+
 ## SDKs, servers, and tools
 
 Flue, Alchemy beta, Effect rc, Better Auth, Expo, and related SDKs move quickly. Never assume their APIs from memory. Read installed package source and version-matched docs first; for Flue use `pnpm exec flue docs ...`. Do not hack, reassign, or monkey-patch framework/SDK internals; use public APIs or an owned boundary and document a narrow removable workaround only when source proves a gap.
@@ -153,7 +170,7 @@ Use these terms in code, contracts, tests, and copy. Do not create synonyms for 
 
 **Borrowed code takes Vivid's names.** Any function, type, module, file, table, environment variable, event, or concept adapted from another project — a reference implementation, an SDK example, or one of our own earlier products — is renamed to this document's vocabulary and file conventions before it lands. The source's names never survive: no `box`, `sand`, `agent`, `bot`, `pod`, or another product's prefixes in identifiers, paths, logs, comments, or copy. Name the thing for what it is in Vivid (`Computer`, `Person`, `Thread`, `Run`, `Artifact`), and record where the design came from in the JSDoc, not in the identifier.
 
-**A reference implementation is a guide to follow, not inspiration.** When an inspected reference already solves the problem — source on disk or a decompiled binary — port it, or adapt it where Vivid differs: keep its mechanism, platform APIs, process layout, protocol methods and message shapes, ordering, limits, timeouts, and failure behavior. Do not redesign it from scratch, simplify it away, or substitute a mechanism recalled from memory. Before claiming the reference lacks something, search it; absence must be checked, not assumed. Cite the reference file and symbol or address in the JSDoc. Where Vivid's architecture, domain model, or the naming rule above requires a change, adapt and state the change and its reason beside the code. Where the reference cannot be inspected or a claim about it is unproved, say so; never fill the gap with a guess.
+**Vendor reference binaries; never reimplement them.** When a reference implementation exists on disk as a working binary (for example the Computer supervisor), vendor the binary, rename the integration to Vivid's names, and use it directly. Do not hand-roll, re-derive, or reconstruct the same functionality from notes or decompilations — that path failed once already. Where the reference cannot be inspected or a claim about it is unproved, say so; never fill the gap with a guess.
 
 ## Agent skills
 

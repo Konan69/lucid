@@ -33,6 +33,7 @@ import {
 } from './extraction.ts'
 import { fixture, pendingWork, storedWork } from './fixtures.ts'
 import { Fixture } from './fixtures/mode.ts'
+import { CRASH_TIMEOUT_MS } from './fixtures/process/mode.ts'
 import { GROW_HEAP_MB, nativeLaunch, extractWith, reportRemoved } from './fixtures/launch.ts'
 import { digestBytes, ingestOwed } from './ingest.ts'
 import { INGESTION_QUEUE_NAME, ingestionOperations, libraryIngestion } from './ingestion.ts'
@@ -413,6 +414,8 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
      * SQL rows prove both acknowledgements and no held claims (rc.116 PQ:1409-1417,1739-1755).
      * Existing VIVID_TEST_DATABASE_URL harness: per-file migrated clone plus per-case cleanup.
      * Root supplies the labeled disposable instance and runs abort cases under its scoped core limit.
+     * Use extraction.test.ts's native crash bound: WSL's piped crash handler delays SIGABRT exit
+     * beyond the runner default even with core files disabled. Synchronization still uses receipts.
      */
     it.effect(
       'P12 settles heap exhaustion and consumes the next real PDF without a held claim',
@@ -497,6 +500,7 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
           expect(yield* storedClaims(healthy.document.id)).toEqual([{ held: false }])
           expect(yield* pendingWork()).toEqual([])
         }),
+      CRASH_TIMEOUT_MS,
     )
 
     /** Q10: attempt 9 settles exhaustion before reading even healthy bytes; notice is atomic. */

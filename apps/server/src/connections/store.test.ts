@@ -89,37 +89,34 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         expect((yield* (yield* ConnectionStore).list(ownerActor)).connections).toEqual([])
       }),
     )
-    for (const configured of [false, true]) {
-      it.effect(`starts no setup sweep with Executor configured ${configured}`, () =>
-        Effect.gen(function* () {
-          const executor = yield* Executor
-          const calls = yield* Ref.make(0)
-          const controlled = Executor.of({
-            ...executor,
-            configured,
-            catalog: () =>
-              Ref.update(calls, (count) => count + 1).pipe(Effect.andThen(executor.catalog())),
-            authorization: () =>
-              Ref.update(calls, (count) => count + 1).pipe(
-                Effect.andThen(
-                  executor.authorization({
-                    service: serviceId,
-                    returnAddress: 'https://example.test/return',
-                  }),
-                ),
+    it.effect('starts no setup sweep of its own', () =>
+      Effect.gen(function* () {
+        const executor = yield* Executor
+        const calls = yield* Ref.make(0)
+        const controlled = Executor.of({
+          ...executor,
+          catalog: () =>
+            Ref.update(calls, (count) => count + 1).pipe(Effect.andThen(executor.catalog())),
+          authorization: () =>
+            Ref.update(calls, (count) => count + 1).pipe(
+              Effect.andThen(
+                executor.authorization({
+                  service: serviceId,
+                  returnAddress: 'https://example.test/return',
+                }),
               ),
-          })
-          yield* Effect.gen(function* () {
-            yield* ConnectionStore
-            yield* TestClock.adjust('1 hour')
-            expect(yield* Ref.get(calls)).toBe(0)
-          }).pipe(
-            Effect.provide(connectionStoreLayer, { local: true }),
-            Effect.provideService(Executor, controlled),
-          )
-        }),
-      )
-    }
+            ),
+        })
+        yield* Effect.gen(function* () {
+          yield* ConnectionStore
+          yield* TestClock.adjust('1 hour')
+          expect(yield* Ref.get(calls)).toBe(0)
+        }).pipe(
+          Effect.provide(connectionStoreLayer, { local: true }),
+          Effect.provideService(Executor, controlled),
+        )
+      }),
+    )
 
     it.effect('preserves the insert failure when provider compensation also fails', () =>
       Effect.gen(function* () {
@@ -409,16 +406,130 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           const listed = yield* offlineStore.list(ownerActor)
           expect(Object.keys(listed)).toEqual(['connections'])
           expect(listed.connections.map((row) => row.id)).toContain(step.connection.id)
-          const afterBackground = yield* Ref.get(probe.catalogs)
+          const afterList = yield* Ref.get(probe.catalogs)
           yield* offlineStore.list(ownerActor)
-          expect(yield* Ref.get(probe.catalogs)).toBe(afterBackground)
+          expect(yield* Ref.get(probe.catalogs)).toBe(afterList)
           expect(yield* offlineStore.find('Records')).toEqual(
             ServiceCatalog.cases.Unavailable.make({}),
           )
-          expect(yield* Ref.get(probe.catalogs)).toBe(afterBackground + 1)
+          expect(yield* Ref.get(probe.catalogs)).toBe(afterList + 1)
         }).pipe(
           Effect.provide(connectionStoreLayer, { local: true }),
           Effect.provideService(Executor, unavailable),
+        )
+      }),
+    )
+    /** A request disconnect must leave the Layer-owned cold probe and other readers alive. */
+    it.effect('shares a slow catalog when its first list caller is interrupted', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const step = yield* (yield* ConnectionStore).begin(ownerActor, {
+          service: serviceId,
+          label: 'Shared catalog',
+          shared: false,
+        })
+        const executor = yield* Executor
+        const calls = yield* Ref.make(0)
+        const started = yield* Deferred.make<void>()
+        const complete = yield* Deferred.make<void>()
+        const secondStarted = yield* Deferred.make<void>()
+        const controlled = Executor.of({
+          ...executor,
+          catalog: Effect.fn('Executor.Test.slowCatalog')(function* () {
+            yield* Ref.update(calls, (count) => count + 1)
+            yield* Deferred.succeed(started, undefined)
+            yield* Deferred.await(complete)
+            return yield* executor.catalog()
+          }),
+        })
+        yield* Effect.gen(function* () {
+          const store = yield* ConnectionStore
+          const first = yield* store.list(ownerActor).pipe(Effect.forkChild)
+          yield* Deferred.await(started)
+          // The public projection follows the final SQL read. Its remaining steps are synchronous,
+          // so this tracer signal puts the second reader at the shared cache before interruption.
+          const tracer = Tracer.make({
+            span(options) {
+              if (options.name === 'Connections.public')
+                Deferred.doneUnsafe(secondStarted, Effect.void)
+              return new Tracer.NativeSpan(options)
+            },
+          })
+          const second = yield* store
+            .list(ownerActor)
+            .pipe(Effect.withTracer(tracer), Effect.forkChild)
+          yield* Deferred.await(secondStarted)
+          // Let the signalled projection enter the cache wait before disconnecting its owner.
+          yield* Effect.yieldNow
+          yield* Fiber.interrupt(first)
+          yield* Deferred.succeed(complete, undefined)
+          expect((yield* Fiber.join(second)).connections.map((row) => row.id)).toContain(
+            step.connection.id,
+          )
+          expect(yield* Ref.get(calls)).toBe(1)
+        }).pipe(
+          Effect.provide(connectionStoreLayer, { local: true }),
+          Effect.provideService(Executor, controlled),
+        )
+      }),
+    )
+
+    /** List failures are paced like catalog downloads; successful reads must still see refreshed sites. */
+    it.effect('recovers catalog icons after backoff and observes subsequent catalog changes', () =>
+      Effect.gen(function* () {
+        const { ownerActor } = yield* fixture()
+        const step = yield* (yield* ConnectionStore).begin(ownerActor, {
+          service: serviceId,
+          label: 'Catalog recovery',
+          shared: false,
+        })
+        const executor = yield* Executor
+        const site = yield* Ref.make<Option.Option<string>>(Option.none())
+        const calls = yield* Ref.make(0)
+        const controlled = Executor.of({
+          ...executor,
+          catalog: Effect.fn('Executor.Test.recoveringCatalog')(function* () {
+            yield* Ref.update(calls, (count) => count + 1)
+            const domain = yield* Ref.get(site)
+            if (Option.isNone(domain))
+              return yield* Effect.fail(
+                ServiceUnavailable.make({ service: 'connections', message: 'Unavailable' }),
+              )
+            return (yield* executor.catalog()).map((entry) =>
+              ExecutorServiceEntry.make({ ...entry, domain: domain.value }),
+            )
+          }),
+        })
+        yield* Effect.gen(function* () {
+          const store = yield* ConnectionStore
+          expect((yield* store.list(ownerActor)).connections).toMatchObject([
+            { id: step.connection.id, mark: null },
+          ])
+          yield* Ref.set(site, Option.some('workspace.google.com'))
+          yield* TestClock.adjust('29 seconds')
+          expect((yield* store.list(ownerActor)).connections).toMatchObject([
+            { id: step.connection.id, mark: null },
+          ])
+          expect(yield* Ref.get(calls)).toBe(1)
+          yield* TestClock.adjust('1 second')
+          expect((yield* store.list(ownerActor)).connections).toMatchObject([
+            {
+              id: step.connection.id,
+              mark: 'https://www.google.com/s2/favicons?domain=google.com',
+            },
+          ])
+          expect(yield* Ref.get(calls)).toBe(2)
+          yield* Ref.set(site, Option.some('deepwiki.com'))
+          expect((yield* store.list(ownerActor)).connections).toMatchObject([
+            {
+              id: step.connection.id,
+              mark: 'https://www.google.com/s2/favicons?domain=deepwiki.com',
+            },
+          ])
+          expect(yield* Ref.get(calls)).toBe(3)
+        }).pipe(
+          Effect.provide(connectionStoreLayer, { local: true }),
+          Effect.provideService(Executor, controlled),
         )
       }),
     )
@@ -513,6 +624,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
             id: ServiceId.make(`service-${index}`),
             name: `Records ${index}`,
             description: 'Records',
+            domain: null,
             authorization:
               index < 24
                 ? ServiceAuthorization.cases.SignIn.make({})

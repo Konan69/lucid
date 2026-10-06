@@ -4,7 +4,7 @@ import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
 import { PushDestination, PushPayload } from '@vivid/contracts'
-import { PushConfig, requirePushConfiguration } from './config.ts'
+import { PushConfig } from './config.ts'
 import {
   PushAcceptance,
   PushRejected,
@@ -18,7 +18,7 @@ export interface PushAdapterService {
   readonly send: (
     destination: PushDestination,
     payload: PushPayload,
-  ) => Effect.Effect<PushAcceptance, PushSendError | import('@vivid/contracts').PushUnavailable>
+  ) => Effect.Effect<PushAcceptance, PushSendError>
   readonly receipt: (
     ticket: string,
   ) => Effect.Effect<Option.Option<'Confirmed' | 'Gone' | 'Rejected'>, PushRejected | PushUncertain>
@@ -66,7 +66,7 @@ const sendBrowser = Effect.fn('PushAdapter.browser')(function* (
   destination: typeof PushDestination.cases.Browser.Type,
   payload: PushPayload,
 ) {
-  const config = yield* requirePushConfiguration()
+  const config = yield* PushConfig
   const details = yield* Effect.try({
     try: () =>
       WebPush.generateRequestDetails(destination, encodePayload(payload), {
@@ -167,7 +167,6 @@ export const pushAdapterLayer = Layer.effect(
     return PushAdapter.of({
       send: Effect.fn('PushAdapter.send')(
         function* (destination, payload) {
-          yield* requirePushConfiguration()
           if (PushDestination.guards.Browser(destination))
             return yield* sendBrowser(destination, payload)
           return yield* sendPhone(destination, payload)

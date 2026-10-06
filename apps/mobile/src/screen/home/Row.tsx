@@ -4,14 +4,14 @@ import { Users } from 'lucide-react-native'
 import { useState } from 'react'
 import { View } from 'react-native'
 import { commit, warn } from '../../data/haptics'
-import { relativeTime, type Lane } from '../../data/lanes'
+import { relativeTime } from '../../data/lanes'
 import { useLiveData } from '../../data/live'
 import { deleteThread, patchThread, retitleThread } from '../../data/threads'
-import { ControlPillMenu } from '../../t3/Menu'
+import { HoldMenu } from '../../t3/Menu'
 import { ThreadSwipeable } from '../../t3/swipe'
 import { useTheme } from '../../theme'
 import { Faces } from '../../ui/Avatar'
-import { confirmDestructive, Dot, EDGE, GUTTER, Label, Press, radius } from '../../ui/ui'
+import { confirmDestructive, Dot, GUTTER, Label, radius } from '../../ui/ui'
 
 /** Who else is in a Thread: faces for named people, a mark for the whole Company. */
 function Audience({ thread }: { thread: Thread }) {
@@ -30,20 +30,6 @@ function Audience({ thread }: { thread: Thread }) {
   })
 }
 
-/** The word and color a card leads with. Only the two attention lanes are drawn as cards. */
-function Standing({ thread }: { thread: Thread }) {
-  const needsYou = thread.attention === 'NeedsYou'
-  const tone = needsYou ? 'status-attention' : 'status-working'
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-      <Dot tone={tone} size={6} />
-      <Label size="caption" tone={tone}>
-        {needsYou ? 'Needs you' : 'Working'}
-      </Label>
-    </View>
-  )
-}
-
 /** What each face of a row is told: the Thread, whether a finger is on it, and its title's state. */
 interface FaceProps {
   readonly thread: Thread
@@ -55,49 +41,29 @@ interface FaceProps {
 /** A title Vivid is thinking of a replacement for is drawn quieter, and still, until it lands. */
 const titleOpacity = (retitling: boolean) => (retitling ? 0.5 : 1)
 
-/** A Thread that needs someone or is being worked on: its state, who is in it, its last words. */
-function CardFace({ thread, pressed, retitling }: FaceProps) {
-  const { colors: c } = useTheme()
-  return (
-    <View
-      style={{
-        marginHorizontal: GUTTER - 6,
-        marginVertical: 4,
-        paddingHorizontal: 14,
-        paddingVertical: 12,
-        gap: 3,
-        borderRadius: radius.card,
-        borderCurve: 'continuous',
-        borderWidth: EDGE,
-        borderColor: c.border,
-        backgroundColor: pressed ? c['row-hover'] : c['thread-selected'],
-      }}
-    >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 18 }}>
-        <Standing thread={thread} />
-        <View style={{ flex: 1 }} />
-        <Audience thread={thread} />
-      </View>
-      <Label
-        numberOfLines={1}
-        size="footnote"
-        style={{ fontSize: 15, opacity: titleOpacity(retitling) }}
-      >
-        {thread.title}
-      </Label>
-      {thread.preview.length > 0 && (
-        <Label numberOfLines={2} size="label" tone="ink-2">
-          {thread.preview}
-        </Label>
-      )}
-    </View>
-  )
-}
+/**
+ * The mark a row leads with, by what the Thread wants of the Person. The lane's heading says the
+ * same in words, so the row itself carries no label: only this color and size.
+ */
+const MARK = {
+  NeedsYou: { tone: 'status-attention', size: 8 },
+  Working: { tone: 'status-working', size: 8 },
+  Unread: { tone: 'accent', size: 8 },
+  Quiet: { tone: 'line-4', size: 6 },
+} as const satisfies Record<Thread['attention'], { tone: string; size: number }>
 
-/** Any other Thread: a mark that says whether something in it is unread, its title, and when. */
+/**
+ * A Thread as one line: its mark, its title, who else is in it, and when it last moved. Every
+ * lane draws its Threads this way. The attention lanes used to draw cards with the lane's name
+ * and two lines of the last message; the name repeated the heading and the words made rows of
+ * different heights, so a list of five read as a page. The drawer finds a Thread; the Thread
+ * itself is where it is read.
+ */
 function LineFace({ thread, now, pressed, retitling }: FaceProps & { readonly now: number }) {
   const { colors: c } = useTheme()
-  const unread = thread.attention === 'Unread'
+  const mark = MARK[thread.attention]
+  // Anything but a quiet Thread is waiting to be looked at, and its title is drawn to say so.
+  const unread = thread.attention !== 'Quiet'
   return (
     <View
       style={{
@@ -111,7 +77,7 @@ function LineFace({ thread, now, pressed, retitling }: FaceProps & { readonly no
         backgroundColor: pressed ? c['row-hover'] : 'transparent',
       }}
     >
-      <Dot tone={unread ? 'accent' : 'line-4'} size={unread ? 8 : 6} />
+      <Dot tone={mark.tone} size={mark.size} />
       <Label
         numberOfLines={1}
         tone={unread ? 'ink' : 'ink-2'}
@@ -144,7 +110,6 @@ function LineFace({ thread, now, pressed, retitling }: FaceProps & { readonly no
  */
 export function ThreadRow({
   thread,
-  variant,
   now,
   width,
   onOpen,
@@ -153,7 +118,6 @@ export function ThreadRow({
   onRefused,
 }: {
   thread: Thread
-  variant: Lane['variant']
   now: number
   /** How wide the list is: a full swipe is measured against it, and the drawer is not the screen. */
   width: number
@@ -209,7 +173,7 @@ export function ThreadRow({
         )
       },
     })
-  // What the long-press menu can do, by the id the native menu reports back when one is chosen.
+  // What the menu on a hold can do, by the id the native menu reports back when one is chosen.
   const filing = Option.match(onFile, {
     onNone: () => [],
     onSome: () => [{ id: 'file', title: 'Move to a project' }],
@@ -225,7 +189,7 @@ export function ThreadRow({
   return (
     <ThreadSwipeable
       backgroundColor={c.drawer}
-      compactActions={variant === 'line'}
+      compactActions
       fullSwipeAction="primary"
       fullSwipeWidth={width}
       threadTitle={thread.title}
@@ -237,33 +201,25 @@ export function ThreadRow({
         onPress: shelve,
       }}
     >
-      {() => (
-        <ControlPillMenu
-          shouldOpenOnLongPress
-          title={thread.title}
-          actions={[
-            { id: 'rename', title: 'Rename' },
-            { id: 'retitle', title: 'Regenerate title' },
-            ...filing,
-            { id: 'shelve', title: shelveLabel },
-            { id: 'remove', title: 'Delete…', attributes: { destructive: true } },
-          ]}
-          onPressAction={({ nativeEvent }) => {
-            const act = chosen.get(nativeEvent.event)
-            if (act !== undefined) act()
-          }}
-        >
-          <Press accessibilityRole="button" onPress={() => onOpen(thread)}>
-            {({ pressed }) =>
-              variant === 'card' ? (
-                <CardFace thread={thread} pressed={pressed} retitling={retitling} />
-              ) : (
-                <LineFace thread={thread} now={now} pressed={pressed} retitling={retitling} />
-              )
-            }
-          </Press>
-        </ControlPillMenu>
-      )}
+      <HoldMenu
+        title={thread.title}
+        actions={[
+          { id: 'rename', title: 'Rename' },
+          { id: 'retitle', title: 'Regenerate title' },
+          ...filing,
+          { id: 'shelve', title: shelveLabel },
+          { id: 'remove', title: 'Delete…', attributes: { destructive: true } },
+        ]}
+        onChoose={(id) => {
+          const act = chosen.get(id)
+          if (act !== undefined) act()
+        }}
+        onPress={() => onOpen(thread)}
+      >
+        {({ pressed }) => (
+          <LineFace thread={thread} now={now} pressed={pressed} retitling={retitling} />
+        )}
+      </HoldMenu>
     </ThreadSwipeable>
   )
 }

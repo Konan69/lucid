@@ -29,6 +29,7 @@ import {
   type DecideApprovalRequest,
   type PersonSummary,
 } from '@vivid/contracts'
+import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { companyColumnOf, loadSummaries, ownedHere, type Actor } from '../auth/access.ts'
 import { Audit, AuditAttribution, recordAudit } from '../audit/record.ts'
 import {
@@ -297,7 +298,17 @@ const claim = Effect.fn('Approvals.claim')(function* (
   const claimed = rows[0]
   if (claimed === undefined)
     return yield* Effect.fail(new Conflict({ message: 'Approval already decided' }))
-  return yield* decodeRow(claimed)
+  const result = yield* decodeRow(claimed)
+  if (Row.guards.denied(result)) {
+    // Only the winning SQL claim decides Denied; reads, delivery and repeat decisions do not.
+    yield* recordRefusal(
+      Refusal.cases.ApprovalDenied.make({
+        effect: result.action.effect,
+        target: result.action.target._tag,
+      }),
+    )
+  }
+  return result
 })
 
 /** Only terminal outcomes have a signal body; execution first records an Awaiting debt. */

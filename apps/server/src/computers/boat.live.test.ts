@@ -3,12 +3,13 @@ import * as NodeProcess from 'node:process'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
 import { BrowserAction, ComputerState, DesktopAction } from '@vivid/contracts'
-import { Config, Duration, Effect, Function, Layer, Option, Predicate } from 'effect'
+import { Clock, Config, Duration, Effect, Function, Layer, Option, Predicate } from 'effect'
 import { eq } from 'drizzle-orm'
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http'
 import { Database } from '../database/client.ts'
 import { machineBindings } from './tables.ts'
 import { bindings } from './boat/bindings.ts'
+import { createdSince } from './boat/created.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { boatMachineLayer } from './boat.ts'
 import { Machine, MachineKey } from './machine.ts'
@@ -43,6 +44,11 @@ const cleanup = Effect.fn('BoatLive.cleanup')(function* (key: MachineKey) {
   const client = yield* HttpClient.HttpClient
   const apiKey = yield* Config.Redacted('VIVID_BOAT_API_KEY')
   const org = yield* Config.option(Config.NonEmptyString('VIVID_BOAT_ORG'))
+  // The provider is built in this process, so this process's own setting says whether the key
+  // took an existing machine (`VIVID_BOAT_MACHINE`) or had one created. Only a created one is
+  // deleted, and only when Boat's record agrees that it was made after this proof began.
+  const adopted = yield* Config.option(Config.String('VIVID_BOAT_MACHINE'))
+  const began = yield* Clock.currentTimeMillis
   const billed = Option.match(org, {
     onNone: () => Function.identity<HttpClientRequest.HttpClientRequest>,
     onSome: (name) => HttpClientRequest.setHeader('X-Boat-Org', name),
@@ -52,7 +58,12 @@ const cleanup = Effect.fn('BoatLive.cleanup')(function* (key: MachineKey) {
       'delete',
       Effect.gen(function* () {
         const binding = yield* saved.load(key)
-        if (Option.isSome(binding) && binding.value.providerId !== null) {
+        if (
+          Option.isNone(adopted) &&
+          Option.isSome(binding) &&
+          binding.value.providerId !== null &&
+          (yield* createdSince(binding.value.providerId, began))
+        ) {
           const id = binding.value.providerId
           const response = yield* client.execute(
             HttpClientRequest.delete(`https://boat.dev/api/v1/sandboxes/${id}`).pipe(

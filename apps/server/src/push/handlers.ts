@@ -10,7 +10,7 @@ import {
 import { requirePerson, requireVivid } from '../auth/access.ts'
 import { live } from '../live/query.ts'
 import { notifyPerson } from '../notifications/attention.ts'
-import { requirePushConfiguration } from './config.ts'
+import { PushConfig } from './config.ts'
 import { PushTargets } from './targets.ts'
 
 /** Push endpoints are personal, even while the client has a Company workspace selected. */
@@ -51,7 +51,7 @@ export const pushHandlers = {
   /** Public VAPID material is safe for a client bundle; the private key stays in the adapter. */
   GetPushKey: Effect.fn('Rpc.GetPushKey')(function* () {
     yield* requirePerson()
-    return PushKeyResponse.make({ publicKey: (yield* requirePushConfiguration()).publicKey })
+    return PushKeyResponse.make({ publicKey: (yield* PushConfig).publicKey })
   }),
   /** Recipient and Thread are authenticated runtime context, never model-supplied authority. */
   NotifyPerson: Effect.fn('Rpc.NotifyPerson')(function* (message: typeof NotifyPersonRequest.Type) {

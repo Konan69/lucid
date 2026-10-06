@@ -157,8 +157,8 @@ describe('Photon Stable enrolment protocol', () => {
     () =>
       Effect.gen(function* () {
         const provider = yield* ChannelProvider
-        expect(provider.available('iMessage')).toBe(true)
-        expect(provider.available('WhatsApp')).toBe(false)
+        expect(provider.channels.includes('iMessage')).toBe(true)
+        expect(provider.channels.includes('WhatsApp')).toBe(false)
         expect(yield* provider.enrol('iMessage', address)).toEqual({
           id: 'enrolled-person',
           textTo: '+12025550100',

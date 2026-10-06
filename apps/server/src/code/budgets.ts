@@ -4,8 +4,8 @@ import { CodeTiming } from '@vivid/contracts/code'
 export const budgets = {
   source: 16_384,
   seconds: CodeTiming.seconds,
-  heap: 64 * 1024 * 1024,
-  child: 256 * 1024 * 1024,
+  // The program's own heap on the Person's Computer, in MiB (Node `resourceLimits`).
+  heap: 256,
   calls: 100,
   frame: 262_144,
   wire: 263_168,
@@ -13,8 +13,10 @@ export const budgets = {
   result: 32_768,
   logs: 8_192,
   depth: 32,
-  // Four children × 256 MiB = 1 GiB maximum aggregate child memory.
+  // Programs this server follows at once, each an open connection to a Computer.
   processes: 4,
+  // Answers on their way to one program at once. Each is a request to the Computer's provider.
+  replies: 8,
   pages: 8,
   pageBytes: 524_288,
   pageText: 24_576,

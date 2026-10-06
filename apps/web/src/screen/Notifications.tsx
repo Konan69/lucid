@@ -1,18 +1,17 @@
-import { InvitationId, type Notification, type NotificationId } from '@vivid/contracts'
+import type { Notification, NotificationId } from '@vivid/contracts'
+import {
+  everyNoticeRead,
+  invitationIn,
+  noticeFace,
+  noticeRows,
+  NoticeRow,
+  noticesRead,
+  type NoticeFace,
+} from '@vivid/state'
 import { Option } from 'effect'
 import { Bell, Check, Hand, Share2, UserPlus } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { change, live, LiveState, useLive, useLiveValue } from '../data/live'
-import {
-  everyNoticeRead,
-  noticeRows,
-  NoticeRow,
-  noticesRead,
-  noticeTrialNames,
-  noticeTrials,
-  type NoticeTrial,
-  type NoticeTrialName,
-} from '../data/notices'
 import { Route, router } from '../data/route'
 import { Button, IconButton } from '../ui/button'
 import { cn } from '../ui/cn'
@@ -52,23 +51,11 @@ function ago(at: number, now: number): string {
  * for an invitation. A new kind of notice fails to compile here.
  */
 const KIND = {
-  finished: { hue: 'green', icon: <Check />, name: 'Vivid finished' },
-  'needs-you': { hue: 'orange', icon: <Hand />, name: 'Vivid needs you' },
-  shared: { hue: 'blue', icon: <Share2 />, name: 'A Thread was shared with you' },
-  invited: { hue: 'violet', icon: <UserPlus />, name: 'You were invited' },
-} as const satisfies Record<Notification['kind'], { hue: Hue; icon: ReactNode; name: string }>
-
-/**
- * What a notice is called when it leads its row. The server writes a title for every notice, but
- * the contract allows an empty one, and a row with a mark, a time and no words was found by
- * looking at the worst-case list: it could not be read or told apart. A notice without a title
- * is called by its kind, which it always has.
- */
-const named = (notice: Notification): string =>
-  notice.title.trim().length === 0 ? KIND[notice.kind].name : notice.title
-
-/** An invitation notice carries its id at the end of its body; the rest is the sentence. */
-const INVITATION = /\s*invitation:(\S+)$/u
+  finished: { hue: 'green', icon: <Check /> },
+  'needs-you': { hue: 'orange', icon: <Hand /> },
+  shared: { hue: 'blue', icon: <Share2 /> },
+  invited: { hue: 'violet', icon: <UserPlus /> },
+} as const satisfies Record<Notification['kind'], { hue: Hue; icon: ReactNode }>
 
 /**
  * What the empty panel says. "Nothing new" is an answer, so it is only said once the server has
@@ -90,9 +77,6 @@ const QUIET = {
  */
 export function Notifications({ unread }: { unread: number }) {
   const [open, setOpen] = useState(false)
-  // Which worst-case list stands in for the live one. It is kept here, above the panel, so it
-  // outlasts closing and reopening the bell; a production build has no way to set it.
-  const [trial, setTrial] = useState<Option.Option<NoticeTrialName>>(Option.none())
   return (
     <Popover open={open} onOpenChange={setOpen}>
       {/* `relative` places the unread dot on the bell's own corner. */}
@@ -113,47 +97,9 @@ export function Notifications({ unread }: { unread: number }) {
         aria-label="Notifications"
         className="max-h-128 w-88 max-w-(--available-width)"
       >
-        <Panel onClose={() => setOpen(false)} trial={trial} />
-        {import.meta.env.DEV && <Trials trial={trial} onTry={setTrial} />}
+        <Panel onClose={() => setOpen(false)} />
       </PopoverContent>
     </Popover>
-  )
-}
-
-/**
- * The switch between the live list and each worst-case one, in a development build only. It is
- * inside the panel because a press anywhere outside closes the panel it is there to test, and it
- * is plain on purpose: it is a tool beside the design, not part of it.
- */
-function Trials({
-  trial,
-  onTry,
-}: {
-  trial: Option.Option<NoticeTrialName>
-  onTry: (next: Option.Option<NoticeTrialName>) => void
-}) {
-  return (
-    <footer className="flex shrink-0 flex-wrap gap-1 p-2 hairline-t" aria-label="Trial data">
-      <Button
-        size="xs"
-        variant="ghost"
-        aria-pressed={Option.isNone(trial)}
-        onClick={() => onTry(Option.none())}
-      >
-        Live
-      </Button>
-      {noticeTrialNames.map((name) => (
-        <Button
-          key={name}
-          size="xs"
-          variant="ghost"
-          aria-pressed={Option.contains(trial, name)}
-          onClick={() => onTry(Option.some(name))}
-        >
-          {name}
-        </Button>
-      ))}
-    </footer>
   )
 }
 
@@ -185,10 +131,8 @@ function readAll() {
 const visit = NoticeRow.$match({
   Single: ({ notice }) => {
     if (notice.readAt === null) read([notice.id])
-    const invitation = INVITATION.exec(notice.body)
-    if (invitation !== null && invitation[1] !== undefined) {
-      router.go(Route.Invite({ id: InvitationId.make(invitation[1]) }))
-    }
+    const invitation = invitationIn(notice)
+    if (Option.isSome(invitation)) router.go(Route.Invite({ id: invitation.value }))
   },
   Grouped: ({ threadId, unread }) => {
     read(unread)
@@ -198,28 +142,19 @@ const visit = NoticeRow.$match({
 
 /**
  * The open panel: the count, the way to clear it, and a row for each place to go, newest first.
- *
- * A trial replaces both live lists at the point they are read, so a worst-case list is drawn by
- * exactly the code the live one is. Its rows and "Mark all read" do nothing when pressed: its
- * notices do not exist on the server, and a trial must never write.
  */
-function Panel({ onClose, trial }: { onClose: () => void; trial: Option.Option<NoticeTrialName> }) {
+function Panel({ onClose }: { onClose: () => void }) {
   const state = useLive(live.notifications)
   const threads = useLiveValue(live.threads)
   // "3h" is counted from the moment the panel opened, read once: a render must not read the clock.
   const [opened] = useState(() => Date.now())
-  // The condition is on the build, so a production bundle drops the trials and their data.
-  const tried = import.meta.env.DEV
-    ? Option.map(trial, (name): NoticeTrial => noticeTrials[name](opened))
-    : Option.none<NoticeTrial>()
-  const shown = Option.getOrElse(tried, (): NoticeTrial => ({
-    notices: LiveState.$is('Ready')(state) ? state.value.notifications : [],
+  const notices = LiveState.$is('Ready')(state) ? state.value.notifications : []
+  const rows = noticeRows(
+    notices,
     // Until the Thread list has answered, a row leads with its notice's own title.
-    threads: Option.match(threads, { onNone: () => [], onSome: (list) => list.threads }),
-  }))
-  const rows = noticeRows(shown.notices, shown.threads)
-  const unread = shown.notices.filter((notice) => notice.readAt === null).length
-  const trying = Option.isSome(tried)
+    Option.match(threads, { onNone: () => [], onSome: (list) => list.threads }),
+  )
+  const unread = notices.filter((notice) => notice.readAt === null).length
 
   return (
     <>
@@ -232,7 +167,7 @@ function Panel({ onClose, trial }: { onClose: () => void; trial: Option.Option<N
         )}
         <span className="flex-1" />
         {unread > 0 && (
-          <Button size="sm" variant="ghost" onClick={trying ? undefined : readAll}>
+          <Button size="sm" variant="ghost" onClick={readAll}>
             Mark all read
           </Button>
         )}
@@ -243,20 +178,19 @@ function Panel({ onClose, trial }: { onClose: () => void; trial: Option.Option<N
             <Bell />
           </Emblem>
           <p className="max-w-56 text-label text-pretty text-ink-3" aria-live="polite">
-            {trying ? QUIET.Ready : QUIET[state._tag]}
+            {QUIET[state._tag]}
           </p>
         </div>
       ) : (
         <ul className="min-h-0 flex-1 overflow-y-auto p-1">
           {rows.map((row) => {
-            const face = faceOf(row)
+            const face = noticeFace(row)
             return (
               <li key={face.key}>
                 <Row
                   face={face}
                   now={opened}
                   onOpen={() => {
-                    if (trying) return
                     onClose()
                     visit(row)
                   }}
@@ -269,44 +203,6 @@ function Panel({ onClose, trial }: { onClose: () => void; trial: Option.Option<N
     </>
   )
 }
-
-/** What a row says, whichever kind of row it is, so both are drawn on the same three edges. */
-interface Face {
-  /** Stable while notices arrive and are read: the Thread for a group, the notice for a single. */
-  readonly key: string
-  /** The Thread's title, or the notice's own when there is no Thread title to lead with. */
-  readonly heading: string
-  /** The notice the mark, the line and the time are taken from: the newest one. */
-  readonly notice: Notification
-  /**
-   * What the notice is, for someone who cannot see its mark, when the heading does not already
-   * say it: a row led by a Thread's title carries its kind only in the colour of an icon.
-   */
-  readonly spoken: Option.Option<string>
-  /** Whether the Thread is waiting on this Person now. */
-  readonly waiting: boolean
-  /** How many notices of the row are unread. */
-  readonly unread: number
-}
-
-const faceOf = NoticeRow.$match({
-  Single: ({ notice }): Face => ({
-    key: notice.id,
-    heading: named(notice),
-    notice,
-    spoken: Option.none(),
-    waiting: false,
-    unread: notice.readAt === null ? 1 : 0,
-  }),
-  Grouped: ({ threadId, title, newest, waiting, unread }): Face => ({
-    key: threadId,
-    heading: Option.getOrElse(title, () => named(newest)),
-    notice: newest,
-    spoken: Option.map(title, () => newest.title),
-    waiting,
-    unread: unread.length,
-  }),
-})
 
 /**
  * One row: the newest notice's mark, where it leads (a Thread's title), and under it one line of
@@ -329,7 +225,7 @@ function Row({
   now,
   onOpen,
 }: {
-  face: Face
+  face: NoticeFace
   /** The moment "3h ago" is counted from. */
   now: number
   onOpen: () => void
@@ -368,7 +264,7 @@ function Row({
           {Option.isSome(face.spoken) && <span className="sr-only">{face.spoken.value}</span>}
           {face.waiting && <span className="shrink-0 text-attention">Needs you</span>}
           <span className="min-w-0 flex-1 truncate">
-            <bdi>{face.notice.body.replace(INVITATION, '')}</bdi>
+            <bdi>{face.line}</bdi>
           </span>
           {face.unread > 1 && (
             <span className="shrink-0 text-meta font-meta text-ink-2 tabular-nums">

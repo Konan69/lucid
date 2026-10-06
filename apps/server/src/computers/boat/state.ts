@@ -92,3 +92,8 @@ export const observations = Effect.fn('Machine.boat.observations')(function* (
   })
   return { bound, running, permission, wait, invalidateViewer }
 })
+
+/** A bound machine: its binding row and the provider's id for it. */
+export type Identity = Effect.Success<
+  ReturnType<Effect.Success<ReturnType<typeof observations>>['bound']>
+>

@@ -53,15 +53,7 @@ const TITLE = {
  * are two kinds of setting: what is the Person's own and follows them everywhere, and what belongs
  * to the workspace they are in. The open section is in the address, so it can be linked to.
  */
-export function Settings({
-  me,
-  section,
-  deviceCode,
-}: {
-  me: MeResponse
-  section: SettingsSection
-  deviceCode: string
-}) {
+export function Settings({ me, section }: { me: MeResponse; section: SettingsSection }) {
   const close = () => router.openSettings(Option.none())
   const place = Workspace.match(me.workspace, {
     Personal: () => 'Your space',
@@ -83,6 +75,8 @@ export function Settings({
         // centre, so the box between them is what the two limits clamp, and its one row is as
         // tall as it is, so the sections scroll inside it.
         flush
+        // It fills the window and its panes scroll, so it is not glass (see `solid`).
+        solid
         className="inset-0 m-auto size-auto max-h-none max-w-none translate-none grid-rows-1 overflow-hidden sm:inset-4 sm:max-h-190 sm:max-w-5xl"
       >
         {/* The panel's own name. What is on screen is the open section's title, in the header. */}
@@ -105,7 +99,7 @@ export function Settings({
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6">
               {section === 'general' && <General me={me} />}
-              {section === 'devices' && <Devices initialCode={deviceCode} />}
+              {section === 'devices' && <Devices />}
               {section === 'people' && <People me={me} />}
               {section === 'connections' && <Connections me={me} />}
               {section === 'rules' && <Rules me={me} />}

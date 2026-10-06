@@ -1,10 +1,11 @@
 import * as Alchemy from 'alchemy'
 import * as Command from 'alchemy/Command'
 import * as Docker from 'alchemy/Docker'
+import * as GitHub from 'alchemy/GitHub'
 import * as Railway from 'alchemy/Railway'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
-import * as Option from 'effect/Option'
+import { computerBinariesRelease } from './infra/github.ts'
 import { databaseUrlFor } from './infra/database.ts'
 import { loadInfrastructureEnvironment } from './infra/env.ts'
 import { railwayResources } from './infra/railway.ts'
@@ -28,13 +29,16 @@ const localStack = () =>
        * Command owns the local processes and Docker the PostgreSQL resources; no cloud provider is loaded, so
        * `alchemy dev` never starts an emulator. See `alchemy/lib/Docker/Providers.d.ts`.
        */
-      providers: Layer.mergeAll(Command.providers(), Docker.providers()),
+      providers: Layer.mergeAll(Command.providers(), Docker.providers(), GitHub.providers()),
       state: Alchemy.localState(),
     },
     Effect.gen(function* () {
       const target = yield* requireRunnableTarget(deployTarget)
       const databaseUrl = yield* databaseUrlFor(target)
       const environment = yield* loadInfrastructureEnvironment
+
+      /** The Computer binaries' release: the desktop app's fetch source, reconciled here. */
+      yield* computerBinariesRelease()
 
       /**
        * Migrations finish before any long-lived process starts. `Command.Exec`
@@ -79,9 +83,12 @@ const localStack = () =>
           VIVID_RUNTIME_TOKEN: environment.runtimeToken,
           VIVID_SERVER_URL: target.serverUrl,
           VIVID_MODEL: environment.model,
-          GOOGLE_CLIENT_ID: Option.getOrUndefined(environment.googleClientId),
-          GOOGLE_CLIENT_SECRET: Option.getOrUndefined(environment.googleClientSecret),
-          GOOGLE_REDIRECT_URI: Option.getOrUndefined(environment.googleRedirectUri),
+          /**
+           * Vivid's notes: one SQLite file for each Person, beside the runtime
+           * (`packages/agent/runtime/src/notes.ts`). The runtime does not start without the
+           * directory. Locally it lives with the runtime's other state, which Git ignores.
+           */
+          VIVID_MEMORY_DIR: '.state/notes',
         },
       })
 
@@ -102,9 +109,17 @@ const localStack = () =>
           PUBLIC_URL: target.serverUrl,
           VIVID_RUNTIME_URL: target.runtimeUrl,
           VIVID_RUNTIME_TOKEN: environment.runtimeToken,
-          GOOGLE_CLIENT_ID: Option.getOrUndefined(environment.googleClientId),
-          GOOGLE_CLIENT_SECRET: Option.getOrUndefined(environment.googleClientSecret),
-          GOOGLE_REDIRECT_URI: Option.getOrUndefined(environment.googleRedirectUri),
+          GOOGLE_CLIENT_ID: environment.google.clientId,
+          GOOGLE_CLIENT_SECRET: environment.google.clientSecret,
+          GOOGLE_REDIRECT_URI: environment.google.redirectUri,
+          /**
+           * The rest of what the server does not start without is not a resource of this graph:
+           * Boat, Helix, Executor, Photon and the push keys are outside services. `Command.Dev`
+           * merges these variables over the environment `pnpm infra:dev` was started in
+           * (`alchemy/lib/Command/Dev.d.ts`, "Environment Variables"), so their settings reach the
+           * server from that environment, and `infra/env.ts` has already refused to go on without
+           * the ones a deploy must carry.
+           */
         },
       })
 
@@ -141,10 +156,15 @@ const localStack = () =>
 const railwayStack = () =>
   Alchemy.Stack(
     deployTarget.stackName,
-    { providers: Railway.providers(), state: Alchemy.localState() },
+    {
+      providers: Layer.mergeAll(Railway.providers(), GitHub.providers()),
+      state: Alchemy.localState(),
+    },
     Effect.gen(function* () {
       const target = yield* requireRunnableTarget(deployTarget)
       const hosted = yield* railwayResources(target, yield* loadInfrastructureEnvironment)
+      /** The Computer binaries' release: the same resource on every target. */
+      yield* computerBinariesRelease()
       return { webUrl: hosted.serverUrl, serverUrl: hosted.serverUrl }
     }).pipe(Effect.orDie),
   )

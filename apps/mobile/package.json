@@ -11,8 +11,8 @@
     "web": "expo start --web",
     "build": "expo export --platform all",
     "updates": "node scripts/publish.mjs",
-    "typecheck": "tsc --noEmit",
-    "lint": "oxlint --type-aware src",
+    "typecheck": "node ../../scripts/types.mjs",
+    "lint": "node ../../scripts/lint.mjs",
     "test": "vitest run"
   },
   "dependencies": {
@@ -56,7 +56,9 @@
     "react-native-svg": "15.15.4",
     "react-native-web": "catalog:",
     "react-native-worklets": "catalog:",
-    "thinking-orbs": "^0.3.2"
+    "thinking-orbs": "^0.3.2",
+    "@sentry/react-native": "catalog:",
+    "@sentry/core": "10.75.2"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

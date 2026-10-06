@@ -1,6 +1,5 @@
 import { pgTable, primaryKey, text, uniqueIndex } from 'drizzle-orm/pg-core'
-import type { Channel, ChannelAddress, RunId, PersonId } from '@vivid/contracts'
-import { personTable } from '../auth/tables.ts'
+import type { Channel, ChannelAddress, RunId } from '@vivid/contracts'
 import { epoch, personColumn, threadColumn } from '../database/owner.ts'
 import { threads } from '../threads/tables.ts'
 import type { ChannelMessageId, ChannelEnrolmentId } from './provider.ts'
@@ -24,19 +23,14 @@ export const channelLinks = pgTable(
 )
 
 /**
- * Claim before interpreting content. Ownership is genuinely absent for an unlinked sender;
- * linked claims retain their Person. No words or raw unlinked address ever enter this ledger.
- * Provider identity survives disconnect and Thread deletion so reconnect replay stays harmless.
+ * Claim provider identity before interpreting content. Receipts outlive disconnect and Thread
+ * deletion so replay stays harmless. No Person attribution, timestamps, addresses or words are kept.
  */
 export const channelMessages = pgTable(
   'vivid_channel_messages',
   {
     channel: text('channel').$type<Channel>().notNull(),
     providerId: text('provider_id').$type<ChannelMessageId>().notNull(),
-    personId: text('person_id')
-      .$type<PersonId>()
-      .references(() => personTable.id, { onDelete: 'set null' }),
-    receivedAt: epoch('received_at').notNull(),
   },
   (table) => [primaryKey({ columns: [table.channel, table.providerId] })],
 )
@@ -50,8 +44,11 @@ export const channelReplies = pgTable('vivid_channel_replies', {
   runId: text('run_id').$type<RunId>().primaryKey(),
   personId: personColumn().notNull(),
   channel: text('channel').$type<Channel>().notNull(),
-  address: text('address').$type<ChannelAddress>().notNull(),
-  threadId: threadColumn('thread_id').notNull(),
-  status: text('status', { enum: ['awaiting', 'unknown', 'sent'] }).notNull(),
+  since: epoch('since').notNull(),
+  responseId: text('response_id').$type<RunId>().unique(),
+  threadId: threadColumn('thread_id')
+    .notNull()
+    .references(() => threads.id, { onDelete: 'cascade' }),
+  status: text('status', { enum: ['awaiting', 'unknown', 'sent', 'not-sent'] }).notNull(),
   updatedAt: epoch('updated_at').notNull(),
 })

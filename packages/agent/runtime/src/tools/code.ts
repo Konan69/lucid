@@ -8,8 +8,9 @@ import { Scope, type RunTool } from './scope.ts'
 import { warnFailure, type ToolResult } from './result.ts'
 import * as views from './views.ts'
 
-/** These are the entire guest API, with human account names and no Vivid ownership arguments. */
-const PROGRAM = `Run a JavaScript async function body (top-level await and return work). Return JSON; lines printed with console.log are returned too. No imports, network, filesystem, process or persistent state. Limits: 16 KiB source, ${CodeTiming.seconds} seconds total, 100 calls, 256 KiB per call/result, 4 MiB data, 32 KiB final result. Approval, a blocking rule or an unknown action ends the program; calls already started finish and completed calls stay completed. Never replay it to resume.
+/** The calls a program can make as the Person, with human account names and no Vivid ownership
+ * arguments. Everything else it has is the Computer it runs on. */
+const PROGRAM = `Run a JavaScript async function body on your Computer (top-level await and return work). Return JSON; lines printed with console.log are returned too. It runs under Node 24 there: await import("node:fs/promises") and other Node modules work, and so do the Computer's files and network. Variables do not last to the next program; files on the Computer do. Limits: 16 KiB source, ${CodeTiming.seconds} seconds total including the Computer waking, 100 calls, 256 KiB per call/result, 4 MiB data, 32 KiB final result. Approval, a blocking rule or an unknown action ends the program; calls already started finish and completed calls stay completed. Never replay it to resume. A failure of Unavailable means the Computer could not be used just now, or contact with it was lost (it did not start, the Person is using it, or it stopped answering): say so and do not try again in a loop.
 The callable API (TypeScript declarations describe JavaScript inputs):
 type Json = null | boolean | number | string | Json[] | {[key: string]: Json};
 declare const tools: {
@@ -94,7 +95,10 @@ export function codeTools(runTool: RunTool) {
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {
-            const outcome = yield* (yield* Scope).client.RunCode(data)
+            const outcome = yield* (yield* Scope).client.RunCode({
+              code: data.code,
+              summary: data.summary,
+            })
             if (CodeOutcome.guards.Failed(outcome))
               yield* warnFailure('run_code', outcome.failure._tag)
             if (CodeOutcome.isAnyOf(['Blocked', 'OutcomeUnknown'])(outcome))
@@ -109,11 +113,11 @@ export function codeTools(runTool: RunTool) {
       name: 'read_page',
       description:
         'Read any public web page as text, without a Computer or signed-in browser. Returns title, headings, paragraphs, lists and links.',
-      input: v.object({ address: text('The public http or https page address.', 4000) }),
+      input: v.object({ summary, address: text('The public http or https page address.', 4000) }),
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {
-            const outcome = yield* (yield* Scope).client.ReadPage(data)
+            const outcome = yield* (yield* Scope).client.ReadPage({ address: data.address })
             if (ReadPageOutcome.guards.Refused(outcome))
               yield* warnFailure('read_page', outcome._tag)
             return pageOutcome(outcome)

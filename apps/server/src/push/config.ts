@@ -1,62 +1,76 @@
 import * as NodeCrypto from 'node:crypto'
-import { Config, Context, Data, Effect, Layer, Option, Redacted } from 'effect'
-import { PushUnavailable } from '@vivid/contracts'
+import { Context, Effect, Layer, Redacted, Schema } from 'effect'
+import { ConfigurationError, requiredSetting } from '../config.ts'
 
-/** A partial installation stays unavailable without lending a default credential to the adapter. */
-export type PushConfiguration = Data.TaggedEnum<{
-  Unavailable: {}
-  Configured: {
-    readonly publicKey: string
-    readonly privateKey: Redacted.Redacted
-    readonly subject: string
-  }
-}>
-export const PushConfiguration = Data.taggedEnum<PushConfiguration>()
+/**
+ * The server's own identity towards browser push services (VAPID, RFC 8292): the public key a
+ * browser subscribes against, the private key that signs every send, and the contact address a
+ * push service may use. Away notifications are part of every running Vivid, so this always exists.
+ */
+export interface PushConfiguration {
+  readonly publicKey: string
+  readonly privateKey: Redacted.Redacted
+  readonly subject: string
+}
 export class PushConfig extends Context.Service<PushConfig, PushConfiguration>()(
   'vivid/PushConfig',
 ) {}
 
-/** Validate the pair once; a typo must not advertise a public key that can never send. */
-const validate = Effect.fn('PushConfig.validate')(function* (input: {
-  readonly publicKey: string
-  readonly privateKey: Redacted.Redacted
-  readonly subject: string
-}) {
-  return yield* Effect.try({
-    try: () => {
-      const subject = new URL(input.subject)
-      const curve = NodeCrypto.createECDH('prime256v1')
-      curve.setPrivateKey(Buffer.from(Redacted.value(input.privateKey), 'base64url'))
-      return (
-        /^(?:https:|mailto:)$/u.test(subject.protocol) &&
-        curve.getPublicKey().toString('base64url') === input.publicKey
-      )
-    },
-    catch: () => new PushUnavailable({ message: 'Push notifications are not configured.' }),
-  })
-})
+/** An uncompressed P-256 point in unpadded base64url: 65 bytes, so always 87 characters. */
+const publicKey = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{87}$/u))
 
-/** Read optional config through Effect; missing or unusable push config never stops the server. */
+/** RFC 8292 allows only these two schemes; a push service refuses a send signed with another. */
+const subject = Schema.String.check(
+  Schema.makeFilter(
+    (value) =>
+      (URL.canParse(value) && /^(?:https:|mailto:)$/u.test(new URL(value).protocol)) ||
+      'an https: or mailto: address',
+  ),
+)
+
+const mismatched = () =>
+  new ConfigurationError({
+    variable: 'VIVID_PUSH_VAPID_PRIVATE',
+    expected: 'the private key of VIVID_PUSH_VAPID_PUBLIC',
+    message:
+      'VIVID_PUSH_VAPID_PRIVATE is missing or invalid: expected the private key of VIVID_PUSH_VAPID_PUBLIC',
+  })
+
+/**
+ * All three settings are required and checked while the server is composed; a missing one, a
+ * subject a push service would refuse, or a private key that does not belong to the public key
+ * stops launch naming the variable. Otherwise the server would hand browsers a public key it can
+ * never sign for, and every away notification would be refused by the push service later.
+ *
+ * A push service or Expo being down is a different fact: it is a typed failure of the one send
+ * that met it (`PushSendError`), recorded on that delivery, and the next send tries again.
+ */
 export const loadPushConfiguration = Effect.fn('PushConfig.load')(function* () {
-  const publicKey = yield* Config.option(Config.String('VIVID_PUSH_VAPID_PUBLIC'))
-  const privateKey = yield* Config.option(Config.Redacted('VIVID_PUSH_VAPID_PRIVATE'))
-  const subject = yield* Config.option(Config.String('VIVID_PUSH_SUBJECT'))
-  if (Option.isNone(publicKey) || Option.isNone(privateKey) || Option.isNone(subject))
-    return PushConfiguration.Unavailable()
-  const input = { publicKey: publicKey.value, privateKey: privateKey.value, subject: subject.value }
-  const valid = yield* validate(input).pipe(
-    Effect.catchTag('PushUnavailable', () => Effect.succeed(false)),
-  )
-  return valid ? PushConfiguration.Configured(input) : PushConfiguration.Unavailable()
-})
-
-/** Callers receive a specific model/client-readable refusal instead of a startup failure. */
-export const requirePushConfiguration = Effect.fn('PushConfig.require')(function* () {
-  return yield* PushConfiguration.$match(yield* PushConfig, {
-    Unavailable: () =>
-      Effect.fail(new PushUnavailable({ message: 'Push notifications are not configured.' })),
-    Configured: (config) => Effect.succeed(config),
+  const configuration = {
+    publicKey: yield* requiredSetting(
+      'VIVID_PUSH_VAPID_PUBLIC',
+      publicKey,
+      'a base64url VAPID public key',
+    ),
+    privateKey: yield* requiredSetting(
+      'VIVID_PUSH_VAPID_PRIVATE',
+      Schema.RedactedFromValue(Schema.NonEmptyString),
+      'a base64url VAPID private key',
+    ),
+    subject: yield* requiredSetting('VIVID_PUSH_SUBJECT', subject, 'an https: or mailto: address'),
+  }
+  // Node refuses a private key that is not on the curve by throwing; both that and a key from
+  // another pair are the same operator mistake, reported without carrying either value.
+  const derived = yield* Effect.try({
+    try: () => {
+      const curve = NodeCrypto.createECDH('prime256v1')
+      curve.setPrivateKey(Buffer.from(Redacted.value(configuration.privateKey), 'base64url'))
+      return curve.getPublicKey().toString('base64url')
+    },
+    catch: mismatched,
   })
+  if (derived !== configuration.publicKey) return yield* mismatched()
+  return configuration
 })
 
 export const pushConfigLayer = Layer.effect(PushConfig, loadPushConfiguration())

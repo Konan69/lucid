@@ -37,7 +37,9 @@ it('refuses an address that could carry a credential or is not a web server', ()
 it('builds every address the app calls from the one server', () => {
   const local = server('http://192.168.1.20:5178')
   expect(serverName(local)).toBe('192.168.1.20:5178')
-  expect(accountAddress(local, 'device/code')).toBe('http://192.168.1.20:5178/api/auth/device/code')
+  expect(accountAddress(local, 'sign-in/email')).toBe(
+    'http://192.168.1.20:5178/api/auth/sign-in/email',
+  )
   expect(liveAddress(local)).toBe('ws://192.168.1.20:5178/api/live')
   expect(liveAddress(server('https://vivid.example.com'))).toBe('wss://vivid.example.com/api/live')
   expect(libraryAddress(local, '/abc/content')).toBe(

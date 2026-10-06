@@ -165,7 +165,7 @@ const catalog = Effect.fn('RuntimeRoutesTest.catalog')(function* (schema: string
 const baseline = Effect.fn('RuntimeRoutesTest.baseline')(function* () {
   const runtime = yield* routes
   const id = thread()
-  yield* runtime.reply('ready')
+  yield* runtime.inspectTools
   const receipt = yield* admit(runtime, delivery(id, 1, 'A real runtime message'))
   expect(yield* runtime.settled(id, receipt.submissionId)).toEqual(
     Settled.Completed({ text: 'ready' }),
@@ -175,8 +175,9 @@ const baseline = Effect.fn('RuntimeRoutesTest.baseline')(function* () {
 })()
 
 describe.skipIf(!testDatabaseConfigured)('production Flue routes on disposable PostgreSQL', () => {
-  it.live('H1 admits an authenticated keyed signal and durably completes without a server', () =>
-    baseline.pipe(Effect.scoped),
+  it.live(
+    'H1 assembles the words every Vivid tool must say for its step and durably completes an authenticated signal',
+    () => baseline.pipe(Effect.scoped),
   )
 
   it.live('H2 refuses a missing runtime token before calling the model', () =>

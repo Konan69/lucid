@@ -15,10 +15,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { LiveQuery, LiveResult } from './live.js'
 import {
   codeEnding,
+  composerOf,
+  FIRST_TEXT,
   messageLink,
   channelWords,
   textingRefusal,
   textingSettled,
+  textLink,
   typedAddress,
 } from './texting.js'
 
@@ -40,7 +43,7 @@ describe('what a refusal says', () => {
       new ChannelProviderFailed({ channel: 'iMessage' }),
     ].map(textingRefusal)
     expect(said).toEqual([
-      'WhatsApp is not set up on this Vivid yet.',
+      'Vivid cannot text on WhatsApp yet.',
       'That is not a phone number iMessage can reach. Write it with its country code, like +234 801 234 5678.',
       'That number is already connected to someone. Use a different number.',
       'No more people can be connected to iMessage right now.',
@@ -82,6 +85,80 @@ describe('the link that opens the messaging app', () => {
   })
 })
 
+/** What real browsers call themselves, one for each kind of device a Person opens Vivid on. */
+const AGENT = {
+  iphone:
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1',
+  mac: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15',
+  android:
+    'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36',
+  windows:
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+  linux:
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+  chromebook:
+    'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+}
+
+describe('which devices open a text', () => {
+  it('reads Apple’s form on an iPhone and a Mac, and the standard one on Android', () => {
+    expect(composerOf(AGENT.iphone)).toEqual(Option.some('apple'))
+    expect(composerOf(AGENT.mac)).toEqual(Option.some('apple'))
+    // Android's user agent says "Linux" too; it must not be taken for a desktop.
+    expect(composerOf(AGENT.android)).toEqual(Option.some('standard'))
+  })
+
+  it('has nothing to open a text with on a Windows, Linux or ChromeOS desktop', () => {
+    expect([AGENT.windows, AGENT.linux, AGENT.chromebook].map(composerOf)).toEqual([
+      Option.none(),
+      Option.none(),
+      Option.none(),
+    ])
+  })
+})
+
+describe('the link that opens a first message to Vivid', () => {
+  const to = '+14155550100'
+
+  it('is written in the form each device reads: iOS and macOS, Android, the phone app', () => {
+    expect(textLink('iMessage', composerOf(AGENT.iphone), to)).toEqual(
+      Option.some('sms:+14155550100&body=Hi%20Vivid'),
+    )
+    expect(textLink('iMessage', composerOf(AGENT.mac), to)).toEqual(
+      Option.some('sms:+14155550100&body=Hi%20Vivid'),
+    )
+    expect(textLink('iMessage', composerOf(AGENT.android), to)).toEqual(
+      Option.some('sms:+14155550100?body=Hi%20Vivid'),
+    )
+    // The phone app knows its platform and builds the same links without a user agent.
+    expect(messageLink('iMessage', 'apple', to, Option.some(FIRST_TEXT))).toBe(
+      'sms:+14155550100&body=Hi%20Vivid',
+    )
+    expect(messageLink('iMessage', 'standard', to, Option.some(FIRST_TEXT))).toBe(
+      'sms:+14155550100?body=Hi%20Vivid',
+    )
+  })
+
+  it('is the bare conversation on every device when there is no body', () => {
+    expect(messageLink('iMessage', 'apple', to, Option.none())).toBe('sms:+14155550100')
+    expect(messageLink('iMessage', 'standard', to, Option.none())).toBe('sms:+14155550100')
+  })
+
+  it('is not offered in a desktop browser that has nothing to open a text with', () => {
+    expect(textLink('iMessage', composerOf(AGENT.windows), to)).toEqual(Option.none())
+    expect(textLink('iMessage', composerOf(AGENT.linux), to)).toEqual(Option.none())
+  })
+
+  it('is always there for WhatsApp, whose link is a web page any browser opens', () => {
+    expect(textLink('WhatsApp', composerOf(AGENT.windows), to)).toEqual(
+      Option.some('https://wa.me/14155550100?text=Hi%20Vivid'),
+    )
+    expect(textLink('WhatsApp', composerOf(AGENT.iphone), to)).toEqual(
+      Option.some('https://wa.me/14155550100?text=Hi%20Vivid'),
+    )
+  })
+})
+
 describe('where a channel stands, in a word', () => {
   it('has words for every standing', () => {
     const mine = address('+2348012345678')
@@ -98,7 +175,7 @@ describe('where a channel stands, in a word', () => {
         }),
         ChannelStanding.cases.Connected.make({ address: mine, textTo, since: 0 }),
       ].map(channelWords),
-    ).toEqual(['Not set up', 'Not connected', 'Waiting for your text', 'Connected'])
+    ).toEqual(['Not available yet', 'Not connected', 'Waiting for your text', 'Connected'])
   })
 })
 

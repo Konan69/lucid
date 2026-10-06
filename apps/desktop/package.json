@@ -8,19 +8,22 @@
   "license": "UNLICENSED",
   "main": "dist/main/main.cjs",
   "scripts": {
-    "build": "node ./scripts/build.mjs",
+    "build": "sh vendor/computer/fetch.sh && node ./scripts/build.mjs",
     "dev": "pnpm build && electron .",
     "start": "pnpm build && electron .",
-    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit",
-    "lint": "oxlint --type-aware src",
+    "typecheck": "node ../../scripts/types.mjs tsconfig.main.json tsconfig.preload.json",
+    "lint": "node ../../scripts/lint.mjs",
     "test": "vitest run",
     "package": "pnpm dist",
     "dist": "pnpm build && electron-builder"
   },
   "exports": {
-    "./bridge": "./src/shared/bridge.ts"
+    "./bridge": "./src/shared/bridge.ts",
+    "./notice": "./src/shared/notice.ts"
   },
   "dependencies": {
+    "@sentry/core": "catalog:",
+    "@sentry/electron": "catalog:",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
     "effect": "catalog:"

@@ -1,69 +1,74 @@
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
-import { ConfigProvider, Effect, Layer, Option, Result, Stream } from 'effect'
+import { ConfigProvider, Effect, Layer, Result } from 'effect'
+import { ConfigurationError } from '../config.ts'
 import { normalizeChannelAddress } from './address.ts'
 import { photonLayer } from './photon.ts'
 import { ChannelProvider } from './provider.ts'
 
-/** Empty config exercises the production selection without contacting Photon or opening a line. */
-const noPhoton = photonLayer.pipe(
-  Layer.provide(NodeHttpClient.layerUndici),
-  Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
-)
+const settings = {
+  VIVID_PHOTON_PROJECT_ID: 'test-project',
+  VIVID_PHOTON_PROJECT_SECRET: 'test-secret',
+}
 
-/** Partial credentials must also select unavailable, rather than trying an anonymous connection. */
-const partialPhoton = photonLayer.pipe(
-  Layer.provide(NodeHttpClient.layerUndici),
-  Layer.provide(
-    ConfigProvider.layer(ConfigProvider.fromUnknown({ VIVID_PHOTON_PROJECT_ID: 'test' })),
-  ),
-)
+/**
+ * Texting is part of every running Vivid: with a Photon credential missing or blank the Layer does
+ * not build, so the server does not start, and the failure names the variable without carrying a
+ * supplied value. Building dials nothing, so no transport is stubbed.
+ */
+describe('Photon settings', () => {
+  for (const [name, values, variable] of [
+    [
+      'the project id is missing',
+      { ...settings, VIVID_PHOTON_PROJECT_ID: undefined },
+      'VIVID_PHOTON_PROJECT_ID',
+    ],
+    [
+      'the project id is blank',
+      { ...settings, VIVID_PHOTON_PROJECT_ID: ' ' },
+      'VIVID_PHOTON_PROJECT_ID',
+    ],
+    [
+      'the project secret is missing',
+      { ...settings, VIVID_PHOTON_PROJECT_SECRET: undefined },
+      'VIVID_PHOTON_PROJECT_SECRET',
+    ],
+    [
+      'the project secret is empty',
+      { ...settings, VIVID_PHOTON_PROJECT_SECRET: '' },
+      'VIVID_PHOTON_PROJECT_SECRET',
+    ],
+  ] as const) {
+    it.effect(`does not build when ${name}`, () =>
+      Effect.gen(function* () {
+        const failure = yield* Layer.build(
+          photonLayer.pipe(
+            Layer.provide(NodeHttpClient.layerUndici),
+            Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(values))),
+          ),
+        ).pipe(Effect.scoped, Effect.flip)
+        expect(failure).toBeInstanceOf(ConfigurationError)
+        expect(failure).toMatchObject({ variable })
+        expect(JSON.stringify(failure)).not.toContain(settings.VIVID_PHOTON_PROJECT_SECRET)
+      }),
+    )
+  }
 
-describe('channel provider', () => {
-  it.effect('starts without credentials and reports both channels unavailable', () =>
+  it.effect('builds with both credentials and texts on iMessage only', () =>
     Effect.gen(function* () {
-      const provider = yield* ChannelProvider
-      for (const channel of ['iMessage', 'WhatsApp'] as const) {
-        const outcome = yield* provider
-          .enrol(channel, yield* normalizeChannelAddress({ channel, value: '+12025550123' }))
-          .pipe(Effect.result)
-        expect(Result.isFailure(outcome) ? outcome.failure._tag : 'available').toBe(
-          'ChannelUnavailable',
-        )
-      }
-      expect(Option.isNone(yield* Stream.runHead(provider.inbound))).toBe(true)
-    }).pipe(Effect.provide(noPhoton)),
+      expect((yield* ChannelProvider).channels).toEqual(['iMessage'])
+    }).pipe(
+      Effect.provide(
+        photonLayer.pipe(
+          Layer.provide(NodeHttpClient.layerUndici),
+          Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(settings))),
+        ),
+      ),
+    ),
   )
+})
 
-  it.effect('refuses a send before dispatch when no Integration is configured', () =>
-    Effect.gen(function* () {
-      const address = yield* normalizeChannelAddress({ channel: 'iMessage', value: '+12025550123' })
-      const outcome = yield* (yield* ChannelProvider)
-        .send({
-          channel: 'iMessage',
-          address,
-          text: 'test',
-          key: 'test-send',
-        })
-        .pipe(Effect.result)
-      expect(Result.isFailure(outcome) ? outcome.failure._tag : 'sent').toBe('ChannelUnavailable')
-    }).pipe(Effect.provide(noPhoton)),
-  )
-
-  it.effect('does not acquire a connection with partial credentials', () =>
-    Effect.gen(function* () {
-      const outcome = yield* (yield* ChannelProvider)
-        .enrol(
-          'iMessage',
-          yield* normalizeChannelAddress({ channel: 'iMessage', value: '+12025550123' }),
-        )
-        .pipe(Effect.result)
-      expect(Result.isFailure(outcome) ? outcome.failure._tag : 'available').toBe(
-        'ChannelUnavailable',
-      )
-    }).pipe(Effect.provide(partialPhoton)),
-  )
-
+describe('channel address', () => {
   it.effect('normalizes an international phone without inventing a country', () =>
     Effect.gen(function* () {
       expect(
