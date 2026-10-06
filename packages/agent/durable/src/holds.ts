@@ -42,7 +42,7 @@ export type Settled = { taskId: TaskId; callId: string; settlement: Settlement }
  * unanswered questions survive provider call-id reuse and transcript compaction independently.
  * `asked` retains answer-later calls through durable output reservation and submission admission;
  * only placement retires them to settled receipts. Withdrawal reopens a submitted question without
- * discarding its first output. The tool's name supplies the late-answer user message. Latest-only: a hold belongs to a run in progress, never to a rewound transcript.
+ * losing a queued answer; a withdrawn attempt accepts the next answer. The tool's name supplies the late-answer user message. Latest-only: a hold belongs to a run in progress, never to a rewound transcript.
  */
 export const Holds = defineDoc<{
   settled: Record<string, Settled>
@@ -535,7 +535,7 @@ export type Answer = { readonly holdId: HoldId; readonly output: JsonValue }
  * A `wait` call is settled in place and the model continues from the tool result. A `later` call
  * already returned, so the answer is submitted as a new user message: a follow-up, which starts a
  * run when the conversation is idle and otherwise waits for the current answer. The request id contains
- * the hold and attempt, so a withdrawn follow-up can retry. The first output is reserved durably;
+ * the hold and attempt, so a withdrawn follow-up can retry. The first output of each delivery attempt is reserved durably;
  * queued/placed repeats return it unchanged. Every successful answer returns its settlement.
  */
 export const answer = Effect.fn('Durable.answer')(function* (

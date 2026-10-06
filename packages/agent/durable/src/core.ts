@@ -1,4 +1,6 @@
 export {
+  HistoryCursorInvalid,
+  HistoryPageInvalid,
   HoldIdInvalid,
   HoldId,
   CallNotWaiting,

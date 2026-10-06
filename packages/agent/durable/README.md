@@ -16,21 +16,37 @@ The host opens its Pi Harness, registers an extension from `toolsExtension`, and
 
 ## Promise server
 
-[Complete, type-checked HTTP handler](src/examples/main.ts). It serves chat POST/GET, GET history/waiting, and POST abort/decide/answer. The host's HTTP framework maps schema rejection to 400 and records other failures. Decision and answer bodies decode once and validate their opaque task ids with the Promise entry's `holdId` before reaching the durable API.
+[Complete, type-checked HTTP handler](src/examples/main.ts). It serves chat POST/GET, GET history/waiting, and POST abort/decide/answer. The handler maps invalid schema, hold-id and history inputs to 400, stale interactions to 409, and missing conversations to 404; other failures reject. Decision and answer bodies decode once and validate their opaque task ids with the Promise entry's `holdId` before reaching the durable API.
 
-This is the handler excerpt; imports and compiled body decoders are in the linked source:
+This is the handler excerpt; imports, compiled decoders and the typed status mapper are in the linked source:
 
 ```ts
-export async function route(
+export function route(
   harness: Harness,
   conversationId: ConversationId,
   request: Request,
   context: Context,
 ): Promise<Response> {
-  const path = new URL(request.url).pathname
+  return dispatch(harness, conversationId, request, context).catch(routeFailure)
+}
+
+/** The framework's Promise-only ingress owns body/query reads and delegates durable work. */
+async function dispatch(
+  harness: Harness,
+  conversationId: ConversationId,
+  request: Request,
+  context: Context,
+): Promise<Response> {
+  const url = new URL(request.url)
+  const path = url.pathname
   if (path === '/chat') return respond(harness, conversationId, request, context)
-  if (path === '/history' && request.method === 'GET')
-    return Response.json(await history(harness, conversationId, { limit: 50 }, context))
+  if (path === '/history' && request.method === 'GET') {
+    const text = url.searchParams.get('limit')
+    const limit = text === null ? 50 : await decodeLimit(text)
+    const before = url.searchParams.get('before')
+    const page = before === null ? { limit } : { limit, before }
+    return Response.json(await history(harness, conversationId, page, context))
+  }
   if (path === '/waiting' && request.method === 'GET')
     return Response.json(await waiting(harness, conversationId, context))
   if (request.method !== 'POST') return new Response(null, { status: 405 })
@@ -97,9 +113,9 @@ Use the stock `useChat` transport, `DefaultChatTransport`, pointing at the autho
 
 ## Guarantees
 
-A held call parks the client response with finish-step/finish while Pi's run remains alive. A decision can arrive with no client attached, after a process restart, or more than once: the first settlement for that hold wins. Direct `decide` and `answer` accept the `holdId` returned by `waiting`, and reject wrong-kind or never-waiting holds with `CallNotWaiting`. Unanswered late questions survive unrelated tasks that reuse a provider call id. A late answer reserves its first output before admission and keeps its question and submission receipt until placement. Abort reopens a withdrawn follow-up; a repeat resubmits the first output under a fresh `answer:<holdId>:<attempt>` key. Queued/placed repeats cannot change it, and every successful `answer` returns the settlement.
+A held call parks the client response with finish-step/finish while Pi's run remains alive. A decision can arrive with no client attached, after a process restart, or more than once: the first settlement for that hold wins. Direct `decide` and `answer` accept the `holdId` returned by `waiting`, and reject wrong-kind or never-waiting holds with `CallNotWaiting`. Unanswered late questions survive unrelated tasks that reuse a provider call id. A late answer reserves its first output before admission and keeps its question and submission receipt until placement. Abort reopens a withdrawn follow-up; the next answer wins under a fresh `answer:<holdId>:<attempt>` key. Queued/placed repeats cannot change it, and every successful `answer` returns the settlement.
 
-A stale approval POST cannot approve a successor task, even within the same run. The assistant message id is stable from the run's first input; a resume naming an older run settles nothing, while still resuming observation. Client tool outputs carry only a tool call id, so replayed client outputs rely on provider ids being unique within a run; approvals do not. Duplicate ids in one tool round are blocked before execution, omitted from waiting and never receive approval requests.
+A stale approval POST cannot approve a successor task, even within the same run. The assistant message id is stable from the run's first input; a resume naming an older run settles nothing, and replays only that older run's tail (or returns 409 if it cannot be located). Client tool outputs carry only a tool call id, so replayed client outputs rely on provider ids being unique within a run; approvals do not. Duplicate ids in one tool round are blocked before execution, omitted from waiting and never receive approval requests.
 
 Observation opens before admission. Slow readers do not block Pi delivery. A replacement snapshot fails with `WatchOverflowed`; a cancelled or closed watch fails with `WatchClosed`. Reconnect through `attachRun` or GET to rebuild from a snapshot. Returned attached/continued streams are one-shot and already have their watches open; cancelling them only detaches. Explicit abort interrupts held waits, retains generated partial text and withdraws queued follow-up inputs. Tool replay follows Pi's stored and current policy and does not promise exactly-once external side effects.
 
@@ -107,7 +123,7 @@ Observation opens before admission. Slow readers do not block Pi delivery. A rep
 
 After a network error, reload history and reconnect with fresh SDK stream state. Resuming step 2 into a kept partial message duplicates earlier text and tools: reset-step clears only the current step. This is the one permitted expected-failure test. Creating a new Chat alone does not always fix it: ai/src/ui/chat.ts:852–858 snapshots a last assistant message with an input-streaming tool part. History must replace that failed partial message first.
 
-`history(harness, conversationId, { limit, before? }, context)` returns oldest-first UI messages and an opaque optional next cursor. `limit` counts messages; a page never splits a multi-entry assistant message. It reads raw fork-aware history, preserving messages removed from model context by compaction. Stable user ids use `entry:<entryId>`; assistant ids use the first assistant entry. During a run, history includes its placed user inputs and any user entries before its first assistant entry; GET reconnect supplies its assistant and tool results. A steer input placed after assistant entries stays out of history until the run settles, because reconnect cannot show it in order. System/reset/compaction/application entries are skipped; late answers are ordinary user messages without special metadata for now. The checked server examples include a GET history route.
+`history(harness, conversationId, { limit, before? }, context)` returns oldest-first UI messages and an opaque optional next cursor. `limit` counts messages; a page never splits a multi-entry assistant message. It reads raw fork-aware history, preserving messages removed from model context by compaction. Stable user ids use `entry:<entryId>`; assistant ids use the first assistant entry. During a run, history includes its placed user inputs and any user entries before its first assistant entry; GET reconnect supplies its assistant and tool results. A steer input placed after assistant entries stays out of history until the run settles, because reconnect cannot show it in order. System/reset/compaction/application entries are skipped; late answers are ordinary user messages without special metadata for now. The checked server examples read `limit` and `before` from the GET history query. Invalid cursors fail `HistoryCursorInvalid`; invalid page sizes fail `HistoryPageInvalid`.
 
 Calls being generated are shown in content order. Only committed sequential slots without a task stay private until Pi allocates their tasks or stores their results. The live-document watch supplies allocations that the event watch omits, so the stock approval predicate works for sequential held/plain tools and denies as well as parallel rounds. GET reconnect and crash recovery apply the same presentation rule.
 

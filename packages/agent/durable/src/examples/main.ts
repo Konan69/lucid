@@ -2,7 +2,40 @@ import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
 import { Schema } from 'effect'
 
-import { abort, answer, decide, history, holdId, respond, waiting } from '@vivid/durable'
+import {
+  abort,
+  answer,
+  decide,
+  history,
+  holdId,
+  respond,
+  waiting,
+  CallNotWaiting,
+  ConversationMissing,
+  HistoryCursorInvalid,
+  HistoryPageInvalid,
+  HoldIdInvalid,
+  RunMissing,
+  TurnInvalid,
+} from '@vivid/durable'
+
+const decodeLimit = Schema.decodeUnknownPromise(Schema.NumberFromString)
+
+/** Expected ingress/admission failures have transport meanings; unexpected failures still reject. */
+function routeFailure(error: Error): Response {
+  if (error instanceof ConversationMissing) return new Response(error.message, { status: 404 })
+  if (error instanceof CallNotWaiting || error instanceof RunMissing)
+    return new Response(error.message, { status: 409 })
+  if (
+    error instanceof Schema.SchemaError ||
+    error instanceof HoldIdInvalid ||
+    error instanceof TurnInvalid ||
+    error instanceof HistoryCursorInvalid ||
+    error instanceof HistoryPageInvalid
+  )
+    return new Response(error.message, { status: 400 })
+  throw error
+}
 
 const decodeDecision = Schema.decodeUnknownPromise(
   Schema.fromJsonString(
@@ -23,20 +56,36 @@ const decodeAnswer = Schema.decodeUnknownPromise(
 )
 
 /**
- * The host authorizes this conversation before calling the handler. Its HTTP framework maps schema
- * rejections to 400 and records other failures; no invalid payload reaches a durable decision.
+ * The host authorizes this conversation before calling the handler. Expected invalid inputs are
+ * 400, stale interactions are 409 and missing conversations are 404; other failures still reject.
  * Paths are relative to the host's conversation route. Chat POST/GET use the stock SDK protocol.
  */
-export async function route(
+export function route(
   harness: Harness,
   conversationId: ConversationId,
   request: Request,
   context: Context,
 ): Promise<Response> {
-  const path = new URL(request.url).pathname
+  return dispatch(harness, conversationId, request, context).catch(routeFailure)
+}
+
+/** The framework's Promise-only ingress owns body/query reads and delegates durable work. */
+async function dispatch(
+  harness: Harness,
+  conversationId: ConversationId,
+  request: Request,
+  context: Context,
+): Promise<Response> {
+  const url = new URL(request.url)
+  const path = url.pathname
   if (path === '/chat') return respond(harness, conversationId, request, context)
-  if (path === '/history' && request.method === 'GET')
-    return Response.json(await history(harness, conversationId, { limit: 50 }, context))
+  if (path === '/history' && request.method === 'GET') {
+    const text = url.searchParams.get('limit')
+    const limit = text === null ? 50 : await decodeLimit(text)
+    const before = url.searchParams.get('before')
+    const page = before === null ? { limit } : { limit, before }
+    return Response.json(await history(harness, conversationId, page, context))
+  }
   if (path === '/waiting' && request.method === 'GET')
     return Response.json(await waiting(harness, conversationId, context))
   if (request.method !== 'POST') return new Response(null, { status: 405 })

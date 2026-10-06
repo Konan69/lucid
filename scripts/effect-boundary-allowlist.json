@@ -120,7 +120,7 @@
   {
     "file": "packages/agent/durable/src/examples/main.ts",
     "classification": "http-framework-entrypoint",
-    "symbol": "route"
+    "symbols": ["route", "dispatch"]
   },
   {
     "file": "packages/agent/durable/src/examples/effect.ts",
@@ -130,7 +130,7 @@
   {
     "file": "packages/agent/durable/src/fixtures/sequential.ts",
     "classification": "test-process-entrypoint",
-    "symbols": ["<module>", "execute", "harness", "root", "first"]
+    "symbols": ["<module>", "execute", "main"]
   },
   {
     "file": "packages/agent/durable/src/reading.ts",
@@ -140,6 +140,6 @@
   {
     "file": "packages/agent/durable/src/fixtures/answer.ts",
     "classification": "test-process-entrypoint",
-    "symbols": ["<module>", "execute", "harness", "root", "question"]
+    "symbols": ["<module>", "execute", "main"]
   }
 ]

@@ -138,6 +138,8 @@ export async function respond(
 }
 
 export {
+  HistoryCursorInvalid,
+  HistoryPageInvalid,
   HoldIdInvalid,
   CallNotWaiting,
   WatchClosed,
@@ -167,7 +169,9 @@ export type { HoldId } from './errors.ts'
 export type HistoryPage = { readonly messages: import('ai').UIMessage[]; readonly next?: string }
 export type HistoryRequest = { readonly limit: number; readonly before?: string }
 const encodeCursor = Schema.encodeSync(Schema.fromJsonString(Core.HistoryCursor))
-const decodeCursor = Schema.decodeUnknownEffect(Schema.fromJsonString(Core.HistoryCursor))
+const decodeCursor = Schema.decodeUnknownEffect(Schema.fromJsonString(Core.HistoryCursor), {
+  onExcessProperty: 'error',
+})
 
 /**
  * The Promise wire uses opaque cursors. Active users preceding the first assistant entry remain
@@ -185,7 +189,11 @@ export const history = (
       const before =
         page.before === undefined
           ? Option.none<Core.HistoryCursor>()
-          : Option.some(yield* decodeCursor(page.before))
+          : Option.some(
+              yield* decodeCursor(page.before).pipe(
+                Effect.mapError(() => new Core.HistoryCursorInvalid({ conversationId })),
+              ),
+            )
       const result = yield* Core.history(
         harness,
         conversationId,

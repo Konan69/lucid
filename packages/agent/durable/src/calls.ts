@@ -65,6 +65,18 @@ const close = (round: Round, id: string): Round => ({
 
 type InputAvailable = Extract<Chunk, { type: 'tool-input-available' }>
 
+/** Durable denial reasons survive replay and refresh the SDK's retained approval on continuation. */
+function approvalResponse(found: Extract<CallLookup, { _tag: 'Settled' }>): Chunk {
+  const response = {
+    type: 'tool-approval-response',
+    approvalId: found.holdId,
+    approved: found.settlement.kind !== 'denied',
+  } as const
+  return found.settlement.kind === 'denied'
+    ? { ...response, reason: found.settlement.reason }
+    : response
+}
+
 /**
  * A call whose input is complete. A bridged tool is a typed tool on the client, so it loses the
  * `dynamic` mark. A call that needs approval is followed by its request, and by the response too
@@ -93,13 +105,7 @@ function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown 
       : []
   const response: readonly Chunk[] =
     Option.contains(kind, 'approval') && CallLookup.guards.Settled(found)
-      ? [
-          {
-            type: 'tool-approval-response',
-            approvalId: found.holdId,
-            approved: found.settlement.kind !== 'denied',
-          },
-        ]
+      ? [approvalResponse(found)]
       : []
   const waits = Option.isSome(kind) && CallLookup.guards.Ready(found)
   const holds = new Map(round.holds)
@@ -143,9 +149,13 @@ function showVisible(round: Round, chunk: Chunk, desk: Desk): Shown {
         holdId === undefined ? desk.call(output.toolCallId) : desk.hold(holdId),
       )
       const denied = CallLookup.guards.Settled(found) && found.settlement.kind === 'denied'
+      const response = denied && round.muted.has(output.toolCallId) ? [approvalResponse(found)] : []
       return {
         round: close(round, output.toolCallId),
-        chunks: [denied ? { type: 'tool-output-denied', toolCallId: output.toolCallId } : output],
+        chunks: [
+          ...response,
+          denied ? { type: 'tool-output-denied', toolCallId: output.toolCallId } : output,
+        ],
       }
     }),
     // Every other chunk, including open-ended data-* extensions, has no tool-presentation behavior.

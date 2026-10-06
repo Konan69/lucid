@@ -236,7 +236,12 @@ it('replays reused call generations with their own approval ids', async () => {
     { type: 'tool-approval-request', toolCallId: 'same', approvalId: second },
   ])
   expect(replayed.chunks.filter((chunk) => chunk.type === 'tool-approval-response')).toEqual([
-    { type: 'tool-approval-response', approvalId: first, approved: false },
+    {
+      type: 'tool-approval-response',
+      approvalId: first,
+      approved: false,
+      reason: 'The person denied this call',
+    },
   ])
   expect(replayed.chunks.filter((chunk) => chunk.type === 'tool-output-denied')).toHaveLength(1)
   expect(fixture.paid).toEqual([])

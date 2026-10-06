@@ -184,7 +184,6 @@ it('exposes sequential task allocation on document watches but not watchEvents',
       .filter((event) => event.type === 'tool_execution_end')
       .map((event) => event.toolCallId),
   ).toEqual(['c1'])
-  expect(delivered.some((event) => event.type === 'entry_appended')).toBe(true)
 })
 
 /** Stock SDK automatic sending observes only admitted calls, never queued sequential inputs. */

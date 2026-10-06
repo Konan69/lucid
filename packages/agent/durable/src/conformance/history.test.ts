@@ -12,7 +12,16 @@ import { Effect, Option } from 'effect'
 import { z } from 'zod'
 import * as Core from '../core.ts'
 import { PlainChat } from '../fixtures/chat.ts'
-import { answer, attachRun, decide, history, respond, streamRun } from '../main.ts'
+import {
+  answer,
+  attachRun,
+  decide,
+  history,
+  respond,
+  streamRun,
+  HistoryCursorInvalid,
+  HistoryPageInvalid,
+} from '../main.ts'
 import { call, consume, context, hold, host, shop, signal, texts } from './fixtures/host.ts'
 
 /** Read approval identity exactly as a stock client does. */
@@ -70,9 +79,17 @@ it.each(['text', 'approved', 'denied', 'answer', 'retry'] as const)(
     await chat.sendMessage({ text: 'Go' })
     if (kind === 'approved' || kind === 'denied' || kind === 'answer') {
       completion = signal()
-      if (kind === 'answer')
-        await chat.addToolOutput({ tool: 'ask', toolCallId: 'held', output: 'savings' })
-      else await chat.addToolApprovalResponse({ id: approval(chat), approved: kind === 'approved' })
+      switch (kind) {
+        case 'answer':
+          await chat.addToolOutput({ tool: 'ask', toolCallId: 'held', output: 'savings' })
+          break
+        case 'denied':
+          await chat.addToolApprovalResponse({ id: approval(chat), approved: false, reason: 'no' })
+          break
+        case 'approved':
+          await chat.addToolApprovalResponse({ id: approval(chat), approved: true })
+          break
+      }
       await completion.promise
     }
     const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
@@ -442,5 +459,97 @@ it.live('core pages the same settled messages as the Promise entry', () =>
       { role: 'user', parts: [{ type: 'text', text: 'Core' }] },
     ])
     expect(Option.isNone(second.next)).toBe(true)
+  }),
+)
+
+// Page/cursor errors stay tagged at both public boundaries, never defects or generic SchemaError.
+it.each([0, 1.5, Number.NaN])(
+  'rejects invalid page size %s as HistoryPageInvalid',
+  async (limit) => {
+    const fixture = await shop()
+    const opened = await fixture.open()
+    await expect(
+      history(opened.harness, opened.root.id, { limit }, context),
+    ).rejects.toBeInstanceOf(HistoryPageInvalid)
+  },
+)
+
+// A cursor must name this conversation's user or first assistant entry, not the middle of a stretch.
+it('rejects malformed, foreign and interior message cursors', async () => {
+  const fixture = await shop()
+  const opened = await fixture.open()
+  opened.faux.setResponses([fauxAssistantMessage('First.')])
+  await consume(
+    await streamRun(
+      opened.harness,
+      { conversationId: opened.root.id, content: 'Go', requestId: 'cursor' },
+      context,
+    ),
+  )
+  await opened.root.commit(
+    (tx) =>
+      tx.appendEntry(opened.root.id, {
+        kind: 'pi.assistant',
+        model: [fauxAssistantMessage('Second.')],
+      }),
+    context,
+  )
+  const raw = await opened.root.entries({}, 100, undefined, context)
+  const interior = raw.items.find((entry) => entry.kind === 'pi.assistant')
+  if (interior === undefined) throw new Error('Expected assistant stretch')
+  const fork = await opened.root.fork(interior.id, { ownership: { kind: 'ownerless' } }, context)
+  await fork.commit(
+    (tx) =>
+      tx.appendEntry(fork.id, {
+        kind: 'pi.user',
+        model: [{ role: 'user', content: 'Foreign', timestamp: 0 }],
+      }),
+    context,
+  )
+  const foreign = (await fork.entries({}, 1, undefined, context)).items[0]
+  if (foreign === undefined) throw new Error('Expected foreign user')
+  for (const before of [
+    'garbage',
+    JSON.stringify({ entry: interior.id }),
+    JSON.stringify({ entry: interior.id, extra: true }),
+    JSON.stringify({ entry: foreign.id }),
+  ])
+    await expect(
+      history(opened.harness, opened.root.id, { limit: 1, before }, context),
+    ).rejects.toBeInstanceOf(HistoryCursorInvalid)
+  const page = await history(opened.harness, opened.root.id, { limit: 1 }, context)
+  expect(texts(Option.getOrThrow(Option.fromNullishOr(page.messages[0])))).toEqual([
+    'First.',
+    'Second.',
+  ])
+  expect(page.next).toBeDefined()
+})
+
+/** Declared core failure channels match the Promise classes for invalid sizes and boundaries. */
+it.live('core exposes tagged history validation failures', () =>
+  Effect.gen(function* () {
+    const fixture = yield* Effect.promise(() => shop())
+    const opened = yield* Effect.promise(() => fixture.open())
+    const invalidSize = yield* Effect.flip(
+      Core.history(opened.harness, opened.root.id, { limit: 0, before: Option.none() }, context),
+    )
+    expect(invalidSize).toBeInstanceOf(HistoryPageInvalid)
+    yield* Effect.promise(() =>
+      opened.root.commit(
+        (tx) => tx.appendEntry(opened.root.id, { kind: 'application.note' }),
+        context,
+      ),
+    )
+    const batch = yield* Effect.promise(() => opened.root.entries({}, 1, undefined, context))
+    const entry = Option.getOrThrow(Option.fromNullishOr(batch.items[0]))
+    const invalidCursor = yield* Effect.flip(
+      Core.history(
+        opened.harness,
+        opened.root.id,
+        { limit: 1, before: Option.some(Core.HistoryCursor.make({ entry: entry.id })) },
+        context,
+      ),
+    )
+    expect(invalidCursor).toBeInstanceOf(HistoryCursorInvalid)
   }),
 )

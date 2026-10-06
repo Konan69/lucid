@@ -10,11 +10,12 @@ import {
 } from '@earendil-works/pi-durable'
 import type { UIMessage, UIMessageChunk } from 'ai'
 import { Data, Effect, Match, Option, Predicate, Schema, Stream } from 'effect'
-import { emptyRound, present } from './calls.ts'
-import { rebuild } from './chunks.ts'
-import { readDesk, type Reader } from './desk.ts'
+import { emptyRound, present, type Desk } from './calls.ts'
+import { rebuild, type Rebuilt } from './chunks.ts'
+import { noDesk, readDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
 import { readMessage } from './reading.ts'
+import { HistoryCursorInvalid, HistoryPageInvalid } from './errors.ts'
 
 /** Pi's numeric identity is checked only at the opaque cursor's wire ingress. */
 const EntryIdentity = Schema.declare<EntryId>(
@@ -41,6 +42,11 @@ type Group = Data.TaggedEnum<{
   Assistant: { readonly entries: readonly EntryRecord[] }
 }>
 const Group = Data.taggedEnum<Group>()
+type Prepared = Data.TaggedEnum<{
+  User: { readonly entry: EntryRecord }
+  Assistant: { readonly identity: EntryId; readonly step: Rebuilt }
+}>
+const Prepared = Data.taggedEnum<Prepared>()
 
 /** Ignore control/application entries; close each assistant stretch only at a user boundary or EOF. */
 function groups(entries: readonly EntryRecord[], exhausted: boolean) {
@@ -89,6 +95,57 @@ function queryFor(before: Option.Option<HistoryCursor>) {
   return Option.isNone(before) ? {} : { maxEntryId: before.value.entry }
 }
 
+type CursorCheck = Data.TaggedEnum<{ Initial: {}; Assistant: {}; Valid: {}; Invalid: {} }>
+const CursorCheck = Data.taggedEnum<CursorCheck>()
+
+/** Control entries are transparent; a second assistant before a user means the bound split a stretch. */
+function checkCursor(state: CursorCheck, entry: EntryRecord, expected: EntryId): CursorCheck {
+  return CursorCheck.$match(state, {
+    Valid: () => state,
+    Invalid: () => state,
+    Initial: () =>
+      entry.id !== expected
+        ? CursorCheck.Invalid()
+        : Match.value(entry.kind).pipe(
+            Match.when('pi.user', () => CursorCheck.Valid()),
+            Match.when('pi.assistant', () => CursorCheck.Assistant()),
+            Match.orElse(() => CursorCheck.Invalid()),
+          ),
+    Assistant: () =>
+      Match.value(entry.kind).pipe(
+        Match.when('pi.user', () => CursorCheck.Valid()),
+        Match.when('pi.assistant', () => CursorCheck.Invalid()),
+        Match.orElse(() => state),
+      ),
+  })
+}
+
+/** A bound inside a stretch would truncate it under a stable id. Validate against raw entries first. */
+const validateCursor = Effect.fn('Durable.historyCursor')(function* (
+  reader: Reader,
+  before: HistoryCursor,
+) {
+  const query = { maxEntryId: before.entry }
+  let cursor = Option.none<Cursor>()
+  let state: CursorCheck = CursorCheck.Initial()
+  for (;;) {
+    const batch = yield* Pi.entries(
+      reader.conversation,
+      { query, limit: 100, cursor },
+      reader.context,
+    )
+    for (const entry of batch.items) state = checkCursor(state, entry, before.entry)
+    if (CursorCheck.$is('Valid')(state)) return yield* Effect.void
+    if (CursorCheck.$is('Invalid')(state))
+      return yield* new HistoryCursorInvalid({ conversationId: reader.conversation.id })
+    cursor = Option.fromNullishOr(batch.next)
+    if (Option.isNone(cursor))
+      return yield* CursorCheck.$is('Assistant')(state)
+        ? Effect.void
+        : Effect.fail(new HistoryCursorInvalid({ conversationId: reader.conversation.id }))
+  }
+})
+
 /**
  * Reconnect supplies the active assistant, while history supplies its preceding user inputs.
  * Entries arrive newest first: find the earliest active assistant before admitting any active
@@ -115,6 +172,7 @@ const readGroups = Effect.fn('Durable.historyGroups')(function* (
   page: HistoryRequest,
 ) {
   const active = yield* boundary(reader)
+  if (Option.isSome(page.before)) yield* validateCursor(reader, page.before.value)
   const query = queryFor(page.before)
   let cursor = Option.none<Cursor>()
   const entries: EntryRecord[] = []
@@ -197,25 +255,48 @@ function settledEntries(entries: readonly EntryRecord[]) {
 
 /** The same translator and presentation create chunks; the SDK reader alone assembles their UI parts. */
 const assistantMessage = Effect.fn('Durable.historyAssistant')(function* (
-  reader: Reader,
-  entries: readonly EntryRecord[],
+  prepared: Extract<Prepared, { _tag: 'Assistant' }>,
+  desk: Desk,
 ) {
-  const first = entries.find((entry) => entry.kind === 'pi.assistant')
-  if (first === undefined) throw new Error('History assistant group lacks its first entry')
-  const step = rebuild(settledEntries(entries))
-  const desk = yield* readDesk(
-    reader,
-    { chunks: step.chunks, origins: step.origins, live: Option.some({ tools: [] }) },
-    emptyRound.holds,
-  )
+  const { step, identity } = prepared
   const shown = present(emptyRound, step.chunks, desk)
   const chunks: readonly UIMessageChunk[] = [
-    { type: 'start', messageId: `entry:${first.id}` },
+    { type: 'start', messageId: `entry:${identity}` },
     ...shown.chunks,
     { type: 'finish-step' },
     { type: 'finish' },
   ]
   return yield* readMessage(yield* Stream.toReadableStreamEffect(Stream.fromIterable(chunks)))
+})
+
+/** Rebuild once per selected message; its chunk identities retain provenance in the shared page desk. */
+function prepare(group: Group): Prepared {
+  return Group.$match(group, {
+    User: ({ entry }) => Prepared.User({ entry }),
+    Assistant: ({ entries }) => {
+      const first = entries.find((entry) => entry.kind === 'pi.assistant')
+      if (first === undefined) throw new Error('History assistant group lacks its first entry')
+      return Prepared.Assistant({ identity: first.id, step: rebuild(settledEntries(entries)) })
+    },
+  })
+}
+
+/** One page observes plans, holds and any unresolved transcript provenance once for all assistant groups. */
+const pageDesk = Effect.fn('Durable.historyDesk')(function* (
+  reader: Reader,
+  selected: readonly Prepared[],
+) {
+  const steps = selected.flatMap((group) => (Prepared.$is('Assistant')(group) ? [group.step] : []))
+  if (steps.length === 0) return noDesk
+  return yield* readDesk(
+    reader,
+    {
+      chunks: steps.flatMap((step) => step.chunks),
+      origins: new Map(steps.flatMap((step) => Array.from(step.origins))),
+      live: Option.some({ tools: [] }),
+    },
+    emptyRound.holds,
+  )
 })
 
 /**
@@ -233,19 +314,25 @@ export const history = Effect.fn('Durable.history')(function* (
   context: Context,
 ): Effect.fn.Return<
   HistoryPage,
-  import('./errors.ts').ConversationMissing | import('./errors.ts').PiFailed
+  | import('./errors.ts').ConversationMissing
+  | import('./errors.ts').PiFailed
+  | HistoryCursorInvalid
+  | HistoryPageInvalid
 > {
-  Limit.make(page.limit)
+  yield* Limit.makeEffect(page.limit).pipe(
+    Effect.mapError(() => new HistoryPageInvalid({ conversationId })),
+  )
   const conversation = yield* Pi.conversation(harness, conversationId, context)
   const reader = { harness, conversation, context }
   const all = yield* readGroups(reader, page)
-  const selected = all.slice(0, page.limit).toReversed()
+  const selected = all.slice(0, page.limit).toReversed().map(prepare)
+  const desk = yield* pageDesk(reader, selected)
   const messages: UIMessage[] = []
   for (const group of selected)
     messages.push(
-      yield* Group.$match(group, {
+      yield* Prepared.$match(group, {
         User: ({ entry }) => Effect.succeed(userMessage(entry)),
-        Assistant: ({ entries }) => assistantMessage(reader, entries),
+        Assistant: (prepared) => assistantMessage(prepared, desk),
       }),
     )
   const oldest = selected[0]
@@ -254,9 +341,9 @@ export const history = Effect.fn('Durable.history')(function* (
       ? Option.none<HistoryCursor>()
       : Option.some(
           HistoryCursor.make({
-            entry: Group.$match(oldest, {
+            entry: Prepared.$match(oldest, {
               User: ({ entry }) => entry.id,
-              Assistant: ({ entries }) => Option.getOrThrow(Option.fromNullishOr(entries[0])).id,
+              Assistant: ({ identity }) => identity,
             }),
           }),
         )

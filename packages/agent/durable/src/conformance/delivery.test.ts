@@ -30,7 +30,7 @@ async function parkedQuestion() {
   return { fixture, opened, question }
 }
 
-// Opus J1: abort withdraws a queued answer, but the person's first output remains retryable.
+// Opus M9: withdrawal reopens the question; the next answer wins, then queued/placed repeats are idempotent.
 it('reopens a withdrawn late answer and delivers it through a fresh attempt', async () => {
   const { opened, question } = await parkedQuestion()
   const first = await answer(
@@ -64,14 +64,14 @@ it('reopens a withdrawn late answer and delivers it through a fresh attempt', as
   ])
   expect(
     await answer(opened.harness, opened.root.id, { holdId: question, output: 'checking' }, context),
-  ).toEqual(first)
+  ).toEqual({ kind: 'answered', output: 'checking' })
   await opened.root.waitForIdle(context)
-  expect(received).toContain('[answer to later] savings')
-  expect(received).not.toContain('[answer to later] checking')
+  expect(received).not.toContain('[answer to later] savings')
+  expect(received).toContain('[answer to later] checking')
   expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
   expect(
     await answer(opened.harness, opened.root.id, { holdId: question, output: 'third' }, context),
-  ).toEqual(first)
+  ).toEqual({ kind: 'answered', output: 'checking' })
   const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
   expect(page.messages.filter((message) => message.role === 'user')).toHaveLength(2)
 })

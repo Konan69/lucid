@@ -177,3 +177,25 @@ export class HoldIdInvalid extends Schema.TaggedError<HoldIdInvalid>()(
     return 'Invalid hold id'
   }
 }
+
+/** An opaque history cursor must name a whole message boundary in the authorized conversation. */
+export class HistoryCursorInvalid extends Schema.TaggedError<HistoryCursorInvalid>()(
+  'HistoryCursorInvalid',
+  { conversationId: ConversationId },
+  { title: 'HistoryCursorInvalid' },
+) {
+  override get message() {
+    return 'Invalid history cursor'
+  }
+}
+
+/** History page sizes are positive whole message counts, never entry counts. */
+export class HistoryPageInvalid extends Schema.TaggedError<HistoryPageInvalid>()(
+  'HistoryPageInvalid',
+  { conversationId: ConversationId },
+  { title: 'HistoryPageInvalid' },
+) {
+  override get message() {
+    return 'History limit must be a positive integer'
+  }
+}

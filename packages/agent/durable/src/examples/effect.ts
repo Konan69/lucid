@@ -7,6 +7,22 @@ import * as Durable from '@vivid/durable/core'
 
 const encodeCursor = Schema.encodeSync(Schema.fromJsonString(Durable.HistoryCursor))
 const decodeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(Durable.TurnBody))
+const decodeLimit = Schema.decodeUnknownEffect(Schema.NumberFromString)
+const decodeCursor = Schema.decodeUnknownEffect(Schema.fromJsonString(Durable.HistoryCursor), {
+  onExcessProperty: 'error',
+})
+const decodeDecision = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      holdId: Durable.HoldId,
+      approved: Schema.Boolean,
+      reason: Schema.optionalKey(Schema.String),
+    }),
+  ),
+)
+const decodeAnswer = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ holdId: Durable.HoldId, output: Schema.MutableJson })),
+)
 
 /** The only unsafe operation here reads the host Request; invalid/read-failed chat bodies are 400. */
 const readBody = (request: Request) =>
@@ -88,14 +104,27 @@ export function actions(harness: Harness, conversationId: ConversationId, contex
 export const history = Effect.fn('Example.history')(function* (
   harness: Harness,
   conversationId: ConversationId,
+  request: Request,
   context: Context,
 ) {
-  const result = yield* Durable.history(
-    harness,
-    conversationId,
-    { limit: 50, before: Option.none() },
-    context,
-  )
+  const query = new URL(request.url).searchParams
+  const limitText = query.get('limit')
+  const limit =
+    limitText === null
+      ? 50
+      : yield* decodeLimit(limitText).pipe(
+          Effect.mapError(() => new Durable.HistoryPageInvalid({ conversationId })),
+        )
+  const beforeText = query.get('before')
+  const before =
+    beforeText === null
+      ? Option.none<Durable.HistoryCursor>()
+      : Option.some(
+          yield* decodeCursor(beforeText).pipe(
+            Effect.mapError(() => new Durable.HistoryCursorInvalid({ conversationId })),
+          ),
+        )
+  const result = yield* Durable.history(harness, conversationId, { limit, before }, context)
   const messages = [...result.messages]
   const body = Option.match(result.next, {
     onNone: () => ({ messages }),
@@ -106,3 +135,52 @@ export const history = Effect.fn('Example.history')(function* (
   })
   return Response.json(body)
 })
+
+/** All expected route failures are explicit; Pi adapter failures stay in the host's error channel. */
+export const route = Effect.fn('Example.route')(
+  function* (harness: Harness, conversationId: ConversationId, request: Request, context: Context) {
+    const path = new URL(request.url).pathname
+    if (path === '/chat') return yield* chat(harness, conversationId, request, context)
+    if (path === '/history' && request.method === 'GET')
+      return yield* history(harness, conversationId, request, context)
+    if (path === '/waiting' && request.method === 'GET')
+      return Response.json(yield* Durable.waiting(harness, conversationId, context))
+    if (request.method !== 'POST') return new Response(null, { status: 405 })
+    if (path === '/abort') {
+      yield* Durable.abort(harness, conversationId, context)
+      return new Response(null, { status: 204 })
+    }
+    if (path === '/decide')
+      return Response.json(
+        yield* Durable.decide(
+          harness,
+          conversationId,
+          yield* decodeDecision(yield* readBody(request)),
+          context,
+        ),
+      )
+    if (path === '/answer')
+      return Response.json(
+        yield* Durable.answer(
+          harness,
+          conversationId,
+          yield* decodeAnswer(yield* readBody(request)),
+          context,
+        ),
+      )
+    return new Response(null, { status: 404 })
+  },
+  (effect) =>
+    effect.pipe(
+      Effect.catchTags({
+        SchemaError: (error) => Effect.succeed(new Response(error.message, { status: 400 })),
+        TurnInvalid: (error) => Effect.succeed(new Response(error.message, { status: 400 })),
+        HistoryPageInvalid: (error) => Effect.succeed(new Response(error.message, { status: 400 })),
+        HistoryCursorInvalid: (error) =>
+          Effect.succeed(new Response(error.message, { status: 400 })),
+        CallNotWaiting: (error) => Effect.succeed(new Response(error.message, { status: 409 })),
+        ConversationMissing: (error) =>
+          Effect.succeed(new Response(error.message, { status: 404 })),
+      }),
+    ),
+)

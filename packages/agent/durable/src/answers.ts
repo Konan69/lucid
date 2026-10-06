@@ -80,7 +80,7 @@ const reserve = Effect.fn('Durable.reserveAnswer')(function* (
             Option.contains(input.withdrawn, submitted.attempt)
               ? Delivery.cases.Reserved.make({
                   attempt: submitted.attempt + 1,
-                  output: copyJson(submitted.output),
+                  output: copyJson(input.given.output),
                 })
               : Delivery.cases.Submitted.make({
                   attempt: submitted.attempt,
@@ -175,7 +175,7 @@ const admit = Effect.fn('Durable.admitAnswer')(function* (
   return delivery
 })
 
-/** Withdrawn follow-ups retry with a fresh key and the first reserved output; repeats cannot alter it. */
+/** A withdrawn follow-up accepts the next answer under a fresh key; queued and placed repeats remain first-wins. */
 export const deliver = Effect.fn('Durable.deliverAnswer')(function* (
   harness: Harness,
   conversation: Conversation,
