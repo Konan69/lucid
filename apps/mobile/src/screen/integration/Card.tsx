@@ -1,5 +1,5 @@
 import { ConnectionStep, type ConnectionId, type ConnectionRequestMessage } from '@vivid/contracts'
-import { answered, Awaited, awaitedWords } from '@vivid/state'
+import { answered, answering, Awaited, awaitedWords } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { useState } from 'react'
 import { View } from 'react-native'
@@ -100,7 +100,15 @@ export function IntegrationCard({
           onPress={() => {
             // It says something in the Thread, and sending is felt.
             commit()
-            onContinue(words.carryOn)
+            // One more account is named by the account that was added, so Vivid does not have to
+            // guess which of several is new.
+            onContinue(
+              words.carryOn(
+                Option.flatMap(connections, (value) =>
+                  answering(value.connections, request, awaited),
+                ),
+              ),
+            )
           }}
         />
       ) : (

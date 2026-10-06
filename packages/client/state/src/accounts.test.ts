@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest'
 import {
   accountWords,
   answered,
+  answering,
   asksName,
   Awaited,
   awaitedOf,
@@ -211,6 +212,28 @@ describe('what a card in a Thread is waiting for', () => {
     const another = awaitedWords(Awaited.Another({ askedAt: 1 }), 'Gmail')
     expect(another.connect).toBe('Add another Gmail account')
     expect(another.title).toBe('Another Gmail account')
-    expect(another.carryOn).toBe('Another Gmail account is connected. Carry on.')
+    expect(another.carryOn(Option.none())).toBe('Another Gmail account is connected. Carry on.')
+  })
+
+  it('tells Vivid which account was added, so it does not have to guess', () => {
+    const awaited = Awaited.Another({ askedAt: 500 })
+    const before = account('home', 'gmail', { createdAt: 100, account: 'gmail (Home)' })
+    const added = account('work', 'gmail', { createdAt: 900, account: 'gmail (Work)' })
+    const latest = account('side', 'gmail', { createdAt: 950, account: 'gmail (Side)' })
+    // The newest account that answers is the one that settled the card; the old one never is.
+    expect(Option.map(answering([before, added], request, awaited), (item) => item.id)).toEqual(
+      Option.some(added.id),
+    )
+    expect(
+      Option.map(answering([latest, before, added], request, awaited), (item) => item.id),
+    ).toEqual(Option.some(latest.id))
+    expect(answering([before], request, awaited)).toEqual(Option.none())
+    expect(
+      awaitedWords(awaited, 'Gmail').carryOn(answering([before, added], request, awaited)),
+    ).toBe('Another Gmail account is connected: gmail (Work). Carry on.')
+    // A service Vivid offered says what it always said.
+    expect(awaitedWords(Awaited.Service(), 'Gmail').carryOn(Option.some(added))).toBe(
+      'Gmail is connected. Carry on.',
+    )
   })
 })

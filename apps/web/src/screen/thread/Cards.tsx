@@ -17,6 +17,7 @@ import {
 import { Option, Predicate, Result, Schema } from 'effect'
 import {
   answered,
+  answering,
   APPROVAL_EFFECT_WORDS,
   asksName,
   Awaited,
@@ -401,7 +402,8 @@ const listening = new Set<string>()
 function carryOnOnceReady(
   key: string,
   ready: (connections: ReadonlyArray<Connection>) => boolean,
-  go: () => void,
+  /** Told the list that settled it, so it can say which account that was. */
+  go: (connections: ReadonlyArray<Connection>) => void,
 ) {
   if (listening.has(key)) return
   listening.add(key)
@@ -413,7 +415,7 @@ function carryOnOnceReady(
   const unsubscribe = engine.registry.subscribe(live.connections.atom, (result) => {
     if (!AsyncResult.isSuccess(result) || !ready(result.value.connections)) return
     stop()
-    go()
+    go(result.value.connections)
   })
   const timer = setTimeout(stop, LISTEN_MS)
 }
@@ -471,7 +473,10 @@ export function ConnectionCard({
   // A request for one more account is never ready when it is made, whatever the card was told.
   const ready = (Awaited.$is('Service')(awaited) && request.ready) || readyIn(list)
   const words = awaitedWords(awaited, request.serviceName)
-  const carryOn = () => onContinue(words.carryOn)
+  // Said with the list as it stands when it is said, so one more account is named by the
+  // account that was added and Vivid does not have to guess which of several is new.
+  const carryOn = (all: ReadonlyArray<Connection>) =>
+    onContinue(words.carryOn(answering(all, request, awaited)))
   // One more account on a service that does not say who signs in is named before it is begun,
   // as "Add account" in Settings does; the accounts already there are what show whether it says.
   const held = list.filter((connection) => connection.service === request.service)
@@ -546,7 +551,7 @@ export function ConnectionCard({
             current={current}
             pressed={pressed}
             onConnect={(name) => void connect(name)}
-            onCarryOn={carryOn}
+            onCarryOn={() => carryOn(list)}
           />
           {Option.isSome(keying) && (
             <EnterKey keying={keying.value} onClose={() => setKeying(Option.none())} />

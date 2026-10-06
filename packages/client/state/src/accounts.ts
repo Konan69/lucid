@@ -218,31 +218,53 @@ const found = (
   )
 
 /**
+ * The account that settled a card: the newest ready one that answers it. A card that asked for
+ * one more account names it when it tells Vivid to carry on, because Vivid cannot tell which of a
+ * Person's accounts is the new one, and guessed wrong when it was only told that there was one.
+ */
+export const answering = (
+  connections: ReadonlyArray<Connection>,
+  request: Pick<ConnectionRequestMessage, 'service'>,
+  awaited: Awaited,
+): Option.Option<Connection> =>
+  Option.fromUndefinedOr(
+    connections
+      .filter(
+        (connection) =>
+          ConnectionState.guards.Ready(connection.state) && answers(awaited, request, connection),
+      )
+      .toSorted((one, other) => other.createdAt - one.createdAt)[0],
+  )
+
+/**
  * What a card calls the thing it is waiting for: `title` where the card is headed by a name (the
  * phone), `connect` and `done` where it is headed by what is to be done (the web), and `carryOn`,
- * the sentence the card sends into the Thread once it is there.
+ * the sentence the card sends into the Thread once it is there. For one more account that
+ * sentence names the account that was added, when the card can see which it was.
  */
-export const awaitedWords = (awaited: Awaited, serviceName: string) =>
-  Awaited.$match(awaited, {
-    Service: () => ({
-      title: serviceName,
-      connect: `Connect ${serviceName}`,
-      done: `${serviceName} is connected`,
-      carryOn: `${serviceName} is connected. Carry on.`,
-    }),
-    Begun: () => ({
-      title: serviceName,
-      connect: `Connect ${serviceName}`,
-      done: `${serviceName} is connected`,
-      carryOn: `${serviceName} is connected. Carry on.`,
-    }),
+export const awaitedWords = (awaited: Awaited, serviceName: string) => {
+  const connected = {
+    title: serviceName,
+    connect: `Connect ${serviceName}`,
+    done: `${serviceName} is connected`,
+    carryOn: (_added: Option.Option<Connection>) => `${serviceName} is connected. Carry on.`,
+  }
+  return Awaited.$match(awaited, {
+    Service: () => connected,
+    Begun: () => connected,
     Another: () => ({
       title: `Another ${serviceName} account`,
       connect: `Add another ${serviceName} account`,
       done: `Another ${serviceName} account is connected`,
-      carryOn: `Another ${serviceName} account is connected. Carry on.`,
+      carryOn: (added: Option.Option<Connection>) =>
+        Option.match(added, {
+          onNone: () => `Another ${serviceName} account is connected. Carry on.`,
+          onSome: (connection) =>
+            `Another ${serviceName} account is connected: ${connection.account}. Carry on.`,
+        }),
     }),
   })
+}
 
 /**
  * The words that say which account a row is, on a card that already carries its service's name.
