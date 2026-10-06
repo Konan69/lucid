@@ -169,6 +169,10 @@ export function Composer({
                 onSubmit={send}
                 // The text scrolls only once it has more lines than the composer will grow to.
                 scrollEnabled={needed > TALLEST}
+                // Android sets text from the top of its box, which leaves one line a few points
+                // high beside the button (measured on a device); the editor centres it on
+                // request. A point of tolerance, so a rounding difference is not a second line.
+                singleLineCentered={needed <= ONE_LINE + 1}
                 contentInsetVertical={INSET}
                 onContentHeightChange={setNeeded}
                 style={{ height: Math.min(TALLEST, Math.max(ONE_LINE, needed)) }}

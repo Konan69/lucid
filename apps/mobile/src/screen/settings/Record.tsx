@@ -1,6 +1,6 @@
 import type { AuditEntry } from '@vivid/contracts'
 import { ScrollText } from 'lucide-react-native'
-import { FlatList, View } from 'react-native'
+import { FlatList, ScrollView, View } from 'react-native'
 import { useNow } from '../../data/foreground'
 import { useLive, useLiveData } from '../../data/live'
 import { auditSentence } from '../../data/record'
@@ -44,13 +44,17 @@ export function Record({ onClose }: { onClose: () => void }) {
         <Live state={audit} loading={<Skeleton rows={5} />}>
           {(value) =>
             value.entries.length === 0 ? (
-              <Empty
-                icon={ScrollText}
-                title="Nothing recorded yet"
-                line="What Vivid does for you is written here as it happens."
-                // The sheet is the whole screen, so it is centred as a page's is.
-                room="page"
-              />
+              // A scroller of its own: the sheet gives this branch no other, and on a phone held
+              // sideways with large text the words would otherwise run off the sheet's foot.
+              <ScrollView>
+                <Empty
+                  icon={ScrollText}
+                  title="Nothing recorded yet"
+                  line="What Vivid does for you is written here as it happens."
+                  // The sheet is the whole screen, so it is centred as a page's is.
+                  room="page"
+                />
+              </ScrollView>
             ) : (
               <Lines entries={value.entries} />
             )

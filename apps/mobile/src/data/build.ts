@@ -13,7 +13,11 @@ import { Data, Option } from 'effect'
 export type Running = Data.TaggedEnum<{
   /** A build that asks nobody for updates: a development build, or one given no server. */
   Off: {}
-  /** The JavaScript the app was installed with. No update has started on this phone yet. */
+  /**
+   * The JavaScript the app was installed with is what is running. That is so before any update
+   * has arrived, and again if the phone has gone back to it from an update it could not start,
+   * so this says what is running and nothing about what came before.
+   */
   Installed: {}
   /** JavaScript delivered since the install: when its server published it, and its own id. */
   Updated: { readonly published: Date; readonly id: string }
@@ -58,7 +62,7 @@ export const shortId = (id: string): string => id.slice(0, 8)
 export const runningWords = (running: Running, write: (moment: Date) => string): string =>
   Running.$match(running, {
     Off: () => 'This build does not take updates.',
-    Installed: () => 'None yet. This is the app as it was installed.',
+    Installed: () => 'None running. This is the app as it was installed.',
     Updated: ({ published, id }) => `Published ${write(published)} · ${shortId(id)}`,
     Unnamed: () => 'An update is running, but this phone cannot say which.',
   })
