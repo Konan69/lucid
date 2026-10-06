@@ -74,7 +74,10 @@ it.live('approves a call and continues the same message', () =>
     const initial = yield* respond(
       harness,
       root.id,
-      ChatTurn.cases.Input.make({ messageId: 'pay', text: 'Pay the invoice' }),
+      ChatTurn.cases.Input.make({
+        messageId: 'pay',
+        parts: [{ type: 'text', text: 'Pay the invoice' }],
+      }),
       context,
     )
     const before = yield* consume(initial, Option.none())
@@ -126,7 +129,10 @@ it.live('answers a tool that has no server execute', () =>
     const initial = yield* respond(
       harness,
       root.id,
-      ChatTurn.cases.Input.make({ messageId: 'ask', text: 'Pay the invoice' }),
+      ChatTurn.cases.Input.make({
+        messageId: 'ask',
+        parts: [{ type: 'text', text: 'Pay the invoice' }],
+      }),
       context,
     )
     const before = yield* consume(initial, Option.none())

@@ -90,6 +90,11 @@ export const respondTurn = (
       Effect.catchTag('ConversationMissing', () =>
         Effect.succeed(new Response('Conversation not found', { status: 404 })),
       ),
+      Effect.catchTag('PartUnsupported', () =>
+        Effect.succeed(
+          new Response('Unsupported file; use an inline base64 image', { status: 400 }),
+        ),
+      ),
     ),
   )
 
@@ -147,6 +152,7 @@ export {
   ConversationMissing,
   PiFailed,
   TurnInvalid,
+  PartUnsupported,
   RunMissing,
   ToolSchemaFailed,
   ToolFailed,
@@ -159,6 +165,7 @@ export type { RunInput } from './stream.ts'
 export type { ResumeInput } from './resume.ts'
 export type { RunState, Step, Chunk } from './chunks.ts'
 export type { ChatTurn } from './respond.ts'
+export type { InputPart } from './input.ts'
 
 /** Explicit run cancellation is distinct from a fetch abort or a detached stream reader. */
 export const abort = (...args: Parameters<typeof Core.abort>) =>

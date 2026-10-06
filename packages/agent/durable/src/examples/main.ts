@@ -17,6 +17,7 @@ import {
   HoldIdInvalid,
   RunMissing,
   TurnInvalid,
+  PartUnsupported,
 } from '@vivid/durable'
 
 const decodeLimit = Schema.decodeUnknownPromise(Schema.NumberFromString)
@@ -30,6 +31,7 @@ function routeFailure(error: Error): Response {
     error instanceof Schema.SchemaError ||
     error instanceof HoldIdInvalid ||
     error instanceof TurnInvalid ||
+    error instanceof PartUnsupported ||
     error instanceof HistoryCursorInvalid ||
     error instanceof HistoryPageInvalid
   )

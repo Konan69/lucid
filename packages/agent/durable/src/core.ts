@@ -9,6 +9,7 @@ export {
   ConversationMissing,
   PiFailed,
   TurnInvalid,
+  PartUnsupported,
   RunMissing,
   ToolSchemaFailed,
   ToolFailed,
@@ -35,6 +36,7 @@ export {
 } from './chunks.ts'
 export { type Replay, type ToolsOptions, toolsExtension } from './tools.ts'
 export { ChatTurn, TurnBody, decodeTurn, respond } from './respond.ts'
+export { InputPart, InputParts } from './input.ts'
 export { attachRun, continueRun, type RunInput, prepareRun, streamRun } from './stream.ts'
 export type { ResumeInput } from './resume.ts'
 

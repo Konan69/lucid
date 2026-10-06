@@ -1,5 +1,5 @@
 import type { Context } from '@earendil-works/chord'
-import type { UserMessage } from '@earendil-works/pi-ai'
+import type { UserMessage, TextContent, ImageContent } from '@earendil-works/pi-ai'
 import {
   LiveDoc,
   type ConversationId,
@@ -16,6 +16,7 @@ import { noDesk, readDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
 import { readMessage } from './reading.ts'
 import { HistoryCursorInvalid, HistoryPageInvalid } from './errors.ts'
+import { decodeStoredImage } from './input.ts'
 
 /** Pi's numeric identity is checked only at the opaque cursor's wire ingress. */
 const EntryIdentity = Schema.declare<EntryId>(
@@ -201,6 +202,18 @@ const readGroups = Effect.fn('Durable.historyGroups')(function* (
   }
 })
 
+/** Restore bridge filenames from Pi's stored image JSON, leaving native images without filenames. */
+function userPart(part: TextContent | ImageContent): UIMessage['parts'][number] {
+  if (part.type === 'text') return { type: 'text', text: part.text }
+  const stored = decodeStoredImage(part)
+  const file = {
+    type: 'file' as const,
+    mediaType: stored.mimeType,
+    url: `data:${stored.mimeType};base64,${stored.data}`,
+  }
+  return stored.filename === undefined ? file : { ...file, filename: stored.filename }
+}
+
 /** Images have the SDK's supported data-URL file shape; late-answer users are ordinary user messages. */
 function userMessage(entry: EntryRecord): UIMessage {
   const model = (entry.model ?? []).find(
@@ -209,15 +222,7 @@ function userMessage(entry: EntryRecord): UIMessage {
   if (model === undefined) throw new Error('Pi user entry has no user message')
   const parts: UIMessage['parts'] = Predicate.isString(model.content)
     ? [{ type: 'text', text: model.content }]
-    : model.content.map((part) =>
-        part.type === 'text'
-          ? { type: 'text', text: part.text }
-          : {
-              type: 'file',
-              mediaType: part.mimeType,
-              url: `data:${part.mimeType};base64,${part.data}`,
-            },
-      )
+    : model.content.map(userPart)
   return { id: `entry:${entry.id}`, role: 'user', parts }
 }
 

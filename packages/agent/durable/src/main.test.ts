@@ -401,7 +401,7 @@ it.live('ignores malformed parts while preserving a valid input turn', () =>
         ],
       }),
     )
-    expect(turn).toMatchObject({ text: 'Hello' })
+    expect(turn).toMatchObject({ parts: [{ type: 'text', text: 'Hello' }] })
     const response = yield* Effect.promise(() => respondTurn(harness, root.id, turn, context))
     expect(response.status).toBe(200)
     expect(yield* Effect.promise(() => response.text())).toContain('Decoded.')

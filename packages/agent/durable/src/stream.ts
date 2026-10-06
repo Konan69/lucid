@@ -24,11 +24,12 @@ import { RunMissing, type PiFailed, type WatchClosed, type WatchOverflowed } fro
 import { readDesk, noDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
 import { selectRun, type ResumeInput } from './resume.ts'
+import { inputContent, type InputPart } from './input.ts'
 
 /** A retried input retains its client request id and therefore Pi's submission identity. */
 export type RunInput = {
   readonly conversationId: ConversationId
-  readonly content: string
+  readonly content: string | readonly InputPart[]
   readonly requestId: string
 }
 
@@ -166,6 +167,7 @@ export const prepareRun = Effect.fn('Durable.prepareRun')(function* (
   input: RunInput,
   context: Context,
 ) {
+  const content = yield* inputContent(input.content)
   const scope = yield* Scope.make()
   return yield* Effect.gen(function* () {
     const conversation = yield* Pi.conversation(harness, input.conversationId, context)
@@ -174,7 +176,7 @@ export const prepareRun = Effect.fn('Durable.prepareRun')(function* (
     )
     const submission = yield* Pi.submit(
       conversation,
-      { type: 'input', content: input.content, requestId: input.requestId },
+      { type: 'input', content, requestId: input.requestId },
       context,
     )
     const live = yield* Pi.watchLive(harness, input.conversationId, context).pipe(

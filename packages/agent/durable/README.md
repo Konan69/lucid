@@ -16,7 +16,7 @@ The host opens its Pi Harness, registers an extension from `toolsExtension`, and
 
 ## Promise server
 
-[Complete, type-checked HTTP handler](src/examples/main.ts). It serves chat POST/GET, GET history/waiting, and POST abort/decide/answer. The handler maps invalid schema, hold-id and history inputs to 400, stale interactions to 409, and missing conversations to 404; other failures reject. Decision and answer bodies decode once and validate their opaque task ids with the Promise entry's `holdId` before reaching the durable API.
+[Complete, type-checked HTTP handler](src/examples/main.ts). It serves chat POST/GET, GET history/waiting, and POST abort/decide/answer. The handler maps invalid schema, hold-id and history inputs and unsupported user files to 400, stale interactions to 409, and missing conversations to 404; other failures reject. Decision and answer bodies decode once and validate their opaque task ids with the Promise entry's `holdId` before reaching the durable API.
 
 This is the handler excerpt; imports, compiled decoders and the typed status mapper are in the linked source:
 
@@ -69,7 +69,7 @@ async function dispatch(
 }
 ```
 
-Chat `respond` accepts a Request; GET reconnects and returns 204 when idle, POST reads and decodes JSON text. Unsupported methods return 405, missing conversations 404, invalid turns 400 and missing resume runs 409. Other adapter failures reject with the original tagged error class. `decodeTurn` and `respondTurn` support hosts that already decoded an object body. `holdId(text)` validates an opaque hold id received over another wire and throws `HoldIdInvalid` for malformed values, without requiring a core Schema import.
+Chat `respond` accepts a Request; GET reconnects and returns 204 when idle, POST reads and decodes JSON text. Unsupported methods return 405, missing conversations 404, invalid turns and unsupported file parts 400, and missing resume runs 409. Other adapter failures reject with the original tagged error class. `decodeTurn` and `respondTurn` support hosts that already decoded an object body. `holdId(text)` validates an opaque hold id received over another wire and throws `HoldIdInvalid` for malformed values, without requiring a core Schema import.
 
 ## Effect server
 
@@ -93,6 +93,9 @@ export function chat(
     Effect.catchTag('TurnInvalid', (error) =>
       Effect.succeed(new Response(error.message, { status: 400 })),
     ),
+    Effect.catchTag('PartUnsupported', () =>
+      Effect.succeed(new Response('Unsupported file; use an inline base64 image', { status: 400 })),
+    ),
     Effect.catchTag('RunMissing', () =>
       Effect.succeed(new Response('No run made these tool calls', { status: 409 })),
     ),
@@ -110,6 +113,10 @@ The same source exposes typed `actions` for history, abort, waiting, decide and 
 Use the stock `useChat` transport, `DefaultChatTransport`, pointing at the authorized chat endpoint. For approval, use `lastAssistantMessageIsCompleteWithApprovalResponses` and echo the tool part's `approval.id` to `addToolApprovalResponse`; that opaque value identifies a durable tool task. For person-supplied tool output, use `lastAssistantMessageIsCompleteWithToolCalls` and `addToolOutput` with the part's tool name and call id. The SDK resubmits the assistant message and continues it in place. The integration suites exercise the real AbstractChat and these stock predicates.
 
 [Complete, type-checked React component](src/examples/client.tsx): stock `useChat`, the loaded history as its first messages, `resume` to rejoin a run in progress, an approval answered from the tool part, and a tool the person answers. The same flows run against the real hook in [`src/react/chat.test.tsx`](src/react/chat.test.tsx). Client `stop()` drops the fetch only. An application that intends to stop durable work calls its authorized abort endpoint too.
+
+User inputs retain ordered text and file parts. Inline base64 image data URLs become native Pi image blocks; history restores their file parts, including filenames retained as bridge metadata on the stored image JSON. Pi Durable 1.0.4 accepts text and image content only. Remote URLs (including image URLs), non-image files, malformed base64 and mismatched data-URL media types fail `PartUnsupported` before admission; HTTP chat returns 400. This library never fetches a file URL. Core `ChatTurn.Input` has `parts`, and `RunInput.content` accepts either a plain string or ordered `InputPart` values.
+
+Size limits belong to the host: bound HTTP request bytes in its ingress middleware before calling `respond`, and check file counts and decoded image sizes before `respondTurn`/core `respond` or `prepareRun` for hosts using typed input directly. This library imposes no payload-size policy.
 
 ## Guarantees
 

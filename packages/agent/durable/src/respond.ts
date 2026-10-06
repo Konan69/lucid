@@ -18,10 +18,11 @@ import * as Pi from './pi.ts'
 import { LiveDoc } from '@earendil-works/pi-durable'
 import { continueRun, prepareRun } from './stream.ts'
 import { waiting } from './waiting.ts'
+import { InputPart, InputParts } from './input.ts'
 
 /** The transport-neutral turn carries only the client's newest input or named tool settlements. */
 export const ChatTurn = Schema.TaggedUnion({
-  Input: { messageId: Schema.String, text: Schema.String.check(Schema.isMinLength(1)) },
+  Input: { messageId: Schema.String, parts: InputParts },
   Resume: {
     messageId: Schema.optionalKey(Schema.String),
     known: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
@@ -60,7 +61,7 @@ const Approval = Schema.Struct({
   }),
 )
 const Part = Schema.Union([
-  Schema.Struct({ type: Schema.Literal('text'), text: Schema.String }),
+  InputPart,
   Schema.Struct({
     type: ToolName,
     toolCallId: Schema.String,
@@ -126,8 +127,11 @@ const toTurn = Effect.fn('Durable.decodeTurn')(function* (body: typeof Body.Type
   if (Option.isNone(last)) return yield* new TurnInvalid({})
   const message = yield* decodeMessage(last.value)
   if (message.role === 'user') {
-    const text = message.parts.flatMap((part) => ('text' in part ? [part.text] : [])).join('\n')
-    return yield* ChatTurn.cases.Input.makeEffect({ messageId: message.id, text })
+    // An incomplete file shape is invalid, rather than silently becoming a text-only turn.
+    if (message.parts.some((part) => part.type === 'file' && !('url' in part)))
+      return yield* new TurnInvalid({})
+    const parts = message.parts.filter((part): part is InputPart => 'text' in part || 'url' in part)
+    return yield* ChatTurn.cases.Input.makeEffect({ messageId: message.id, parts })
   }
   return yield* resumed(message)
 })
@@ -198,8 +202,14 @@ const settleHolds = Effect.fn('Durable.settleHolds')(function* (
   }
 })
 
+type ResponseEffect = Effect.Effect<
+  Effect.Success<ReturnType<typeof prepareRun>>,
+  Effect.Error<ReturnType<typeof prepareRun>> | RunMissing
+>
+
 /** Authorize before calling. A stale assistant message settles nothing and still resumes observation.
- * Client outputs match call ids and require uniqueness within one run; approvals are task-scoped. */
+ * Client outputs match call ids and require uniqueness within one run; approvals are task-scoped.
+ * Ordered input parts are validated before admission; unsupported files fail without a Pi input. */
 export const respond = Effect.fn('Durable.respond')(function* (
   harness: Harness,
   conversationId: ConversationId,
@@ -207,13 +217,13 @@ export const respond = Effect.fn('Durable.respond')(function* (
   context: Context,
 ) {
   return yield* ChatTurn.match(turn, {
-    Input: (input) =>
+    Input: (input): ResponseEffect =>
       prepareRun(
         harness,
-        { conversationId, content: input.text, requestId: input.messageId },
+        { conversationId, content: input.parts, requestId: input.messageId },
         context,
       ),
-    Resume: (resume) =>
+    Resume: (resume): ResponseEffect =>
       settleHolds(harness, conversationId, resume, context).pipe(
         Effect.andThen(
           resume.messageId === undefined

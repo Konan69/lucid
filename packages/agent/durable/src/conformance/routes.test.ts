@@ -63,6 +63,24 @@ it.live(
         }
       }
       const invalid = [
+        new Request('http://durable.test/chat', {
+          method: 'POST',
+          body: JSON.stringify({
+            messages: [
+              {
+                role: 'user',
+                id: 'unsupported-file',
+                parts: [
+                  {
+                    type: 'file',
+                    mediaType: 'application/pdf',
+                    url: 'data:application/pdf;base64,YQ==',
+                  },
+                ],
+              },
+            ],
+          }),
+        }),
         new Request('http://durable.test/history?limit=0'),
         new Request('http://durable.test/history?limit=garbage'),
         new Request('http://durable.test/history?before=garbage'),

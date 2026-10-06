@@ -65,6 +65,18 @@ export class TurnInvalid extends Schema.TaggedError<TurnInvalid>()(
   }
 }
 
+/** A user file has no Pi input representation; its URL is never fetched or echoed in diagnostics. */
+export class PartUnsupported extends Schema.TaggedError<PartUnsupported>()(
+  'PartUnsupported',
+  { mediaType: Schema.String },
+  { title: 'PartUnsupported' },
+) {
+  /** Hosts can explain the unsupported media without disclosing a supplied URL or payload. */
+  override get message() {
+    return `Unsupported file part (${this.mediaType}); use an inline base64 image`
+  }
+}
+
 /** None of the stored assistant messages made the tool calls named by a resume. */
 export class RunMissing extends Schema.TaggedError<RunMissing>()(
   'RunMissing',

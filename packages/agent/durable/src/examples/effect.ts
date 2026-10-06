@@ -78,6 +78,9 @@ export function chat(
     Effect.catchTag('TurnInvalid', (error) =>
       Effect.succeed(new Response(error.message, { status: 400 })),
     ),
+    Effect.catchTag('PartUnsupported', () =>
+      Effect.succeed(new Response('Unsupported file; use an inline base64 image', { status: 400 })),
+    ),
     Effect.catchTag('RunMissing', () =>
       Effect.succeed(new Response('No run made these tool calls', { status: 409 })),
     ),
