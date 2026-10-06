@@ -5,7 +5,8 @@
     "types": ["node"],
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo"
+    "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo",
+    "jsx": "react-jsx"
   },
   "include": ["src"]
 }

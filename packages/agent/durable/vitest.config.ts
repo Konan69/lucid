@@ -4,6 +4,6 @@ export default defineProject({
   test: {
     name: '@vivid/durable',
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
   },
 })

@@ -93,7 +93,7 @@ The same source exposes typed `actions` for history, abort, waiting, decide and 
 
 Use the stock `useChat` transport, `DefaultChatTransport`, pointing at the authorized chat endpoint. For approval, use `lastAssistantMessageIsCompleteWithApprovalResponses` and echo the tool part's `approval.id` to `addToolApprovalResponse`; that opaque value identifies a durable tool task. For person-supplied tool output, use `lastAssistantMessageIsCompleteWithToolCalls` and `addToolOutput` with the part's tool name and call id. The SDK resubmits the assistant message and continues it in place. The integration suites exercise the real AbstractChat and these stock predicates.
 
-A React hook/component example must be supplied by the frontend owner; the checked examples here are backend code. Client `stop()` drops the fetch only. An application that intends to stop durable work calls its authorized abort endpoint too.
+[Complete, type-checked React component](src/examples/client.tsx): stock `useChat`, the loaded history as its first messages, `resume` to rejoin a run in progress, an approval answered from the tool part, and a tool the person answers. The same flows run against the real hook in [`src/react/chat.test.tsx`](src/react/chat.test.tsx). Client `stop()` drops the fetch only. An application that intends to stop durable work calls its authorized abort endpoint too.
 
 ## Guarantees
 

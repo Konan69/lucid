@@ -20,10 +20,16 @@
     "effect": "catalog:"
   },
   "devDependencies": {
+    "@ai-sdk/react": "4.0.130",
     "@effect/vitest": "catalog:",
     "@opentelemetry/api": "1.9.0",
     "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
     "@typescript/native": "catalog:",
+    "jsdom": "30.1.2",
+    "react": "catalog:",
+    "react-dom": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
     "zod": "4.5.4"
