@@ -25,7 +25,36 @@ export const ConnectionState = Schema.TaggedUnion({
 })
 export type ConnectionState = typeof ConnectionState.Type
 
-/** An authorized relationship with an external account. Credential values are never part of it. */
+/** The most characters a Person's name for an account may have. */
+export const ACCOUNT_NAME_MAX = 40
+
+/**
+ * What a Person calls one of their accounts, to tell it from their others on the same service:
+ * "Work", "Personal". 1 to 40 characters with no space at either end, on one line. It is said to
+ * the model as plain text and drawn in one line of a row, so a line break has no honest meaning in
+ * it. A client trims what was typed before it sends; the server refuses rather than repairs.
+ */
+export const AccountName = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isLengthBetween(1, ACCOUNT_NAME_MAX),
+  Schema.isPattern(/^[^\r\n]*$/),
+)
+export type AccountName = typeof AccountName.Type
+
+/**
+ * An authorized relationship with an external account. Credential values are never part of it.
+ *
+ * A Person may connect one service several times: two Gmail accounts are two Connections. Two
+ * separate facts tell them apart, and neither stands in for the other:
+ *
+ * - `identity` is who the service says signed in ("ada@example.com"). The Person never types it.
+ *   Only some services say; the others leave it null.
+ * - `name` is what the Person calls the account ("Work"). It is null until they call it anything,
+ *   and they may change it whenever they like.
+ *
+ * `account` is the one name that results, the same words on every screen and the words Vivid uses
+ * for it: "Gmail (Work)". The server writes it, so a screen never works it out differently.
+ */
 export const Connection = Schema.Struct({
   id: ConnectionId,
   service: ServiceId,
@@ -36,8 +65,22 @@ export const Connection = Schema.Struct({
    * server's site. Null for a catalog service, which each client draws from its bundled logos.
    */
   mark: Schema.NullOr(Schema.String),
-  /** What the Person called this account: "Work", "Personal". */
-  label: Schema.String,
+  /** What the Person called this account: "Work". Null until they name it. */
+  name: Schema.NullOr(AccountName),
+  /** Who the service says signed in: "ada@example.com". Null when the service does not say. */
+  identity: Schema.NullOr(Schema.String),
+  /**
+   * What this account is called, among everything this Person can use: "Gmail (Work)",
+   * "Gmail (ada@example.com)", or "Gmail" alone when nothing tells it apart. It is the name
+   * Vivid is given for the account and the name it must use to act through it.
+   */
+  account: Schema.String,
+  /**
+   * Where the service came from. One from the `Catalogue` can be connected again for one more
+   * account. A server someone added by its `Address` cannot yet: adding it a second time is not
+   * something the Connection layer has been shown to do, so no screen offers it.
+   */
+  origin: Schema.Literals(['Catalogue', 'Address']),
   ownership: ConnectionOwnership,
   state: ConnectionState,
   createdAt: Schema.Number,
@@ -131,13 +174,29 @@ export const ServiceCatalog = Schema.TaggedUnion({
 })
 export type ServiceCatalog = typeof ServiceCatalog.Type
 
-/** Starting a Connection. Sharing one with the Company takes an admin. */
+/**
+ * Starting a Connection. Sharing one with the Company takes an admin. A service may be begun any
+ * number of times; each is one more account.
+ */
 export const BeginConnectionRequest = Schema.Struct({
   service: ServiceId,
-  label: Schema.String.check(Schema.isMaxLength(40)),
+  /**
+   * What the Person calls the account being added, when they said: the way to tell it apart on a
+   * service that does not say who signed in. Null leaves it unnamed.
+   */
+  name: Schema.NullOr(AccountName),
   shared: Schema.Boolean,
 })
 export interface BeginConnectionRequest extends Schema.Schema.Type<typeof BeginConnectionRequest> {}
+
+/** A Person naming one of their accounts, or taking its name away again with null. */
+export const RenameConnectionRequest = Schema.Struct({
+  id: ConnectionId,
+  name: Schema.NullOr(AccountName),
+})
+export interface RenameConnectionRequest extends Schema.Schema.Type<
+  typeof RenameConnectionRequest
+> {}
 
 /** What the client must do next to finish authorizing. */
 export const ConnectionStep = Schema.TaggedUnion({
@@ -170,7 +229,7 @@ export const ConnectionResponse = Schema.Struct({ connection: Connection })
 /** One thing Vivid can do through a Connection. */
 export const ConnectionTool = Schema.Struct({
   connectionId: ConnectionId,
-  /** "Gmail (Work)": the service and the account, so Vivid can say which it will use. */
+  /** "Gmail (Work)": the service and the account (`Connection.account`), so Vivid can say which it will use. */
   account: Schema.String,
   name: Schema.String,
   description: Schema.String,
@@ -203,6 +262,11 @@ export const FindToolsResponse = Schema.Struct({
   tools: Schema.Array(DiscoveredTool),
   /** Services that would answer the query if they were connected, so Vivid can offer them. */
   unconnected: Schema.Array(Service),
+  /**
+   * Services that answer the query and that the acting Person already has a ready account on.
+   * Vivid can ask for one more account on any of them: a second Gmail, a work GitHub.
+   */
+  connected: Schema.Array(Service),
 })
 export interface FindToolsResponse extends Schema.Schema.Type<typeof FindToolsResponse> {}
 
@@ -246,7 +310,10 @@ export const ConnectionRequestMessage = Schema.Struct({
   service: ServiceId,
   serviceName: Schema.String,
   reason: Schema.String,
-  /** Whether the acting Person already has this service connected and ready. */
+  /**
+   * Whether what was asked for is already there: the acting Person has a ready account on this
+   * service. A request for one more account is never ready when it is made.
+   */
   ready: Schema.Boolean,
 }).annotate({ identifier: 'ConnectionRequestMessage', title: 'Integration request message' })
 /** Decoded Connection request message. */
@@ -254,12 +321,42 @@ export interface ConnectionRequestMessage extends Schema.Schema.Type<
   typeof ConnectionRequestMessage
 > {}
 
+/**
+ * Vivid asking for one more account on a service the Person has already connected: the work
+ * Gmail beside the personal one. It is the same card with one more field. `askedAt` is when Vivid
+ * asked, in milliseconds: an account that was there before does not answer the request, so only
+ * one begun after that moment does.
+ */
+export const AnotherAccount = Schema.Struct({ askedAt: Schema.Number })
+export const AnotherAccountMessage = Schema.Struct({
+  kind: Schema.Literal('connection-request'),
+  service: ServiceId,
+  serviceName: Schema.String,
+  reason: Schema.String,
+  ready: Schema.Literal(false),
+  another: AnotherAccount,
+})
+
+/**
+ * Which accounts Vivid is asking for.
+ *
+ * - `Service`: the service at all. Any ready account the Person has on it answers.
+ * - `Another`: one more account than the Person has now. None of the present ones answers.
+ */
+export const ConnectionWanted = Schema.Literals(['Service', 'Another'])
+export type ConnectionWanted = typeof ConnectionWanted.Type
+
 /** Vivid offering a service it needs for the request in front of it. */
 export const OfferConnectionRequest = Schema.Struct({
   service: ServiceId,
   reason: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(400)),
+  wanted: ConnectionWanted,
 })
 export interface OfferConnectionRequest extends Schema.Schema.Type<typeof OfferConnectionRequest> {}
+
+/** What `OfferConnection` answers with: the card for the service, or the card for one more account. */
+export const ConnectionOffer = Schema.Union([AnotherAccountMessage, ConnectionRequestMessage])
+export type ConnectionOffer = typeof ConnectionOffer.Type
 
 /** Discovery combines accessible accounts with Executor's catalogue, without exposing authority. */
 export const FindIntegrationsRequest = Schema.Struct({
@@ -274,6 +371,8 @@ export const ConnectionMatch = Schema.TaggedUnion({
   Account: {
     name: Schema.String,
     account: Schema.String,
+    /** Who the service says signed in, when it says: the address behind an account named "Work". */
+    identity: Schema.NullOr(Schema.String),
     connected: Schema.Boolean,
     shared: Schema.Boolean,
     state: ConnectionState,

@@ -1,11 +1,13 @@
 import {
+  AnotherAccountMessage,
   MemoryScope,
   RoutineTrigger,
   type BrowseResult,
   type CommandResult,
   type DesktopView,
-  type ConnectionRequestMessage,
+  type ConnectionOffer,
   type FindToolsResponse,
+  type Service,
   type InputRequest,
   type LibrarySearchResult,
   type Memory,
@@ -13,8 +15,11 @@ import {
   type Skill,
   type SkillSummary,
 } from '@vivid/contracts'
+import { Schema } from 'effect'
 import { SavedProcedures, type ContextSkill } from './snapshots.ts'
 import { catalog, inventory, savedInventory } from './names.ts'
+
+const isAnotherAccount = Schema.is(AnotherAccountMessage)
 
 /** Dates cross the model boundary in ISO units; null remains genuine domain absence. */
 const date = (value: number | null) => (value === null ? null : new Date(value).toISOString())
@@ -175,14 +180,33 @@ export function inputRequest(item: InputRequest) {
   }
 }
 
-/** See inputRequest: the catalog reference is required by the existing connection card contract. */
-export function connectionRequest(item: ConnectionRequestMessage) {
-  return {
+/**
+ * See inputRequest: the catalog reference is required by the existing connection card contract.
+ * A request for one more account also carries when Vivid asked (`AnotherAccountMessage`): the
+ * card needs it to tell the account that was asked for from the ones the Person already had.
+ */
+export function connectionRequest(item: ConnectionOffer) {
+  const card = {
     kind: item.kind,
     service: item.service,
     serviceName: modelText(item.serviceName),
     reason: modelText(item.reason),
     ready: item.ready,
+  }
+  if (isAnotherAccount(item)) return { ...card, another: item.another }
+  return card
+}
+
+/**
+ * The service is connected and Vivid did not ask for one more account, so there is no card to
+ * show. The words say what to do next either way: use an account that is there, or ask again for
+ * another one.
+ */
+export function alreadyConnected(service: Service) {
+  const name = modelText(service.name)
+  return {
+    connected: true,
+    message: `${name} is already connected. Call find_tools to see its accounts and use the one the person means. If they need an account that is not among them, call connect again with another set to true.`,
   }
 }
 

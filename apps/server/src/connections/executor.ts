@@ -61,6 +61,20 @@ export const ExecutorAuthorizationId = Schema.NonEmptyString.pipe(
   Schema.brand('ExecutorAuthorizationId'),
 )
 
+/**
+ * Who a service says an account is: an address, else a username, else a display name. It names
+ * the account on every screen and to Vivid, inside the account's whole name ("Gmail (…)"), which
+ * the runtime accepts up to 200 characters, so one that is longer than 120, empty, padded or on
+ * more than one line is not used as a name at all.
+ */
+export const AccountIdentity = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isLengthBetween(1, 120),
+  Schema.isPattern(/^[^\r\n]*$/),
+)
+export type AccountIdentity = typeof AccountIdentity.Type
+const decodeIdentity = Schema.decodeUnknownOption(AccountIdentity)
+
 const referenceFields = {
   service: ServiceId,
   app: ExecutorAppId,
@@ -323,6 +337,9 @@ const BeginInput = Schema.Struct({
   service: ServiceId,
   owner: ExecutorOwnerId,
   subject: Schema.NonEmptyString,
+  /** What Executor files the profile and account under in its own records: the service's name.
+   * Vivid never reads it back. What a Person calls an account, and who the service says it is,
+   * are Vivid's own columns (`connections/tables.ts`). */
   label: Schema.NonEmptyString.check(Schema.isMaxLength(40)),
   returnAddress: Schema.NonEmptyString,
 })
@@ -377,6 +394,14 @@ export interface ExecutorService {
   readonly status: (
     references: ExecutorReferences,
   ) => Effect.Effect<typeof ExecutorStatus.Type, ExecutorFailure>
+  /**
+   * Who the service says the Connection's account is, asked of the service now. None for a
+   * Connection with no account (a public service), for one whose app has no way to ask, and for
+   * an answer that names nobody.
+   */
+  readonly identity: (
+    references: ExecutorReferences,
+  ) => Effect.Effect<Option.Option<AccountIdentity>, ExecutorFailure>
   readonly remove: (references: ExecutorReferences) => Effect.Effect<void, ExecutorFailure>
   readonly tools: (
     references: ExecutorReferences,
@@ -414,6 +439,21 @@ const WireSetup = Schema.Struct({
   mode: Schema.Literals(['automatic', 'saved', 'client-required']),
 })
 const WireAccount = Schema.Struct({ id: ExecutorAccountId })
+/**
+ * `AccountHealth` in Executor's `packages/sdk/src/contracts/account.ts`: `info` is the upstream
+ * identity the app's own check reported (`AccountInfo` in `packages/apps/src/contracts/provider.ts`),
+ * null when the app has no check or the check named nobody. Only the three fields that can name an
+ * account are read; its picture and profile addresses are left where they are.
+ */
+const WireHealth = Schema.Struct({
+  info: Schema.NullOr(
+    Schema.Struct({
+      email: Schema.optionalKey(Schema.String),
+      username: Schema.optionalKey(Schema.String),
+      displayName: Schema.optionalKey(Schema.String),
+    }),
+  ),
+})
 const WireProfile = Schema.Struct({
   id: ExecutorProfileId,
   status: Schema.Literals([
@@ -864,6 +904,7 @@ function makeHttp(client: HttpClient.HttpClient, google: GoogleClient) {
     readSignIn,
     readRemoval,
     readSetup: read(WireSetup),
+    readHealth: read(WireHealth),
   }
 }
 type ExecutorHttp = ReturnType<typeof makeHttp>
@@ -1140,6 +1181,32 @@ function makeAuthorize(
         return yield* signIn(input, pending, methodName)
       }),
     })
+  })
+}
+
+/**
+ * Asks the service who the account is, through the app's own check.
+ *
+ * Executor runs an app's `health` function only when asked (`check` in `HostedAccounts`,
+ * `apps/hosted/server/src/contracts/accounts.ts`: `POST …/accounts/:account/health`), never by
+ * itself when an account is connected, so a Connection that has just become ready is asked here.
+ * Run against the hosted build (source at commit `304bf60`): before the call the account's `info`
+ * is null; the call answers with what `health` returned, per account, for two accounts on one app.
+ * An app with no `health` answers with no `info`, which is most of the catalogue.
+ *
+ * The most specific name wins: an address tells two accounts apart where two display names often
+ * do not. A value that cannot be a name (`AccountIdentity`) is passed over for the next.
+ */
+function makeIdentity(http: ExecutorHttp) {
+  return Effect.fn('Executor.identity')(function* (references: ExecutorReferences) {
+    if (!ExecutorReferences.guards.Authorized(references)) return Option.none<AccountIdentity>()
+    const health = yield* http.readHealth(
+      Effect.succeed(HttpClientRequest.post(`/accounts/${query(references.account)}/health`)),
+      null,
+    )
+    if (health.info === null) return Option.none<AccountIdentity>()
+    const { email, username, displayName } = health.info
+    return Arr.findFirst([email, username, displayName], (candidate) => decodeIdentity(candidate))
   })
 }
 
@@ -2275,6 +2342,7 @@ const makeExecutor = Effect.fn('Executor.make')(function* (
       return references
     }),
     status: makeStatus(http),
+    identity: makeIdentity(http),
     remove: Effect.fn('Executor.removeCached')(function* (references: ExecutorReferences) {
       yield* remove(references)
       yield* Cache.invalidate(snapshots, references)

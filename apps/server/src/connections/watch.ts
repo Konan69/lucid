@@ -29,7 +29,7 @@ import {
 } from './executor.ts'
 import { executorFailure } from './errors.ts'
 import { listRecords } from './records.ts'
-import { namedAccounts } from './tools.ts'
+import { namedAccounts } from './names.ts'
 import { connections } from './tables.ts'
 
 /** Output paths describe a provider list; only metadata-classified reads may ever be selected.

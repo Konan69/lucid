@@ -26,6 +26,7 @@ import {
   ConnectionStep,
   InvalidRequest,
   NotFound,
+  RenameConnectionRequest,
   Service,
   ServiceCatalog,
   ServiceAuthorization,
@@ -55,6 +56,7 @@ import {
 } from './executor.ts'
 import { executorFailure } from './errors.ts'
 import {
+  connectionOf,
   encodeReferences,
   getRecord,
   callbackId,
@@ -62,9 +64,12 @@ import {
   publicConnection,
   recordChanged,
   retainResumer,
+  saveIdentity,
+  saveName,
   saveState,
   type ConnectionRecord,
 } from './records.ts'
+import { namedAccounts } from './names.ts'
 import { connections } from './tables.ts'
 import { callbackHash, correlateSignIn } from './correlation.ts'
 import { catalogService, IMPORTED, serviceLogo } from './logo.ts'
@@ -105,6 +110,37 @@ const rowActor = Effect.fn('Connections.rowActor')(function* (actor: Actor, row:
   return { ...actor, workspace }
 })
 
+/**
+ * What Executor files a Connection's profile and account under in its own records: the service's
+ * name, in the 40 characters its label takes. Vivid never reads it back.
+ */
+const executorLabel = (serviceName: string) => serviceName.slice(0, 40)
+
+/**
+ * Asks the service who a ready Connection's account is, and keeps the answer on the row.
+ *
+ * It runs once a Connection is ready, which is the first moment the service will say: Executor
+ * asks only when told to (`Executor.identity`). Knowing the address is not what makes an account
+ * usable, so nothing here can fail the Connection it is asked about. Executor being out of reach,
+ * refusing, or timing out leaves the account without an identity, logged by tag; so does a row
+ * that changed while the service was being asked. The Person can still name the account.
+ */
+const identify = Effect.fn('Connections.identify')(function* (row: ConnectionRecord) {
+  if (row.status !== 'ready') return row
+  const executor = yield* Executor
+  const identity = yield* executor.identity(row.references).pipe(
+    Effect.catch((failure) =>
+      Effect.logWarning('Integration identity unavailable', failure._tag).pipe(
+        Effect.as(Option.none<typeof row.identity & string>()),
+      ),
+    ),
+  )
+  if (Option.isNone(identity) || identity.value === row.identity) return row
+  return yield* saveIdentity(row, identity.value).pipe(
+    Effect.catchTag('Conflict', () => Effect.succeed(row)),
+  )
+})
+
 /** Persist authorization state before auditing readiness; provider calls remain outside transactions. */
 const finish = Effect.fn('Connections.finish')(function* (
   actor: Actor,
@@ -130,7 +166,7 @@ const finish = Effect.fn('Connections.finish')(function* (
       }),
     },
   )
-  const saved = yield* saveState(row, next.state, next.references)
+  const saved = yield* identify(yield* saveState(row, next.state, next.references))
   yield* recordChanged(actor, saved)
   if (row.status !== 'ready' && saved.status === 'ready') {
     const attribution =
@@ -170,8 +206,6 @@ const begin = Effect.fn('Connections.begin')(function* (
   if (request.shared) companyId = (yield* requireAdmin(actor.workspace)).company.id
   if (ServiceAuthorization.guards.SetupRequired(service.authorization))
     return yield* Effect.fail(new InvalidRequest({ message: connectionSetupMessage }))
-  if (request.label.trim().length === 0)
-    return yield* Effect.fail(new InvalidRequest({ message: 'Give this account a label.' }))
   const id = ConnectionId.make(crypto.randomUUID())
   const config = yield* ServerConfig
   const owner = ExecutorOwnerId.make(companyId === null ? `p-${actor.person.id}` : `c-${companyId}`)
@@ -180,7 +214,7 @@ const begin = Effect.fn('Connections.begin')(function* (
   const step = yield* start({
     connectionId: id,
     service: request.service,
-    label: request.label,
+    label: executorLabel(service.name),
     owner,
     subject: actor.person.id,
     returnAddress: new URL('/api/connections/return', config.PUBLIC_URL).href,
@@ -208,7 +242,10 @@ const begin = Effect.fn('Connections.begin')(function* (
           id,
           service: service.id,
           serviceName: service.name,
-          label: request.label,
+          // What the Person called it, if they said. Who the service says it is comes after the
+          // account is ready (`identify`), so it is never known at insert.
+          name: request.name,
+          identity: null,
           personId: actor.person.id,
           companyId,
           references: encodeReferences(step.references),
@@ -233,10 +270,8 @@ const begin = Effect.fn('Connections.begin')(function* (
         }),
       ),
     )
-  const row = yield* getRecord(
-    actor,
-    ConnectionId.make((yield* returned(rows, 'Connection')).id),
-    false,
+  const row = yield* identify(
+    yield* getRecord(actor, ConnectionId.make((yield* returned(rows, 'Connection')).id), false),
   )
   yield* recordChanged(actor, row)
   if (status === 'ready')
@@ -278,7 +313,7 @@ const resume = Effect.fn('Connections.resume')(function* (actor: Actor, row: Con
     .reauthorize({
       connectionId: row.id,
       service: row.service,
-      label: row.label,
+      label: executorLabel(row.serviceName),
       owner: row.references.owner,
       subject: actor.person.id,
       references: row.references,
@@ -292,12 +327,14 @@ const resume = Effect.fn('Connections.resume')(function* (actor: Actor, row: Con
       }),
       Effect.flatMap(correlateSignIn),
     )
-  const saved = yield* saveState(
-    row,
-    ExecutorStep.guards.Done(step)
-      ? ConnectionState.cases.Ready.make({})
-      : ConnectionState.cases.NeedsAuthorization.make({}),
-    step.references,
+  const saved = yield* identify(
+    yield* saveState(
+      row,
+      ExecutorStep.guards.Done(step)
+        ? ConnectionState.cases.Ready.make({})
+        : ConnectionState.cases.NeedsAuthorization.make({}),
+      step.references,
+    ),
   )
   yield* recordChanged(actor, saved)
   if (ExecutorStep.guards.Done(step))
@@ -362,7 +399,10 @@ const withCatalogMarks = (
           service: item.service,
           serviceName: item.serviceName,
           mark: Option.getOrNull(Option.fromNullishOr(marks.get(item.service))),
-          label: item.label,
+          name: item.name,
+          identity: item.identity,
+          account: item.account,
+          origin: item.origin,
           ownership: item.ownership,
           state: item.state,
           createdAt: item.createdAt,
@@ -482,8 +522,11 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
      * bundled logo or the service's initial.
      */
     list: Effect.fn('Connections.list')(function* (actor: Actor) {
-      const rows = yield* provide(listRecords(actor))
-      const items = yield* Effect.forEach(rows, (row) => provide(publicConnection(actor, row)))
+      // Named oldest first, which is what fixes each account's name; shown newest first.
+      const named = namedAccounts(yield* provide(listRecords(actor))).toReversed()
+      const items = yield* Effect.forEach(named, ({ row, account }) =>
+        connectionOf(actor, row, account),
+      )
       const catalog = yield* listCatalog.pipe(
         Effect.catchTag('ServiceUnavailable', () => Effect.succeed<ReadonlyArray<Service>>([])),
       )
@@ -532,11 +575,9 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
       return yield* provide(
         begin(
           actor,
-          {
-            service: importedService.id,
-            label: request.name,
-            shared: request.shared,
-          },
+          // The name Vivid gave is the server's own, kept as the service's name. Nobody has
+          // called the account anything yet.
+          { service: importedService.id, name: null, shared: request.shared },
           importedService,
           start,
         ),
@@ -692,6 +733,21 @@ const makeManagement = (input: {
       return yield* provide(finish(actor, row, references))
     }),
     ...makeCallbacks(input, withResume),
+    /**
+     * What a Person calls an account is theirs to give, change and take away. Whoever may remove
+     * the Connection may name it, so a member cannot rename the account their Company shares.
+     * Nothing is asked of the service: the name is Vivid's own.
+     */
+    rename: Effect.fn('Connections.rename')(function* (
+      actor: Actor,
+      request: RenameConnectionRequest,
+    ) {
+      const row = yield* get(actor, request.id)
+      yield* mayManage(actor, row)
+      const saved = yield* provide(saveName(row, request.name))
+      yield* provide(recordChanged(actor, saved))
+      return yield* provide(publicConnection(actor, saved))
+    }),
     /** Remove provider authority before deleting the scoped product record. */
     remove: Effect.fn('Connections.remove')(function* (actor: Actor, id: ConnectionId) {
       const row = yield* get(actor, id)

@@ -9,6 +9,13 @@ import { companyColumn, epoch, personColumn } from '../database/owner.ts'
  * the encoded set of identifiers the Connection layer needs to find the account again; no
  * credential is ever stored here or anywhere in this database. `status` is `ready`,
  * `needs-authorization` or `failed`, and `reason` explains `failed`.
+ *
+ * One Person may hold several rows for one `service`: each is one more account, and nothing here
+ * makes a service unique. Two columns tell such rows apart and are never mixed. `name` is what the
+ * Person called the account ("Work"), null until they call it anything. `identity` is who the
+ * service says signed in ("ada@example.com"), null when the service does not say. There was one
+ * `label` column for both; every client filled it with the service's own name, so it told no two
+ * accounts apart.
  */
 export const connections = pgTable(
   'vivid_connections',
@@ -16,7 +23,8 @@ export const connections = pgTable(
     id: text('id').primaryKey(),
     service: text('service').notNull(),
     serviceName: text('service_name').notNull(),
-    label: text('label').notNull(),
+    name: text('name'),
+    identity: text('identity'),
     personId: personColumn().notNull(),
     companyId: companyColumn(),
     references: jsonb('references').notNull(),

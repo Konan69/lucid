@@ -2,6 +2,7 @@ import { and, desc, eq, isNull, or, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
 import { Clock, Effect, Schema, Match } from 'effect'
 import {
+  AccountName,
   CompanyId,
   Connection,
   ConnectionId,
@@ -17,13 +18,16 @@ import {
 import { inWorkspace, summaryOf, type Actor } from '../auth/access.ts'
 import { Database, decodeStored, returned } from '../database/client.ts'
 import { changed, Topic } from '../live/changes.ts'
-import { ExecutorReferences } from './executor.ts'
-import { connectionLogo } from './logo.ts'
+import { AccountIdentity, ExecutorReferences } from './executor.ts'
+import { connectionLogo, IMPORTED } from './logo.ts'
+import { namedAccounts } from './names.ts'
 import { connections } from './tables.ts'
 
 const rowSchema = createSelectSchema(connections, {
   id: ConnectionId,
   service: ServiceId,
+  name: Schema.NullOr(AccountName),
+  identity: Schema.NullOr(AccountIdentity),
   personId: PersonId,
   companyId: Schema.NullOr(CompanyId),
   references: ExecutorReferences,
@@ -118,17 +122,24 @@ export const stateOf = (row: ConnectionRecord) =>
     Match.exhaustive,
   )
 
-/** Personal ownership always refers to the acting owner, never to a Company's administrator. */
-export const publicConnection = Effect.fn('Connections.public')(function* (
+/**
+ * One row as a Person's screens read it, under the name it has among this Actor's accounts.
+ * Personal ownership always refers to the acting owner, never to a Company's administrator.
+ */
+export const connectionOf = Effect.fn('Connections.connectionOf')(function* (
   actor: Actor,
   row: ConnectionRecord,
+  account: string,
 ) {
   return Connection.make({
     id: row.id,
     service: row.service,
     serviceName: row.serviceName,
     mark: connectionLogo(row.service),
-    label: row.label,
+    name: row.name,
+    identity: row.identity,
+    account,
+    origin: row.service.startsWith(IMPORTED) ? 'Address' : 'Catalogue',
     ownership:
       row.companyId === null
         ? ConnectionOwnership.cases.Personal.make({ owner: summaryOf(actor.person) })
@@ -136,6 +147,21 @@ export const publicConnection = Effect.fn('Connections.public')(function* (
     state: yield* stateOf(row),
     createdAt: row.createdAt,
   })
+})
+
+/**
+ * One Connection for an answer that carries only it (a step, a rename). Its name is decided among
+ * everything the Actor can use, so it is the name the list and Vivid give it; a row that is no
+ * longer among them has been removed, and is not found.
+ */
+export const publicConnection = Effect.fn('Connections.public')(function* (
+  actor: Actor,
+  row: ConnectionRecord,
+) {
+  const named = namedAccounts(yield* listRecords(actor)).find((entry) => entry.row.id === row.id)
+  if (named === undefined)
+    return yield* Effect.fail(new NotFound({ message: 'Integration not found' }))
+  return yield* connectionOf(actor, row, named.account)
 })
 
 /** Publish to the persisted Company too, including callbacks after a workspace switch. */
@@ -192,6 +218,59 @@ export const saveState = Effect.fn('Connections.saveState')(function* (
         message: 'This integration changed before authorization finished; reload it.',
       }),
     )
+  return yield* decodeRow(yield* returned(rows, 'Connection'))
+})
+
+/**
+ * Writes who the service says signed in, once Executor has said. It changes nothing else, so a
+ * state change that happened meanwhile is kept; the row's revision moves with it, and the caller
+ * gets the row as it now is.
+ */
+export const saveIdentity = Effect.fn('Connections.saveIdentity')(function* (
+  row: ConnectionRecord,
+  identity: AccountIdentity,
+) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .update(connections)
+      .set({ identity, updatedAt: yield* Clock.currentTimeMillis })
+      .where(and(eq(connections.id, row.id), eq(connections.updatedAt, row.updatedAt)))
+      .returning(),
+  )
+  if (rows.length === 0)
+    return yield* Effect.fail(
+      new Conflict({ message: 'This integration changed while it was being named; reload it.' }),
+    )
+  return yield* decodeRow(yield* returned(rows, 'Connection'))
+})
+
+/**
+ * Writes what the Person calls the account, or takes the name away with null. Scoped to the row's
+ * own owner like every other write here; the row's state and references are left alone.
+ */
+export const saveName = Effect.fn('Connections.saveName')(function* (
+  row: ConnectionRecord,
+  name: AccountName | null,
+) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .update(connections)
+      .set({ name, updatedAt: yield* Clock.currentTimeMillis })
+      .where(
+        and(
+          eq(connections.id, row.id),
+          eq(connections.personId, row.personId),
+          row.companyId === null
+            ? isNull(connections.companyId)
+            : eq(connections.companyId, row.companyId),
+        ),
+      )
+      .returning(),
+  )
+  if (rows.length === 0)
+    return yield* Effect.fail(new NotFound({ message: 'Integration not found' }))
   return yield* decodeRow(yield* returned(rows, 'Connection'))
 })
 
