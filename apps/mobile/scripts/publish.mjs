@@ -85,6 +85,11 @@ const exported = NodeChildProcess.spawnSync(
     ...platforms.flatMap((platform) => ['--platform', platform]),
     '--output-dir',
     directory,
+    // Maps for Sentry (`metro.config.js`). Without them a report's frames name offsets in the
+    // bundle instead of the source they came from. The export writes the maps beside their
+    // bundles; `metadata.json` does not list them, so the app never downloads them.
+    '--source-maps',
+    'external',
   ],
   { cwd: root, stdio: 'inherit', shell: NodeProcess.platform === 'win32' },
 )
@@ -94,4 +99,46 @@ NodeFS.writeFileSync(
   NodePath.join(directory, 'expoConfig.json'),
   capture('pnpm', ['exec', 'expo', 'config', '--json', '--type', 'public']),
 )
+
+// The maps go to Sentry so its reports come back with readable stack frames; the bundle and its
+// map already carry the debug ID that pairs them (`metro.config.js`). Uploading is the root
+// script's job, so the credentials and the idempotent behaviour live in one place. Without
+// `SENTRY_AUTH_TOKEN` it leaves the maps on disk and reports, and the publish still stands: the
+// update itself is complete without them, only Sentry's frames stay unreadable.
+NodeChildProcess.spawnSync(
+  'node',
+  [NodePath.join(root, '../../scripts/sentry-upload.mjs'), 'vivid-mobile', directory],
+  { stdio: 'inherit' },
+)
+
+// Anything metadata.json does not name stays unread by the app, and the map files are the only
+// such files an export leaves (`--source-maps external` above): a map is for the server's Sentry
+// upload only, never for a phone. Keeping the export to what `metadata.json` names keeps the
+// server's release directory honest, and sources are not shipped where they are not used.
+const metadata = JSON.parse(NodeFS.readFileSync(NodePath.join(directory, 'metadata.json'), 'utf8'))
+const named = new Set(
+  Object.values(metadata.fileMetadata)
+    .flatMap((platform) => [platform.launchAsset.path, ...platform.assets.map((asset) => asset.path)])
+    .map((path) => NodePath.resolve(directory, path)),
+)
+for (const file of findMaps(directory)) {
+  if (!named.has(NodePath.resolve(directory, file))) NodeFS.rmSync(NodePath.resolve(directory, file))
+}
+
+/** Every `.map` below `directory`, through the relative paths this script and the server both use. */
+function findMaps(directory) {
+  const maps = []
+  const visit = (relative) => {
+    for (const name of NodeFS.readdirSync(NodePath.join(directory, relative), {
+      withFileTypes: true,
+    })) {
+      const path = NodePath.join(relative, name.name)
+      if (name.isDirectory()) visit(path)
+      else if (path.endsWith('.map')) maps.push(path)
+    }
+  }
+  visit('.')
+  return maps
+}
+
 console.log(`Published runtime ${runtimeVersion} to ${directory}`)
