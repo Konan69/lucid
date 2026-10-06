@@ -5,6 +5,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
   type StyleProp,
   type TextInputProps,
@@ -321,19 +322,100 @@ export function Notice({ message }: { message: string }) {
   )
 }
 
+/** The mark of an empty place: a soft tile a little larger than a row's, with the place's icon. */
+const EMPTY_MARK = 64
 /**
- * A screen or list with nothing in it yet: one plain line of what goes here, and the one action
- * that puts something there. Vivid's face is not here. It is drawn only where Vivid is present
- * (greeting, thinking, speaking), and an empty list is not Vivid saying anything.
+ * How much of the window an empty page's block is centred in, from where the page's content
+ * starts under its bar. Six tenths puts the block a little above the middle of the screen, which
+ * is where the eye rests on a page with nothing else on it; the true middle reads as sunk.
  */
-export function Empty({ line, children }: { line: string; children?: ReactNode }) {
+const EMPTY_SHARE = 0.6
+
+/**
+ * A screen or list with nothing in it yet. It says three things, in this order: which place this
+ * is (its mark, the same icon the menu shows for it), what is missing (the title), and how it
+ * fills (one line). Under them is the one action that puts something there, as the page's
+ * primary button.
+ *
+ * It used to be one grey sentence and a quiet button at the top of the page, on the gutter, with
+ * the rest of the screen bare; the owner asked for the empty states to be redesigned (6 October
+ * 2026). The arrangement is the platform's own for a place with no content, iOS's
+ * `UIContentUnavailableView`: a picture, a title and a line, centred, with at most one button.
+ * The mark is in the accent the Person chose, soft, so an empty page is still this Person's
+ * Vivid and not a grey sheet.
+ *
+ * `room` says where it stands. A `page` has nothing else on it, so the block is centred in most
+ * of the window, and the page leaves out the line that says what the place is while it is empty:
+ * this says it, and a second sentence on the gutter above a centred block is a stray edge. A
+ * `section` shares its sheet or page with other things and takes only the room it needs.
+ *
+ * Vivid's face is not here. It is drawn only where Vivid is present (greeting, thinking,
+ * speaking), and an empty list is not Vivid saying anything.
+ *
+ * The block fades in once, when the list it stands for has answered that it is empty; nothing
+ * else moves, and with reduced motion it is simply there.
+ */
+export function Empty({
+  icon: Icon,
+  title,
+  line,
+  room,
+  children,
+}: {
+  icon: LucideIcon
+  title: string
+  line?: string
+  room: 'page' | 'section'
+  /** The one action that fills this place. */
+  children?: ReactNode
+}) {
+  const { colors: c } = useTheme()
+  const { height } = useWindowDimensions()
   return (
-    <View style={{ alignItems: 'flex-start', paddingVertical: 28, gap: 16 }}>
-      <Label tone="ink-2" style={{ maxWidth: 340 }}>
-        {line}
+    <Animated.View
+      entering={APPEAR}
+      style={{
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: room === 'page' ? Math.round(height * EMPTY_SHARE) : undefined,
+        paddingVertical: 32,
+        paddingHorizontal: 12,
+      }}
+    >
+      <View
+        pointerEvents="none"
+        style={{
+          width: EMPTY_MARK,
+          height: EMPTY_MARK,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: 20,
+          borderCurve: 'continuous',
+          backgroundColor: c['accent-soft'],
+        }}
+      >
+        <Icon size={28} strokeWidth={1.7} color={c['accent-ink']} />
+      </View>
+      <Label
+        accessibilityRole="header"
+        size="title"
+        style={{ marginTop: 20, textAlign: 'center', maxWidth: 320 }}
+      >
+        {title}
       </Label>
-      {children}
-    </View>
+      {line !== undefined && (
+        <Label
+          tone="ink-2"
+          // Two lines of about the same length, not one long and a word left over. Android
+          // balances them itself; the narrow measure does most of it on iOS, which cannot.
+          textBreakStrategy="balanced"
+          style={{ marginTop: 6, textAlign: 'center', maxWidth: 280 }}
+        >
+          {line}
+        </Label>
+      )}
+      {children !== undefined && <View style={{ marginTop: 24 }}>{children}</View>}
+    </Animated.View>
   )
 }
 

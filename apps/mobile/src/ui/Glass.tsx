@@ -160,7 +160,7 @@ export function GlassMaterial({ ref, style }: { ref?: Ref<View>; style?: StylePr
 
 /**
  * The glass material as an animated view, so it follows the same layout transition as the outline
- * it sits behind: the composer's shape and Vivid's capsule at the top of a screen. The reference's
- * `AnimatedGlassSurface` (`src/features/threads/ThreadComposer.tsx`).
+ * it sits behind: Vivid's capsule at the top of a screen, which widens as what it says changes.
+ * The reference's `AnimatedGlassSurface` (`src/features/threads/ThreadComposer.tsx`).
  */
 export const AnimatedGlassMaterial = Animated.createAnimatedComponent(GlassMaterial)

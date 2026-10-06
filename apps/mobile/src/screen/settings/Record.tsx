@@ -1,4 +1,5 @@
 import type { AuditEntry } from '@vivid/contracts'
+import { ScrollText } from 'lucide-react-native'
 import { FlatList, View } from 'react-native'
 import { useNow } from '../../data/foreground'
 import { useLive, useLiveData } from '../../data/live'
@@ -43,7 +44,13 @@ export function Record({ onClose }: { onClose: () => void }) {
         <Live state={audit} loading={<Skeleton rows={5} />}>
           {(value) =>
             value.entries.length === 0 ? (
-              <Empty line="Nothing recorded yet." />
+              <Empty
+                icon={ScrollText}
+                title="Nothing recorded yet"
+                line="What Vivid does for you is written here as it happens."
+                // The sheet is the whole screen, so it is centred as a page's is.
+                room="page"
+              />
             ) : (
               <Lines entries={value.entries} />
             )
