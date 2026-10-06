@@ -3,9 +3,9 @@ import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import { openRunDatabase } from './database.mjs'
 import * as Schema from 'effect/Schema'
-import { logged, readTestCounts, runIdentifier } from './process.mjs'
+import { logged, readTestCounts, runIdentifier, stopChildrenOnSignal } from './process.mjs'
 import { checkRatchets } from './ratchets.mjs'
-import { holdSlot, takeLock } from './slots.mjs'
+import { holdSlot, takeLock, treeLockName } from './slots.mjs'
 import { stageOfTask, stages } from './stages.mjs'
 
 /** Where Vitest writes each package's counts; a Turbo output, so a cache hit restores it. */
@@ -207,30 +207,27 @@ export async function runLocal(root, selection, environment) {
   const runId = runIdentifier()
   const directory = NodePath.join(root, '.cache/gate/runs', runId)
   NodeFS.mkdirSync(directory, { recursive: true })
-  const releaseTree = holdTree(root)
-  const releaseSlot = await holdSlot((message) => process.stdout.write(`${message}\n`))
+  // One gate at a time in one tree: two would run Turbo over the same outputs and could each
+  // read the other's run summary.
+  const releaseTree = await takeLock(treeLockName(root))
+  if (releaseTree === undefined) throw new Error('a gate is already running in this tree')
   try {
-    return await runStages(root, selection, environment, { runId, directory })
+    const releaseSlot = await holdSlot((message) => process.stdout.write(`${message}\n`))
+    try {
+      return await runStages(root, selection, environment, { runId, directory })
+    } finally {
+      releaseSlot()
+    }
   } finally {
-    releaseSlot()
     releaseTree()
   }
-}
-
-/**
- * One gate at a time in one tree: two would run Turbo over the same outputs and could each read
- * the other's run summary.
- */
-function holdTree(root) {
-  const release = takeLock(NodePath.join(root, '.cache/gate/lock'))
-  if (release === undefined) throw new Error('a gate is already running in this tree')
-  return release
 }
 
 async function runStages(root, selection, environment, { runId, directory }) {
   const selected = stages.filter((stage) => selection.stages.includes(stage.name))
   const needsDatabase = selected.some((stage) => stage.lane === 'tests')
   const database = needsDatabase ? await openRunDatabase(root, environment, runId) : undefined
+  stopChildrenOnSignal(() => (database === undefined ? Promise.resolve() : database.close()))
   const env = { ...environment, CI: '1', TURBO_TELEMETRY_DISABLED: '1' }
   delete env.VIVID_TEST_DATABASE_URL
   if (database !== undefined) {

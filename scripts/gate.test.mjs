@@ -1,5 +1,6 @@
 import * as NodeAssert from 'node:assert/strict'
 import * as NodeChildProcess from 'node:child_process'
+import * as NodeEvents from 'node:events'
 import * as NodeFS from 'node:fs'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
@@ -153,20 +154,33 @@ void test('a remote argument stays one word whatever it contains', () => {
   }
 })
 
-void test('a lock is exclusive while its owner lives and is taken over when it is gone', (t) => {
-  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-gate-lock-'))
-  t.after(() => NodeFS.rmSync(directory, { recursive: true, force: true }))
-  const lock = NodePath.join(directory, 'lock')
-  const release = takeLock(lock)
+void test('a lock is exclusive, and the kernel frees it when its owner ends', async () => {
+  const name = `test-${process.pid}-${Date.now()}`
+  const release = await takeLock(name)
   assert.notEqual(release, undefined)
-  assert.equal(takeLock(lock), undefined)
+  assert.equal(await takeLock(name), undefined)
   release()
-  // A process id that has exited: the child is reaped before its id is written.
-  const gone = NodeChildProcess.spawnSync(process.execPath, ['-e', 'console.log(process.pid)'], {
-    encoding: 'utf8',
-  })
-  NodeFS.writeFileSync(lock, gone.stdout.trim())
-  assert.notEqual(takeLock(lock), undefined)
+  // Another process takes the lock and is killed without releasing it.
+  const holder = NodeChildProcess.spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `import { takeLock } from ${JSON.stringify(NodeURL.pathToFileURL(NodePath.join(repositoryRoot, 'scripts/gate/slots.mjs')).href)}
+       const held = await takeLock(${JSON.stringify(name)})
+       console.log(held === undefined ? 'refused' : 'held')
+       setInterval(() => {}, 1000)`,
+    ],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  )
+  const [line] = await NodeEvents.once(holder.stdout, 'data')
+  assert.equal(String(line).trim(), 'held')
+  assert.equal(await takeLock(name), undefined)
+  holder.kill('SIGKILL')
+  await NodeEvents.once(holder, 'close')
+  const after = await takeLock(name)
+  assert.notEqual(after, undefined)
+  after()
   assert.equal(slotCount(8), 2)
   assert.equal(slotCount(2), 1)
 })

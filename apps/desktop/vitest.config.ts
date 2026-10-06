@@ -2,8 +2,6 @@ const project = {
   test: {
     name: '@vivid/desktop',
     environment: 'node',
-    // Transformed modules are kept on disk, keyed by content, and reused by the next process.
-    fsModuleCache: true,
     include: ['src/**/*.test.ts'],
     passWithNoTests: false,
     // The Computer tests start real child processes whose stand-in loads its modules cold

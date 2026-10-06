@@ -94,8 +94,24 @@ async function buildTemplate(
  */
 async function migratedTemplate(admin: Pg.Client, supplied: string, prefix: string) {
   const template = templateName()
+  // One run at a time decides about templates on this server: building, marking one as used
+  // and dropping unused ones. Without it a run could drop a template another had just chosen.
+  // The lock belongs to this connection and ends with it.
+  await admin.query('SELECT pg_advisory_lock(hashtext($1))', ['vivid_template'])
+  try {
+    return await chooseTemplate(admin, supplied, { template, scratch: `${prefix}_scratch` })
+  } finally {
+    await admin.query('SELECT pg_advisory_unlock(hashtext($1))', ['vivid_template'])
+  }
+}
+
+async function chooseTemplate(
+  admin: Pg.Client,
+  supplied: string,
+  { template, scratch }: { readonly template: string; readonly scratch: string },
+) {
   const existing = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [template])
-  if (existing.rowCount === 0) await buildTemplate(admin, supplied, template, `${prefix}_scratch`)
+  if (existing.rowCount === 0) await buildTemplate(admin, supplied, template, scratch)
   await admin.query(`COMMENT ON DATABASE "${template}" IS '${Math.floor(Date.now() / 1000)}'`)
   const unused = await admin.query(
     `SELECT quote_ident(datname) AS name FROM pg_database
@@ -104,7 +120,8 @@ async function migratedTemplate(admin: Pg.Client, supplied: string, prefix: stri
        AND shobj_description(oid, 'pg_database')::bigint < extract(epoch FROM now()) - $2`,
     [template, unusedAfterSeconds],
   )
-  for (const stale of decodeNames(unused.rows)) await admin.query(`DROP DATABASE ${stale.name}`)
+  for (const stale of decodeNames(unused.rows))
+    await admin.query(`DROP DATABASE IF EXISTS ${stale.name}`)
   return template
 }
 

@@ -103,8 +103,16 @@ function git(root, args, environment) {
  * and nothing refers to the commit but the push that sends it.
  */
 export function snapshot(root, environment, committed) {
-  const head = git(root, ['rev-parse', 'HEAD'], environment).stdout.trim()
-  const dirty = git(root, ['status', '--porcelain'], environment).stdout.trim() !== ''
+  // Checked like every later step: a failed `status` prints nothing, which would read as a
+  // clean tree and gate HEAD in place of the work on disk.
+  const read = (args) => {
+    const result = git(root, args, environment)
+    if (result.status !== 0)
+      throw new Error(`could not read the checkout (git ${args[0]}): ${result.stderr.trim()}`)
+    return result.stdout.trim()
+  }
+  const head = read(['rev-parse', 'HEAD'])
+  const dirty = read(['status', '--porcelain']) !== ''
   if (committed || !dirty) return { sha: head, label: head.slice(0, 12) }
   const index = NodePath.join(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'gate-')), 'index')
   const scratch = { ...environment, GIT_INDEX_FILE: index }
@@ -203,9 +211,11 @@ export function runCloud(root, options, environment) {
   const run = `${name}-${runIdentifier()}`
   const started = Date.now()
   push(root, options.host, `${sha}:refs/gate/${name}`, environment)
+  // An explicit base need not be an ancestor of the commit; the warm tree must have it to compare.
+  if (options.base !== undefined)
+    push(root, options.host, `${options.base}:refs/gate/${name}-base`, environment)
   const forwarded = [options.mode, ...(options.files === undefined ? [] : options.files)]
   if (options.only !== undefined) forwarded.push('--only', options.only)
-  // The base is an ancestor of the commit just pushed, so the warm tree's repository has it.
   if (options.base !== undefined) forwarded.push('--base', options.base)
   const start = ssh(options.host, remoteScript, [name, sha, run, label, ...forwarded], 'pipe')
   if (start.status !== 0) throw new Error(`could not start the run: ${start.stderr.trim()}`)

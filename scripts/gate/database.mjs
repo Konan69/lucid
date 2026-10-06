@@ -112,14 +112,20 @@ export async function openRunDatabase(root, environment, runId) {
   }
   try {
     const abandoned = await admin.query(
-      `SELECT quote_ident(datname) AS name FROM pg_database
+      `SELECT datname AS owner FROM pg_database
        WHERE starts_with(datname, 'gate_')
          AND shobj_description(oid, 'pg_database') ~ '^[0-9]+$'
          AND shobj_description(oid, 'pg_database')::bigint < extract(epoch FROM now()) - $1`,
       [abandonedAfterSeconds],
     )
-    // IF EXISTS: two runs starting together both see the same abandoned database.
-    for (const row of abandoned.rows)
+    // Everything under an abandoned run's name goes with it: its suites' clones carry no
+    // comment of their own. IF EXISTS: two runs starting together see the same leftovers.
+    const leftovers = await admin.query(
+      `SELECT quote_ident(d.datname) AS name FROM pg_database d
+       WHERE EXISTS (SELECT 1 FROM unnest($1::text[]) owner WHERE starts_with(d.datname, owner))`,
+      [abandoned.rows.map((row) => row.owner)],
+    )
+    for (const row of leftovers.rows)
       await admin.query(`DROP DATABASE IF EXISTS ${row.name} WITH (FORCE)`)
     await admin.query(`CREATE DATABASE "${name}" TEMPLATE template0`)
     await admin.query(`COMMENT ON DATABASE "${name}" IS '${Math.floor(Date.now() / 1000)}'`)

@@ -106,13 +106,23 @@ function lastLines(file) {
  */
 export function changeBase(root, options, environment) {
   if (options.mode !== 'affected') return undefined
-  if (options.base !== undefined) return options.base
-  const base = NodeChildProcess.spawnSync('git', ['merge-base', 'HEAD', 'origin/main'], {
+  // Always a commit id: a name such as origin/main means nothing in the warm tree's repository,
+  // and a name that moves would leave the forwarded argument, and so the task hash, unchanged.
+  const args =
+    options.base === undefined
+      ? ['merge-base', 'HEAD', 'origin/main']
+      : ['rev-parse', '--verify', `${options.base}^{commit}`]
+  const base = NodeChildProcess.spawnSync('git', args, {
     cwd: root,
     env: environment,
     encoding: 'utf8',
   })
-  if (base.status !== 0) throw new Error('affected needs --base: origin/main is not known here')
+  if (base.status !== 0)
+    throw new Error(
+      options.base === undefined
+        ? 'affected needs --base: origin/main is not known here'
+        : `--base ${options.base} is not a commit here`,
+    )
   return base.stdout.trim()
 }
 
