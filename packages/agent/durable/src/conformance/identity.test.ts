@@ -116,7 +116,12 @@ it('replaying the identical approval POST leaves a same-run successor unpaid and
     expect(fixture.paid).toEqual([100])
     await decide(opened.harness, opened.root.id, { holdId: secondHold, approved: false }, context)
     const final = await consume(
-      await continueRun(opened.harness, opened.root.id, new Set(['reused']), context),
+      await continueRun(
+        opened.harness,
+        opened.root.id,
+        { messageId: first.message.id, known: new Set(['reused']) },
+        context,
+      ),
       first.message,
     )
     expect(final.chunks.some((chunk) => chunk.type === 'tool-output-denied')).toBe(true)

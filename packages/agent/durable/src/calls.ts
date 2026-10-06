@@ -24,6 +24,7 @@ export type Round = {
   readonly withheld: ReadonlyMap<string, readonly Chunk[]>
   readonly started: ReadonlySet<string>
   readonly available: ReadonlySet<string>
+  readonly inputs: ReadonlyMap<string, InputAvailable>
   readonly completed: ReadonlySet<string>
   readonly muted: ReadonlySet<string>
 }
@@ -34,6 +35,7 @@ export const emptyRound: Round = {
   withheld: new Map(),
   started: new Set(),
   available: new Set(),
+  inputs: new Map(),
   completed: new Set(),
   muted: new Set(),
   holds: new Map(),
@@ -56,6 +58,7 @@ const close = (round: Round, id: string): Round => ({
   holds: new Map([...round.holds].filter(([callId]) => callId !== id)),
   withheld: new Map([...round.withheld].filter(([callId]) => callId !== id)),
   completed: new Set([...round.completed, id]),
+  inputs: new Map([...round.inputs].filter(([callId]) => callId !== id)),
   awaiting: without(round.awaiting, id),
   running: without(round.running, id),
 })
@@ -165,7 +168,11 @@ function showInput(round: Round, chunk: InputStart | InputAvailable, desk: Desk)
   const next =
     chunk.type === 'tool-input-start'
       ? { ...round, started: new Set([...round.started, id]) }
-      : { ...round, available: new Set([...round.available, id]) }
+      : {
+          ...round,
+          available: new Set([...round.available, id]),
+          inputs: new Map(round.inputs).set(id, chunk),
+        }
   const shown = showVisible(next, chunk, desk)
   return { round: shown.round, chunks: round.muted.has(id) ? [] : shown.chunks }
 }
@@ -242,6 +249,16 @@ function refresh(shown: Shown, desk: Desk): Shown {
     const next = release(round, id, desk)
     round = next.round
     chunks.push(...next.chunks)
+  }
+  // A generating call is already visible, but its task-scoped approval can only be requested
+  // after the tool-round commit. Refresh the hold without repeating its available input chunk.
+  for (const [id, input] of round.inputs) {
+    if (round.awaiting.has(id) || !CallLookup.guards.Ready(desk.call(id))) continue
+    const plan = desk.plan(input.toolName)
+    if (Option.isNone(plan) || Option.isNone(holdKind(plan.value, input.input))) continue
+    const next = inputAvailable(round, input, desk)
+    round = next.round
+    chunks.push(...next.chunks.filter((chunk) => chunk.type !== 'tool-input-available'))
   }
   return { round, chunks }
 }

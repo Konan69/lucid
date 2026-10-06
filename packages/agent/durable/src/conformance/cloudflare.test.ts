@@ -38,7 +38,12 @@ it('approval runs the tool once and clears its hold', async () => {
     { holdId: await hold(opened.harness, opened.root.id, 'pay'), approved: true },
     context,
   )
-  const stream = await continueRun(opened.harness, opened.root.id, new Set(['pay']), context)
+  const stream = await continueRun(
+    opened.harness,
+    opened.root.id,
+    { messageId: parked.message.id, known: new Set(['pay']) },
+    context,
+  )
   if (stream === undefined) throw new Error('Expected the held run')
   const result = await consume(stream, parked.message)
   expect(fixture.paid).toEqual([500])
@@ -74,7 +79,12 @@ it('denial never executes and gives the model the reason', async () => {
     },
     context,
   )
-  const stream = await continueRun(opened.harness, opened.root.id, new Set(['pay']), context)
+  const stream = await continueRun(
+    opened.harness,
+    opened.root.id,
+    { messageId: parked.message.id, known: new Set(['pay']) },
+    context,
+  )
   if (stream === undefined) throw new Error('Expected the held run')
   const result = await consume(stream, parked.message)
   expect(fixture.paid).toEqual([])
@@ -220,7 +230,12 @@ it('two holds in one round settle independently', async () => {
     },
     context,
   )
-  const stream = await continueRun(opened.harness, opened.root.id, new Set(['one', 'two']), context)
+  const stream = await continueRun(
+    opened.harness,
+    opened.root.id,
+    { messageId: parked.message.id, known: new Set(['one', 'two']) },
+    context,
+  )
   if (stream === undefined) throw new Error('Expected the held run')
   const result = await consume(stream, parked.message)
   expect(fixture.paid).toEqual([100])

@@ -233,7 +233,12 @@ it('requires a fresh decision when a later round of the same run reuses an id', 
   )
   try {
     await entered.promise
-    const stream = await continueRun(opened.harness, opened.root.id, new Set(['reused']), context)
+    const stream = await continueRun(
+      opened.harness,
+      opened.root.id,
+      { messageId: first.message.id, known: new Set(['reused']) },
+      context,
+    )
     release.resolve()
     const result = await consume(stream, first.message)
     expect(result.chunks.filter((chunk) => chunk.type === 'tool-approval-request')).toMatchObject([

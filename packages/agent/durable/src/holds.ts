@@ -84,6 +84,7 @@ export const CallLookup = Schema.TaggedUnion({
   Duplicate: {},
   Missing: {},
   Queued: {},
+  Generating: {},
   Ready: { taskId: TaskIdentity, holdId: HoldId, callId: Schema.String },
   Executing: { taskId: TaskIdentity, holdId: HoldId, callId: Schema.String },
   Done: { taskId: TaskIdentity, holdId: HoldId, callId: Schema.String },
@@ -219,7 +220,7 @@ export function lookup(
       )
   if (Option.isSome(slot)) return taskState(holds, identity.callId, slot.value)
   if (matching.length > 0) return CallLookup.cases.Missing.make({})
-  if (generatingCall(live, identity.callId)) return CallLookup.cases.Queued.make({})
+  if (generatingCall(live, identity.callId)) return CallLookup.cases.Generating.make({})
   if (CallIdentity.guards.Public(identity)) {
     if (identity.duplicate) return CallLookup.cases.Duplicate.make({})
     return Option.match(identity.resultTask, {

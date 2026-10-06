@@ -151,7 +151,12 @@ it.live('holds a call for approval across a restart, then runs it once', () =>
       { holdId: yield* hold(after.harness, after.root.id, 'call-pay', context), approved: true },
       context,
     )
-    const stream = yield* continueRun(after.harness, after.root.id, new Set(['call-pay']), context)
+    const stream = yield* continueRun(
+      after.harness,
+      after.root.id,
+      { messageId: parkedRun.message.id, known: new Set(['call-pay']) },
+      context,
+    )
     const finished = yield* consume(stream, Option.some(parkedRun.message))
 
     expect(paid).toEqual([{ amount: 500 }])
@@ -216,7 +221,12 @@ it.live('never runs a denied call and tells the model why', () =>
       },
       context,
     )
-    const stream = yield* continueRun(harness, root.id, new Set(['call-deny']), context)
+    const stream = yield* continueRun(
+      harness,
+      root.id,
+      { messageId: parkedRun.message.id, known: new Set(['call-deny']) },
+      context,
+    )
     const finished = yield* consume(stream, Option.some(parkedRun.message))
 
     expect(paid).toEqual([])
@@ -253,7 +263,12 @@ it.live('keeps the model inside a call until a person answers it', () =>
       { holdId: yield* hold(harness, root.id, 'call-ask', context), output: 'savings' },
       context,
     )
-    const stream = yield* continueRun(harness, root.id, new Set(['call-ask']), context)
+    const stream = yield* continueRun(
+      harness,
+      root.id,
+      { messageId: parkedRun.message.id, known: new Set(['call-ask']) },
+      context,
+    )
     const finished = yield* consume(stream, Option.some(parkedRun.message))
 
     expect(finished.message.parts.find((part) => part.type === 'tool-ask_person')).toMatchObject({

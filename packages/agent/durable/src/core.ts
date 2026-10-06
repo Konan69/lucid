@@ -34,6 +34,7 @@ export {
 export { type Replay, type ToolsOptions, toolsExtension } from './tools.ts'
 export { ChatTurn, TurnBody, decodeTurn, respond } from './respond.ts'
 export { attachRun, continueRun, type RunInput, prepareRun, streamRun } from './stream.ts'
+export type { ResumeInput } from './resume.ts'
 
 export { abort } from './abort.ts'
 

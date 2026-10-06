@@ -322,9 +322,14 @@ it.live('maps invalid turns to 400 and missing resumes to 409', () =>
     expect(missing.status).toBe(409)
     expect(yield* Effect.promise(() => missing.text())).toBe('No run made these tool calls')
     yield* Effect.promise(() =>
-      expect(continueRun(harness, root.id, new Set(['missing']), context)).rejects.toBeInstanceOf(
-        RunMissing,
-      ),
+      expect(
+        continueRun(
+          harness,
+          root.id,
+          { messageId: 'missing', known: new Set(['missing']) },
+          context,
+        ),
+      ).rejects.toBeInstanceOf(RunMissing),
     )
   }),
 )

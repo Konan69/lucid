@@ -11,7 +11,7 @@ import {
   SchemaIssue,
 } from 'effect'
 
-import { HoldId, TurnInvalid } from './errors.ts'
+import { HoldId, RunMissing, TurnInvalid } from './errors.ts'
 import { answerObserved, decideObserved } from './holds.ts'
 import { runMessageId } from './chunks.ts'
 import * as Pi from './pi.ts'
@@ -215,7 +215,16 @@ export const respond = Effect.fn('Durable.respond')(function* (
       ),
     Resume: (resume) =>
       settleHolds(harness, conversationId, resume, context).pipe(
-        Effect.andThen(continueRun(harness, conversationId, new Set(resume.known), context)),
+        Effect.andThen(
+          resume.messageId === undefined
+            ? Effect.fail(new RunMissing({ conversationId }))
+            : continueRun(
+                harness,
+                conversationId,
+                { messageId: resume.messageId, known: new Set(resume.known) },
+                context,
+              ),
+        ),
       ),
   })
 })

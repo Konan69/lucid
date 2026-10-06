@@ -154,6 +154,7 @@ export type { Answer, Decision, Settlement, Plan, Source } from './holds.ts'
 export type { Waiting } from './waiting.ts'
 export type { Replay, ToolsOptions } from './tools.ts'
 export type { RunInput } from './stream.ts'
+export type { ResumeInput } from './resume.ts'
 export type { RunState, Step, Chunk } from './chunks.ts'
 export type { ChatTurn } from './respond.ts'
 

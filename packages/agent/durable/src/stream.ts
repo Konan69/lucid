@@ -15,7 +15,6 @@ import { type Desk, emptyRound, needsDesk, parked, present, type Round } from '.
 import {
   initialRunState,
   replay,
-  replayAfter,
   type RunState,
   type Step,
   type Chunk,
@@ -24,6 +23,7 @@ import {
 import { RunMissing, type PiFailed, type WatchClosed, type WatchOverflowed } from './errors.ts'
 import { readDesk, noDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
+import { selectRun, type ResumeInput } from './resume.ts'
 
 /** A retried input retains its client request id and therefore Pi's submission identity. */
 export type RunInput = {
@@ -34,17 +34,28 @@ export type RunInput = {
 
 type WatchFailure = PiFailed | WatchClosed | WatchOverflowed
 
-type State = { readonly state: RunState; readonly round: Round }
+type State = {
+  readonly state: RunState
+  readonly round: Round
+  /** Only event settlement (or the captured snapshot) permits parking on a later live allocation. */
+  readonly settled: boolean
+}
 type Written = State & { readonly chunks: readonly UIMessageChunk[]; readonly ended: boolean }
 
 /** Parking completes the client's step and response, leaving Pi's durable run untouched. */
-function writeStep(current: State, step: Step, settled: boolean, desk: Desk): Written {
+export function writeStep(current: State, step: Step, settled: boolean, desk: Desk): Written {
   const shown = present(current.round, step.chunks, desk)
   const ended = settled && parked(shown.round)
   const ending: readonly UIMessageChunk[] = ended
     ? [{ type: 'finish-step' }, { type: 'finish' }]
     : []
-  return { state: step.state, round: shown.round, chunks: [...shown.chunks, ...ending], ended }
+  return {
+    state: step.state,
+    round: shown.round,
+    settled,
+    chunks: [...shown.chunks, ...ending],
+    ended,
+  }
 }
 
 /** Text events avoid document reads; presentation chunks alone need the desk. */
@@ -54,20 +65,29 @@ const apply = Effect.fn('Durable.streamEvent')(function* (
   event: AgentEvent,
 ) {
   const translated = translate(current.state, event)
-  const needsRefresh = event.type === 'message_end' && current.round.withheld.size > 0
+  const needsRefresh =
+    event.type === 'message_end' &&
+    (current.round.withheld.size > 0 || current.round.inputs.size > 0)
   const desk =
     needsDesk(translated.chunks) || needsRefresh
       ? yield* readDesk(
           reader,
           {
-            chunks: [...translated.chunks, ...[...current.round.withheld.values()].flat()],
+            chunks: [
+              ...translated.chunks,
+              ...[...current.round.withheld.values()].flat(),
+              ...current.round.inputs.values(),
+            ],
             live: Option.none(),
             origins: new Map(),
           },
           current.round.holds,
         )
       : noDesk
-  const roundSettled = event.type === 'message_end' || event.type === 'tool_execution_end'
+  const roundSettled =
+    event.type === 'turn_start'
+      ? false
+      : current.settled || event.type === 'message_end' || event.type === 'tool_execution_end'
   const written = writeStep(current, translated, roundSettled, desk)
   return { ...written, ended: written.ended || event.type === 'run_end' }
 })
@@ -85,14 +105,15 @@ const applyLive = Effect.fn('Durable.liveFrame')(function* (
   current: State,
   live: Readonly<LiveState>,
 ) {
-  if (current.round.withheld.size === 0) return { ...current, chunks: [], ended: false }
-  const inputs = [...current.round.withheld.values()].flat()
+  if (current.round.withheld.size === 0 && current.round.inputs.size === 0)
+    return { ...current, chunks: [], ended: false }
+  const inputs = [...[...current.round.withheld.values()].flat(), ...current.round.inputs.values()]
   const desk = yield* readDesk(
     reader,
     { chunks: inputs, live: Option.some(live), origins: new Map() },
     current.round.holds,
   )
-  const written = writeStep(current, { state: current.state, chunks: [] }, true, desk)
+  const written = writeStep(current, { state: current.state, chunks: [] }, current.settled, desk)
   return written
 })
 
@@ -166,6 +187,7 @@ export const prepareRun = Effect.fn('Durable.prepareRun')(function* (
       {
         state: initialRunState,
         round: emptyRound,
+        settled: false,
       },
     ).pipe(Stream.ensuring(Scope.close(scope, Exit.void)))
   }).pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))))
@@ -198,7 +220,7 @@ const resume = Effect.fn('Durable.resumeStream')(function* (
   const settled =
     watched.snapshot.generation === undefined || watched.snapshot.generation.message === undefined
   const written = writeStep(
-    { state: initialRunState, round: { ...emptyRound, muted: prefix.known } },
+    { state: initialRunState, round: { ...emptyRound, muted: prefix.known }, settled: false },
     prefix.step,
     settled,
     desk,
@@ -219,14 +241,17 @@ const resume = Effect.fn('Durable.resumeStream')(function* (
 const reconnect = Effect.fn('Durable.reconnect')(function* (
   harness: Harness,
   conversationId: ConversationId,
-  select: (snapshot: SnapshotEvent) => Effect.Effect<Option.Option<Prefix>, RunMissing>,
+  select: (
+    snapshot: SnapshotEvent,
+    reader: Reader,
+  ) => Effect.Effect<Option.Option<Prefix>, RunMissing | PiFailed>,
   context: Context,
 ) {
   const scope = yield* Scope.make()
   return yield* Effect.gen(function* () {
     const conversation = yield* Pi.conversation(harness, conversationId, context)
     const watched = yield* Pi.watch(harness, conversationId, context).pipe(Scope.provide(scope))
-    const prefix = yield* select(watched.snapshot)
+    const prefix = yield* select(watched.snapshot, { harness, conversation, context })
     if (Option.isNone(prefix)) {
       yield* Scope.close(scope, Exit.void)
       return Option.none<Stream.Stream<UIMessageChunk, WatchFailure>>()
@@ -265,18 +290,13 @@ export const attachRun = Effect.fn('Durable.attachRun')(function* (
 export const continueRun = Effect.fn('Durable.continueRun')(function* (
   harness: Harness,
   conversationId: ConversationId,
-  known: ReadonlySet<string>,
+  input: ResumeInput,
   context: Context,
 ) {
   const found = yield* reconnect(
     harness,
     conversationId,
-    (snapshot) => {
-      const prefix = replayAfter(snapshot, known)
-      return Option.isSome(prefix)
-        ? Effect.succeed(Option.map(prefix, (selected) => ({ ...selected, known })))
-        : Effect.fail(new RunMissing({ conversationId }))
-    },
+    (snapshot, reader) => selectRun(reader, input, snapshot),
     context,
   )
   // The selector cannot return None: retaining that invariant here keeps the shared idle path honest.

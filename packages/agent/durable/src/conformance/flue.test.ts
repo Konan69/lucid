@@ -66,7 +66,12 @@ it('replays only the suffix after known calls once the run has completed', async
     context,
   )
   await opened.root.waitForIdle(context)
-  const stream = await continueRun(opened.harness, opened.root.id, new Set(['pay']), context)
+  const stream = await continueRun(
+    opened.harness,
+    opened.root.id,
+    { messageId: prefix.message.id, known: new Set(['pay']) },
+    context,
+  )
   if (stream === undefined) throw new Error('Expected the completed suffix')
   const suffix = await consume(stream, prefix.message)
   expect(

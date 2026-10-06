@@ -10,6 +10,7 @@ import { createRegistry, Harness } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { tool } from 'ai'
 import { z } from 'zod'
+import { Option } from 'effect'
 import { continueRun, decide, streamRun, toolsExtension, waiting } from '../main.ts'
 
 const context = BACKGROUND_CONTEXT
@@ -48,17 +49,23 @@ const harness = await Harness.open(
 const root = await harness.root(context, {
   agent: { model: { provider: 'faux', modelId: 'faux-1' } },
 })
-for await (const _chunk of await streamRun(
+let messageId = Option.none<string>()
+for await (const chunk of await streamRun(
   harness,
   { conversationId: root.id, content: 'Pay both', requestId: 'crash-sequential' },
   context,
 )) {
-  /* Drain to the first park. */
+  if (chunk.type === 'start') messageId = Option.fromNullishOr(chunk.messageId)
 }
 const first = (await waiting(harness, root.id, context)).find((row) => row.callId === 'c1')
 if (first === undefined) throw new Error('Expected c1 hold')
 await decide(harness, root.id, { holdId: first.holdId, approved: true }, context)
-for await (const _chunk of await continueRun(harness, root.id, new Set(['c1']), context)) {
+for await (const _chunk of await continueRun(
+  harness,
+  root.id,
+  { messageId: Option.getOrThrow(messageId), known: new Set(['c1']) },
+  context,
+)) {
   /* Drain to the second park. */
 }
 if (!(await waiting(harness, root.id, context)).some((row) => row.callId === 'c2'))

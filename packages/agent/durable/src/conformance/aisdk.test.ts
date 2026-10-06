@@ -129,7 +129,12 @@ it.each(['text', 'reasoning', 'approval', 'answer', 'denial', 'retry'] as const)
           },
           context,
         )
-      const stream = await continueRun(opened.harness, opened.root.id, new Set(['held']), context)
+      const stream = await continueRun(
+        opened.harness,
+        opened.root.id,
+        { messageId: first.message.id, known: new Set(['held']) },
+        context,
+      )
       if (stream === undefined) throw new Error('Expected a continuation')
       const result = await consume(stream, first.message)
       expect(texts(result.message)).toEqual(['Done.'])
