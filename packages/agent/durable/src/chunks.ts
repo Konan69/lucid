@@ -9,7 +9,7 @@ import type {
   SubmissionId,
 } from '@earendil-works/pi-durable'
 import type { UIMessageChunk } from 'ai'
-import { Array as Arr, Match, Option, Schema } from 'effect'
+import { Array as Arr, Data, Match, Option, Schema } from 'effect'
 
 /** Pi's closed event and block types are exhaustive; an impossible branch indicates an SDK contract defect. */
 const unreachable = (value: never): never => {
@@ -31,7 +31,8 @@ export type Chunk =
  * and every recovered partial). The translator must emit exactly one start and one end per block in
  * all three, so it records what it has already sent.
  */
-type Reported = 'open' | 'closed'
+type Reported = Data.TaggedEnum<{ Open: { readonly length: number }; Closed: {} }>
+const Reported = Data.taggedEnum<Reported>()
 
 /**
  * Translator state for one run. A run is the turns from an input to its final answer and becomes one
@@ -101,21 +102,39 @@ function closeBlock(state: RunState, contentIndex: number, block: Block): readon
 }
 
 /** The text a block holds now, as one delta. Empty text gives no chunk; a tool call has none. */
-function blockBody(state: RunState, contentIndex: number, block: Block): readonly Chunk[] {
+function blockBody(
+  state: RunState,
+  contentIndex: number,
+  block: Block,
+  offset: number,
+): readonly Chunk[] {
   const id = partId(state, contentIndex)
-  if (block.type === 'text' && block.text !== '')
-    return [{ type: 'text-delta', id, delta: block.text }]
-  if (block.type === 'thinking' && block.thinking !== '') {
-    return [{ type: 'reasoning-delta', id, delta: block.thinking }]
+  if (block.type === 'text' && block.text.length > offset)
+    return [{ type: 'text-delta', id, delta: block.text.slice(offset) }]
+  if (block.type === 'thinking' && block.thinking.length > offset) {
+    return [{ type: 'reasoning-delta', id, delta: block.thinking.slice(offset) }]
   }
   return []
+}
+
+/** UTF-16 offsets match JavaScript slice; tool arguments never enter the text reconciliation. */
+function bodyLength(block: Block): number {
+  switch (block.type) {
+    case 'text':
+      return block.text.length
+    case 'thinking':
+      return block.thinking.length
+    case 'toolCall':
+      return 0
+  }
+  return unreachable(block)
 }
 
 /** The whole content of a block that was never streamed, as one delta between its start and end. */
 function wholeBlock(state: RunState, contentIndex: number, block: Block): readonly Chunk[] {
   return [
     ...openBlock(state, contentIndex, block),
-    ...blockBody(state, contentIndex, block),
+    ...blockBody(state, contentIndex, block, 0),
     ...closeBlock(state, contentIndex, block),
   ]
 }
@@ -140,26 +159,40 @@ function startResponse(state: RunState, partial: AssistantMessage): Step {
   const fresh: RunState = { ...state, response: state.response + 1, blocks: new Map(), failure: [] }
   return partial.content.reduce<Step>(
     (step, block, contentIndex) => ({
-      state: mark(step.state, contentIndex, 'open'),
+      state: mark(step.state, contentIndex, Reported.Open({ length: bodyLength(block) })),
       chunks: [
         ...step.chunks,
         ...openBlock(step.state, contentIndex, block),
-        ...blockBody(step.state, contentIndex, block),
+        ...blockBody(step.state, contentIndex, block, 0),
       ],
     }),
     { state: fresh, chunks: reset },
   )
 }
 
-/** Finish a block with its final value, opening it first when nothing was streamed. */
+/**
+ * Pi's throttled final partial may never commit. Emit the terminal value's unsent text suffix
+ * before closing, opening the block first when nothing was streamed. Never duplicate its prefix.
+ */
 function finishBlock(state: RunState, contentIndex: number, block: Block): Step {
   const reported = state.blocks.get(contentIndex)
-  if (reported === 'closed') return { state, chunks: [] }
+  if (reported !== undefined && Reported.$is('Closed')(reported)) return { state, chunks: [] }
   const chunks =
-    reported === 'open'
-      ? closeBlock(state, contentIndex, block)
+    reported !== undefined && Reported.$is('Open')(reported)
+      ? [
+          ...blockBody(state, contentIndex, block, reported.length),
+          ...closeBlock(state, contentIndex, block),
+        ]
       : wholeBlock(state, contentIndex, block)
-  return { state: mark(state, contentIndex, 'closed'), chunks }
+  return { state: mark(state, contentIndex, Reported.Closed()), chunks }
+}
+
+/** A document append extends an already-open text/reasoning block's reported prefix. */
+function appendBody(state: RunState, contentIndex: number, delta: string): RunState {
+  const reported = state.blocks.get(contentIndex)
+  if (reported === undefined || !Reported.$is('Open')(reported))
+    throw new Error('Pi appended text without an open content block')
+  return mark(state, contentIndex, Reported.Open({ length: reported.length + delta.length }))
 }
 
 /** Apply one change to the in-flight assistant message. */
@@ -171,28 +204,33 @@ function applyChange(state: RunState, change: MessageChange): Step {
     case 'thinking_start':
     case 'toolcall_start':
       return {
-        state: mark(state, change.contentIndex, 'open'),
+        state: mark(
+          state,
+          change.contentIndex,
+          Reported.Open({ length: bodyLength(change.block) }),
+        ),
         chunks: [
           ...openBlock(state, change.contentIndex, change.block),
-          ...blockBody(state, change.contentIndex, change.block),
+          ...blockBody(state, change.contentIndex, change.block, 0),
         ],
       }
     case 'text_delta':
       return {
-        state,
+        state: appendBody(state, change.contentIndex, change.delta),
         chunks: [
           { type: 'text-delta', id: partId(state, change.contentIndex), delta: change.delta },
         ],
       }
     case 'thinking_delta':
       return {
-        state,
+        state: appendBody(state, change.contentIndex, change.delta),
         chunks: [
           { type: 'reasoning-delta', id: partId(state, change.contentIndex), delta: change.delta },
         ],
       }
-    // Argument text arrives as appends at a path inside the arguments object, not as raw JSON text,
-    // so it cannot feed `tool-input-delta`. The finished arguments are sent when the block closes.
+    // Pi 1.0.4 harness/generation.js streamResponse persists event.partial, discarding raw JSON
+    // fragments. harness/events.js messageChanges emits path-local string-value appends here,
+    // which cannot feed tool-input-delta. Do not synthesize JSON; close with the parsed arguments.
     case 'toolcall_delta':
       return { state, chunks: [] }
     case 'block':

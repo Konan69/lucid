@@ -53,6 +53,8 @@ it('keeps slow parallel content order identical in live Chat, attachment and his
     'tool-pay',
     'text',
   ])
+  // The terminal entry must supply any suffix omitted by Pi's throttled last partial commit.
+  expect(texts(chat.lastMessage)).toEqual(['Before '.repeat(20), 'After '.repeat(20)])
   const attached = await attachRun(opened.harness, opened.root.id, context)
   if (attached.status !== 'running') throw new Error('Expected parked run')
   expect((await consume(attached.stream)).message.parts).toEqual(chat.lastMessage.parts)
