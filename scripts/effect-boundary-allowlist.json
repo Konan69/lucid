@@ -55,7 +55,8 @@
       "stop",
       "closed",
       "commitWithLive",
-      "abort"
+      "abort",
+      "watchLive"
     ]
   },
   {
@@ -121,5 +122,10 @@
     "file": "packages/agent/durable/src/examples/effect.ts",
     "classification": "third-party-adapter",
     "symbol": "readBody"
+  },
+  {
+    "file": "packages/agent/durable/src/fixtures/sequential.ts",
+    "classification": "test-process-entrypoint",
+    "symbols": ["<module>", "execute", "harness", "root", "first"]
   }
 ]

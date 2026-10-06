@@ -9,7 +9,7 @@ import type {
   LiveState,
   Tx,
   AgentEvent,
-  AgentEventStream,
+  WatchHandle,
 } from '@earendil-works/pi-durable'
 import { watchEvents, LiveDoc } from '@earendil-works/pi-durable'
 import { Cause, Effect, Option, Queue, Stream } from 'effect'
@@ -163,7 +163,7 @@ const openWatch = (harness: Harness, conversationId: ConversationId, context: Co
   })
 
 /** Pi's session/observation.ts CommittedWatch.stop always resolves WatchEnd; rejection is a defect. */
-const stop = (events: AgentEventStream) => Effect.promise(() => events.stop())
+const stop = (events: Pick<WatchHandle<never>, 'stop'>) => Effect.promise(() => events.stop())
 
 /** Never suspend Pi delivery on an HTTP reader: its bounded pending frames otherwise overflow. */
 function batchForPi(queue: Queue.Queue<AgentEvent, PiFailed | WatchClosed | Cause.Done>) {
@@ -178,12 +178,12 @@ function batchForPi(queue: Queue.Queue<AgentEvent, PiFailed | WatchClosed | Caus
 }
 
 /** Pi settles closed even on cancellation; listener failures retain their watch operation context. */
-const closed = (events: AgentEventStream) => Effect.promise(() => events.closed)
+const closed = (events: Pick<WatchHandle<never>, 'closed'>) => Effect.promise(() => events.closed)
 
 /** End the queue when Pi closes observation so a consumer never waits for an event that cannot arrive. */
-const finishWatch = Effect.fn('Durable.finishWatch')(function* (
-  events: AgentEventStream,
-  queue: Queue.Queue<AgentEvent, PiFailed | WatchClosed | Cause.Done>,
+const finishWatch = Effect.fn('Durable.finishWatch')(function* <A>(
+  events: Pick<WatchHandle<never>, 'closed'>,
+  queue: Queue.Queue<A, PiFailed | WatchClosed | Cause.Done>,
   conversationId: ConversationId,
 ) {
   const end = yield* closed(events)
@@ -231,3 +231,43 @@ export const abort = (owner: Conversation, context: Context) =>
     try: () => owner.abort(context),
     catch: (cause) => new PiFailed({ operation: 'abort', cause }),
   })
+
+/** The live document carries sequential task allocations that watchEvents intentionally omits. */
+export const watchLive = Effect.fn('Durable.watchLive')(function* (
+  harness: Harness,
+  conversationId: ConversationId,
+  context: Context,
+) {
+  const queue = yield* Queue.unbounded<Readonly<LiveState>, PiFailed | WatchClosed | Cause.Done>()
+  const document = yield* Effect.acquireRelease(
+    Effect.tryPromise({
+      try: () => harness.watchDoc(LiveDoc, conversationId, context),
+      catch: (cause) => new PiFailed({ operation: 'watch', cause }),
+    }),
+    (opened) =>
+      Queue.shutdown(queue).pipe(Effect.andThen(opened === undefined ? Effect.void : stop(opened))),
+  )
+  // Admission opens this watch after submit creates LiveDoc; an idle reconnect needs no live tail.
+  if (document === undefined) return Stream.empty
+  yield* Effect.sync(() => document.start(liveForPi(queue)))
+  yield* finishWatch(document, queue, conversationId).pipe(Effect.forkScoped)
+  return document.value === null
+    ? Stream.fromQueue(queue)
+    : Stream.concat(Stream.succeed(document.value), Stream.fromQueue(queue))
+})
+
+/** Non-suspending delivery keeps Pi's pending frame limit independent of the HTTP reader. */
+function liveForPi(queue: Queue.Queue<Readonly<LiveState>, PiFailed | WatchClosed | Cause.Done>) {
+  return function deliverLive(
+    live: Readonly<LiveState> | null,
+    _ops: readonly import('@earendil-works/chord/delta').Op[],
+    context: Context,
+  ) {
+    return runForPi(
+      Effect.sync(() => {
+        if (live !== null) Queue.offerUnsafe(queue, live)
+      }),
+      context.abortSignal,
+    )
+  }
+}

@@ -395,7 +395,8 @@ export function replay(snapshot: SnapshotEvent): Option.Option<Step> {
   )
   return Option.some(
     Option.match(partial, {
-      onNone: () => stored,
+      onNone: () =>
+        snapshot.generation === undefined ? stored : join(stored, startTurn(stored.state)),
       onSome: (message) => join(stored, replayPartial(stored.state, message)),
     }),
   )
@@ -434,7 +435,18 @@ export function replayAfter(
   const stored = (nextInput === -1 ? rest : rest.slice(0, nextInput)).reduce<Step>(
     (step, entry) => join(step, replayEntry(step.state, entry)),
     // No message id: the client continues the assistant message it already has.
-    { state: initialRunState, chunks: [{ type: 'start' }] },
+    {
+      state: initialRunState,
+      chunks: [
+        { type: 'start' },
+        ...replayEntry(
+          initialRunState,
+          Option.getOrThrow(Option.fromNullishOr(snapshot.entries[at])),
+        ).chunks.filter(
+          (chunk) => chunk.type === 'tool-input-start' || chunk.type === 'tool-input-available',
+        ),
+      ],
+    },
   )
   const partial = live
     ? Option.fromNullishOr(snapshot.generation).pipe(
@@ -443,7 +455,8 @@ export function replayAfter(
     : Option.none()
   return Option.some({
     step: Option.match(partial, {
-      onNone: () => stored,
+      onNone: () =>
+        !live || snapshot.generation === undefined ? stored : join(stored, startTurn(stored.state)),
       onSome: (message) => join(stored, replayPartial(stored.state, message)),
     }),
     live,

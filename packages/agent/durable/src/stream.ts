@@ -6,10 +6,11 @@ import type {
   Harness,
   SnapshotEvent,
   SubmissionId,
+  LiveState,
 } from '@earendil-works/pi-durable'
 import { LiveDoc } from '@earendil-works/pi-durable'
 import type { UIMessageChunk } from 'ai'
-import { Effect, Exit, Option, Scope, Stream } from 'effect'
+import { Data, Effect, Exit, Option, Scope, Stream } from 'effect'
 
 import { type Desk, emptyRound, needsDesk, parked, present, type Round } from './calls.ts'
 import {
@@ -21,7 +22,15 @@ import {
   translate,
 } from './chunks.ts'
 import { RunMissing, type PiFailed, type WatchClosed, type WatchOverflowed } from './errors.ts'
-import { CallIdentity, CallLookup, identitiesFor, lookupSnapshots, Holds, planOf } from './holds.ts'
+import {
+  type CallState,
+  CallIdentity,
+  CallLookup,
+  identitiesFor,
+  lookupSnapshots,
+  Holds,
+  planOf,
+} from './holds.ts'
 import * as Pi from './pi.ts'
 
 /** A retried input retains its client request id and therefore Pi's submission identity. */
@@ -52,6 +61,7 @@ const readDesk = Effect.fn('Durable.readDesk')(function* (
   reader: Reader,
   chunks: Step['chunks'],
   shownHolds: Round['holds'],
+  observedLive: Option.Option<CallState>,
 ) {
   const agent = yield* Pi.agent(reader.conversation, reader.context)
   const plans = new Map(
@@ -61,7 +71,9 @@ const readDesk = Effect.fn('Durable.readDesk')(function* (
     }),
   )
   const holds = yield* Pi.snapshot(reader.harness, Holds, reader.conversation.id, reader.context)
-  const live = yield* Pi.snapshot(reader.harness, LiveDoc, reader.conversation.id, reader.context)
+  const live = Option.isSome(observedLive)
+    ? observedLive
+    : yield* Pi.snapshot(reader.harness, LiveDoc, reader.conversation.id, reader.context)
   const callIds = new Set(
     chunks.flatMap((chunk) => ('toolCallId' in chunk ? [chunk.toolCallId] : [])),
   )
@@ -118,13 +130,14 @@ const apply = Effect.fn('Durable.streamEvent')(function* (
   event: AgentEvent,
 ) {
   const translated = translate(current.state, event)
-  const needsRefresh = event.type === 'message_end' && current.round.unrequested.size > 0
+  const needsRefresh = event.type === 'message_end' && current.round.withheld.size > 0
   const desk =
     needsDesk(translated.chunks) || needsRefresh
       ? yield* readDesk(
           reader,
-          [...translated.chunks, ...current.round.unrequested.values()],
+          [...translated.chunks, ...[...current.round.withheld.values()].flat()],
           current.round.holds,
+          Option.none(),
         )
       : noDesk
   const roundSettled = event.type === 'message_end' || event.type === 'tool_execution_end'
@@ -132,13 +145,45 @@ const apply = Effect.fn('Durable.streamEvent')(function* (
   return { ...written, ended: written.ended || event.type === 'run_end' }
 })
 
-/** Accumulate translator and tool-round state, including the terminal event's chunks before stopping. */
-function follow(reader: Reader, events: Stream.Stream<AgentEvent, WatchFailure>, initial: State) {
-  return events.pipe(
+/** Internal trusted SDK signals need no second wire decoder. */
+type Signal = Data.TaggedEnum<{
+  Event: { readonly event: AgentEvent }
+  Live: { readonly live: Readonly<LiveState> }
+}>
+const Signal = Data.taggedEnum<Signal>()
+
+/** Only withheld calls need a live-frame read; text and unrelated document changes stay silent. */
+const applyLive = Effect.fn('Durable.liveFrame')(function* (
+  reader: Reader,
+  current: State,
+  live: Readonly<LiveState>,
+) {
+  if (current.round.withheld.size === 0) return { ...current, chunks: [], ended: false }
+  const inputs = [...current.round.withheld.values()].flat()
+  const desk = yield* readDesk(reader, inputs, current.round.holds, Option.some(live))
+  const written = writeStep(current, { state: current.state, chunks: [] }, true, desk)
+  return written
+})
+
+/** Merge independently buffered watches; presentation owns input deduplication across both channels. */
+function follow(
+  reader: Reader,
+  events: Stream.Stream<AgentEvent, WatchFailure>,
+  live: Stream.Stream<Readonly<LiveState>, PiFailed | WatchClosed>,
+  initial: State,
+) {
+  const signals = Stream.merge(
+    Stream.map(events, (event) => Signal.Event({ event })),
+    Stream.map(live, (document) => Signal.Live({ live: document })),
+  )
+  return signals.pipe(
     Stream.mapAccumEffect(
       () => initial,
-      (current, event) =>
-        apply(reader, current, event).pipe(Effect.map((written) => [written, [written]] as const)),
+      (current, signal) =>
+        Signal.$match(signal, {
+          Event: ({ event }) => apply(reader, current, event),
+          Live: ({ live: document }) => applyLive(reader, current, document),
+        }).pipe(Effect.map((written) => [written, [written]] as const)),
     ),
     Stream.takeUntil((written) => written.ended),
     Stream.flatMap((written) => Stream.fromIterable(written.chunks)),
@@ -180,28 +225,40 @@ export const prepareRun = Effect.fn('Durable.prepareRun')(function* (
       { type: 'input', content: input.content, requestId: input.requestId },
       context,
     )
-    return follow({ harness, conversation, context }, matching(watched.stream, submission.id), {
-      state: initialRunState,
-      round: emptyRound,
-    }).pipe(Stream.ensuring(Scope.close(scope, Exit.void)))
+    const live = yield* Pi.watchLive(harness, input.conversationId, context).pipe(
+      Scope.provide(scope),
+    )
+    return follow(
+      { harness, conversation, context },
+      matching(watched.stream, submission.id),
+      live,
+      {
+        state: initialRunState,
+        round: emptyRound,
+      },
+    ).pipe(Stream.ensuring(Scope.close(scope, Exit.void)))
   }).pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))))
 })
 
-type Prefix = { readonly step: Step; readonly live: boolean }
+type Prefix = { readonly step: Step; readonly live: boolean; readonly known: ReadonlySet<string> }
 
 /** Replay the captured state, then either follow the same live run or finish the stored run. */
 const resume = Effect.fn('Durable.resumeStream')(function* (
   reader: Reader,
   watched: Effect.Success<ReturnType<typeof Pi.watch>>,
   prefix: Prefix,
+  live: Stream.Stream<Readonly<LiveState>, PiFailed | WatchClosed>,
 ) {
+  // Presentation uses the atomic event snapshot, rather than a later live state that may have
+  // already advanced a sequential slot. The live tail will admit subsequent allocations.
+  const captured: CallState = watched.snapshot
   const desk = needsDesk(prefix.step.chunks)
-    ? yield* readDesk(reader, prefix.step.chunks, emptyRound.holds)
+    ? yield* readDesk(reader, prefix.step.chunks, emptyRound.holds, Option.some(captured))
     : noDesk
   const settled =
     watched.snapshot.generation === undefined || watched.snapshot.generation.message === undefined
   const written = writeStep(
-    { state: initialRunState, round: emptyRound },
+    { state: initialRunState, round: { ...emptyRound, muted: prefix.known } },
     prefix.step,
     settled,
     desk,
@@ -209,7 +266,7 @@ const resume = Effect.fn('Durable.resumeStream')(function* (
   const head = Stream.fromIterable(written.chunks)
   if (written.ended) return head
   const tail = prefix.live
-    ? follow(reader, watched.stream, written)
+    ? follow(reader, watched.stream, live, written)
     : Stream.succeed<UIMessageChunk>({ type: 'finish' })
   return Stream.concat(head, tail)
 })
@@ -234,7 +291,8 @@ const reconnect = Effect.fn('Durable.reconnect')(function* (
       yield* Scope.close(scope, Exit.void)
       return Option.none<Stream.Stream<UIMessageChunk, WatchFailure>>()
     }
-    const stream = yield* resume({ harness, conversation, context }, watched, prefix.value)
+    const live = yield* Pi.watchLive(harness, conversationId, context).pipe(Scope.provide(scope))
+    const stream = yield* resume({ harness, conversation, context }, watched, prefix.value, live)
     return Option.some(stream.pipe(Stream.ensuring(Scope.close(scope, Exit.void))))
   }).pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))))
 })
@@ -249,7 +307,11 @@ export const attachRun = Effect.fn('Durable.attachRun')(function* (
     harness,
     conversationId,
     (snapshot) =>
-      Effect.succeed(replay(snapshot).pipe(Option.map((prefix) => ({ step: prefix, live: true })))),
+      Effect.succeed(
+        replay(snapshot).pipe(
+          Option.map((prefix) => ({ step: prefix, live: true, known: new Set<string>() })),
+        ),
+      ),
     context,
   )
 })
@@ -267,7 +329,7 @@ export const continueRun = Effect.fn('Durable.continueRun')(function* (
     (snapshot) => {
       const prefix = replayAfter(snapshot, known)
       return Option.isSome(prefix)
-        ? Effect.succeed(prefix)
+        ? Effect.succeed(Option.map(prefix, (selected) => ({ ...selected, known })))
         : Effect.fail(new RunMissing({ conversationId }))
     },
     context,

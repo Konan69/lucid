@@ -20,13 +20,21 @@ export type Round = {
   readonly awaiting: ReadonlySet<string>
   readonly running: ReadonlySet<string>
   readonly holds: ReadonlyMap<string, HoldId>
-  readonly unrequested: ReadonlyMap<string, InputAvailable>
+  readonly withheld: ReadonlyMap<string, readonly Chunk[]>
+  readonly started: ReadonlySet<string>
+  readonly available: ReadonlySet<string>
+  readonly completed: ReadonlySet<string>
+  readonly muted: ReadonlySet<string>
 }
 
 export const emptyRound: Round = {
   awaiting: new Set(),
   running: new Set(),
-  unrequested: new Map(),
+  withheld: new Map(),
+  started: new Set(),
+  available: new Set(),
+  completed: new Set(),
+  muted: new Set(),
   holds: new Map(),
 }
 
@@ -43,8 +51,10 @@ const without = (set: ReadonlySet<string>, id: string) =>
   new Set([...set].filter((each) => each !== id))
 
 const close = (round: Round, id: string): Round => ({
+  ...round,
   holds: new Map([...round.holds].filter(([callId]) => callId !== id)),
-  unrequested: new Map([...round.unrequested].filter(([callId]) => callId !== id)),
+  withheld: new Map([...round.withheld].filter(([callId]) => callId !== id)),
+  completed: new Set([...round.completed, id]),
   awaiting: without(round.awaiting, id),
   running: without(round.running, id),
 })
@@ -87,24 +97,30 @@ function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown 
           },
         ]
       : []
-  const waits = Option.isSome(kind) && CallLookup.isAnyOf(['Ready', 'Queued'])(found)
+  const waits = Option.isSome(kind) && CallLookup.guards.Ready(found)
   const holds = new Map(round.holds)
   if (CallLookup.isAnyOf(['Ready', 'Settled', 'Asked', 'Executing', 'Done'])(found))
     holds.set(chunk.toolCallId, found.holdId)
-  const unrequested = new Map(round.unrequested)
-  if (Option.isSome(kind) && CallLookup.guards.Queued(found))
-    unrequested.set(chunk.toolCallId, typed)
-  else unrequested.delete(chunk.toolCallId)
   return {
     round: waits
-      ? { ...round, holds, unrequested, awaiting: new Set([...round.awaiting, chunk.toolCallId]) }
-      : { ...round, holds, unrequested, running: new Set([...round.running, chunk.toolCallId]) },
-    chunks: [typed, ...request, ...response],
+      ? {
+          ...round,
+          holds,
+          awaiting: new Set([...round.awaiting, chunk.toolCallId]),
+          running: without(round.running, chunk.toolCallId),
+        }
+      : {
+          ...round,
+          holds,
+          running: new Set([...round.running, chunk.toolCallId]),
+          awaiting: without(round.awaiting, chunk.toolCallId),
+        },
+    chunks: round.muted.has(chunk.toolCallId) ? [] : [typed, ...request, ...response],
   }
 }
 
 /** Present one translated chunk. */
-function show(round: Round, chunk: Chunk, desk: Desk): Shown {
+function showVisible(round: Round, chunk: Chunk, desk: Desk): Shown {
   return Match.value(chunk).pipe(
     Match.when({ type: 'tool-input-start' }, (input): Shown => {
       if (Option.isNone(desk.plan(input.toolName))) return { round, chunks: [input] }
@@ -131,6 +147,66 @@ function show(round: Round, chunk: Chunk, desk: Desk): Shown {
   )
 }
 
+/** A task or a stored result admits presentation; queued generation/sequential inputs stay private. */
+const visible = (id: string, desk: Desk) =>
+  !CallLookup.isAnyOf(['Queued', 'Missing'])(desk.call(id))
+
+/** Deduplicate each input phase and update the finite tool round before its result can close it. */
+function showInput(round: Round, chunk: InputStart | InputAvailable, desk: Desk): Shown {
+  const id = chunk.toolCallId
+  if (round.completed.has(id)) return { round, chunks: [] }
+  const seen = chunk.type === 'tool-input-start' ? round.started : round.available
+  if (seen.has(id)) return { round, chunks: [] }
+  const next =
+    chunk.type === 'tool-input-start'
+      ? { ...round, started: new Set([...round.started, id]) }
+      : { ...round, available: new Set([...round.available, id]) }
+  const shown = showVisible(next, chunk, desk)
+  return { round: shown.round, chunks: round.muted.has(id) ? [] : shown.chunks }
+}
+type InputStart = Extract<Chunk, { type: 'tool-input-start' }>
+
+/** Buffer complete input phases in provider order. A result itself admits and flushes its input first. */
+function show(round: Round, chunk: Chunk, desk: Desk): Shown {
+  if (chunk.type === 'start-step') return { round: emptyRound, chunks: [chunk] }
+  if (chunk.type === 'tool-input-start' || chunk.type === 'tool-input-available') {
+    const id = chunk.toolCallId
+    if (round.completed.has(id)) return { round, chunks: [] }
+    if (!visible(id, desk))
+      return {
+        round: {
+          ...round,
+          withheld: new Map(round.withheld).set(id, [...(round.withheld.get(id) ?? []), chunk]),
+        },
+        chunks: [],
+      }
+    const pending = release(round, id, desk)
+    const current = showInput(pending.round, chunk, desk)
+    return { round: current.round, chunks: [...pending.chunks, ...current.chunks] }
+  }
+  if (chunk.type === 'tool-output-available' || chunk.type === 'tool-output-error') {
+    const pending = release(round, chunk.toolCallId, desk)
+    const result = showVisible(pending.round, chunk, desk)
+    return { round: result.round, chunks: [...pending.chunks, ...result.chunks] }
+  }
+  return showVisible(round, chunk, desk)
+}
+
+/** Release once, even if the event and live watches both observe the same allocation. */
+function release(round: Round, id: string, desk: Desk): Shown {
+  const chunks = round.withheld.get(id) ?? []
+  const withheld = new Map(round.withheld)
+  withheld.delete(id)
+  return chunks.reduce<Shown>(
+    (shown, chunk) => {
+      if (chunk.type !== 'tool-input-start' && chunk.type !== 'tool-input-available') return shown
+      const next = showInput(shown.round, chunk, desk)
+      return { round: next.round, chunks: [...shown.chunks, ...next.chunks] }
+    },
+    { round: { ...round, withheld }, chunks: [] },
+  )
+}
+
 /**
  * Present translated chunks to an AI SDK client: typed parts for bridged tools, approval requests
  * and denials, and the record of which calls are still open.
@@ -149,17 +225,15 @@ export function present(round: Round, chunks: readonly Chunk[], desk: Desk): Sho
   return refresh(shown, desk)
 }
 
-/** Partial input can precede task allocation. Present its hold only after the shared lookup admits it. */
+/** A live-document transition can admit withheld calls without any tool execution event. */
 function refresh(shown: Shown, desk: Desk): Shown {
   let round = shown.round
   const chunks: Chunk[] = [...shown.chunks]
-  for (const [id, input] of shown.round.unrequested) {
-    const found = desk.call(id)
-    if (CallLookup.isAnyOf(['Queued', 'Missing'])(found)) continue
-    const next = inputAvailable(close(round, id), input, desk)
+  for (const id of shown.round.withheld.keys()) {
+    if (!visible(id, desk)) continue
+    const next = release(round, id, desk)
     round = next.round
-    // The input was already sent; only its newly admitted approval is presented again.
-    chunks.push(...next.chunks.slice(1))
+    chunks.push(...next.chunks)
   }
   return { round, chunks }
 }

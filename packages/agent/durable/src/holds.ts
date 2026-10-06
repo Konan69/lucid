@@ -5,7 +5,7 @@ import {
   type Harness,
   type HookApi,
   type EntryRecord,
-  type LiveState,
+  type SnapshotEvent,
   LiveDoc,
   type TaskId,
   type ToolSlot,
@@ -61,6 +61,9 @@ const SettlementValue = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('denied'), reason: Schema.String }),
   Schema.Struct({ kind: Schema.Literal('answered'), output: Schema.MutableJson }),
 ])
+
+/** Only the slot/generation presentation is needed; atomic event snapshots and live docs agree here. */
+export type CallState = Pick<SnapshotEvent, 'generation'> & { readonly tools?: readonly ToolSlot[] }
 
 /** Hooks address their exact task; public calls require unique ids and completed-entry provenance. */
 export const CallIdentity = Schema.TaggedUnion({
@@ -196,7 +199,7 @@ function taskState(
  * have no task yet and cannot inherit a prior run's settlement even before their slots are created.
  */
 export function lookup(
-  live: Readonly<LiveState>,
+  live: CallState,
   holds: Readonly<HoldState>,
   identity: CallIdentity,
 ): CallLookup {
@@ -228,7 +231,7 @@ export function lookup(
 }
 
 /** Streamed arguments precede the tool-round commit and therefore have no task identity yet. */
-function generatingCall(live: Readonly<LiveState>, callId: string) {
+function generatingCall(live: CallState, callId: string) {
   const generation = live.generation
   if (generation === undefined || generation.message === undefined) return false
   return generation.message.content.some(
@@ -237,11 +240,7 @@ function generatingCall(live: Readonly<LiveState>, callId: string) {
 }
 
 /** A hold keeps its own receipt and question even after another task reuses the provider's call id. */
-function lookupHold(
-  live: Readonly<LiveState>,
-  holds: Readonly<HoldState>,
-  holdId: HoldId,
-): CallLookup {
+function lookupHold(live: CallState, holds: Readonly<HoldState>, holdId: HoldId): CallLookup {
   const recorded = holds.settled[holdId]
   if (recorded !== undefined)
     return CallLookup.cases.Settled.make({
@@ -273,7 +272,7 @@ export const holdIdOf = (taskId: TaskId): HoldId => HoldId.make(`hold:${taskId}`
 
 /** Normalize genuine document absence to Pi's declared initial value, then use the same pure lookup. */
 export function lookupSnapshots(
-  live: Option.Option<Readonly<LiveState>>,
+  live: Option.Option<CallState>,
   holds: Option.Option<Readonly<HoldState>>,
   identity: CallIdentity,
 ) {

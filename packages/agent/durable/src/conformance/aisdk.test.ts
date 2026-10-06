@@ -239,9 +239,9 @@ it('the stock approval predicate waits for both decisions before posting', async
 })
 
 // Installed ai/src/ui/last-assistant-message-is-complete-with-approval-responses.ts:35–40
-// requires every tool in the last step to be completed or approval-responded. Pi's unstarted second
-// sequential tool is input-available, so the stock client cannot automatically POST the first decision.
-it('the stock approval predicate cannot advance an unstarted sequential call', async () => {
+// requires all presented tools to have responses. Withholding unstarted calls lets c1 authorize
+// the next request, then the live document watch presents c2 when its task is allocated.
+it('the stock approval predicate advances after withholding an unstarted sequential call', async () => {
   const paid: number[] = []
   const fixture = await host(
     {
@@ -267,25 +267,33 @@ it('the stock approval predicate cannot advance an unstarted sequential call', a
     ),
     fauxAssistantMessage('Done.'),
   ])
-  const { chat } = client(opened.transport, lastAssistantMessageIsCompleteWithApprovalResponses)
+  const { chat, next } = client(
+    opened.transport,
+    lastAssistantMessageIsCompleteWithApprovalResponses,
+  )
   await chat.sendMessage({ text: 'Pay both' })
   expect(await waiting(opened.harness, opened.root.id, context)).toMatchObject([{ callId: 'c1' }])
+  if (chat.lastMessage === undefined) throw new Error('Expected the sequential message')
+  expect(
+    chat.lastMessage.parts.find((part) => 'toolCallId' in part && part.toolCallId === 'c2'),
+  ).toBeUndefined()
+  const completed = next()
   await chat.addToolApprovalResponse({
     id: await hold(opened.harness, opened.root.id, 'c1'),
     approved: true,
   })
-  if (chat.lastMessage === undefined) throw new Error('Expected the sequential message')
-  expect(
-    chat.lastMessage.parts.find((part) => 'toolCallId' in part && part.toolCallId === 'c1'),
-  ).toMatchObject({ state: 'approval-responded' })
+  await completed
+  expect(paid).toEqual([1])
   expect(
     chat.lastMessage.parts.find((part) => 'toolCallId' in part && part.toolCallId === 'c2'),
-  ).toMatchObject({ state: 'input-available' })
-  expect(lastAssistantMessageIsCompleteWithApprovalResponses({ messages: chat.messages })).toBe(
-    false,
-  )
-  expect(paid).toEqual([])
-  expect(chat.status).toBe('ready')
+  ).toMatchObject({ state: 'approval-requested' })
+  const finished = next()
+  await chat.addToolApprovalResponse({
+    id: await hold(opened.harness, opened.root.id, 'c2'),
+    approved: true,
+  })
+  await finished
+  expect(paid).toEqual([1, 2])
   expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
 })
 

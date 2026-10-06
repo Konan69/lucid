@@ -9,7 +9,17 @@ import {
   type CommitPublication,
   type TaskId,
 } from '@earendil-works/pi-durable'
-import { tool } from 'ai'
+import {
+  isToolUIPart,
+  lastAssistantMessageIsCompleteWithApprovalResponses,
+  tool,
+  type DefaultChatTransport,
+  type UIMessage,
+} from 'ai'
+import * as NodeChildProcess from 'node:child_process'
+import * as NodeEvents from 'node:events'
+import * as NodeURL from 'node:url'
+import { PlainChat } from '../fixtures/chat.ts'
 import { expect, it, onTestFinished } from 'vitest'
 import { Effect, Option } from 'effect'
 import * as Pi from '../pi.ts'
@@ -176,3 +186,186 @@ it('exposes sequential task allocation on document watches but not watchEvents',
   ).toEqual(['c1'])
   expect(delivered.some((event) => event.type === 'entry_appended')).toBe(true)
 })
+
+/** Stock SDK automatic sending observes only admitted calls, never queued sequential inputs. */
+function chatClient(transport: DefaultChatTransport<UIMessage>) {
+  let completion = signal()
+  const chat = new PlainChat({
+    transport,
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+    onFinish: () => completion.resolve(),
+    onError: (error) => completion.reject(error),
+  })
+  return {
+    chat,
+    next: () => {
+      completion = signal()
+      return completion.promise
+    },
+  }
+}
+
+/** The app copies the SDK part's opaque approval identity without consulting waiting(). */
+function approval(chat: PlainChat, callId: string) {
+  if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
+  const part = chat.lastMessage.parts.find(
+    (candidate) => isToolUIPart(candidate) && candidate.toolCallId === callId,
+  )
+  if (part === undefined || !isToolUIPart(part) || part.state !== 'approval-requested')
+    throw new Error(`Expected approval for ${callId}`)
+  return part.approval.id
+}
+
+/** Preserve call order and prove exactly one assistant message across automatic POSTs. */
+function callParts(chat: PlainChat) {
+  if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
+  expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
+  return chat.lastMessage.parts.filter(isToolUIPart)
+}
+
+// ai/src/ui/last-assistant-message-is-complete-with-approval-responses.ts: stock all-parts predicate.
+it.each(['held-held', 'held-plain', 'plain-held', 'denied-held'] as const)(
+  'automatically completes sequential %s in call order',
+  async (kind) => {
+    const paid: number[] = []
+    const payment = tool({
+      inputSchema: z.object({ amount: z.number() }),
+      execute: async ({ amount }) => {
+        paid.push(amount)
+        return amount
+      },
+    })
+    const fixture = await host(
+      { pay: payment, plain: payment },
+      { approval: { pay: true } },
+      { toolExecution: 'sequential' },
+    )
+    const opened = await fixture.open()
+    opened.faux.setResponses([
+      fauxAssistantMessage(
+        [
+          fauxToolCall(kind === 'plain-held' ? 'plain' : 'pay', { amount: 1 }, { id: 'c1' }),
+          fauxToolCall(kind === 'held-plain' ? 'plain' : 'pay', { amount: 2 }, { id: 'c2' }),
+        ],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('Done.'),
+    ])
+    const { chat, next } = chatClient(opened.transport)
+    await chat.sendMessage({ text: 'Pay both' })
+    if (kind !== 'plain-held') {
+      expect(callParts(chat).map((part) => part.toolCallId)).toEqual(['c1'])
+      const first = next()
+      await chat.addToolApprovalResponse({
+        id: approval(chat, 'c1'),
+        approved: kind !== 'denied-held',
+      })
+      await first
+    }
+    if (kind !== 'held-plain') {
+      expect(callParts(chat)).toMatchObject([
+        { toolCallId: 'c1', state: kind === 'denied-held' ? 'output-denied' : 'output-available' },
+        { toolCallId: 'c2', state: 'approval-requested' },
+      ])
+      const second = next()
+      await chat.addToolApprovalResponse({ id: approval(chat, 'c2'), approved: true })
+      await second
+    }
+    expect(paid).toEqual(kind === 'denied-held' ? [2] : [1, 2])
+    expect(callParts(chat).map((part) => part.toolCallId)).toEqual(['c1', 'c2'])
+    expect(callParts(chat).map((part) => part.state)).toEqual([
+      kind === 'denied-held' ? 'output-denied' : 'output-available',
+      'output-available',
+    ])
+  },
+)
+
+// HttpChatTransport.reconnectToStream GET and AbstractChat.resumeStream use the captured live snapshot.
+it('GET reconnect withholds c2 while c1 waits and presents c1 result while c2 waits', async () => {
+  const fixture = await host(
+    {
+      pay: tool({
+        inputSchema: z.object({ amount: z.number() }),
+        execute: async ({ amount }) => amount,
+      }),
+    },
+    { approval: { pay: true } },
+    { toolExecution: 'sequential' },
+  )
+  const opened = await fixture.open()
+  opened.faux.setResponses([
+    fauxAssistantMessage(
+      [
+        fauxToolCall('pay', { amount: 1 }, { id: 'c1' }),
+        fauxToolCall('pay', { amount: 2 }, { id: 'c2' }),
+      ],
+      { stopReason: 'toolUse' },
+    ),
+    fauxAssistantMessage('Done.'),
+  ])
+  const { chat, next } = chatClient(opened.transport)
+  await chat.sendMessage({ text: 'Pay both' })
+  const first = chatClient(opened.transport).chat
+  await first.resumeStream()
+  expect(callParts(first)).toMatchObject([{ toolCallId: 'c1', state: 'approval-requested' }])
+  expect(callParts(first)).toHaveLength(1)
+  const progress = next()
+  await chat.addToolApprovalResponse({ id: approval(chat, 'c1'), approved: true })
+  await progress
+  const second = chatClient(opened.transport).chat
+  await second.resumeStream()
+  expect(callParts(second)).toMatchObject([
+    { toolCallId: 'c1', state: 'output-available', output: 1 },
+    { toolCallId: 'c2', state: 'approval-requested' },
+  ])
+  const done = next()
+  await chat.addToolApprovalResponse({ id: approval(chat, 'c2'), approved: true })
+  await done
+})
+
+// recovery.test.ts: SIGKILL a captured child, then recover its second sequential approval with the real SDK.
+it('recovers c2 after a crash without repeating c1', async () => {
+  const paid: number[] = []
+  const fixture = await host(
+    {
+      pay: tool({
+        inputSchema: z.object({ amount: z.number() }),
+        execute: async ({ amount }) => {
+          paid.push(amount)
+          return amount
+        },
+      }),
+    },
+    { approval: { pay: true } },
+    { toolExecution: 'sequential' },
+  )
+  const child = NodeChildProcess.spawn(
+    process.execPath,
+    [NodeURL.fileURLToPath(new URL('../fixtures/sequential.ts', import.meta.url)), fixture.file],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  )
+  onTestFinished(() => {
+    child.kill('SIGKILL')
+  })
+  const [line] = await NodeEvents.EventEmitter.once(child.stdout, 'data')
+  expect(String(line)).toContain('c2-waiting')
+  const exited = NodeEvents.EventEmitter.once(child, 'exit')
+  child.kill('SIGKILL')
+  await exited
+  const opened = await fixture.open()
+  opened.faux.setResponses([fauxAssistantMessage('Done.')])
+  const { chat, next } = chatClient(opened.transport)
+  await chat.resumeStream()
+  expect(callParts(chat)).toMatchObject([
+    { toolCallId: 'c1', state: 'output-available', output: 1 },
+    { toolCallId: 'c2', state: 'approval-requested' },
+  ])
+  const done = next()
+  await chat.addToolApprovalResponse({ id: approval(chat, 'c2'), approved: true })
+  await done
+  expect(paid).toEqual([2])
+  expect(callParts(chat).map((part) => part.state)).toEqual([
+    'output-available',
+    'output-available',
+  ])
+}, 30_000)
