@@ -51,7 +51,7 @@ const setup = Effect.fn('PollingTest.setup')(function* () {
   ])
   const connected = yield* store.begin(ownerActor, {
     service: serviceId,
-    label: 'Gmail (Work)',
+    name: 'Work',
     shared: false,
   })
   yield* Ref.set(
@@ -62,7 +62,7 @@ const setup = Effect.fn('PollingTest.setup')(function* () {
   )
   yield* Ref.set(probe.calls, 0)
   const trigger = RoutineTrigger.cases.Integration.make({
-    account: 'Gmail (Work)',
+    account: 'Records (Work)',
     event: 'listMail',
     filter,
   })
@@ -110,7 +110,7 @@ describe.skipIf(!testDatabaseConfigured)('Integration polling adapter', () => {
             },
           }),
         ])
-        const discovered = yield* watcher.discover(ownerActor, 'Gmail (Work)')
+        const discovered = yield* watcher.discover(ownerActor, 'Records (Work)')
         expect(discovered.events.map((event) => event.event)).toEqual(['listMail'])
         expect(JSON.stringify(discovered)).not.toContain(account)
         expect(JSON.stringify(discovered)).not.toContain(connected.connection.id)
@@ -236,7 +236,7 @@ describe.skipIf(!testDatabaseConfigured)('Integration polling adapter', () => {
           yield* database.run(
             database
               .update(connections)
-              .set({ label: 'Renamed', status: 'needs-authorization' })
+              .set({ name: 'Renamed', status: 'needs-authorization' })
               .where(eq(connections.id, connected.connection.id)),
           )
           yield* Ref.set(probe.calls, 0)

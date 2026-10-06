@@ -124,7 +124,7 @@ describe('model views', () => {
       views.skills([skill, skill]),
       views.skill(skill, 'review-agreement-2'),
       views.skillSummary(skill, 'Review agreement'),
-      views.tools({ tools: [tool], unconnected: [service] }),
+      views.tools({ tools: [tool], connected: [], unconnected: [service] }),
       views.memories([
         memory,
         { ...memory, scope: MemoryScope.cases.Person.make({}) },
@@ -220,7 +220,7 @@ describe('model views', () => {
     // Connected services reach the model by name, with any identifier in a name removed.
     expect(context).toContain('"integrations":["DeepWiki","Mail ')
     expect(json).toContain('admin@example.test')
-    expect(views.tools({ tools: [tool], unconnected: [] }).tools[0]).toHaveProperty(
+    expect(views.tools({ tools: [tool], connected: [], unconnected: [] }).tools[0]).toHaveProperty(
       'signature',
       tool.signature,
     )
@@ -232,7 +232,7 @@ describe('model views', () => {
         account,
         call: `accounts[${JSON.stringify(account)}].read_mail`,
       })
-      const view = views.tools({ tools: [hidden, tool], unconnected: [] })
+      const view = views.tools({ tools: [hidden, tool], connected: [], unconnected: [] })
       expect(view.tools).toEqual([
         expect.objectContaining({ account: tool.account, call: tool.call }),
       ])
@@ -242,7 +242,7 @@ describe('model views', () => {
   })
 
   it('projects call expressions and signatures without provider schema documents', () => {
-    const result = views.tools({ tools: [tool], unconnected: [] }).tools[0]
+    const result = views.tools({ tools: [tool], connected: [], unconnected: [] }).tools[0]
     expect(result).toHaveProperty('call', tool.call)
     expect(result).toHaveProperty('signature', tool.signature)
     expect(result).not.toHaveProperty('input')

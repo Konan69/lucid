@@ -69,6 +69,7 @@ describe('connected tool execution', () => {
         requestId: discovery.id,
         exit: Exit.succeed({
           tools: [],
+          connected: [],
           unconnected: [
             {
               id: ServiceId.make('mail'),
@@ -224,7 +225,10 @@ describe('connected tool execution', () => {
           service: ServiceId.make('MARK-service'),
           serviceName: 'Records',
           mark: null,
-          label: 'Work Records',
+          name: 'Work Records',
+          identity: null,
+          account: 'Records (Work Records)',
+          origin: 'Catalogue',
           ownership: ConnectionOwnership.cases.Personal.make({
             owner: { id: PersonId.make('MARK-person'), name: 'Ada', image: null },
           }),

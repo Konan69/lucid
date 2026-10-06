@@ -21,7 +21,10 @@ const connection = Connection.make({
   service: ServiceId.make('MARK-service'),
   serviceName: 'Records',
   mark: null,
-  label: 'Work',
+  name: 'Work',
+  identity: null,
+  account: 'Records (Work)',
+  origin: 'Catalogue',
   ownership: ConnectionOwnership.cases.Personal.make({
     owner: { id: PersonId.make('MARK-person'), name: 'Ada', image: null },
   }),
@@ -39,7 +42,8 @@ describe('integration model views', () => {
       integrations: [
         ConnectionMatch.cases.Account.make({
           name: 'Records',
-          account: 'Work',
+          account: 'Records (Work)',
+          identity: null,
           connected: false,
           shared: false,
           state: ConnectionState.cases.Failed.make({ reason: 'KEY-MUST-NOT-APPEAR' }),
@@ -55,21 +59,21 @@ describe('integration model views', () => {
     expect(view).toMatchObject({
       omittedAccounts: 3,
       integrations: [
-        { account: 'Work', state: 'failed' },
+        { account: 'Records (Work)', state: 'failed' },
         { name: 'Linear', connected: false },
       ],
     })
     expect(JSON.stringify(view)).not.toContain('KEY-MUST-NOT-APPEAR')
     const receipt = tested(
       TestIntegrationOutcome.cases.Tested.make({
-        account: 'Work',
+        account: 'Records (Work)',
         tools: ['health'],
         tool: 'health',
       }),
     )
     expect(receipt).toEqual({
       works: true,
-      account: 'Work',
+      account: 'Records (Work)',
       tools: ['health'],
       testedTool: 'health',
     })
