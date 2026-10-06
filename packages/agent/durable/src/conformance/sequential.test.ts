@@ -27,7 +27,7 @@ import { z } from 'zod'
 
 import { decide, streamRun, waiting } from '../main.ts'
 import { consume, context, hold, host, signal } from './fixtures/host.ts'
-import type { ProviderFamily } from '../fixtures/provider.ts'
+import { providerFamilies } from '../fixtures/provider.ts'
 
 /**
  * Pi 1.0.4 generation.tools allocates c2 in a separate commit after c1 ends, but events.translate
@@ -280,7 +280,7 @@ it.each(['held-held', 'held-plain', 'plain-held', 'denied-held'] as const)(
   },
 )
 
-const families: readonly ProviderFamily[] = ['anthropic', 'openai', 'bedrock', 'mistral']
+const families = providerFamilies
 const streamingRounds = [
   { kind: 'held-held', execution: 'sequential', override: false, round: 'sequential' },
   { kind: 'held-plain', execution: 'sequential', override: false, round: 'sequential' },

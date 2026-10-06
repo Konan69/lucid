@@ -79,6 +79,10 @@ function openBlock(state: RunState, contentIndex: number, block: Block): readonl
   return unreachable(block)
 }
 
+/** OpenAI completions and Bedrock can announce a tool before either wire identity is known. */
+const identified = (block: Block) =>
+  block.type !== 'toolCall' || (block.id.length > 0 && block.name.length > 0)
+
 /** Chunks that close a block whose final value is `block`. */
 function closeBlock(state: RunState, contentIndex: number, block: Block): readonly Chunk[] {
   const id = partId(state, contentIndex)
@@ -158,14 +162,7 @@ function startResponse(state: RunState, partial: AssistantMessage): Step {
   const reset: readonly Chunk[] = state.blocks.size > 0 ? [{ type: 'reset-step' }] : []
   const fresh: RunState = { ...state, response: state.response + 1, blocks: new Map(), failure: [] }
   return partial.content.reduce<Step>(
-    (step, block, contentIndex) => ({
-      state: mark(step.state, contentIndex, Reported.Open({ length: bodyLength(block) })),
-      chunks: [
-        ...step.chunks,
-        ...openBlock(step.state, contentIndex, block),
-        ...blockBody(step.state, contentIndex, block, 0),
-      ],
-    }),
+    (step, block, contentIndex) => join(step, updateBlock(step.state, contentIndex, block)),
     { state: fresh, chunks: reset },
   )
 }
@@ -175,6 +172,7 @@ function startResponse(state: RunState, partial: AssistantMessage): Step {
  * before closing, opening the block first when nothing was streamed. Never duplicate its prefix.
  */
 function finishBlock(state: RunState, contentIndex: number, block: Block): Step {
+  if (!identified(block)) return { state, chunks: [] }
   const reported = state.blocks.get(contentIndex)
   if (reported !== undefined && Reported.$is('Closed')(reported)) return { state, chunks: [] }
   const chunks =
@@ -193,6 +191,7 @@ function finishBlock(state: RunState, contentIndex: number, block: Block): Step 
  * Keep it open; final tool arguments and approval eligibility belong solely to message_end.
  */
 function updateBlock(state: RunState, contentIndex: number, block: Block): Step {
+  if (!identified(block)) return { state, chunks: [] }
   const reported = state.blocks.get(contentIndex)
   if (reported !== undefined && Reported.$is('Closed')(reported)) return { state, chunks: [] }
   const chunks =
@@ -226,17 +225,7 @@ function applyChange(state: RunState, change: MessageChange): Step {
     case 'text_start':
     case 'thinking_start':
     case 'toolcall_start':
-      return {
-        state: mark(
-          state,
-          change.contentIndex,
-          Reported.Open({ length: bodyLength(change.block) }),
-        ),
-        chunks: [
-          ...openBlock(state, change.contentIndex, change.block),
-          ...blockBody(state, change.contentIndex, change.block, 0),
-        ],
-      }
+      return updateBlock(state, change.contentIndex, change.block)
     case 'text_delta':
       return {
         state: appendBody(state, change.contentIndex, change.delta),
@@ -267,7 +256,11 @@ function applyChange(state: RunState, change: MessageChange): Step {
 function finishMessage(state: RunState, message: AssistantMessage): Step {
   return message.content.reduce<Step>(
     (step, block, contentIndex) => {
-      const next = finishBlock(step.state, contentIndex, block)
+      // An aborted provider retains parsed partial arguments, never a complete executable input.
+      const next =
+        message.stopReason === 'aborted' && block.type === 'toolCall'
+          ? updateBlock(step.state, contentIndex, block)
+          : finishBlock(step.state, contentIndex, block)
       return { state: next.state, chunks: [...step.chunks, ...next.chunks] }
     },
     { state, chunks: [] },
@@ -374,13 +367,21 @@ export function translate(state: RunState, event: AgentEvent): Step {
     ),
     Match.when({ type: 'turn_end' }, (): Step => ({ state, chunks: [{ type: 'finish-step' }] })),
     Match.when({ type: 'message_update' }, (update) =>
-      update.changes.reduce<Step>(
-        (step, change) => {
-          const next = applyChange(step.state, change)
-          return { state: next.state, chunks: [...step.chunks, ...next.chunks] }
-        },
-        { state, chunks: [] },
-      ),
+      // Pi's view-op order may append trailing blocks before replacing an earlier anonymous tool.
+      // Within the batch, reveal identities in provider content order; equal-index deltas stay stable.
+      update.changes
+        .toSorted((left, right) =>
+          'contentIndex' in left && 'contentIndex' in right
+            ? left.contentIndex - right.contentIndex
+            : 0,
+        )
+        .reduce<Step>(
+          (step, change) => {
+            const next = applyChange(step.state, change)
+            return { state: next.state, chunks: [...step.chunks, ...next.chunks] }
+          },
+          { state, chunks: [] },
+        ),
     ),
     Match.when({ type: 'message_end' }, (ended) =>
       Option.fromNullishOr(ended.entry.model).pipe(

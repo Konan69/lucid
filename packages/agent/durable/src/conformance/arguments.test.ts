@@ -8,7 +8,7 @@ import { onTestFinished } from 'vitest'
 import { z } from 'zod'
 
 import { continueRun, decide, holdId, streamRun } from '../main.ts'
-import { streamingProvider, type ProviderFamily } from '../fixtures/provider.ts'
+import { streamingProvider, providerFamilies } from '../fixtures/provider.ts'
 import { runForPi } from '../pi.ts'
 import { consume, context, host, signal, texts } from './fixtures/host.ts'
 
@@ -40,7 +40,7 @@ it.live('receives raw argument JSON from the provider before the durable boundar
  * Non-append scratch/signature edits produce block updates, never terminal client input. Drain
  * delivery through a receipt; consume validates every chunk and uses the stock SDK reader.
  */
-const families: readonly ProviderFamily[] = ['anthropic', 'openai', 'bedrock', 'mistral']
+const families = providerFamilies
 for (const partialFamily of families)
   it.live(
     `approves final arguments after growing ${partialFamily} blocks and Google text signatures`,
@@ -111,7 +111,9 @@ for (const partialFamily of families)
           event.type === 'message_update' ? event.changes : [],
         )
         const scratch =
-          partialFamily === 'anthropic' || partialFamily === 'bedrock'
+          partialFamily === 'anthropic' ||
+          partialFamily === 'bedrock' ||
+          partialFamily === 'responses'
             ? 'partialJson'
             : 'partialArgs'
         expect(changes).toContainEqual(
