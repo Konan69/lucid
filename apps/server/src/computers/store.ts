@@ -599,16 +599,45 @@ const observations = (
       outage: Option.none<MachineFailure>(),
     }
   })
-  /** Person reads include the cached viewer; action checks carry lifecycle facts only. */
-  const get = Effect.fn('ComputerStore.get')((person: PersonId) =>
-    read(person, (key) => machine.status(key)).pipe(
-      Effect.map(({ computer }) => Computer.make(computer)),
-    ),
-  )
   /** The lifecycle facts with the outage, for callers that must refuse rather than report. */
   const observe = Effect.fn('ComputerStore.observe')((person: PersonId) =>
     read(person, (key) => machine.inspect(key)),
   )
+  /**
+   * A Person's read: the lifecycle facts and, for a Computer that runs, its screen.
+   *
+   * The screen is asked of a machine that runs (so is whether this binding holds it), and failing
+   * to get either says nothing about whether the machine runs. So a view that could not be made
+   * is answered from the lifecycle facts alone. Those are recorded as always; when they say the
+   * machine runs, this read alone says why it could not be shown, and the next read asks again.
+   *
+   * Until 6 October 2026 the failed view was recorded as the Computer's state: that evening the
+   * provider refused to issue a screen for a machine that was running and in use, the record
+   * became "failed", and a failed record was one Vivid no longer started.
+   */
+  const get = Effect.fn('ComputerStore.get')(function* (person: PersonId) {
+    const row = yield* rows.load(person)
+    if (Option.isNone(row)) return Computer.make(withoutRow(ComputerState.cases.Absent.make({})))
+    const shown = yield* machine.status(row.value.machine).pipe(Effect.result)
+    if (Result.isSuccess(shown))
+      return Computer.make(yield* reconcile(person, row.value, shown.success))
+    yield* Effect.logWarning('Computer could not be shown', { failure: shown.failure._tag })
+    const { computer } = yield* observe(person)
+    const facts = computer.state
+    // Not running, or the provider could not be asked at all: the facts are the answer.
+    if (!MachineState.guards.Running(facts))
+      return Computer.make({ id: computer.id, heldByPerson: computer.heldByPerson, state: facts })
+    return Computer.make({
+      id: computer.id,
+      heldByPerson: computer.heldByPerson,
+      state: isOutage(shown.failure)
+        ? unanswered(facts.since)
+        : ComputerState.cases.Failed.make({
+            since: facts.since,
+            reason: machineFailureReason(shown.failure),
+          }),
+    })
+  })
   const inspect = Effect.fn('ComputerStore.inspect')((person: PersonId) =>
     observe(person).pipe(Effect.map(({ computer }) => computer)),
   )

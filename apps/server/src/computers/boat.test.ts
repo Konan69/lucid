@@ -53,7 +53,6 @@ import {
   MachineNoCapacity,
   MachineOperationFailed,
   MachineRequestRejected,
-  type MachineFailure,
 } from './machine.ts'
 import * as TestClock from 'effect/testing/TestClock'
 import { machineBindings } from './tables.ts'
@@ -953,9 +952,12 @@ const stepped = Effect.fn('BoatTest.stepped')(function* () {
  * and none when the machine takes it. A refused command is told on `asked` by the caller's own
  * fiber, just before it waits to ask again, so a test moves the clock only once the wait is real.
  */
+/** What a command meets on a machine Boat calls running and cannot yet reach. */
+type Unheard = MachineExecutionUnknown | MachineRequestRejected
+
 const unready = Effect.fn('BoatTest.unready')(function* (
   key: MachineKey,
-  refuse: (sent: number) => Effect.Effect<Option.Option<MachineFailure>>,
+  refuse: (sent: number) => Effect.Effect<Option.Option<Unheard>>,
 ) {
   const saved = yield* bindings()
   const real = yield* transport()
@@ -1925,7 +1927,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       const evidence = yield* Evidence
       // As production saw it on 6 October 2026: Boat calls the machine running, and for the next
       // half minute a command is answered 409 or 502. Sent once, that failed every wake.
-      const refusals: ReadonlyArray<MachineFailure> = [
+      const refusals: ReadonlyArray<Unheard> = [
         new MachineRequestRejected({ status: 409 }),
         new MachineExecutionUnknown({ key }),
         new MachineExecutionUnknown({ key }),

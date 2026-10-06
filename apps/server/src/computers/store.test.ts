@@ -64,6 +64,7 @@ import {
   MachineExecutionUnknown,
   MachineNotRunning,
   MachineOperationFailed,
+  MachineRequestRejected,
   MachineUnreachable,
   type MachineKey,
 } from './machine.ts'
@@ -105,6 +106,8 @@ interface EvidenceService {
   readonly decisions: Ref.Ref<GateDecision>
   readonly actions: Ref.Ref<ReadonlyArray<ProposedAction>>
   readonly viewerReads: Ref.Ref<number>
+  /** While true the provider refuses to issue a screen for a machine that runs. */
+  readonly screenRefused: Ref.Ref<boolean>
   readonly lost: Ref.Ref<boolean>
   readonly boot: Ref.Ref<Option.Option<Deferred.Deferred<void>>>
   readonly executionGate: Ref.Ref<Option.Option<Deferred.Deferred<void>>>
@@ -132,6 +135,7 @@ const evidenceLayer = Layer.effect(
       decisions: yield* Ref.make<GateDecision>(GateDecision.cases.Allowed.make({})),
       actions: yield* Ref.make<ReadonlyArray<ProposedAction>>([]),
       viewerReads: yield* Ref.make(0),
+      screenRefused: yield* Ref.make(false),
       lost: yield* Ref.make(false),
       executing: yield* Queue.unbounded<MachineKey>(),
       executionGate: yield* Ref.make<Option.Option<Deferred.Deferred<void>>>(Option.none()),
@@ -160,7 +164,10 @@ const providerLayer = Layer.effect(
     })
     const status = Effect.fn('Computer.test.status')(function* (key: MachineKey) {
       yield* Ref.update(evidence.viewerReads, (count) => count + 1)
-      return yield* inspect(key)
+      const state = yield* inspect(key)
+      if (ComputerState.guards.Running(state) && (yield* Ref.get(evidence.screenRefused)))
+        return yield* Effect.fail(new MachineRequestRejected({ status: 409 }))
+      return state
     })
     const ensure = Effect.fn('Computer.test.ensure')(function* (key: MachineKey) {
       yield* Ref.update(evidence.ensures, (calls) => [...calls, key])
@@ -1196,6 +1203,30 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
       expect((yield* store.run(first.id, request).pipe(Effect.flip))._tag).toBe('ComputerHeld')
       expect(yield* Ref.get(evidence.calls)).toHaveLength(1)
       expect(yield* Ref.get(evidence.ensures)).toHaveLength(3)
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('a screen the provider refuses is said on that read and never recorded', () =>
+    Effect.gen(function* () {
+      const { first } = yield* fixture()
+      const database = yield* Database
+      const store = yield* ComputerStore
+      const evidence = yield* ProviderEvidence
+      const recorded = database
+        .run(database.select().from(computers).where(eq(computers.personId, first.id)))
+        .pipe(Effect.map((rows) => rows.map((row) => [row.status, row.reason])))
+      yield* start(first)
+      // The machine runs and is in use; only its screen cannot be issued.
+      yield* Ref.set(evidence.screenRefused, true)
+      const shown = (yield* store.get(first.id)).state
+      expect(ComputerState.guards.Failed(shown) && shown.reason).toBe(
+        'The Computer provider refused the operation.',
+      )
+      expect(yield* recorded).toEqual([['running', null]])
+      expect((yield* store.run(first.id, request)).stdout).toBe('hello')
+      expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
+      yield* Ref.set(evidence.screenRefused, false)
+      expect((yield* store.get(first.id)).state._tag).toBe('Running')
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
 
