@@ -10,7 +10,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stand } from '../data/stand'
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
-import { GlassMaterial } from './Glass'
+import { ringed, smooth } from './elevation'
+import { GLASS_SUPPORTED, GlassMaterial } from './Glass'
 import { APPEAR, LEAVE } from './motion/morph'
 import { Face, Label, TARGET, type Tone } from './ui'
 
@@ -209,13 +210,11 @@ export function VividMenu({ menu, children }: { menu: Menu; children: ReactNode 
  * drawn. A pill that is always as wide as its words is worth more than one that glides there.
  */
 function Avatar({ stand }: { stand: Stand }) {
-  const { colors: c, dark } = useTheme()
+  const { colors: c } = useTheme()
   const vivid = useAppearance()
   const window = useWindowDimensions().width
   const words = wordsOf(vivid.name, stand)
   const mood = Stand.$is('Resting')(stand) ? stand.mood : 'neutral'
-  // Soft and close: two small things floating over a page, lifted only a little.
-  const lifted = dark ? '0 4px 16px rgba(0, 0, 0, 0.28)' : '0 4px 16px rgba(0, 0, 0, 0.1)'
   return (
     <View
       accessible
@@ -227,7 +226,15 @@ function Avatar({ stand }: { stand: Stand }) {
       accessibilityLiveRegion="polite"
       style={{ alignItems: 'center' }}
     >
-      <View style={{ width: AVATAR, height: AVATAR, borderRadius: AVATAR / 2, boxShadow: lifted }}>
+      <View
+        // A solid disc is its own edge, so it takes the compact tier's stack with no ring.
+        style={{
+          width: AVATAR,
+          height: AVATAR,
+          borderRadius: AVATAR / 2,
+          boxShadow: smooth('sm'),
+        }}
+      >
         <Face size={AVATAR} mood={mood} label="" />
       </View>
       <View
@@ -239,7 +246,8 @@ function Avatar({ stand }: { stand: Stand }) {
           borderRadius: PILL / 2,
           borderCurve: 'continuous',
           overflow: 'hidden',
-          boxShadow: lifted,
+          // The system's glass has an edge of its own; without it the ring is the edge.
+          boxShadow: GLASS_SUPPORTED ? smooth('sm') : ringed('sm', c.border),
         }}
       >
         <GlassMaterial

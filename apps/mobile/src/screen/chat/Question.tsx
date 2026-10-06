@@ -6,7 +6,7 @@ import { ActivityIndicator, Pressable, View } from 'react-native'
 import Animated, { Easing, LinearTransition, ReduceMotion } from 'react-native-reanimated'
 import { useTheme } from '../../theme'
 import { APPEAR, LEAVE } from '../../ui/motion/morph'
-import { Dot, EDGE, Field, HAIRLINE, Label, Notice, Press, radius, TARGET } from '../../ui/ui'
+import { Dot, Field, Label, Notice, Press, radius, TARGET } from '../../ui/ui'
 
 /** One answer on offer: what it is called, and what picking it means in a line. */
 export interface Choice {
@@ -60,10 +60,16 @@ const FOLD = LinearTransition.duration(m['dur-enter'])
  * only what the Person is in the middle of (the words of their own answer).
  *
  * Ported from the web's `apps/web/src/screen/thread/Question.tsx`, which follows the reference
- * assistant's question card: the title in title weight on a raised card; the rows in one bordered
- * container divided by hairlines; each row 56 tall with a square 24 letter keycap on a subtle
- * fill before its label, and a smaller second line when the option has one; and, once answered,
- * the card closed down to the title and the one chosen row, muted, with a check at its far end.
+ * assistant's question card: the title in title weight on a raised card; each row 56 tall with a
+ * square 24 letter keycap on a subtle fill before its label, and a smaller second line when the
+ * option has one; and, once answered, the card closed down to the title and the one chosen row,
+ * muted, with a check at its far end.
+ *
+ * It has no lines. The reference draws an outline round the card, a second round the rows, a
+ * hairline between each pair of rows and one round every keycap; on a phone that was four kinds
+ * of border on one card, and the owner asked for them to go (6 October 2026). The card is one
+ * filled shape on the page, the rows are told apart by their keycaps and their even height, and a
+ * keycap is a fill.
  *
  * The phone differs where a hand does:
  * - A row is its whole width to press, and answers the press with a fill, not a hover.
@@ -104,8 +110,6 @@ export function Question({
         gap: 8,
         borderRadius: radius.card,
         borderCurve: 'continuous',
-        borderWidth: EDGE,
-        borderColor: c.border,
         backgroundColor: c.subtle,
       }}
     >
@@ -217,7 +221,7 @@ const standingOf = (
 }
 
 /**
- * The rows of a question in their one bordered container: every choice while it is open, then the
+ * The rows of a question in their one container: every choice while it is open, then the
  * row for words of the Person's own; and once it is answered only the one chosen, or the Person's
  * own words as a row when they wrote the answer themselves. Nothing is drawn for a question with
  * no choices, no own answer and nothing written.
@@ -252,8 +256,6 @@ function Answers({
         marginTop: 2,
         borderRadius: radius.row,
         borderCurve: 'continuous',
-        borderWidth: EDGE,
-        borderColor: c.border,
         overflow: 'hidden',
       }}
     >
@@ -267,8 +269,6 @@ function Answers({
             choice={choice}
             standing={standing.value}
             arrives={arrives}
-            // None once answered: one row has nothing to divide.
-            divided={index > 0 && Option.isNone(answer)}
             onPress={() => Option.map(onAnswer, (send) => send(choice.label))}
           />
         )
@@ -319,8 +319,6 @@ function Keycap({ children }: { children: ReactNode }) {
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: m['radius-sm'],
-        borderWidth: EDGE,
-        borderColor: c.border,
         backgroundColor: c['subtle-strong'],
       }}
     >
@@ -342,7 +340,6 @@ function Row({
   choice,
   standing,
   arrives,
-  divided,
   onPress,
 }: {
   letter: string
@@ -350,8 +347,6 @@ function Row({
   standing: Standing
   /** Whether its check fades in: only on a card that was open on screen when it was answered. */
   arrives: boolean
-  /** Whether a hairline is drawn over it. */
-  divided: boolean
   onPress: () => void
 }) {
   const { colors: c } = useTheme()
@@ -362,8 +357,6 @@ function Row({
       layout={FOLD}
       exiting={LEAVE}
       style={{
-        borderTopWidth: divided ? HAIRLINE : 0,
-        borderTopColor: c.border,
         // The rows that were not pressed stand back while the one that was is on its way.
         opacity: standing === 'waiting' ? STANDING_BACK : 1,
         transitionProperty: 'opacity',
@@ -450,7 +443,6 @@ function Own({
     <OwnWriting
       key="writing"
       own={own}
-      divided={!bare}
       takesKeyboard={!bare}
       sending={sending}
       held={held}
@@ -470,9 +462,6 @@ function OwnResting({ held, onOpen }: { held: boolean; onOpen: () => void }) {
       layout={FOLD}
       exiting={LEAVE}
       style={{
-        // It is only ever under the choices, so it always has a row to be divided from.
-        borderTopWidth: HAIRLINE,
-        borderTopColor: c.border,
         opacity: held ? STANDING_BACK : 1,
         transitionProperty: 'opacity',
         transitionDuration: m['dur-fast'],
@@ -511,7 +500,6 @@ function OwnResting({ held, onOpen }: { held: boolean; onOpen: () => void }) {
  */
 function OwnWriting({
   own,
-  divided,
   takesKeyboard,
   sending,
   held,
@@ -519,7 +507,6 @@ function OwnWriting({
   onAnswer,
 }: {
   own: string
-  divided: boolean
   /** Whether it was opened by a press, which is when the keyboard should come up with it. */
   takesKeyboard: boolean
   sending: boolean
@@ -527,7 +514,6 @@ function OwnWriting({
   onChange: (text: string) => void
   onAnswer: (answer: string) => void
 }) {
-  const { colors: c } = useTheme()
   const said = own.trim()
   const ready = said.length > 0 && !held
   const send = () => {
@@ -545,8 +531,6 @@ function OwnWriting({
         paddingLeft: 12,
         paddingRight: 6,
         paddingVertical: 6,
-        borderTopWidth: divided ? HAIRLINE : 0,
-        borderTopColor: c.border,
         opacity: held && !sending ? STANDING_BACK : 1,
       }}
     >

@@ -1,5 +1,5 @@
 import { useState, type Ref } from 'react'
-import { Platform, View } from 'react-native'
+import { View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ArrowUp, Square } from 'lucide-react-native'
 import { commit } from '../data/haptics'
@@ -9,7 +9,8 @@ import { ComposerEditor } from '../native/composer/Editor'
 import type { ComposerEditorHandle } from '../native/composer/types'
 import { useTheme } from '../theme'
 import { BorderBeam } from '../../vendor/beam'
-import { GlassMaterial } from './Glass'
+import { ringed, smooth } from './elevation'
+import { GLASS_SUPPORTED, GlassMaterial } from './Glass'
 import { Press, styles, TARGET } from './ui'
 
 /**
@@ -51,9 +52,9 @@ const ROUND = 30
  * once, as typing is never animated.
  *
  * The glass is a passive material laid under the content, not its parent, so the controls stay
- * out of the effect view's layout (the reference's `ComposerSurface`). The shadow is the
- * reference's `shadow-[0_6px_28px]` in black at 15% in light and 35% in dark, and its elevation
- * on Android before 9, which has no outset box shadow.
+ * out of the effect view's layout (the reference's `ComposerSurface`). The shadow is not the
+ * reference's (`shadow-[0_6px_28px]`, one wide blur): it is the app's own tier for what floats
+ * over the page (`ui/elevation.ts`), and the shape has no border beside it.
  *
  * The button is always there, as the reference's is: dimmed when there is nothing to send, the
  * way to send when there is, and while Vivid is working the way to stop, in the same place, with
@@ -93,7 +94,7 @@ export function Composer({
   onSend: () => void
   onStop: () => void
 }) {
-  const { dark } = useTheme()
+  const { colors: c } = useTheme()
   const insets = useSafeAreaInsets()
   const keyboard = useKeyboardShowing()
   // What the editor says its text needs, inset included. One line is `ONE_LINE`.
@@ -125,8 +126,9 @@ export function Composer({
             borderRadius: CORNER,
             borderCurve: 'continuous',
             overflow: 'hidden',
-            boxShadow: dark ? '0 6px 28px rgba(0, 0, 0, 0.35)' : '0 6px 28px rgba(0, 0, 0, 0.15)',
-            elevation: Platform.OS === 'android' && Platform.Version < 28 ? 10 : undefined,
+            // Over the page: the plugin's stack. The system's glass has an edge of its own;
+            // without it the hairline is the stack's ring, and there is no border.
+            boxShadow: GLASS_SUPPORTED ? smooth('md') : ringed('md', c.border),
           },
         ]}
       >

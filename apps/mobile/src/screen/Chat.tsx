@@ -370,6 +370,9 @@ function Conversation({
     runs: Option.match(detail, { onNone: () => [], onSome: (value) => value.runs }),
   }
   const shown = agent.messages.filter(isShown)
+  // Thinking starts at the send; the composer's button waits for Vivid to have really started.
+  const thinking = working || sending.pending
+  const page = pageOf(agent.historyReady, shown.length, thinking)
   // The stream keeps a message it could not send, under the id it showed it with, so the Thread
   // can draw it as not sent instead of as said. Sending again clears the list.
   const undelivered = new Set(agent.failedSends.map((send) => send.id))
@@ -425,19 +428,15 @@ function Conversation({
       <Top
         thread={thread}
         present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
-        // What was just sent is being thought about from the moment it leaves, so Vivid's face
-        // thinks at once; the composer's own button waits for Vivid to have really started
-        // before it becomes the way to stop.
-        working={working || sending.pending}
-        opening={agent.historyReady && shown.length === 0 && !(working || sending.pending)}
+        working={thinking}
+        opening={page === 'Opening'}
         onShare={() => setSharing(true)}
       />
       <View ref={wake} style={{ flex: 1 }}>
         <Messages
           messages={shown}
-          ready={agent.historyReady}
+          page={page}
           working={working}
-          thinking={working || sending.pending}
           ended={ended}
           trouble={trouble}
           around={around}
@@ -446,19 +445,7 @@ function Conversation({
           onContinue={speak}
         />
       </View>
-      {stopping.refused && (
-        <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
-          <Notice message="Vivid could not be stopped just now. Try again." />
-        </View>
-      )}
-      {/* Just above the composer, and not in the list: reading back up the conversation must not
-          scroll away the one thing that says Vivid is at work. It stands on the conversation's
-          own inset, so the orb is where Vivid's face will be beside the answer. */}
-      {(working || sending.pending) && (
-        <View style={[styles.column, { paddingHorizontal: GUTTER - 4, paddingTop: 6 }]}>
-          <Thinking />
-        </View>
-      )}
+      <Between refused={stopping.refused} thinking={thinking} />
       <Composer
         value={typed}
         autoFocus={writing}
@@ -497,13 +484,8 @@ interface Ended {
 
 interface MessagesProps {
   readonly messages: ReadonlyArray<FlueConversationMessage>
-  readonly ready: boolean
+  readonly page: Page
   readonly working: boolean
-  /**
-   * Vivid is thinking about what was sent here: from the moment of the send, which is before
-   * the Thread's record says it is working. The list is drawn, not the greeting, while it is.
-   */
-  readonly thinking: boolean
   readonly ended: Option.Option<Ended>
   readonly trouble: Option.Option<Trouble>
   readonly around: Around
@@ -514,12 +496,55 @@ interface MessagesProps {
 }
 
 /**
+ * What a Thread's page is. It is decided once (`pageOf`) for everything that depends on it: the
+ * list or what stands in its place, and whether Vivid's avatar floats at the top of the screen or
+ * stands in the middle of the page. Decided in two places, the two could disagree, and the page
+ * would then show two avatars or none.
+ *
+ * - `Outline`: the Thread is still opening and nothing is known to be in it.
+ * - `Opening`: it has opened and has no words: Vivid's greeting, with its avatar in the middle.
+ * - `Conversation`: it has words, or Vivid is thinking about the first of them.
+ */
+type Page = 'Outline' | 'Opening' | 'Conversation'
+
+/** `said` is how many messages are shown; `thinking` starts at a send, before the record says so. */
+const pageOf = (ready: boolean, said: number, thinking: boolean): Page => {
+  if (said > 0 || thinking) return 'Conversation'
+  return ready ? 'Opening' : 'Outline'
+}
+
+/**
  * The conversation. A Thread with nothing in it is its outline or its invitation; otherwise the
  * list (`Transcript`). The two are separate components so the list can hold state of its own.
  */
 function Messages(props: MessagesProps) {
-  if (props.messages.length === 0 && !props.thinking) return <Blank ready={props.ready} />
-  return <Transcript {...props} />
+  if (props.page === 'Conversation') return <Transcript {...props} />
+  return <Blank ready={props.page === 'Opening'} />
+}
+
+/**
+ * What stands between the conversation and the composer: that the last Stop was refused, and
+ * that Vivid is thinking (`ui/Thinking.tsx`).
+ *
+ * The thinking line is here and not a row of the list: reading back up the conversation must not
+ * scroll away the one thing that says Vivid is at work. It stands on the conversation's own
+ * inset, so the orb is where Vivid's face will be beside the answer.
+ */
+function Between({ refused, thinking }: { refused: boolean; thinking: boolean }) {
+  return (
+    <>
+      {refused && (
+        <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
+          <Notice message="Vivid could not be stopped just now. Try again." />
+        </View>
+      )}
+      {thinking && (
+        <View style={[styles.column, { paddingHorizontal: GUTTER - 4, paddingTop: 6 }]}>
+          <Thinking />
+        </View>
+      )}
+    </>
+  )
 }
 
 /** How far from the newest words still counts as reading them, in points. */
