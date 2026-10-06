@@ -294,9 +294,10 @@ function Floating({ said, menu }: { said: Told; menu: Menu }) {
   return (
     <Animated.View
       pointerEvents="box-none"
-      // It arrives and leaves with the screens that have it, quicker going than coming.
+      // It fades in with the screen that has it, and is gone at once when that screen gives it
+      // up: an empty page draws Vivid in its own middle from the same frame, and a fading
+      // avatar here would be a second one for a moment.
       entering={APPEAR}
-      exiting={LEAVE}
       style={{
         position: 'absolute',
         top: insets.top + ABOVE,

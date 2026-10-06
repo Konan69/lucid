@@ -25,8 +25,9 @@ import { IconButton, Label, type Tone } from './ui'
  * The bar is the platform's own (`GLASS_HEADER` in `ui/stack.ts`). On iOS every action is a real
  * `UIBarButtonItem`, so on iOS 26 the system draws it, and the way back, as round liquid glass;
  * nothing here draws a button. A screen says what it wants by rendering `Bar`, `StandingBar` or
- * `VividBar`, which draw nothing themselves. `VividBar` also says what Vivid's capsule shows,
- * which floats over the stack where the bar's title would be (`ui/Presence.tsx`).
+ * `VividBar`, which draw nothing themselves. A Thread also renders `VividAtTop`, which says how
+ * Vivid's avatar stands; that floats over the stack where the bar's title would be
+ * (`ui/Presence.tsx`).
  *
  * Ported from T3 Code mobile `src/native/StackHeader.tsx` (`NativeStackScreenOptions`,
  * `NativeHeaderToolbar`) and its uses in `src/features/settings/SettingsRouteScreen.tsx` and

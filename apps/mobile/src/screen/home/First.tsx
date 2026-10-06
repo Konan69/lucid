@@ -24,8 +24,8 @@ const FACE = 56
  * The arrangement is the owner's reference for an empty first screen, the Claude iPhone app (its
  * mark over "Happy Tuesday, Konan", centred, with the composer at the foot; his screenshot of
  * 6 October 2026). It used to be type alone, set at the foot of the page above the composer, with
- * the rest of the screen bare. Vivid's face is also in its capsule at the top; this one is the
- * greeting's own, as the reference's mark is.
+ * the rest of the screen bare. While a page is this, Vivid is not also at the top of the screen:
+ * its avatar floats there only over a conversation (`VividAtTop`, `ui/Bar.tsx`).
  *
  * The face is the way to Vivid's own menu here, as its avatar at the top of a Thread is: its
  * computer and what it knows. A new Thread is not offered, because this page is one being started.

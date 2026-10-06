@@ -130,7 +130,7 @@ function Under({ showing, ...writing }: WritingProps & { showing: Showing }) {
 /**
  * For someone Vivid has met: the greeting in the middle of the page, that Vivid is thinking
  * while a first message is on its way, anything the last send was refused for, and the composer.
- * The words and the send are `Fresh`'s (`useStart`), because the face at the top thinks too.
+ * The words and the send are `Fresh`'s (`useStart`), which also decides the mood of the face.
  */
 function Writing({ me, mood, start, placeholder }: WritingProps) {
   return (

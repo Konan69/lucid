@@ -451,6 +451,14 @@ function Conversation({
           <Notice message="Vivid could not be stopped just now. Try again." />
         </View>
       )}
+      {/* Just above the composer, and not in the list: reading back up the conversation must not
+          scroll away the one thing that says Vivid is at work. It stands on the conversation's
+          own inset, so the orb is where Vivid's face will be beside the answer. */}
+      {(working || sending.pending) && (
+        <View style={[styles.column, { paddingHorizontal: GUTTER - 4, paddingTop: 6 }]}>
+          <Thinking />
+        </View>
+      )}
       <Composer
         value={typed}
         autoFocus={writing}
@@ -493,7 +501,7 @@ interface MessagesProps {
   readonly working: boolean
   /**
    * Vivid is thinking about what was sent here: from the moment of the send, which is before
-   * the Thread's record says it is working.
+   * the Thread's record says it is working. The list is drawn, not the greeting, while it is.
    */
   readonly thinking: boolean
   readonly ended: Option.Option<Ended>
@@ -536,9 +544,10 @@ const FOLLOWING = 80
  * and the whole conversation was drawn at about a fifth of its strength. The second is the
  * system's scroll edge effect, which takes an upside-down list behind a bar to be under that bar
  * from end to end (`NO_SCROLL_EDGES`, `ui/stack.ts`). Switching the effect off through the screen
- * did not hold: react-native-screens sets it once, when the option changes, on the scroll view
- * that is there at that moment (`RNSScreen.mm`, `updateContentScrollViewEdgeEffectsIfExists`),
- * and this list is mounted later, after the Thread's outline. A list that is never behind the
+ * did not hold: react-native-screens sets it when the option changes and when the screen is put
+ * in its stack, on the scroll view that is there at that moment (`RNSScreen.mm`,
+ * `updateContentScrollViewEdgeEffectsIfExists`, called from the props update and from
+ * `willMoveToParentViewController`), and this list is mounted later, after the Thread's outline. A list that is never behind the
  * bar has nothing for the system to soften. Where it meets the bar it fades out over a few
  * points (`TopFade`), so words leave softly instead of being cut. Not seen on an iPhone from
  * here: there is no iOS device or simulator to run it on.
@@ -597,9 +606,7 @@ function Transcript(props: MessagesProps) {
           // avatar hangs into, so the oldest words rest under its name and not behind it.
           ListFooterComponent={<View style={{ height: HANG }} />}
           // The first thing in an inverted list is the last thing on screen.
-          ListHeaderComponent={
-            <Tail thinking={props.thinking} ended={props.ended} trouble={props.trouble} />
-          }
+          ListHeaderComponent={<Tail ended={props.ended} trouble={props.trouble} />}
           renderItem={({ item, index }) => (
             <Message
               message={item}
@@ -720,15 +727,14 @@ function Blank({ ready }: { ready: boolean }) {
 }
 
 /**
- * What sits under the newest message, just above the composer: that Vivid's last Run came to
- * nothing, that something did not arrive, or that Vivid is thinking (`ui/Thinking.tsx`).
+ * What sits under the newest message: that Vivid's last Run came to nothing, or that something
+ * did not arrive. That Vivid is thinking is not said here but under the list, just above the
+ * composer, where it stays while the conversation is read (`ui/Thinking.tsx`).
  */
 function Tail({
-  thinking,
   ended,
   trouble,
 }: {
-  thinking: boolean
   ended: Option.Option<Ended>
   trouble: Option.Option<Trouble>
 }) {
@@ -758,7 +764,6 @@ function Tail({
           />
         </View>
       )}
-      {thinking && <Thinking />}
     </View>
   )
 }
