@@ -1,11 +1,13 @@
 import { fauxAssistantMessage, fauxText, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
-import { LiveDoc } from '@earendil-works/pi-durable'
+import { LiveDoc, watchEvents } from '@earendil-works/pi-durable'
 import { expect, it } from '@effect/vitest'
 import { tool } from 'ai'
 import { Effect } from 'effect'
+import { onTestFinished } from 'vitest'
+import { runForPi } from '../pi.ts'
 import { z } from 'zod'
 import { abort, streamRun } from '../main.ts'
-import { context, host } from './fixtures/host.ts'
+import { context, host, signal } from './fixtures/host.ts'
 
 /**
  * generation.js startToolRound reads runtime.settings.toolExecution, supplied from HarnessImpl's
@@ -38,8 +40,8 @@ it.live('does not expose the global execution mode through the public agent', ()
 
 /**
  * Capture the observable failing precondition without hanging sendMessage or adding it.fails:
- * a host omitting execution declares parallel, so both starts are visible while its global-sequential response still has no committed tool slots.
- * Cancel observation and explicitly abort the isolated run after this bounded prefix.
+ * A host omitting execution declares parallel. After message_end, c2 is already visible but its
+ * committed sequential slot has no task, preventing parking. Observe that settled state, then abort.
  */
 it.live('shows the unobservable-mode gap during slow sequential generation', () =>
   Effect.promise(async () => {
@@ -55,6 +57,25 @@ it.live('shows the unobservable-mode gap during slow sequential generation', () 
       { tokensPerSecond: 1500, tokenSize: { min: 1, max: 1 } },
     )
     const opened = await fixture.open()
+    const ended = signal()
+    const shown = signal()
+    const events = await watchEvents(opened.harness, opened.root.id, context)
+    onTestFinished(async () => {
+      await events.stop()
+    })
+    events.start((batch) =>
+      runForPi(
+        Effect.sync(() => {
+          if (
+            batch.some(
+              (event) => event.type === 'message_end' && event.entry.kind === 'pi.assistant',
+            )
+          )
+            ended.resolve()
+        }),
+        context.abortSignal,
+      ),
+    )
     opened.faux.setResponses([
       fauxAssistantMessage(
         [
@@ -72,16 +93,34 @@ it.live('shows the unobservable-mode gap during slow sequential generation', () 
       context,
     )
     const starts: string[] = []
-    for await (const chunk of stream) {
-      if (chunk.type !== 'tool-input-start') continue
-      starts.push(chunk.toolCallId)
-      if (starts.length === 2) break
-    }
+    const reader = stream.getReader()
+    onTestFinished(() => reader.cancel())
+    let finished = false
+    const drain = (async () => {
+      for (;;) {
+        const next = await reader.read()
+        if (next.done) break
+        const chunk = next.value
+        if (chunk.type === 'tool-input-start') {
+          starts.push(chunk.toolCallId)
+          if (chunk.toolCallId === 'c2') shown.resolve()
+        }
+      }
+      finished = true
+    })()
+    await ended.promise
+    await shown.promise
     const live = await opened.harness.snapshot(LiveDoc, opened.root.id, context)
-    if (live === undefined || live.generation === undefined)
-      throw new Error('Expected in-flight generation')
+    if (live === undefined || live.tools === undefined) throw new Error('Expected committed round')
     expect(starts).toEqual(['c1', 'c2'])
-    expect(live.tools ?? []).toEqual([])
+    expect(live.tools.find((slot) => slot.callId === 'c2')).toEqual({
+      callId: 'c2',
+      name: 'pay',
+      status: 'pending',
+    })
+    expect(live.run).toBeDefined()
+    expect(finished).toBe(false)
     await abort(opened.harness, opened.root.id, context)
+    await drain
   }),
 )

@@ -197,7 +197,12 @@ function showInput(round: Round, chunk: InputStart | InputAvailable, desk: Desk)
   if (seen.has(id)) return { round, chunks: [] }
   const next =
     chunk.type === 'tool-input-start'
-      ? { ...round, started: new Set([...round.started, id]) }
+      ? {
+          ...round,
+          started: new Set([...round.started, id]),
+          // An open input is not waiting for a person yet; it must prevent premature parking.
+          running: new Set([...round.running, id]),
+        }
       : {
           ...round,
           available: new Set([...round.available, id]),

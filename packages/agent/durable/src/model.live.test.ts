@@ -220,7 +220,11 @@ it.live.skipIf(process.env['DURABLE_LIVE'] !== '1')(
       // A real endpoint need not persist a truncated block. Report that observation without
       // weakening final-input equality or claiming the live run reproduced N1 when it did not.
       const observed = yield* Stream.runCollect(
-        watched.stream.pipe(Stream.takeUntil((event) => event.type === 'message_end')),
+        watched.stream.pipe(
+          Stream.takeUntil(
+            (event) => event.type === 'message_end' && event.entry.kind === 'pi.assistant',
+          ),
+        ),
       )
       const partials = observed
         .flatMap((event) => (event.type === 'message_update' ? event.changes : []))
