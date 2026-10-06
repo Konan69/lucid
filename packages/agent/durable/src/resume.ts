@@ -45,6 +45,32 @@ const entriesOf = Effect.fn('Durable.resumeEntries')(function* (
   }
 })
 
+/** Bound whole-run attachment to its first placed input, never the newest steer or an older run. */
+export const captureRun = Effect.fn('Durable.captureRun')(function* (
+  reader: Reader,
+  snapshot: SnapshotEvent,
+) {
+  if (snapshot.run === undefined) return snapshot
+  const first = Option.getOrThrow(Option.fromNullishOr(snapshot.run.inputs[0]))
+  const handle = yield* Pi.submission(reader.harness, first, reader.context)
+  if (Option.isNone(handle))
+    return yield* new RunMissing({ conversationId: reader.conversation.id })
+  const receipt = yield* Pi.status(handle.value, reader.context)
+  if (!placedFor(receipt, reader.conversation.id))
+    return yield* new RunMissing({ conversationId: reader.conversation.id })
+  // Usually the atomic model view contains the whole run. Compaction can remove its first input;
+  // recover raw entries only then, bounded by the snapshot's tail so the prefix cannot outrun events.
+  if (snapshot.entries.some((entry) => entry.id === receipt.entry))
+    return { ...snapshot, entries: snapshot.entries.filter((entry) => entry.id >= receipt.entry) }
+  const tail = Option.fromNullishOr(snapshot.entries.at(-1))
+  if (Option.isNone(tail)) return yield* new RunMissing({ conversationId: reader.conversation.id })
+  const entries = yield* entriesOf(reader, {
+    first: receipt.entry,
+    last: Option.some(tail.value.id),
+  })
+  return { ...snapshot, entries }
+})
+
 /** Unanswered runs have no answer bound. transaction.js stamps assistant entries with the generation
  * task id; all responses of that run share it, including recovered attempts and steer extensions.
  * Stop before another generation's assistant rather than borrowing its reused call ids. A parked

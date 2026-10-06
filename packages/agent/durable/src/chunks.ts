@@ -40,6 +40,8 @@ const Reported = Data.taggedEnum<Reported>()
  * AI SDK assistant message; each turn becomes one AI SDK step.
  */
 export type RunState = {
+  /** Retry entries share the same generation task and therefore the same SDK step. */
+  readonly generation: Option.Option<TaskId>
   /** Durable result entries reported by this reader, across step changes and snapshot/live overlap. */
   readonly results: ReadonlySet<EntryId>
   /** Turns started in this run. */
@@ -63,6 +65,7 @@ export type RunState = {
 }
 
 export const initialRunState: RunState = {
+  generation: Option.none(),
   turn: 0,
   response: 0,
   blocks: new Map(),
@@ -520,9 +523,9 @@ export function translate(state: RunState, event: AgentEvent): Step {
 
 const join = (a: Step, b: Step): Step => ({ state: b.state, chunks: [...a.chunks, ...b.chunks] })
 
-/** Entries of the run in progress: everything after the newest user entry of the active transcript. */
+/** Snapshot observation has bounded the entries to the first input of this run; steers are transparent. */
 function runEntries(entries: readonly EntryRecord[]): readonly EntryRecord[] {
-  const start = entries.findLastIndex((entry) => entry.kind === 'pi.user')
+  const start = entries.findIndex((entry) => entry.kind === 'pi.user')
   return entries.slice(start + 1)
 }
 
@@ -532,9 +535,15 @@ export function replayEntry(state: RunState, entry: EntryRecord): Step {
   if (Option.isNone(found)) return { state, chunks: [] }
   const message = found.value
   if (message.role === 'assistant') {
-    const turn = startTurn(state)
-    const response: RunState = { ...turn.state, response: turn.state.response + 1, failure: [] }
-    return join(turn, assistantEnd(response, message))
+    // generation.js retries append another assistant entry under the same task. events.js only
+    // starts a turn when that task changes, so snapshots must reset the attempt within its step.
+    const same = entry.byTaskId !== undefined && Option.contains(state.generation, entry.byTaskId)
+    const turn = same ? { state, chunks: [] } : startTurn(state)
+    const response = startResponse(
+      { ...turn.state, generation: Option.fromNullishOr(entry.byTaskId) },
+      message,
+    )
+    return join(join(turn, response), assistantEnd(response.state, message))
   }
   if (message.role === 'toolResult')
     return resultStep(state, message.toolCallId, Option.some(entry))
@@ -543,7 +552,7 @@ export function replayEntry(state: RunState, entry: EntryRecord): Step {
 
 /** The partial response of the generation in flight: a turn, then each block with its text so far. */
 function replayPartial(state: RunState, message: AssistantMessage): Step {
-  const turn = startTurn(state)
+  const turn = state.failure.length > 0 ? { state, chunks: [] } : startTurn(state)
   return join(turn, startResponse(turn.state, message))
 }
 
@@ -553,7 +562,7 @@ function replayPartial(state: RunState, message: AssistantMessage): Step {
  * prefix that brings an AI SDK reader to that state, and the translator state from which the live
  * events continue. `undefined` means no run is in progress.
  *
- * Limit: a steer adds a user entry inside a run, so the prefix then starts at the steer.
+ * The observation adapter bounds entries to the first placed input; later steers are transparent.
  */
 export function replay(snapshot: SnapshotEvent): Option.Option<Rebuilt> {
   if (snapshot.run === undefined) return Option.none()
@@ -575,7 +584,9 @@ export function replay(snapshot: SnapshotEvent): Option.Option<Rebuilt> {
   )
   const step = Option.match(partial, {
     onNone: () =>
-      snapshot.generation === undefined ? stored : join(stored, startTurn(stored.state)),
+      snapshot.generation === undefined || stored.state.failure.length > 0
+        ? stored
+        : join(stored, startTurn(stored.state)),
     onSome: (message) => join(stored, replayPartial(stored.state, message)),
   })
   return Option.some({ ...step, origins: originsFor(runEntries(snapshot.entries), step.chunks) })

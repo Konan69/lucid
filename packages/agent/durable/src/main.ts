@@ -6,7 +6,7 @@ import { Effect, Function, Option, Result, Schema, Stream } from 'effect'
 import * as Core from './core.ts'
 import { HoldIdInvalid, TurnInvalid } from './errors.ts'
 import { prepareRun } from './stream.ts'
-import { TurnBody } from './respond.ts'
+import { reconnectRequest, TurnBody } from './respond.ts'
 import type { ToolsOptions } from './tools.ts'
 import type { InputOptions } from './input.ts'
 
@@ -68,6 +68,22 @@ export const attachRun = (...args: Parameters<typeof Core.attachRun>): Promise<A
     ),
   )
 
+/** The retained-step counterpart of attachRun has the same Promise result shape. */
+export const rejoinRun = (...args: Parameters<typeof Core.rejoinRun>): Promise<Attached> =>
+  Effect.runPromise(
+    Core.rejoinRun(...args).pipe(
+      Effect.flatMap((attached) =>
+        Option.match(attached, {
+          onNone: () => Effect.succeed<Attached>({ status: 'idle' }),
+          onSome: (stream) =>
+            Stream.toReadableStreamEffect(stream).pipe(
+              Effect.map((readable): Attached => ({ status: 'running', stream: readable })),
+            ),
+        }),
+      ),
+    ),
+  )
+
 /** RunMissing rejects before a platform stream is returned. */
 export const continueRun = (...args: Parameters<typeof Core.continueRun>) =>
   Effect.runPromise(
@@ -117,7 +133,7 @@ export async function respond(
   // AI SDK HttpChatTransport.reconnectToStream sends a bodyless GET and treats 204 as idle.
   if (request.method === 'GET') {
     return Effect.runPromise(
-      Core.attachRun(harness, conversationId, context).pipe(
+      reconnectRequest(harness, conversationId, new URL(request.url), context).pipe(
         Effect.flatMap((attached) =>
           Option.match(attached, {
             onNone: () => Effect.succeed(new Response(null, { status: 204 })),
@@ -126,6 +142,9 @@ export async function respond(
                 Effect.map((readable) => createUIMessageStreamResponse({ stream: readable })),
               ),
           }),
+        ),
+        Effect.catchTag('RejoinInvalid', () =>
+          Effect.succeed(new Response('Invalid reconnect state', { status: 400 })),
         ),
         Effect.catchTag('ConversationMissing', () =>
           Effect.succeed(new Response('Conversation not found', { status: 404 })),
@@ -160,6 +179,7 @@ export {
   ConversationMissing,
   PiFailed,
   TurnInvalid,
+  RejoinInvalid,
   PartUnsupported,
   PartTooLarge,
   RunMissing,
@@ -170,7 +190,7 @@ export {
 export type { Answer, Decision, Settlement, Plan, Source } from './holds.ts'
 export type { Waiting } from './waiting.ts'
 export type { Replay, ToolsOptions } from './tools.ts'
-export type { RunInput } from './stream.ts'
+export type { Rejoin, RunInput } from './stream.ts'
 export type { ResumeInput } from './resume.ts'
 export type { RunState, Step, Chunk } from './chunks.ts'
 export type { ChatTurn, TurnInput } from './respond.ts'

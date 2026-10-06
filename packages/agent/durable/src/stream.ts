@@ -18,12 +18,19 @@ import {
   type RunState,
   type Step,
   type Chunk,
+  type Rebuilt,
   translate,
 } from './chunks.ts'
-import { RunMissing, type PiFailed, type WatchClosed, type WatchOverflowed } from './errors.ts'
+import {
+  RejoinInvalid,
+  RunMissing,
+  type PiFailed,
+  type WatchClosed,
+  type WatchOverflowed,
+} from './errors.ts'
 import { readDesk, noDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
-import { selectRun, type ResumeInput } from './resume.ts'
+import { captureRun, selectRun, type ResumeInput } from './resume.ts'
 import { inputContent, type InputPart, type InputOptions } from './input.ts'
 
 /** A retried input retains its client request id and therefore Pi's submission identity. */
@@ -242,31 +249,40 @@ const resume = Effect.fn('Durable.resumeStream')(function* (
  * scope transfers to the returned Stream and closes on completion, cancellation, idle, or failure.
  * This bridges the two-phase API without closing the watch before consumption begins.
  */
-const reconnect = Effect.fn('Durable.reconnect')(function* (
+function reconnect<E>(
   harness: Harness,
   conversationId: ConversationId,
-  select: (
-    snapshot: SnapshotEvent,
-    reader: Reader,
-  ) => Effect.Effect<Option.Option<Prefix>, RunMissing | PiFailed>,
+  select: (snapshot: SnapshotEvent, reader: Reader) => Effect.Effect<Option.Option<Prefix>, E>,
   context: Context,
 ) {
-  const scope = yield* Scope.make()
-  return yield* Effect.gen(function* () {
-    const conversation = yield* Pi.conversation(harness, conversationId, context)
-    const watched = yield* Pi.watch(harness, conversationId, context).pipe(Scope.provide(scope))
-    const prefix = yield* select(watched.snapshot, { harness, conversation, context })
-    if (Option.isNone(prefix)) {
-      yield* Scope.close(scope, Exit.void)
-      return Option.none<Stream.Stream<UIMessageChunk, WatchFailure>>()
-    }
-    const live = yield* Pi.watchLive(harness, conversationId, context).pipe(Scope.provide(scope))
-    const stream = yield* resume({ harness, conversation, context }, watched, prefix.value, live)
-    return Option.some(stream.pipe(Stream.ensuring(Scope.close(scope, Exit.void))))
-  }).pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))))
-})
+  return Effect.gen(function* () {
+    const scope = yield* Scope.make()
+    return yield* Effect.gen(function* () {
+      const conversation = yield* Pi.conversation(harness, conversationId, context)
+      const watched = yield* Pi.watch(harness, conversationId, context).pipe(Scope.provide(scope))
+      const prefix = yield* select(watched.snapshot, { harness, conversation, context })
+      if (Option.isNone(prefix)) {
+        yield* Scope.close(scope, Exit.void)
+        return Option.none<Stream.Stream<UIMessageChunk, WatchFailure>>()
+      }
+      const live = yield* Pi.watchLive(harness, conversationId, context).pipe(Scope.provide(scope))
+      const stream = yield* resume({ harness, conversation, context }, watched, prefix.value, live)
+      return Option.some(stream.pipe(Stream.ensuring(Scope.close(scope, Exit.void))))
+    }).pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))))
+  })
+}
 
 /** Idle returns None. The one-shot Stream replays the atomic snapshot; its watch is already open. */
+function attachedPrefix(found: Option.Option<Rebuilt>): Option.Option<Prefix> {
+  return Option.map(found, (prefix) => ({
+    step: prefix,
+    live: true,
+    known: new Set<string>(),
+    origins: prefix.origins,
+  }))
+}
+
+/** Whole-run attachment and retained-step rejoin share the same live-prefix contract. */
 export const attachRun = Effect.fn('Durable.attachRun')(function* (
   harness: Harness,
   conversationId: ConversationId,
@@ -275,16 +291,55 @@ export const attachRun = Effect.fn('Durable.attachRun')(function* (
   return yield* reconnect(
     harness,
     conversationId,
-    (snapshot) =>
-      Effect.succeed(
-        replay(snapshot).pipe(
-          Option.map((prefix) => ({
-            step: prefix,
-            live: true,
-            known: new Set<string>(),
-            origins: prefix.origins,
-          })),
-        ),
+    (snapshot, reader) =>
+      captureRun(reader, snapshot).pipe(Effect.map(replay), Effect.map(attachedPrefix)),
+    context,
+  )
+})
+
+/** Retained client state identifies its current step; the same one-shot watch ownership as attachRun. */
+export type Rejoin = { readonly messageId: string; readonly steps: number }
+
+/**
+ * Replay keeps the full translator state for the live tail. Only the wire prefix is trimmed:
+ * reset-step preserves the client's current step-start, so omit that marker and all earlier steps.
+ * A different message belongs to another run and receives the ordinary whole-run snapshot.
+ */
+function rejoinPrefix(snapshot: SnapshotEvent, input: Rejoin) {
+  return Effect.gen(function* () {
+    const found = replay(snapshot)
+    if (Option.isNone(found)) return found
+    const prefix = found.value
+    const start = prefix.chunks[0]
+    if (start === undefined || start.type !== 'start' || start.messageId !== input.messageId)
+      return found
+    const steps = prefix.chunks.flatMap((chunk, index) =>
+      chunk.type === 'start-step' ? [index] : [],
+    )
+    if (!Number.isInteger(input.steps) || input.steps < 1 || input.steps > steps.length)
+      return yield* new RejoinInvalid({})
+    const at = Option.getOrThrow(Option.fromNullishOr(steps[input.steps - 1]))
+    return Option.some({
+      ...prefix,
+      chunks: [start, ...prefix.chunks.slice(1, 2), ...prefix.chunks.slice(at + 1)],
+    })
+  })
+}
+
+/** Idle returns None; a retained current step resumes without duplicating earlier durable steps. */
+export const rejoinRun = Effect.fn('Durable.rejoinRun')(function* (
+  harness: Harness,
+  conversationId: ConversationId,
+  input: Rejoin,
+  context: Context,
+) {
+  return yield* reconnect(
+    harness,
+    conversationId,
+    (snapshot, reader) =>
+      captureRun(reader, snapshot).pipe(
+        Effect.flatMap((captured) => rejoinPrefix(captured, input)),
+        Effect.map(attachedPrefix),
       ),
     context,
   )

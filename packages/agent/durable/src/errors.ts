@@ -65,6 +65,18 @@ export class TurnInvalid extends Schema.TaggedError<TurnInvalid>()(
   }
 }
 
+/** A reconnect pair is incomplete, malformed, or names a step beyond the captured run. */
+export class RejoinInvalid extends Schema.TaggedError<RejoinInvalid>()(
+  'RejoinInvalid',
+  {},
+  { title: 'RejoinInvalid' },
+) {
+  /** Keep query diagnostics short without echoing client-supplied identifiers. */
+  override get message() {
+    return 'Invalid reconnect state'
+  }
+}
+
 /** A user file has no Pi input representation; its URL is never fetched or echoed in diagnostics. */
 export class PartUnsupported extends Schema.TaggedError<PartUnsupported>()(
   'PartUnsupported',
