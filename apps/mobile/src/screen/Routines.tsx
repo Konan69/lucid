@@ -15,6 +15,7 @@ import {
   Pause,
   Play,
   Plus,
+  Repeat2,
   Webhook,
   type LucideIcon,
   Plug,
@@ -89,6 +90,8 @@ export function Routines() {
     setOver(next)
   }
   const create = () => open(Over.Creating())
+  // The list has answered and holds nothing: the page is its empty state and nothing else.
+  const none = LiveState.$is('Ready')(list) && list.value.routines.length === 0
   // A Routine open here can be deleted from somewhere else; its sheet then simply is not drawn.
   const selected =
     Over.$is('Showing')(over) && LiveState.$is('Ready')(list)
@@ -108,16 +111,24 @@ export function Routines() {
         contentContainerStyle={[styles.page, styles.column]}
       >
         {/* What this place is, as the page's first line. It was the line under the bar's title;
-            the system's bar has no such line without a native change (`ui/Bar.tsx`). */}
-        <Label size="label" tone="ink-2">
-          What Vivid repeats, so you don’t have to.
-        </Label>
+            the system's bar has no such line without a native change (`ui/Bar.tsx`). With no
+            Routines the page's empty state says it instead (`Empty`). */}
+        {!none && (
+          <Label size="label" tone="ink-2">
+            What Vivid repeats, so you don’t have to.
+          </Label>
+        )}
         {Option.isSome(undeleted) && <Notice message={undeleted.value} />}
         <Live state={list} loading={<Skeleton rows={4} />}>
           {(value) =>
             value.routines.length === 0 ? (
-              <Empty line="Write an instruction once and Vivid follows it on a schedule.">
-                <Button icon={Plus} label="New routine" onPress={create} />
+              <Empty
+                icon={Repeat2}
+                title="No routines yet"
+                line="Write an instruction once and Vivid follows it on a schedule."
+                room="page"
+              >
+                <Button kind="primary" icon={Plus} label="New routine" onPress={create} />
               </Empty>
             ) : (
               <Section title="Yours">

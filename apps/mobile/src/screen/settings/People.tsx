@@ -8,7 +8,7 @@ import {
 import { Data, Option, Result } from 'effect'
 import { useState } from 'react'
 import { ScrollView, Share as SystemShare, View } from 'react-native'
-import { UserPlus } from 'lucide-react-native'
+import { UserPlus, Users } from 'lucide-react-native'
 import { commit, warn } from '../../data/haptics'
 import { refusalOf, useLive, useLiveData } from '../../data/live'
 import { invitationAddress } from '../../data/server'
@@ -71,7 +71,12 @@ export function People() {
           contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={{ paddingHorizontal: GUTTER }}
         >
-          <Empty line="You are working in your own space. Switch to a company to see who is in it." />
+          <Empty
+            icon={Users}
+            title="Only you are here"
+            line="You are working in your own space. Switch to a company to see who is in it."
+            room="page"
+          />
         </ScrollView>
       </Screen>
     )

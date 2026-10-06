@@ -7,7 +7,7 @@ import {
   type NativeStackNavigationOptions,
   type NativeStackNavigationProp,
 } from '@react-navigation/native-stack'
-import { PanelLeft, Phone, type LucideIcon } from 'lucide-react-native'
+import { Menu as MenuLines, Phone, type LucideIcon } from 'lucide-react-native'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { Animated, Platform, useWindowDimensions, View } from 'react-native'
 import { openDrawer } from '../data/drawer'
@@ -15,7 +15,7 @@ import type { Stand } from '../data/stand'
 import { useAppearance } from '../data/vivid'
 import { Faces } from './Avatar'
 import { GLASS_SUPPORTED } from './Glass'
-import { capsule, type Origin, type Told } from './Presence'
+import { capsule, type Told } from './Presence'
 import { NO_SCROLL_EDGES, SCROLL_EDGES } from './stack'
 import { IconButton, Label, TARGET, type Tone } from './ui'
 
@@ -158,8 +158,8 @@ const endOptions = (end: BarEnd, press: PressAt): NativeStackNavigationOptions =
 
 /** The way to the menu, as the action it is in a bar. */
 const MENU: BarAction = {
-  symbol: 'sidebar.left',
-  icon: PanelLeft,
+  symbol: 'line.3.horizontal',
+  icon: MenuLines,
   label: 'Open menu',
   disabled: false,
   onPress: openDrawer,
@@ -170,12 +170,18 @@ const MENU: BarAction = {
  * screen is the root of the stack, so the system draws no way back there and this button is
  * alone at the start.
  *
- * It is the system's sidebar symbol as a bar button of its own (the reference's "Show thread
- * sidebar" button, `src/features/layout/workspace-sidebar-toolbar.tsx`), so on iOS 26 the system
- * draws it as round glass like every other bar button. Vivid's face used to be the button; the
- * owner asked for a sidebar icon here and Vivid in the centre (5 October 2026), and the face is
- * in Vivid's capsule now (`ui/Presence.tsx`). `unstable_headerLeftItems` is iOS's, so Android
- * gets the same button drawn by the app in its solid bar.
+ * It is a bar button of its own (the reference's "Show thread sidebar" button,
+ * `src/features/layout/workspace-sidebar-toolbar.tsx`), so on iOS 26 the system draws it as round
+ * glass like every other bar button. Its picture is the three lines a phone's menu is known by.
+ * The reference's is the system's sidebar symbol, a window with a pane, which is how a desktop
+ * says it; the owner called that "the pc version" on a phone (6 October 2026). The picture is one
+ * of the system's own symbols and not an image of ours, because a bar button's image comes from
+ * a file, and one delivered in an update has lost the name that says how dense it is.
+ *
+ * Vivid's face used to be the button; the owner asked for a menu icon here and Vivid in the
+ * centre (5 October 2026), and the face is in Vivid's capsule now (`ui/Presence.tsx`).
+ * `unstable_headerLeftItems` is iOS's, so Android gets the same button drawn by the app in its
+ * solid bar.
  */
 const menuOptions = (): NativeStackNavigationOptions =>
   Platform.OS === 'ios'
@@ -345,11 +351,10 @@ function useTelling(said: Told) {
     latest.current = said
   })
   const signature = JSON.stringify([said.stand, said.limit])
-  const { id, button, sends } = said.origin
   useLayoutEffect(() => {
     if (focused) capsule.say(owner, latest.current)
     else capsule.leave(owner)
-  }, [focused, owner, signature, id, button, sends])
+  }, [focused, owner, signature])
   useLayoutEffect(() => () => capsule.leave(owner), [owner])
 }
 
@@ -359,25 +364,22 @@ function useTelling(said: Told) {
  * to call Vivid.
  *
  * The capsule is not in the bar. The bar's title is left empty and one capsule floats over the
- * whole stack in its place (`Presence`), where it can be pressed, change shape on the UI thread
- * and take the disc that rises from the composer. This says what that capsule should show while
- * the screen is in front, and draws nothing itself. A Thread's title is not in its bar either:
+ * whole stack in its place (`Presence`), where it can be pressed and change shape on the UI
+ * thread. This says what that capsule should show while the screen is in front, and draws
+ * nothing itself. A Thread's title is not in its bar either:
  * the owner asked for Vivid in the centre, and the title is where the Person chose the Thread,
  * its row in the menu.
  *
  * `inverted` says the screen's scroller is a Thread's upside-down list, which the system's edge
  * effect frosts whole (`NO_SCROLL_EDGES`); the greeting's scroller is the right way up and keeps
  * the effect. Both are named every time, because the two share one route and `setOptions` merges.
- *
- * `origin` is the composer on the same screen, where a send leaves from.
  */
 export function VividBar({
   stand,
-  origin,
   inverted,
   present,
   actions,
-}: BarEnd & { stand: Stand; origin: Origin; inverted: boolean }) {
+}: BarEnd & { stand: Stand; inverted: boolean }) {
   const vivid = useAppearance()
   const end: BarEnd = { present, actions: [...actions, callAction(vivid.name)] }
   const limit = limitIn(useWindowDimensions().width, end)
@@ -393,7 +395,7 @@ export function VividBar({
       ...endOptions(end, press),
     }),
   )
-  useTelling({ stand, origin, limit })
+  useTelling({ stand, limit })
   return null
 }
 
