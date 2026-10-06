@@ -1,7 +1,9 @@
 import { holdId } from '../main.ts'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { tool } from 'ai'
-import { expect, it } from 'vitest'
+import { expect, it, onTestFinished } from 'vitest'
+import { Effect } from 'effect'
+import { waitForFrame } from '../fixtures/provider.ts'
 import { z } from 'zod'
 
 import { CallNotWaiting, continueRun, decide, respond, streamRun, waiting } from '../main.ts'
@@ -127,6 +129,8 @@ it('does not apply a stale denial to a failing unheld task with the same id', as
 // Review probe.test.ts B: streamed input exists before its new tool task; historical approvals never apply.
 it('requests a fresh approval for a reused id in a later run with streamed partial input', async () => {
   const paid: number[] = []
+  const release = signal()
+  let generation = 0
   const fixture = await host(
     {
       pay: tool({
@@ -138,10 +142,22 @@ it('requests a fresh approval for a reused id in a later run with streamed parti
       }),
     },
     { approval: { pay: true } },
-    {},
-    { tokensPerSecond: 60 },
+    { progress: { partialIntervalMs: 1 } },
+    {
+      partialFamily: 'anthropic',
+      onFrame: (event, abortSignal) => {
+        if (event.type === 'toolcall_start') generation += 1
+        return event.type === 'toolcall_start' && generation === 2
+          ? waitForFrame(
+              Effect.promise(() => release.promise),
+              abortSignal,
+            )
+          : Effect.void
+      },
+    },
   )
   const opened = await fixture.open()
+  onTestFinished(() => release.resolve())
   opened.faux.setResponses([
     call('pay', { amount: 100 }, 'reused'),
     fauxAssistantMessage('First paid.'),
@@ -172,17 +188,27 @@ it('requests a fresh approval for a reused id in a later run with streamed parti
     context,
   )
   await opened.root.waitForIdle(context)
-  const result = await consume(
-    await streamRun(
-      opened.harness,
-      {
-        conversationId: opened.root.id,
-        content: 'Again',
-        requestId: 'second',
-      },
-      context,
-    ),
+  const stream = await streamRun(
+    opened.harness,
+    {
+      conversationId: opened.root.id,
+      content: 'Again',
+      requestId: 'second',
+    },
+    context,
   )
+  const [observed, folded] = stream.tee()
+  const started = signal()
+  const resultPromise = consume(folded)
+  const drain = (async () => {
+    for await (const chunk of observed) if (chunk.type === 'tool-input-start') started.resolve()
+  })()
+  await started.promise
+  expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
+  expect(paid).toEqual([100])
+  release.resolve()
+  const result = await resultPromise
+  await drain
   expect(result.chunks.filter((chunk) => chunk.type === 'tool-approval-response')).toEqual([])
   expect(result.chunks.filter((chunk) => chunk.type === 'tool-approval-request')).toHaveLength(1)
   expect(await waiting(opened.harness, opened.root.id, context)).toMatchObject([

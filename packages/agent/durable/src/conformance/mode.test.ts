@@ -119,6 +119,8 @@ it.live('shows the unobservable-mode gap during slow sequential generation', () 
       status: 'pending',
     })
     expect(live.run).toBeDefined()
+    // This records openness at the committed observation with c2 visible and unstarted; it
+    // does not prove the stream would stay open indefinitely. Explicit abort supplies termination.
     expect(finished).toBe(false)
     await abort(opened.harness, opened.root.id, context)
     await drain

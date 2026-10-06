@@ -67,7 +67,7 @@ export function waitForFrame(released: Effect.Effect<void>, signal: Option.Optio
  * to an already-streaming text block. These are owned copies, never patches to SDK objects.
  * OpenAI completions:309/429 and Bedrock:432 can start without identity; late keeps those fields
  * empty until argument deltas reveal them. Responses shared:559/598 replaces whole text/thinking
- * at output_item.done; retain one unsent suffix character until that replacement. Completions:306
+ * at output_item.done; the summary-part separator is later removed by a shorter join. Text retains one unsent suffix character until its whole replacement. Completions:306
  * customInput retains the grammar input property and its JSON buffer instead of partialArgs.
  */
 function partial(message: AssistantMessage, state: PartialState): AssistantMessage {
@@ -187,6 +187,33 @@ function terminal(message: AssistantMessage, state: PartialState): AssistantMess
   }
 }
 
+/** Responses shared:502 appends a summary separator, then :584 replaces it with a shorter join.
+ * Publish both provider states so a receipt gate can force the transient separator into Pi's
+ * durable partial. The old hidden-character extension still exercises whole text replacements. */
+function frames(
+  event: AssistantMessageEvent,
+  state: PartialState,
+): readonly AssistantMessageEvent[] {
+  if (state.family !== 'responses' || event.type !== 'thinking_end') return [adapt(event, state)]
+  const block = event.partial.content[event.contentIndex]
+  if (block === undefined || block.type !== 'thinking')
+    throw new Error('Expected Responses reasoning')
+  const captured = partial(event.partial, state)
+  const extended = { ...block, thinking: block.thinking + '\n\n' }
+  const tail: AssistantMessageEvent = {
+    type: 'thinking_delta',
+    contentIndex: event.contentIndex,
+    delta: block.thinking.slice(-1) + '\n\n',
+    partial: {
+      ...captured,
+      content: captured.content.map((part, index) =>
+        index === event.contentIndex ? extended : part,
+      ),
+    },
+  }
+  return [tail, adapt(event, state)]
+}
+
 /** The SDK's async iterator/result are the unsafe provider boundary; all fixture state lives here. */
 const relay = Effect.fn('Test.providerRelay')(function* (
   source: AssistantMessageEventStream,
@@ -207,9 +234,10 @@ const relay = Effect.fn('Test.providerRelay')(function* (
   yield* Stream.fromAsyncIterable(source, String).pipe(
     Stream.runForEach((event) =>
       Effect.gen(function* () {
-        const captured = adapt(event, state)
-        destination.push(captured)
-        yield* gate.onFrame(captured, gate.signal)
+        for (const captured of frames(event, state)) {
+          destination.push(captured)
+          yield* gate.onFrame(captured, gate.signal)
+        }
       }),
     ),
   )

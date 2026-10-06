@@ -252,7 +252,29 @@ function reportBlock(state: RunState, contentIndex: number, block: Block): Step 
  */
 function updateBlock(state: RunState, contentIndex: number, block: Block): Step {
   const content = new Map(state.content).set(contentIndex, block)
-  return releaseContent({ ...state, content })
+  const replaced = replaceContent(state, content)
+  return join(replaced, releaseContent(replaced.state))
+}
+
+/** SDK text/reasoning deltas append; a shorter authoritative replacement needs reset-step.
+ * Reset only this response's step, then rebuild its latest content with the same part ids. This
+ * removes Responses' streamed trailing summary separator while retaining earlier steps. Replayed
+ * partials start from the captured replacement and therefore follow the same content rule. */
+function replaceContent(state: RunState, content: ReadonlyMap<number, Block>): Step {
+  const shortened = [...content].some(([index, block]) => {
+    const reported = state.blocks.get(index)
+    return (
+      reported !== undefined &&
+      Reported.$is('Open')(reported) &&
+      bodyLength(block) < reported.length
+    )
+  })
+  return shortened
+    ? {
+        state: { ...state, content, blocks: new Map(), calls: new Set() },
+        chunks: [{ type: 'reset-step' }],
+      }
+    : { state: { ...state, content }, chunks: [] }
 }
 
 /** Release all newly identifiable prefixes without reading state outside the pure translator. */
@@ -267,10 +289,11 @@ function releaseContent(state: RunState): Step {
 
 /** Whole-message replacements update every partial block without implying a provider end. */
 function updateMessage(state: RunState, message: AssistantMessage): Step {
-  return releaseContent({
-    ...state,
-    content: new Map(message.content.map((block, index) => [index, block])),
-  })
+  const replaced = replaceContent(
+    state,
+    new Map(message.content.map((block, index) => [index, block])),
+  )
+  return join(replaced, releaseContent(replaced.state))
 }
 
 /** A document append extends an already-open text/reasoning block's reported prefix. */
@@ -322,10 +345,7 @@ function finishMessage(state: RunState, message: AssistantMessage): Step {
           : finishBlock(step.state, contentIndex, block)
       return { state: next.state, chunks: [...step.chunks, ...next.chunks] }
     },
-    {
-      state: { ...state, content: new Map(message.content.map((block, index) => [index, block])) },
-      chunks: [],
-    },
+    replaceContent(state, new Map(message.content.map((block, index) => [index, block]))),
   )
 }
 
