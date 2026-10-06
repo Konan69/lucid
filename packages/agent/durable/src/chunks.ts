@@ -259,12 +259,36 @@ function finishMessage(state: RunState, message: AssistantMessage): Step {
       // An aborted provider retains parsed partial arguments, never a complete executable input.
       const next =
         message.stopReason === 'aborted' && block.type === 'toolCall'
-          ? updateBlock(step.state, contentIndex, block)
+          ? abortBlock(step.state, contentIndex, block)
           : finishBlock(step.state, contentIndex, block)
       return { state: next.state, chunks: [...step.chunks, ...next.chunks] }
     },
     { state, chunks: [] },
   )
+}
+
+/** SDK tool-input-error closes unfinished input honestly; abort has no per-tool state of its own. */
+function abortBlock(
+  state: RunState,
+  contentIndex: number,
+  block: Extract<Block, { type: 'toolCall' }>,
+): Step {
+  if (!identified(block)) return { state, chunks: [] }
+  const opened = updateBlock(state, contentIndex, block)
+  return {
+    state: mark(opened.state, contentIndex, Reported.Closed()),
+    chunks: [
+      ...opened.chunks,
+      {
+        type: 'tool-input-error',
+        toolCallId: block.id,
+        toolName: block.name,
+        input: copyJson(block.arguments),
+        errorText: 'Tool input was interrupted before it completed',
+        dynamic: true,
+      },
+    ],
+  }
 }
 
 /** Text of a tool result, the form an AI SDK error part carries. */

@@ -144,6 +144,14 @@ function showVisible(round: Round, chunk: Chunk, desk: Desk): Shown {
       round: close(round, output.toolCallId),
       chunks: [output],
     })),
+    Match.when({ type: 'tool-input-error' }, (input): Shown => {
+      // This failed input never became executable. Keep bridged parts typed in live and history.
+      const { dynamic: _dynamic, ...typed } = input
+      return {
+        round: close(round, input.toolCallId),
+        chunks: [Option.isNone(desk.plan(input.toolName)) ? input : typed],
+      }
+    }),
     Match.when({ type: 'tool-output-error' }, (output): Shown => {
       // Pi's blocked result becomes the AI SDK denial state only when the durable decision denied it.
       const holdId = round.holds.get(output.toolCallId)
@@ -219,7 +227,11 @@ function show(round: Round, chunk: Chunk, desk: Desk): Shown {
     const current = showInput(pending.round, chunk, desk)
     return { round: current.round, chunks: [...pending.chunks, ...current.chunks] }
   }
-  if (chunk.type === 'tool-output-available' || chunk.type === 'tool-output-error') {
+  if (
+    chunk.type === 'tool-output-available' ||
+    chunk.type === 'tool-output-error' ||
+    chunk.type === 'tool-input-error'
+  ) {
     const pending = release(round, chunk.toolCallId, desk)
     const result = showVisible(pending.round, chunk, desk)
     return { round: result.round, chunks: [...pending.chunks, ...result.chunks] }
@@ -293,5 +305,6 @@ export const needsDesk = (chunks: readonly Chunk[]) =>
     (chunk) =>
       chunk.type === 'tool-input-start' ||
       chunk.type === 'tool-input-available' ||
+      chunk.type === 'tool-input-error' ||
       chunk.type === 'tool-output-error',
   )

@@ -9,7 +9,7 @@ import { isToolUIPart, lastAssistantMessageIsCompleteWithApprovalResponses, tool
 import { Effect } from 'effect'
 import { z } from 'zod'
 import { PlainChat } from '../fixtures/chat.ts'
-import { abort, streamRun } from '../main.ts'
+import { abort, attachRun, history, streamRun } from '../main.ts'
 import { consume, context, host, signal, texts } from './fixtures/host.ts'
 
 /** openai-completions.js customInput stores a growing grammar string, not JSON argument scratch. */
@@ -126,14 +126,31 @@ it.live(
         for await (const chunk of raw) if (chunk.type === 'tool-input-start') started.resolve()
       })()
       await started.promise
+      const attached = await attachRun(opened.harness, opened.root.id, context)
+      if (attached.status !== 'running') throw new Error('Expected partial replay')
+      const replayed = consume(attached.stream)
       await abort(opened.harness, opened.root.id, context)
       await drain
       const finished = await result
+      expect((await replayed).message.parts).toEqual(finished.message.parts)
       const types = finished.chunks.map((chunk) => chunk.type)
       expect(types).toContain('tool-input-start')
       expect(types).toContain('abort')
       expect(types).not.toContain('tool-input-available')
       expect(types).not.toContain('tool-approval-request')
+      expect(types.indexOf('tool-input-error')).toBeGreaterThan(types.indexOf('tool-input-start'))
+      expect(types.indexOf('abort')).toBeGreaterThan(types.indexOf('tool-input-error'))
+      const part = finished.message.parts.find(isToolUIPart)
+      expect(part).toMatchObject({
+        type: 'tool-pay',
+        toolCallId: 'partial',
+        state: 'output-error',
+        errorText: 'Tool input was interrupted before it completed',
+      })
+      const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+      const assistant = page.messages.find((message) => message.role === 'assistant')
+      if (assistant === undefined) throw new Error('Expected aborted history')
+      expect(assistant.parts).toEqual(finished.message.parts)
       const view = await opened.root.context(context)
       const recorded = view.entries
         .flatMap((entry) => entry.model ?? [])

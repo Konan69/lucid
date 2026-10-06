@@ -221,7 +221,7 @@ function userMessage(entry: EntryRecord): UIMessage {
   return { id: `entry:${entry.id}`, role: 'user', parts }
 }
 
-/** Replaced error attempts vanish; unfinished calls have no settled history part. Aborted text remains. */
+/** Replaced errors vanish; aborted inputs retain their SDK input error, never an executable input. */
 function settledEntries(entries: readonly EntryRecord[]) {
   return entries.flatMap((entry, index) => {
     const model = (entry.model ?? [])[0]
@@ -244,7 +244,8 @@ function settledEntries(entries: readonly EntryRecord[]) {
           {
             ...model,
             content: model.content.filter(
-              (part) => part.type !== 'toolCall' || results.has(part.id),
+              (part) =>
+                part.type !== 'toolCall' || results.has(part.id) || model.stopReason === 'aborted',
             ),
           },
         ],
