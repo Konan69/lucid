@@ -14,12 +14,15 @@ const repositoryRoot = NodePath.resolve(
   '..',
 )
 
-const usage = `usage: pnpm gate [full|focused <test files...>] [options]
+const usage = `usage: pnpm gate [full|affected|focused <test files...>] [options]
 
   full                 every stage: ${stageNames.join(', ')}
+  affected             every stage, but only the test files the change can reach
   focused <files...>   only the named test files, with the test database
 
-  --only <a,b>         full: run only these stages
+  --only <a,b>         full, affected: run only these stages
+  --base <commit>      affected: what the change is measured from (default: where the
+                       branch left origin/main)
   --host <ssh host>    run in a warm tree on that machine (default: $VIVID_GATE_HOST)
   --here               run in this checkout even when a host is set
   --name <tree>        the warm tree's name on the host (default: the branch name)
@@ -63,11 +66,12 @@ export function parse(argv) {
       here: { type: 'boolean', default: false },
       committed: { type: 'boolean', default: false },
       sha: { type: 'string' },
+      base: { type: 'string' },
       help: { type: 'boolean', default: false },
     },
   })
   const mode = positionals[0] === undefined ? 'full' : positionals[0]
-  if (values.help || !['full', 'focused'].includes(mode)) return { mode: 'help' }
+  if (values.help || !['full', 'affected', 'focused'].includes(mode)) return { mode: 'help' }
   return { mode, files: positionals.slice(1), ...values }
 }
 
@@ -96,6 +100,22 @@ function lastLines(file) {
   return NodeFS.readFileSync(file, 'utf8').trimEnd().split('\n').slice(-60).join('\n')
 }
 
+/**
+ * What an affected run measures the change from: the commit where this branch left the remote
+ * default branch, so the change is everything the branch adds, committed or not.
+ */
+export function changeBase(root, options, environment) {
+  if (options.mode !== 'affected') return undefined
+  if (options.base !== undefined) return options.base
+  const base = NodeChildProcess.spawnSync('git', ['merge-base', 'HEAD', 'origin/main'], {
+    cwd: root,
+    env: environment,
+    encoding: 'utf8',
+  })
+  if (base.status !== 0) throw new Error('affected needs --base: origin/main is not known here')
+  return base.stdout.trim()
+}
+
 /** The commit this checkout is at; a remote run is told the commit it was sent. */
 function headLabel(root, options) {
   if (options.sha !== undefined) return options.sha
@@ -118,13 +138,14 @@ async function main(argv, environment) {
   }
   const env = withoutRepositoryEnvironment(environment)
   const host = options.host === undefined ? env.VIVID_GATE_HOST : options.host
+  const base = changeBase(repositoryRoot, options, env)
   if (host !== undefined && host !== '' && !options.here)
-    return runCloud(repositoryRoot, { ...options, host }, env)
+    return runCloud(repositoryRoot, { ...options, host, base }, env)
   const label = { mode: options.mode, sha: headLabel(repositoryRoot, options) }
   const outcome =
     options.mode === 'focused'
       ? await runFocused(repositoryRoot, options.files, env)
-      : await runLocal(repositoryRoot, { stages: selectStages(options.only) }, env)
+      : await runLocal(repositoryRoot, { stages: selectStages(options.only), base }, env)
   const { text, passed } = report(outcome, label)
   // A remote run's logs are on the remote machine, so a failure brings its evidence with it.
   for (const result of outcome.results.filter((entry) => entry.failed.length > 0))

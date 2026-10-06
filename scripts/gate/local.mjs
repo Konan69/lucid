@@ -92,6 +92,18 @@ function stageResult(stage, tasks, run) {
 }
 
 /**
+ * What each package's `vitest run` is given. The JSON result is how the verdict counts tests.
+ * With a base, Vitest runs only the test files whose imports reach a file changed since that
+ * commit; a package nothing reaches then has no test to run, which is a pass. A file a test
+ * reads without importing it (a migration, a fixture read from disk) is not in that graph,
+ * which is why an affected run is the working loop and the full run is the gate for main.
+ */
+function vitestArguments(base) {
+  const report = ['--reporter=default', '--reporter=json', `--outputFile.json=${testResult}`]
+  return base === undefined ? report : [...report, `--changed=${base}`, '--passWithNoTests']
+}
+
+/**
  * One Turbo invocation for one lane. `--continue=always` so every failing stage is reported in
  * one run, not only the first. The summary carries each task's cache status, times and log.
  */
@@ -99,10 +111,7 @@ async function runLane(lane, laneStages, run) {
   const tasks = laneStages.flatMap((stage) => stage.tasks)
   const before = existingSummaries(run.root)
   const concurrency = lane === 'checks' ? '1' : String(run.testTasks)
-  const forwarded =
-    lane === 'tests'
-      ? ['--', '--reporter=default', '--reporter=json', `--outputFile.json=${testResult}`]
-      : []
+  const forwarded = lane === 'tests' ? ['--', ...vitestArguments(run.base)] : []
   const turbo = await logged(
     [
       'node',
@@ -208,6 +217,7 @@ export async function runLocal(root, selection, environment) {
     directory,
     env,
     cache,
+    base: selection.base,
     testTasks: Math.max(2, Math.floor(NodeOS.availableParallelism() / 2)),
   }
   const started = Date.now()

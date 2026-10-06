@@ -12,8 +12,9 @@ import './template.ts'
 const supplied = NodeProcess.env.VIVID_TEST_DATABASE_URL
 if (supplied !== undefined) {
   const template = inject('serverDatabaseTemplate')
-  // PostgreSQL identifiers have a 63-byte limit; the invocation UUID plus 64 random bits fits.
-  const name = `${template}_${NodeCrypto.randomBytes(8).toString('hex')}`
+  // PostgreSQL identifiers have a 63-byte limit; the invocation prefix (at most 33 bytes) plus
+  // 64 random bits fits.
+  const name = `${inject('serverDatabasePrefix')}_${NodeCrypto.randomBytes(8).toString('hex')}`
   const admin = new Pg.Client({ connectionString: supplied })
   await admin.connect()
   afterAll(async () => {

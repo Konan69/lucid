@@ -185,6 +185,8 @@ export function runCloud(root, options, environment) {
   push(root, options.host, `${sha}:refs/gate/${name}`, environment)
   const forwarded = [options.mode, ...(options.files === undefined ? [] : options.files)]
   if (options.only !== undefined) forwarded.push('--only', options.only)
+  // The base is an ancestor of the commit just pushed, so the warm tree's repository has it.
+  if (options.base !== undefined) forwarded.push('--base', options.base)
   const start = ssh(options.host, remoteScript, [name, sha, run, label, ...forwarded], 'pipe')
   if (start.status !== 0) throw new Error(`could not start the run: ${start.stderr.trim()}`)
   const exit = follow(options.host, run)
