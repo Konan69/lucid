@@ -22,6 +22,7 @@ import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
 import {
   AuditEvent,
+  Conflict,
   CreateRoutineRequest,
   DatabaseFailure,
   Forbidden,
@@ -394,6 +395,25 @@ const withdrawPending = Effect.fn('RoutineStore.withdrawPending')(function* (
       )
 })
 
+/**
+ * Whether a baseline that was read before the row was locked no longer belongs to the Routine.
+ *
+ * The baseline for a Routine that is switched on again is read from the service for the watch the
+ * Routine had when the patch began, outside the lock, because a network read never runs under a
+ * row lock. A patch that keeps the trigger must still find that watch when it takes the lock: if
+ * another change replaced it meanwhile (`watch_revision` moved), the baseline is for a trigger
+ * that is gone, and writing it would undo that change.
+ */
+const staleBaseline = (patch: {
+  readonly prepared: Watch | null
+  readonly input: PatchInput
+  readonly current: RoutineRecord
+  readonly authorized: RoutineRecord
+}) =>
+  patch.prepared !== null &&
+  patch.input.trigger === undefined &&
+  patch.current.watchRevision !== patch.authorized.watchRevision
+
 /** Row locking preserves concurrent partial updates and key rotation while a trigger is changed. */
 const makePatch = (
   database: DatabaseService,
@@ -416,6 +436,12 @@ const makePatch = (
         const row = rows[0]
         if (row === undefined) return yield* Effect.fail(new RoutineMissing({ id }))
         const current = yield* decodeRoutine(row)
+        if (staleBaseline({ prepared, input, current, authorized }))
+          return yield* Effect.fail(
+            new Conflict({
+              message: 'This Routine changed while it was being switched on. Try again.',
+            }),
+          )
         const prompt = input.prompt === undefined ? current.routine.prompt : input.prompt
         yield* requireStandingPerson(actor, current.routine.prompt)
         yield* requireStandingPerson(actor, prompt)

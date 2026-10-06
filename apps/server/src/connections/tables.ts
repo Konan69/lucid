@@ -15,11 +15,13 @@ import { companyColumn, epoch, personColumn } from '../database/owner.ts'
  * Person called the account ("Work"), null until they call it anything. `identity` is who the
  * service says signed in ("ada@example.com"), null when the service does not say.
  *
- * `label` is retired: no code reads or writes it. There was one `label` for both facts, and every
- * client filled it with the service's own name, so it told no two accounts apart. The column
- * stays, without its NOT NULL, for one release: a deploy applies migrations while the previous
- * server is still answering, and that server selects and inserts `label`. Drop it in the release
- * after this one (6 October 2026).
+ * `label` is retired: no code reads it. There was one `label` for both facts, and every client
+ * filled it with the service's own name, so it told no two accounts apart. The column stays for
+ * one release, and a new row is still written with the service's name in it, exactly what every
+ * client used to send: a deploy applies migrations while the previous server is still answering,
+ * and that server selects `label`, inserts it, and refuses a row in which it is null. So the
+ * previous release keeps working beside this one and after a roll back. Drop the column, and the
+ * line that writes it (`begin` in `store.ts`), in the release after this one (6 October 2026).
  */
 export const connections = pgTable(
   'vivid_connections',

@@ -91,8 +91,9 @@ describe.skipIf(process.env['VIVID_LIVE_ANOTHER_ACCOUNT'] !== '1')(
           // The account that was already there is not the one the card was waiting for.
           expect(work.connection.createdAt).toBeLessThanOrEqual(another.another.askedAt)
 
+          // What the card sends once it is settled: it names the account that was added.
           const carried = yield* fixture.send(
-            `Another ${wiki.name} account is connected. Carry on.`,
+            `Another ${wiki.name} account is connected: ${personal.connection.account}. Carry on.`,
           )
           const done = yield* completeRun(fixture, carried)
           expect(through(done)).toContain(personal.connection.account)

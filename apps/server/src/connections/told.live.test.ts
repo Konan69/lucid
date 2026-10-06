@@ -78,12 +78,15 @@ describe.skipIf(process.env['VIVID_LIVE_TOLD_ACCOUNT'] !== '1')(
           expect(ConnectionState.guards.Ready(second.connection.state)).toBe(true)
           expect(second.connection.createdAt).toBeGreaterThan(card.another.askedAt)
 
+          // What the card sends once it is settled: it names the account that was added.
           const carried = yield* fixture.send(
-            `Another ${wiki.name} account is connected. Carry on.`,
+            `Another ${wiki.name} account is connected: ${second.connection.account}. Carry on.`,
           )
           const done = yield* completeRun(fixture, carried)
-          // Vivid ends with words, and the Person now has two accounts on the service.
-          expect(replyText(done).trim().length).toBeGreaterThan(0)
+          // Vivid says which account is new, and does not call the old one the new one.
+          const reply = replyText(done)
+          expect(reply).toContain('Work')
+          expect(reply).not.toMatch(/new[^.]*\(Personal\)/iu)
           const listed = yield* fixture.rpc.ListConnections()
           expect(listed.connections.map((item) => item.account).toSorted()).toEqual([
             `${wiki.name} (Personal)`,

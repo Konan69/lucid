@@ -158,6 +158,11 @@ const identify = Effect.fn('Connections.identify')(function* (row: ConnectionRec
  *
  * A Person's own account and their Company's may still share a name: whoever names the Company's
  * cannot see what each member called their own. Those two are told apart by the number.
+ *
+ * This reads and then writes; nothing in the database enforces it. Two requests that give the
+ * same name at the same instant (one Person on two devices) can both pass, and the two accounts
+ * are then told apart by the number as well. Making that impossible takes a unique index on the
+ * owner, the service and the folded name, which this change does not add.
  */
 const requireFreeName = Effect.fn('Connections.requireFreeName')(function* (
   actor: Actor,
@@ -296,6 +301,9 @@ const begin = Effect.fn('Connections.begin')(function* (
           // account is ready (`identify`), so it is never known at insert.
           name: request.name,
           identity: null,
+          // Retired, and written only so a server on the previous release can read this row
+          // (`tables.ts`): the service's name is what every client sent as the label.
+          label: service.name,
           personId: actor.person.id,
           companyId,
           references: encodeReferences(step.references),
