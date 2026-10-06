@@ -1,16 +1,15 @@
 import { expect, it } from 'vitest'
 import { Stand, standIn } from './stand.ts'
 
-it('thinks while Vivid is at work, whoever else is writing', () => {
-  expect(standIn('Working', [])).toEqual(Stand.Thinking())
-  // The capsule is the only place that says Vivid is working; typing must not hide it.
-  expect(standIn('Working', ['Ada'])).toEqual(Stand.Thinking())
+it('only changes the mood of its face while Vivid is at work', () => {
+  // The work itself is said just above the composer, not in the capsule.
+  expect(standIn('Working', [])).toEqual(Stand.Resting({ mood: 'thinking' }))
 })
 
-it('says who is writing when Vivid is not at work', () => {
+it('says who is writing, whatever the Thread was waiting on', () => {
   expect(standIn('Quiet', ['Ada', 'Grace'])).toEqual(Stand.Typing({ names: ['Ada', 'Grace'] }))
-  // Someone writing is what is about to change the Thread, more than what it was waiting on.
   expect(standIn('NeedsYou', ['Ada'])).toEqual(Stand.Typing({ names: ['Ada'] }))
+  expect(standIn('Working', ['Ada'])).toEqual(Stand.Typing({ names: ['Ada'] }))
 })
 
 it('waits for the Person when the Thread needs them and nobody is writing', () => {
