@@ -18,12 +18,14 @@ import {
   RunMissing,
   TurnInvalid,
   PartUnsupported,
+  PartTooLarge,
 } from '@vivid/durable'
 
 const decodeLimit = Schema.decodeUnknownPromise(Schema.NumberFromString)
 
 /** Expected ingress/admission failures have transport meanings; unexpected failures still reject. */
 function routeFailure(error: Error): Response {
+  if (error instanceof PartTooLarge) return new Response(error.message, { status: 413 })
   if (error instanceof ConversationMissing) return new Response(error.message, { status: 404 })
   if (error instanceof CallNotWaiting || error instanceof RunMissing)
     return new Response(error.message, { status: 409 })
@@ -80,7 +82,17 @@ async function dispatch(
 ): Promise<Response> {
   const url = new URL(request.url)
   const path = url.pathname
-  if (path === '/chat') return respond(harness, conversationId, request, context)
+  // Example host policy only. Bound raw request bytes in middleware before this route as well.
+  if (path === '/chat')
+    return respond(
+      harness,
+      conversationId,
+      {
+        request,
+        options: { maxPartBytes: 5 * 1024 * 1024 },
+      },
+      context,
+    )
   if (path === '/history' && request.method === 'GET') {
     const text = url.searchParams.get('limit')
     const limit = text === null ? 50 : await decodeLimit(text)

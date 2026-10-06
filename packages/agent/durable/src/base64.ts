@@ -28,3 +28,21 @@ export function base64Size(text: string, start: number): Option.Option<number> {
   if (padding > 0 && (digit(text.charCodeAt(end - 1)) & mask) !== 0) return Option.none()
   return Option.some((length / 4) * 3 - padding)
 }
+
+/** Decode at most twelve signature bytes from already-validated input, never the whole image. */
+export function base64Head(text: string, start: number): readonly number[] {
+  const bytes: number[] = []
+  let bits = 0
+  let buffer = 0
+  for (let index = start; index < text.length && bytes.length < 12; index++) {
+    const value = digit(text.charCodeAt(index))
+    if (value === -1) break // Only terminal padding can remain after base64Size succeeds.
+    buffer = (buffer << 6) | value
+    bits += 6
+    if (bits >= 8) {
+      bits -= 8
+      bytes.push((buffer >>> bits) & 255)
+    }
+  }
+  return bytes
+}

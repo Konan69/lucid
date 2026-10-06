@@ -18,7 +18,7 @@ import * as Pi from './pi.ts'
 import { LiveDoc } from '@earendil-works/pi-durable'
 import { continueRun, prepareRun } from './stream.ts'
 import { waiting } from './waiting.ts'
-import { InputPart, InputParts } from './input.ts'
+import { InputPart, InputParts, type InputOptions } from './input.ts'
 
 /** The transport-neutral turn carries only the client's newest input or named tool settlements. */
 export const ChatTurn = Schema.TaggedUnion({
@@ -38,6 +38,8 @@ export const ChatTurn = Schema.TaggedUnion({
   },
 })
 export type ChatTurn = typeof ChatTurn.Type
+/** Group per-input host policy with the turn, keeping authority/context separate and four arguments. */
+export type TurnInput = ChatTurn | { readonly turn: ChatTurn; readonly options: InputOptions }
 
 const ToolName = Schema.String.check(Schema.isPattern(/^(?:tool-|dynamic-tool$)/u))
 const ApprovalValue = Schema.Struct({
@@ -213,14 +215,15 @@ type ResponseEffect = Effect.Effect<
 export const respond = Effect.fn('Durable.respond')(function* (
   harness: Harness,
   conversationId: ConversationId,
-  turn: ChatTurn,
+  input: TurnInput,
   context: Context,
 ) {
+  const { turn, options } = 'turn' in input ? input : { turn: input, options: {} }
   return yield* ChatTurn.match(turn, {
-    Input: (input): ResponseEffect =>
+    Input: ({ parts, messageId }): ResponseEffect =>
       prepareRun(
         harness,
-        { conversationId, content: input.parts, requestId: input.messageId },
+        { conversationId, content: parts, requestId: messageId, options },
         context,
       ),
     Resume: (resume): ResponseEffect =>

@@ -39,7 +39,17 @@ async function dispatch(
 ): Promise<Response> {
   const url = new URL(request.url)
   const path = url.pathname
-  if (path === '/chat') return respond(harness, conversationId, request, context)
+  // Example host policy only. Bound raw request bytes in middleware before this route as well.
+  if (path === '/chat')
+    return respond(
+      harness,
+      conversationId,
+      {
+        request,
+        options: { maxPartBytes: 5 * 1024 * 1024 },
+      },
+      context,
+    )
   if (path === '/history' && request.method === 'GET') {
     const text = url.searchParams.get('limit')
     const limit = text === null ? 50 : await decodeLimit(text)
@@ -69,7 +79,7 @@ async function dispatch(
 }
 ```
 
-Chat `respond` accepts a Request; GET reconnects and returns 204 when idle, POST reads and decodes JSON text. Unsupported methods return 405, missing conversations 404, invalid turns and unsupported file parts 400, and missing resume runs 409. Other adapter failures reject with the original tagged error class. `decodeTurn` and `respondTurn` support hosts that already decoded an object body. `holdId(text)` validates an opaque hold id received over another wire and throws `HoldIdInvalid` for malformed values, without requiring a core Schema import.
+Chat `respond` accepts a Request; GET reconnects and returns 204 when idle, POST reads and decodes JSON text. Unsupported methods return 405, missing conversations 404, invalid turns and unsupported file parts 400, oversized parts 413, and missing resume runs 409. Other adapter failures reject with the original tagged error class. `decodeTurn` and `respondTurn` support hosts that already decoded an object body. `holdId(text)` validates an opaque hold id received over another wire and throws `HoldIdInvalid` for malformed values, without requiring a core Schema import.
 
 ## Effect server
 
@@ -96,6 +106,9 @@ export function chat(
     Effect.catchTag('PartUnsupported', () =>
       Effect.succeed(new Response('Unsupported file; use an inline base64 image', { status: 400 })),
     ),
+    Effect.catchTag('PartTooLarge', () =>
+      Effect.succeed(new Response('File part too large', { status: 413 })),
+    ),
     Effect.catchTag('RunMissing', () =>
       Effect.succeed(new Response('No run made these tool calls', { status: 409 })),
     ),
@@ -114,9 +127,9 @@ Use the stock `useChat` transport, `DefaultChatTransport`, pointing at the autho
 
 [Complete, type-checked React component](src/examples/client.tsx): stock `useChat`, the loaded history as its first messages, `resume` to rejoin a run in progress, an approval answered from the tool part, and a tool the person answers. The same flows run against the real hook in [`src/react/chat.test.tsx`](src/react/chat.test.tsx). Client `stop()` drops the fetch only. An application that intends to stop durable work calls its authorized abort endpoint too.
 
-User inputs retain ordered text and file parts. Inline base64 image data URLs become native Pi image blocks; history restores their file parts, including filenames retained as bridge metadata on the stored image JSON. Pi Durable 1.0.4 accepts text and image content only. Remote URLs (including image URLs), non-image files, malformed base64 and mismatched data-URL media types fail `PartUnsupported` before admission; HTTP chat returns 400. This library never fetches a file URL. Core `ChatTurn.Input` has `parts`, and `RunInput.content` accepts either a plain string or ordered `InputPart` values.
+User inputs retain ordered text and file parts. Inline base64 PNG, JPEG, GIF and WebP data URLs with matching binary signatures become native Pi image blocks; history restores their file parts, including filenames retained as bridge metadata on the stored image JSON. Pi Durable 1.0.4 accepts text and image content only. Remote URLs (including image URLs), SVG or unknown image types, mismatched magic bytes, non-image files, malformed base64 and mismatched data-URL media types fail `PartUnsupported` before admission; HTTP chat returns 400. This library never fetches a file URL. Core `ChatTurn.Input` has `parts`, and `RunInput.content` accepts either a plain string or ordered `InputPart` values.
 
-Size limits belong to the host: bound HTTP request bytes in its ingress middleware before calling `respond`, and check file counts and decoded image sizes before `respondTurn`/core `respond` or `prepareRun` for hosts using typed input directly. This library imposes no payload-size policy.
+The host should set `options.maxPartBytes` to a nonnegative integer decoded-byte limit per image, and also bound HTTP request bytes in middleware before calling `respond`. There is no default image limit. To preserve the repo’s four-parameter rule, bounded ingress uses `respond(harness, id, { request, options: { maxPartBytes } }, context)` or `respondTurn(harness, id, { turn, options: { maxPartBytes } }, context)`; existing bare Request/turn calls remain valid. Core `respond` accepts the same turn/options bundle. `streamRun` and `prepareRun` take `RunInput.options`. Exceeding the decoded size fails `PartTooLarge { bytes, limit }`, mapped to HTTP 413 before observation or admission. Validation scans base64 once and reads at most twelve signature bytes; it never decodes or copies the full binary. Empty text blocks beside files are omitted from Pi content. The server examples choose a 5 MB decoded-image budget as a host policy, not a library default.
 
 ## Guarantees
 

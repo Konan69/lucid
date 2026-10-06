@@ -8,6 +8,10 @@ import { HoldIdInvalid, TurnInvalid } from './errors.ts'
 import { prepareRun } from './stream.ts'
 import { TurnBody } from './respond.ts'
 import type { ToolsOptions } from './tools.ts'
+import type { InputOptions } from './input.ts'
+
+/** A host can bound decoded parts while preserving the four-argument Request ingress. */
+export type RequestInput = Request | { readonly request: Request; readonly options: InputOptions }
 
 /** Like runtime/client.test.ts decodeIncoming, parse JSON text and validate through one compiled codec. */
 const decodeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(TurnBody))
@@ -77,7 +81,7 @@ export const continueRun = (...args: Parameters<typeof Core.continueRun>) =>
 export const respondTurn = (
   harness: Harness,
   conversationId: ConversationId,
-  turn: Core.ChatTurn,
+  turn: Core.TurnInput,
   context: Context,
 ): Promise<Response> =>
   Effect.runPromise(
@@ -95,6 +99,9 @@ export const respondTurn = (
           new Response('Unsupported file; use an inline base64 image', { status: 400 }),
         ),
       ),
+      Effect.catchTag('PartTooLarge', () =>
+        Effect.succeed(new Response('File part too large', { status: 413 })),
+      ),
     ),
   )
 
@@ -103,9 +110,10 @@ export const respondTurn = (
 export async function respond(
   harness: Harness,
   conversationId: ConversationId,
-  request: Request,
+  input: RequestInput,
   context: Context,
 ): Promise<Response> {
+  const { request, options } = 'request' in input ? input : { request: input, options: {} }
   // AI SDK HttpChatTransport.reconnectToStream sends a bodyless GET and treats 204 as idle.
   if (request.method === 'GET') {
     return Effect.runPromise(
@@ -139,7 +147,7 @@ export async function respond(
   )
   if (Option.isNone(turn))
     return new Response('Expected a user message or a message with tool calls', { status: 400 })
-  return respondTurn(harness, conversationId, turn.value, context)
+  return respondTurn(harness, conversationId, { turn: turn.value, options }, context)
 }
 
 export {
@@ -153,6 +161,7 @@ export {
   PiFailed,
   TurnInvalid,
   PartUnsupported,
+  PartTooLarge,
   RunMissing,
   ToolSchemaFailed,
   ToolFailed,
@@ -164,8 +173,8 @@ export type { Replay, ToolsOptions } from './tools.ts'
 export type { RunInput } from './stream.ts'
 export type { ResumeInput } from './resume.ts'
 export type { RunState, Step, Chunk } from './chunks.ts'
-export type { ChatTurn } from './respond.ts'
-export type { InputPart } from './input.ts'
+export type { ChatTurn, TurnInput } from './respond.ts'
+export type { InputPart, InputOptions } from './input.ts'
 
 /** Explicit run cancellation is distinct from a fetch abort or a detached stream reader. */
 export const abort = (...args: Parameters<typeof Core.abort>) =>

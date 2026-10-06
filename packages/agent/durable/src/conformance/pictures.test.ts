@@ -7,7 +7,16 @@ import { Effect, Option, Stream } from 'effect'
 import * as Core from '../core.ts'
 import { PlainChat } from '../fixtures/chat.ts'
 import type { ProviderOptions } from '../fixtures/provider.ts'
-import { decodeTurn, history, respond, streamRun, PartUnsupported, TurnInvalid } from '../main.ts'
+import {
+  decodeTurn,
+  history,
+  respond,
+  respondTurn,
+  streamRun,
+  PartUnsupported,
+  PartTooLarge,
+  TurnInvalid,
+} from '../main.ts'
 import { context, host } from './fixtures/host.ts'
 import { consume } from './fixtures/host.ts'
 
@@ -156,12 +165,13 @@ it.live('retains ordered text and pictures through chat and raw history', () =>
     expect(userContent(received)).toEqual([
       { type: 'text', text: 'First' },
       { type: 'image', mimeType: 'image/png', data, filename: 'picture.png' },
-      { type: 'text', text: '' },
       { type: 'text', text: 'Second' },
       { type: 'image', mimeType: 'image/png', data },
     ])
     const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
-    expect(partsAt(page.messages, 0)).toEqual(parts)
+    expect(partsAt(page.messages, 0)).toEqual(
+      parts.filter((part) => part.type !== 'text' || part.text !== ''),
+    )
   }),
 )
 
@@ -188,6 +198,21 @@ it.live('admits file-only input through core prepareRun', () =>
 )
 
 const unsupported = [
+  {
+    name: 'SVG with script',
+    mediaType: 'image/svg+xml',
+    url: 'data:image/svg+xml;base64,PHN2Zz48c2NyaXB0PmFsZXJ0KDEpPC9zY3JpcHQ+PC9zdmc+',
+  },
+  {
+    name: 'unknown image media',
+    mediaType: 'image/x-anything',
+    url: 'data:image/x-anything;base64,YQ==',
+  },
+  {
+    name: 'plain text declared as PNG',
+    mediaType: 'image/png',
+    url: 'data:image/png;base64,aGVsbG8=',
+  },
   { name: 'remote images', mediaType: 'image/png', url: 'https://picture.test/image.png' },
   {
     name: 'non-image files',
@@ -197,6 +222,99 @@ const unsupported = [
   { name: 'invalid base64', mediaType: 'image/png', url: 'data:image/png;base64,invalid!' },
   { name: 'mismatched media types', mediaType: 'image/png', url: `data:image/jpeg;base64,${data}` },
 ]
+
+/** All four admitted MIME types must match actual decoded signature bytes. */
+for (const [mediaType, signature] of [
+  ['image/png', [137, 80, 78, 71, 13, 10, 26, 10]],
+  ['image/jpeg', [255, 216, 255, 224]],
+  ['image/gif', [71, 73, 70, 56, 55, 97]],
+  ['image/gif', [71, 73, 70, 56, 57, 97]],
+  ['image/webp', [82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80]],
+] as const)
+  it.live(`admits ${mediaType} signature ${signature.join(',')}`, () =>
+    Effect.promise(async () => {
+      const fixture = await host({}, {}, {}, images)
+      const opened = await fixture.open()
+      const encoded = Buffer.from(signature).toString('base64')
+      const parts: Core.InputPart[] = [
+        { type: 'file', mediaType, url: `data:${mediaType};base64,${encoded}` },
+      ]
+      opened.faux.setResponses([fauxAssistantMessage('Recognized.')])
+      await consume(
+        await streamRun(
+          opened.harness,
+          { conversationId: opened.root.id, content: parts, requestId: 'signature' },
+          context,
+        ),
+      )
+      expect(opened.faux.state.callCount).toBe(1)
+      const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+      expect(partsAt(page.messages, 0)).toEqual(parts)
+    }),
+  )
+
+/** Byte budgets use the decoded size and reject before persistence on every public input seam. */
+it.live(
+  'enforces the host decoded-byte bound in core, streamRun, respondTurn and Request ingress',
+  () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(() => host({}, {}, {}, images))
+      const opened = yield* Effect.promise(() => fixture.open())
+      const bytes = Buffer.from(data, 'base64').byteLength
+      const options = { maxPartBytes: bytes - 1 }
+      const input = {
+        conversationId: opened.root.id,
+        content: [picture],
+        requestId: 'bounded',
+        options,
+      }
+      const failure = yield* Core.prepareRun(opened.harness, input, context).pipe(Effect.flip)
+      expect(failure).toBeInstanceOf(PartTooLarge)
+      expect(failure).toMatchObject({ bytes, limit: bytes - 1 })
+      yield* Effect.promise(() =>
+        expect(streamRun(opened.harness, input, context)).rejects.toBeInstanceOf(PartTooLarge),
+      )
+      const turn = Core.ChatTurn.cases.Input.make({ messageId: 'bounded', parts: [picture] })
+      const core = yield* Core.respond(
+        opened.harness,
+        opened.root.id,
+        { turn, options },
+        context,
+      ).pipe(Effect.flip)
+      expect(core).toBeInstanceOf(PartTooLarge)
+      const turned = yield* Effect.promise(() =>
+        respondTurn(opened.harness, opened.root.id, { turn, options }, context),
+      )
+      expect(turned.status).toBe(413)
+      const request = new Request('http://durable.test/chat', {
+        method: 'POST',
+        body: JSON.stringify({ messages: [{ role: 'user', id: 'bounded', parts: [picture] }] }),
+      })
+      const response = yield* Effect.promise(() =>
+        respond(opened.harness, opened.root.id, { request, options }, context),
+      )
+      expect(response.status).toBe(413)
+      expect(yield* Effect.promise(() => response.text())).toBe('File part too large')
+      expect(opened.faux.state.callCount).toBe(0)
+      expect(
+        (yield* Effect.promise(() => opened.root.entries({}, 10, undefined, context))).items,
+      ).toEqual([])
+      opened.faux.setResponses([fauxAssistantMessage('At the bound.')])
+      yield* Effect.promise(async () =>
+        consume(
+          await streamRun(
+            opened.harness,
+            {
+              ...input,
+              options: { maxPartBytes: bytes },
+            },
+            context,
+          ),
+        ),
+      )
+      expect(opened.faux.state.callCount).toBe(1)
+    }),
+)
 
 /** Incomplete files cannot fall through to a generic ignored part alongside otherwise valid text. */
 it.live('rejects incomplete file shapes and empty text at body decoding', () =>

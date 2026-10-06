@@ -40,7 +40,16 @@ const post = Effect.fn('Example.post')(function* (
 ) {
   const body = yield* readBody(request)
   const turn = yield* decodeRequest(body).pipe(Effect.mapError(() => new Durable.TurnInvalid({})))
-  const stream = yield* Durable.respond(harness, conversationId, turn, context)
+  // Host policy, not a library default; middleware also bounds the raw request before reading.
+  const stream = yield* Durable.respond(
+    harness,
+    conversationId,
+    {
+      turn,
+      options: { maxPartBytes: 5 * 1024 * 1024 },
+    },
+    context,
+  )
   return createUIMessageStreamResponse({ stream: yield* Stream.toReadableStreamEffect(stream) })
 })
 
@@ -80,6 +89,9 @@ export function chat(
     ),
     Effect.catchTag('PartUnsupported', () =>
       Effect.succeed(new Response('Unsupported file; use an inline base64 image', { status: 400 })),
+    ),
+    Effect.catchTag('PartTooLarge', () =>
+      Effect.succeed(new Response('File part too large', { status: 413 })),
     ),
     Effect.catchTag('RunMissing', () =>
       Effect.succeed(new Response('No run made these tool calls', { status: 409 })),

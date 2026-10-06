@@ -77,6 +77,18 @@ export class PartUnsupported extends Schema.TaggedError<PartUnsupported>()(
   }
 }
 
+/** A decoded image exceeds the host's explicit per-part byte budget; no default is imposed. */
+export class PartTooLarge extends Schema.TaggedError<PartTooLarge>()(
+  'PartTooLarge',
+  { bytes: Schema.Number, limit: Schema.Number },
+  { title: 'PartTooLarge' },
+) {
+  /** Report byte units, never the submitted image or URL. */
+  override get message() {
+    return `File part is ${this.bytes} bytes; limit is ${this.limit} bytes`
+  }
+}
+
 /** None of the stored assistant messages made the tool calls named by a resume. */
 export class RunMissing extends Schema.TaggedError<RunMissing>()(
   'RunMissing',
