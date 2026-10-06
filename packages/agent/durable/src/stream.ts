@@ -168,13 +168,12 @@ export const prepareRun: (
   input: RunInput,
   context: Context,
 ) => Effect.Effect<
-  Stream.Stream<UIMessageChunk, WatchFailure, never>,
+  Stream.Stream<UIMessageChunk, WatchFailure>,
   | import('./errors.ts').ConversationMissing
   | import('./errors.ts').PartTooLarge
   | import('./errors.ts').PartUnsupported
   | PiFailed
-  | import('./errors.ts').TurnInvalid,
-  never
+  | import('./errors.ts').TurnInvalid
 > = Effect.fn('Durable.prepareRun')(function* (
   harness: Harness,
   input: RunInput,
@@ -284,9 +283,8 @@ export const attachRun: (
   conversationId: ConversationId,
   context: Context,
 ) => Effect.Effect<
-  Option.Option<Stream.Stream<UIMessageChunk, WatchFailure, never>>,
-  import('./errors.ts').ConversationMissing | PiFailed | RunMissing,
-  never
+  Option.Option<Stream.Stream<UIMessageChunk, WatchFailure>>,
+  import('./errors.ts').ConversationMissing | PiFailed | RunMissing
 > = Effect.fn('Durable.attachRun')(function* (
   harness: Harness,
   conversationId: ConversationId,
@@ -317,9 +315,8 @@ export const continueRun: (
   input: ResumeInput,
   context: Context,
 ) => Effect.Effect<
-  Stream.Stream<UIMessageChunk, WatchFailure, never>,
-  import('./errors.ts').ConversationMissing | PiFailed | RunMissing,
-  never
+  Stream.Stream<UIMessageChunk, WatchFailure>,
+  import('./errors.ts').ConversationMissing | PiFailed | RunMissing
 > = Effect.fn('Durable.continueRun')(function* (
   harness: Harness,
   conversationId: ConversationId,
@@ -336,9 +333,8 @@ export const completeTurn: (
   input: ResumeInput,
   context: Context,
 ) => Effect.Effect<
-  Stream.Stream<UIMessageChunk, WatchFailure, never>,
-  import('./errors.ts').ConversationMissing | PiFailed | RunMissing,
-  never
+  Stream.Stream<UIMessageChunk, WatchFailure>,
+  import('./errors.ts').ConversationMissing | PiFailed | RunMissing
 > = Effect.fn('Durable.completeTurn')(function* (
   harness: Harness,
   conversationId: ConversationId,

@@ -327,8 +327,7 @@ export const history: (
   | import('./errors.ts').ConversationMissing
   | HistoryCursorInvalid
   | HistoryPageInvalid
-  | import('./errors.ts').PiFailed,
-  never
+  | import('./errors.ts').PiFailed
 > = Effect.fn('Durable.history')(function* (
   harness: Harness,
   conversationId: ConversationId,

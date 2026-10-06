@@ -547,8 +547,7 @@ export const answer: (
   context: Context,
 ) => Effect.Effect<
   Settlement,
-  CallNotWaiting | import('./errors.ts').ConversationMissing | import('./errors.ts').PiFailed,
-  never
+  CallNotWaiting | import('./errors.ts').ConversationMissing | import('./errors.ts').PiFailed
 > = Effect.fn('Durable.answer')(function* (
   harness: Harness,
   conversationId: ConversationId,

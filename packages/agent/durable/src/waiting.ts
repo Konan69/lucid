@@ -46,8 +46,7 @@ export const waiting: (
   context: Context,
 ) => Effect.Effect<
   Waiting[],
-  import('./errors.ts').ConversationMissing | import('./errors.ts').PiFailed,
-  never
+  import('./errors.ts').ConversationMissing | import('./errors.ts').PiFailed
 > = Effect.fn('Durable.waiting')(function* (
   harness: Harness,
   conversationId: ConversationId,

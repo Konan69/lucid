@@ -15,8 +15,7 @@ export const abort: (
   context: Context,
 ) => Effect.Effect<
   void,
-  import('./errors.ts').ConversationMissing | import('./errors.ts').PiFailed,
-  never
+  import('./errors.ts').ConversationMissing | import('./errors.ts').PiFailed
 > = Effect.fn('Durable.abort')(function* (
   harness: Harness,
   conversationId: ConversationId,

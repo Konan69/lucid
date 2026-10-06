@@ -222,16 +222,14 @@ export const respond: (
     import('ai').UIMessageChunk,
     | import('./errors.ts').PiFailed
     | import('./errors.ts').WatchClosed
-    | import('./errors.ts').WatchOverflowed,
-    never
+    | import('./errors.ts').WatchOverflowed
   >,
   | import('./errors.ts').ConversationMissing
   | import('./errors.ts').PartTooLarge
   | import('./errors.ts').PartUnsupported
   | import('./errors.ts').PiFailed
   | RunMissing
-  | TurnInvalid,
-  never
+  | TurnInvalid
 > = Effect.fn('Durable.respond')(function* (
   harness: Harness,
   conversationId: ConversationId,

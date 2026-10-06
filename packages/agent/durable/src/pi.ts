@@ -24,7 +24,7 @@ export const conversation: (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,
-) => Effect.Effect<Conversation, ConversationMissing | PiFailed, never> = Effect.fn(
+) => Effect.Effect<Conversation, ConversationMissing | PiFailed> = Effect.fn(
   'Durable.conversation',
 )(function* (harness: Harness, conversationId: ConversationId, context: Context) {
   const found = yield* Effect.tryPromise({
@@ -213,8 +213,7 @@ export const watch: (
     snapshot: import('@earendil-works/pi-durable').SnapshotEvent
     stream: Stream.Stream<
       Exclude<AgentEvent, import('@earendil-works/pi-durable').SnapshotEvent>,
-      PiFailed | WatchClosed | WatchOverflowed,
-      never
+      PiFailed | WatchClosed | WatchOverflowed
     >
   },
   PiFailed,
@@ -258,7 +257,7 @@ export const watchLive: (
   conversationId: ConversationId,
   context: Context,
 ) => Effect.Effect<
-  Stream.Stream<Readonly<LiveState>, PiFailed | WatchClosed, never>,
+  Stream.Stream<Readonly<LiveState>, PiFailed | WatchClosed>,
   PiFailed,
   import('effect/Scope').Scope
 > = Effect.fn('Durable.watchLive')(function* (

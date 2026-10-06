@@ -23,7 +23,7 @@ export const questionOpen: (
   conversation: Conversation,
   question: Question,
   context: Context,
-) => Effect.Effect<boolean, import('./errors.ts').PiFailed, never> = Effect.fn(
+) => import('effect/Effect').Effect<boolean, import('./errors.ts').PiFailed> = Effect.fn(
   'Durable.questionOpen',
 )(function* (harness: Harness, conversation: Conversation, question: Question, context: Context) {
   return yield* Delivery.match(question.delivery, {
@@ -183,7 +183,7 @@ export const deliver: (
   conversation: Conversation,
   given: Answer,
   context: Context,
-) => Effect.Effect<Settlement, CallNotWaiting | import('./errors.ts').PiFailed, never> = Effect.fn(
+) => Effect.Effect<Settlement, CallNotWaiting | import('./errors.ts').PiFailed> = Effect.fn(
   'Durable.deliverAnswer',
 )(function* (
   harness: Harness,
