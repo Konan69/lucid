@@ -1,15 +1,19 @@
-import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
+import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import {
+  DefaultChatTransport,
   isToolUIPart,
   lastAssistantMessageIsCompleteWithApprovalResponses,
   lastAssistantMessageIsCompleteWithToolCalls,
+  tool,
+  type UIMessage,
 } from 'ai'
 import { expect, it } from '@effect/vitest'
 import { Effect, Option } from 'effect'
+import { z } from 'zod'
 import * as Core from '../core.ts'
 import { PlainChat } from '../fixtures/chat.ts'
-import { answer, history, streamRun } from '../main.ts'
-import { call, consume, context, hold, shop, signal, texts } from './fixtures/host.ts'
+import { answer, attachRun, decide, history, respond, streamRun } from '../main.ts'
+import { call, consume, context, hold, host, shop, signal, texts } from './fixtures/host.ts'
 
 /** Read approval identity exactly as a stock client does. */
 function approval(chat: PlainChat) {
@@ -119,8 +123,120 @@ it('pages on message boundaries across more than one raw entry page', async () =
   expect(second.next).toBeUndefined()
 })
 
-// The first input's placement separates settled history from a multi-entry run still waiting.
-it('loads settled messages then GET resumes the busy run without duplicating history', async () => {
+// Reload replaces partial SDK state; history owns users and GET owns the active assistant.
+it('reloads a running tool through history and GET in message order without duplicates', async () => {
+  const entered = signal()
+  const release = signal()
+  const attached = signal()
+  const fixture = await host(
+    {
+      work: tool({
+        description: 'Build a report',
+        inputSchema: z.object({}),
+        execute: async () => {
+          entered.resolve()
+          await release.promise
+          return '12 pages'
+        },
+      }),
+    },
+    {},
+  )
+  const opened = await fixture.open()
+  opened.faux.setResponses([
+    fauxAssistantMessage(
+      [{ type: 'text', text: 'Starting.' }, fauxToolCall('work', {}, { id: 'work' })],
+      { stopReason: 'toolUse' },
+    ),
+    fauxAssistantMessage('Finished.'),
+  ])
+  const original = await streamRun(
+    opened.harness,
+    { conversationId: opened.root.id, content: 'Build', requestId: 'reload' },
+    context,
+  )
+  await entered.promise
+  await original.cancel()
+  const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+  expect(page.messages).toMatchObject([{ role: 'user', parts: [{ type: 'text', text: 'Build' }] }])
+  expect(page.messages).toHaveLength(1)
+  const fresh = new PlainChat({
+    transport: new DefaultChatTransport<UIMessage>({
+      api: 'http://durable.test/chat',
+      fetch: async (url, init) => {
+        const request = new Request(url, init)
+        const response = await respond(opened.harness, opened.root.id, request, context)
+        if (request.method === 'GET') attached.resolve()
+        return response
+      },
+    }),
+  })
+  fresh.messages = page.messages
+  const resumed = fresh.resumeStream()
+  await attached.promise
+  release.resolve()
+  await resumed
+  expect(fresh.status).toBe('ready')
+  expect(fresh.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
+  expect(fresh.messages[0]).toEqual(page.messages[0])
+  const assistant = Option.getOrThrow(Option.fromNullishOr(fresh.lastMessage))
+  expect(texts(assistant)).toEqual(['Starting.', 'Finished.'])
+  expect(assistant.parts.filter(isToolUIPart)).toMatchObject([
+    { toolCallId: 'work', state: 'output-available', output: '12 pages' },
+  ])
+  const settled = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+  expect(settled.messages.map((message) => message.parts)).toEqual(
+    fresh.messages.map((message) => message.parts),
+  )
+})
+
+// Even before a first assistant entry exists, the placed user input survives a reload.
+it('includes the active input while the model has not produced an assistant entry', async () => {
+  const fixture = await shop()
+  const opened = await fixture.open()
+  const entered = signal()
+  const release = signal()
+  opened.faux.setResponses([
+    async () => {
+      entered.resolve()
+      await release.promise
+      return fauxAssistantMessage('Done.')
+    },
+  ])
+  const original = await streamRun(
+    opened.harness,
+    { conversationId: opened.root.id, content: 'New', requestId: 'generation' },
+    context,
+  )
+  await entered.promise
+  const page = await history(opened.harness, opened.root.id, { limit: 1 }, context)
+  expect(page.messages).toMatchObject([{ role: 'user', parts: [{ type: 'text', text: 'New' }] }])
+  expect(page.messages).toHaveLength(1)
+  expect(page.next).toBeUndefined()
+  // A raw user entry before the assistant also belongs in history, even without a run-input receipt.
+  await opened.root.commit(
+    (tx) =>
+      tx.appendEntry(opened.root.id, {
+        kind: 'pi.user',
+        model: [{ role: 'user', content: 'One more input', timestamp: 0 }],
+      }),
+    context,
+  )
+  const newest = await history(opened.harness, opened.root.id, { limit: 1 }, context)
+  expect(newest.messages).toMatchObject([
+    { role: 'user', parts: [{ type: 'text', text: 'One more input' }] },
+  ])
+  expect(newest.messages).toHaveLength(1)
+  if (newest.next === undefined) throw new Error('Expected the original input cursor')
+  expect(
+    await history(opened.harness, opened.root.id, { limit: 1, before: newest.next }, context),
+  ).toEqual(page)
+  release.resolve()
+  await consume(original)
+})
+
+// A parked approval reconnect adds only the assistant; its user is already in the hydrated list.
+it('reloads settled messages and the active user before GET resumes a parked approval', async () => {
   const fixture = await shop()
   const opened = await fixture.open()
   opened.faux.setResponses([fauxAssistantMessage('Old.')])
@@ -130,20 +246,110 @@ it('loads settled messages then GET resumes the busy run without duplicating his
   await chat.sendMessage({ text: 'New' })
   const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
   expect(page.messages.map((message) => message.parts)).toEqual(
-    chat.messages.slice(0, 2).map((message) => message.parts),
+    chat.messages.slice(0, 3).map((message) => message.parts),
   )
   const fresh = new PlainChat({ transport: opened.transport })
   fresh.messages = page.messages
   await fresh.resumeStream()
-  expect(fresh.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'assistant'])
+  expect(fresh.messages.map((message) => message.role)).toEqual([
+    'user',
+    'assistant',
+    'user',
+    'assistant',
+  ])
+  expect(fresh.messages.map((message) => message.parts)).toEqual(
+    chat.messages.map((message) => message.parts),
+  )
   expect(
-    Option.getOrThrow(Option.fromNullishOr(fresh.messages[2])).parts.find(isToolUIPart),
+    Option.getOrThrow(Option.fromNullishOr(fresh.messages[3])).parts.find(isToolUIPart),
   ).toMatchObject({
     toolCallId: 'held',
     state: 'approval-requested',
   })
   expect(texts(Option.getOrThrow(Option.fromNullishOr(fresh.messages[1])))).toEqual(['Old.'])
+  const newest = await history(opened.harness, opened.root.id, { limit: 1 }, context)
+  expect(newest.messages).toEqual([page.messages[2]])
+  if (newest.next === undefined) throw new Error('Expected previous message cursor')
+  const previous = await history(
+    opened.harness,
+    opened.root.id,
+    { limit: 1, before: newest.next },
+    context,
+  )
+  expect(previous.messages).toEqual([page.messages[1]])
 })
+
+// Active prefixes spanning Pi's 100-entry pages must not leak steers before finding the first assistant.
+it.each([1, 105])(
+  'withholds %i placed steers until settlement and keeps the first input',
+  async (count) => {
+    const fixture = await shop({ steeringMode: 'all' })
+    const opened = await fixture.open()
+    opened.faux.setResponses([
+      call('pay', { amount: 100 }, 'c1'),
+      call('pay', { amount: 200 }, 'c2'),
+      fauxAssistantMessage('Done.'),
+    ])
+    await consume(
+      await streamRun(
+        opened.harness,
+        { conversationId: opened.root.id, content: 'Pay', requestId: 'first' },
+        context,
+      ),
+    )
+    for (let index = 0; index < count; index++)
+      await opened.root.submit(
+        {
+          type: 'input',
+          content: 'Also another payment',
+          requestId: `steer:${index}`,
+          whenBusy: 'steer',
+        },
+        context,
+      )
+    await decide(
+      opened.harness,
+      opened.root.id,
+      { holdId: await hold(opened.harness, opened.root.id, 'c1'), approved: true },
+      context,
+    )
+    const attached = await attachRun(opened.harness, opened.root.id, context)
+    if (attached.status !== 'running') throw new Error('Expected the second approval run')
+    await consume(attached.stream)
+    const entries = await opened.root.entries({}, 100, undefined, context)
+    expect(
+      entries.items.some(
+        (entry) =>
+          entry.kind === 'pi.user' &&
+          (entry.model ?? []).some(
+            (message) => message.role === 'user' && message.content === 'Also another payment',
+          ),
+      ),
+    ).toBe(true)
+    const busy = await history(opened.harness, opened.root.id, { limit: 1 }, context)
+    expect(busy.messages).toMatchObject([{ role: 'user', parts: [{ type: 'text', text: 'Pay' }] }])
+    expect(busy.messages).toHaveLength(1)
+    expect(busy.next).toBeUndefined()
+    await decide(
+      opened.harness,
+      opened.root.id,
+      { holdId: await hold(opened.harness, opened.root.id, 'c2'), approved: true },
+      context,
+    )
+    await opened.root.waitForIdle(context)
+    const settled = await history(opened.harness, opened.root.id, { limit: count + 3 }, context)
+    expect(settled.messages.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      ...Array.from({ length: count }, () => 'user'),
+      'assistant',
+    ])
+    expect(settled.messages[2]).toMatchObject({
+      parts: [{ type: 'text', text: 'Also another payment' }],
+    })
+    expect(fixture.paid).toEqual([100, 200])
+  },
+)
 
 // Pi forks copy the raw prefix, while history cursors remain entry bounds independent of storage cursors.
 it('reads a forked prefix and ignores control and application entries', async () => {

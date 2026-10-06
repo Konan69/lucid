@@ -66,7 +66,7 @@ function groups(entries: readonly EntryRecord[], exhausted: boolean) {
   return completed
 }
 
-/** Known run inputs expose placement publicly in Pi 1.0.4; the earliest entry excludes the whole run. */
+/** Known input placements locate the active prefix without scanning submissions or needing Storage. */
 const boundary = Effect.fn('Durable.historyBoundary')(function* (reader: Reader) {
   const live = yield* Pi.snapshot(reader.harness, LiveDoc, reader.conversation.id, reader.context)
   if (Option.isNone(live) || live.value.run === undefined) return Option.none<EntryId>()
@@ -84,14 +84,29 @@ const boundary = Effect.fn('Durable.historyBoundary')(function* (reader: Reader)
   throw new Error('Pi active run has no placed input entry')
 })
 
-/** Bounds combine the captured busy-run cut and a caller's previous message boundary. */
-function queryFor(before: Option.Option<HistoryCursor>, active: Option.Option<EntryId>) {
-  const bounds = [Option.map(before, (cursor) => cursor.entry), active].flatMap((bound) =>
-    Option.isSome(bound) ? [bound.value] : [],
-  )
-  return bounds.length === 0
-    ? {}
-    : { maxEntryId: bounds.reduce((first, entry) => (entry < first ? entry : first)) }
+/** Pi's inclusive query bound is filtered to the cursor's exclusive message boundary below. */
+function queryFor(before: Option.Option<HistoryCursor>) {
+  return Option.isNone(before) ? {} : { maxEntryId: before.value.entry }
+}
+
+/**
+ * Reconnect supplies the active assistant, while history supplies its preceding user inputs.
+ * Entries arrive newest first: find the earliest active assistant before admitting any active
+ * users. A steer placed after that assistant stays hidden until settlement, because reconnect
+ * cannot insert a user message between the assistant's steps.
+ */
+function historyEntries(entries: readonly EntryRecord[], active: Option.Option<EntryId>) {
+  return Option.match(active, {
+    onNone: () => entries,
+    onSome: (input) => {
+      const first = entries.findLast((entry) => entry.id >= input && entry.kind === 'pi.assistant')
+      return entries.filter(
+        (entry) =>
+          entry.id < input ||
+          (entry.kind === 'pi.user' && (first === undefined || entry.id < first.id)),
+      )
+    },
+  })
 }
 
 /** Read another raw page until enough complete messages exist; never split a multi-entry stretch. */
@@ -99,7 +114,8 @@ const readGroups = Effect.fn('Durable.historyGroups')(function* (
   reader: Reader,
   page: HistoryRequest,
 ) {
-  const query = queryFor(page.before, yield* boundary(reader))
+  const active = yield* boundary(reader)
+  const query = queryFor(page.before)
   let cursor = Option.none<Cursor>()
   const entries: EntryRecord[] = []
   for (;;) {
@@ -114,7 +130,15 @@ const readGroups = Effect.fn('Durable.historyGroups')(function* (
       ),
     )
     cursor = Option.fromNullishOr(batch.next)
-    const completed = groups(entries, Option.isNone(cursor))
+    // Read the whole active prefix before counting messages, even if late steers fill a raw page.
+    // If the caller's cursor already hides the first assistant, all remaining active users precede it.
+    if (
+      Option.isSome(active) &&
+      Option.isSome(cursor) &&
+      entries.every((entry) => entry.id > active.value)
+    )
+      continue
+    const completed = groups(historyEntries(entries, active), Option.isNone(cursor))
     if (completed.length > page.limit || Option.isNone(cursor)) return completed
   }
 })
@@ -195,9 +219,11 @@ const assistantMessage = Effect.fn('Durable.historyAssistant')(function* (
 })
 
 /**
- * Raw fork-aware settled messages, oldest first. Paging counts messages and never splits an
- * assistant stretch. Control/system/reset/compaction/application entries are skipped. A running
- * run is excluded using known submission placements; no submissions scan or Storage is required.
+ * Raw fork-aware messages, oldest first. Paging counts messages and never splits an assistant
+ * stretch. Control/system/reset/compaction/application entries are skipped. During a run, users
+ * before its first assistant entry are included; its assistant and tool results come from attachRun.
+ * A steer placed after that assistant stays out until settlement: reconnect cannot show it in order.
+ * Known submission placements locate the run without a submissions scan or Storage requirement.
  * Late-answer user entries are ordinary users for now, without answerTo metadata.
  */
 export const history = Effect.fn('Durable.history')(function* (

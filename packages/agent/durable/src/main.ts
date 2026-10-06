@@ -168,7 +168,11 @@ export type HistoryRequest = { readonly limit: number; readonly before?: string 
 const encodeCursor = Schema.encodeSync(Schema.fromJsonString(Core.HistoryCursor))
 const decodeCursor = Schema.decodeUnknownEffect(Schema.fromJsonString(Core.HistoryCursor))
 
-/** The Promise wire uses opaque strings; Option and Effect remain inside the facade. */
+/**
+ * The Promise wire uses opaque cursors. Active users preceding the first assistant entry remain
+ * in history; GET reconnect supplies that assistant. Mid-run steers placed after assistant entries
+ * stay out until settlement, because reconnect cannot insert them in order.
+ */
 export const history = (
   harness: Harness,
   conversationId: ConversationId,
