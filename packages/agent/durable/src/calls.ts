@@ -10,6 +10,7 @@ export type Desk = {
   readonly plan: (toolName: string) => Option.Option<Plan>
   /** Every presentation uses the same task/provenance lookup as hooks and admission. */
   readonly call: (callId: string) => CallLookup
+  readonly origin: (chunk: Extract<Chunk, { toolCallId: string }>) => Option.Option<CallLookup>
   readonly hold: (holdId: HoldId) => CallLookup
 }
 
@@ -76,7 +77,7 @@ function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown 
   }
   const { dynamic: _dynamic, ...typed } = chunk
   const kind = holdKind(plan.value, chunk.input)
-  const found = desk.call(chunk.toolCallId)
+  const found = Option.getOrElse(desk.origin(chunk), () => desk.call(chunk.toolCallId))
   const request: readonly Chunk[] =
     Option.contains(kind, 'approval') && CallLookup.isAnyOf(['Ready', 'Settled'])(found)
       ? [
@@ -135,7 +136,9 @@ function showVisible(round: Round, chunk: Chunk, desk: Desk): Shown {
     Match.when({ type: 'tool-output-error' }, (output): Shown => {
       // Pi's blocked result becomes the AI SDK denial state only when the durable decision denied it.
       const holdId = round.holds.get(output.toolCallId)
-      const found = holdId === undefined ? desk.call(output.toolCallId) : desk.hold(holdId)
+      const found = Option.getOrElse(desk.origin(output), () =>
+        holdId === undefined ? desk.call(output.toolCallId) : desk.hold(holdId),
+      )
       const denied = CallLookup.guards.Settled(found) && found.settlement.kind === 'denied'
       return {
         round: close(round, output.toolCallId),
@@ -148,8 +151,10 @@ function showVisible(round: Round, chunk: Chunk, desk: Desk): Shown {
 }
 
 /** A task or a stored result admits presentation; queued generation/sequential inputs stay private. */
-const visible = (id: string, desk: Desk) =>
-  !CallLookup.isAnyOf(['Queued', 'Missing'])(desk.call(id))
+const visible = (chunk: Extract<Chunk, { toolCallId: string }>, desk: Desk) =>
+  !CallLookup.isAnyOf(['Queued', 'Missing'])(
+    Option.getOrElse(desk.origin(chunk), () => desk.call(chunk.toolCallId)),
+  )
 
 /** Deduplicate each input phase and update the finite tool round before its result can close it. */
 function showInput(round: Round, chunk: InputStart | InputAvailable, desk: Desk): Shown {
@@ -172,7 +177,7 @@ function show(round: Round, chunk: Chunk, desk: Desk): Shown {
   if (chunk.type === 'tool-input-start' || chunk.type === 'tool-input-available') {
     const id = chunk.toolCallId
     if (round.completed.has(id)) return { round, chunks: [] }
-    if (!visible(id, desk))
+    if (!visible(chunk, desk))
       return {
         round: {
           ...round,
@@ -230,7 +235,10 @@ function refresh(shown: Shown, desk: Desk): Shown {
   let round = shown.round
   const chunks: Chunk[] = [...shown.chunks]
   for (const id of shown.round.withheld.keys()) {
-    if (!visible(id, desk)) continue
+    const input = (shown.round.withheld.get(id) ?? []).find(
+      (chunk) => chunk.type === 'tool-input-start',
+    )
+    if (input === undefined || input.type !== 'tool-input-start' || !visible(input, desk)) continue
     const next = release(round, id, desk)
     round = next.round
     chunks.push(...next.chunks)

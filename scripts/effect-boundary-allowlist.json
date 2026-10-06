@@ -56,7 +56,10 @@
       "closed",
       "commitWithLive",
       "abort",
-      "watchLive"
+      "watchLive",
+      "entries",
+      "submission",
+      "status"
     ]
   },
   {
@@ -85,7 +88,8 @@
       "continueRun",
       "respond",
       "respondTurn",
-      "abort"
+      "abort",
+      "history"
     ]
   },
   {
@@ -127,5 +131,10 @@
     "file": "packages/agent/durable/src/fixtures/sequential.ts",
     "classification": "test-process-entrypoint",
     "symbols": ["<module>", "execute", "harness", "root", "first"]
+  },
+  {
+    "file": "packages/agent/durable/src/reading.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["readMessage", "readForSdk"]
   }
 ]

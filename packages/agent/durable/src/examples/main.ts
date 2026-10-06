@@ -3,7 +3,7 @@ import type { ConversationId, Harness } from '@earendil-works/pi-durable'
 import { Schema } from 'effect'
 
 import { HoldId } from '@vivid/durable/core'
-import { abort, answer, decide, respond, waiting } from '@vivid/durable'
+import { abort, answer, decide, history, respond, waiting } from '@vivid/durable'
 
 const decodeDecision = Schema.decodeUnknownPromise(
   Schema.fromJsonString(
@@ -36,6 +36,8 @@ export async function route(
 ): Promise<Response> {
   const path = new URL(request.url).pathname
   if (path === '/chat') return respond(harness, conversationId, request, context)
+  if (path === '/history' && request.method === 'GET')
+    return Response.json(await history(harness, conversationId, { limit: 50 }, context))
   if (path === '/waiting' && request.method === 'GET')
     return Response.json(await waiting(harness, conversationId, context))
   if (request.method !== 'POST') return new Response(null, { status: 405 })

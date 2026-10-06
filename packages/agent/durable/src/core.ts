@@ -35,3 +35,5 @@ export { ChatTurn, TurnBody, decodeTurn, respond } from './respond.ts'
 export { attachRun, continueRun, type RunInput, prepareRun, streamRun } from './stream.ts'
 
 export { abort } from './abort.ts'
+
+export { HistoryCursor, type HistoryPage, type HistoryRequest, history } from './history.ts'

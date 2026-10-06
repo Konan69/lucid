@@ -1,14 +1,13 @@
 import type { Context } from '@earendil-works/chord'
 import type {
   AgentEvent,
-  Conversation,
   ConversationId,
   Harness,
   SnapshotEvent,
   SubmissionId,
   LiveState,
+  TaskId,
 } from '@earendil-works/pi-durable'
-import { LiveDoc } from '@earendil-works/pi-durable'
 import type { UIMessageChunk } from 'ai'
 import { Data, Effect, Exit, Option, Scope, Stream } from 'effect'
 
@@ -19,18 +18,11 @@ import {
   replayAfter,
   type RunState,
   type Step,
+  type Chunk,
   translate,
 } from './chunks.ts'
 import { RunMissing, type PiFailed, type WatchClosed, type WatchOverflowed } from './errors.ts'
-import {
-  type CallState,
-  CallIdentity,
-  CallLookup,
-  identitiesFor,
-  lookupSnapshots,
-  Holds,
-  planOf,
-} from './holds.ts'
+import { readDesk, noDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
 
 /** A retried input retains its client request id and therefore Pi's submission identity. */
@@ -40,78 +32,10 @@ export type RunInput = {
   readonly requestId: string
 }
 
-const noDesk: Desk = {
-  plan: () => Option.none(),
-  call: () => CallLookup.cases.Missing.make({}),
-  hold: () => CallLookup.cases.Missing.make({}),
-}
-
 type WatchFailure = PiFailed | WatchClosed | WatchOverflowed
 
-type Reader = {
-  readonly harness: Harness
-  readonly conversation: Conversation
-  readonly context: Context
-}
 type State = { readonly state: RunState; readonly round: Round }
 type Written = State & { readonly chunks: readonly UIMessageChunk[]; readonly ended: boolean }
-
-/** Resolve tool plans at the point of presentation, since the registry can change between turns. */
-const readDesk = Effect.fn('Durable.readDesk')(function* (
-  reader: Reader,
-  chunks: Step['chunks'],
-  shownHolds: Round['holds'],
-  observedLive: Option.Option<CallState>,
-) {
-  const agent = yield* Pi.agent(reader.conversation, reader.context)
-  const plans = new Map(
-    agent.tools.flatMap((tool) => {
-      const plan = planOf(tool)
-      return Option.isNone(plan) ? [] : [[tool.name, plan.value] as const]
-    }),
-  )
-  const holds = yield* Pi.snapshot(reader.harness, Holds, reader.conversation.id, reader.context)
-  const live = Option.isSome(observedLive)
-    ? observedLive
-    : yield* Pi.snapshot(reader.harness, LiveDoc, reader.conversation.id, reader.context)
-  const callIds = new Set(
-    chunks.flatMap((chunk) => ('toolCallId' in chunk ? [chunk.toolCallId] : [])),
-  )
-  // A slot, an in-flight generation call, or the hold previously shown to this reader can
-  // answer without a transcript scan. Only a truly missing completed call needs provenance.
-  const calls = new Map(
-    [...callIds].map((callId) => {
-      const identity = CallIdentity.cases.Public.make({
-        callId,
-        resultTask: Option.none(),
-        duplicate: false,
-      })
-      const direct = lookupSnapshots(live, holds, identity)
-      const shownHold = shownHolds.get(callId)
-      const found =
-        CallLookup.guards.Missing(direct) && shownHold !== undefined
-          ? lookupSnapshots(live, holds, CallIdentity.cases.Hold.make({ holdId: shownHold }))
-          : direct
-      return [callId, found] as const
-    }),
-  )
-  const unresolved = [...calls].flatMap(([id, found]) =>
-    CallLookup.guards.Missing(found) ? [id] : [],
-  )
-  if (unresolved.length > 0) {
-    const identities = identitiesFor((yield* Pi.view(reader.conversation, reader.context)).entries)
-    for (const callId of unresolved) {
-      const identity = identities.get(callId)
-      if (identity !== undefined) calls.set(callId, lookupSnapshots(live, holds, identity))
-    }
-  }
-  return {
-    plan: (toolName: string) => Option.fromNullishOr(plans.get(toolName)),
-    call: (callId: string) => calls.get(callId) ?? CallLookup.cases.Missing.make({}),
-    hold: (holdId: import('./errors.ts').HoldId) =>
-      lookupSnapshots(live, holds, CallIdentity.cases.Hold.make({ holdId })),
-  } satisfies Desk
-})
 
 /** Parking completes the client's step and response, leaving Pi's durable run untouched. */
 function writeStep(current: State, step: Step, settled: boolean, desk: Desk): Written {
@@ -135,9 +59,12 @@ const apply = Effect.fn('Durable.streamEvent')(function* (
     needsDesk(translated.chunks) || needsRefresh
       ? yield* readDesk(
           reader,
-          [...translated.chunks, ...[...current.round.withheld.values()].flat()],
+          {
+            chunks: [...translated.chunks, ...[...current.round.withheld.values()].flat()],
+            live: Option.none(),
+            origins: new Map(),
+          },
           current.round.holds,
-          Option.none(),
         )
       : noDesk
   const roundSettled = event.type === 'message_end' || event.type === 'tool_execution_end'
@@ -160,7 +87,11 @@ const applyLive = Effect.fn('Durable.liveFrame')(function* (
 ) {
   if (current.round.withheld.size === 0) return { ...current, chunks: [], ended: false }
   const inputs = [...current.round.withheld.values()].flat()
-  const desk = yield* readDesk(reader, inputs, current.round.holds, Option.some(live))
+  const desk = yield* readDesk(
+    reader,
+    { chunks: inputs, live: Option.some(live), origins: new Map() },
+    current.round.holds,
+  )
   const written = writeStep(current, { state: current.state, chunks: [] }, true, desk)
   return written
 })
@@ -240,7 +171,12 @@ export const prepareRun = Effect.fn('Durable.prepareRun')(function* (
   }).pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))))
 })
 
-type Prefix = { readonly step: Step; readonly live: boolean; readonly known: ReadonlySet<string> }
+type Prefix = {
+  readonly step: Step
+  readonly live: boolean
+  readonly known: ReadonlySet<string>
+  readonly origins: ReadonlyMap<Chunk, TaskId>
+}
 
 /** Replay the captured state, then either follow the same live run or finish the stored run. */
 const resume = Effect.fn('Durable.resumeStream')(function* (
@@ -251,9 +187,13 @@ const resume = Effect.fn('Durable.resumeStream')(function* (
 ) {
   // Presentation uses the atomic event snapshot, rather than a later live state that may have
   // already advanced a sequential slot. The live tail will admit subsequent allocations.
-  const captured: CallState = watched.snapshot
+  const captured = watched.snapshot
   const desk = needsDesk(prefix.step.chunks)
-    ? yield* readDesk(reader, prefix.step.chunks, emptyRound.holds, Option.some(captured))
+    ? yield* readDesk(
+        reader,
+        { chunks: prefix.step.chunks, live: Option.some(captured), origins: prefix.origins },
+        emptyRound.holds,
+      )
     : noDesk
   const settled =
     watched.snapshot.generation === undefined || watched.snapshot.generation.message === undefined
@@ -309,7 +249,12 @@ export const attachRun = Effect.fn('Durable.attachRun')(function* (
     (snapshot) =>
       Effect.succeed(
         replay(snapshot).pipe(
-          Option.map((prefix) => ({ step: prefix, live: true, known: new Set<string>() })),
+          Option.map((prefix) => ({
+            step: prefix,
+            live: true,
+            known: new Set<string>(),
+            origins: prefix.origins,
+          })),
         ),
       ),
     context,

@@ -5,6 +5,7 @@ import { Effect, Match, Option, Schema, Stream } from 'effect'
 
 import * as Durable from '@vivid/durable/core'
 
+const encodeCursor = Schema.encodeSync(Schema.fromJsonString(Durable.HistoryCursor))
 const decodeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(Durable.TurnBody))
 
 /** The only unsafe operation here reads the host Request; invalid/read-failed chat bodies are 400. */
@@ -74,9 +75,34 @@ export function chat(
 export function actions(harness: Harness, conversationId: ConversationId, context: Context) {
   return {
     abort: () => Durable.abort(harness, conversationId, context),
+    history: (page: Durable.HistoryRequest) =>
+      Durable.history(harness, conversationId, page, context),
     waiting: () => Durable.waiting(harness, conversationId, context),
     decide: (decision: Durable.Decision) =>
       Durable.decide(harness, conversationId, decision, context),
     answer: (output: Durable.Answer) => Durable.answer(harness, conversationId, output, context),
   }
 }
+
+/** An authorized GET /history route serializes the core's opaque cursor with its schema. */
+export const history = Effect.fn('Example.history')(function* (
+  harness: Harness,
+  conversationId: ConversationId,
+  context: Context,
+) {
+  const result = yield* Durable.history(
+    harness,
+    conversationId,
+    { limit: 50, before: Option.none() },
+    context,
+  )
+  const messages = [...result.messages]
+  const body = Option.match(result.next, {
+    onNone: () => ({ messages }),
+    onSome: (next) => ({
+      messages,
+      next: encodeCursor(next),
+    }),
+  })
+  return Response.json(body)
+})

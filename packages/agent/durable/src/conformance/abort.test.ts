@@ -1,7 +1,8 @@
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from 'vitest'
+import { Option } from 'effect'
 
-import { abort, attachRun, CallNotWaiting, decide, streamRun, waiting } from '../main.ts'
+import { abort, history, attachRun, CallNotWaiting, decide, streamRun, waiting } from '../main.ts'
 import { hold, call, consume, context, host, shop, signal, texts } from './fixtures/host.ts'
 
 /** A real partial receipt arms cancellation; no clock wait is used to guess provider progress. */
@@ -34,6 +35,10 @@ it('aborts producing text, emits abort, and retains the committed partial', asyn
   await abort(opened.harness, opened.root.id, context)
   const result = await chunks
   expect(await watching).toContain('abort')
+  const settled = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+  expect(Option.getOrThrow(Option.fromNullishOr(settled.messages.at(-1))).parts).toEqual(
+    result.message.parts,
+  )
   const partial = texts(result.message).join('')
   expect(partial.length).toBeGreaterThan(0)
   expect(partial.length).toBeLessThan(full.length)
@@ -73,6 +78,17 @@ it('aborts a parked approval and rejects a late decision', async () => {
   ).rejects.toBeInstanceOf(CallNotWaiting)
   expect(await attachRun(opened.harness, opened.root.id, context)).toEqual({ status: 'idle' })
   expect(fixture.paid).toEqual([])
+  const settled = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+  expect(settled.messages.filter((message) => message.role === 'user')).toMatchObject([
+    { parts: [{ type: 'text', text: 'Pay' }] },
+  ])
+  expect(
+    settled.messages
+      .flatMap((message) => message.parts)
+      .some(
+        (part) => 'toolCallId' in part && 'state' in part && part.state === 'approval-requested',
+      ),
+  ).toBe(false)
 })
 
 /** Queued follow-ups are withdrawn by the same durable abort, without creating another user entry. */
@@ -111,4 +127,15 @@ it('withdraws a queued follow-up when aborting a held run', async () => {
   const entries = await opened.root.entries({}, 100, undefined, context)
   expect(entries.items.filter((entry) => entry.kind === 'pi.user')).toHaveLength(1)
   expect(fixture.paid).toEqual([])
+  const settled = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+  expect(settled.messages.filter((message) => message.role === 'user')).toMatchObject([
+    { parts: [{ type: 'text', text: 'Pay' }] },
+  ])
+  expect(
+    settled.messages
+      .flatMap((message) => message.parts)
+      .some(
+        (part) => 'toolCallId' in part && 'state' in part && part.state === 'approval-requested',
+      ),
+  ).toBe(false)
 })

@@ -16,7 +16,7 @@ The host opens its Pi Harness, registers an extension from `toolsExtension`, and
 
 ## Promise server
 
-[Complete, type-checked HTTP handler](src/examples/main.ts). It serves chat POST/GET, GET waiting, and POST abort/decide/answer. The host's HTTP framework maps schema rejection to 400 and records other failures. Decision and answer bodies decode once with the exported HoldId contract before reaching the durable API.
+[Complete, type-checked HTTP handler](src/examples/main.ts). It serves chat POST/GET, GET history/waiting, and POST abort/decide/answer. The host's HTTP framework maps schema rejection to 400 and records other failures. Decision and answer bodies decode once with the exported HoldId contract before reaching the durable API.
 
 This is the handler excerpt; imports and compiled body decoders are in the linked source:
 
@@ -29,6 +29,8 @@ export async function route(
 ): Promise<Response> {
   const path = new URL(request.url).pathname
   if (path === '/chat') return respond(harness, conversationId, request, context)
+  if (path === '/history' && request.method === 'GET')
+    return Response.json(await history(harness, conversationId, { limit: 50 }, context))
   if (path === '/waiting' && request.method === 'GET')
     return Response.json(await waiting(harness, conversationId, context))
   if (request.method !== 'POST') return new Response(null, { status: 405 })
@@ -84,7 +86,7 @@ export function chat(
 }
 ```
 
-The same source exposes typed `actions` for abort, waiting, decide and answer. Decode route bodies before calling them. Core `decodeTurn` is a compiled object decoder; `Schema.fromJsonString(TurnBody)` is the corresponding JSON-text ingress. Core `prepareRun` admits input and returns a one-shot stream whose watch is already open.
+The same source exposes typed `actions` for history, abort, waiting, decide and answer. Decode route bodies before calling them. Core `decodeTurn` is a compiled object decoder; `Schema.fromJsonString(TurnBody)` is the corresponding JSON-text ingress. Core `prepareRun` admits input and returns a one-shot stream whose watch is already open.
 
 ## Client protocol
 
@@ -104,8 +106,8 @@ Observation opens before admission. Slow readers do not block Pi delivery. A rep
 
 After a network error, reload settled history and reconnect with fresh SDK stream state. Resuming step 2 into a kept partial message duplicates earlier text and tools: reset-step clears only the current step. This is the one permitted expected-failure test. Creating a new Chat alone does not always fix it: ai/src/ui/chat.ts:852–858 snapshots a last assistant message with an input-streaming tool part. Settled history must replace that failed partial message first.
 
-The planned `history` API is blocked on its Storage authority. Pi exposes the required settled-submission scan only on Storage, not Harness, and raw entries do not carry the original client request id. Until that input is agreed, this package has no history endpoint; an application needs its own authorized settled-history loader for reload-then-resume. No history example or incomplete history implementation is exported.
+`history(harness, conversationId, { limit, before? }, context)` returns oldest-first settled UI messages and an opaque optional next cursor. `limit` counts messages; a page never splits a multi-entry assistant message. It reads raw fork-aware history, preserving messages removed from model context by compaction. Stable user ids use `entry:<entryId>`; assistant ids use the first assistant entry. Running work is excluded before its earliest placed input; its assistant arrives through GET reconnect. This also excludes the active user message: the SDK reconnect protocol only carries assistant chunks, so the host must retain that input separately. System/reset/compaction/application entries are skipped; late answers are ordinary user messages without special metadata for now. The checked server examples include a GET history route.
 
-Sequential presentation remains blocked: Pi 1.0.4 assigns a queued successor its task while leaving its slot pending, but watchEvents emits no task-admission event for that transition. The lower LiveDoc and ConversationView watches do carry it. Parallel approval rounds work with the stock predicate; do not claim the sequential flow is complete or poll around the missing event.
+Sequential calls stay private until Pi allocates their tool tasks or stores their results. The live-document watch supplies allocations that the event watch omits, so the stock approval predicate works for sequential held/plain tools and denies as well as parallel rounds. GET reconnect and crash recovery apply the same presentation rule.
 
 There is no WebSocket transport or streaming tool-argument presentation. Live model evaluation stays skipped unless explicitly enabled with real credentials. These Node conformance suites do not establish React Native transport conformance.

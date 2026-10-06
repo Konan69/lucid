@@ -10,6 +10,9 @@ import type {
   Tx,
   AgentEvent,
   WatchHandle,
+  Submission,
+  SubmissionId,
+  Cursor,
 } from '@earendil-works/pi-durable'
 import { watchEvents, LiveDoc } from '@earendil-works/pi-durable'
 import { Cause, Effect, Option, Queue, Stream } from 'effect'
@@ -271,3 +274,32 @@ function liveForPi(queue: Queue.Queue<Readonly<LiveState>, PiFailed | WatchClose
     )
   }
 }
+
+/** Raw fork-aware pages retain person history even when model context was compacted or edited. */
+export const entries = (
+  owner: Conversation,
+  page: {
+    readonly query: Parameters<Conversation['entries']>[0]
+    readonly limit: number
+    readonly cursor: Option.Option<Cursor>
+  },
+  context: Context,
+) =>
+  Effect.tryPromise({
+    try: () => owner.entries(page.query, page.limit, Option.getOrUndefined(page.cursor), context),
+    catch: (cause) => new PiFailed({ operation: 'entries', cause }),
+  })
+
+/** Known live-run inputs and admitted late answers have public submission handles; no scan is needed. */
+export const submission = (harness: Harness, id: SubmissionId, context: Context) =>
+  Effect.tryPromise({
+    try: () => harness.submission(id, context),
+    catch: (cause) => new PiFailed({ operation: 'submission', cause }),
+  }).pipe(Effect.map(Option.fromNullishOr))
+
+/** Placement is the durable receipt that a submitted input reached the transcript. */
+export const status = (input: Submission, context: Context) =>
+  Effect.tryPromise({
+    try: () => input.status(context),
+    catch: (cause) => new PiFailed({ operation: 'status', cause }),
+  })

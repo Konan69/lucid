@@ -1,0 +1,238 @@
+import type { Context } from '@earendil-works/chord'
+import type { UserMessage } from '@earendil-works/pi-ai'
+import {
+  LiveDoc,
+  type ConversationId,
+  type EntryId,
+  type EntryRecord,
+  type Harness,
+  type Cursor,
+} from '@earendil-works/pi-durable'
+import type { UIMessage, UIMessageChunk } from 'ai'
+import { Data, Effect, Match, Option, Predicate, Schema, Stream } from 'effect'
+import { emptyRound, present } from './calls.ts'
+import { rebuild } from './chunks.ts'
+import { readDesk, type Reader } from './desk.ts'
+import * as Pi from './pi.ts'
+import { readMessage } from './reading.ts'
+
+/** Pi's numeric identity is checked only at the opaque cursor's wire ingress. */
+const EntryIdentity = Schema.declare<EntryId>(
+  (value): value is EntryId =>
+    Predicate.isNumber(value) && Number.isSafeInteger(value) && value > 0,
+)
+/** Exclusive entry bound owned by this library, independent of Pi's storage cursor. */
+export const HistoryCursor = Schema.Struct({ entry: EntryIdentity }).pipe(
+  Schema.brand('Durable.HistoryCursor'),
+)
+export type HistoryCursor = typeof HistoryCursor.Type
+export type HistoryPage = {
+  readonly messages: readonly UIMessage[]
+  readonly next: Option.Option<HistoryCursor>
+}
+export type HistoryRequest = {
+  readonly limit: number
+  readonly before: Option.Option<HistoryCursor>
+}
+const Limit = Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0))
+
+type Group = Data.TaggedEnum<{
+  User: { readonly entry: EntryRecord }
+  Assistant: { readonly entries: readonly EntryRecord[] }
+}>
+const Group = Data.taggedEnum<Group>()
+
+/** Ignore control/application entries; close each assistant stretch only at a user boundary or EOF. */
+function groups(entries: readonly EntryRecord[], exhausted: boolean) {
+  const completed: Group[] = []
+  let assistant: EntryRecord[] = []
+  for (const entry of entries) {
+    Match.value(entry.kind).pipe(
+      Match.when('pi.user', () => {
+        if (assistant.some((item) => item.kind === 'pi.assistant'))
+          completed.push(Group.Assistant({ entries: assistant.toReversed() }))
+        assistant = []
+        completed.push(Group.User({ entry }))
+      }),
+      Match.when(Match.is('pi.assistant', 'pi.tool-result'), () => {
+        assistant.push(entry)
+      }),
+      // Entry kinds are an open SDK extension vocabulary, including application-owned kinds.
+      Match.orElse(() => {}),
+    )
+  }
+  if (exhausted && assistant.some((item) => item.kind === 'pi.assistant'))
+    completed.push(Group.Assistant({ entries: assistant.toReversed() }))
+  return completed
+}
+
+/** Known run inputs expose placement publicly in Pi 1.0.4; the earliest entry excludes the whole run. */
+const boundary = Effect.fn('Durable.historyBoundary')(function* (reader: Reader) {
+  const live = yield* Pi.snapshot(reader.harness, LiveDoc, reader.conversation.id, reader.context)
+  if (Option.isNone(live) || live.value.run === undefined) return Option.none<EntryId>()
+  const placed: EntryId[] = []
+  for (const id of live.value.run.inputs) {
+    const input = yield* Pi.submission(reader.harness, id, reader.context)
+    if (Option.isNone(input)) continue
+    const receipt = yield* Pi.status(input.value, reader.context)
+    if (receipt.entry !== undefined) placed.push(receipt.entry)
+  }
+  if (placed.length > 0)
+    return Option.some(placed.reduce((first, entry) => (entry < first ? entry : first)))
+  // generation.js startRun accepts placed inputs only, and draining steers appends placed ids.
+  // A run without their entries violates Pi's invariant; do not fabricate a history boundary.
+  throw new Error('Pi active run has no placed input entry')
+})
+
+/** Bounds combine the captured busy-run cut and a caller's previous message boundary. */
+function queryFor(before: Option.Option<HistoryCursor>, active: Option.Option<EntryId>) {
+  const bounds = [Option.map(before, (cursor) => cursor.entry), active].flatMap((bound) =>
+    Option.isSome(bound) ? [bound.value] : [],
+  )
+  return bounds.length === 0
+    ? {}
+    : { maxEntryId: bounds.reduce((first, entry) => (entry < first ? entry : first)) }
+}
+
+/** Read another raw page until enough complete messages exist; never split a multi-entry stretch. */
+const readGroups = Effect.fn('Durable.historyGroups')(function* (
+  reader: Reader,
+  page: HistoryRequest,
+) {
+  const query = queryFor(page.before, yield* boundary(reader))
+  let cursor = Option.none<Cursor>()
+  const entries: EntryRecord[] = []
+  for (;;) {
+    const batch = yield* Pi.entries(
+      reader.conversation,
+      { query, limit: 100, cursor },
+      reader.context,
+    )
+    entries.push(
+      ...batch.items.filter(
+        (entry) => query.maxEntryId === undefined || entry.id < query.maxEntryId,
+      ),
+    )
+    cursor = Option.fromNullishOr(batch.next)
+    const completed = groups(entries, Option.isNone(cursor))
+    if (completed.length > page.limit || Option.isNone(cursor)) return completed
+  }
+})
+
+/** Images have the SDK's supported data-URL file shape; late-answer users are ordinary user messages. */
+function userMessage(entry: EntryRecord): UIMessage {
+  const model = (entry.model ?? []).find(
+    (message): message is UserMessage => message.role === 'user',
+  )
+  if (model === undefined) throw new Error('Pi user entry has no user message')
+  const parts: UIMessage['parts'] = Predicate.isString(model.content)
+    ? [{ type: 'text', text: model.content }]
+    : model.content.map((part) =>
+        part.type === 'text'
+          ? { type: 'text', text: part.text }
+          : {
+              type: 'file',
+              mediaType: part.mimeType,
+              url: `data:${part.mimeType};base64,${part.data}`,
+            },
+      )
+  return { id: `entry:${entry.id}`, role: 'user', parts }
+}
+
+/** Replaced error attempts vanish; unfinished calls have no settled history part. Aborted text remains. */
+function settledEntries(entries: readonly EntryRecord[]) {
+  return entries.flatMap((entry, index) => {
+    const model = (entry.model ?? [])[0]
+    if (model === undefined || model.role !== 'assistant') return [entry]
+    const following = entries.slice(index + 1)
+    if (model.stopReason === 'error' && following.some((item) => item.kind === 'pi.assistant'))
+      return []
+    const nextAssistant = following.findIndex((item) => item.kind === 'pi.assistant')
+    const results = new Set(
+      (nextAssistant === -1 ? following : following.slice(0, nextAssistant)).flatMap((item) =>
+        (item.model ?? []).flatMap((message) =>
+          message.role === 'toolResult' ? [message.toolCallId] : [],
+        ),
+      ),
+    )
+    return [
+      {
+        ...entry,
+        model: [
+          {
+            ...model,
+            content: model.content.filter(
+              (part) => part.type !== 'toolCall' || results.has(part.id),
+            ),
+          },
+        ],
+      },
+    ]
+  })
+}
+
+/** The same translator and presentation create chunks; the SDK reader alone assembles their UI parts. */
+const assistantMessage = Effect.fn('Durable.historyAssistant')(function* (
+  reader: Reader,
+  entries: readonly EntryRecord[],
+) {
+  const first = entries.find((entry) => entry.kind === 'pi.assistant')
+  if (first === undefined) throw new Error('History assistant group lacks its first entry')
+  const step = rebuild(settledEntries(entries))
+  const desk = yield* readDesk(
+    reader,
+    { chunks: step.chunks, origins: step.origins, live: Option.some({ tools: [] }) },
+    emptyRound.holds,
+  )
+  const shown = present(emptyRound, step.chunks, desk)
+  const chunks: readonly UIMessageChunk[] = [
+    { type: 'start', messageId: `entry:${first.id}` },
+    ...shown.chunks,
+    { type: 'finish-step' },
+    { type: 'finish' },
+  ]
+  return yield* readMessage(yield* Stream.toReadableStreamEffect(Stream.fromIterable(chunks)))
+})
+
+/**
+ * Raw fork-aware settled messages, oldest first. Paging counts messages and never splits an
+ * assistant stretch. Control/system/reset/compaction/application entries are skipped. A running
+ * run is excluded using known submission placements; no submissions scan or Storage is required.
+ * Late-answer user entries are ordinary users for now, without answerTo metadata.
+ */
+export const history = Effect.fn('Durable.history')(function* (
+  harness: Harness,
+  conversationId: ConversationId,
+  page: HistoryRequest,
+  context: Context,
+): Effect.fn.Return<
+  HistoryPage,
+  import('./errors.ts').ConversationMissing | import('./errors.ts').PiFailed
+> {
+  Limit.make(page.limit)
+  const conversation = yield* Pi.conversation(harness, conversationId, context)
+  const reader = { harness, conversation, context }
+  const all = yield* readGroups(reader, page)
+  const selected = all.slice(0, page.limit).toReversed()
+  const messages: UIMessage[] = []
+  for (const group of selected)
+    messages.push(
+      yield* Group.$match(group, {
+        User: ({ entry }) => Effect.succeed(userMessage(entry)),
+        Assistant: ({ entries }) => assistantMessage(reader, entries),
+      }),
+    )
+  const oldest = selected[0]
+  const next =
+    all.length <= page.limit || oldest === undefined
+      ? Option.none<HistoryCursor>()
+      : Option.some(
+          HistoryCursor.make({
+            entry: Group.$match(oldest, {
+              User: ({ entry }) => entry.id,
+              Assistant: ({ entries }) => Option.getOrThrow(Option.fromNullishOr(entries[0])).id,
+            }),
+          }),
+        )
+  return { messages, next }
+})

@@ -159,3 +159,35 @@ export const abort = (...args: Parameters<typeof Core.abort>) =>
   Effect.runPromise(Core.abort(...args))
 
 export type { HoldId } from './errors.ts'
+
+export type HistoryPage = { readonly messages: import('ai').UIMessage[]; readonly next?: string }
+export type HistoryRequest = { readonly limit: number; readonly before?: string }
+const encodeCursor = Schema.encodeSync(Schema.fromJsonString(Core.HistoryCursor))
+const decodeCursor = Schema.decodeUnknownEffect(Schema.fromJsonString(Core.HistoryCursor))
+
+/** The Promise wire uses opaque strings; Option and Effect remain inside the facade. */
+export const history = (
+  harness: Harness,
+  conversationId: ConversationId,
+  page: HistoryRequest,
+  context: Context,
+): Promise<HistoryPage> =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const before =
+        page.before === undefined
+          ? Option.none<Core.HistoryCursor>()
+          : Option.some(yield* decodeCursor(page.before))
+      const result = yield* Core.history(
+        harness,
+        conversationId,
+        { limit: page.limit, before },
+        context,
+      )
+      const messages = [...result.messages]
+      return Option.match(result.next, {
+        onNone: (): HistoryPage => ({ messages }),
+        onSome: (next): HistoryPage => ({ messages, next: encodeCursor(next) }),
+      })
+    }),
+  )

@@ -5,6 +5,7 @@ import type {
   EntryRecord,
   MessageChange,
   SnapshotEvent,
+  TaskId,
 } from '@earendil-works/pi-durable'
 import type { UIMessageChunk } from 'ai'
 import { Array as Arr, Match, Option, Schema } from 'effect'
@@ -347,7 +348,7 @@ function runEntries(entries: readonly EntryRecord[]): readonly EntryRecord[] {
 }
 
 /** One stored entry of the run in progress, as the chunks its live events would have produced. */
-function replayEntry(state: RunState, entry: EntryRecord): Step {
+export function replayEntry(state: RunState, entry: EntryRecord): Step {
   const found = Option.fromNullishOr(entry.model).pipe(Option.flatMap(Arr.head))
   if (Option.isNone(found)) return { state, chunks: [] }
   const message = found.value
@@ -375,7 +376,7 @@ function replayPartial(state: RunState, message: AssistantMessage): Step {
  *
  * Limit: a steer adds a user entry inside a run, so the prefix then starts at the steer.
  */
-export function replay(snapshot: SnapshotEvent): Option.Option<Step> {
+export function replay(snapshot: SnapshotEvent): Option.Option<Rebuilt> {
   if (snapshot.run === undefined) return Option.none()
   const started: Step = {
     state: initialRunState,
@@ -393,13 +394,12 @@ export function replay(snapshot: SnapshotEvent): Option.Option<Step> {
   const partial = Option.fromNullishOr(snapshot.generation).pipe(
     Option.flatMapNullishOr((generation) => generation.message),
   )
-  return Option.some(
-    Option.match(partial, {
-      onNone: () =>
-        snapshot.generation === undefined ? stored : join(stored, startTurn(stored.state)),
-      onSome: (message) => join(stored, replayPartial(stored.state, message)),
-    }),
-  )
+  const step = Option.match(partial, {
+    onNone: () =>
+      snapshot.generation === undefined ? stored : join(stored, startTurn(stored.state)),
+    onSome: (message) => join(stored, replayPartial(stored.state, message)),
+  })
+  return Option.some({ ...step, origins: originsFor(runEntries(snapshot.entries), step.chunks) })
 }
 
 /** Whether `entry` is an assistant message that calls one of the tool calls in `known`. */
@@ -426,7 +426,11 @@ function callsAny(entry: EntryRecord, known: ReadonlySet<string>): boolean {
 export function replayAfter(
   snapshot: SnapshotEvent,
   known: ReadonlySet<string>,
-): Option.Option<{ readonly step: Step; readonly live: boolean }> {
+): Option.Option<{
+  readonly step: Step
+  readonly live: boolean
+  readonly origins: ReadonlyMap<Chunk, TaskId>
+}> {
   const at = snapshot.entries.findLastIndex((entry) => callsAny(entry, known))
   if (at === -1) return Option.none()
   const rest = snapshot.entries.slice(at + 1)
@@ -453,13 +457,18 @@ export function replayAfter(
         Option.flatMapNullishOr((generation) => generation.message),
       )
     : Option.none()
+  const step = Option.match(partial, {
+    onNone: () =>
+      !live || snapshot.generation === undefined ? stored : join(stored, startTurn(stored.state)),
+    onSome: (message) => join(stored, replayPartial(stored.state, message)),
+  })
   return Option.some({
-    step: Option.match(partial, {
-      onNone: () =>
-        !live || snapshot.generation === undefined ? stored : join(stored, startTurn(stored.state)),
-      onSome: (message) => join(stored, replayPartial(stored.state, message)),
-    }),
+    step,
     live,
+    origins: originsFor(
+      snapshot.entries.slice(at, nextInput === -1 ? undefined : at + 1 + nextInput),
+      step.chunks,
+    ),
   })
 }
 
@@ -505,4 +514,60 @@ function untranslated(
     ),
     Match.exhaustive,
   )
+}
+
+/** Historical chunks retain the exact result task of their own assistant generation, even for reused ids. */
+export type Rebuilt = Step & { readonly origins: ReadonlyMap<Chunk, TaskId> }
+
+/** Index each assistant's following results separately; provider call ids only relate parts within that round. */
+function resultRounds(entries: readonly EntryRecord[]) {
+  const rounds: Map<string, Option.Option<TaskId>>[] = []
+  for (const entry of entries) indexRound(rounds, entry)
+  return rounds
+}
+
+/** One stored entry either opens a call generation or records its result task. */
+function indexRound(rounds: Map<string, Option.Option<TaskId>>[], entry: EntryRecord) {
+  for (const message of entry.model ?? []) {
+    if (message.role === 'assistant')
+      rounds.push(
+        new Map(
+          message.content.flatMap((block) =>
+            block.type === 'toolCall' ? [[block.id, Option.none<TaskId>()] as const] : [],
+          ),
+        ),
+      )
+    else if (message.role === 'toolResult') {
+      const round = rounds.at(-1)
+      if (round !== undefined && round.has(message.toolCallId))
+        round.set(message.toolCallId, Option.fromNullishOr(entry.byTaskId))
+    }
+  }
+}
+
+/** The start chunk advances one generation of a call; its available/result chunks share that task. */
+export function originsFor(entries: readonly EntryRecord[], chunks: readonly Chunk[]) {
+  const tasks = new Map<string, Option.Option<TaskId>[]>()
+  for (const round of resultRounds(entries)) {
+    for (const [callId, task] of round) tasks.set(callId, [...(tasks.get(callId) ?? []), task])
+  }
+  const positions = new Map<string, number>()
+  const origins = new Map<Chunk, TaskId>()
+  for (const chunk of chunks) {
+    if (!('toolCallId' in chunk)) continue
+    const callId = chunk.toolCallId
+    if (chunk.type === 'tool-input-start') positions.set(callId, (positions.get(callId) ?? -1) + 1)
+    const task = (tasks.get(callId) ?? [])[positions.get(callId) ?? 0]
+    if (task !== undefined && Option.isSome(task)) origins.set(chunk, task.value)
+  }
+  return origins
+}
+
+/** Use precisely the live translator's constructors for each stored assistant step and tool result. */
+export function rebuild(entries: readonly EntryRecord[]): Rebuilt {
+  const step = entries.reduce<Step>(
+    (current, entry) => join(current, replayEntry(current.state, entry)),
+    { state: initialRunState, chunks: [] },
+  )
+  return { ...step, origins: originsFor(entries, step.chunks) }
 }
