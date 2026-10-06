@@ -20,11 +20,12 @@
     "effect": "catalog:"
   },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@opentelemetry/api": "1.9.0",
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
-    "zod": "4.5.4",
-    "@effect/vitest": "catalog:"
+    "zod": "4.5.4"
   }
 }
