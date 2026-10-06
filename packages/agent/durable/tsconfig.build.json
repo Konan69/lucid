@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "rewriteRelativeImportExtensions": true,
+    "tsBuildInfoFile": ".cache/typescript/build.tsbuildinfo"
+  },
+  "include": ["src/*.ts"],
+  "exclude": ["src/**/*.test.ts", "src/fixtures", "src/examples", "src/react", "src/conformance"]
+}
