@@ -65,28 +65,34 @@ const readDesk = Effect.fn('Durable.readDesk')(function* (
   const callIds = new Set(
     chunks.flatMap((chunk) => ('toolCallId' in chunk ? [chunk.toolCallId] : [])),
   )
-  const slots = Option.match(live, { onNone: () => [], onSome: (document) => document.tools ?? [] })
-  const needsHistory = [...callIds].some(
-    (id) => !slots.some((slot) => slot.callId === id) && !shownHolds.has(id),
-  )
-  const identities = needsHistory
-    ? identitiesFor((yield* Pi.view(reader.conversation, reader.context)).entries)
-    : new Map<string, typeof CallIdentity.cases.Public.Type>()
+  // A slot, an in-flight generation call, or the hold previously shown to this reader can
+  // answer without a transcript scan. Only a truly missing completed call needs provenance.
   const calls = new Map(
     [...callIds].map((callId) => {
+      const identity = CallIdentity.cases.Public.make({
+        callId,
+        resultTask: Option.none(),
+        duplicate: false,
+      })
+      const direct = lookupSnapshots(live, holds, identity)
       const shownHold = shownHolds.get(callId)
-      if (shownHold !== undefined && !slots.some((slot) => slot.callId === callId))
-        return [
-          callId,
-          lookupSnapshots(live, holds, CallIdentity.cases.Hold.make({ holdId: shownHold })),
-        ] as const
-      const identity = slots.some((slot) => slot.callId === callId)
-        ? CallIdentity.cases.Public.make({ callId, resultTask: Option.none(), duplicate: false })
-        : (identities.get(callId) ??
-          CallIdentity.cases.Public.make({ callId, resultTask: Option.none(), duplicate: false }))
-      return [callId, lookupSnapshots(live, holds, identity)] as const
+      const found =
+        CallLookup.guards.Missing(direct) && shownHold !== undefined
+          ? lookupSnapshots(live, holds, CallIdentity.cases.Hold.make({ holdId: shownHold }))
+          : direct
+      return [callId, found] as const
     }),
   )
+  const unresolved = [...calls].flatMap(([id, found]) =>
+    CallLookup.guards.Missing(found) ? [id] : [],
+  )
+  if (unresolved.length > 0) {
+    const identities = identitiesFor((yield* Pi.view(reader.conversation, reader.context)).entries)
+    for (const callId of unresolved) {
+      const identity = identities.get(callId)
+      if (identity !== undefined) calls.set(callId, lookupSnapshots(live, holds, identity))
+    }
+  }
   return {
     plan: (toolName: string) => Option.fromNullishOr(plans.get(toolName)),
     call: (callId: string) => calls.get(callId) ?? CallLookup.cases.Missing.make({}),

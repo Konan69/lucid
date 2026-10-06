@@ -149,14 +149,14 @@ function indexMessage(
 }
 
 /** The SDK's transcript is typed; select calls without flattening duplicate ids into a Map. */
-export function callsIn(entry: EntryRecord, callId: string) {
+export function callsIn(entry: EntryRecord) {
   const messages = entry.model
   if (messages === undefined) return []
   return messages.flatMap((message) =>
     message.role === 'assistant'
       ? message.content.filter(
           (block): block is Extract<typeof block, { type: 'toolCall' }> =>
-            block.type === 'toolCall' && block.id === callId,
+            block.type === 'toolCall',
         )
       : [],
   )

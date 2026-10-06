@@ -1,7 +1,7 @@
 import { copyJson, type Context, type JsonValue } from '@earendil-works/chord'
 import { type ConversationId, type Harness, LiveDoc } from '@earendil-works/pi-durable'
 
-import { Array as Arr, Effect, Option } from 'effect'
+import { Effect, Option } from 'effect'
 
 import {
   CallIdentity,
@@ -47,8 +47,6 @@ export const waiting = Effect.fn('Durable.waiting')(function* (
   const conversation = yield* Pi.conversation(harness, conversationId, context)
   const holds = yield* Pi.snapshot(harness, Holds, conversationId, context)
   const live = yield* Pi.snapshot(harness, LiveDoc, conversationId, context)
-  const agent = yield* Pi.agent(conversation, context)
-  const view = yield* Pi.view(conversation, context)
   const callIds = new Set(
     Option.match(live, {
       onNone: () => [],
@@ -66,16 +64,23 @@ export const waiting = Effect.fn('Durable.waiting')(function* (
           : []
       }),
   })
-  const current = Array.from(callIds).flatMap((callId): Waiting[] => {
+  const ready = [...callIds].flatMap((callId) => {
     const found = lookupSnapshots(
       live,
       holds,
       CallIdentity.cases.Public.make({ callId, resultTask: Option.none(), duplicate: false }),
     )
-    if (!CallLookup.guards.Ready(found)) return []
-    const entry = view.entries.findLast((candidate) => callsIn(candidate, callId).length > 0)
-    if (entry === undefined) return []
-    const call = Option.fromNullishOr(callsIn(entry, callId)).pipe(Option.flatMap(Arr.head))
+    return CallLookup.guards.Ready(found) ? [found] : []
+  })
+  if (ready.length === 0) return later
+  // Pending slots contain no arguments. One context read indexes all current inputs together;
+  // idle/later-only observations need neither context nor registry authority.
+  const agent = yield* Pi.agent(conversation, context)
+  const view = yield* Pi.view(conversation, context)
+  const inputs = new Map(view.entries.flatMap(callsIn).map((call) => [call.id, call]))
+  const current = ready.flatMap((found): Waiting[] => {
+    const callId = found.callId
+    const call = Option.fromNullishOr(inputs.get(callId))
     if (Option.isNone(call)) return []
     const tool = agent.tools.find((each) => each.name === call.value.name)
     const plan = Option.fromNullishOr(tool).pipe(Option.flatMap(planOf))
