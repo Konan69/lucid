@@ -54,6 +54,9 @@ exec 9>"$home/trees/$name.lock"; flock 9
 cd "$tree" || finish 92
 git checkout -q --force --detach "$sha" && git clean -fdq || finish 92
 mkdir -p .cache/gate
+# pnpm fetches the version this repository pins on first use, and that first call can fail
+# while the download lands (seen after the machine woke with its cache gone). Ask twice.
+pnpm --version > /dev/null 2>&1 || pnpm --version > /dev/null 2>&1 || true
 stamp=$(git ls-tree -r "$sha" | grep -E '(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$|[[:space:]]patches/' | sha256sum | cut -c1-32)
 if [ "$(cat .cache/gate/installed 2>/dev/null)" != "$stamp" ]; then
   echo "installing dependencies"
