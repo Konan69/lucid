@@ -231,3 +231,5 @@ export function holdId(text: string): Core.HoldId {
   if (Result.isFailure(result)) throw new HoldIdInvalid({})
   return result.success
 }
+export { type ToolScope } from './tools.ts'
+export { ToolContextFailed } from './errors.ts'

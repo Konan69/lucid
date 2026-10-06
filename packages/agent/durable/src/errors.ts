@@ -223,3 +223,16 @@ export class HistoryPageInvalid extends Schema.TaggedError<HistoryPageInvalid>()
     return 'History limit must be a positive integer'
   }
 }
+
+/** A resolver or SDK context validator failed before the tool acquired its scoped authority. */
+export class ToolContextFailed extends Schema.TaggedError<ToolContextFailed>()(
+  'ToolContextFailed',
+  { toolName: Schema.String, cause: Schema.Defect() },
+  { title: 'ToolContextFailed' },
+) {
+  /** Name the tool without discarding the resolver's diagnostic. */
+  override get message() {
+    const text = Predicate.isError(this.cause) ? this.cause.message : String(this.cause)
+    return `Tool ${this.toolName} context failed: ${text}`
+  }
+}

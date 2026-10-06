@@ -1,5 +1,7 @@
 import { copyJson, type Context, type JsonValue } from '@earendil-works/chord'
 import {
+  type ConversationId,
+  type TaskId,
   defineExtension,
   LiveDoc,
   hook,
@@ -11,7 +13,7 @@ import {
 import { asSchema, type Tool, type ToolSet } from 'ai'
 import { Effect, Option, Predicate, Schema } from 'effect'
 
-import { ToolFailed, ToolOutputFailed, ToolSchemaFailed } from './errors.ts'
+import { ToolContextFailed, ToolFailed, ToolOutputFailed, ToolSchemaFailed } from './errors.ts'
 import {
   CallIdentity,
   holdIdOf,
@@ -29,7 +31,18 @@ import { Delivery } from './delivery.ts'
 /** Whether an interrupted call may run again after a crash. Pi's own default is unsafe. */
 export type Replay = 'safe' | 'unsafe'
 
+/** Pi persists these identities with the tool task, preserving them across safe replay. */
+export type ToolScope = {
+  readonly conversationId: ConversationId
+  readonly taskId: TaskId
+  readonly callId: string
+  readonly toolName: string
+}
+
 export type ToolsOptions = {
+  /** Resolve SDK context once per execution attempt; absence supplies the durable ToolScope itself. */
+  readonly context?: (scope: ToolScope) => Effect.Effect<unknown, unknown>
+
   /**
    * Must equal the host's HarnessSettings.toolExecution; Pi Durable does not expose that setting.
    * Default parallel. Every bridged registration states its mode explicitly instead of inheriting
@@ -49,6 +62,7 @@ export type ToolsOptions = {
 }
 
 type Lookups = {
+  readonly context: Option.Option<NonNullable<ToolsOptions['context']>>
   readonly execution: NonNullable<ToolsOptions['execution']>
   readonly sequential: ReadonlySet<string>
   readonly replay: NonNullable<ToolsOptions['replay']>
@@ -63,7 +77,7 @@ type Program = (
   context: Context,
 ) => Effect.Effect<
   ToolExecutionResult,
-  ToolFailed | ToolOutputFailed | import('./errors.ts').PiFailed
+  ToolContextFailed | ToolFailed | ToolOutputFailed | import('./errors.ts').PiFailed
 >
 
 const decodeJsonText = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.MutableJson))
@@ -93,19 +107,23 @@ function executeForPi(program: Program): Execute {
 type Server = {
   readonly name: string
   readonly schema: ReturnType<typeof asSchema>
-  readonly execute: NonNullable<Tool['execute']>
+  readonly execute: NonNullable<Tool<unknown, unknown, unknown>['execute']>
+  readonly contextSchema: Option.Option<ReturnType<typeof asSchema>>
+  readonly context: Lookups['context']
 }
 
 /** SDK validators may be synchronous or Promise-based; normalize only this external operation. */
-const validate = (server: Server, args: Parameters<Execute>[0]) => {
-  const schema = server.schema
+type SdkValue = Parameters<NonNullable<ReturnType<typeof asSchema>['validate']>>[0]
+
+/** This SDK schema ingress accepts exactly the value type its validator declares. */
+const validate = (schema: ReturnType<typeof asSchema>, args: SdkValue, name: string) => {
   if (schema.validate === undefined) return Effect.succeed({ success: true as const, value: args })
   const validateArgs = schema.validate.bind(schema)
   return Effect.tryPromise({
     try: async function validateForSdk() {
       return validateArgs(args)
     },
-    catch: (cause) => new ToolFailed({ toolName: server.name, cause }),
+    catch: (cause) => new ToolFailed({ toolName: name, cause }),
   })
 }
 
@@ -119,15 +137,45 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
   api: ToolExecutionApi,
   context: Context,
 ) {
-  const checked = yield* validate(server, input)
+  const checked = yield* validate(server.schema, input, server.name)
   if (!checked.success) return failure(checked.error.message)
+  const scope: ToolScope = {
+    conversationId: api.conversationId,
+    taskId: api.taskId,
+    callId: api.callId,
+    toolName: server.name,
+  }
+  const resolved = yield* Option.match(server.context, {
+    onNone: () => Effect.succeed(scope),
+    onSome: (resolve) =>
+      Effect.try({
+        try: () => resolve(scope),
+        catch: (cause) => new ToolContextFailed({ toolName: server.name, cause }),
+      }).pipe(
+        Effect.flatten,
+        Effect.mapError((cause) => new ToolContextFailed({ toolName: server.name, cause })),
+      ),
+  })
+  // ai/src/generate-text/validate-tool-context.ts:21–33 validates and normalizes before execute.
+  const toolContext = yield* Option.match(server.contextSchema, {
+    onNone: () => Effect.succeed(resolved),
+    onSome: (schema) =>
+      validate(schema, resolved, server.name).pipe(
+        Effect.mapError((cause) => new ToolContextFailed({ toolName: server.name, cause })),
+        Effect.flatMap((validated) =>
+          validated.success
+            ? Effect.succeed(validated.value)
+            : Effect.fail(new ToolContextFailed({ toolName: server.name, cause: validated.error })),
+        ),
+      ),
+  })
   const output = yield* Effect.tryPromise({
     try: async function executeForSdk() {
       return server.execute(checked.value, {
         toolCallId: api.callId,
         messages: [],
         abortSignal: context.abortSignal,
-        context: undefined,
+        context: toolContext,
       })
     },
     catch: (cause) => new ToolFailed({ toolName: server.name, cause }),
@@ -222,6 +270,8 @@ function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
       name,
       schema: asSchema(tool.inputSchema),
       execute: tool.execute.bind(tool),
+      contextSchema: Option.map(Option.fromNullishOr(tool.contextSchema), asSchema),
+      context: lookups.context,
     }
     return {
       plan: { approval, source: 'server', execution: lookups.execution },
@@ -318,6 +368,7 @@ export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* (
   options: ToolsOptions,
 ) {
   const lookups: Lookups = {
+    context: Option.fromNullishOr(options.context),
     execution: options.execution ?? 'parallel',
     sequential: new Set(options.sequential ?? []),
     replay: options.replay ?? {},
