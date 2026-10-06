@@ -84,9 +84,9 @@
       "outputs": []
     },
     "test": {
-      "dependsOn": ["^build"],
-      "env": ["VIVID_TEST_DATABASE_URL"],
-      "outputs": ["coverage/**"]
+      "dependsOn": ["checkinputs"],
+      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "outputs": [".cache/gate/tests.json"]
     },
     "dev": {
       "cache": false,
@@ -129,16 +129,56 @@
         "checkinputs",
         "@vivid/agent-runtime#types",
         "@vivid/agent-runtime#checkinputs"
-      ]
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/types.mjs"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
+      "outputs": [".cache/typescript/**", "*.tsbuildinfo"]
     },
     "@vivid/skills#lint": {
-      "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"]
+      "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/.oxlintrc.json",
+        "$TURBO_ROOT$/tsconfig*.json",
+        "$TURBO_ROOT$/apps/**/tsconfig*.json",
+        "$TURBO_ROOT$/packages/**/tsconfig*.json",
+        "$TURBO_ROOT$/scripts/lint.mjs",
+        "$TURBO_ROOT$/scripts/oxlint-plugin-vivid.mjs",
+        "$TURBO_ROOT$/tools/oxlint/**",
+        "$TURBO_ROOT$/apps/web/src/styles/**"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS"],
+      "outputs": []
     },
     "@vivid/agent-runtime#typecheck": {
-      "dependsOn": ["types", "^types", "checkinputs", "@vivid/server#checkinputs"]
+      "dependsOn": ["types", "^types", "checkinputs", "@vivid/server#checkinputs"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/types.mjs"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
+      "outputs": [".cache/typescript/**", "*.tsbuildinfo"]
     },
     "@vivid/agent-runtime#lint": {
-      "dependsOn": ["checkinputs", "@vivid/server#checkinputs"]
+      "dependsOn": ["checkinputs", "@vivid/server#checkinputs"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/.oxlintrc.json",
+        "$TURBO_ROOT$/tsconfig*.json",
+        "$TURBO_ROOT$/apps/**/tsconfig*.json",
+        "$TURBO_ROOT$/packages/**/tsconfig*.json",
+        "$TURBO_ROOT$/scripts/lint.mjs",
+        "$TURBO_ROOT$/scripts/oxlint-plugin-vivid.mjs",
+        "$TURBO_ROOT$/tools/oxlint/**",
+        "$TURBO_ROOT$/apps/web/src/styles/**"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS"],
+      "outputs": []
     },
     "@vivid/server#typecheck": {
       "dependsOn": [
@@ -147,16 +187,96 @@
         "checkinputs",
         "@vivid/agent-runtime#types",
         "@vivid/agent-runtime#checkinputs"
-      ]
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/types.mjs"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
+      "outputs": [".cache/typescript/**", "*.tsbuildinfo"]
     },
     "@vivid/server#lint": {
-      "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"]
+      "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/.oxlintrc.json",
+        "$TURBO_ROOT$/tsconfig*.json",
+        "$TURBO_ROOT$/apps/**/tsconfig*.json",
+        "$TURBO_ROOT$/packages/**/tsconfig*.json",
+        "$TURBO_ROOT$/scripts/lint.mjs",
+        "$TURBO_ROOT$/scripts/oxlint-plugin-vivid.mjs",
+        "$TURBO_ROOT$/tools/oxlint/**",
+        "$TURBO_ROOT$/apps/web/src/styles/**"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS"],
+      "outputs": []
     },
     "@vivid/mobile#typecheck": {
-      "dependsOn": ["types", "^types", "checkinputs", "@vivid/web#checkinputs"]
+      "dependsOn": ["types", "^types", "checkinputs", "@vivid/web#checkinputs"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/types.mjs"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
+      "outputs": [".cache/typescript/**", "*.tsbuildinfo"]
     },
     "@vivid/mobile#lint": {
-      "dependsOn": ["checkinputs", "@vivid/web#checkinputs"]
+      "dependsOn": ["checkinputs", "@vivid/web#checkinputs"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/.oxlintrc.json",
+        "$TURBO_ROOT$/tsconfig*.json",
+        "$TURBO_ROOT$/apps/**/tsconfig*.json",
+        "$TURBO_ROOT$/packages/**/tsconfig*.json",
+        "$TURBO_ROOT$/scripts/lint.mjs",
+        "$TURBO_ROOT$/scripts/oxlint-plugin-vivid.mjs",
+        "$TURBO_ROOT$/tools/oxlint/**",
+        "$TURBO_ROOT$/apps/web/src/styles/**"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS"],
+      "outputs": []
+    },
+    "@vivid/skills#test": {
+      "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"],
+      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "outputs": [".cache/gate/tests.json"]
+    },
+    "@vivid/agent-runtime#test": {
+      "dependsOn": ["checkinputs", "@vivid/server#checkinputs"],
+      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "outputs": [".cache/gate/tests.json"],
+      "env": ["VIVID_TEST_DATABASE"],
+      "passThroughEnv": ["VIVID_TEST_DATABASE_URL"]
+    },
+    "@vivid/server#test": {
+      "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"],
+      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "outputs": [".cache/gate/tests.json"],
+      "env": ["VIVID_TEST_DATABASE"],
+      "passThroughEnv": ["VIVID_TEST_DATABASE_URL"]
+    },
+    "@vivid/mobile#test": {
+      "dependsOn": ["checkinputs", "@vivid/web#checkinputs"],
+      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "outputs": [".cache/gate/tests.json"]
+    },
+    "//#test:tooling": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "apps/**/package.json",
+        "packages/**/package.json",
+        "apps/**/tsconfig*.json",
+        "packages/**/tsconfig*.json",
+        "apps/*/drizzle/**",
+        "apps/*/product-drizzle/**",
+        "packages/**/drizzle/**",
+        "!docs/**",
+        "!**/node_modules/**"
+      ],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC"],
+      "outputs": []
     }
   }
 }

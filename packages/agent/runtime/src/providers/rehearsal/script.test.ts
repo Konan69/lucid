@@ -78,6 +78,14 @@ function expectCapitalSentences(message: AssistantMessage) {
   }
 }
 
+/**
+ * Each registration case starts a Node process that boots Vite and loads the provider cold: about
+ * two seconds on an idle machine, and past the default five when several gates share its cores
+ * (6.6 s and 16 s measured on the Cloudbox, 6 Oct 2026). This is a ceiling for that start, not a
+ * wait: nothing here sleeps.
+ */
+const coldProcess = 30_000
+
 /** Isolated Node processes prove import-time opt-in against Flue's real registry without module mocks or global env changes. */
 function registration(model: Option.Option<string>) {
   const env = { ...process.env }
@@ -417,13 +425,21 @@ describe('Rehearsal scenes', () => {
     Option.some('openrouter/z-ai/glm-5.3-flash'),
     Option.some('rehearsalish/script'),
   ]) {
-    it(`does not register without explicit opt-in (${String(model)})`, () => {
-      expect(registration(model)).toBe('{"registered":false,"model":null}')
-    })
-  }
-  it('registers exactly the opt-in script model through Flue', () => {
-    expect(registration(Option.some('rehearsal/script'))).toBe(
-      '{"registered":true,"model":"script"}',
+    it(
+      `does not register without explicit opt-in (${String(model)})`,
+      () => {
+        expect(registration(model)).toBe('{"registered":false,"model":null}')
+      },
+      coldProcess,
     )
-  })
+  }
+  it(
+    'registers exactly the opt-in script model through Flue',
+    () => {
+      expect(registration(Option.some('rehearsal/script'))).toBe(
+        '{"registered":true,"model":"script"}',
+      )
+    },
+    coldProcess,
+  )
 })
