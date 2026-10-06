@@ -21,6 +21,7 @@ import {
   Person,
   PersonId,
   PersonSummary,
+  DesktopAction,
   ProposedAction,
   Run,
   RunId,
@@ -348,11 +349,13 @@ export const connectionAction = ProposedAction.make({
     input: { project: 'private tool value' },
   }),
 })
-export const commandAction = ProposedAction.make({
-  summary: 'List working files',
+export const desktopAction = ProposedAction.make({
+  summary: 'Type the file name',
   rationale: 'Inspect work',
   effect: 'write',
-  target: ActionTarget.cases.Command.make({ command: 'ls' }),
+  target: ActionTarget.cases.Desktop.make({
+    action: DesktopAction.cases.Type.make({ text: 'notes' }),
+  }),
 })
 export const JudgmentMode = Judgment
 

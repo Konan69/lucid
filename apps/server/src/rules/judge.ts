@@ -61,7 +61,6 @@ const shown = (action: ProposedAction) => ({
       tool,
       input: JSON.stringify(input),
     }),
-    Command: ({ command }) => ({ integration: 'Computer', tool: 'command', input: command }),
     Browser: ({ target, action: step }) => ({
       integration: BrowseTarget.guards.Person(target) ? "Person's own browser" : 'Computer',
       tool: 'browser',

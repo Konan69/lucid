@@ -104,7 +104,6 @@ describe.skipIf(!testDatabaseConfigured)(
                 }),
               })
               const storedComputer = yield* ComputerStore
-              const commandOwners = yield* Ref.make<string[]>([])
               const computer = ComputerStore.of({
                 ...storedComputer,
                 access: Effect.fn('Test.computerAccess')((person) =>
@@ -112,10 +111,6 @@ describe.skipIf(!testDatabaseConfigured)(
                     ComputerAccess.cases.Ready.make({ key: computerMachineKey(person) }),
                   ),
                 ),
-                exec: Effect.fn('Test.computerReceipt')(function* (person) {
-                  yield* Ref.update(commandOwners, (owners) => owners.concat(person))
-                  return { exitCode: 0, output: 'Computer receipt', truncated: false }
-                }),
               })
               const outcome = yield* run(
                 test.personal,
@@ -123,8 +118,7 @@ describe.skipIf(!testDatabaseConfigured)(
                 `const found=await tools.find_tools({query:"read"}); const tool=found.tools[0];
       const first=await tools.use_tool({account:tool.account,tool:tool.tool,input:{},summary:"Read first page",rationale:"Find records"});
       const [left,right]=await Promise.all([1,2].map(page=>tools.use_tool({account:tool.account,tool:tool.tool,input:{cursor:first.output.cursor,page},summary:"Read next page",rationale:"Find records"})));
-      const receipt=await tools.run_command({command:"pwd",summary:"Check the Computer"});
-      return {chosen:left.output.rows.filter(row=>row.value>497).map(row=>row.value),count:right.output.rows.length,exitCode:receipt.result.exitCode};`,
+      return {chosen:left.output.rows.filter(row=>row.value>497).map(row=>row.value),count:right.output.rows.length};`,
               ).pipe(
                 Effect.provide(codeCallsLayer, { local: true }),
                 Effect.provideService(Executor, provider),
@@ -134,21 +128,18 @@ describe.skipIf(!testDatabaseConfigured)(
               expect(outcome).toHaveProperty('result', {
                 chosen: [498, 499],
                 count: 500,
-                exitCode: 0,
               })
               expect(outcome.calls.map((call) => call.kind)).toEqual([
                 'find_tools',
                 'use_tool',
                 'use_tool',
                 'use_tool',
-                'run_command',
               ])
               expect(yield* Ref.get(inputs)).toEqual([
                 {},
                 { cursor: 'next-page', page: 1 },
                 { cursor: 'next-page', page: 2 },
               ])
-              expect(yield* Ref.get(commandOwners)).toEqual([test.personal.person.id])
             }),
           ).pipe(Effect.provide(testLayer)),
       )
@@ -480,7 +471,7 @@ describe.skipIf(!testDatabaseConfigured)(
 /** Infrastructure faults exercise bound dispatch directly, independently of host interpreter support. */
 describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => {
   /** Availability replies are new code refusals; they are recorded once without private reasons. */
-  standalone.effect.each(['command', 'personal browser', 'cloud browser'] as const)(
+  standalone.effect.each(['personal browser', 'cloud browser'] as const)(
     'records one CallRefused for unavailable %s',
     (surface) =>
       Effect.scoped(
@@ -490,21 +481,17 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
           const store = yield* ComputerStore
           const unavailable = ComputerStore.of({
             ...store,
-            exec: () => Effect.fail(new ComputerNotReady({ reason: 'Private command outage' })),
             browse: () => Effect.fail(new ComputerNotReady({ reason: 'Private browser outage' })),
           })
-          const input =
-            surface === 'command'
-              ? { command: 'pwd', summary: 'Check availability' }
-              : {
-                  target:
-                    surface === 'personal browser'
-                      ? BrowseTarget.cases.Person.make({})
-                      : BrowseTarget.cases.Vivid.make({}),
-                  action: BrowserAction.cases.Open.make({ address: 'https://example.test' }),
-                  summary: 'Check availability',
-                }
-          const kind = surface === 'command' ? 'run_command' : 'browse'
+          const input = {
+            target:
+              surface === 'personal browser'
+                ? BrowseTarget.cases.Person.make({})
+                : BrowseTarget.cases.Vivid.make({}),
+            action: BrowserAction.cases.Open.make({ address: 'https://example.test' }),
+            summary: 'Check availability',
+          }
+          const kind = 'browse'
           const outcome = yield* Effect.gen(function* () {
             return yield* (yield* CodeCalls).bind({
               person: test.personal.person.id,

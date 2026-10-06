@@ -114,15 +114,6 @@ export const ComputerFileWriteOutcome = Schema.TaggedUnion({
 })
 export type ComputerFileWriteOutcome = typeof ComputerFileWriteOutcome.Type
 
-/** One command Vivid runs on the Computer. */
-export const RunCommandRequest = Schema.Struct({
-  command: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(8000)),
-  /** One sentence saying what this does, shown if a Person must approve it. */
-  summary: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
-  timeoutSeconds: Schema.optionalKey(Schema.Number),
-})
-export interface RunCommandRequest extends Schema.Schema.Type<typeof RunCommandRequest> {}
-
 /** What the command produced. Long output is cut with a marker, never silently. */
 export const CommandResult = Schema.Struct({
   exitCode: Schema.Number,
@@ -418,18 +409,6 @@ export const DesktopView = Schema.Struct({
   window: Schema.NullOr(Schema.String),
 }).annotate({ identifier: 'DesktopView', title: 'Desktop view' })
 export interface DesktopView extends Schema.Schema.Type<typeof DesktopView> {}
-
-/** What came of a command: its result, a decision to wait for, a rule that forbids it, or no machine. */
-export const CommandOutcome = Schema.TaggedUnion({
-  Completed: { result: CommandResult },
-  ApprovalRequired: { approvalId: ApprovalId, summary: Schema.String },
-  Blocked: { rule: Schema.String },
-  /** A Person holds the Computer, or it is not running and could not be started. */
-  Unavailable: { reason: Schema.String },
-  /** Dispatch may have happened; a missing receipt never authorizes an automatic retry. */
-  OutcomeUnknown: {},
-})
-export type CommandOutcome = typeof CommandOutcome.Type
 
 /** What came of a browser step, including uncertain dispatch. */
 export const BrowseOutcome = Schema.TaggedUnion({

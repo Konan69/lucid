@@ -26,10 +26,8 @@ import {
   type UseDesktopRequest,
   BrowseTarget,
   BrowseOutcome,
-  CommandOutcome,
   ProposedAction,
   type BrowseRequest,
-  type RunCommandRequest,
   type ComputerShellRequest,
   ComputerShellOutcome,
   type ComputerFileReadRequest,
@@ -398,10 +396,6 @@ export interface ComputerStoreService {
   readonly access: (person: PersonId) => Effect.Effect<ComputerAccess, StoreError>
   readonly watching: (person: PersonId) => Effect.Effect<void, StoreError, Scope.Scope>
   readonly screen: (person: PersonId) => Effect.Effect<Option.Option<MachineScreen>, StoreError>
-  readonly exec: (
-    person: PersonId,
-    input: { readonly command: string; readonly timeoutSeconds: number },
-  ) => Effect.Effect<CommandResult, StoreError | MachineFailure | ReadinessFailure>
   /** Passive observations neither wake a Computer nor extend its inactivity deadline. */
   readonly probe: (
     person: PersonId,
@@ -995,13 +989,6 @@ export const computerStoreLayer = Layer.effect(
       yield* prepare(state, person).pipe(Effect.onError(() => recoverIdle(person)))
       return yield* executeReady(person, action)
     })
-    /** Commands, browser steps and desktop input share precisely the same readiness and idle policy. */
-    const exec = Effect.fn('ComputerStore.exec')(
-      (person: PersonId, input: { readonly command: string; readonly timeoutSeconds: number }) =>
-        execute(person, (key) =>
-          state.machine.exec({ key, command: input.command, timeoutSeconds: input.timeoutSeconds }),
-        ),
-    )
     /** Hold the same permit as takeover and idle stop, but do not prepare or record activity.
      * Context reads must never start a machine or indefinitely postpone its idle shutdown. */
     const probe = Effect.fn('ComputerStore.probe')(
@@ -1057,7 +1044,6 @@ export const computerStoreLayer = Layer.effect(
       watching: inactivity.watching,
       access,
       screen,
-      exec,
       probe,
       browse,
       desktop,
@@ -1130,57 +1116,6 @@ const browserEffect = (action: BrowserAction, target: BrowseTarget) =>
     ShowTab: () => 'read' as const,
     CloseTab: () => (BrowseTarget.guards.Person(target) ? ('write' as const) : ('read' as const)),
   })
-
-/** Gate decisions run before any command reaches the provider, and refusal is a wire outcome. */
-export const computerRunCommand = Effect.fn('Computer.runCommand')(function* (
-  actor: Actor,
-  request: RunCommandRequest,
-) {
-  const store = yield* ComputerStore
-  const gate = yield* Gate
-  const action = ProposedAction.make({
-    summary: request.summary,
-    rationale: '',
-    effect: 'write',
-    target: ActionTarget.cases.Command.make({ command: request.command }),
-  })
-  const decision = yield* gate.check(actor, action, 'Ordinary')
-  return yield* GateDecision.match<Effect.Effect<CommandOutcome, DatabaseInfrastructureError>>(
-    decision,
-    {
-      Blocked: Effect.fn('Computer.command.blocked')(
-        ({ rule }: typeof GateDecision.cases.Blocked.Type): Effect.Effect<CommandOutcome> =>
-          Effect.succeed(CommandOutcome.cases.Blocked.make({ rule })),
-      ),
-      ApprovalRequired: ({ approval }) =>
-        Effect.succeed(
-          CommandOutcome.cases.ApprovalRequired.make({
-            approvalId: approval.id,
-            summary: approval.action.summary,
-          }),
-        ),
-      Allowed: () =>
-        store
-          .exec(actor.person.id, {
-            command: request.command,
-            timeoutSeconds: request.timeoutSeconds === undefined ? 30 : request.timeoutSeconds,
-          })
-          .pipe(
-            Effect.map((result) => CommandOutcome.cases.Completed.make({ result })),
-            Effect.catchTag('MachineExecutionUnknown', () =>
-              Effect.succeed(CommandOutcome.cases.OutcomeUnknown.make({})),
-            ),
-            Effect.catchTags(
-              executionRefusals((failure) =>
-                Effect.succeed(
-                  CommandOutcome.cases.Unavailable.make({ reason: executionReason(failure) }),
-                ),
-              ),
-            ),
-          ),
-    },
-  )
-})
 
 /** A refusal by the machine's file system is told apart from a Computer that cannot be used. */
 const fileOutcome = <A, Done>(
@@ -1426,7 +1361,6 @@ export const computerDesktop = Effect.fn('Computer.desktop')(function* (
 })
 
 type ComputerTarget =
-  | typeof ActionTarget.cases.Command.Type
   | typeof ActionTarget.cases.Browser.Type
   | typeof ActionTarget.cases.Desktop.Type
 
@@ -1495,16 +1429,6 @@ export const computerRunner = Effect.fn('Computer.runner')(function* (input: {
   const result = yield* ActionTarget.match<
     Effect.Effect<ActionOutcome, ExecutionFailure, DeviceRegistry>
   >(input.target, {
-    Command: ({ command }) =>
-      store.exec(input.person.id, { command, timeoutSeconds: 30 }).pipe(
-        Effect.map((receipt) =>
-          receipt.exitCode === 0
-            ? ActionOutcome.cases.Succeeded.make({ result: receipt.output.slice(0, 4000) })
-            : ActionOutcome.cases.Failed.make({
-                reason: `The command exited with code ${receipt.exitCode}.`,
-              }),
-        ),
-      ),
     Browser: ({ action, target }) =>
       BrowseTarget.guards.Person(target)
         ? personBrowse({

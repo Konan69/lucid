@@ -202,7 +202,6 @@ const STANDING = {
 
 /** Mirrors the web's watchable steps, without exposing tool names to the drawn UI. */
 const ON_COMPUTER = new Set([
-  'run_command',
   'bash',
   'read',
   'write',
