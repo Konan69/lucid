@@ -34,7 +34,7 @@ import { Texting } from './screen/settings/Texting'
 import { People } from './screen/settings/People'
 import { ThemeProvider, useTheme } from './theme'
 import { Drawer } from './ui/Drawer'
-import { Presence, type Place } from './ui/Presence'
+import { IN_THREAD, ON_GREETING, Presence } from './ui/Presence'
 import { Recover } from './ui/Recover'
 import { GLASS_HEADER, navigationTheme, SCREEN_CHANGE } from './ui/stack'
 import { Button, Face, GUTTER, Label } from './ui/ui'
@@ -222,9 +222,10 @@ const underMenu = ({ children, state, navigation }: StackLayout) => (
 )
 
 /**
- * Vivid's capsule over the stack (`ui/Presence.tsx`), and where the rows of its menu lead. It is
+ * Vivid's avatar over the stack (`ui/Presence.tsx`), and where the rows of its menu lead. It is
  * drawn here, after the stack and inside the menu's page, so it is over the system's bar, where
- * it can be pressed, and under the open menu.
+ * it can be pressed, and under the open menu. It is there only while a Thread with words in it
+ * is in front; a page with no conversation has the avatar in its own middle.
  *
  * A new Thread is offered only while a Thread is in front: on the greeting the Person is already
  * starting one. The other rows are Vivid's own places, pushed over whatever is in front.
@@ -245,10 +246,6 @@ function Vivid({ go }: { go: StackLayout['navigation'] }) {
   )
 }
 
-/** The rows of Vivid's menu, in order. One list each, so a render does not make a new one. */
-const IN_THREAD: ReadonlyArray<Place> = ['Fresh', 'Computer', 'Memory']
-const ON_GREETING: ReadonlyArray<Place> = ['Computer', 'Memory']
-
 /**
  * The signed-in app: one native stack, with the menu over it.
  *
@@ -260,8 +257,8 @@ const ON_GREETING: ReadonlyArray<Place> = ['Computer', 'Memory']
  * The bar is the platform's (`GLASS_HEADER`): its way back and its buttons are the system's,
  * liquid glass on iOS 26, with each screen's content scrolling under it. A screen that has
  * actions or a live title says so itself (`ui/Bar.tsx`); one whose bar is only its name has it
- * here. Home's bar starts with the way to the menu, has Vivid's capsule in the middle (one
- * capsule, drawn over the stack: `Vivid` above) and ends with the way to call Vivid.
+ * here. Home's bar starts with the way to the menu and ends with the way to call Vivid; in a
+ * Thread Vivid's avatar floats in the middle (one avatar, drawn over the stack: `Vivid` above).
  *
  * The menu is the navigator's `layout`, so it is drawn over the stack and its bar and is handed
  * the stack's state: it can be dragged open only while Home is the screen in front.
