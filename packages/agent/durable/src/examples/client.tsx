@@ -8,6 +8,7 @@ import {
   type ToolUIPart,
   type UIMessage,
 } from 'ai'
+import { useState } from 'react'
 
 /** The text a person typed into the form's field `name`. */
 function typed(form: HTMLFormElement, name: string) {
@@ -23,8 +24,11 @@ function typed(form: HTMLFormElement, name: string) {
  * reconnect on mount to a run that is still in progress or waits for a person.
  */
 export function Thread(props: { readonly api: string; readonly messages: UIMessage[] }) {
+  // One transport for the life of the component; a new one each render would be a new connection
+  // owner each time.
+  const [transport] = useState(() => new DefaultChatTransport({ api: props.api }))
   const chat = useChat({
-    transport: new DefaultChatTransport({ api: props.api }),
+    transport,
     messages: props.messages,
     resume: true,
     // Send the approvals and answers back as soon as the person has given all of them.
