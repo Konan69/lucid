@@ -10,8 +10,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stand } from '../data/stand'
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
-import { AnimatedGlassMaterial } from './Glass'
-import { APPEAR, LEAVE, MORPH } from './motion/morph'
+import { GlassMaterial } from './Glass'
+import { APPEAR, LEAVE } from './motion/morph'
 import { Face, Label, TARGET, type Tone } from './ui'
 
 /**
@@ -198,10 +198,15 @@ export function VividMenu({ menu, children }: { menu: Menu; children: ReactNode 
  *
  * The pill is built as the reference builds its composer's shape (T3 Code mobile
  * `ComposerSurface`, `src/features/threads/ThreadComposer.tsx`): an outline that clips, the
- * passive glass material behind, and the content in front as the material's sibling, all on one
- * layout transition, so the pill widens around its new words instead of showing them outside
- * itself first. The words are keyed by what they say, so the old ones fade out as the new ones
- * fade in; the face only changes its expression.
+ * passive glass material behind, and the content in front as the material's sibling. The words
+ * are keyed by what they say, so the old ones fade out as the new ones fade in; the face only
+ * changes its expression.
+ *
+ * The pill takes its new width at once. It used to ease to it on a layout transition, as the
+ * reference's shape does, and on a device that sometimes left it at the old width with the new
+ * words cut off ("Waiting fo", an Android emulator, 6 October 2026): the words change while the
+ * layer is still arriving, and the transition then starts from a frame that is not the one
+ * drawn. A pill that is always as wide as its words is worth more than one that glides there.
  */
 function Avatar({ stand }: { stand: Stand }) {
   const { colors: c, dark } = useTheme()
@@ -225,8 +230,7 @@ function Avatar({ stand }: { stand: Stand }) {
       <View style={{ width: AVATAR, height: AVATAR, borderRadius: AVATAR / 2, boxShadow: lifted }}>
         <Face size={AVATAR} mood={mood} label="" />
       </View>
-      <Animated.View
-        layout={MORPH}
+      <View
         style={{
           marginTop: BETWEEN,
           height: PILL,
@@ -238,13 +242,10 @@ function Avatar({ stand }: { stand: Stand }) {
           boxShadow: lifted,
         }}
       >
-        <AnimatedGlassMaterial
-          layout={MORPH}
+        <GlassMaterial
           style={[StyleSheet.absoluteFill, { borderRadius: PILL / 2, borderCurve: 'continuous' }]}
         />
-        <Animated.View
-          collapsable={false}
-          layout={MORPH}
+        <View
           style={{
             height: PILL,
             flexDirection: 'row',
@@ -276,11 +277,9 @@ function Avatar({ stand }: { stand: Stand }) {
               </Label>
             </Animated.View>
           </LayoutAnimationConfig>
-          <Animated.View layout={MORPH}>
-            <ChevronDown pointerEvents="none" size={CHEVRON} strokeWidth={2.4} color={c['ink-3']} />
-          </Animated.View>
-        </Animated.View>
-      </Animated.View>
+          <ChevronDown pointerEvents="none" size={CHEVRON} strokeWidth={2.4} color={c['ink-3']} />
+        </View>
+      </View>
     </View>
   )
 }
