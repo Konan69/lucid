@@ -160,16 +160,24 @@ function observeIdentity(event: AssistantMessageEvent, state: PartialState) {
   }
 }
 
+/** A scripted authoritative replacement keeps the old whole partial visible until its end frame. */
+function replacedFrame(
+  event: Exclude<AssistantMessageEvent, { type: 'done' | 'error' }>,
+  state: PartialState,
+): Option.Option<AssistantMessageEvent> {
+  if (Option.isNone(state.replacedContent)) return Option.none()
+  if (event.type === 'text_end') state.replaced = true
+  return state.replaced
+    ? Option.none()
+    : Option.some({ ...event, partial: { ...event.partial, content: state.replacedContent.value } })
+}
+
 /** Provider terminal blocks strip scratch fields; every delta has its own captured partial copy. */
 function adapt(event: AssistantMessageEvent, state: PartialState): AssistantMessageEvent {
   if (event.type === 'done') return event
-  if (Option.isSome(state.replacedContent) && event.type !== 'error') {
-    if (event.type === 'text_end') state.replaced = true
-    if (!state.replaced)
-      return { ...event, partial: { ...event.partial, content: state.replacedContent.value } }
-  }
-
   if (event.type === 'error') return { ...event, error: terminal(event.error, state) }
+  const replacement = replacedFrame(event, state)
+  if (Option.isSome(replacement)) return replacement.value
   observeIdentity(event, state)
   if (event.type === 'toolcall_start') state.arguments.set(event.contentIndex, '')
   if (event.type === 'toolcall_delta') {

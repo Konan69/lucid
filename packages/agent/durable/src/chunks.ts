@@ -273,6 +273,7 @@ function extendsReported(before: Block, after: Block, reported: Reported): boole
     case 'toolCall':
       return after.type === 'toolCall' && after.id === before.id && after.name === before.name
   }
+  return unreachable(before)
 }
 
 /** An authoritative non-prefix replacement resets this response's SDK step and rebuilds it.
