@@ -1,6 +1,15 @@
 #!/usr/bin/env sh
 set -eu
 
+# git tells a hook where its repository is: a push from a linked worktree exports GIT_DIR
+# (git 2.54; a push from the main checkout exports none). Every step below finds the repository
+# from the working directory, and the tooling tests make repositories of their own in temporary
+# directories (scripts/cache.test.mjs, scripts/types.test.mjs). With GIT_DIR inherited, their
+# `git add .` wrote the fixture into this worktree's index and the tests failed, so the gate
+# could not pass from a worktree. The names come from git itself.
+# shellcheck disable=SC2046
+unset $(git rev-parse --local-env-vars)
+
 pnpm check:package-manager
 pnpm check:versions
 pnpm audit:effect-boundaries
