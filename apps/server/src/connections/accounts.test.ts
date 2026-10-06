@@ -143,14 +143,13 @@ describe.skipIf(!testDatabaseConfigured)('several accounts on one Integration', 
           yield* connectionHandlers
             .UseTool(toolRequest(resolved.connectionId, 'read'))
             .pipe(Effect.provideService(AuthContext, vivid))
-          const [checked] = yield* Ref.get(probe.checked)
-          if (checked === undefined || !ActionTarget.guards.Connection(checked.action.target))
-            return expect.fail('The Gate was not asked about a Connection')
           // The Gate, and so an Approval, is asked about the account by its own name.
-          expect(checked.action.target).toMatchObject({
-            connectionId: work.id,
-            account: 'Records (ada@work.example)',
-          })
+          const asked = (yield* Ref.get(probe.checked))
+            .map((check) => check.action.target)
+            .filter(ActionTarget.guards.Connection)
+          expect(asked).toMatchObject([
+            { connectionId: work.id, account: 'Records (ada@work.example)' },
+          ])
         }),
     )
 
@@ -347,10 +346,16 @@ describe.skipIf(!testDatabaseConfigured)('several accounts on one Integration', 
         // The service is there, so the ordinary card is settled.
         expect((yield* offer('Service', ownerActor)).ready).toBe(true)
         const another = yield* offer('Another', ownerActor)
-        if (!isAnother(another)) return expect.fail('A request for one more account was expected')
         expect(another.ready).toBe(false)
-        // The account that is there was begun before Vivid asked, so it does not answer.
-        expect(another.another.askedAt).toBeGreaterThanOrEqual(connected.createdAt)
+        // The card carries when Vivid asked. The account that is there was begun before that
+        // moment, so it does not answer the request.
+        const askedAt = Option.map(
+          Option.liftPredicate(another, isAnother),
+          (message) => message.another.askedAt,
+        )
+        expect(Option.map(askedAt, (moment) => moment >= connected.createdAt)).toEqual(
+          Option.some(true),
+        )
 
         // Another Person has no account on it: for them the service is still simply on offer.
         const theirs = yield* connectionHandlers

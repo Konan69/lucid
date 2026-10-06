@@ -97,6 +97,7 @@ describe.skipIf(process.env['VIVID_LIVE_ANOTHER_ACCOUNT'] !== '1')(
           const done = yield* completeRun(fixture, carried)
           expect(through(done)).toContain(personal.connection.account)
           expect(through(done)).not.toContain(workAccount)
+          return yield* Effect.void
         }).pipe(Effect.scoped, Effect.provide(chainLayer)),
       { timeout: 180_000 },
     )

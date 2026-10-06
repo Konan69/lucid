@@ -28,20 +28,35 @@ import {
 
 const ada = { id: PersonId.make('ada'), name: 'Ada Obi', image: null }
 
-/** An account on Linear the Person called "Work"; the service does not say who signed in. */
-const account = (id: string, state: ConnectionState): Connection => ({
+const mine = ConnectionOwnership.cases.Personal.make({ owner: ada })
+
+/** What tells an account apart, as the server sends it. */
+type Said = Pick<Connection, 'name' | 'identity' | 'account'>
+/** The Person called it "Work"; the service does not say who signed in. */
+const work: Said = { name: 'Work', identity: null, account: 'Linear (Work)' }
+
+/** One account on Linear, written out whole: who it is, whose it is and how it stands. */
+const held = (
+  id: string,
+  said: Said,
+  ownership: ConnectionOwnership,
+  state: ConnectionState,
+): Connection => ({
   id: ConnectionId.make(id),
   service: ServiceId.make('linear'),
   serviceName: 'Linear',
   mark: null,
-  name: 'Work',
-  identity: null,
-  account: 'Linear (Work)',
+  name: said.name,
+  identity: said.identity,
+  account: said.account,
   origin: 'Catalogue',
-  ownership: ConnectionOwnership.cases.Personal.make({ owner: ada }),
+  ownership,
   state,
   createdAt: 1,
 })
+
+/** The Person's own account called "Work", standing as given. */
+const account = (id: string, state: ConnectionState): Connection => held(id, work, mine, state)
 
 /** What a card carries for an Integration Vivid began adding, which here wants a key. */
 const started = ConnectionAuthorization.cases.EnterKey.make({
@@ -102,14 +117,7 @@ const offered = (
 const ready = ConnectionState.cases.Ready.make({})
 const unfinished = ConnectionState.cases.NeedsAuthorization.make({})
 
-/** A working account on Linear as the server names it: what the Person and the service said. */
-const held = (
-  id: string,
-  said: Pick<Connection, 'name' | 'identity' | 'account'>,
-  ownership: ConnectionOwnership,
-): Connection => ({ ...account(id, ready), ...said, ownership })
-const mine = ConnectionOwnership.cases.Personal.make({ owner: ada })
-const unnamed = { name: null, identity: null, account: 'Linear (2)' }
+const unnamed: Said = { name: null, identity: null, account: 'Linear (2)' }
 
 /** A row with nothing pressed, for the only account on its service unless said otherwise. */
 const facts = { alone: true, sharedWith: Option.none<string>(), pressed: Option.none() }
@@ -119,32 +127,37 @@ describe('a connected account’s row on the Integrations sheet', () => {
     expect(accountLine(account('a', ready), facts)).toBe('Work')
     expect(
       accountLine(
-        held('a', { name: 'Work', identity: 'ada@example.com', account: 'Linear (Work)' }, mine),
+        held(
+          'a',
+          { name: 'Work', identity: 'ada@example.com', account: 'Linear (Work)' },
+          mine,
+          ready,
+        ),
         facts,
       ),
     ).toBe('Work · ada@example.com')
     expect(
       accountLine(
-        held('a', { name: null, identity: 'ada@example.com', account: 'Linear' }, mine),
+        held('a', { name: null, identity: 'ada@example.com', account: 'Linear' }, mine, ready),
         facts,
       ),
     ).toBe('ada@example.com')
   })
 
   it('says it is connected when nothing tells it apart and it is the only one', () => {
-    expect(accountLine(held('a', unnamed, mine), facts)).toBe('Connected')
+    expect(accountLine(held('a', unnamed, mine, ready), facts)).toBe('Connected')
   })
 
   it('is called what Vivid calls it when it is one of several with nothing to tell it apart', () => {
-    expect(accountLine(held('a', unnamed, mine), { ...facts, alone: false })).toBe(
-      'Linear (2) · Connected',
+    expect(accountLine(held('a', unnamed, mine, ready), { ...facts, alone: false })).toBe(
+      'Linear (2)',
     )
   })
 
   it('says how it stands as well while it does not work', () => {
     expect(accountLine(account('a', unfinished), facts)).toBe('Work · Sign-in not finished')
     const revoked = ConnectionState.cases.Failed.make({ reason: 'the key was revoked' })
-    expect(accountLine({ ...held('a', unnamed, mine), state: revoked }, facts)).toBe(
+    expect(accountLine(held('a', unnamed, mine, revoked), facts)).toBe(
       'Not working: the key was revoked',
     )
   })
@@ -162,12 +175,7 @@ describe('a connected account’s row on the Integrations sheet', () => {
   })
 
   it('lists the Person’s own accounts before the Company’s, each in the server’s order', () => {
-    const shared = (id: string) =>
-      held(
-        id,
-        { name: 'Work', identity: null, account: 'Linear (Work)' },
-        ConnectionOwnership.cases.Shared.make({}),
-      )
+    const shared = (id: string) => held(id, work, ConnectionOwnership.cases.Shared.make({}), ready)
     expect(
       ownFirst([shared('s1'), account('m1', ready), shared('s2'), account('m2', ready)]).map(
         (item) => item.id,

@@ -166,18 +166,20 @@ const requireFreeName = Effect.fn('Connections.requireFreeName')(function* (
     readonly except: ConnectionId | null
   },
 ) {
-  if (target.name === null) return
-  const wanted = target.name.trim().toLowerCase()
-  const taken = (yield* listRecords(actor)).some(
-    (row) =>
-      row.service === target.service &&
-      row.companyId === target.companyId &&
-      row.id !== target.except &&
-      row.name !== null &&
-      row.name.trim().toLowerCase() === wanted,
-  )
+  // Taking a name away clashes with nothing.
+  const wanted = Option.map(Option.fromNullOr(target.name), (name) => name.trim().toLowerCase())
+  const taken =
+    Option.isSome(wanted) &&
+    (yield* listRecords(actor)).some(
+      (row) =>
+        row.service === target.service &&
+        row.companyId === target.companyId &&
+        row.id !== target.except &&
+        row.name !== null &&
+        row.name.trim().toLowerCase() === wanted.value,
+    )
   if (taken)
-    return yield* Effect.fail(
+    yield* Effect.fail(
       new Conflict({ message: 'Another account on this integration already has that name.' }),
     )
 })
