@@ -9,7 +9,7 @@ import {
   type ConnectionId,
   type ConnectionRequestMessage,
 } from '@vivid/contracts'
-import { Data, Option, Schema } from 'effect'
+import { Array as Arr, Data, Option, Order, Schema } from 'effect'
 
 /**
  * The accounts a Person has on their Integrations, as every client reads them.
@@ -30,9 +30,17 @@ export interface ServiceAccounts {
   readonly accounts: ReadonlyArray<Connection>
 }
 
+/**
+ * Sorting goes through Effect's `Array.sort`, never `toSorted`: the phone's JavaScript engine
+ * (Hermes) does not have that method, and the Integrations sheet did not draw at all on a phone
+ * while this file used it. A browser and the test runner both have it, so nothing but the device
+ * showed the fault.
+ */
+const oldestFirst = Order.mapInput(Order.Number, (account: Connection) => account.createdAt)
+const newestFirst = Order.flip(oldestFirst)
+
 /** Oldest first, the order accounts are numbered in ("Gmail", "Gmail (2)"). */
-const byAge = (accounts: ReadonlyArray<Connection>) =>
-  accounts.toSorted((one, other) => one.createdAt - other.createdAt)
+const byAge = (accounts: ReadonlyArray<Connection>) => Arr.sort(accounts, oldestFirst)
 
 /**
  * Groups a list of Connections by service.
@@ -52,28 +60,29 @@ export const byService = (
     if (group === undefined) groups.set(connection.service, [connection])
     else group.push(connection)
   }
-  return [...groups.values()]
-    .flatMap((group) => {
-      const [first] = byAge(group)
-      if (first === undefined) return []
-      const marked = group.find((connection) => connection.mark !== null)
-      return [
-        {
-          since: first.createdAt,
-          accounts: {
-            service: first.service,
-            serviceName: first.serviceName,
-            mark: marked === undefined ? null : marked.mark,
-            accounts: [
-              ...byAge(group.filter((item) => ConnectionOwnership.guards.Personal(item.ownership))),
-              ...byAge(group.filter((item) => ConnectionOwnership.guards.Shared(item.ownership))),
-            ],
-          },
+  const placed = [...groups.values()].flatMap((group) => {
+    const [first] = byAge(group)
+    if (first === undefined) return []
+    const marked = group.find((connection) => connection.mark !== null)
+    return [
+      {
+        since: first.createdAt,
+        accounts: {
+          service: first.service,
+          serviceName: first.serviceName,
+          mark: marked === undefined ? null : marked.mark,
+          accounts: [
+            ...byAge(group.filter((item) => ConnectionOwnership.guards.Personal(item.ownership))),
+            ...byAge(group.filter((item) => ConnectionOwnership.guards.Shared(item.ownership))),
+          ],
         },
-      ]
-    })
-    .toSorted((one, other) => other.since - one.since)
-    .map((group) => group.accounts)
+      },
+    ]
+  })
+  return Arr.sort(
+    placed,
+    Order.flip(Order.mapInput(Order.Number, (group: (typeof placed)[number]) => group.since)),
+  ).map((group) => group.accounts)
 }
 
 /**
@@ -227,13 +236,14 @@ export const answering = (
   request: Pick<ConnectionRequestMessage, 'service'>,
   awaited: Awaited,
 ): Option.Option<Connection> =>
-  Option.fromUndefinedOr(
-    connections
-      .filter(
+  Arr.head(
+    Arr.sort(
+      connections.filter(
         (connection) =>
           ConnectionState.guards.Ready(connection.state) && answers(awaited, request, connection),
-      )
-      .toSorted((one, other) => other.createdAt - one.createdAt)[0],
+      ),
+      newestFirst,
+    ),
   )
 
 /**
