@@ -7,7 +7,7 @@ import * as NodeTest from 'node:test'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
 import { parse, report, selectStages, withoutRepositoryEnvironment } from './gate.mjs'
-import { snapshot, treeName } from './gate/cloud.mjs'
+import { shellWord, snapshot, treeName } from './gate/cloud.mjs'
 import { checkRatchets, countFindings, ratchets } from './gate/ratchets.mjs'
 import { stageNames, stageOfTask, stages } from './gate/stages.mjs'
 
@@ -61,6 +61,9 @@ void test('a finding is counted in both of the formats oxlint prints a rule in',
     '  ⚠ eslint(complexity): unrelated',
   ].join('\n')
   assert.equal(countFindings(output, ratchet), 2)
+  // The rule's words inside a longer file name earlier in the line do not hide the rule field.
+  const shadowed = 'src/vivid/no-try-catch-fixture.ts:1:1: message [Warning/vivid/no-try-catch]'
+  assert.equal(countFindings(shadowed, ratchet), 1)
 })
 
 void test('a ratchet fails only above its ceiling, and every ratchet names a distinct rule', () => {
@@ -119,15 +122,33 @@ void test('a package-specific Turbo task keeps the generic task hash inputs and 
   }
 })
 
-void test('only the database suites hash the database marker, and none hashes its address', () => {
+/**
+ * The database address differs on every run and would miss the cache every time; the gate's
+ * marker and every other test setting are hashed instead, so a result made without one of them
+ * never answers for a run that has it.
+ */
+void test('test tasks hash every test setting except the database address', () => {
   const { tasks } = decodeTurboConfig(
     NodeFS.readFileSync(NodePath.join(repositoryRoot, 'turbo.json'), 'utf8'),
   )
-  for (const [key, task] of Object.entries(tasks)) {
-    const env = task.env === undefined ? [] : task.env
-    assert.ok(!env.includes('VIVID_TEST_DATABASE_URL'), `${key} would miss its cache on every run`)
-    const database = key === '@vivid/server#test' || key === '@vivid/agent-runtime#test'
-    assert.equal(env.includes('VIVID_TEST_DATABASE'), database, key)
+  const tests = Object.entries(tasks).filter(([key]) => /(^|#)test$/u.test(key))
+  assert.ok(tests.length >= 6)
+  for (const [key, task] of tests) {
+    assert.deepEqual(
+      task.env,
+      ['VIVID_TEST_*', 'VIVID_LIVE_*', 'EXPLABS_API_KEY', '!VIVID_TEST_DATABASE_URL'],
+      key,
+    )
+    assert.deepEqual(task.passThroughEnv, ['VIVID_TEST_DATABASE_URL'], key)
+  }
+})
+
+void test('a remote argument stays one word whatever it contains', () => {
+  for (const argument of ['plain', 'two words', "it's", '$(touch x); `id` && *']) {
+    const echoed = NodeChildProcess.spawnSync('sh', ['-c', `printf %s ${shellWord(argument)}`], {
+      encoding: 'utf8',
+    })
+    assert.equal(echoed.stdout, argument)
   }
 })
 

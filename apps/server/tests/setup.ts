@@ -2,7 +2,8 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeProcess from 'node:process'
 import * as Pg from 'pg'
 import { afterAll, inject } from 'vitest'
-import './template.ts'
+// Types only: the provided-context declaration. The module itself hashes every migration.
+import type {} from './template.ts'
 
 /**
  * UUID rows alone cannot isolate global scheduler/replay scans. Give each file its own migrated

@@ -142,6 +142,12 @@ async function main(argv, environment) {
   if (host !== undefined && host !== '' && !options.here)
     return runCloud(repositoryRoot, { ...options, host, base }, env)
   const label = { mode: options.mode, sha: headLabel(repositoryRoot, options) }
+  // Here the checks read the working tree. With uncommitted work that is not the commit being
+  // pushed, so a fix that exists only on disk could pass the gate for a broken commit.
+  if (options.committed && label.sha.endsWith('+uncommitted'))
+    throw new Error(
+      '--committed with uncommitted work: commit it, or set VIVID_GATE_HOST so the gate runs on the pushed commit in its own tree',
+    )
   const outcome =
     options.mode === 'focused'
       ? await runFocused(repositoryRoot, options.files, env)

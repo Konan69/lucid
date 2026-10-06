@@ -14,26 +14,24 @@ permissions:
   contents: read
 
 jobs:
-  quality:
-    name: Lint, format, typecheck, and test
+  # The gate is scripts/gate.mjs: its stages are defined in scripts/gate/stages.mjs and the push
+  # hook runs the same ones. Each job below is a selection of stages on its own machine, so lint
+  # and typecheck, which each hold a whole TypeScript program in memory, run at the same time
+  # without sharing one machine's memory.
+  checks:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      DATABASE_URL: postgresql://vivid:vivid@localhost:55433/vivid
-    services:
-      postgres:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_USER: vivid
-          POSTGRES_PASSWORD: vivid
-          POSTGRES_DB: vivid
-        options: >-
-          --health-cmd "pg_isready -U vivid -d vivid"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 55433:5432
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Policy, format and tooling
+            stages: policy,format,tooling
+          - name: Lint with native type analysis
+            stages: lint
+          - name: Typecheck
+            stages: typecheck
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,46 +48,71 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # pnpm's cache contains downloads, not successful check results. Task hashes
-      # decide reuse after restoring the latest cache for this lockfile.
+      # pnpm's cache contains downloads, not successful check results. Task hashes decide reuse
+      # after restoring the latest cache for this lockfile; each job keeps its own, so a job
+      # restores only the results of the stages it runs.
       - name: Restore Turbo task cache
         uses: actions/cache@v4
         with:
           path: .turbo/cache
-          key: turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          key: turbo-${{ runner.os }}-${{ matrix.stages }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
-            turbo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            turbo-${{ runner.os }}-${{ matrix.stages }}-${{ hashFiles('pnpm-lock.yaml') }}-
 
-      # Runs after the install because the script imports `effect`; before it, Node cannot
-      # resolve the package and the job stopped here without checking anything.
-      - name: Check package-manager policy
-        run: node scripts/package-manager.mjs
+      - name: Run the gate stages
+        run: node scripts/gate.mjs full --here --only ${{ matrix.stages }}
 
-      - name: Check version lockstep
-        run: pnpm check:versions
-
-      - name: Audit Effect boundaries
-        run: pnpm audit:effect-boundaries
-
-      - name: Check migration integrity
-        run: pnpm check:migrations
-
-      - name: Test tooling rules
-        run: pnpm test:tooling
-
-      - name: Lint with native type analysis
-        run: pnpm lint
-
-      - name: Check formatting
-        run: pnpm format
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Test
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # An administration connection to a disposable server. The gate creates one empty database
+      # per run on it and gives that to the suites; without this the gate fails, it does not skip.
+      VIVID_TEST_DATABASE_URL: postgresql://vivid:vivid@localhost:55440/postgres
+    services:
+      postgres:
+        image: postgres:18-alpine
         env:
-          VIVID_TEST_DATABASE_URL: postgresql://vivid:vivid@localhost:55433/vivid
-        run: pnpm test
+          POSTGRES_USER: vivid
+          POSTGRES_PASSWORD: vivid
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd "pg_isready -U vivid -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 55440:5432
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # pnpm's cache contains downloads, not successful check results. Task hashes decide reuse
+      # after restoring the latest cache for this lockfile; each job keeps its own, so a job
+      # restores only the results of the stages it runs.
+      - name: Restore Turbo task cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-test-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-test-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Run the test stage
+        run: node scripts/gate.mjs full --here --only test
 
   gitleaks:
     name: Secret scan

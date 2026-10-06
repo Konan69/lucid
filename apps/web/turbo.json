@@ -4,9 +4,6 @@
   "tasks": {
     "build": {
       "dependsOn": ["@vivid/tokens#build"]
-    },
-    "test": {
-      "dependsOn": ["@vivid/tokens#build"]
     }
   }
 }

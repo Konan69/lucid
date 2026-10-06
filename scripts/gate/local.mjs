@@ -136,13 +136,24 @@ async function runLane(lane, laneStages, run) {
       detail: 'turbo did not run',
       log: NodePath.join(run.directory, `turbo-${lane}.log`),
     }))
-  return laneStages.map((stage) =>
+  const results = laneStages.map((stage) =>
     stageResult(
       stage,
       summary.tasks.filter((task) => stageOfTask(task.taskId) === stage),
       run,
     ),
   )
+  // Turbo's own exit is the authority. A task outside every stage (a prerequisite another
+  // package's configuration adds) can fail while each stage's own tasks pass; that failure
+  // belongs to the lane, so it is charged to the lane's first stage and never dropped.
+  if (turbo.exit !== 0 && results.every((result) => result.failed.length === 0)) {
+    const strays = summary.tasks
+      .filter((task) => task.execution.exitCode !== 0)
+      .map((task) => task.taskId)
+    results[0].failed.push(...strays, `turbo exited ${turbo.exit}`)
+    results[0].log = NodePath.join(run.directory, `turbo-${lane}.log`)
+  }
+  return results
 }
 
 /** Lint passes with warnings; the ratchets are what turn a new warning into a failure. */
@@ -195,6 +206,46 @@ export async function runLocal(root, selection, environment) {
   const runId = runIdentifier()
   const directory = NodePath.join(root, '.cache/gate/runs', runId)
   NodeFS.mkdirSync(directory, { recursive: true })
+  const release = holdTree(root)
+  try {
+    return await runStages(root, selection, environment, { runId, directory })
+  } finally {
+    release()
+  }
+}
+
+/**
+ * One gate at a time in one tree. Two would run Turbo over the same outputs and could each read
+ * the other's run summary. The lock is a file holding the owner's process id, created
+ * exclusively; a lock whose owner is gone (a killed run) is taken over.
+ */
+function holdTree(root) {
+  const lock = NodePath.join(root, '.cache/gate/lock')
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      NodeFS.writeFileSync(lock, String(process.pid), { flag: 'wx' })
+      return () => NodeFS.rmSync(lock, { force: true })
+    } catch {
+      const owner = Number(NodeFS.readFileSync(lock, 'utf8'))
+      if (ownerAlive(owner))
+        throw new Error(`a gate is already running in this tree (process ${owner})`)
+      NodeFS.rmSync(lock, { force: true })
+    }
+  }
+  throw new Error('could not take the gate lock for this tree')
+}
+
+/** Signal 0 delivers nothing; it only asks whether the process exists. */
+function ownerAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function runStages(root, selection, environment, { runId, directory }) {
   const selected = stages.filter((stage) => selection.stages.includes(stage.name))
   const needsDatabase = selected.some((stage) => stage.lane === 'tests')
   const database = needsDatabase ? await openRunDatabase(root, environment, runId) : undefined

@@ -189,10 +189,13 @@ export const ratchets = [
 export function countFindings(lintOutput, ratchet) {
   const named = `${ratchet.plugin}(${ratchet.rule})`
   const path = `${ratchet.plugin}/${ratchet.rule}`
-  const ends = (line) => {
-    const after = line.slice(line.indexOf(path) + path.length, line.indexOf(path) + path.length + 1)
-    return line.includes(path) && !/[\w-]/u.test(after)
-  }
+  // Every occurrence is tried: a file path earlier in the line may hold the same words
+  // followed by more of a name, and must not hide the rule field after it.
+  const ends = (line) =>
+    line
+      .split(path)
+      .slice(1)
+      .some((after) => !/^[\w-]/u.test(after))
   return lintOutput.split('\n').filter((line) => line.includes(named) || ends(line)).length
 }
 

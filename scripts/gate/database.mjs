@@ -5,7 +5,10 @@ import * as NodeTimersPromises from 'node:timers/promises'
 
 /** The gate's own disposable PostgreSQL server. Nothing but gate runs ever connects to it. */
 const container = 'vivid-gate-pg'
-/** A run that died without its sweep leaves databases behind; this is how long they may stay. */
+/**
+ * A run that died without its sweep leaves databases behind; this is how long they may stay.
+ * Age stands in for a lease: a full gate is minutes, so nothing alive is six hours old.
+ */
 const abandonedAfterSeconds = 6 * 60 * 60
 
 /** A gate must never pass with its database suites skipped, so an absent server is a failure. */
@@ -115,7 +118,9 @@ export async function openRunDatabase(root, environment, runId) {
          AND shobj_description(oid, 'pg_database')::bigint < extract(epoch FROM now()) - $1`,
       [abandonedAfterSeconds],
     )
-    for (const row of abandoned.rows) await admin.query(`DROP DATABASE ${row.name} WITH (FORCE)`)
+    // IF EXISTS: two runs starting together both see the same abandoned database.
+    for (const row of abandoned.rows)
+      await admin.query(`DROP DATABASE IF EXISTS ${row.name} WITH (FORCE)`)
     await admin.query(`CREATE DATABASE "${name}" TEMPLATE template0`)
     await admin.query(`COMMENT ON DATABASE "${name}" IS '${Math.floor(Date.now() / 1000)}'`)
   } catch (error) {

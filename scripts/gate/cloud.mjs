@@ -69,6 +69,7 @@ $capped node scripts/gate.mjs "$@" --here --sha "$label"
 finish $?
 RUN
 setsid nohup bash "$home/runs/$run.sh" "$name" "$sha" "$run" "$label" "$@" > "$log" 2>&1 < /dev/null &
+echo $! > "$home/runs/$run.pid"
 `
 
 /**
@@ -80,8 +81,12 @@ home="$HOME/vivid-gate/fast"; run="$1"
 touch "$home/runs/$run.log"
 tail -n +1 -f "$home/runs/$run.log" &
 tail=$!
-while [ ! -f "$home/runs/$run.exit" ]; do sleep 0.2; done
+runner="$(cat "$home/runs/$run.pid")"
+# The runner's own process id, written when it started. A runner that was killed writes no exit
+# file, so its absence with no live runner is a failure, not something to wait on.
+while [ ! -f "$home/runs/$run.exit" ] && kill -0 "$runner" 2>/dev/null; do sleep 0.2; done
 sleep 0.3; kill "$tail" 2>/dev/null; wait "$tail" 2>/dev/null
+[ -f "$home/runs/$run.exit" ] || { echo "the run ended without a result"; exit 93; }
 exit "$(cat "$home/runs/$run.exit")"
 `
 
@@ -101,17 +106,23 @@ export function snapshot(root, environment, committed) {
   const index = NodePath.join(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'gate-')), 'index')
   const scratch = { ...environment, GIT_INDEX_FILE: index }
   try {
-    git(root, ['read-tree', 'HEAD'], scratch)
-    git(root, ['add', '--all'], scratch)
-    const tree = git(root, ['write-tree'], scratch).stdout.trim()
+    // Every step is checked: a failed `add` would leave HEAD's content in the index, and the
+    // commit made from it would gate the tree without the change it was meant to carry.
+    const step = (args, env) => {
+      const result = git(root, args, env)
+      if (result.status !== 0)
+        throw new Error(`could not snapshot the tree (git ${args[0]}): ${result.stderr.trim()}`)
+      return result.stdout.trim()
+    }
+    step(['read-tree', 'HEAD'], scratch)
+    step(['add', '--all'], scratch)
+    const tree = step(['write-tree'], scratch)
     const identity = ['-c', 'user.name=gate', '-c', 'user.email=gate@localhost']
-    const commit = git(
-      root,
+    const commit = step(
       [...identity, 'commit-tree', tree, '-p', head, '-m', 'gate: working tree'],
       environment,
     )
-    if (commit.status !== 0) throw new Error(`could not snapshot the tree: ${commit.stderr}`)
-    return { sha: commit.stdout.trim(), label: `${head.slice(0, 12)}+uncommitted` }
+    return { sha: commit, label: `${head.slice(0, 12)}+uncommitted` }
   } finally {
     NodeFS.rmSync(NodePath.dirname(index), { recursive: true, force: true })
   }
@@ -131,8 +142,14 @@ export function treeName(root, environment, requested) {
   return name
 }
 
+/** One argument as one shell word: ssh joins its arguments into a single remote command line. */
+export function shellWord(argument) {
+  return `'${argument.replaceAll("'", `'\\''`)}'`
+}
+
 function ssh(host, script, args, stdio) {
-  return NodeChildProcess.spawnSync('ssh', [...sshOptions, host, 'bash', '-s', '--', ...args], {
+  const words = args.map((argument) => shellWord(argument))
+  return NodeChildProcess.spawnSync('ssh', [...sshOptions, host, 'bash', '-s', '--', ...words], {
     input: script,
     encoding: 'utf8',
     stdio,

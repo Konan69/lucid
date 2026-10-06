@@ -11,6 +11,8 @@ export default defineProject({
   test: {
     name: '@vivid/skills',
     environment: 'node',
+    // Transformed modules are kept on disk, keyed by content, and reused by the next process.
+    fsModuleCache: true,
     // These suites import the runtime's Vivid, and the runtime does not load without its notes
     // directory (`packages/agent/runtime/src/notes.ts`). Nothing is written there unless a case
     // writes a note; the directory is the system's temporary one, never a developer's notes.
