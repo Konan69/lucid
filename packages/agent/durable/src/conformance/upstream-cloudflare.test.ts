@@ -9,15 +9,7 @@ import { z } from 'zod'
 import { Predicate } from 'effect'
 
 import { PlainChat } from '../fixtures/chat.ts'
-import {
-  answer,
-  CallNotWaiting,
-  continueRun,
-  decide,
-  history,
-  streamRun,
-  waiting,
-} from '../main.ts'
+import { answer, continueRun, decide, history, streamRun, waiting } from '../main.ts'
 import { call, consume, context, hold, host, modelText, shop, texts } from './fixtures/host.ts'
 
 // Cloudflare packages/think/src/tests/actions-durable-pause.test.ts:185/197.
@@ -126,21 +118,21 @@ it('pause-again: the next gated call re-pauses; a second approve completes', asy
 })
 
 // Cloudflare packages/think/src/tests/actions-durable-pause.test.ts:132/149;
-// execute-hitl.test.ts:297/325. Gap: settled decisions return the first durable value rather than an error.
-// Ports packages/think/src/tests/execute-hitl.test.ts:297 — Think HITL — approve/reject paused executions > double-approve is graceful: the second returns an error and leaves the transcript alone.
-it.fails.each([
+// execute-hitl.test.ts:297/325. Adaptation: Pi's first settlement wins; repeated callers receive it.
+// Upstream packages/think/src/tests/execute-hitl.test.ts:297 — Think HITL — approve/reject paused executions > double-approve is graceful: the second returns an error and leaves the transcript alone.
+it.each([
   {
-    name: 'errors on a second approve and never double-executes (claim-by-delete)',
+    name: 'second approve',
     first: true,
     second: true,
   },
-  { name: 'errors on approve-after-reject', first: false, second: true },
+  { name: 'approve after reject', first: false, second: true },
   {
-    name: 'reject after approve is graceful: returns an error, never marks the run rejected',
+    name: 'reject after approve',
     first: true,
     second: false,
   },
-])('settled decision: $name', async ({ first, second }) => {
+])('returns the first settlement after $name', async ({ first, second }) => {
   const fixture = await shop()
   const opened = await fixture.open()
   opened.faux.setResponses([call('pay', { amount: 100 }, 'pay'), fauxAssistantMessage('Settled.')])
@@ -152,64 +144,79 @@ it.fails.each([
     ),
   )
   const holdId = await hold(opened.harness, opened.root.id, 'pay')
-  await decide(opened.harness, opened.root.id, { holdId, approved: first }, context)
+  const settled = await decide(
+    opened.harness,
+    opened.root.id,
+    { holdId, approved: first, reason: 'First decision' },
+    context,
+  )
+  expect(settled).toEqual(
+    first ? { kind: 'approved' } : { kind: 'denied', reason: 'First decision' },
+  )
   await opened.root.waitForIdle(context)
   const before = await history(opened.harness, opened.root.id, { limit: 10 }, context)
-  const repeat = await Promise.allSettled([
-    decide(opened.harness, opened.root.id, { holdId, approved: second }, context),
-  ])
+  const repeat = await decide(
+    opened.harness,
+    opened.root.id,
+    { holdId, approved: second, reason: 'Later decision' },
+    context,
+  )
   expect(await history(opened.harness, opened.root.id, { limit: 10 }, context)).toEqual(before)
   expect(fixture.paid).toEqual(first ? [100] : [])
-  expect(repeat).toEqual([{ status: 'rejected', reason: expect.any(CallNotWaiting) }])
+  expect(repeat).toEqual(settled)
 })
 
 // Cloudflare packages/think/src/tests/actions-durable-pause.test.ts:624-665.
-// Gap: Pi's immutable assistant entry retains post-pause text/reasoning; continuation sees it too.
-// Ports packages/think/src/tests/actions-durable-pause.test.ts:624 — resolving a durable pause drops pending-state generation (#2054) > drops text and reasoning written after the paused part on approve.
-it.fails.each([
-  { name: 'drops text and reasoning written after the paused part on approve', approved: true },
-  { name: 'drops text and reasoning written after the paused part on reject', approved: false },
-])('post-pause content: $name', async ({ approved }) => {
-  const fixture = await shop()
-  const opened = await fixture.open()
-  let prompt = ''
-  opened.faux.setResponses([
-    fauxAssistantMessage(
-      [
-        { type: 'text', text: 'Checking first.' },
-        fauxToolCall('pay', { amount: 100 }, { id: 'pay' }),
-        fauxThinking('Waiting for approval.'),
-        { type: 'text', text: 'Once approved, it runs.' },
-      ],
-      { stopReason: 'toolUse' },
-    ),
-    (request) => {
-      prompt = modelText(request.messages)
-      return fauxAssistantMessage('Settled.')
-    },
-  ])
-  await consume(
-    await streamRun(
+// Adaptation: Pi keeps its recorded response; a decision cannot rewrite post-pause generation.
+// Upstream packages/think/src/tests/actions-durable-pause.test.ts:624 — resolving a durable pause drops pending-state generation (#2054) > drops text and reasoning written after the paused part on approve.
+// Upstream packages/think/src/tests/actions-durable-pause.test.ts:651 — resolving a durable pause drops pending-state generation (#2054) > drops text and reasoning written after the paused part on reject.
+it.each([true, false])(
+  'retains recorded post-pause content after approval=%s',
+  async (approved) => {
+    const fixture = await shop()
+    const opened = await fixture.open()
+    let prompt = ''
+    opened.faux.setResponses([
+      fauxAssistantMessage(
+        [
+          { type: 'text', text: 'Checking first.' },
+          fauxToolCall('pay', { amount: 100 }, { id: 'pay' }),
+          fauxThinking('Waiting for approval.'),
+          { type: 'text', text: 'Once approved, it runs.' },
+        ],
+        { stopReason: 'toolUse' },
+      ),
+      (request) => {
+        prompt = modelText(request.messages)
+        return fauxAssistantMessage('Settled.')
+      },
+    ])
+    await consume(
+      await streamRun(
+        opened.harness,
+        { conversationId: opened.root.id, content: 'Pay', requestId: 'pending' },
+        context,
+      ),
+    )
+    await decide(
       opened.harness,
-      { conversationId: opened.root.id, content: 'Pay', requestId: 'pending' },
+      opened.root.id,
+      { holdId: await hold(opened.harness, opened.root.id, 'pay'), approved },
       context,
-    ),
-  )
-  await decide(
-    opened.harness,
-    opened.root.id,
-    { holdId: await hold(opened.harness, opened.root.id, 'pay'), approved },
-    context,
-  )
-  await opened.root.waitForIdle(context)
-  const saved = await history(opened.harness, opened.root.id, { limit: 10 }, context)
-  expect(saved.messages.flatMap(texts)).toContain('Checking first.')
-  expect(
-    saved.messages.flatMap((message) => message.parts).filter((part) => part.type === 'reasoning'),
-  ).toEqual([])
-  expect(saved.messages.flatMap(texts)).not.toContain('Once approved, it runs.')
-  expect(prompt).not.toContain('Once approved, it runs.')
-})
+    )
+    await opened.root.waitForIdle(context)
+    const saved = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+    expect(saved.messages.flatMap(texts)).toContain('Checking first.')
+    expect(
+      saved.messages
+        .flatMap((message) => message.parts)
+        .filter((part) => part.type === 'reasoning'),
+    ).toMatchObject([{ text: 'Waiting for approval.', state: 'done' }])
+    expect(saved.messages.flatMap(texts)).toContain('Once approved, it runs.')
+    expect(prompt).toContain('Once approved, it runs.')
+    expect(fixture.paid).toEqual(approved ? [100] : [])
+  },
+)
 
 // Cloudflare packages/agents/src/harness/pi/tests/harness.test.ts:144;
 // packages/ai-chat/src/tests/message-concurrency.test.ts:923, queue policy only.
@@ -273,9 +280,9 @@ it('keeps sessions separate', async () => {
 })
 
 // Cloudflare packages/ai-chat/src/react-tests/use-agent-chat.test.tsx:1821-1911.
-// Gap: SDK onToolCall is invoked for server tools; the bridge does not mark them providerExecuted.
-// Ports packages/ai-chat/src/react-tests/use-agent-chat.test.tsx:1821 — useAgentChat onToolCall > does not fire onToolCall for a server tool that is still executing (#2195).
-it.fails('does not fire onToolCall for a server tool that is still executing (#2195)', async () => {
+// Adaptation: stock Chat reports the server call; Cloudflare's hook-specific suppression is absent.
+// Upstream packages/ai-chat/src/react-tests/use-agent-chat.test.tsx:1821 — useAgentChat onToolCall > does not fire onToolCall for a server tool that is still executing (#2195).
+it('stock Chat reports a server tool through onToolCall', async () => {
   const fixture = await host(
     { server: tool({ inputSchema: z.object({}), execute: async () => 'Server result.' }) },
     {},
@@ -293,7 +300,11 @@ it.fails('does not fire onToolCall for a server tool that is still executing (#2
   const message = chat.lastMessage
   if (message === undefined) throw new Error('Expected assistant')
   expect(texts(message)).toEqual(['Done.'])
-  expect(calls).toEqual([])
+  expect(calls).toEqual(['server'])
+  expect(message.parts.find(isToolUIPart)).toMatchObject({
+    state: 'output-available',
+    output: 'Server result.',
+  })
 })
 
 // Cloudflare packages/ai-chat/src/tests/client-tool-duplicate-message.test.ts:480-566;

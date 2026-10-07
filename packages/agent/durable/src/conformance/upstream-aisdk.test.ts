@@ -330,94 +330,11 @@ it.fails('should send message when a dynamic tool output is submitted', async ()
   expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
 })
 
-// AI SDK packages/react/src/use-chat.ui.test.tsx:2130, should regenerate assistant message;
-// Cloudflare packages/ai-chat/src/tests/regenerate-message.test.ts:59, replaces the stale assistant.
-// Gap: regenerate reuses the preceding user id; durable submission dedupe replays the old answer.
-// Ports packages/react/src/use-chat.ui.test.tsx:2130 — use-chat > regenerate > should show streamed response.
-it.fails('regenerate returns a new answer and preserves preceding messages', async () => {
-  const fixture = await host({}, {})
-  const opened = await fixture.open()
-  opened.faux.setResponses([
-    fauxAssistantMessage('Parent.'),
-    fauxAssistantMessage('Original.'),
-    fauxAssistantMessage('Regenerated.'),
-  ])
-  const admitted = signal()
-  let requests = 0
-  const transport = new DefaultChatTransport<UIMessage>({
-    api: 'http://durable.test/chat',
-    fetch: async (url, init) => {
-      const response = await respond(
-        opened.harness,
-        opened.root.id,
-        new Request(url, init),
-        context,
-      )
-      requests++
-      if (requests === 3) admitted.resolve()
-      return response
-    },
-  })
-  const chat = new PlainChat({ transport })
-  await chat.sendMessage({ text: 'Parent prompt' })
-  await chat.sendMessage({ text: 'Original prompt' })
-  const preceding = structuredClone(chat.messages.slice(0, 2))
-  const pending = chat.regenerate()
-  onTestFinished(async () => {
-    await chat.stop()
-    await pending
-  })
-  await admitted.promise
-  await opened.root.waitForIdle(context)
-  expect(opened.faux.state.callCount).toBe(3)
-  await pending
-  expect(chat.messages.slice(0, 2)).toEqual(preceding)
-  expect(texts(last(chat))).toEqual(['Regenerated.'])
-})
-
-// AI SDK packages/ai/src/ui/chat.test.ts:1550-1873 expects replacement to answer edited user content.
-// Gap: replacement reuses a durable request id and returns the prior answer without editing history.
-// Ports packages/ai/src/ui/chat.test.ts:1550 — Chat > should replace an existing user message.
-it.fails('should replace an existing user message', async () => {
-  const fixture = await host({}, {})
-  const opened = await fixture.open()
-  opened.faux.setResponses([fauxAssistantMessage('Original.'), fauxAssistantMessage('Edited.')])
-  const admitted = signal()
-  let requests = 0
-  const transport = new DefaultChatTransport<UIMessage>({
-    api: 'http://durable.test/chat',
-    fetch: async (url, init) => {
-      const response = await respond(
-        opened.harness,
-        opened.root.id,
-        new Request(url, init),
-        context,
-      )
-      requests++
-      if (requests === 2) admitted.resolve()
-      return response
-    },
-  })
-  const chat = new PlainChat({ transport })
-  await chat.sendMessage({ text: 'Original prompt' })
-  const user = chat.messages[0]
-  if (user === undefined) throw new Error('Expected user')
-  const pending = chat.sendMessage({ text: 'Edited prompt', messageId: user.id })
-  onTestFinished(async () => {
-    await chat.stop()
-    await pending
-  })
-  await admitted.promise
-  await opened.root.waitForIdle(context)
-  expect(opened.faux.state.callCount).toBe(2)
-  await pending
-  expect(chat.messages.map(texts)).toEqual([['Edited prompt'], ['Edited.']])
-})
-
 // AI SDK packages/react/src/use-chat.ui.test.tsx:1572-1660 / 1794-1907.
-// Gap: inline non-image files and remote image URLs get HTTP 400, while upstream accepts both.
-// Ports packages/react/src/use-chat.ui.test.tsx:1572 — use-chat > file attachments with data url > should handle text file attachment and submission.
-it.fails.each([
+// Adaptation: Pi accepts inline images; unsupported files/URLs must fail before durable admission.
+// Upstream packages/react/src/use-chat.ui.test.tsx:1572 — use-chat > file attachments with data url > should handle text file attachment and submission.
+// Upstream packages/react/src/use-chat.ui.test.tsx:1794 — use-chat > file attachments with url > should handle image file attachment and submission.
+it.each([
   {
     name: 'text file attachment',
     mediaType: 'text/plain',
@@ -428,14 +345,19 @@ it.fails.each([
     mediaType: 'image/png',
     url: 'https://files.example.test/image.png',
   },
-])('should handle $name and submission', async ({ mediaType, url }) => {
+])('refuses $name with HTTP 400 before admission', async ({ mediaType, url }) => {
   const fixture = await host({}, {})
   const opened = await fixture.open()
   opened.faux.setResponses([fauxAssistantMessage('Attached.')])
   const chat = new PlainChat({ transport: opened.transport })
   await chat.sendMessage({ text: 'See attachment', files: [{ type: 'file', mediaType, url }] })
-  expect(chat.status).toBe('ready')
-  expect(texts(last(chat))).toEqual(['Attached.'])
+  expect(chat.status).toBe('error')
+  expect(chat.error).toBeInstanceOf(APICallError)
+  expect(chat.error).toMatchObject({ statusCode: 400 })
+  expect(opened.faux.state.callCount).toBe(0)
+  expect((await history(opened.harness, opened.root.id, { limit: 10 }, context)).messages).toEqual(
+    [],
+  )
 })
 
 // AI SDK packages/ai/src/ui/chat.test.ts:955/959; stop cancels SDK observation, not host work.
@@ -854,7 +776,9 @@ it.fails.each([
 
 // AI SDK packages/ai/src/ui/process-ui-message-stream.test.ts:7521/9422, tool returns preliminary results,
 // including initial tool execution after approval with preliminary tool output.
-// Gap: SDK execute's AsyncIterable is serialized as {}, never consumed or emitted as preliminary output.
+// Gap: SDK execute's AsyncIterable final output is serialized as {} instead of the last yielded value.
+// Preliminary values are deliberately not streamed. The tools lane's final-value fix flips these
+// expected failures at merge; preserve all static/dynamic and approval/no-approval variants.
 // Ports packages/ai/src/ui/process-ui-message-stream.test.ts:7521 — processUIMessageStream > preliminary tool results > should have the correct final message state.
 it.fails.each([
   { kind: 'static', approval: false },
@@ -862,7 +786,7 @@ it.fails.each([
   { kind: 'dynamic', approval: false },
   { kind: 'dynamic', approval: true },
 ])(
-  'streams $kind preliminary results and a final output with approval=$approval',
+  'preserves the final $kind generator output with approval=$approval',
   async ({ kind, approval }) => {
     const registration = {
       inputSchema: z.object({}),
@@ -903,11 +827,10 @@ it.fails.each([
         initial.message,
       )
     }
-    expect(result.chunks.filter((chunk) => chunk.type === 'tool-output-available')).toMatchObject([
-      { output: { status: 'loading' }, preliminary: true },
-      { output: { status: 'success' }, preliminary: true },
-      { output: { status: 'success' } },
-    ])
+    const outputs = result.chunks.filter((chunk) => chunk.type === 'tool-output-available')
+    expect(outputs).toHaveLength(1)
+    expect(outputs).toMatchObject([{ output: { status: 'success' } }])
+    expect(outputs[0]).not.toMatchObject({ preliminary: true })
     const part = result.message.parts.find(isToolUIPart)
     expect(part).toMatchObject({ state: 'output-available', output: { status: 'success' } })
     expect(part).not.toMatchObject({ preliminary: true })

@@ -51,8 +51,11 @@ it('returns the original identity for an exact oversized retry', async () => {
 })
 
 // Flue packages/runtime/src/test-utils/define-conversation-stream-store-contract-tests.ts:201/292.
-// Gap: Pi treats a reused request id as identical even when content differs; Flue rejects conflicts.
+// Gap: changed content under a used input id returns the prior receipt. The bridge must reject
+// with a tagged conflict at its Promise entry and HTTP 409 through the real SDK transport.
+// The conflict tag is not yet exported here; require its semantic tag without prescribing its name.
 // Ports packages/runtime/src/test-utils/define-conversation-stream-store-contract-tests.ts:201 — rejects conflicting producer retries without advancing the stream.
+// Ports packages/runtime/src/test-utils/define-conversation-stream-store-contract-tests.ts:292 — rejects a conflicting oversized retry without advancing the stream.
 it.fails.each([1, 2_500_000])(
   'rejects conflicting retries of %i bytes without advancing history',
   async (bytes) => {
@@ -68,14 +71,33 @@ it.fails.each([1, 2_500_000])(
       ),
     )
     const before = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+    const changed = content.slice(0, -1) + 'y'
+    const http = await Promise.allSettled([
+      opened.transport.sendMessages({
+        chatId: 'conflict',
+        trigger: 'submit-message',
+        messageId: 'conflict',
+        abortSignal: undefined,
+        messages: [{ id: 'conflict', role: 'user', parts: [{ type: 'text', text: changed }] }],
+      }),
+    ])
+    // Current deduplication returns a stream; detach it before testing the missing refusal.
+    for (const attempt of http) if (attempt.status === 'fulfilled') await attempt.value.cancel()
     const retried = await Promise.allSettled([
-      opened.root.submit(
-        { type: 'input', content: content.slice(0, -1) + 'y', requestId: 'conflict' },
+      streamRun(
+        opened.harness,
+        { conversationId: opened.root.id, content: changed, requestId: 'conflict' },
         context,
       ),
     ])
+    for (const attempt of retried) if (attempt.status === 'fulfilled') await attempt.value.cancel()
     expect(await history(opened.harness, opened.root.id, { limit: 10 }, context)).toEqual(before)
     expect(opened.faux.state.callCount).toBe(1)
-    expect(retried).toMatchObject([{ status: 'rejected' }])
+    expect(http).toMatchObject([
+      { status: 'rejected', reason: { name: 'AI_APICallError', statusCode: 409 } },
+    ])
+    expect(retried).toMatchObject([
+      { status: 'rejected', reason: { _tag: expect.stringMatching(/conflict/iu) } },
+    ])
   },
 )
