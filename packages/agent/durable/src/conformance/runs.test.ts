@@ -1,10 +1,12 @@
+import { runForPi } from '../pi.ts'
+import { consumeReadable } from '../fixtures/reading.ts'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { defineExtension, GenerationTask, hook, type EntryRecord } from '@earendil-works/pi-durable'
 import { expect, it } from '@effect/vitest'
-import { Effect, Predicate } from 'effect'
-import { onTestFinished } from 'vitest'
+import { Effect, Predicate, Option, Deferred } from 'effect'
+
 import { streamRun } from '../main.ts'
-import { consume, context, host, signal, texts } from './fixtures/host.ts'
+import { context, host, texts } from './fixtures/host.ts'
 
 /** Raw entry identity, attribution and content cannot distinguish these native run boundaries.
  * generation.js:408–421 appends either an onYield continuation or queued inputs under the current
@@ -33,14 +35,14 @@ function visible(entries: readonly EntryRecord[]) {
 it.live(
   'retains distinct run boundaries for identical continuation and follow-up entry shapes',
   () =>
-    Effect.promise(async () => {
+    Effect.gen(function* () {
       const histories: ReturnType<typeof visible>[] = []
       for (const mode of ['continuation', 'followUp'] as const) {
-        const entered = signal()
-        const release = signal()
-        onTestFinished(() => release.resolve())
-        const fixture = await host({}, {})
-        const opened = await fixture.open([
+        const entered = Deferred.makeUnsafe<void>()
+        const release = Deferred.makeUnsafe<void>()
+
+        const fixture = yield* host({}, {})
+        const opened = yield* fixture.open([
           defineExtension({
             name: 'native-continuation',
             hooks: [
@@ -54,33 +56,53 @@ it.live(
             ],
           }),
         ])
+        // Release the provider before the scoped harness closes, including failed assertions.
+        yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined))
         opened.faux.setResponses([
-          async () => {
-            entered.resolve()
-            await release.promise
-            return fauxAssistantMessage('First.')
-          },
+          () =>
+            runForPi(
+              Effect.gen(function* () {
+                Deferred.doneUnsafe(entered, Effect.void)
+                yield* Deferred.await(release)
+                return fauxAssistantMessage('First.')
+              }),
+              undefined,
+            ),
           fauxAssistantMessage('Final.'),
         ])
-        const initial = await opened.root.submit(
-          { type: 'input', content: 'Initial', requestId: 'initial' },
-          context,
+        const initial = yield* Effect.promise(() =>
+          Promise.resolve(
+            opened.root.submit(
+              { type: 'input', content: 'Initial', requestId: 'initial' },
+              context,
+            ),
+          ),
         )
-        const stream = await streamRun(
-          opened.harness,
-          { conversationId: opened.root.id, content: 'Initial', requestId: 'initial' },
-          context,
+        const stream = yield* Effect.promise(() =>
+          Promise.resolve(
+            streamRun(
+              opened.harness,
+              { conversationId: opened.root.id, content: 'Initial', requestId: 'initial' },
+              context,
+            ),
+          ),
         )
-        await entered.promise
+        yield* Deferred.await(entered)
         if (mode === 'followUp')
-          await opened.root.submit(
-            { type: 'input', content: 'Follow', requestId: 'follow', whenBusy: 'followUp' },
-            context,
+          yield* Effect.promise(() =>
+            Promise.resolve(
+              opened.root.submit(
+                { type: 'input', content: 'Follow', requestId: 'follow', whenBusy: 'followUp' },
+                context,
+              ),
+            ),
           )
-        release.resolve()
-        const result = await consume(stream)
-        await opened.root.waitForIdle(context)
-        const entries = (await opened.root.entries({}, 100, undefined, context)).items.toReversed()
+        Deferred.doneUnsafe(release, Effect.void)
+        const result = yield* consumeReadable(stream, Option.none())
+        yield* Effect.promise(() => Promise.resolve(opened.root.waitForIdle(context)))
+        const entries = (yield* Effect.promise(() =>
+          Promise.resolve(opened.root.entries({}, 100, undefined, context)),
+        )).items.toReversed()
         histories.push(visible(entries))
         const users = entries.filter((entry) => entry.kind === 'pi.user')
         const assistant = entries.find((entry) => entry.kind === 'pi.assistant')
@@ -96,10 +118,13 @@ it.live(
         expect(user.model).toEqual([
           { role: 'user', content: 'Follow', timestamp: expect.any(Number) },
         ])
-        const receipt = await initial.status(context)
+        const receipt = yield* Effect.promise(() => Promise.resolve(initial.status(context)))
         expect(receipt.status).toBe('done')
         expect(receipt.answer).toBe(mode === 'continuation' ? lastAssistant.id : assistant.id)
-        expect((await opened.harness.inspect(context)).submissions).toEqual([])
+        expect(
+          (yield* Effect.promise(() => Promise.resolve(opened.harness.inspect(context))))
+            .submissions,
+        ).toEqual([])
         expect(texts(result.message)).toEqual(
           mode === 'continuation' ? ['First.', 'Final.'] : ['First.'],
         )

@@ -1,3 +1,5 @@
+import { runForPi } from '../pi.ts'
+import { consumeReadable } from '../fixtures/reading.ts'
 import type { Message } from '@earendil-works/pi-ai'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from '@effect/vitest'
@@ -18,7 +20,7 @@ import {
   TurnInvalid,
 } from '../main.ts'
 import { context, host } from './fixtures/host.ts'
-import { consume } from './fixtures/host.ts'
+import {} from './fixtures/host.ts'
 
 // A valid one-pixel PNG, not a URL that a test or server could fetch.
 const data =
@@ -58,17 +60,21 @@ for (const { valid, malformed } of largePictures) {
 /** Exercise public admission and HTTP rejection at sizes that overflowed Schema.isBase64. */
 for (const { megabytes, valid, malformed } of largePictures) {
   it.live(`admits ${megabytes} MB base64 without a regex stack overflow`, () =>
-    Effect.promise(async () => {
-      const fixture = await host({}, {}, {}, images)
-      const opened = await fixture.open()
+    Effect.gen(function* () {
+      const fixture = yield* host({}, {}, {}, images)
+      const opened = yield* fixture.open()
       opened.faux.setResponses([fauxAssistantMessage('Accepted.')])
       const part = valid
-      const stream = await streamRun(
-        opened.harness,
-        { conversationId: opened.root.id, content: [part], requestId: 'large-image' },
-        context,
+      const stream = yield* Effect.promise(() =>
+        Promise.resolve(
+          streamRun(
+            opened.harness,
+            { conversationId: opened.root.id, content: [part], requestId: 'large-image' },
+            context,
+          ),
+        ),
       )
-      const result = await consume(stream)
+      const result = yield* consumeReadable(stream, Option.none())
       expect(result.message.parts).toContainEqual({
         type: 'text',
         text: 'Accepted.',
@@ -79,8 +85,8 @@ for (const { megabytes, valid, malformed } of largePictures) {
   )
   it.live(`rejects malformed ${megabytes} MB base64 with tagged core failure and HTTP 400`, () =>
     Effect.gen(function* () {
-      const fixture = yield* Effect.promise(() => host({}, {}, {}, images))
-      const opened = yield* Effect.promise(() => fixture.open())
+      const fixture = yield* host({}, {}, {}, images)
+      const opened = yield* fixture.open()
       const parts = [malformed]
       const result = yield* Core.prepareRun(
         opened.harness,
@@ -124,9 +130,9 @@ function partsAt(messages: readonly UIMessage[], index: number) {
 
 /** Stock sendMessage(files) crosses HTTP, Pi input and SQLite, then reloads into the same SDK. */
 it.live('sends an inline picture to Pi and restores the same file part from history', () =>
-  Effect.promise(async () => {
-    const fixture = await host({}, {}, {}, images)
-    const opened = await fixture.open()
+  Effect.gen(function* () {
+    const fixture = yield* host({}, {}, {}, images)
+    const opened = yield* fixture.open()
     let received: readonly Message[] = []
     opened.faux.setResponses([
       (transcript) => {
@@ -135,17 +141,21 @@ it.live('sends an inline picture to Pi and restores the same file part from hist
       },
     ])
     const chat = new PlainChat({ transport: opened.transport })
-    await chat.sendMessage({ text: 'Describe this', files: [picture] })
+    yield* Effect.promise(() =>
+      Promise.resolve(chat.sendMessage({ text: 'Describe this', files: [picture] })),
+    )
     expect(chat.status).toBe('ready')
     expect(userContent(received)).toEqual([
       { type: 'image', mimeType: 'image/png', data, filename: 'picture.png' },
       { type: 'text', text: 'Describe this' },
     ])
-    const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+    const page = yield* Effect.promise(() =>
+      Promise.resolve(history(opened.harness, opened.root.id, { limit: 10 }, context)),
+    )
     expect(partsAt(page.messages, 0)).toEqual([picture, { type: 'text', text: 'Describe this' }])
     const reloaded = new PlainChat({ transport: opened.transport })
     reloaded.messages = page.messages
-    await reloaded.resumeStream()
+    yield* Effect.promise(() => Promise.resolve(reloaded.resumeStream()))
     expect(reloaded.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
     expect(partsAt(reloaded.messages, 0)).toEqual(partsAt(chat.messages, 0))
     expect(partsAt(reloaded.messages, 1)).toEqual(partsAt(chat.messages, 1))
@@ -155,18 +165,20 @@ it.live('sends an inline picture to Pi and restores the same file part from hist
 
 /** A multi-megabyte HTTP body persists and reloads the entire validated image, without truncation. */
 it.live('round trips a three-megabyte image payload through stock Chat HTTP and history', () =>
-  Effect.promise(async () => {
-    const opened = await (await host({}, {}, {}, images)).open()
+  Effect.gen(function* () {
+    const opened = yield* (yield* host({}, {}, {}, images)).open()
     opened.faux.setResponses([fauxAssistantMessage('Stored the picture.')])
     const part = largePicture(3, false)
     const chat = new PlainChat({ transport: opened.transport })
-    await chat.sendMessage({ parts: [part] })
+    yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ parts: [part] })))
     expect(chat.status).toBe('ready')
-    const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+    const page = yield* Effect.promise(() =>
+      Promise.resolve(history(opened.harness, opened.root.id, { limit: 10 }, context)),
+    )
     expect(partsAt(page.messages, 0)).toEqual([part])
     const reloaded = new PlainChat({ transport: opened.transport })
     reloaded.messages = page.messages
-    await reloaded.resumeStream()
+    yield* Effect.promise(() => Promise.resolve(reloaded.resumeStream()))
     expect(partsAt(reloaded.messages, 0)).toEqual([part])
     expect(opened.faux.state.callCount).toBe(1)
   }),
@@ -174,9 +186,9 @@ it.live('round trips a three-megabyte image payload through stock Chat HTTP and 
 
 /** An explicit SDK message retains interleaved text/image order rather than flattening text. */
 it.live('retains ordered text and pictures through chat and raw history', () =>
-  Effect.promise(async () => {
-    const fixture = await host({}, {}, {}, images)
-    const opened = await fixture.open()
+  Effect.gen(function* () {
+    const fixture = yield* host({}, {}, {}, images)
+    const opened = yield* fixture.open()
     let received: readonly Message[] = []
     opened.faux.setResponses([
       (transcript) => {
@@ -192,7 +204,7 @@ it.live('retains ordered text and pictures through chat and raw history', () =>
       { type: 'file', mediaType: picture.mediaType, url: picture.url },
     ]
     const chat = new PlainChat({ transport: opened.transport })
-    await chat.sendMessage({ parts })
+    yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ parts })))
     expect(chat.status).toBe('ready')
     expect(userContent(received)).toEqual([
       { type: 'text', text: 'First' },
@@ -200,7 +212,9 @@ it.live('retains ordered text and pictures through chat and raw history', () =>
       { type: 'text', text: 'Second' },
       { type: 'image', mimeType: 'image/png', data },
     ])
-    const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+    const page = yield* Effect.promise(() =>
+      Promise.resolve(history(opened.harness, opened.root.id, { limit: 10 }, context)),
+    )
     expect(partsAt(page.messages, 0)).toEqual(
       parts.filter((part) => part.type !== 'text' || part.text !== ''),
     )
@@ -210,8 +224,8 @@ it.live('retains ordered text and pictures through chat and raw history', () =>
 /** File-only turns are valid on the core too; preparation admits the identical native image block. */
 it.live('admits file-only input through core prepareRun', () =>
   Effect.gen(function* () {
-    const fixture = yield* Effect.promise(() => host({}, {}, {}, images))
-    const opened = yield* Effect.promise(() => fixture.open())
+    const fixture = yield* host({}, {}, {}, images)
+    const opened = yield* fixture.open()
     opened.faux.setResponses([fauxAssistantMessage('Image only.')])
     const stream = yield* Core.prepareRun(
       opened.harness,
@@ -264,23 +278,30 @@ for (const [mediaType, signature] of [
   ['image/webp', [82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80]],
 ] as const)
   it.live(`admits ${mediaType} signature ${signature.join(',')}`, () =>
-    Effect.promise(async () => {
-      const fixture = await host({}, {}, {}, images)
-      const opened = await fixture.open()
+    Effect.gen(function* () {
+      const fixture = yield* host({}, {}, {}, images)
+      const opened = yield* fixture.open()
       const encoded = Buffer.from(signature).toString('base64')
       const parts: Core.InputPart[] = [
         { type: 'file', mediaType, url: `data:${mediaType};base64,${encoded}` },
       ]
       opened.faux.setResponses([fauxAssistantMessage('Recognized.')])
-      await consume(
-        await streamRun(
-          opened.harness,
-          { conversationId: opened.root.id, content: parts, requestId: 'signature' },
-          context,
+      yield* consumeReadable(
+        yield* Effect.promise(() =>
+          Promise.resolve(
+            streamRun(
+              opened.harness,
+              { conversationId: opened.root.id, content: parts, requestId: 'signature' },
+              context,
+            ),
+          ),
         ),
+        Option.none(),
       )
       expect(opened.faux.state.callCount).toBe(1)
-      const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+      const page = yield* Effect.promise(() =>
+        Promise.resolve(history(opened.harness, opened.root.id, { limit: 10 }, context)),
+      )
       expect(partsAt(page.messages, 0)).toEqual(parts)
     }),
   )
@@ -290,8 +311,8 @@ it.live(
   'enforces the host decoded-byte bound in core, streamRun, respondTurn and Request ingress',
   () =>
     Effect.gen(function* () {
-      const fixture = yield* Effect.promise(() => host({}, {}, {}, images))
-      const opened = yield* Effect.promise(() => fixture.open())
+      const fixture = yield* host({}, {}, {}, images)
+      const opened = yield* fixture.open()
       const bytes = Buffer.from(data, 'base64').byteLength
       const options = { maxPartBytes: bytes - 1 }
       const input = {
@@ -332,25 +353,30 @@ it.live(
         (yield* Effect.promise(() => opened.root.entries({}, 10, undefined, context))).items,
       ).toEqual([])
       opened.faux.setResponses([fauxAssistantMessage('At the bound.')])
-      yield* Effect.promise(async () =>
-        consume(
-          await streamRun(
-            opened.harness,
-            {
-              ...input,
-              options: { maxPartBytes: bytes },
-            },
-            context,
+      yield* Effect.gen(function* () {
+        return yield* consumeReadable(
+          yield* Effect.promise(() =>
+            Promise.resolve(
+              streamRun(
+                opened.harness,
+                {
+                  ...input,
+                  options: { maxPartBytes: bytes },
+                },
+                context,
+              ),
+            ),
           ),
-        ),
-      )
+          Option.none(),
+        )
+      })
       expect(opened.faux.state.callCount).toBe(1)
     }),
 )
 
 /** Incomplete files cannot fall through to a generic ignored part alongside otherwise valid text. */
 it.live('rejects incomplete file shapes and empty text at body decoding', () =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     const invalid = [
       [{ type: 'text', text: '' }],
       [
@@ -361,54 +387,75 @@ it.live('rejects incomplete file shapes and empty text at body decoding', () =>
       [{ ...picture, filename: 7 }],
     ]
     for (const parts of invalid)
-      await expect(
-        decodeTurn({ messages: [{ role: 'user', id: 'invalid-file', parts }] }),
-      ).rejects.toBeInstanceOf(TurnInvalid)
+      yield* Effect.promise(() =>
+        Promise.resolve(
+          expect(
+            decodeTurn({ messages: [{ role: 'user', id: 'invalid-file', parts }] }),
+          ).rejects.toBeInstanceOf(TurnInvalid),
+        ),
+      )
   }),
 )
 
 /** Unsupported files fail before admission, including beside valid text, with no model call/fetch. */
 for (const given of unsupported)
   it.live(`rejects ${given.name} without dropping the file or submitting a turn`, () =>
-    Effect.promise(async () => {
-      const fixture = await host({}, {}, {}, images)
-      const opened = await fixture.open()
+    Effect.gen(function* () {
+      const fixture = yield* host({}, {}, {}, images)
+      const opened = yield* fixture.open()
       const statuses: number[] = []
       const transport = new DefaultChatTransport<UIMessage>({
         api: 'http://durable.test/chat',
-        fetch: async (url, init) => {
-          const response = await respond(
-            opened.harness,
-            opened.root.id,
-            new Request(url, init),
-            context,
-          )
-          statuses.push(response.status)
-          return response
-        },
+        fetch: (url, init) =>
+          runForPi(
+            Effect.gen(function* () {
+              const response = yield* Effect.promise(() =>
+                Promise.resolve(
+                  respond(opened.harness, opened.root.id, new Request(url, init), context),
+                ),
+              )
+              statuses.push(response.status)
+              return response
+            }),
+            undefined,
+          ),
       })
       const part: Core.InputPart = { type: 'file', mediaType: given.mediaType, url: given.url }
       const chat = new PlainChat({ transport })
-      await chat.sendMessage({ text: 'Do not lose my file', files: [part] })
+      yield* Effect.promise(() =>
+        Promise.resolve(chat.sendMessage({ text: 'Do not lose my file', files: [part] })),
+      )
       expect(statuses).toEqual([400])
       expect(chat.status).toBe('error')
       if (chat.error === undefined) throw new Error('Expected chat admission failure')
       expect(chat.error.message).toBe('Unsupported file; use an inline base64 image')
-      await expect(
-        streamRun(
-          opened.harness,
-          { conversationId: opened.root.id, content: [part], requestId: 'unsupported' },
-          context,
+      yield* Effect.promise(() =>
+        Promise.resolve(
+          expect(
+            streamRun(
+              opened.harness,
+              { conversationId: opened.root.id, content: [part], requestId: 'unsupported' },
+              context,
+            ),
+          ).rejects.toMatchObject({ mediaType: given.mediaType }),
         ),
-      ).rejects.toMatchObject({ mediaType: given.mediaType })
-      await expect(
-        streamRun(
-          opened.harness,
-          { conversationId: opened.root.id, content: [part], requestId: 'unsupported-repeat' },
-          context,
+      )
+      yield* Effect.promise(() =>
+        Promise.resolve(
+          expect(
+            streamRun(
+              opened.harness,
+              { conversationId: opened.root.id, content: [part], requestId: 'unsupported-repeat' },
+              context,
+            ),
+          ).rejects.toBeInstanceOf(PartUnsupported),
         ),
-      ).rejects.toBeInstanceOf(PartUnsupported)
+      )
       expect(opened.faux.state.callCount).toBe(0)
-      expect((await opened.root.entries({}, 10, undefined, context)).items).toEqual([])
+      expect(
+        (yield* Effect.promise(() =>
+          Promise.resolve(opened.root.entries({}, 10, undefined, context)),
+        )).items,
+      ).toEqual([])
     }),
   )
