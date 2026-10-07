@@ -1,5 +1,6 @@
 import type { DeliveredMessage } from '@flue/runtime'
 import * as Config from 'effect/Config'
+import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
@@ -87,8 +88,9 @@ export const actingLayer = (acting: Acting) => {
 }
 
 /**
- * Runs a context read as the acting Person. Tools acquire the same attributed Layer through
- * Scope, retaining the client's resources for the whole tool program.
+ * Runs a context read with an RPC client acquired when this call starts and closed when it ends,
+ * even inside a longer scope. Layer.build uses the same forked MemoMap as Effect.provide(layer).
+ * Tools acquire the attributed Layer through Scope for the whole tool program instead.
  */
 export const asActing = <A, E>(
   acting: Option.Option<Acting>,
@@ -100,7 +102,10 @@ export const asActing = <A, E>(
         new NobodyToActFor({ message: 'There is no Person behind this message to act for.' }),
       ),
     onSome: (who) =>
-      Effect.gen(function* () {
-        return yield* use(yield* VividRpcClient)
-      }).pipe(Effect.provide(actingLayer(who))),
+      Effect.scoped(
+        Effect.gen(function* () {
+          const context = yield* Layer.build(actingLayer(who))
+          return yield* use(Context.get(context, VividRpcClient))
+        }),
+      ),
   })

@@ -24,6 +24,7 @@ import { searchRequest } from './library.ts'
 import { settle } from './result.ts'
 import { codeTools } from './code.ts'
 import { toolRunner } from './scope.ts'
+import { asActing } from '../client.ts'
 
 const folder = '3a1c68db-241e-4b59-a0aa-4b18867d6da1'
 
@@ -97,6 +98,33 @@ describe('Routine Library authority', () => {
           [runtimeHeaders.thread]: 'test-thread',
           [runtimeHeaders.actor]: 'test-person',
         })
+        // Separate reads inside the server's longer scope must acquire distinct attributed clients.
+        yield* Effect.gen(function* () {
+          const clients: object[] = []
+          for (let call = 0; call < 2; call++) {
+            const result = yield* asActing(
+              Option.some({
+                threadId: ThreadId.make('test-thread'),
+                personId: PersonId.make('test-person'),
+              }),
+              (client) => {
+                clients.push(client)
+                return client.ReadPage({ address: 'https://example.com' })
+              },
+            )
+            expect(result).toMatchObject({ _tag: 'Read', title: 'Example Domain' })
+          }
+          expect(clients[0]).not.toBe(clients[1])
+          expect(headers).toHaveLength(3)
+        }).pipe(
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromUnknown({
+              VIVID_SERVER_URL: address,
+              VIVID_RUNTIME_TOKEN: 'test-runtime-token',
+            }),
+          ),
+        )
       }).pipe(Effect.provide(yield* Layer.build(server)))
     }),
   )

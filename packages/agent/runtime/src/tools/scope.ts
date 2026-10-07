@@ -16,7 +16,9 @@ export interface ScopeService {
 export class Scope extends Context.Service<Scope, ScopeService>()('vivid/Tools/Scope') {}
 
 /** Tool-time recovery is lazy; the attributed client shares the tool Layer's lifetime.
- * Returning a client from a nested Effect.provide closes its RPC scope before the first call. */
+ * Returning a client from a nested Effect.provide closes its RPC scope before the first call.
+ * The bare recovery client instead lives only for the lookup, in its own inner scope;
+ * Layer.build forks the same MemoMap as the former per-lookup Effect.provide(layer). */
 export function scopeLayer(
   thread: string,
   delivery: DeliveredMessage,
@@ -25,7 +27,12 @@ export function scopeLayer(
   return Layer.unwrap(
     Effect.gen(function* () {
       const authority = yield* resolveAuthority(thread, delivery, origin, (threadId, turn) =>
-        recoverAuthority(threadId, turn).pipe(Effect.provide(runtimeClientLayer)),
+        Effect.scoped(
+          Effect.gen(function* () {
+            const context = yield* Layer.build(runtimeClientLayer)
+            return yield* recoverAuthority(threadId, turn).pipe(Effect.provide(context))
+          }),
+        ),
       )
       return Layer.effect(
         Scope,
