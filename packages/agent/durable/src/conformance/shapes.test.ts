@@ -1,3 +1,6 @@
+import { Deferred, Effect, Fiber, Option, Stream } from 'effect'
+import { FixtureFailed } from '../fixtures/harness.ts'
+import { consumeReadable, ReadFailed } from '../fixtures/reading.ts'
 import {
   fauxAssistantMessage,
   fauxText,
@@ -6,26 +9,23 @@ import {
 } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from '@effect/vitest'
 import { isToolUIPart, lastAssistantMessageIsCompleteWithApprovalResponses, tool } from 'ai'
-import { Effect } from 'effect'
 import { z } from 'zod'
-import { onTestFinished } from 'vitest'
 import { waitForFrame } from '../fixtures/provider.ts'
 import { PlainChat } from '../fixtures/chat.ts'
 import { abort, attachRun, history, streamRun } from '../main.ts'
-import { consume, context, host, signal, texts } from './fixtures/host.ts'
-
+import { context, host, texts } from './fixtures/host.ts'
 /** openai-completions.js customInput stores a growing grammar string, not JSON argument scratch. */
 it.live('approves customInput without exposing its partial grammar input', () =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     const input = 'a payment instruction '.repeat(30)
     const paid: string[] = []
-    const fixture = await host(
+    const fixture = yield* host(
       {
         pay: tool({
           inputSchema: z.object({ input: z.string() }),
-          execute: async (args) => {
+          execute: (args) => {
             paid.push(args.input)
-            return args.input
+            return Promise.resolve(args.input)
           },
         }),
       },
@@ -33,41 +33,43 @@ it.live('approves customInput without exposing its partial grammar input', () =>
       { progress: { partialIntervalMs: 0 } },
       { partialFamily: 'custom', commitFrames: true, tokenSize: { min: 1, max: 1 } },
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([
       fauxAssistantMessage([fauxToolCall('pay', { input }, { id: 'custom' })], {
         stopReason: 'toolUse',
       }),
       fauxAssistantMessage('Done.'),
     ])
-    let done = signal()
+    let done = yield* Deferred.make<void, FixtureFailed>()
     const chat = new PlainChat({
       transport: opened.transport,
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-      onFinish: () => done.resolve(),
-      onError: (error) => done.reject(error),
+      onFinish: () => Deferred.doneUnsafe(done, Effect.void),
+      onError: (error) =>
+        Deferred.doneUnsafe(done, Effect.fail(new FixtureFailed({ cause: error }))),
     })
-    await chat.sendMessage({ text: 'Pay' })
+    yield* Effect.promise(() => chat.sendMessage({ text: 'Pay' }))
     if (chat.lastMessage === undefined) throw new Error('Expected assistant')
     const part = chat.lastMessage.parts.find(isToolUIPart)
     if (part === undefined || part.state !== 'approval-requested')
       throw new Error('Expected approval')
     expect(part.input).toEqual({ input })
     expect(paid).toEqual([])
-    done = signal()
-    await chat.addToolApprovalResponse({ id: part.approval.id, approved: true })
-    await done.promise
+    done = yield* Deferred.make<void, FixtureFailed>()
+    yield* Effect.promise(() =>
+      Promise.resolve(chat.addToolApprovalResponse({ id: part.approval.id, approved: true })),
+    )
+    yield* Deferred.await(done)
     expect(paid).toEqual([input])
     expect(chat.status).toBe('ready')
   }),
 )
-
 /** Responses streams a trailing summary separator then replaces it with its shorter authoritative join. */
 it.live('reconciles a committed shorter Responses replacement in live, attach and history', () =>
-  Effect.promise(async () => {
-    const releaseTail = signal()
-    const releaseReplacement = signal()
-    const fixture = await host(
+  Effect.gen(function* () {
+    const releaseTail = yield* Deferred.make<void>()
+    const releaseReplacement = yield* Deferred.make<void>()
+    const fixture = yield* host(
       {},
       {},
       { progress: { partialIntervalMs: 0 } },
@@ -76,54 +78,65 @@ it.live('reconciles a committed shorter Responses replacement in live, attach an
         tokenSize: { min: 1, max: 1 },
         onFrame: (event, abortSignal) => {
           if (event.type === 'thinking_delta' && event.delta.endsWith('\n\n'))
-            return waitForFrame(
-              Effect.promise(() => releaseTail.promise),
-              abortSignal,
-            )
+            return waitForFrame(Deferred.await(releaseTail), abortSignal)
           if (event.type === 'thinking_end')
-            return waitForFrame(
-              Effect.promise(() => releaseReplacement.promise),
-              abortSignal,
-            )
+            return waitForFrame(Deferred.await(releaseReplacement), abortSignal)
           return Effect.void
         },
       },
     )
-    const opened = await fixture.open()
-    onTestFinished(() => {
-      releaseTail.resolve()
-      releaseReplacement.resolve()
-    })
+    const opened = yield* fixture.open()
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        Deferred.doneUnsafe(releaseTail, Effect.void)
+        Deferred.doneUnsafe(releaseReplacement, Effect.void)
+      }),
+    )
     const reasoning = 'Reasoning '.repeat(30)
     const text = 'Answer '.repeat(30)
     opened.faux.setResponses([fauxAssistantMessage([fauxThinking(reasoning), fauxText(text)])])
-    const stream = await streamRun(
-      opened.harness,
-      { conversationId: opened.root.id, content: 'Explain', requestId: 'responses' },
-      context,
+    const stream = yield* Effect.promise(() =>
+      streamRun(
+        opened.harness,
+        { conversationId: opened.root.id, content: 'Explain', requestId: 'responses' },
+        context,
+      ),
     )
     const [raw, folded] = stream.tee()
-    const tailed = signal()
-    const replaced = signal()
-    const resultPromise = consume(folded)
-    const drain = (async () => {
-      for await (const chunk of raw) {
-        if (chunk.type === 'reasoning-delta' && chunk.delta.endsWith('\n\n')) tailed.resolve()
-        if (chunk.type === 'reset-step') replaced.resolve()
-      }
-    })()
-    await tailed.promise
-    const attachedTail = await attachRun(opened.harness, opened.root.id, context)
+    const tailed = yield* Deferred.make<void>()
+    const replaced = yield* Deferred.make<void>()
+    const resultPromise = yield* Effect.forkScoped(consumeReadable(folded, Option.none()))
+    const drain = yield* Effect.forkScoped(
+      Stream.runForEach(
+        Stream.fromAsyncIterable(raw, (cause) => new ReadFailed({ cause })),
+        (chunk) =>
+          Effect.sync(() => {
+            if (chunk.type === 'reasoning-delta' && chunk.delta.endsWith('\n\n'))
+              Deferred.doneUnsafe(tailed, Effect.void)
+            if (chunk.type === 'reset-step') Deferred.doneUnsafe(replaced, Effect.void)
+          }),
+      ),
+    )
+    yield* Deferred.await(tailed)
+    const attachedTail = yield* Effect.promise(() =>
+      attachRun(opened.harness, opened.root.id, context),
+    )
     if (attachedTail.status !== 'running') throw new Error('Expected separator attachment')
-    const replayedTail = consume(attachedTail.stream)
-    releaseTail.resolve()
-    await replaced.promise
-    const attachedReplacement = await attachRun(opened.harness, opened.root.id, context)
+    const replayedTail = yield* Effect.forkScoped(
+      consumeReadable(attachedTail.stream, Option.none()),
+    )
+    Deferred.doneUnsafe(releaseTail, Effect.void)
+    yield* Deferred.await(replaced)
+    const attachedReplacement = yield* Effect.promise(() =>
+      attachRun(opened.harness, opened.root.id, context),
+    )
     if (attachedReplacement.status !== 'running') throw new Error('Expected replacement attachment')
-    const replayedReplacement = consume(attachedReplacement.stream)
-    releaseReplacement.resolve()
-    await drain
-    const result = await resultPromise
+    const replayedReplacement = yield* Effect.forkScoped(
+      consumeReadable(attachedReplacement.stream, Option.none()),
+    )
+    Deferred.doneUnsafe(releaseReplacement, Effect.void)
+    yield* Fiber.join(drain)
+    const result = yield* Fiber.join(resultPromise)
     expect(texts(result.message)).toEqual([text])
     expect(result.message.parts.filter((part) => part.type === 'reasoning')).toMatchObject([
       { type: 'reasoning', text: reasoning, state: 'done' },
@@ -131,28 +144,29 @@ it.live('reconciles a committed shorter Responses replacement in live, attach an
     expect(result.chunks.filter((chunk) => chunk.type === 'reset-step')).toHaveLength(1)
     expect(result.chunks.filter((chunk) => chunk.type === 'reasoning-start')).toHaveLength(2)
     expect(result.chunks.filter((chunk) => chunk.type === 'text-start')).toHaveLength(1)
-    expect((await replayedTail).message.parts).toEqual(result.message.parts)
-    expect((await replayedReplacement).message.parts).toEqual(result.message.parts)
-    const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+    expect((yield* Fiber.join(replayedTail)).message.parts).toEqual(result.message.parts)
+    expect((yield* Fiber.join(replayedReplacement)).message.parts).toEqual(result.message.parts)
+    const page = yield* Effect.promise(() =>
+      history(opened.harness, opened.root.id, { limit: 10 }, context),
+    )
     const assistant = page.messages.find((message) => message.role === 'assistant')
     if (assistant === undefined) throw new Error('Expected history')
     expect(assistant.parts).toEqual(result.message.parts)
   }),
 )
-
 /** anthropic-messages.js abort strips scratch but retains truncated parsed arguments: never admit them. */
 it.live(
   'aborts a parsed partial tool input without making it available or requesting approval',
   () =>
-    Effect.promise(async () => {
+    Effect.gen(function* () {
       const input = { account: 'savings', amount: 12345 }
-      const release = signal()
+      const release = yield* Deferred.make<void>()
       let held = false
-      const fixture = await host(
+      const fixture = yield* host(
         {
           pay: tool({
             inputSchema: z.object({ account: z.string(), amount: z.number() }),
-            execute: async (args) => args,
+            execute: (args) => Promise.resolve(args),
           }),
         },
         { approval: { pay: true } },
@@ -163,40 +177,47 @@ it.live(
           onFrame: (event, abortSignal) => {
             if (event.type !== 'toolcall_delta' || held) return Effect.void
             held = true
-            return waitForFrame(
-              Effect.promise(() => release.promise),
-              abortSignal,
-            )
+            return waitForFrame(Deferred.await(release), abortSignal)
           },
         },
       )
-      const opened = await fixture.open()
-      onTestFinished(() => release.resolve())
+      const opened = yield* fixture.open()
+      yield* Effect.addFinalizer(() => Effect.sync(() => Deferred.doneUnsafe(release, Effect.void)))
       opened.faux.setResponses([
         fauxAssistantMessage([fauxToolCall('pay', input, { id: 'partial' })], {
           stopReason: 'toolUse',
         }),
       ])
-      const stream = await streamRun(
-        opened.harness,
-        { conversationId: opened.root.id, content: 'Pay', requestId: 'abort-partial' },
-        context,
+      const stream = yield* Effect.promise(() =>
+        streamRun(
+          opened.harness,
+          { conversationId: opened.root.id, content: 'Pay', requestId: 'abort-partial' },
+          context,
+        ),
       )
       const [raw, folded] = stream.tee()
-      const result = consume(folded)
-      const started = signal()
-      const drain = (async () => {
-        for await (const chunk of raw) if (chunk.type === 'tool-input-start') started.resolve()
-      })()
-      await started.promise
-      const attached = await attachRun(opened.harness, opened.root.id, context)
+      const result = yield* Effect.forkScoped(consumeReadable(folded, Option.none()))
+      const started = yield* Deferred.make<void>()
+      const drain = yield* Effect.forkScoped(
+        Stream.runForEach(
+          Stream.fromAsyncIterable(raw, (cause) => new ReadFailed({ cause })),
+          (chunk) =>
+            Effect.sync(() => {
+              if (chunk.type === 'tool-input-start') Deferred.doneUnsafe(started, Effect.void)
+            }),
+        ),
+      )
+      yield* Deferred.await(started)
+      const attached = yield* Effect.promise(() =>
+        attachRun(opened.harness, opened.root.id, context),
+      )
       if (attached.status !== 'running') throw new Error('Expected partial replay')
-      const replayed = consume(attached.stream)
-      await abort(opened.harness, opened.root.id, context)
-      release.resolve()
-      await drain
-      const finished = await result
-      expect((await replayed).message.parts).toEqual(finished.message.parts)
+      const replayed = yield* Effect.forkScoped(consumeReadable(attached.stream, Option.none()))
+      yield* Effect.promise(() => abort(opened.harness, opened.root.id, context))
+      Deferred.doneUnsafe(release, Effect.void)
+      yield* Fiber.join(drain)
+      const finished = yield* Fiber.join(result)
+      expect((yield* Fiber.join(replayed)).message.parts).toEqual(finished.message.parts)
       const types = finished.chunks.map((chunk) => chunk.type)
       expect(types).toContain('tool-input-start')
       expect(types).toContain('abort')
@@ -211,11 +232,13 @@ it.live(
         state: 'output-error',
         errorText: 'Tool input was interrupted before it completed',
       })
-      const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+      const page = yield* Effect.promise(() =>
+        history(opened.harness, opened.root.id, { limit: 10 }, context),
+      )
       const assistant = page.messages.find((message) => message.role === 'assistant')
       if (assistant === undefined) throw new Error('Expected aborted history')
       expect(assistant.parts).toEqual(finished.message.parts)
-      const view = await opened.root.context(context)
+      const view = yield* Effect.promise(() => opened.root.context(context))
       const recorded = view.entries
         .flatMap((entry) => entry.model ?? [])
         .flatMap((message) => (message.role === 'assistant' ? message.content : []))

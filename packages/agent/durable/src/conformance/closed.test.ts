@@ -1,3 +1,7 @@
+import { Deferred, Effect, Option, Stream } from 'effect'
+import { runForPi } from '../pi.ts'
+import { FixtureFailed } from '../fixtures/harness.ts'
+import { consumeReadable, ReadFailed } from '../fixtures/reading.ts'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from '@effect/vitest'
 import {
@@ -6,111 +10,127 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
   tool,
   type UIMessage,
+  type UIMessageChunk,
 } from 'ai'
-import { Effect } from 'effect'
-import { onTestFinished } from 'vitest'
 import { z } from 'zod'
 import { abort, continueRun, respond, RunMissing, streamRun } from '../main.ts'
 import { waitForFrame } from '../fixtures/provider.ts'
 import { PlainChat } from '../fixtures/chat.ts'
-import { call, consume, context, host, shop, signal } from './fixtures/host.ts'
-
+import { call, context, host, shop } from './fixtures/host.ts'
 /** A provider frame gate holds the input open until the real SDK has received its start. */
 for (const predicate of [
   lastAssistantMessageIsCompleteWithToolCalls,
   lastAssistantMessageIsCompleteWithApprovalResponses,
 ])
   it.live(`finishes an aborted input with ${predicate.name} without a POST loop`, () =>
-    Effect.promise(async () => {
-      const release = signal()
-      const fixture = await host(
-        { pay: tool({ inputSchema: z.object({ amount: z.number() }), execute: async () => 1 }) },
+    Effect.gen(function* () {
+      const release = yield* Deferred.make<void>()
+      const fixture = yield* host(
+        {
+          pay: tool({
+            inputSchema: z.object({ amount: z.number() }),
+            execute: () => Promise.resolve(1),
+          }),
+        },
         { approval: { pay: true } },
         { progress: { partialIntervalMs: 1 } },
         {
           partialFamily: 'anthropic',
           onFrame: (event, abortSignal) =>
             event.type === 'toolcall_start'
-              ? waitForFrame(
-                  Effect.promise(() => release.promise),
-                  abortSignal,
-                )
+              ? waitForFrame(Deferred.await(release), abortSignal)
               : Effect.void,
         },
       )
-      const opened = await fixture.open()
-      onTestFinished(() => release.resolve())
+      const opened = yield* fixture.open()
+      yield* Effect.addFinalizer(() => Effect.sync(() => Deferred.doneUnsafe(release, Effect.void)))
       opened.faux.setResponses([
         fauxAssistantMessage([fauxToolCall('pay', { amount: 100 }, { id: 'partial' })], {
           stopReason: 'toolUse',
         }),
       ])
-      const started = signal()
-      const done = signal()
+      const started = yield* Deferred.make<void>()
+      const done = yield* Deferred.make<void, FixtureFailed>()
       let posts = 0
       const transport = new DefaultChatTransport<UIMessage>({
         api: 'http://durable.test/chat',
-        fetch: async (url, init) => {
-          posts += 1
-          if (posts > 2) throw new Error('Unexpected repeated POST')
-          const response = await respond(
-            opened.harness,
-            opened.root.id,
-            new Request(url, init),
-            context,
-          )
-          return response
-        },
+        fetch: (url, init) =>
+          runForPi(
+            Effect.gen(function* () {
+              posts += 1
+              if (posts > 2) throw new Error('Unexpected repeated POST')
+              const response = yield* Effect.promise(() =>
+                respond(opened.harness, opened.root.id, new Request(url, init), context),
+              )
+              return response
+            }),
+            undefined,
+          ),
       })
       // Decode through the real transport, observing only its public chunk stream before the SDK.
       const chat = new PlainChat({
         transport: {
           reconnectToStream: (input) => transport.reconnectToStream(input),
-          sendMessages: async (input) => {
-            const stream = await transport.sendMessages(input)
-            return stream.pipeThrough(
-              new TransformStream({
-                transform(chunk, controller) {
-                  controller.enqueue(chunk)
-                  if (chunk.type === 'tool-input-start') started.resolve()
-                },
+          sendMessages: (input) =>
+            runForPi(
+              Effect.gen(function* () {
+                const stream = yield* Effect.promise(() => transport.sendMessages(input))
+                return stream.pipeThrough(
+                  new TransformStream({
+                    transform(chunk, controller) {
+                      controller.enqueue(chunk)
+                      if (chunk.type === 'tool-input-start')
+                        Deferred.doneUnsafe(started, Effect.void)
+                    },
+                  }),
+                )
               }),
-            )
-          },
+              undefined,
+            ),
         },
         sendAutomaticallyWhen: predicate,
-        onFinish: () => done.resolve(),
-        onError: (error) => done.reject(error),
+        onFinish: () => Deferred.doneUnsafe(done, Effect.void),
+        onError: (error) =>
+          Deferred.doneUnsafe(done, Effect.fail(new FixtureFailed({ cause: error }))),
       })
       const sending = chat.sendMessage({ text: 'Pay' })
-      await started.promise
-      await abort(opened.harness, opened.root.id, context)
-      release.resolve()
-      await sending
-      await done.promise
+      yield* Deferred.await(started)
+      yield* Effect.promise(() => abort(opened.harness, opened.root.id, context))
+      Deferred.doneUnsafe(release, Effect.void)
+      yield* Effect.promise(() => sending)
+      yield* Deferred.await(done)
       expect(chat.status).toBe('ready')
       expect(posts).toBe(1)
       if (chat.lastMessage === undefined) throw new Error('Expected aborted assistant')
-      expect(chat.lastMessage.parts.find((part) => 'toolCallId' in part)).toMatchObject({
+      const last = chat.lastMessage
+      expect(last.parts.find((part) => 'toolCallId' in part)).toMatchObject({
         state: 'output-error',
       })
       // A manual retry with no new settlement is safe for either stock predicate too.
-      const stream = await continueRun(
-        opened.harness,
-        opened.root.id,
-        {
-          messageId: chat.lastMessage.id,
-          known: new Set(['partial']),
-        },
-        context,
+      const stream = yield* Effect.promise(() =>
+        continueRun(
+          opened.harness,
+          opened.root.id,
+          {
+            messageId: last.id,
+            known: new Set(['partial']),
+          },
+          context,
+        ),
       )
-      const chunks = []
-      for await (const chunk of stream) chunks.push(chunk)
+      const chunks: UIMessageChunk[] = []
+      yield* Stream.runForEach(
+        Stream.fromAsyncIterable(stream, (cause) => new ReadFailed({ cause })),
+        (chunk) =>
+          Effect.sync(() => {
+            chunks.push(chunk)
+          }),
+      )
       expect(chunks).toEqual([
         {
           type: 'start',
-          messageId: chat.lastMessage.id,
-          messageMetadata: chat.lastMessage.metadata,
+          messageId: last.id,
+          messageMetadata: last.metadata,
         },
         {
           type: 'tool-input-error',
@@ -123,58 +143,60 @@ for (const predicate of [
         { type: 'finish-step' },
         {
           type: 'start',
-          messageId: chat.lastMessage.id,
-          messageMetadata: chat.lastMessage.metadata,
+          messageId: last.id,
+          messageMetadata: last.metadata,
         },
-        { type: 'finish', messageMetadata: chat.lastMessage.metadata },
+        { type: 'finish', messageMetadata: last.metadata },
       ])
-      const missing = await respond(
-        opened.harness,
-        opened.root.id,
-        new Request('http://durable.test/chat', {
-          method: 'POST',
-          body: JSON.stringify({
-            messages: [
-              {
-                id: chat.lastMessage.id,
-                role: 'assistant',
-                parts: [{ type: 'tool-pay', toolCallId: 'never-made' }],
-              },
-            ],
+      const missing = yield* Effect.promise(() =>
+        respond(
+          opened.harness,
+          opened.root.id,
+          new Request('http://durable.test/chat', {
+            method: 'POST',
+            body: JSON.stringify({
+              messages: [
+                {
+                  id: last.id,
+                  role: 'assistant',
+                  parts: [{ type: 'tool-pay', toolCallId: 'never-made' }],
+                },
+              ],
+            }),
           }),
-        }),
-        context,
+          context,
+        ),
       )
       expect(missing.status).toBe(409)
     }),
   )
-
 /** A finished run with no new outputs/decisions acknowledges the same message without replaying parts. */
 it.live('acknowledges a finished message without another automatic tool POST', () =>
-  Effect.promise(async () => {
-    const fixture = await host(
+  Effect.gen(function* () {
+    const fixture = yield* host(
       {
         pay: tool({
           inputSchema: z.object({}),
-          execute: async (): Promise<number> => {
-            throw new Error('Payment refused')
-          },
+          execute: (): Promise<number> => Promise.reject(new Error('Payment refused')),
         }),
       },
       {},
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([call('pay', {}, 'finished'), fauxAssistantMessage('Done.')])
-    const result = await consume(
-      await streamRun(
-        opened.harness,
-        {
-          conversationId: opened.root.id,
-          content: 'Pay',
-          requestId: 'done',
-        },
-        context,
+    const result = yield* consumeReadable(
+      yield* Effect.promise(() =>
+        streamRun(
+          opened.harness,
+          {
+            conversationId: opened.root.id,
+            content: 'Pay',
+            requestId: 'done',
+          },
+          context,
+        ),
       ),
+      Option.none(),
     )
     let posts = 0
     const transport = new DefaultChatTransport<UIMessage>({
@@ -195,62 +217,82 @@ it.live('acknowledges a finished message without another automatic tool POST', (
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
     })
     chat.messages = [message]
-    await chat.sendMessage()
+    yield* Effect.promise(() => chat.sendMessage())
     expect(posts).toBe(1)
     expect(chat.status).toBe('ready')
     expect(chat.lastMessage).toEqual(message)
   }),
 )
-
 /** A parked abort has no aborted partial entry; a successor generation's calls still cannot match it. */
 it.live('acknowledges a parked aborted run without borrowing the successor generation', () =>
-  Effect.promise(async () => {
-    const fixture = await shop()
-    const opened = await fixture.open()
+  Effect.gen(function* () {
+    const fixture = yield* shop()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([call('pay', { amount: 1 }, 'old'), call('pay', { amount: 2 }, 'new')])
-    const old = await consume(
-      await streamRun(
-        opened.harness,
-        {
-          conversationId: opened.root.id,
-          content: 'First',
-          requestId: 'old',
-        },
-        context,
+    const old = yield* consumeReadable(
+      yield* Effect.promise(() =>
+        streamRun(
+          opened.harness,
+          {
+            conversationId: opened.root.id,
+            content: 'First',
+            requestId: 'old',
+          },
+          context,
+        ),
       ),
+      Option.none(),
     )
-    await abort(opened.harness, opened.root.id, context)
-    await consume(
-      await streamRun(
-        opened.harness,
-        {
-          conversationId: opened.root.id,
-          content: 'Second',
-          requestId: 'new',
-        },
-        context,
+    yield* Effect.promise(() => abort(opened.harness, opened.root.id, context))
+    yield* consumeReadable(
+      yield* Effect.promise(() =>
+        streamRun(
+          opened.harness,
+          {
+            conversationId: opened.root.id,
+            content: 'Second',
+            requestId: 'new',
+          },
+          context,
+        ),
       ),
+      Option.none(),
     )
-    const existing = await continueRun(
-      opened.harness,
-      opened.root.id,
-      { messageId: old.message.id, known: new Set(['old']) },
-      context,
-    )
-    const chunks = []
-    for await (const chunk of existing) chunks.push(chunk)
-    expect(chunks.at(-1)).toEqual({ type: 'finish', messageMetadata: old.message.metadata })
-    await expect(
+    const existing = yield* Effect.promise(() =>
       continueRun(
         opened.harness,
         opened.root.id,
-        {
-          messageId: old.message.id,
-          known: new Set(['new']),
-        },
+        { messageId: old.message.id, known: new Set(['old']) },
         context,
       ),
-    ).rejects.toBeInstanceOf(RunMissing)
+    )
+    const chunks: UIMessageChunk[] = []
+    yield* Stream.runForEach(
+      Stream.fromAsyncIterable(existing, (cause) => new ReadFailed({ cause })),
+      (chunk) =>
+        Effect.sync(() => {
+          chunks.push(chunk)
+        }),
+    )
+    expect(chunks.at(-1)).toEqual({ type: 'finish', messageMetadata: old.message.metadata })
+    yield* Effect.map(
+      Effect.flip(
+        Effect.tryPromise({
+          try: () =>
+            continueRun(
+              opened.harness,
+              opened.root.id,
+              {
+                messageId: old.message.id,
+                known: new Set(['new']),
+              },
+              context,
+            ),
+          catch: (cause) => new FixtureFailed({ cause }),
+        }),
+      ),
+      (failed) => expect(failed.cause).toBeInstanceOf(RunMissing),
+    )
     expect(fixture.paid).toEqual([])
   }),
 )
