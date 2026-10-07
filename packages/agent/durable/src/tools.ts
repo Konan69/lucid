@@ -14,7 +14,7 @@ import {
 } from '@earendil-works/pi-durable'
 import { validateToolArguments } from '@earendil-works/pi-ai/utils/validation'
 import { asSchema, type Tool, type ToolSet } from 'ai'
-import { Cause, Data, Effect, Match, Option, Predicate, Schema } from 'effect'
+import { Cause, Data, Effect, Exit, Match, Option, Predicate, Schema } from 'effect'
 
 import {
   ToolApprovalUnsupported,
@@ -59,9 +59,9 @@ export type ToolScope = {
   readonly toolName: string
 }
 
-export type ToolsOptions = {
+export type ToolsOptions<ContextError = unknown> = {
   /** Resolve SDK context once per execution attempt; absence supplies the durable ToolScope itself. */
-  readonly context?: (scope: ToolScope) => Effect.Effect<unknown, unknown>
+  readonly context?: (scope: ToolScope) => Effect.Effect<SdkValue, ContextError>
 
   /**
    * Must equal the host's HarnessSettings.toolExecution; Pi Durable does not expose that setting.
@@ -86,7 +86,7 @@ export type ToolsOptions = {
 }
 
 type Lookups = {
-  readonly context: Option.Option<NonNullable<ToolsOptions['context']>>
+  readonly context: Option.Option<(scope: ToolScope) => Effect.Effect<SdkValue, ToolContextFailed>>
   readonly execution: NonNullable<ToolsOptions['execution']>
   readonly sequential: ReadonlySet<string>
   readonly replay: NonNullable<ToolsOptions['replay']>
@@ -246,8 +246,8 @@ const validate = (schema: ReturnType<typeof asSchema>, args: SdkValue, name: str
   if (schema.validate === undefined) return Effect.succeed({ success: true as const, value: args })
   const validateArgs = schema.validate.bind(schema)
   return Effect.tryPromise({
-    try: async function validateForSdk() {
-      return validateArgs(args)
+    try: function validateForSdk() {
+      return Promise.resolve(validateArgs(args))
     },
     catch: (cause) => new ToolFailed({ toolName: name, cause }),
   })
@@ -257,29 +257,41 @@ const validate = (schema: ReturnType<typeof asSchema>, args: SdkValue, name: str
  * A user resolver is an SDK boundary: reject non-Effects before the fiber runtime sees them, and
  * translate its typed failures and defects once. Cancellation retains interruption semantics.
  */
-const resolveContext = Effect.fn('Durable.toolContext')(function* (
-  resolve: NonNullable<ToolsOptions['context']>,
+const resolveContext = Effect.fn('Durable.toolContext')(function* <ContextError>(
+  resolve: NonNullable<ToolsOptions<ContextError>['context']>,
   scope: ToolScope,
 ) {
-  return yield* Effect.suspend(() => {
-    const resolved = resolve(scope)
-    // Invalid Promise resolvers are not awaited; observe rejection while reporting the contract error.
-    if (Predicate.isPromiseLike(resolved))
-      resolved.then(
-        () => {},
-        () => {},
-      )
-    if (Effect.isEffect(resolved)) return resolved
-    return Effect.fail(new Error('Context resolver must return an Effect'))
+  // Capture the host's Effect as an Exit at this ingress; opaque host errors never enter our channel.
+  const resolved = yield* Effect.try({
+    try: () => resolve(scope),
+    catch: (cause) => new ToolContextFailed({ toolName: scope.toolName, cause }),
   }).pipe(
-    Effect.catchCause((cause) =>
+    Effect.flatMap((candidate) => {
+      // A malformed Promise is not awaited, but its rejection must still be observed.
+      if (Predicate.isPromiseLike(candidate))
+        candidate.then(
+          () => {},
+          () => {},
+        )
+      return Effect.isEffect(candidate)
+        ? Effect.exit(candidate)
+        : Effect.fail(
+            new ToolContextFailed({
+              toolName: scope.toolName,
+              cause: new Error('Context resolver must return an Effect'),
+            }),
+          )
+    }),
+  )
+  return yield* Exit.match(resolved, {
+    onSuccess: (value) => Effect.succeed(value),
+    onFailure: (cause) =>
       Cause.hasInterrupts(cause)
         ? Effect.interrupt
         : Effect.fail(
             new ToolContextFailed({ toolName: scope.toolName, cause: Cause.squash(cause) }),
           ),
-    ),
-  )
+  })
 })
 
 /** Observe SDK cleanup rejection without waiting for return queued behind an uncooperative next. */
@@ -344,7 +356,7 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
   }
   const resolved = yield* Option.match(server.context, {
     onNone: () => Effect.succeed(scope),
-    onSome: (resolve) => resolveContext(resolve, scope),
+    onSome: (resolve) => resolve(scope),
   })
   // ai/src/generate-text/validate-tool-context.ts:21–33 validates and normalizes before execute.
   const toolContext = yield* Option.match(server.contextSchema, {
@@ -421,9 +433,10 @@ const executeForSdk = Effect.fn('Durable.projectToolOutput')(function* (
   convert: NonNullable<Tool<unknown, unknown, unknown>['toModelOutput']>,
   args: Parameters<NonNullable<Tool<unknown, unknown, unknown>['toModelOutput']>>[0],
 ) {
-  const model = yield* Effect.tryPromise(async () => convert(args)).pipe(
-    Effect.mapError((error) => new ToolOutputFailed({ toolName: name, cause: error.cause })),
-  )
+  const model = yield* Effect.tryPromise({
+    try: () => Promise.resolve(convert(args)),
+    catch: (cause) => new ToolOutputFailed({ toolName: name, cause }),
+  })
   const projected = yield* decodeModelOutput(model).pipe(
     Effect.mapError(
       () =>
@@ -682,8 +695,8 @@ const registration = Effect.fn('Durable.registerTool')(function* (
       cause: new Error(`Pi Durable cannot represent ${unsupportedField.value}`),
     })
   const parameters = yield* Effect.tryPromise({
-    try: async function schemaForSdk() {
-      return asSchema(tool.inputSchema).jsonSchema
+    try: function schemaForSdk() {
+      return Promise.resolve(asSchema(tool.inputSchema).jsonSchema)
     },
     catch: (cause) => new ToolSchemaFailed({ toolName: name, cause }),
   })
@@ -752,7 +765,7 @@ const before = Effect.fn('Durable.beforeTool')(function* (
   if (checked.owner !== owner.name)
     return Option.some({ block: new ToolNameDuplicated({ toolName: call.name }).message })
   return yield* CallDecision.match(checked.decision, {
-    Blocked: (blocked) => Effect.succeed(Option.some({ block: blocked.reason })),
+    Blocked: (blocked) => Effect.succeedSome({ block: blocked.reason }),
     Free: () => Effect.succeed(Option.none<{ block: string }>()),
     Held: () => settlement(api, call.id, context).pipe(Effect.map(blockSettlement)),
   })
@@ -806,13 +819,17 @@ const validateOptionNames = Effect.fn('Durable.validateToolOptionNames')(functio
 
 /** Names must be unique across selected extensions: hooks cannot see the composed phase agent.
  * SDK needsApproval and host approval predicates must be pure, synchronous and input-only. */
-export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* (
+export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* <ContextError>(
   name: string,
   tools: ToolSet,
-  options: ToolsOptions,
+  options: ToolsOptions<ContextError>,
 ): Effect.fn.Return<Extension, ToolSchemaFailed | ToolApprovalUnsupported> {
   const lookups: Lookups = {
-    context: Option.fromNullishOr(options.context),
+    // Preserve the host's error type until the resolver ingress normalizes it exactly once per attempt.
+    context: Option.map(
+      Option.fromNullishOr(options.context),
+      (resolve) => (scope: ToolScope) => resolveContext(resolve, scope),
+    ),
     execution: options.execution ?? 'parallel',
     sequential: new Set(options.sequential ?? []),
     replay: options.replay ?? {},

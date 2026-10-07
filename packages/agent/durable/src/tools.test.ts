@@ -7,9 +7,15 @@ import {
   fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux'
 import { createRegistry } from '@earendil-works/pi-durable'
-import { tool, lastAssistantMessageIsCompleteWithToolCalls } from 'ai'
+import {
+  tool,
+  readUIMessageStream,
+  type UIMessage,
+  type UIMessageChunk,
+  lastAssistantMessageIsCompleteWithToolCalls,
+} from 'ai'
 import { expect, it } from '@effect/vitest'
-import { Effect, Option } from 'effect'
+import { Array as Arr, Effect, Option, Schema, Stream } from 'effect'
 import { z } from 'zod'
 
 import {
@@ -20,10 +26,42 @@ import {
   type Replay,
 } from './core.ts'
 import { memory } from './fixtures/harness.ts'
-import { consume } from './fixtures/reading.ts'
 import { PlainChat } from './fixtures/chat.ts'
 import { host, consume as consumeSdk, call, signal } from './conformance/fixtures/host.ts'
 import { streamRun as streamSdk, answer, waiting } from './main.ts'
+
+/** The shared fixture's SDK failure is opaque and its file belongs to the next conversion round. */
+class SdkReaderFailed extends Schema.TaggedError<SdkReaderFailed>()(
+  'ToolsTest.SdkReaderFailed',
+  {
+    cause: Schema.Defect(),
+  },
+  { title: 'SdkReaderFailed' },
+) {}
+
+/** Preserve the fixture's finite collect/fold order with the same stock SDK reader, decoding its error here. */
+const consume = Effect.fn('ToolsTest.consume')(function* <E>(
+  stream: Stream.Stream<UIMessageChunk, E>,
+  from: Option.Option<UIMessage>,
+) {
+  const chunks = yield* Stream.runCollect(stream)
+  const readable = yield* Stream.toReadableStreamEffect(Stream.fromIterable(chunks))
+  const options = Option.match(from, {
+    onNone: () => ({ stream: readable }),
+    onSome: (message) => ({ stream: readable, message }),
+  })
+  const messages = yield* Stream.runCollect(
+    Stream.fromAsyncIterable(
+      readUIMessageStream(options),
+      (cause) => new SdkReaderFailed({ cause }),
+    ),
+  )
+  return {
+    chunks,
+    types: chunks.map((chunk) => chunk.type),
+    message: Option.getOrThrow(Arr.last(messages)),
+  }
+})
 
 const context = BACKGROUND_CONTEXT
 
@@ -44,9 +82,9 @@ const run = Effect.fn('Test.runTool')(function* (
         price: tool({
           description: 'Price of an item',
           inputSchema: z.object({ item: z.string(), currency: z.string().default('NGN') }),
-          execute: async (input) => {
+          execute: (input) => {
             seen.push(input)
-            return { amount: 1500, currency: input.currency }
+            return Promise.resolve({ amount: 1500, currency: input.currency })
           },
         }),
       },
@@ -147,14 +185,12 @@ it.live('presents SDK rejection and serialization failure as tool output errors'
           broken: tool({
             description: 'Rejects execution',
             inputSchema: z.object({}),
-            execute: async (): Promise<string> => {
-              throw new Error('ledger offline')
-            },
+            execute: (): Promise<string> => Promise.reject(new Error('ledger offline')),
           }),
           unserializable: tool({
             description: 'Returns a non JSON number',
             inputSchema: z.object({}),
-            execute: async () => ({ amount: 1n }),
+            execute: () => Promise.resolve({ amount: 1n }),
           }),
         },
         {},
@@ -206,8 +242,9 @@ it.live('persists null for a void tool and gives the model explicit null text', 
         {
           notify: tool({
             inputSchema: z.object({}),
-            execute: async () => {
+            execute: () => {
               executions++
+              return Promise.resolve()
             },
           }),
         },
@@ -257,7 +294,7 @@ for (const sample of [
       args: {},
       isProviderExecuted: false,
       inputSchema: z.object({}),
-      execute: async () => 'local',
+      execute: () => Promise.resolve('local'),
     }),
   },
   {
@@ -265,35 +302,47 @@ for (const sample of [
     value: tool({
       description: () => 'Scoped description',
       inputSchema: z.object({}),
-      execute: async () => 'done',
+      execute: () => Promise.resolve('done'),
     }),
   },
   {
     name: 'deferred-discovery',
-    value: tool({ deferLoading: true, inputSchema: z.object({}), execute: async () => 'done' }),
+    value: tool({
+      deferLoading: true,
+      inputSchema: z.object({}),
+      execute: () => Promise.resolve('done'),
+    }),
   },
   {
     name: 'provider-options',
     value: tool({
       providerOptions: { openai: { cacheControl: 'required' } },
       inputSchema: z.object({}),
-      execute: async () => 'done',
+      execute: () => Promise.resolve('done'),
     }),
   },
   {
     name: 'input-start',
-    value: tool({ onInputStart: () => {}, inputSchema: z.object({}), execute: async () => 'done' }),
+    value: tool({
+      onInputStart: () => {},
+      inputSchema: z.object({}),
+      execute: () => Promise.resolve('done'),
+    }),
   },
   {
     name: 'input-delta',
-    value: tool({ onInputDelta: () => {}, inputSchema: z.object({}), execute: async () => 'done' }),
+    value: tool({
+      onInputDelta: () => {},
+      inputSchema: z.object({}),
+      execute: () => Promise.resolve('done'),
+    }),
   },
   {
     name: 'input-available',
     value: tool({
       onInputAvailable: () => {},
       inputSchema: z.object({}),
-      execute: async () => 'done',
+      execute: () => Promise.resolve('done'),
     }),
   },
   { name: 'answer-approval', value: tool({ needsApproval: true, inputSchema: z.object({}) }) },
@@ -310,26 +359,29 @@ for (const sample of [
 
 /** Empty provider metadata has no semantics to lose; non-empty metadata remains refused above. */
 it.live('runs a tool with empty providerOptions', () =>
-  Effect.promise(async () => {
-    const fixture = await host(
-      {
-        empty: tool({
-          providerOptions: {},
-          inputSchema: z.object({}),
-          execute: async () => 'accepted',
-        }),
-      },
-      {},
+  Effect.gen(function* () {
+    const fixture = yield* Effect.promise(() =>
+      host(
+        {
+          empty: tool({
+            providerOptions: {},
+            inputSchema: z.object({}),
+            execute: () => Promise.resolve('accepted'),
+          }),
+        },
+        {},
+      ),
     )
-    const opened = await fixture.open()
+    const opened = yield* Effect.promise(() => fixture.open())
     opened.faux.setResponses([call('empty', {}, 'empty'), fauxAssistantMessage('Done.')])
-    const result = await consumeSdk(
-      await streamSdk(
+    const stream = yield* Effect.promise(() =>
+      streamSdk(
         opened.harness,
         { conversationId: opened.root.id, content: 'Run', requestId: 'empty-options' },
         context,
       ),
     )
+    const result = yield* Effect.promise(() => consumeSdk(stream))
     expect(result.message.parts.find((part) => part.type === 'tool-empty')).toMatchObject({
       output: 'accepted',
     })
@@ -339,12 +391,20 @@ it.live('runs a tool with empty providerOptions', () =>
 /** Pi exposes constrained sampling through registration; the faux request must receive the declaration. */
 for (const strict of [true, false, undefined])
   it.live(`carries SDK strict=${String(strict)} into the Pi model request`, () =>
-    Effect.promise(async () => {
-      const fixture = await host(
-        { sampling: tool({ strict, inputSchema: z.object({}), execute: async () => 'sampled' }) },
-        {},
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(() =>
+        host(
+          {
+            sampling: tool({
+              strict,
+              inputSchema: z.object({}),
+              execute: () => Promise.resolve('sampled'),
+            }),
+          },
+          {},
+        ),
       )
-      const opened = await fixture.open()
+      const opened = yield* Effect.promise(() => fixture.open())
       opened.faux.setResponses([
         (request) => {
           const offered = getCurrentTools(request.messages).find(
@@ -358,13 +418,14 @@ for (const strict of [true, false, undefined])
         },
         fauxAssistantMessage('Done.'),
       ])
-      const result = await consumeSdk(
-        await streamSdk(
+      const stream = yield* Effect.promise(() =>
+        streamSdk(
           opened.harness,
           { conversationId: opened.root.id, content: 'Run', requestId: `strict-${String(strict)}` },
           context,
         ),
       )
+      const result = yield* Effect.promise(() => consumeSdk(stream))
       expect(result.message.parts.find((part) => part.type === 'tool-sampling')).toMatchObject({
         output: 'sampled',
       })
@@ -395,29 +456,32 @@ for (const sample of [
 for (const name of ['constructor', '__proto__'])
   for (const policy of ['absent', 'inherited', 'own'] as const)
     it.live(`uses own per-tool options for server tool ${name} (${policy})`, () =>
-      Effect.promise(async () => {
+      Effect.gen(function* () {
         const replay: Record<string, Replay> = {}
         if (policy === 'inherited') Object.setPrototypeOf(replay, { [name]: 'safe' })
         if (policy === 'own')
           Object.defineProperty(replay, name, { value: 'safe', enumerable: true })
-        const fixture = await host(
-          { [name]: tool({ inputSchema: z.object({}), execute: async () => 'done' }) },
-          { replay },
+        const fixture = yield* Effect.promise(() =>
+          host(
+            { [name]: tool({ inputSchema: z.object({}), execute: () => Promise.resolve('done') }) },
+            { replay },
+          ),
         )
-        const opened = await fixture.open()
-        const registered = (await opened.root.agent(context)).tools.find(
+        const opened = yield* Effect.promise(() => fixture.open())
+        const registered = (yield* Effect.promise(() => opened.root.agent(context))).tools.find(
           (entry) => entry.name === name,
         )
         if (registered === undefined) throw new Error('Expected registered tool')
         expect(registered.replay).toBe(policy === 'own' ? 'safe' : 'unsafe')
         opened.faux.setResponses([call(name, {}, name), fauxAssistantMessage('Done.')])
-        const result = await consumeSdk(
-          await streamSdk(
+        const stream = yield* Effect.promise(() =>
+          streamSdk(
             opened.harness,
             { conversationId: opened.root.id, content: 'Run', requestId: name },
             context,
           ),
         )
+        const result = yield* Effect.promise(() => consumeSdk(stream))
         expect(result.message.parts.find((part) => part.type === `tool-${name}`)).toMatchObject({
           output: 'done',
         })
@@ -427,16 +491,18 @@ for (const name of ['constructor', '__proto__'])
 /** Inherited answer/approval declarations have no authority; a named own false still overrides SDK approval. */
 for (const name of ['constructor', '__proto__'])
   it.live(`ignores inherited policies and accepts an own answer policy for ${name}`, () =>
-    Effect.promise(async () => {
+    Effect.gen(function* () {
       const answers: Record<string, 'wait' | 'later'> = {}
       const approval: Record<string, boolean> = {}
       Object.setPrototypeOf(answers, { [name]: 'later' })
       Object.setPrototypeOf(approval, { [name]: true })
-      const fixture = await host(
-        { [name]: tool({ inputSchema: z.object({}), outputSchema: z.string() }) },
-        { answers, approval },
+      const fixture = yield* Effect.promise(() =>
+        host(
+          { [name]: tool({ inputSchema: z.object({}), outputSchema: z.string() }) },
+          { answers, approval },
+        ),
       )
-      const opened = await fixture.open()
+      const opened = yield* Effect.promise(() => fixture.open())
       opened.faux.setResponses([call(name, {}, name), fauxAssistantMessage('Answered.')])
       let completed = signal()
       const chat = new PlainChat({
@@ -445,40 +511,47 @@ for (const name of ['constructor', '__proto__'])
         onFinish: () => completed.resolve(),
         onError: (error) => completed.reject(error),
       })
-      await chat.sendMessage({ text: 'Ask' })
-      const rows = await waiting(opened.harness, opened.root.id, context)
+      yield* Effect.promise(() => chat.sendMessage({ text: 'Ask' }))
+      const rows = yield* Effect.promise(() => waiting(opened.harness, opened.root.id, context))
       expect(rows).toHaveLength(1)
       const row = rows[0]
       if (row === undefined) throw new Error('Expected person-answer hold')
       expect(row.kind).toBe('answer')
       completed = signal()
-      await chat.addToolOutput({ tool: name, toolCallId: name, output: 'yes' })
-      await completed.promise
+      yield* Effect.promise(() =>
+        Promise.resolve(chat.addToolOutput({ tool: name, toolCallId: name, output: 'yes' })),
+      )
+      yield* Effect.promise(() => completed.promise)
       if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
       expect(chat.lastMessage.parts.find((part) => part.type === `tool-${name}`)).toMatchObject({
         output: 'yes',
       })
 
-      const own = await host(
-        { [name]: tool({ needsApproval: true, inputSchema: z.object({}) }) },
-        { answers: { [name]: 'later' }, approval: { [name]: false } },
+      const own = yield* Effect.promise(() =>
+        host(
+          { [name]: tool({ needsApproval: true, inputSchema: z.object({}) }) },
+          { answers: { [name]: 'later' }, approval: { [name]: false } },
+        ),
       )
-      const other = await own.open()
+      const other = yield* Effect.promise(() => own.open())
       other.faux.setResponses([call(name, {}, name), fauxAssistantMessage('Later.')])
-      const result = await consumeSdk(
-        await streamSdk(
+      const stream = yield* Effect.promise(() =>
+        streamSdk(
           other.harness,
           { conversationId: other.root.id, content: 'Ask later', requestId: name },
           context,
         ),
       )
+      const result = yield* Effect.promise(() => consumeSdk(stream))
       expect(result.message.parts.find((part) => part.type === `tool-${name}`)).toMatchObject({
         output: { status: 'asked' },
       })
-      const held = (await waiting(other.harness, other.root.id, context))[0]
+      const held = (yield* Effect.promise(() => waiting(other.harness, other.root.id, context)))[0]
       if (held === undefined) throw new Error('Expected later answer hold')
       other.faux.setResponses([fauxAssistantMessage('Received.')])
-      await answer(other.harness, other.root.id, { holdId: held.holdId, output: 'yes' }, context)
+      yield* Effect.promise(() =>
+        answer(other.harness, other.root.id, { holdId: held.holdId, output: 'yes' }, context),
+      )
     }),
   )
 
@@ -495,7 +568,7 @@ for (const option of ['approval', 'answers', 'replay', 'sequential'] as const)
       const failure = yield* Effect.flip(
         toolsExtension(
           'options',
-          { pay: tool({ inputSchema: z.object({}), execute: async () => 'paid' }) },
+          { pay: tool({ inputSchema: z.object({}), execute: () => Promise.resolve('paid') }) },
           options,
         ),
       )
@@ -515,7 +588,7 @@ it.live('refuses contextSchema without a context resolver at registration', () =
           scoped: tool({
             inputSchema: z.object({}),
             contextSchema: z.object({ owner: z.string() }),
-            execute: async () => 'unused',
+            execute: () => Promise.resolve('unused'),
           }),
         },
         {},

@@ -71,14 +71,7 @@
   {
     "file": "packages/agent/durable/src/tools.ts",
     "classification": "third-party-adapter",
-    "symbols": [
-      "validate",
-      "validateForSdk",
-      "invoke",
-      "executeForSdk",
-      "registration",
-      "schemaForSdk"
-    ]
+    "symbols": ["validate", "invoke", "executeForSdk", "registration"]
   },
   {
     "file": "packages/agent/durable/src/main.ts",
