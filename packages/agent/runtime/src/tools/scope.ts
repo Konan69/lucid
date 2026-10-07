@@ -55,9 +55,13 @@ export function toolRunner(layer: Layer.Layer<Scope, ToolFailure>) {
     program: Effect.Effect<ToolResult, ToolFailure, Scope>,
     { signal, tool }: Pick<ToolContext<undefined>, 'signal'> & { readonly tool: string },
   ) {
+    const settled = program.pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- The single Flue tool execution boundary owns the tool Layer.
+      Effect.provide(layer),
+      (provided) => settle(provided, tool),
+    )
     // oxlint-disable-next-line vivid/no-runpromise-in-library -- This is the single Flue tool execution boundary, classified exactly by the Effect audit.
-    // @effect-diagnostics-next-line strictEffectProvide:off -- The single Flue tool execution boundary owns the tool Layer.
-    return Effect.runPromise(settle(program.pipe(Effect.provide(layer)), tool), { signal })
+    return Effect.runPromise(settled, { signal })
   }
 }
 
