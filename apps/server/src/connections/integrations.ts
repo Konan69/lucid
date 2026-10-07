@@ -18,7 +18,8 @@ import { requireAdmin, type Actor } from '../auth/access.ts'
 import { ConnectionAddress, type ConnectionAddressInvalid, publicAddress } from './address.ts'
 import { IMPORTED } from './logo.ts'
 import { ConnectionStore, ToolDiscovery } from './store.ts'
-import { namedAccounts, useTool } from './tools.ts'
+import { useTool } from './tools.ts'
+import { namedAccounts } from './names.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
 import { testInput } from './probe.ts'
 
@@ -38,10 +39,16 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
 ) {
   const store = yield* ConnectionStore
   const records = yield* store.records(actor)
+  // An account answers to its whole name and to the address behind a name the Person gave it,
+  // so "work" and "ada@example.com" both find "Gmail (Work)".
   const named = namedAccounts(records).map((entry) => ({
     row: entry.row,
     account: entry.account,
-    matches: matches(request.query, entry.row.serviceName, entry.account),
+    matches: matches(
+      request.query,
+      entry.row.serviceName,
+      [entry.account, ...Option.toArray(Option.fromNullOr(entry.row.identity))].join(' '),
+    ),
   }))
   const ordered = Arr.sort(
     named,
@@ -60,6 +67,7 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
       return ConnectionMatch.cases.Account.make({
         name: row.serviceName,
         account,
+        identity: row.identity,
         connected: ConnectionState.guards.Ready(state),
         shared: row.companyId !== null,
         state,

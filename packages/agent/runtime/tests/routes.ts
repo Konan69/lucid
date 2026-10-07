@@ -200,11 +200,9 @@ export const routes = Effect.fn('RuntimeTest.routes')(function* () {
           )
           // Counted with notes mounted, as every runtime has them: the three note tools are in,
           // and the two knowledge-base tools that only a runtime without notes offered are gone.
-          // The Person's computer is ours (`use_person_computer`); `run_command` is gone since
-          // 6 October 2026, when `bash` took its place.
+          // The Person's computer is ours (`use_person_computer`).
           expect(owned).toHaveLength(29)
           expect(owned.map((tool) => tool.name)).toContain('use_person_computer')
-          expect(owned.map((tool) => tool.name)).not.toContain('run_command')
           // Every tool says its step to the Person in `summary`. `ask_person` is the one that
           // does not: its `question` is already that sentence (`tools/ask.ts`, 5 October 2026).
           for (const tool of owned)

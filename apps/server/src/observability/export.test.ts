@@ -603,7 +603,7 @@ it.effect('exports a refusal field only when its value is one of a closed set', 
         'vivid.refusal.reason': PRIVATE,
       })
       yield* recordRefusal(
-        Refusal.cases.ActionBlocked.make({ effect: 'destructive', target: 'Command' }),
+        Refusal.cases.ActionBlocked.make({ effect: 'destructive', target: 'Desktop' }),
       )
     })
     const { lines, text } = yield* exported(decide())
@@ -615,7 +615,7 @@ it.effect('exports a refusal field only when its value is one of a closed set', 
       {
         'vivid.refusal.kind': 'ActionBlocked',
         'vivid.refusal.effect': 'destructive',
-        'vivid.refusal.target': 'Command',
+        'vivid.refusal.target': 'Desktop',
       },
     ])
     expect(text).not.toContain(PRIVATE)

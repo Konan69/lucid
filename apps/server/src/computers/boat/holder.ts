@@ -1,8 +1,12 @@
-import { Effect } from 'effect'
+import { Clock, Effect, Ref, Schedule } from 'effect'
 import {
+  MachineExecutionUnknown,
   MachineHeld,
   MachineOperationFailed,
   MachinePersistenceFailed,
+  MachineRequestRejected,
+  MachineUnreachable,
+  type MachineFailure,
   type MachineKey,
 } from '../machine.ts'
 import type { Bindings } from './bindings.ts'
@@ -65,6 +69,16 @@ export const HELD = 73
 
 /** The exit status when the holder could not be settled: no lock, or a record that is damage. */
 export const UNSETTLED = 74
+
+/**
+ * The exit status of a wake whose holder was settled and whose desktop launcher then failed.
+ *
+ * The launcher only shows the application finder on the desktop (`infra/computer/desktop.py`,
+ * `start`); the shell, the files and the browser driver do not need it. On 7 October 2026 Boat's
+ * desktop was not ready on the production machine after a resume, the launcher failed, and the
+ * whole start was recorded as failed although the machine was running and its holder settled.
+ */
+export const UNOPENED = 75
 
 /** A UUID's groups of hexadecimal digits. */
 const GROUPS = [8, 4, 4, 4, 12] as const
@@ -134,9 +148,49 @@ export const holderClaim = (input: { readonly id: ProviderId; readonly intent: s
     'exec 9>&-',
   ].join('\n')
 
-/** One wake: the holder is settled first, and only its own desktop is then opened. */
+/**
+ * What Boat leaves out of a Computer's snapshots, as the `.boxignore` in its home directory
+ * (gitignore syntax, relative to that directory; Boat's "Snapshots & Copies", "Excluding files").
+ *
+ * Boat captures every file each minute, counts a hard link as a full copy, and will only start a
+ * machine whose captured data fits the size it runs on. Download caches are the files that grow
+ * without anyone meaning them to and that every tool rebuilds, so they are kept out. Dependency
+ * trees inside a project (`node_modules`) stay in: a Person's project must come back whole after
+ * a stop, and Vivid stops the Computer whenever it is idle.
+ *
+ * This is the guard for the Computer's own use. What filled a Person's Computer on 6 October 2026
+ * was not that: it was another system's build trees (5.8 million files, 117.5 GiB captured), and
+ * what prevents that is that nothing but Vivid's product runs on a Person's Computer.
+ */
+const SNAPSHOT_RULES = [
+  '# Written by Vivid. Boat leaves these out of this Computer’s snapshots: they are caches',
+  '# that tools fill again by themselves. Add lines for anything else that need not be kept.',
+  '.cache/',
+  '.npm/',
+  '.pnpm-store/',
+  '.local/share/pnpm/store/',
+  '.turbo/',
+  '.gradle/caches/',
+  '.m2/repository/',
+  '.cargo/registry/',
+]
+
+/**
+ * The shell that puts those rules in place on a machine that has none. A file that is already
+ * there is the Person's or Vivid's own and is left alone. It never fails the command it is part
+ * of: a Computer without the file still starts.
+ */
+export const snapshotRules = [
+  `if [ -n "\${HOME-}" ] && [ ! -e "$HOME/.boxignore" ]; then`,
+  `  printf '%s\\n' ${SNAPSHOT_RULES.map((line) => `'${line}'`).join(' ')} > "$HOME/.boxignore.new" &&`,
+  '    mv -f "$HOME/.boxignore.new" "$HOME/.boxignore" || true',
+  'fi',
+].join('\n')
+
+/** One wake: the holder is settled first, then the snapshot rules, and only then is its own
+ * desktop opened. */
 export const wakeCommand = (input: { readonly id: ProviderId; readonly intent: string }): string =>
-  `${holderClaim(input)}\n/opt/vivid/python/bin/python3 /opt/vivid/computer/desktop.py start`
+  `${holderClaim(input)}\n${snapshotRules}\n/opt/vivid/python/bin/python3 /opt/vivid/computer/desktop.py start || exit ${UNOPENED}`
 
 /** One command that settles the holder before anything else is done on the machine. */
 export interface HolderStep {
@@ -152,12 +206,86 @@ export const admission: HolderStep = { operation: 'holder', command: holderClaim
 export const wake: HolderStep = { operation: 'desktop-launcher', command: wakeCommand }
 
 /**
+ * Whether Boat failed to run a command, or could not say whether it ran.
+ *
+ * Boat reports a resumed machine as running before a command can reach it. Measured on the
+ * production machine on 6 October 2026: the machine read `idle` from 21:20:01 UTC, while
+ * `POST /commands` answered 502 `sandbox_direct_failed` until 21:20:38 and 200 from 21:20:39; each
+ * refusal took six to nine seconds to come back. A machine not yet placed answered 409
+ * `machine_not_running`. `transport.ts` reads every 5xx and every lost connection on a command as
+ * an uncertain receipt (`MachineExecutionUnknown`), which is right for a command a Person or the
+ * model wrote and wrong to stop at for the one below.
+ */
+const unheard = (failure: MachineFailure): boolean =>
+  failure instanceof MachineExecutionUnknown ||
+  (failure instanceof MachineRequestRejected && failure.status === 409)
+
+/** How often a machine that does not answer its holder command is asked again, and how many
+ * times; `UNHEARD_FOR` bounds the same wait by the clock, since one refusal takes seconds to come
+ * back. The gap measured above was 37 seconds; the same numbers bound an SSH opening
+ * (`ssh/links.ts`), which waits on the same machine for the same reason. */
+const ASK_AGAIN_EVERY = '2 seconds'
+const ASK_AGAIN_TIMES = 30
+const UNHEARD_FOR = '75 seconds'
+
+/**
  * The server's side of the record, for one process. `forget` drops what the adapter cached about
  * a machine it turns out not to hold.
  */
 export const holding = (api: Transport, saved: Bindings, forget: (key: MachineKey) => void) => {
   /** The binding each machine has accepted from this process, by its intent. */
   const admitted = new Map<MachineKey, string>()
+  /**
+   * The holder command, sent until the machine answers it.
+   *
+   * It is the first command a woken machine is sent, so it is the one that meets the gap in which
+   * Boat calls the machine running and cannot yet run anything on it (`unheard`). Until 6 October
+   * 2026 it was sent once: the 502 became "the command receipt was lost", the start was recorded
+   * as failed, and the Person's Computer stayed unusable for the rest of the day.
+   *
+   * Sending it again is safe because the command is Vivid's own and says the same thing every
+   * time: the claim leaves the record as it is when this binding already holds the machine
+   * (`holderClaim`), and the launcher opens nothing when this desktop session already has its
+   * launcher (`infra/computer/desktop.py`, `start`: a marker under a lock). A command from a
+   * Person or the model is still never sent twice.
+   *
+   * A machine that has not answered when the wait ends is an outage (`MachineUnreachable`): nothing
+   * was learned about the machine, nothing is recorded against it, and the next need asks again.
+   */
+  const asked = Effect.fn('Machine.boat.holderCommand')(function* (
+    key: MachineKey,
+    id: ProviderId,
+    command: string,
+  ) {
+    const began = yield* Clock.currentTimeMillis
+    const sent = yield* Ref.make(0)
+    const told = Effect.fn('Machine.boat.holderWaited')(function* (answered: boolean) {
+      const tries = yield* Ref.get(sent)
+      if (tries < 2 && answered) return
+      yield* Effect.logWarning('Computer did not take commands when Boat called it running', {
+        answered,
+        tries,
+        waitedMillis: (yield* Clock.currentTimeMillis) - began,
+      })
+    })
+    return yield* Ref.update(sent, (count) => count + 1).pipe(
+      Effect.andThen(api.command(id, key, command, 30)),
+      Effect.retry({
+        while: unheard,
+        schedule: Schedule.spaced(ASK_AGAIN_EVERY),
+        times: ASK_AGAIN_TIMES,
+      }),
+      Effect.timeoutOrElse({
+        duration: UNHEARD_FOR,
+        orElse: () => Effect.fail(new MachineUnreachable()),
+      }),
+      Effect.catchIf(unheard, () => Effect.fail(new MachineUnreachable())),
+      Effect.tap(() => told(true)),
+      Effect.tapError((failure) =>
+        failure instanceof MachineUnreachable ? told(false) : Effect.void,
+      ),
+    )
+  })
   /**
    * Send a running machine one command that first settles whose machine it is; a binding it does
    * not name is refused before anything else in the command runs. A refused binding is given up
@@ -174,12 +302,7 @@ export const holding = (api: Transport, saved: Bindings, forget: (key: MachineKe
     // The machine is being asked again, so what it said before no longer stands: a call that
     // fails here must not leave this process still passing on an old answer.
     admitted.delete(key)
-    const receipt = yield* api.command(
-      identity.id,
-      key,
-      step.command({ id: identity.id, intent }),
-      30,
-    )
+    const receipt = yield* asked(key, identity.id, step.command({ id: identity.id, intent }))
     if (receipt.exitCode === HELD) {
       yield* saved.release(key, intent)
       forget(key)
@@ -188,7 +311,11 @@ export const holding = (api: Transport, saved: Bindings, forget: (key: MachineKe
     // Damage, or no lock: nothing was learned about whose machine it is, so the binding stays.
     if (receipt.exitCode === UNSETTLED)
       return yield* Effect.fail(new MachineOperationFailed({ operation: 'holder' }))
-    if (receipt.exitCode !== 0 || receipt.timedOut)
+    // The holder is settled and only the desktop's launcher did not open: the machine is this
+    // binding's and is used. It is said in the log; the next wake tries the launcher again.
+    if (receipt.exitCode === UNOPENED && !receipt.timedOut)
+      yield* Effect.logWarning('Computer desktop launcher did not open')
+    else if (receipt.exitCode !== 0 || receipt.timedOut)
       return yield* Effect.fail(new MachineOperationFailed({ operation: step.operation }))
     admitted.set(key, intent)
     return identity

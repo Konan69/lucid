@@ -2,35 +2,22 @@ import { ConnectionOwnership, ConnectionState, type Connection } from '@vivid/co
 import { Option } from 'effect'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
-import { Building2, Unplug } from 'lucide-react-native'
-import {
-  accountLine,
-  ownFirst,
-  standingOf,
-  type Pressed,
-  type StandingTone,
-} from '../../data/integration'
+import { byService } from '@vivid/state'
+import { accountLine, standingOf, type Presses, type StandingTone } from '../../data/integration'
 import { useTheme } from '../../theme'
 import { Row, Section } from '../../ui/List'
-import { Button, Card, Dot, IconButton, Label } from '../../ui/ui'
-import type { Flow } from './flow'
+import { Button, Card, Dot, Label } from '../../ui/ui'
 import { Logo } from './Logo'
 
 /**
- * The day an account was added, as this phone writes a short date ("3 Oct", "Oct 3"). The
- * phone's engine has `Intl.DateTimeFormat`, the formatter `data/when.ts` is built on; `when`
- * itself writes a time of day for today, which is not what tells two accounts apart.
- */
-const added = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
-const addedOn = (moment: number) => added.format(moment)
-
-/**
- * What is connected, first in the sheet. With nothing connected it is the one sentence that says
+ * What is connected, first on the page. With nothing connected it is the one sentence that says
  * how connecting works; while the Person is searching for something else, an empty answer here
  * is left out.
  *
  * Ported from the web (`Connected` in `apps/web/src/screen/settings/Connections.tsx`): the same
- * order, count, standing and words, as rows of one list where the web lays out tiles.
+ * order, count, standing and words. The web draws one card for each service with a row for each
+ * account; a phone draws one row for each account in one list, under its service's name, and
+ * says which account it is on the second line. Pressing a row opens that account's own sheet.
  */
 export function Connected({
   connections,
@@ -38,7 +25,9 @@ export function Connected({
   company,
   admin,
   marks,
-  flow,
+  presses,
+  onResume,
+  onManage,
 }: {
   /** The accounts whose service answers to the search, in the server's order. */
   connections: ReadonlyArray<Connection>
@@ -48,7 +37,12 @@ export function Connected({
   admin: boolean
   /** The icon address the catalog gives each service, for an account that carries none. */
   marks: ReadonlyMap<Connection['service'], string>
-  flow: Flow
+  /** Where each row's last press stands. */
+  presses: Presses
+  /** Picks up an account whose sign-in was left, or lapsed. */
+  onResume: (connection: Connection) => void
+  /** Opens the account's own sheet. */
+  onManage: (connection: Connection) => void
 }) {
   if (connections.length === 0) return searching ? null : <NothingConnected />
   // The count is of accounts that work now. A sign-in that was started and never finished is
@@ -64,22 +58,35 @@ export function Connected({
         ),
       )}
     >
-      {ownFirst(connections).map((connection) => {
-        const own = ConnectionOwnership.guards.Personal(connection.ownership)
-        return (
-          <Account
-            key={connection.id}
-            connection={connection}
-            sharedWith={own ? Option.none() : company}
-            pressed={Option.fromUndefinedOr(flow.presses.get(connection.id))}
-            mark={Option.orElse(Option.fromNullishOr(connection.mark), () =>
-              Option.fromUndefinedOr(marks.get(connection.service)),
-            )}
-            // A Company's Integration is finished or removed by an admin, never by a member.
-            actions={own || admin ? Option.some(flow) : Option.none()}
-          />
-        )
-      })}
+      {/* One service's accounts stay together and in the order they were added, so a second
+          Gmail account lands under the first and nothing above it moves (`byService`). */}
+      {byService(connections).flatMap((group) =>
+        group.accounts.map((connection) => {
+          const own = ConnectionOwnership.guards.Personal(connection.ownership)
+          const pressed = Option.fromUndefinedOr(presses.get(connection.id))
+          return (
+            <Account
+              key={connection.id}
+              connection={connection}
+              line={accountLine(connection, {
+                alone: group.accounts.length === 1,
+                sharedWith: own ? Option.none() : company,
+                pressed,
+              })}
+              // One press at a time: nothing is asked again while the server is still asked.
+              asking={Option.exists(
+                pressed,
+                (value) => value === 'starting' || value === 'checking',
+              )}
+              mark={Option.orElse(Option.fromNullishOr(connection.mark), () =>
+                Option.fromUndefinedOr(marks.get(connection.service)),
+              )}
+              // A Company's Integration is named, finished or removed by an admin, never a member.
+              actions={own || admin ? Option.some({ onResume, onManage }) : Option.none()}
+            />
+          )
+        }),
+      )}
     </Section>
   )
 }
@@ -103,55 +110,53 @@ function NothingConnected() {
 }
 
 /**
- * One connected account: the service's logo with its standing as a dot on the corner, its name,
- * and in words how it stands and which account it is. One that works offers "Disconnect". One
- * that does not leads with "Reconnect" on a line of its own, where it is the widest thing in the
- * row and cannot be missed, and keeps disconnecting as the icon at the trailing edge.
+ * One connected account: the service's logo with its standing as a dot on the corner, the
+ * service's name, and in words which account it is. Pressing it opens the account's own sheet,
+ * where it is named, added to and disconnected, so the row carries the chevron of a row that
+ * goes somewhere. One that does not work also leads with "Reconnect" on a line of its own, where
+ * it is the widest thing in the row and cannot be missed.
  */
 function Account({
   connection,
-  sharedWith,
-  pressed,
+  line,
+  asking,
   mark,
   actions,
 }: {
   connection: Connection
-  /** The Company this account is shared with, when it is not the Person's own. */
-  sharedWith: Option.Option<string>
-  pressed: Option.Option<Pressed>
+  /** The second line: which account it is and how it stands. */
+  line: string
+  asking: boolean
   mark: Option.Option<string>
-  /** Present for whoever may finish or remove this Integration. */
-  actions: Option.Option<Pick<Flow, 'resume' | 'disconnect'>>
+  /** Present for whoever may name, finish or remove this Integration. */
+  actions: Option.Option<{
+    readonly onResume: (connection: Connection) => void
+    readonly onManage: (connection: Connection) => void
+  }>
 }) {
-  const ready = ConnectionState.guards.Ready(connection.state)
-  // One press at a time: the row is not pressed again while the server is still being asked.
-  const asking = Option.exists(pressed, (value) => value === 'starting' || value === 'checking')
+  const leading = (
+    <Standing tone={standingOf(connection).tone}>
+      <Logo service={connection.service} mark={mark} />
+    </Standing>
+  )
+  if (Option.isNone(actions)) {
+    return <Row leading={leading} title={connection.serviceName} detail={line} />
+  }
   return (
     <View>
       <Row
-        leading={
-          <Standing tone={standingOf(connection).tone}>
-            <Logo service={connection.service} mark={mark} />
-          </Standing>
-        }
+        leading={leading}
         title={connection.serviceName}
-        detail={accountLine(connection, pressed, addedOn)}
-        trailing={
-          <Trailing
-            connection={connection}
-            sharedWith={sharedWith}
-            ready={ready}
-            onDisconnect={Option.map(actions, (flow) => () => flow.disconnect(connection))}
-          />
-        }
+        detail={line}
+        onPress={() => actions.value.onManage(connection)}
       />
-      {!ready && Option.isSome(actions) && (
+      {!ConnectionState.guards.Ready(connection.state) && (
         // Under the words, starting where they start (the row's 16, the 40 of the logo, its 12).
         <View style={{ paddingLeft: 68, paddingRight: 16, paddingBottom: 12 }}>
           <Button
             label="Reconnect"
             disabled={asking}
-            onPress={() => actions.value.resume(connection)}
+            onPress={() => actions.value.onResume(connection)}
           />
         </View>
       )}
@@ -182,58 +187,6 @@ function Standing({ tone, children }: { tone: StandingTone; children: ReactNode 
       >
         <Dot tone={tone} size={10} />
       </View>
-    </View>
-  )
-}
-
-/**
- * The trailing edge of an account's row: the mark of an account the whole Company shares, then
- * the way to disconnect it for whoever may. Nothing at all for a member looking at their own
- * Company's account with no mark to show.
- */
-function Trailing({
-  connection,
-  sharedWith,
-  ready,
-  onDisconnect,
-}: {
-  connection: Connection
-  sharedWith: Option.Option<string>
-  ready: boolean
-  onDisconnect: Option.Option<() => void>
-}) {
-  const { colors: c } = useTheme()
-  if (Option.isNone(sharedWith) && Option.isNone(onDisconnect)) return null
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-      {Option.isSome(sharedWith) && (
-        <View
-          accessible
-          accessibilityRole="image"
-          accessibilityLabel={`Shared with everyone at ${sharedWith.value}`}
-        >
-          <Building2 pointerEvents="none" size={16} strokeWidth={1.7} color={c['ink-3']} />
-        </View>
-      )}
-      {Option.isSome(onDisconnect) &&
-        (ready ? (
-          // The label of a shapeless button ends 20 points inside it; pulled out so the word,
-          // not the empty shape, lines up near the row's own edge.
-          <Button
-            kind="ghost"
-            label="Disconnect"
-            onPress={onDisconnect.value}
-            containerStyle={{ marginEnd: -12 }}
-          />
-        ) : (
-          <View style={{ marginEnd: -8 }}>
-            <IconButton
-              icon={Unplug}
-              label={`Disconnect ${connection.serviceName}`}
-              onPress={onDisconnect.value}
-            />
-          </View>
-        ))}
     </View>
   )
 }

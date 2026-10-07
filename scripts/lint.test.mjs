@@ -44,6 +44,7 @@ if (args.includes('--fixture-failure')) {
 function invoke(root, cwd, args = [], workers) {
   const environment = { ...process.env }
   delete environment.GOMAXPROCS
+  delete environment.VIVID_LINT_THREADS
   if (workers !== undefined) environment.GOMAXPROCS = workers
   return NodeChildProcess.spawnSync(
     process.execPath,

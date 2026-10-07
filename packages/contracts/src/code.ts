@@ -1,4 +1,5 @@
 import * as Schema from 'effect/Schema'
+import { ACCOUNT_HANDLE_MAX } from './connections.js'
 import { ApprovalId } from './identity.js'
 
 /**
@@ -24,7 +25,7 @@ export const CodeToolTimeout =
 
 /** Discovery and guest dispatch accept exactly the same account/tool vocabulary. */
 export const CodeToolNames = Schema.Struct({
-  account: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(300)),
+  account: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(ACCOUNT_HANDLE_MAX)),
   tool: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
 })
 
@@ -50,7 +51,6 @@ export interface RunCodeRequest extends Schema.Schema.Type<typeof RunCodeRequest
 export const CodeCallKind = Schema.Literals([
   'find_tools',
   'use_tool',
-  'run_command',
   'browse',
   'read_page',
 ] as const)

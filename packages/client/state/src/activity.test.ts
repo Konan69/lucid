@@ -37,13 +37,8 @@ describe('a step, in words', () => {
 
   it('says what work on the Computer was for, while it is still running', () => {
     expect(
-      describeToolCall(
-        'run_command',
-        readAsked({ command: 'ls', summary: 'List the downloads' }),
-        Option.none(),
-        'running',
-      ),
-    ).toMatchObject({ label: 'Working on its computer', detail: 'List the downloads' })
+      describeToolCall('bash', readAsked({ command: 'ls ~/Downloads' }), Option.none(), 'running'),
+    ).toMatchObject({ label: 'Working on its computer', detail: 'ls ~/Downloads' })
   })
 
   it('says work in the Person’s own apps is on their computer, not Vivid’s', () => {

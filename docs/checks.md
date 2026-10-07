@@ -20,6 +20,70 @@ workspace source + shared rules/configs → Turbo task hash
 - Keep automatic Turbo worktree cache sharing. Do not add a cacheDir that would disable it. Persist `.turbo/cache` in CI; no remote cache provider is configured.
 - Fix commands always execute and are never cached.
 
+## The gate
+
+`pnpm gate` (`scripts/gate.mjs`) is the one definition of the checks. Its stages are in `scripts/gate/stages.mjs`, the lint ratchets in `scripts/gate/ratchets.mjs`; the push hook, a run on another machine and each GitHub job select stages from it.
+
+```text
+policy (5 checks, together, always run)
+checks lane: lint, format, typecheck, tooling tests   one Turbo task at a time
+tests lane:  test per package                         beside the checks lane
+```
+
+- Tests run through Turbo, one task per package. A test task hashes its package, its dependencies' production source (`checkinputs`), the explicit integration edges, and every test setting except the database address; it needs no build. A package nothing reached is replayed with its counts, so the verdict always reports the whole suite.
+- A task for one package replaces the generic task, and so does a package's own `turbo.json`; Turbo merges neither. Each such task repeats the generic inputs, outputs and environment, and `scripts/gate.test.mjs` fails when one drifts. Before this, the server, runtime, skills and mobile lint did not rerun when the lint configuration changed.
+- Every run creates one empty database and gives it to the suites. The server's migrated template is named by a digest of the migrations and kept on the test server; each test file clones it under the run's prefix, and the run drops everything with its prefix at the end. Without a database server the gate fails.
+- `--host` runs in a warm tree on another machine: a worktree per branch of one repository there, moved by git, with dependencies and build info kept and one Turbo cache for all trees. The client follows the run by its identifier.
+- At most one gate per four cores does work at once on a machine, across checkouts. Lint and typecheck stay serialized as designed above; the measured peak for one typed lint process is still about 3.6 GiB.
+- `affected` gives each package's Vitest the commit where the branch left the default branch (`--changed`), so only test files whose imports reach a changed file run. A file a test reads without importing is outside that graph; the full gate is the merge gate.
+
+### Which test files run
+
+"Run only the tests that changed" cannot mean the test files that were edited: a test's result changes when anything it loads changes. So each package's test script is `scripts/test.mjs`, and a test file runs only when its inputs differ from the last time it passed.
+
+- A file's key is the content of every module it loads, read from Vitest's own transform of each module (static and dynamic imports as Vite resolved them, so path aliases, package exports and Flue's Markdown imports are followed exactly as the run follows them), plus the package's inputs: the lockfile, the compiler and runner configuration, the setup files and what they load, the test settings in the environment, and every tracked file in the package that is not code (fixtures, migrations, Markdown read from disk).
+- A file whose key already passed is replayed with its counts, so the verdict still reports the whole suite. A failed file is never recorded.
+- An import graph cannot see everything. A module that starts another program, reads files by its own location or the working directory, imports a computed path, or loads modules by its own means makes every test that reaches it "wide": that test is keyed on Turbo's hash of the whole package task and runs whenever anything in the package or its dependencies changed. Test code that touches the file system at all is wide too. `node scripts/test.mjs --plan` in a package lists the wide files and the reason for each. In the server package 27 of 168 files are wide.
+- A type-only change runs no test: erased imports are not in the graph, and typecheck is the stage that owns types.
+- `--all` (or `VIVID_TEST_ALL=1`) runs every file and trusts no record. GitHub's job for the default branch does that, so a dependency the keys miss is caught there at the latest.
+- The records are small files named by key, shared by every checkout on a machine through the gate's cache directory.
+
+On a remote machine the gate keeps one warm tree per concurrent gate (one for every four cores) and takes the first free one, whatever the branch; it writes a `.boxignore` beside them so a Boat machine does not snapshot dependency trees or caches. One tree per branch, without that file, filled a machine's disk in a day.
+
+Measured on the eight-core Cloudbox on 6 October 2026, same repository state, other threads' gates running beside it:
+
+| Run                                               |                                               Before |                                                           After |
+| ------------------------------------------------- | ---------------------------------------------------: | --------------------------------------------------------------: |
+| Full gate, nothing changed                        | 7 min (fresh tree, 0 cached, queued behind one lock) |                  4 to 17 s from command (all 53 tasks replayed) |
+| Full gate after a server source change            |                                                7 min |                                         56 to 88 s from command |
+| Named test files with the database                |                                         not possible |                                               10 s from command |
+| Two full gates at once, each with a server change |                           second waits for the first |                                   both pass, 88 s each, no wait |
+| Server suite alone (164 files)                    |                                 226 s at two workers | 134 s at four workers under load; about 60 s on a quiet machine |
+
+A tree with a deliberate lint finding, type error, format error and failing test fails in exactly those four stages. The old hook's serial sequence, run against the new tree, also passes.
+
+## Effect language service
+
+Typecheck runs the native TypeScript 7 compiler. `effect-language-service patch` patches the JavaScript `typescript` package, which typecheck does not run, so from the move to TypeScript 7 until 7 October 2026 no Effect diagnostic reached the gate: a floating Effect and a `new Promise` in a contracts file passed typecheck. `@effect/tsgo` is the service for the native compiler (its README: "If you are using TypeScript 7.0 or newer, use `@effect/tsgo`"); `prepare` now runs `effect-tsgo patch --typescript` as well, and the plugin block in `tsconfig.base.json` is read by both.
+
+The first patched run reported 1,677 findings that had gathered meanwhile, none of them a plain TypeScript error: 741 `strictEffectProvide` (most are tests that give a Layer to each case with `Effect.provide` where `layer(...)` builds it once for the file), 406 `unnecessaryFailYieldableError`, 188 `schemaNumber`, 84 `asyncFunction`, 52 `multipleEffectProvide`, and 29 smaller rules. For now the compiler prints every finding and exits 0 (`ignoreEffect...InTscExitCode`), and the gate's typecheck line says how many there are without failing. They are being fixed on their own branch; when the count is zero the options go back to `false`, so an Effect error or warning fails typecheck again, and `scripts/versions.mjs` goes back to requiring that.
+
+## The type checker is ts-rust
+
+Since 7 October 2026 `scripts/types.mjs` runs `tsc-rs` 0.1.0 (pingdotgg/ts-rust), a Rust port of the native TypeScript compiler with the same command line, declarations and build info, and the Effect language service rules built in. `@typescript/native` 7.0.2 stays installed: typed lint and editors use it, `@effect/tsgo` patches it, and `apps/web`'s build compiles with it. `tsc-rs` runs on Linux x64 and macOS arm64 only.
+
+Measured on the PC over the gate's whole typecheck graph (17 projects, in dependency order, declarations included, Effect rules on, cold):
+
+| Compiler                                             |   Time | Peak memory, largest process | Diagnostics                               |
+| ---------------------------------------------------- | -----: | ---------------------------: | ----------------------------------------- |
+| native `tsc` 7.0.2, one checker (the gate until now) | 28.3 s |                      1.97 GB | 1,677 Effect findings, 0 errors           |
+| native `tsc` 7.0.2, default checkers                 | 19.1 s |                      3.08 GB | the same                                  |
+| `tsc-rs` 0.1.0                                       | 11.1 s |                      2.07 GB | the same 1,677, and 3 errors more (below) |
+
+The server project alone: 14.2 s, 8.1 s and 5.2 s. Warm, with build info kept: 8.8 s native, 4.1 s `tsc-rs`.
+
+The 3 extra errors were TS7031 (implicit any) on `packages/agent/runtime/src/tools/sandbox.ts`, for `(path, { recursive } = {}) =>` in an object typed by an SDK interface. They are not a fault of the port: TypeScript 6.0.3, 7.0.2 and the 7.1 nightly of 22 September accept the code, and the nightly of 23 September and later report the same error, since microsoft/TypeScript pull request 64043 ("Align object binding defaults with arrays"). The compiler says the element is implicitly `any` while its own next diagnostic gives its type as `boolean | undefined`. The two parameters are annotated in `sandbox.ts` until that is fixed; pingdotgg/ts-rust issue 16 and pull request 17 carry the reproduction and a fix (report the error only when the parameter has no contextual type).
+
 ## Reference and limits
 
 The VCOS reference (`apps/web/TYPECHECK.md` and its shared/server/agent configs) splits a combined program into declaration-producing projects and checks consumers against those outputs. Separate Vivid workspace configs are not equivalent boundaries: source exports pull shared implementation into consumers, and tests import implementation across server/runtime/skills packages. The first cache/concurrency change repairs repeat runs but does not complete this graph optimization.

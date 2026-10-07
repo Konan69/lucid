@@ -46,8 +46,10 @@ pnpm lint
 pnpm format
 ```
 
-For code changes, `.husky/pre-push` runs the integrated gates, including serialized typecheck
-and tests. Avoid concurrent TypeScript graphs or a typecheck alongside a build.
+For code changes, `pnpm gate` runs every stage (policy, lint, format, typecheck, tooling tests,
+tests) and replays whatever did not change; the push hook runs the same command. `pnpm gate
+affected` and `pnpm gate focused <test files>` are the faster loops. Avoid concurrent TypeScript
+graphs or a typecheck alongside a build.
 
 ## Runtime and persistence
 

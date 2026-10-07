@@ -8,12 +8,14 @@ import {
   type Run,
 } from '@vivid/contracts'
 import {
+  awaitedOf,
   describeToolCall,
   drawn,
   readAnswered,
   readAsked,
   speakerOfTurn,
   summarizeSteps,
+  type Awaited,
 } from '@vivid/state'
 import { Data, Option, Schema } from 'effect'
 import type { Authorization } from './integration'
@@ -200,7 +202,6 @@ const STANDING = {
 
 /** Mirrors the web's watchable steps, without exposing tool names to the drawn UI. */
 const ON_COMPUTER = new Set([
-  'run_command',
   'bash',
   'read',
   'write',
@@ -278,6 +279,8 @@ export type Card = Data.TaggedEnum<{
   Connection: {
     readonly request: ConnectionRequestMessage
     readonly authorization: Option.Option<Authorization>
+    /** Which accounts answer it: any on the service, the one Vivid began, or one more. */
+    readonly awaited: Awaited
   }
 }>
 export const Card = Data.taggedEnum<Card>()
@@ -309,6 +312,7 @@ export function cardOf(tool: ToolPart): Option.Option<Card> {
             decodeAuthorization(tool.output),
             (message) => message.authorization,
           ),
+          awaited: awaitedOf(tool.output),
         }),
       ),
     ),

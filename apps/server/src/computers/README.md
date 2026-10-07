@@ -66,15 +66,46 @@ without anyone pressing Start. Two things are not covered: the creation of a Per
 machine still waits for Boat, and a Person who presses Start when no size is free sees the
 Computer return to stopped without that reason.
 
+Boat's other answers to a start are read from its error body (`boat/transport.ts`, `started`),
+each seen on 7 October 2026. `resume_failed` with "needs … GiB of disk but the largest … machine
+holds …" is a size the Computer's data no longer fits, and the start moves to the next size; the
+last one, `xlarge`, is refused with `machine_class_plan_required` on Boat's smaller plans. When no
+size the plan allows can hold the Computer the start fails `MachineOutgrown`, and the Person is
+told what cures it: files removed, or the provider plan upgraded. `rate_limited` is the account's
+25 starts an hour being spent: the start stops asking and says to try again in a few minutes.
+
+A machine Boat calls running does not take commands yet: for about 35 seconds its command endpoint
+answers 502. The first command Vivid sends a woken machine (the holder claim, the snapshot rules
+and the desktop launcher, one command) is therefore sent again every two seconds for up to 75
+seconds (`boat/holder.ts`, `asked`). It is Vivid's own and says the same thing each time. A machine
+that never takes it is an outage. The snapshot rules are a `.boxignore` in the Computer's home
+directory, written when there is none: Boat captures every file each minute, counts a hard link as
+a full copy, and starts a machine only on a size that holds everything captured, so download
+caches are kept out of the snapshots.
+
 Boat itself not answering is not a state the server is in. A connection that fails, a reply that
 does not come in time, or Boat's own 5xx is an outage: the call that met it is refused with
 "Vivid’s computer is not answering right now", nothing about it is written to the Computer's
 record, and the next call asks Boat again, so it is over when Boat is back, with no restart and
 without anyone pressing Start. A start that Boat refused or could not finish is different: it is
-recorded as failed with its reason and needs a Person to start the Computer again. So does one
-outage case: when the outage met the creation of a Person's first machine, Boat's adapter keeps the
-unanswered creation as unresolved (a machine may have been made and paid for) and it is reconciled
-by an explicit Start, never by a retry on its own.
+recorded as failed with its reason. The record says what the last start met, never that Vivid
+stopped trying: the next action starts the Computer again (`store.ts`, `prepare`). Until 6 October
+2026 a failed start waited for a Person to press Start, and one start that met Boat's 502 refused
+every action for the rest of that day. The exception is a failure that asking again cannot cure
+(`machine.ts`, `isStanding`: the Computer has outgrown every machine, another account holds it,
+the credentials are refused, a creation is unresolved). For ten minutes after one of those the
+action is refused with the recorded reason and Boat is not asked, because every start counts
+against the account's hourly limit; a Person's Start still tries at once. An unresolved creation
+is safe to start again: the adapter replays its one intent under the same idempotency key for 23
+hours and refuses after that, so a second machine is never made.
+
+A Person's read of the Computer asks two more things of a machine that runs: whether this binding
+holds it, and its screen. Failing either says nothing about whether the machine runs, so it is
+told on that read and never recorded as the Computer's state (`store.ts`, `get`). A machine found
+running that the record did not have running counts its idle time from that moment.
+
+A Person's Computer runs nothing but Vivid's product. Gates, builds and test suites run on the
+build machine; `scripts/gate/cloud.mjs` refuses a host that resolves to the Computer.
 
 Boat supplies the real desktop, Chrome and native input driver. Running state carries a short-lived,
 token-gated Viewer address; provider keys never enter client state or model context. Browser and

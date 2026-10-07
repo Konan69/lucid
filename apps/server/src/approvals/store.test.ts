@@ -32,7 +32,7 @@ import { threads } from '../threads/tables.ts'
 import { ActionOutcome } from './gate.ts'
 import { ApprovalStore } from './store.ts'
 import { approvals } from './tables.ts'
-import { commandAction, connectionAction, fixture, Observation, trustTestLayer } from './testing.ts'
+import { desktopAction, connectionAction, fixture, Observation, trustTestLayer } from './testing.ts'
 
 const once = ApprovalDecision.cases.AllowOnce.make({})
 /** A click on the Person's own signed-in page. */
@@ -159,7 +159,7 @@ describe.skipIf(!testDatabaseConfigured)('Approval claims and outcomes', () => {
       const test = yield* fixture()
       const store = yield* ApprovalStore
       const action = ProposedAction.make({
-        ...commandAction,
+        ...desktopAction,
         target: ActionTarget.cases.Desktop.make({
           action: DesktopAction.cases.Type.make({ text: 'Private content' }),
         }),
@@ -488,7 +488,7 @@ describe.skipIf(!testDatabaseConfigured)('Approval recovery and permanent permis
         observed.outcome,
         ActionOutcome.cases.Failed.make({ reason: 'Computer refused the command' }),
       )
-      const approval = yield* store.raise(test.vivid, commandAction)
+      const approval = yield* store.raise(test.vivid, desktopAction)
       const settled = yield* store.decide(test.personal, {
         id: approval.id,
         digest: approval.digest,
@@ -499,7 +499,7 @@ describe.skipIf(!testDatabaseConfigured)('Approval recovery and permanent permis
         expect.objectContaining({
           threadId: approval.threadId,
           by: 'person',
-          event: AuditEvent.cases.ActionFailed.make({ service: 'Computer', tool: 'command' }),
+          event: AuditEvent.cases.ActionFailed.make({ service: 'Computer', tool: 'desktop' }),
         }),
       ])
       expect(yield* Ref.get(observed.deliveries)).toEqual([
@@ -516,7 +516,7 @@ describe.skipIf(!testDatabaseConfigured)('Approval recovery and permanent permis
     Effect.gen(function* () {
       const test = yield* fixture()
       const store = yield* ApprovalStore
-      const action = ProposedAction.make({ ...commandAction, effect: 'destructive' })
+      const action = ProposedAction.make({ ...desktopAction, effect: 'destructive' })
       const approval = yield* store.raise(test.vivid, action)
       const result = yield* Effect.result(
         store.decide(test.personal, { id: approval.id, digest: approval.digest, decision: always }),
@@ -647,7 +647,7 @@ describe.skipIf(!testDatabaseConfigured)('Approval identity across Runs', () => 
           admittedAt: 0,
         }),
       )
-      const initial = yield* store.raise(test.vivid, commandAction)
+      const initial = yield* store.raise(test.vivid, desktopAction)
       yield* database.run(
         database.update(runs).set({ state: 'completed', finishedAt: 1 }).where(eq(runs.id, first)),
       )
@@ -663,14 +663,14 @@ describe.skipIf(!testDatabaseConfigured)('Approval identity across Runs', () => 
           admittedAt: 1,
         }),
       )
-      const repeated = yield* store.raise(test.vivid, commandAction)
+      const repeated = yield* store.raise(test.vivid, desktopAction)
       expect(repeated.id).toBe(initial.id)
       expect(repeated.runId).toBe(first)
       expect(yield* store.inThread(test.personalId)).toHaveLength(1)
       const request = { id: initial.id, digest: initial.digest, decision: once }
       expect((yield* store.decide(test.personal, request)).state._tag).toBe('Succeeded')
       expect((yield* store.decide(test.personal, request).pipe(Effect.flip))._tag).toBe('Conflict')
-      expect(yield* Ref.get((yield* Observation).actions)).toEqual([commandAction])
+      expect(yield* Ref.get((yield* Observation).actions)).toEqual([desktopAction])
     }).pipe(Effect.scoped, Effect.provide(trustTestLayer)),
   )
 })

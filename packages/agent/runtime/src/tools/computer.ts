@@ -3,7 +3,7 @@ import { Type } from '@earendil-works/pi-ai'
 import {
   BrowserAction,
   BrowseTarget,
-  RunCommandRequest,
+  BrowseRequest,
   DesktopOutcome,
   BrowseOutcome,
   UseDesktopRequest,
@@ -85,7 +85,7 @@ const browseInput = Schema.Struct({
     modelAction(BrowserAction.cases.ShowTab.fields, 'show_tab'),
     modelAction(BrowserAction.cases.CloseTab.fields, 'close_tab'),
   ]),
-  summary: RunCommandRequest.fields.summary
+  summary: BrowseRequest.fields.summary
     .check(
       Schema.isPattern(/\S/),
       Schema.makeFilter((value) => v.is(summary, value)),
@@ -149,9 +149,7 @@ function browserAction(input: typeof browseInput.Type.action): BrowserAction {
 /**
  * Mounts Vivid's Computer for this conversation: Flue's own file and shell tools on the real
  * machine, with `use_desktop`, `browse` and the Person's computer beside them. Nothing else is
- * registered: the earlier `run_command` tool, which asked for an Approval per command, was removed
- * on 6 October 2026 once `bash` had run on a Person's Computer in production. Availability and
- * takeover still belong to the server.
+ * registered. Availability and takeover still belong to the server.
  */
 export function mountComputer(runTool: RunTool, run: RunScoped) {
   useSandbox(computerSandboxFactory(runTool, run))

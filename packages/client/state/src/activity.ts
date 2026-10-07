@@ -262,14 +262,6 @@ const STEPS = {
     },
     detail: (asked) => [said(asked.pattern)],
   },
-  run_command: {
-    said: {
-      running: 'Working on its computer',
-      done: 'Worked on its computer',
-      failed: 'The computer did not do it',
-    },
-    detail: (asked) => [said(asked.summary)],
-  },
   browse: {
     said: {
       running: 'Using its browser',

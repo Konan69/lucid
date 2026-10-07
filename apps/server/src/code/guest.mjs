@@ -327,7 +327,7 @@ function runner() {
     worker = new NodeWorkerThreads.Worker(new URL(import.meta.url), {
       workerData: {
         code,
-        kinds: ['find_tools', 'use_tool', 'run_command', 'browse', 'read_page'],
+        kinds: ['find_tools', 'use_tool', 'browse', 'read_page'],
         limits: { calls: limits.calls, frame: limits.frame, logs: limits.logs },
       },
       resourceLimits: { maxOldGenerationSizeMb: limits.heap },

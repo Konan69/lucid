@@ -12,7 +12,7 @@ import { threads } from '../threads/tables.ts'
 import { ApprovalStore, approvalStoreLayer } from './store.ts'
 import { approvals } from './tables.ts'
 import { approvalSweeperLayer } from './sweeper.ts'
-import { commandAction, fixture, Observation, trustTestLayer } from './testing.ts'
+import { desktopAction, fixture, Observation, trustTestLayer } from './testing.ts'
 
 const isDatabaseFailure = Schema.is(DatabaseFailure)
 
@@ -39,7 +39,7 @@ describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
         const store = yield* ApprovalStore
         const observed = yield* Observation
         yield* Ref.set(observed.deliveryFailure, Option.some(failure))
-        const approval = yield* store.raise(test.vivid, commandAction)
+        const approval = yield* store.raise(test.vivid, desktopAction)
         yield* store.decide(test.personal, {
           id: approval.id,
           digest: approval.digest,
@@ -85,7 +85,7 @@ describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
             .set({ audience: 'company' })
             .where(eq(threads.id, test.companyId)),
         )
-        const approval = yield* store.raise(test.companyVivid, commandAction)
+        const approval = yield* store.raise(test.companyVivid, desktopAction)
         yield* store.decide(test.owner, {
           id: approval.id,
           digest: approval.digest,
@@ -110,7 +110,7 @@ describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
       const test = yield* fixture()
       const store = yield* ApprovalStore
       const observed = yield* Observation
-      const approval = yield* store.raise(test.vivid, commandAction)
+      const approval = yield* store.raise(test.vivid, desktopAction)
       yield* Ref.set(observed.changesDefect, true)
       const crash = yield* Effect.exit(
         store.decide(test.personal, { id: approval.id, digest: approval.digest, decision: deny }),
@@ -135,7 +135,7 @@ describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
       const test = yield* fixture()
       const store = yield* ApprovalStore
       const observed = yield* Observation
-      const approval = yield* store.raise(test.vivid, commandAction)
+      const approval = yield* store.raise(test.vivid, desktopAction)
       yield* Ref.set(observed.changesDefect, true)
       yield* Effect.exit(
         store.decide(test.personal, { id: approval.id, digest: approval.digest, decision: deny }),
@@ -154,7 +154,7 @@ describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
       const test = yield* fixture()
       const store = yield* ApprovalStore
       const observed = yield* Observation
-      const approval = yield* store.raise(test.vivid, commandAction)
+      const approval = yield* store.raise(test.vivid, desktopAction)
       yield* Ref.set(
         observed.deliveryFailure,
         Option.some(new RuntimeUnavailable({ message: 'Unavailable' })),
@@ -184,13 +184,13 @@ describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
         const store = yield* ApprovalStore
         const observed = yield* Observation
         const database = yield* Database
-        const approval = yield* store.raise(test.vivid, commandAction)
+        const approval = yield* store.raise(test.vivid, desktopAction)
         yield* Ref.set(observed.changesDefect, true)
         yield* Effect.exit(
           store.decide(test.personal, { id: approval.id, digest: approval.digest, decision: deny }),
         )
         yield* Ref.set(observed.changesDefect, false)
-        yield* store.raise(test.vivid, commandAction)
+        yield* store.raise(test.vivid, desktopAction)
         yield* database.run(database.delete(threads).where(eq(threads.id, test.personalId)))
         expect(yield* store.inbox(test.personal)).toEqual([])
         expect(yield* store.inThread(test.personalId)).toEqual([])
@@ -209,7 +209,7 @@ describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
       const test = yield* fixture()
       const store = yield* ApprovalStore
       const observed = yield* Observation
-      const approval = yield* store.raise(test.vivid, commandAction)
+      const approval = yield* store.raise(test.vivid, desktopAction)
       yield* Ref.set(observed.changesDefect, true)
       yield* Effect.exit(
         store.decide(test.personal, { id: approval.id, digest: approval.digest, decision: deny }),
@@ -237,7 +237,7 @@ describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
       const test = yield* fixture()
       const store = yield* ApprovalStore
       const observed = yield* Observation
-      const approval = yield* store.raise(test.vivid, commandAction)
+      const approval = yield* store.raise(test.vivid, desktopAction)
       yield* Ref.set(observed.deliveryDefect, true)
       expect(
         Exit.isFailure(

@@ -41,9 +41,9 @@
     "build": "node scripts/build.mjs",
     "example": "node src/examples/serve.ts",
     "check:package": "node scripts/consumer.mjs",
-    "typecheck": "tsc --noEmit",
-    "lint": "oxlint --type-aware src",
-    "test": "vitest run"
+    "typecheck": "node ../../../scripts/types.mjs",
+    "lint": "node ../../../scripts/lint.mjs",
+    "test": "node ../../../scripts/test.mjs"
   },
   "peerDependencies": {
     "@earendil-works/chord": "1.0.4",

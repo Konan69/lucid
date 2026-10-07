@@ -413,7 +413,6 @@ function ItemSheet({
     const outcome = await startThread(data, {
       message: `Read “${item.name}” in the Library and tell me what matters in it.`,
       projectId: null,
-      resume: Option.none(),
     })
     setBusy(false)
     if (Start.$is('Started')(outcome)) {

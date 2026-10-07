@@ -6,7 +6,7 @@ import { onForeground } from '../../data/foreground'
 
 /**
  * The trip to a provider's own sign-in page and back: the one time the phone app hands the
- * Person to the browser. The card in a Thread (`Card.tsx`) and the Integrations sheet
+ * Person to the browser. The card in a Thread (`Card.tsx`) and the Integrations page
  * (`screen/settings/Integrations.tsx`) both make it, so the parts they share are here once and
  * each keeps its own words.
  */

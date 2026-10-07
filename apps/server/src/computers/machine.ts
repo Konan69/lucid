@@ -119,15 +119,32 @@ export class MachineRequestRejected extends Schema.TaggedError<MachineRequestRej
 ) {}
 
 /**
- * The provider answered that it has no machine free to start this Computer on, for every size the
- * start may use. Nothing was started and the Computer is as it was: stopped, with its disk saved.
- * It is not an outage (the provider answered) and not a fault of the machine, and it ends when the
- * provider has a machine again, so the next start is simply tried afresh.
+ * The provider answered that it will not start this Computer now, though it could hold it: it has
+ * no machine free on any size the start may use, or (`limited`) the installation has used up the
+ * number of starts the provider allows in an hour. Nothing was started and the Computer is as it
+ * was: stopped, with its disk saved. It is not an outage (the provider answered) and not a fault
+ * of the machine, and it ends by itself, so the next start is simply tried afresh.
  */
 export class MachineNoCapacity extends Schema.TaggedError<MachineNoCapacity>()(
   'MachineNoCapacity',
-  {},
+  { limited: Schema.Boolean },
   { title: 'MachineNoCapacity' },
+) {}
+
+/**
+ * The Computer holds more data than any machine the provider will start it on.
+ *
+ * Nothing was started and nothing is lost: the disk is saved as it was. It does not end by itself
+ * the way `MachineNoCapacity` does. It ends when files are removed from the Computer, or when
+ * the installation's provider plan allows a larger machine: `upgrade` says the provider named a
+ * larger size and refused it for the plan. On 7 October 2026 a Person's Computer needed 125.4 GiB
+ * where the plan's largest machine held 125.0, and all Vivid could say was that the provider
+ * "refused the operation": nobody could tell that the cure was a plan or a clean disk.
+ */
+export class MachineOutgrown extends Schema.TaggedError<MachineOutgrown>()(
+  'MachineOutgrown',
+  { upgrade: Schema.Boolean },
+  { title: 'MachineOutgrown' },
 ) {}
 
 /** An installation's adopted Computer has one owner; refusal never reveals that Person's identity. */
@@ -189,6 +206,7 @@ export type MachineFailure =
   | MachineCreationUnresolved
   | MachineRequestRejected
   | MachineNoCapacity
+  | MachineOutgrown
   | MachinePersistenceFailed
   | MachineHeld
   | MachineCapabilityUnavailable
@@ -232,6 +250,21 @@ export interface MachineRun {
 export const isOutage = (failure: MachineFailure): boolean =>
   failure instanceof MachineUnreachable ||
   (failure instanceof MachineRequestRejected && failure.status >= 500)
+
+/**
+ * Failures that asking again does not cure: something outside Vivid has to change first (files
+ * removed or a larger plan, the machine's holder, the provider's credentials, an unresolved
+ * creation). Everything else a start can meet is worth asking again at the next need.
+ *
+ * The difference matters because every start is counted: Boat allows an account 25 starts an hour
+ * across all its machines and answered 429 `rate_limited` on 7 October 2026, after a day of
+ * starts that could not succeed had spent them.
+ */
+export const isStanding = (failure: MachineFailure): boolean =>
+  failure instanceof MachineOutgrown ||
+  failure instanceof MachineHeld ||
+  failure instanceof MachineAuthenticationFailed ||
+  failure instanceof MachineCreationUnresolved
 
 /** One machine boundary; ownership, approvals, receipts, and RPC remain application concerns. */
 export interface MachineOperations {

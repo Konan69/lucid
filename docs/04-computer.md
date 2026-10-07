@@ -259,11 +259,11 @@ the screen union belongs to its own lane. Runtime placement and external state s
 **Status: decided 5 October 2026. Built on `feat/native-computer`: the server holds the connection
 and Vivid has Flue's six file and shell tools on its Computer. Its connection code is proven on a real SSH server and on a Person's Computer, and the product path
 (a Thread and a model using the tools) ran on a Person's Computer in production on 6 October 2026.
-`run_command`, the earlier tool that asked for an Approval per command, is removed from the model.** This is the step between today and
+`run_command`, the earlier tool that asked for an Approval per command, is deleted: from the model, from programs (a program runs on the Computer and starts its own commands there), from the server and its contract, and with it the command kind of Approval.** This is the step between today and
 "Runtime on the Computer" below. It is deliberately thin, because it is deleted when the runtime
 moves onto the machine.
 
-### What is wrong today
+### What was wrong before 5 October 2026
 
 Vivid cannot read or write one file on its own Computer. Its runtime runs beside the server, and
 reaches the machine through one custom tool, `run_command`: the model asks the server, the server
@@ -480,10 +480,19 @@ answered "nothing there" without waking it, and only a tool the model calls wake
 - **Slow sending.** Sending to a machine through the provider's endpoint was measured at about
   60 KB a second, so a 10 MB put takes about three minutes. A put has no deadline of its own, and
   the keepalive keeps answering during it, so a slow upload is not taken for a dead connection.
-- **Waiting for a woken machine.** The store waits at most 90 seconds for the provider to say the
-  machine runs, and answers "did not become ready within 90 seconds" otherwise. Opening SSH then
-  tries every two seconds while the machine cannot be reached, for at most 75 seconds, and answers
-  "not answering" otherwise. Neither hangs. A wrong host key or a refused key is not retried.
+- **Waiting for a woken machine.** The store waits at most 3 minutes for a start, and answers "did
+  not become ready within 3 minutes" otherwise. It was 90 seconds until 7 October 2026, which is
+  what a healthy start takes: measured the evening before on the production machine, 51 to 58
+  seconds from the resume to the provider calling the machine running, then 37 seconds in which
+  its command endpoint answered 502. The first command sent to a woken machine is sent again
+  every two seconds for at most 75 seconds for that reason. Opening SSH then tries every two
+  seconds while the machine cannot be reached, for at most 75 seconds, and answers "not
+  answering" otherwise. None of them hangs. A wrong host key or a refused key is not retried.
+- **A start that failed.** The next action starts the Computer again; nobody has to press Start.
+  The exception is a failure that asking again cannot cure, such as a Computer that holds more
+  data than any machine the provider plan allows: for ten minutes the action is refused with
+  that reason and the provider is not asked, because the provider counts every start against an
+  hourly limit for the whole account.
 
 ### The built code on a Person's Computer, 6 October 2026
 
@@ -530,8 +539,10 @@ not known; the file steps can only have been the new tools.
 - A conversation in production that does not need the Computer leaving a stopped Computer
   stopped, and a request for a file waking it. Check: stop the Computer, start a conversation
   that does not need it, confirm it stays stopped; ask for a file and confirm it wakes and answers.
-- `bash` in production now that `run_command` is gone from the model: ask for a command after
-  the deploy that carries the removal.
+- `bash` in production now that `run_command` is deleted: ask for a command after the deploy
+  that carries the removal.
+- A program starting a command of its own on the Computer in production (`node:child_process`),
+  now that programs have no command call to the server.
 - Whether the provider puts back, after a resume, a key it was given earlier. The removal at each
   opening takes it out either way.
 - Whether cancelling a tool call in the runtime interrupts the server's call. The server ends the

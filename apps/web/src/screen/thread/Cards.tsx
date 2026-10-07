@@ -6,7 +6,7 @@ import {
   ConnectionAuthorization,
   ConnectionAuthorizationMessage,
   ConnectionRequestMessage,
-  ConnectionState,
+  type AccountName,
   type Connection,
   InputRequestId,
   InputRequestState,
@@ -15,9 +15,20 @@ import {
   type PersonId,
 } from '@vivid/contracts'
 import { Option, Predicate, Result, Schema } from 'effect'
-import { APPROVAL_EFFECT_WORDS, browserStep, desktopStep } from '@vivid/state'
+import {
+  answered,
+  answering,
+  APPROVAL_EFFECT_WORDS,
+  asksName,
+  Awaited,
+  awaitedOf,
+  awaitedWords,
+  begunFor,
+  browserStep,
+  desktopStep,
+} from '@vivid/state'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
-import { Check, Globe, Link2, MousePointer2, ShieldQuestion, Terminal, X } from 'lucide-react'
+import { Check, Globe, Link2, MousePointer2, ShieldQuestion, X } from 'lucide-react'
 import { BorderBeam } from 'border-beam'
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import { change, live, useLiveValue } from '../../data/live'
@@ -31,6 +42,7 @@ import { cn } from '../../ui/cn'
 import { Began, begin, follow } from '../integration/begin'
 import { EnterKey, type Keying } from '../integration/Key'
 import { Mark } from '../integration/Mark'
+import { NameAccount } from '../integration/Name'
 import { Asked, Question } from './Question'
 
 /**
@@ -60,6 +72,8 @@ export type CardRequest =
       readonly request: ConnectionRequestMessage
       /** What finishing it takes, when Vivid has already begun adding it. */
       readonly authorization: Option.Option<ConnectionAuthorizationValue>
+      /** Which accounts answer it: any on the service, the one Vivid began, or one more. */
+      readonly awaited: Awaited
     }
 
 /** Reads a tool's output for a card. Outputs that are not cards are simply not cards. */
@@ -75,12 +89,12 @@ export function cardFor(
     kind: 'connection',
     request,
     authorization: Option.map(decodeAuthorization(output), (message) => message.authorization),
+    awaited: awaitedOf(output),
   }))
 }
 
 const TARGET_ICON = {
   Connection: <Link2 className="size-4" />,
-  Command: <Terminal className="size-4" />,
   Browser: <Globe className="size-4" />,
   Desktop: <MousePointer2 className="size-4" />,
 } satisfies Record<ActionTarget['_tag'], ReactNode>
@@ -177,7 +191,6 @@ function Exactly({ target }: { target: ActionTarget }) {
       <span className="min-w-0 font-mono wrap-break-word whitespace-pre-wrap">
         {ActionTarget.match(target, {
           Connection: ({ account, tool }) => `${account} · ${tool}`,
-          Command: ({ command }) => command,
           Browser: ({ action }) => browserStep(action),
           Desktop: ({ action }) => desktopStep(action),
         })}
@@ -387,7 +400,8 @@ const listening = new Set<string>()
 function carryOnOnceReady(
   key: string,
   ready: (connections: ReadonlyArray<Connection>) => boolean,
-  go: () => void,
+  /** Told the list that settled it, so it can say which account that was. */
+  go: (connections: ReadonlyArray<Connection>) => void,
 ) {
   if (listening.has(key)) return
   listening.add(key)
@@ -399,7 +413,7 @@ function carryOnOnceReady(
   const unsubscribe = engine.registry.subscribe(live.connections.atom, (result) => {
     if (!AsyncResult.isSuccess(result) || !ready(result.value.connections)) return
     stop()
-    go()
+    go(result.value.connections)
   })
   const timer = setTimeout(stop, LISTEN_MS)
 }
@@ -424,11 +438,18 @@ const AFTER_PRESS = {
  * in its own tab, a key is typed into a dialog that sends it straight to the Integration (never
  * into the Thread, never to Vivid). Whether it is connected is read live, so the card settles by
  * itself, and Vivid carries on without being told.
+ *
+ * Which accounts settle it is `awaited`. A service Vivid offered is settled by any ready account
+ * on it. An Integration Vivid began is settled by that one. One more account, which Vivid asks
+ * for when the Person wants an account that is not among theirs (their work Gmail), is settled
+ * only by an account begun after Vivid asked: the card then says "Add another … account" and
+ * offers Connect although the service is already connected.
  */
 export function ConnectionCard({
   id,
   request,
   authorization,
+  awaited,
   current,
   onContinue,
 }: {
@@ -436,6 +457,7 @@ export function ConnectionCard({
   id: string
   request: ConnectionRequestMessage
   authorization: Option.Option<ConnectionAuthorizationValue>
+  awaited: Awaited
   /** Whether this is the newest thing in the Thread and Vivid has stopped to wait for it. */
   current: boolean
   onContinue: (message: string) => void
@@ -445,24 +467,23 @@ export function ConnectionCard({
   const [pressed, setPressed] = useState<Pressed>('not-yet')
   const shown = useSyncExternalStore(theme.subscribe, theme.shown)
   const list = Option.match(connections, { onNone: () => [], onSome: (value) => value.connections })
-  /** The Integration Vivid started is this one exactly; one offered from the catalogue is satisfied by any ready account on that service. */
-  const isThis = (connection: Connection) =>
-    Option.match(authorization, {
-      onNone: () => connection.service === request.service,
-      onSome: (next) => connection.id === next.connectionId,
-    })
-  const readyIn = (all: ReadonlyArray<Connection>) =>
-    all.some((connection) => ConnectionState.guards.Ready(connection.state) && isThis(connection))
-  const ready = request.ready || readyIn(list)
-  const carryOn = () => onContinue(`${request.serviceName} is connected. Carry on.`)
+  const readyIn = (all: ReadonlyArray<Connection>) => answered(all, request, awaited)
+  // A request for one more account is never ready when it is made, whatever the card was told.
+  const ready = (Awaited.$is('Service')(awaited) && request.ready) || readyIn(list)
+  const words = awaitedWords(awaited, request.serviceName)
+  // Said with the list as it stands when it is said, so one more account is named by the
+  // account that was added and Vivid does not have to guess which of several is new.
+  const carryOn = (all: ReadonlyArray<Connection>) =>
+    onContinue(words.carryOn(answering(all, request, awaited)))
+  // One more account on a service that does not say who signs in is named before it is begun,
+  // as "Add account" in Settings does; the accounts already there are what show whether it says.
+  const held = list.filter((connection) => connection.service === request.service)
+  const named = Awaited.$is('Another')(awaited) && asksName(held)
 
   /** One press: resume what was begun, or begin it, then listen for it to be connected. */
-  async function connect() {
+  async function connect(name: Option.Option<AccountName>) {
     // An Integration that was begun and left unfinished is picked up, not begun a second time.
-    const begun = Option.match(authorization, {
-      onNone: () => Option.map(Option.fromUndefinedOr(list.find(isThis)), (found) => found.id),
-      onSome: (next) => Option.some(next.connectionId),
-    })
+    const begun = begunFor(list, request, awaited)
     // A sign-in tab is opened by the click itself when a sign-in is known to be coming.
     const tab = Option.exists(authorization, ConnectionAuthorization.guards.OpenSignIn)
       ? window.open('about:blank', '_blank')
@@ -470,7 +491,7 @@ export function ConnectionCard({
     // Beginning can take the server many seconds; the button says so from the press.
     setPressed('starting')
     const began = await Option.match(begun, {
-      onNone: () => begin({ id: request.service, name: request.serviceName }, tab, false),
+      onNone: () => begin({ id: request.service }, tab, { shared: false, name }),
       onSome: async (connectionId) => {
         const step = await change((client) => client.ResumeConnection({ id: connectionId }))
         if (Result.isSuccess(step)) return follow(step.success, tab)
@@ -507,9 +528,7 @@ export function ConnectionCard({
         <Card className="flex-row flex-wrap items-center gap-3 p-4">
           <Mark service={{ name: request.serviceName }} size={40} />
           <div className="min-w-48 flex-1">
-            <h3 className="text-title font-title text-ink">
-              {ready ? `${request.serviceName} is connected` : `Connect ${request.serviceName}`}
-            </h3>
+            <h3 className="text-title font-title text-ink">{ready ? words.done : words.connect}</h3>
             <p className="mt-0.5 text-label text-pretty text-ink-3">{request.reason}</p>
             {!ready && Option.isSome(after) && (
               <p
@@ -524,12 +543,13 @@ export function ConnectionCard({
             )}
           </div>
           <ConnectionAction
-            name={request.serviceName}
+            label={words.connect}
+            naming={named ? Option.some({ service: request.serviceName, held }) : Option.none()}
             ready={ready}
             current={current}
             pressed={pressed}
-            onConnect={() => void connect()}
-            onCarryOn={carryOn}
+            onConnect={(name) => void connect(name)}
+            onCarryOn={() => carryOn(list)}
           />
           {Option.isSome(keying) && (
             <EnterKey keying={keying.value} onClose={() => setKeying(Option.none())} />
@@ -551,18 +571,25 @@ const CONNECT_WORDS = {
 
 /** The one thing to press on the card, or the settled fact when there is nothing left to press. */
 function ConnectionAction({
-  name,
+  label,
+  naming,
   ready,
   current,
   pressed,
   onConnect,
   onCarryOn,
 }: {
-  name: string
+  /** What the press does, for a screen reader: "Connect Gmail", "Add another Gmail account". */
+  label: string
+  /**
+   * The service whose new account is asked a name for before it is begun, when one is, with the
+   * accounts already on it: a name one of them has cannot be given again.
+   */
+  naming: Option.Option<{ readonly service: string; readonly held: ReadonlyArray<Connection> }>
   ready: boolean
   current: boolean
   pressed: Pressed
-  onConnect: () => void
+  onConnect: (name: Option.Option<AccountName>) => void
   onCarryOn: () => void
 }) {
   if (ready && current) {
@@ -593,12 +620,31 @@ function ConnectionAction({
       </Button>
     )
   }
+  // Once a press is waiting on a sign-in, pressing again opens it again: no second name is asked.
+  if (Option.isSome(naming) && pressed !== 'waiting') {
+    return (
+      <NameAccount
+        trigger={
+          <Button size="sm" aria-label={label} disabled={pressed === 'starting'}>
+            {CONNECT_WORDS[pressed]}
+          </Button>
+        }
+        title="Name the new account"
+        why={`${naming.value.service} does not say who signs in. A name is how you and Vivid tell your accounts apart.`}
+        action="Connect"
+        current={Option.none()}
+        others={naming.value.held}
+        optional={false}
+        onName={onConnect}
+      />
+    )
+  }
   return (
     <Button
       size="sm"
-      aria-label={`Connect ${name}`}
+      aria-label={label}
       disabled={pressed === 'starting'}
-      onClick={onConnect}
+      onClick={() => onConnect(Option.none())}
     >
       {CONNECT_WORDS[pressed]}
     </Button>

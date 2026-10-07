@@ -1,6 +1,7 @@
 import { Array as Arr, Clock, Duration, Effect, Option, Order, Result, Schema } from 'effect'
 import {
   ActionTarget,
+  AnotherAccountMessage,
   ConnectionRequestMessage,
   ConnectionTool,
   DiscoveredTool,
@@ -37,6 +38,7 @@ import { decisionConfigured, isDecisionNonEvent } from '../decisions/model.ts'
 import { relevantTools, relevantToolsWithin, RELEVANCE_BUDGET } from './relevance.ts'
 import { ToolEffects } from './effects.ts'
 import { stateOf, type ConnectionRecord } from './records.ts'
+import { namedAccounts } from './names.ts'
 
 /** Provider schemas stay on this server projection; discovery publishes only rendered signatures. */
 const NamedTool = ExecutorTool.pipe(
@@ -146,35 +148,16 @@ const classifyTool = Effect.fn('Connections.classifyTool')(function* (
   return ExecutorTool.make({ ...tool, effect })
 })
 
-/** Name all accessible Connections before status/query filtering; creation order fixes duplicate suffixes.
- * Reserve literal labels too so an account actually named “Gmail (2)” cannot collide with a suffix. */
-export function namedAccounts(records: readonly ConnectionRecord[]) {
-  const ordered = Arr.sort(
-    records,
-    Order.combine(
-      Order.mapInput(Order.Number, (row: ConnectionRecord) => row.createdAt),
-      Order.mapInput(Order.String, (row: ConnectionRecord) => row.id),
-    ),
-  )
-  const reserved = new Set(ordered.map((row) => row.label.trim().toLowerCase()))
-  const used = new Set<string>()
-  return ordered.map((row) => {
-    const label = row.label.trim()
-    let account = label
-    let occurrence = 2
-    if (used.has(account.toLowerCase())) {
-      do {
-        account = `${label} (${occurrence++})`
-      } while (used.has(account.toLowerCase()) || reserved.has(account.toLowerCase()))
-    }
-    used.add(account.toLowerCase())
-    return { row, account }
-  })
-}
-
 /** Catalog reads only enrich Integration offers and do not depend on semantic ranking.
  * Keeping this branch separate lets both optional reads overlap while retaining the existing
- * ServiceUnavailable baseline and ready-Integration exclusion. */
+ * ServiceUnavailable baseline.
+ *
+ * A service is offered on one of two lists. One with no ready account is `unconnected`: Vivid can
+ * offer it. One the Person already has a ready account on is `connected`: Vivid cannot offer it
+ * again as if it were missing, and can ask for one more account on it. Each list is the best
+ * three for the query, ranked on its own, so a connected service never takes an offer's place.
+ * Only an offer is inspected for whether this Vivid is set up for it; a connected service was
+ * set up when its account was added, and `offerConnection` inspects it again before any card. */
 const offeredServices = Effect.fn('Connections.offeredServices')(function* (
   store: typeof ConnectionStore.Service,
   records: readonly ConnectionRecord[],
@@ -183,17 +166,19 @@ const offeredServices = Effect.fn('Connections.offeredServices')(function* (
   const services = yield* store
     .catalog()
     .pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
-  const unconnected = services.filter(
-    (service) => !records.some((row) => row.service === service.id && row.status === 'ready'),
-  )
-  return yield* Effect.forEach(
-    rank(unconnected, query, 3, (service) => ({
+  const has = (service: Service) =>
+    records.some((row) => row.service === service.id && row.status === 'ready')
+  const best = (candidates: readonly Service[]) =>
+    rank(candidates, query, 3, (service) => ({
       own: `${service.name} ${service.description}`,
       identity: '',
-    })),
+    }))
+  const unconnected = yield* Effect.forEach(
+    best(services.filter((service) => !has(service))),
     (service) => store.service(service.id),
     { concurrency: 3 },
   ).pipe(Effect.catchTag('ServiceUnavailable', () => Effect.succeed<readonly Service[]>([])))
+  return { unconnected, connected: best(services.filter(has)) }
 })
 
 /**
@@ -294,9 +279,10 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
         })
       }),
     ),
-    unconnected: offered.filter(
+    unconnected: offered.unconnected.filter(
       (service) => !ServiceAuthorization.guards.SetupRequired(service.authorization),
     ),
+    connected: offered.connected,
   }
 })
 
@@ -569,9 +555,19 @@ export const useTool = Effect.fn('Connections.useTool')(function* (
     return toolAdmissionOutcome(prepared.failure)
   }
   const { row, tool } = prepared.success
+  // An Approval names the account as discovery named it to Vivid, so the Person is asked about
+  // "Gmail (Work)" and never about a bare "Gmail" that could be either of two.
+  const named = namedAccounts(yield* (yield* ConnectionStore).records(actor)).find(
+    (entry) => entry.row.id === row.id,
+  )
+  if (named === undefined) {
+    // Removed between admission and here: there is no account left to name or to act through.
+    yield* recordRefusal(Refusal.cases.ToolRejected.make({ reason: 'IntegrationUnavailable' }))
+    return toolAdmissionOutcome(ToolAdmissionRefusal.cases.IntegrationUnavailable.make({}))
+  }
   const target = ActionTarget.cases.Connection.make({
     connectionId: row.id,
-    account: row.label,
+    account: named.account,
     tool: tool.name,
     input: request.input,
   })
@@ -678,7 +674,16 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
     ),
 )
 
-/** Offers use actual catalog entries and the same ownership rules as discovery. */
+/**
+ * Offers use actual catalog entries and the same ownership rules as discovery.
+ *
+ * Vivid asks for one of two things. The service at all: any ready account answers, so the card
+ * says whether the Person already has one. Or one more account than the Person has now (their
+ * work Gmail beside their personal one): no present account answers that, so the card is never
+ * ready when it is made, and it carries the moment Vivid asked. Only an account begun after that
+ * moment is the one that was asked for (`AnotherAccountMessage`). Asking for one more where there
+ * is none yet is asking for the service, and is answered as that.
+ */
 export const offerConnection = Effect.fn('Connections.offer')(function* (
   actor: Actor,
   request: OfferConnectionRequest,
@@ -690,6 +695,15 @@ export const offerConnection = Effect.fn('Connections.offer')(function* (
   const ready = (yield* store.records(actor)).some(
     (row) => row.service === service.id && row.status === 'ready',
   )
+  if (request.wanted === 'Another' && ready)
+    return AnotherAccountMessage.make({
+      kind: 'connection-request',
+      service: service.id,
+      serviceName: service.name,
+      reason: request.reason,
+      ready: false,
+      another: { askedAt: yield* Clock.currentTimeMillis },
+    })
   return ConnectionRequestMessage.make({
     kind: 'connection-request',
     service: service.id,

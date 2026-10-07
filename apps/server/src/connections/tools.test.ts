@@ -45,7 +45,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         )
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Private account',
+          name: 'Private account',
           shared: reason === 'SharedReadOnly',
         })
         const row = yield* store.get(ownerActor, step.connection.id)
@@ -87,7 +87,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         yield* Effect.addFinalizer(() => Ref.set(probe.checked, checked))
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Work',
+          name: 'Work',
           shared: false,
         })
         const executor = yield* Executor
@@ -131,13 +131,13 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           const store = yield* ConnectionStore
           const step = yield* store.begin(ownerActor, {
             service: serviceId,
-            label: 'Work',
+            name: 'Work',
             shared: false,
           })
           const executor = yield* Executor
           const target = ActionTarget.cases.Connection.make({
             connectionId: step.connection.id,
-            account: 'Work',
+            account: 'Records (Work)',
             tool: 'read',
             input: {},
           })
@@ -200,7 +200,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         const calls = yield* Ref.get(probe.calls)
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Work',
+          name: 'Work',
           shared: reason === 'SharedReadOnly',
         })
         const row = yield* store.get(ownerActor, step.connection.id)
@@ -211,7 +211,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           workspace: ownerActor.workspace,
           target: ActionTarget.cases.Connection.make({
             connectionId: row.id,
-            account: 'Work',
+            account: 'Records (Work)',
             tool: reason === 'ToolUnknown' ? 'missing' : 'write',
             input: {},
           }),
@@ -249,7 +249,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         const store = yield* ConnectionStore
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Work',
+          name: 'Work',
           shared: false,
         })
         const probe = yield* ConnectionProbe
@@ -259,7 +259,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           workspace: ownerActor.workspace,
           target: ActionTarget.cases.Connection.make({
             connectionId: step.connection.id,
-            account: 'Work',
+            account: 'Records (Work)',
             tool: 'read',
             input: {},
           }),
@@ -296,7 +296,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         const store = yield* ConnectionStore
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Work',
+          name: 'Work',
           shared: false,
         })
         const calls = yield* Ref.get((yield* ConnectionProbe).calls)
@@ -305,7 +305,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           workspace: ownerActor.workspace,
           target: ActionTarget.cases.Connection.make({
             connectionId: step.connection.id,
-            account: 'Work',
+            account: 'Records (Work)',
             tool: 'read',
             input: {},
           }),
@@ -344,7 +344,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         const store = yield* ConnectionStore
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Work',
+          name: 'Work',
           shared: false,
         })
         const probe = yield* ConnectionProbe
@@ -360,7 +360,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           workspace: ownerActor.workspace,
           target: ActionTarget.cases.Connection.make({
             connectionId: step.connection.id,
-            account: 'Work',
+            account: 'Records (Work)',
             tool: 'read',
             input: {},
           }),
@@ -383,7 +383,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         const store = yield* ConnectionStore
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Work',
+          name: 'Work',
           shared: false,
         })
         const unavailable = ConnectionStore.of({
@@ -423,7 +423,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           )
           const step = yield* store.begin(ownerActor, {
             service: serviceId,
-            label: 'Private account',
+            name: 'Private account',
             shared: false,
           })
           const row = yield* store.get(ownerActor, step.connection.id)
@@ -467,19 +467,22 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             input: {},
           }),
         ])
-        yield* store.begin(ownerActor, { service: serviceId, label: 'Work', shared: false })
+        yield* store.begin(ownerActor, { service: serviceId, name: 'Work', shared: false })
         yield* TestClock.adjust(1)
-        yield* store.begin(ownerActor, { service: serviceId, label: 'Team', shared: true })
+        yield* store.begin(ownerActor, { service: serviceId, name: 'Team', shared: true })
         const service = yield* findTools(ownerActor, { query: 'Records' })
         expect(service.tools.map((tool) => [tool.account, tool.name])).toEqual([
-          ['Work', 'write'],
-          ['Work', 'read'],
-          ['Team', 'read'],
+          ['Records (Work)', 'write'],
+          ['Records (Work)', 'read'],
+          ['Records (Team)', 'read'],
         ])
         const specific = yield* findTools(ownerActor, { query: 'Records read' })
         expect(specific.tools.map((tool) => tool.name)).toEqual(['read', 'read', 'write'])
         const account = yield* findTools(ownerActor, { query: 'Work' })
-        expect(account.tools.map((tool) => tool.account)).toEqual(['Work', 'Work'])
+        expect(account.tools.map((tool) => tool.account)).toEqual([
+          'Records (Work)',
+          'Records (Work)',
+        ])
         expect((yield* findTools(ownerActor, { query: 'unrelated' })).tools).toEqual([])
       }),
     )
@@ -491,11 +494,11 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         const probe = yield* ConnectionProbe
         const previous = yield* Ref.get(probe.tools)
         yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
-        yield* store.begin(ownerActor, { service: serviceId, label: 'Work', shared: false })
+        yield* store.begin(ownerActor, { service: serviceId, name: 'Work', shared: false })
         yield* TestClock.adjust(1)
         const target = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Other',
+          name: 'Other',
           shared: false,
         })
         yield* Ref.set(probe.tools, [
@@ -551,7 +554,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           ])
           const connected = yield* store.begin(ownerActor, {
             service: serviceId,
-            label: 'Records',
+            name: null,
             shared: false,
           })
           const found = yield* findTools(ownerActor, { query: 'get records', limit: 25 })
@@ -575,69 +578,80 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         const store = yield* ConnectionStore
         const first = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Gmail (Gmail)',
+          name: 'Gmail (Gmail)',
           shared: false,
         })
         yield* TestClock.adjust(1)
         const second = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Gmail (Gmail)',
+          name: 'Gmail (Gmail)',
           shared: true,
         })
         yield* TestClock.adjust(1)
         yield* store.begin(memberActor, {
           service: serviceId,
-          label: 'Gmail (Gmail)',
+          name: 'Gmail (Gmail)',
           shared: false,
         })
         expect(ConnectionStep.guards.Done(first)).toBe(true)
         expect(ConnectionStep.guards.Done(second)).toBe(true)
         const found = yield* findTools(ownerActor, { query: 'read', limit: 25 })
         const labels = found.tools.filter((tool) => tool.name === 'read')
-        expect(labels.map((tool) => tool.account)).toEqual(['Gmail (Gmail)', 'Gmail (Gmail) (2)'])
+        expect(labels.map((tool) => tool.account)).toEqual([
+          'Records (Gmail (Gmail))',
+          'Records (Gmail (Gmail)) (2)',
+        ])
         expect(labels.map((tool) => tool.connectionId)).toEqual([
           first.connection.id,
           second.connection.id,
         ])
         expect(
-          (yield* resolveTool(ownerActor, { account: 'Gmail (Gmail)', tool: 'read' })).connectionId,
+          (yield* resolveTool(ownerActor, { account: 'Records (Gmail (Gmail))', tool: 'read' }))
+            .connectionId,
         ).toBe(first.connection.id)
         expect(
-          (yield* resolveTool(ownerActor, { account: 'Gmail (Gmail) (2)', tool: 'read' }))
+          (yield* resolveTool(ownerActor, { account: 'Records (Gmail (Gmail)) (2)', tool: 'read' }))
             .connectionId,
         ).toBe(second.connection.id)
         expect(
-          (yield* resolveTool(memberActor, { account: 'Gmail (Gmail)', tool: 'read' }))
+          (yield* resolveTool(memberActor, { account: 'Records (Gmail (Gmail))', tool: 'read' }))
             .connectionId,
         ).toBe(second.connection.id)
         expect(
           (yield* Effect.flip(
-            resolveTool(ownerActor, { account: 'Gmail (Gmail) (2)', tool: 'write' }),
+            resolveTool(ownerActor, { account: 'Records (Gmail (Gmail)) (2)', tool: 'write' }),
           ))._tag,
         ).toBe('NotFound')
         expect(
-          (yield* resolveTool(ownerActor, { account: '  gmail (GMAIL)  ', tool: 'read' }))
+          (yield* resolveTool(ownerActor, { account: '  records (gmail (GMAIL))  ', tool: 'read' }))
             .connectionId,
         ).toBe(first.connection.id)
         expect(
-          (yield* resolveTool(ownerActor, { account: ' GMAIL (gmail) (2) ', tool: 'read' }))
-            .connectionId,
+          (yield* resolveTool(ownerActor, {
+            account: ' RECORDS (GMAIL (gmail)) (2) ',
+            tool: 'read',
+          })).connectionId,
         ).toBe(second.connection.id)
         expect(
-          (yield* Effect.flip(resolveTool(ownerActor, { account: 'gmail (gmail)', tool: 'READ' })))
-            ._tag,
+          (yield* Effect.flip(
+            resolveTool(ownerActor, { account: 'records (gmail (gmail))', tool: 'READ' }),
+          ))._tag,
         ).toBe('NotFound')
         const writes = yield* findTools(ownerActor, { query: 'write', limit: 25 })
-        expect(writes.tools.map((tool) => tool.account)).toEqual(['Gmail (Gmail)'])
+        expect(writes.tools.map((tool) => tool.account)).toEqual(['Records (Gmail (Gmail))'])
         const again = yield* findTools(ownerActor, { query: 'records', limit: 25 })
         expect(
           again.tools.filter((tool) => tool.name === 'read').map((tool) => tool.account),
         ).toEqual(labels.map((tool) => tool.account))
-        yield* store.begin(ownerActor, { service: serviceId, label: 'Owner only', shared: false })
-        expect(
-          (yield* Effect.flip(resolveTool(memberActor, { account: 'Owner only', tool: 'read' })))
-            ._tag,
-        ).toBe('NotFound')
+        const mine = yield* store.begin(ownerActor, {
+          service: serviceId,
+          name: 'Owner only',
+          shared: false,
+        })
+        // The owner acts through the account under its name; another Person cannot find it.
+        const owned = { account: 'Records (Owner only)', tool: 'read' }
+        expect((yield* resolveTool(ownerActor, owned)).connectionId).toBe(mine.connection.id)
+        expect((yield* Effect.flip(resolveTool(memberActor, owned)))._tag).toBe('NotFound')
       }),
     )
 
@@ -661,7 +675,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         )
         yield* (yield* ConnectionStore).begin(ownerActor, {
           service: serviceId,
-          label: 'Work',
+          name: 'Work',
           shared: false,
         })
         const sizes: number[] = []
@@ -722,7 +736,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           ])
           yield* (yield* ConnectionStore).begin(ownerActor, {
             service: serviceId,
-            label: 'Work',
+            name: 'Work',
             shared: false,
           })
           const model = yield* DecisionModel.make({
@@ -766,7 +780,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         ])
         yield* (yield* ConnectionStore).begin(ownerActor, {
           service: serviceId,
-          label: 'Work',
+          name: 'Work',
           shared: false,
         })
         let calls = 0
@@ -790,7 +804,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
       Effect.gen(function* () {
         const { ownerActor } = yield* fixture()
         const store = yield* ConnectionStore
-        yield* store.begin(ownerActor, { service: serviceId, label: 'Work', shared: false })
+        yield* store.begin(ownerActor, { service: serviceId, name: 'Work', shared: false })
         const recordsStarted = yield* Deferred.make<void>()
         const releaseRecords = yield* Deferred.make<void>()
         const toolsStarted = yield* Deferred.make<void>()
@@ -883,7 +897,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           ])
           yield* (yield* ConnectionStore).begin(ownerActor, {
             service: serviceId,
-            label: 'Work',
+            name: 'Work',
             shared: false,
           })
           const started = yield* Deferred.make<void>()
@@ -936,7 +950,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         ])
         const connection = yield* (yield* ConnectionStore).begin(ownerActor, {
           service: serviceId,
-          label: 'Wiki',
+          name: 'Wiki',
           shared: false,
         })
         let effectCalls = 0
@@ -968,7 +982,8 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             ),
           ).toEqual(['read'])
           expect(
-            (yield* resolveTool(ownerActor, { account: 'Wiki', tool: 'ask_question' })).effect,
+            (yield* resolveTool(ownerActor, { account: 'Records (Wiki)', tool: 'ask_question' }))
+              .effect,
           ).toBe('read')
           yield* useTool(ownerActor, {
             connectionId: connection.connection.id,
@@ -1006,7 +1021,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         )
         yield* (yield* ConnectionStore).begin(ownerActor, {
           service: serviceId,
-          label: 'Work',
+          name: 'Work',
           shared: false,
         })
         const effectsStarted = yield* Deferred.make<void>()
@@ -1075,7 +1090,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         for (let index = 0; index < 9; index += 1)
           yield* store.begin(ownerActor, {
             service: serviceId,
-            label: `Account ${index}`,
+            name: `Account ${index}`,
             shared: false,
           })
         const scriptedStore = ConnectionStore.of({
@@ -1085,13 +1100,13 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               ToolDiscovery.cases.Ready.make({
                 tools: [
                   ExecutorTool.make({
-                    name: `lookup_${row.label}`,
+                    name: `lookup_${row.name}`,
                     description: 'Lookup existing records',
                     effect: 'write',
                     input: {},
                   }),
                   ExecutorTool.make({
-                    name: `read_${row.label}`,
+                    name: `read_${row.name}`,
                     description: 'Read records',
                     effect: 'read',
                     input: {},
@@ -1229,7 +1244,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         )
         const connection = yield* (yield* ConnectionStore).begin(ownerActor, {
           service: serviceId,
-          label: 'Work',
+          name: 'Work',
           shared: false,
         })
         const names: string[] = []
@@ -1260,13 +1275,13 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             summary: 'Read',
             rationale: 'Read a record',
           })
-          yield* resolveTool(ownerActor, { account: 'Work', tool: 'lookup_1' })
+          yield* resolveTool(ownerActor, { account: 'Records (Work)', tool: 'lookup_1' })
           yield* connectionRunner({
             person: ownerActor.person,
             workspace: ownerActor.workspace,
             target: ActionTarget.cases.Connection.make({
               connectionId: connection.connection.id,
-              account: 'Work',
+              account: 'Records (Work)',
               tool: 'lookup_2',
               input: {},
             }),

@@ -2,9 +2,11 @@ import { createFlueClient, type FlueClient } from '@flue/sdk'
 import { regenerateThreadTitle } from '@vivid/client-runtime'
 import { ThreadId, type ProjectId } from '@vivid/contracts'
 import { titleFromMessage } from '@vivid/state'
-import { Data, Effect, Option, Redacted, Result, Schema } from 'effect'
+import { Data, Effect, Redacted, Result, Schema } from 'effect'
 import { randomUUID } from 'expo-crypto'
-import type { LiveData } from './live'
+import { draft } from './drafts'
+import { firstKey, type Way } from './first'
+import { refusalOf, type LiveData } from './live'
 import { threadAddress } from './server'
 import type { SignedIn } from './session'
 import { streamingFetch } from './transport'
@@ -68,8 +70,7 @@ export const say = (
  *
  * - `Started`: the Thread exists and its first message is with Vivid.
  * - `NotCreated`: the server refused the Thread; nothing exists.
- * - `NotSaid`: the Thread exists and is empty, because its first message did not arrive. Trying
- *   again with this `id` sends into it instead of making a second Thread.
+ * - `NotSaid`: the Thread exists and is empty, because its first message did not arrive.
  */
 export type Start = Data.TaggedEnum<{
   Started: { readonly id: ThreadId }
@@ -78,41 +79,61 @@ export type Start = Data.TaggedEnum<{
 }>
 export const Start = Data.taggedEnum<Start>()
 
+/** Makes an empty Thread under an id chosen here, named after the message it is started with. */
+const createThread = (
+  data: LiveData,
+  thread: { readonly id: ThreadId; readonly message: string; readonly projectId: ProjectId | null },
+) =>
+  data.change((client) =>
+    client.CreateThread({
+      id: thread.id,
+      title: titleFromMessage(thread.message),
+      projectId: thread.projectId,
+    }),
+  )
+
 /**
- * Starts a Thread with its first message: the path from the first screen, a suggestion and a
- * Library item's "ask about this".
+ * Starts a Thread with its first message and answers when both are done: a Library item's "ask
+ * about this", which stays on its own sheet until the Thread can be opened.
  *
  * The Thread must exist before the gateway will accept a message for it, so it is created first
- * and the message sent once that is confirmed. The Person is taken to the Thread only when the
- * message is with Vivid, so words they typed are never dropped on the way to a screen that could
- * not say so.
+ * and the message sent once that is confirmed. The first screen does the same two steps, but
+ * shows the Thread while they run (`firstWay`).
  */
 export async function startThread(
   data: LiveData,
-  start: {
-    readonly message: string
-    readonly projectId: ProjectId | null
-    /** A Thread an earlier attempt created and could not speak in. */
-    readonly resume: Option.Option<ThreadId>
-  },
+  start: { readonly message: string; readonly projectId: ProjectId | null },
 ): Promise<Start> {
-  const id = Option.getOrElse(start.resume, () => ThreadId.make(randomUUID()))
-  if (Option.isNone(start.resume)) {
-    const created = await data.change((client) =>
-      client.CreateThread({
-        id,
-        title: titleFromMessage(start.message),
-        projectId: start.projectId,
-      }),
-    )
-    if (Result.isFailure(created)) return Start.NotCreated({ message: created.failure.message })
-  }
+  const id = ThreadId.make(randomUUID())
+  const created = await createThread(data, { id, ...start })
+  if (Result.isFailure(created)) return Start.NotCreated({ message: created.failure.message })
   // The Thread's id is also the delivery's name: a first message is said at most once.
-  const said = await say(data, { id, body: start.message, key: `first:${id}` })
+  const said = await say(data, { id, body: start.message, key: firstKey(id) })
   return Result.isFailure(said)
     ? Start.NotSaid({ id, message: said.failure.message })
     : Start.Started({ id })
 }
+
+/**
+ * How the first screen's first words reach the server (`deliver`, `data/first.ts`): the Thread is
+ * made, then spoken in, each answering with why it did not go through.
+ *
+ * Words that did not arrive are put back in the composer they were typed in, unless the Person
+ * has written something else there since. A Thread that was never made is not in the menu, so
+ * its screen is not somewhere they can come back to; the composer is. Once the words are with
+ * Vivid they are taken out of it again, when they are still what it holds.
+ */
+export const firstWay = (data: LiveData): Way => ({
+  make: (id, start) =>
+    createThread(data, { id, message: start.words, projectId: start.projectId }).then(refusalOf),
+  say: (id, start) => say(data, { id, body: start.words, key: firstKey(id) }).then(refusalOf),
+  returned: (start) => {
+    if (draft.in(start.place).length === 0) draft.keep(start.place, start.words)
+  },
+  taken: (start) => {
+    if (draft.in(start.place).trim() === start.words) draft.keep(start.place, '')
+  },
+})
 
 /** Changes a Thread's title or whether it is archived, shown before the server has confirmed it. */
 export const patchThread = (

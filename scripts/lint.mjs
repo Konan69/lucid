@@ -7,12 +7,17 @@ const repositoryRoot = NodePath.resolve(
   '..',
 )
 
+/** One worker unless the caller named a count. */
+const workersFrom = (setting) => (setting === undefined ? '1' : setting)
+
 /**
  * Keep package checks in the root config's coordinate system: overrides and
  * design-plugin paths are root-relative. Each package owns its whole directory;
  * the root task covers only the remainder. Fixes explicitly select the whole
  * workspace and always bypass Turbo. One Rust worker and one default Go worker
  * limit active checker state without dropping type-aware rules or capping heap.
+ * The gate, which runs one lint process at a time, names more of each through
+ * VIVID_LINT_THREADS and GOMAXPROCS.
  */
 export function runLint(root, cwd, args, environment) {
   const scope = NodePath.relative(root, cwd).split(NodePath.sep).join('/')
@@ -25,12 +30,16 @@ export function runLint(root, cwd, args, environment) {
     process.stderr.write('--workspace is only valid for the root fix command\n')
     return 1
   }
-  const flags = ['--type-aware', '--threads=1', ...args.filter((arg) => arg !== '--workspace')]
+  const flags = [
+    '--type-aware',
+    `--threads=${workersFrom(environment.VIVID_LINT_THREADS)}`,
+    ...args.filter((arg) => arg !== '--workspace'),
+  ]
   if (scope === '' && !wholeWorkspace) {
     flags.push('--ignore-pattern', 'apps/**', '--ignore-pattern', 'packages/**')
   }
   flags.push(scope === '' ? '.' : scope)
-  const goWorkers = environment.GOMAXPROCS === undefined ? '1' : environment.GOMAXPROCS
+  const goWorkers = workersFrom(environment.GOMAXPROCS)
   const result = NodeChildProcess.spawnSync(
     process.execPath,
     [NodePath.join(root, 'node_modules', 'oxlint', 'bin', 'oxlint'), ...flags],

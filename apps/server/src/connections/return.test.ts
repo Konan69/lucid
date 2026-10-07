@@ -59,7 +59,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
             const store = yield* ConnectionStore
             const step = yield* store.begin(ownerActor, {
               service: hostedService,
-              label: 'Sign in',
+              name: 'Sign in',
               shared: false,
             })
             if (!ConnectionStep.guards.OpenSignIn(step)) expect.fail('Expected hosted OAuth')

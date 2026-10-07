@@ -7,9 +7,9 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --checkers 1 --noEmit",
+    "typecheck": "node ../../../scripts/types.mjs",
     "lint": "node ../../../scripts/lint.mjs",
-    "test": "vitest run"
+    "test": "node ../../../scripts/test.mjs"
   },
   "devDependencies": {
     "@typescript/native": "catalog:",

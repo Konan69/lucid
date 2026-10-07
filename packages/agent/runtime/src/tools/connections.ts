@@ -6,7 +6,7 @@ import {
   TestIntegrationOutcome,
   ToolOutcome,
 } from '@vivid/contracts'
-import { Effect, Schema } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 import * as v from 'valibot'
 import { summary, text } from './inputs.ts'
 import { catalog, named } from './names.ts'
@@ -56,27 +56,60 @@ export function connectionTools(runTool: RunTool) {
     defineTool({
       name: 'connect',
       description:
-        'Offer the integration named in find_tools as a secure connect card for the person.',
+        'Offer an integration as a secure connect card for the person. Use it for a service named in unconnected by find_tools. A person can have several accounts on one integration: to add one more account on a service they already connected (a second Gmail, their work GitHub), whether they told you to connect it or the account they asked for is not among theirs, set another to true and say in reason which account it is.',
       input: v.object({
         summary,
-        service: text('The integration name shown in unconnected by find_tools.', 200),
-        reason: text('Why this request needs the integration.', 400),
+        service: text(
+          'The integration name: one shown in unconnected by find_tools, or with another set to true, one the person already connected.',
+          200,
+        ),
+        reason: text(
+          'One sentence said to the person, in your own voice, shown on the card: why this needs the integration, or which other account it is. Say "you", never "the person". For example: "You asked me to add another GitHub account."',
+          400,
+        ),
+        another: v.optional(
+          v.pipe(
+            v.boolean(),
+            v.description(
+              'True to ask for one more account on an integration the person already connected. Leave it out for a service they have not connected.',
+            ),
+          ),
+        ),
       }),
-      /** FindServices is Person-only; runtime authority resolves services through FindTools instead. */
+      /**
+       * FindServices is Person-only; runtime authority resolves services through FindTools instead.
+       *
+       * Discovery answers with two lists: services the Person has no account on (`unconnected`),
+       * and services they have one on (`connected`). An ordinary offer names one of the first. A
+       * request for one more account names one of either: the server answers a service with no
+       * account yet as an ordinary offer. A service that is already connected and was not asked
+       * for again gets no card, and the model is told how to ask for another account, so it
+       * neither shows a card that is already settled nor fails on a name that does exist.
+       */
       run({ data, signal }) {
         return runTool(
           Effect.gen(function* () {
             const { client } = yield* Scope
             const found = yield* client.FindTools({ query: data.service, limit: 25 })
+            const name = (item: (typeof found.unconnected)[number]) => views.modelText(item.name)
+            const another = data.another === true
+            if (!another) {
+              const held = named(catalog(found.connected, name), data.service)
+              if (Result.isSuccess(held)) return { output: views.alreadyConnected(held.success) }
+            }
             const service = yield* Effect.fromResult(
               named(
-                catalog(found.unconnected, (item) => views.modelText(item.name)),
+                catalog(
+                  another ? [...found.connected, ...found.unconnected] : found.unconnected,
+                  name,
+                ),
                 data.service,
               ),
             )
             const response = yield* client.OfferConnection({
               service: service.id,
               reason: data.reason,
+              wanted: another ? 'Another' : 'Service',
             })
             // A connect card is the answer for this turn. Flue must settle it rather than
             // asking the model to keep discovering the same unavailable account. The card's

@@ -86,7 +86,7 @@ describe.skipIf(!testDatabaseConfigured)(
               const test = yield* fixture()
               yield* (yield* ConnectionStore).begin(test.personal, {
                 service: serviceId,
-                label: 'Records',
+                name: null,
                 shared: false,
               })
               const executor = yield* Executor
@@ -104,7 +104,6 @@ describe.skipIf(!testDatabaseConfigured)(
                 }),
               })
               const storedComputer = yield* ComputerStore
-              const commandOwners = yield* Ref.make<string[]>([])
               const computer = ComputerStore.of({
                 ...storedComputer,
                 access: Effect.fn('Test.computerAccess')((person) =>
@@ -112,10 +111,6 @@ describe.skipIf(!testDatabaseConfigured)(
                     ComputerAccess.cases.Ready.make({ key: computerMachineKey(person) }),
                   ),
                 ),
-                exec: Effect.fn('Test.computerReceipt')(function* (person) {
-                  yield* Ref.update(commandOwners, (owners) => owners.concat(person))
-                  return { exitCode: 0, output: 'Computer receipt', truncated: false }
-                }),
               })
               const outcome = yield* run(
                 test.personal,
@@ -123,8 +118,7 @@ describe.skipIf(!testDatabaseConfigured)(
                 `const found=await tools.find_tools({query:"read"}); const tool=found.tools[0];
       const first=await tools.use_tool({account:tool.account,tool:tool.tool,input:{},summary:"Read first page",rationale:"Find records"});
       const [left,right]=await Promise.all([1,2].map(page=>tools.use_tool({account:tool.account,tool:tool.tool,input:{cursor:first.output.cursor,page},summary:"Read next page",rationale:"Find records"})));
-      const receipt=await tools.run_command({command:"pwd",summary:"Check the Computer"});
-      return {chosen:left.output.rows.filter(row=>row.value>497).map(row=>row.value),count:right.output.rows.length,exitCode:receipt.result.exitCode};`,
+      return {chosen:left.output.rows.filter(row=>row.value>497).map(row=>row.value),count:right.output.rows.length};`,
               ).pipe(
                 Effect.provide(codeCallsLayer, { local: true }),
                 Effect.provideService(Executor, provider),
@@ -134,21 +128,18 @@ describe.skipIf(!testDatabaseConfigured)(
               expect(outcome).toHaveProperty('result', {
                 chosen: [498, 499],
                 count: 500,
-                exitCode: 0,
               })
               expect(outcome.calls.map((call) => call.kind)).toEqual([
                 'find_tools',
                 'use_tool',
                 'use_tool',
                 'use_tool',
-                'run_command',
               ])
               expect(yield* Ref.get(inputs)).toEqual([
                 {},
                 { cursor: 'next-page', page: 1 },
                 { cursor: 'next-page', page: 2 },
               ])
-              expect(yield* Ref.get(commandOwners)).toEqual([test.personal.person.id])
             }),
           ).pipe(Effect.provide(testLayer)),
       )
@@ -161,7 +152,7 @@ describe.skipIf(!testDatabaseConfigured)(
               const test = yield* fixture()
               yield* (yield* ConnectionStore).begin(test.personal, {
                 service: serviceId,
-                label: 'Records',
+                name: null,
                 shared: false,
               })
               const executor = yield* Executor
@@ -204,12 +195,12 @@ describe.skipIf(!testDatabaseConfigured)(
               const store = yield* ConnectionStore
               yield* store.begin(test.personal, {
                 service: serviceId,
-                label: 'Records',
+                name: 'Records',
                 shared: false,
               })
               yield* store.begin(test.other, {
                 service: serviceId,
-                label: 'Records',
+                name: 'Records',
                 shared: false,
               })
               const probe = yield* ConnectionProbe
@@ -223,8 +214,8 @@ describe.skipIf(!testDatabaseConfigured)(
               const result = yield* run(
                 test.personal,
                 test.personalId,
-                `const found=await tools.find_tools({query:"read"}); const result=await ${use('read')};
-            const forged=await tools.use_tool({account:"Records",tool:"read",connectionId:"other-person",input:{},summary:"Read",rationale:"Read"}); return {found,result,forged};`,
+                `const found=await tools.find_tools({query:"read"}); const result=await tools.use_tool({account:"Records (Records)",tool:"read",input:{draft:"original"},summary:"Read or update records",rationale:"Answer the request"});
+            const forged=await tools.use_tool({account:"Records (Records)",tool:"read",connectionId:"other-person",input:{},summary:"Read",rationale:"Read"}); return {found,result,forged};`,
               )
               expect(CodeOutcome.guards.Completed(result)).toBe(true)
               expect(JSON.stringify(result)).not.toContain('connectionId')
@@ -248,7 +239,7 @@ describe.skipIf(!testDatabaseConfigured)(
                 const test = yield* fixture()
                 yield* (yield* ConnectionStore).begin(test.owner, {
                   service: serviceId,
-                  label: 'Records',
+                  name: null,
                   shared: true,
                 })
                 const started = yield* Deferred.make<void>()
@@ -299,7 +290,7 @@ describe.skipIf(!testDatabaseConfigured)(
           Effect.gen(function* () {
             const test = yield* fixture()
             const store = yield* ConnectionStore
-            yield* store.begin(test.owner, { service: serviceId, label: 'Records', shared: true })
+            yield* store.begin(test.owner, { service: serviceId, name: null, shared: true })
             const shared = yield* run(test.member, test.companyId, `return await ${use('write')};`)
             expect(shared.calls.map((call) => call.end)).toEqual(['refused'])
           }),
@@ -313,7 +304,7 @@ describe.skipIf(!testDatabaseConfigured)(
             const store = yield* ConnectionStore
             yield* store.begin(test.personal, {
               service: serviceId,
-              label: 'Private records',
+              name: 'Private records',
               shared: false,
             })
             yield* (yield* Database).run(
@@ -325,7 +316,7 @@ describe.skipIf(!testDatabaseConfigured)(
             const personal = yield* run(
               test.member,
               test.companyId,
-              `return await tools.use_tool({account:"Private records",tool:"read",input:{},summary:"Read private records",rationale:"Answer"});`,
+              `return await tools.use_tool({account:"Records (Private records)",tool:"read",input:{},summary:"Read private records",rationale:"Answer"});`,
             )
             expect(CodeOutcome.guards.ApprovalRequired(personal)).toBe(true)
             expect(personal.calls.map((call) => call.end)).toEqual(['needs approval'])
@@ -341,7 +332,7 @@ describe.skipIf(!testDatabaseConfigured)(
               const test = yield* fixture()
               yield* (yield* ConnectionStore).begin(test.personal, {
                 service: serviceId,
-                label: 'Records',
+                name: null,
                 shared: false,
               })
               const probe = yield* ConnectionProbe
@@ -387,7 +378,7 @@ describe.skipIf(!testDatabaseConfigured)(
               const test = yield* fixture()
               yield* (yield* ConnectionStore).begin(test.personal, {
                 service: serviceId,
-                label: 'Records',
+                name: null,
                 shared: false,
               })
               const probe = yield* ConnectionProbe
@@ -412,7 +403,7 @@ describe.skipIf(!testDatabaseConfigured)(
               const test = yield* fixture()
               yield* (yield* ConnectionStore).begin(test.personal, {
                 service: serviceId,
-                label: 'Records',
+                name: null,
                 shared: false,
               })
               const store = yield* ApprovalStore
@@ -451,7 +442,7 @@ describe.skipIf(!testDatabaseConfigured)(
             const test = yield* fixture()
             yield* (yield* ConnectionStore).begin(test.personal, {
               service: serviceId,
-              label: 'Records',
+              name: null,
               shared: false,
             })
             yield* (yield* RuleStore).create(test.personal, {
@@ -480,7 +471,7 @@ describe.skipIf(!testDatabaseConfigured)(
 /** Infrastructure faults exercise bound dispatch directly, independently of host interpreter support. */
 describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => {
   /** Availability replies are new code refusals; they are recorded once without private reasons. */
-  standalone.effect.each(['command', 'personal browser', 'cloud browser'] as const)(
+  standalone.effect.each(['personal browser', 'cloud browser'] as const)(
     'records one CallRefused for unavailable %s',
     (surface) =>
       Effect.scoped(
@@ -490,21 +481,17 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
           const store = yield* ComputerStore
           const unavailable = ComputerStore.of({
             ...store,
-            exec: () => Effect.fail(new ComputerNotReady({ reason: 'Private command outage' })),
             browse: () => Effect.fail(new ComputerNotReady({ reason: 'Private browser outage' })),
           })
-          const input =
-            surface === 'command'
-              ? { command: 'pwd', summary: 'Check availability' }
-              : {
-                  target:
-                    surface === 'personal browser'
-                      ? BrowseTarget.cases.Person.make({})
-                      : BrowseTarget.cases.Vivid.make({}),
-                  action: BrowserAction.cases.Open.make({ address: 'https://example.test' }),
-                  summary: 'Check availability',
-                }
-          const kind = surface === 'command' ? 'run_command' : 'browse'
+          const input = {
+            target:
+              surface === 'personal browser'
+                ? BrowseTarget.cases.Person.make({})
+                : BrowseTarget.cases.Vivid.make({}),
+            action: BrowserAction.cases.Open.make({ address: 'https://example.test' }),
+            summary: 'Check availability',
+          }
+          const kind = 'browse'
           const outcome = yield* Effect.gen(function* () {
             return yield* (yield* CodeCalls).bind({
               person: test.personal.person.id,
@@ -531,7 +518,7 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
         const test = yield* fixture()
         yield* (yield* ConnectionStore).begin(test.personal, {
           service: serviceId,
-          label: 'Records',
+          name: null,
           shared: false,
         })
         const executor = yield* Executor
@@ -669,7 +656,7 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
         Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* ConnectionStore
-          yield* store.begin(test.personal, { service: serviceId, label: 'Records', shared: false })
+          yield* store.begin(test.personal, { service: serviceId, name: null, shared: false })
           const unavailable = ConnectionStore.of({
             ...store,
             tools: () =>

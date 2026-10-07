@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "typecheck": "node ../../scripts/types.mjs",
     "lint": "node ../../scripts/lint.mjs",
-    "test": "vitest run"
+    "test": "node ../../scripts/test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -19,6 +19,9 @@
     "@fontsource-variable/bricolage-grotesque": "^5.3.0",
     "@fontsource-variable/geist": "^5.3.0",
     "@novnc/novnc": "^1.7.0",
+    "@sentry/core": "catalog:",
+    "@sentry/electron": "catalog:",
+    "@sentry/react": "catalog:",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
     "@vivid/marks": "workspace:*",
@@ -33,13 +36,11 @@
     "react-dom": "catalog:",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "thinking-orbs": "^0.3.2",
-    "@sentry/electron": "catalog:",
-    "@sentry/react": "catalog:",
-    "@sentry/core": "catalog:"
+    "thinking-orbs": "^0.3.2"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@sentry/vite-plugin": "5.4.0",
     "@tailwindcss/vite": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",

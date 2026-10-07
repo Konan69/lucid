@@ -8,7 +8,7 @@
     "start": "tsx src/main.ts",
     "typecheck": "node ../../scripts/types.mjs",
     "lint": "node ../../scripts/lint.mjs",
-    "test": "vitest run",
+    "test": "node ../../scripts/test.mjs",
     "db:generate": "drizzle-kit generate",
     "db:generate:product": "drizzle-kit generate --config product-drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate",

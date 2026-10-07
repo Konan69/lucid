@@ -383,12 +383,18 @@ importers:
       '@effect/language-service':
         specifier: 0.87.2
         version: 0.87.2
+      '@effect/tsgo':
+        specifier: 0.51.0
+        version: 0.51.0
       '@effect/vitest':
         specifier: 'catalog:'
         version: 4.0.0-rc.116(effect@4.0.0-rc.116)(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(jsdom@30.1.2(@noble/hashes@2.4.0))(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))
       '@oxlint/plugins':
         specifier: 1.83.0
         version: 1.83.0
+      '@sentry/cli':
+        specifier: 3.8.0
+        version: 3.8.0
       '@shadcn/lint':
         specifier: 0.1.1
         version: 0.1.1(supports-color@8.1.1)(typescript@6.0.3)
@@ -422,6 +428,9 @@ importers:
       oxlint-tsgolint:
         specifier: 7.0.2002
         version: 7.0.2002
+      tsc-rs:
+        specifier: 0.1.0
+        version: 0.1.0
       turbo:
         specifier: 2.11.2
         version: 2.11.2
@@ -825,6 +834,9 @@ importers:
       '@effect/vitest':
         specifier: 'catalog:'
         version: 4.0.0-rc.116(effect@4.0.0-rc.116)(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(jsdom@30.1.2(@noble/hashes@2.4.0))(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))
+      '@sentry/vite-plugin':
+        specifier: 5.4.0
+        version: 5.4.0(supports-color@8.1.1)
       '@tailwindcss/vite':
         specifier: 'catalog:'
         version: 4.3.3(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0))
@@ -1969,8 +1981,8 @@ packages:
   '@better-fetch/fetch@1.3.2':
     resolution: {integrity: sha512-Gs7n99b5tqUC6cQAPbV0uED3IraHB6xQbHLQ/C3l7ZFafHScOx9pQ+DYmP5blbLFShVWLqxNUlI9wi4xU/X+ow==}
 
-  '@bramus/specificity@2.4.2':
-    resolution: {integrity: sha512-ctxtJ/eA+t+6q2++vj5j7FYX3nRu311q1wfYH3xjlLOsczhlhxAg2FWNUXhpGvAw3BWo1xBcvOV6/YLc2r5FJw==}
+  '@bramus/specificity@2.4.3':
+    resolution: {integrity: sha512-0GEz8qJWokkUVYQYRukmkSHIFNoBH8QTreeHrAFbvz1XFYc3Y+puhMs8PQ5x8GNugiC2l5jvDBXKLbBIByeSBw==}
     hasBin: true
 
   '@bufbuild/protobuf@2.16.0':
@@ -2225,6 +2237,45 @@ packages:
     resolution: {integrity: sha512-VYHPcyDtiq6h/vmJD/9c6BFvEi1xqG5c54wlbs15zMjhUybJkGWkhZ5dbs4jCqVhkBNJSYX861oDaXxyH1HELw==}
     peerDependencies:
       effect: 4.0.0-rc.116
+
+  '@effect/tsgo-darwin-arm64@0.51.0':
+    resolution: {integrity: sha512-IsVT2Z7hNGT6RCLbNP/lyLyyjC9arVblfoXbr3qt3cF0A364BigXnoKx+NGm6ZNfg5NozW2NGKW2AD9btcy13Q==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@effect/tsgo-darwin-x64@0.51.0':
+    resolution: {integrity: sha512-S0k97HUL7vS9a1CZFcZEUeOK/6fYuev06li7+canKpn9w1PAp+YtxrET3r37ZdHeZP7w/WYJtT0yxxLZO7Mprw==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@effect/tsgo-linux-arm64@0.51.0':
+    resolution: {integrity: sha512-2KSJiPO3foagMgBuKhUBhO9X+JLHeJ/+2FzrwxQhexhR6V3LUnJ2L2hJS3KGs/sMn4TJjjtgczO8mAmIrFaffw==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@effect/tsgo-linux-arm@0.51.0':
+    resolution: {integrity: sha512-4FUwHI8G1Fbpa3nPBfR9143mK0ziLjfa+/RVzbr9VIfSF0FWEYHJzD7A3RGNEh0EXZ9ZQG+UKmfs9kKRhWOvyw==}
+    cpu: [arm]
+    os: [linux]
+
+  '@effect/tsgo-linux-x64@0.51.0':
+    resolution: {integrity: sha512-Psolf3poNm3PVHm/Q2Q66cXQ17ZIBLhtPJoKMvEIrlbAJmHMWfQyKeUrtRfum6V+yDTy6ZTeO6ksUfk0hg2YwA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@effect/tsgo-win32-arm64@0.51.0':
+    resolution: {integrity: sha512-V+BiYnc75s30F62CQO2NtTFiaG0tYpBcVbIIvoiRBVuHUy68RDCXVQWqSNG6JkohTIabObPmvk4bznCLbcGvPQ==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@effect/tsgo-win32-x64@0.51.0':
+    resolution: {integrity: sha512-sO2Ngbdxn6DrDdSCItXu/J5ha7PgFGyY7U1qJ4VzMyovazguiVJfkExskZ174Qa+ltPWZIGHFY/QdVZwHepOTw==}
+    cpu: [x64]
+    os: [win32]
+
+  '@effect/tsgo@0.51.0':
+    resolution: {integrity: sha512-USDPT8AJCq1xc8+C8gyroohI0aJ9SZmmnSQRUEKzEMiBMJFpVuadXKqkHQ1DGOwZDeu2NDz/tLXxDD/vtel1bA==}
+    hasBin: true
 
   '@effect/vitest@4.0.0-rc.116':
     resolution: {integrity: sha512-q42ue4hAa5AcPBwqi8rvMvR1Jstr+JjsyyxEBUoBk+WWm8otnqFxQ+XbWslW1QSwdg5+2Fdgd7z59IValt9Oiw==}
@@ -4709,6 +4760,10 @@ packages:
     resolution: {integrity: sha512-5IQtU8SommZyTZgJxZFunQQHay8Vq78D8P0qP9ggQ1hTa6GU6kQKBDDN8eNayUA/Hl2qPei/LAmvmyiZNDIJ0Q==}
     engines: {node: '>=20.19.0 <22.0.0 || >=22.12.0 <23.0.0 || >=23.2.0'}
 
+  '@sentry/vite-plugin@5.4.0':
+    resolution: {integrity: sha512-fFJgCxs5hDyAm9BbZJ+LbA+LK2tjX5OoD0v0ARU4StR6KQmGUduoPs69yJ9AfqZ0om3Rlp5JDliiwFcNkasORA==}
+    engines: {node: '>= 18'}
+
   '@shadcn/lint@0.1.1':
     resolution: {integrity: sha512-00FroeyOehwp18oWk6ybuGJDm5IMc7ywmEvCODIj2yjPISSzgx+fv/BB4V6nh/Wiwrw6XoRobk89d/T2Hc3QJg==}
     engines: {node: '>=20.19'}
@@ -4932,6 +4987,18 @@ packages:
 
   '@ts-morph/common@0.27.0':
     resolution: {integrity: sha512-Wf29UqxWDpc+i61k3oIOzcUfQt79PIT9y/MWfAGlrkjg6lBC1hwDECLXPVJAhWjiGbfBCxZd65F/LIZF3+jeJQ==}
+
+  '@tsc-rs/darwin-arm64@0.1.0':
+    resolution: {integrity: sha512-VgS/GcwcSOOdSlQnpw4etSnL5xFZNwfuPIa7KtBpfC6Qg1Fg0w150s58a00Zs6D6DnDd7yBxx3XgHcyNLjzaPA==}
+    engines: {node: '>=16.20.0'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@tsc-rs/linux-x64@0.1.0':
+    resolution: {integrity: sha512-gzswr3ihKhkviz2ZcmkyVomXY4jqMPT4cWu/rjJqbJtMXJJHuZ9H5Eqv2fcCX9AB0i18EmPNva7Gp7NYaAdpJA==}
+    engines: {node: '>=16.20.0'}
+    cpu: [x64]
+    os: [linux]
 
   '@turbo/darwin-64@2.11.2':
     resolution: {integrity: sha512-0pGfE4Lpxrbd+6gUD9z025Tn4z9uMaSNZ3VX0H/hkUPZkjY5xrCa1NfTqocs09NM5NiYE3wEVcoYBadrhayRCA==}
@@ -9708,6 +9775,11 @@ packages:
   ts-morph@26.0.0:
     resolution: {integrity: sha512-ztMO++owQnz8c/gIENcM9XfCEzgoGphTv+nKpYNM1bgsdOVC/jRZuEBf6N+mLLDNg68Kl+GgUZfOySaRiG1/Ug==}
 
+  tsc-rs@0.1.0:
+    resolution: {integrity: sha512-ibJNjypqagRtvc3wrQALo4VxOd0QmujczOIqMm97ioTkRuMS3UQlmX3f17IkhsLwgQ2az4UuWzfuaYliUdf3xQ==}
+    engines: {node: '>=16.20.0'}
+    hasBin: true
+
   tsconfig-paths@4.2.0:
     resolution: {integrity: sha512-NoZ4roiN7LnbKn9QqE1amc9DJfzvZXxF4xDavcOWt1BPkdx+m+0gJuPM+S0vCe7zTJMYUP0R8pO2XMr+Y8oLIg==}
     engines: {node: '>=6'}
@@ -11308,7 +11380,7 @@ snapshots:
 
   '@better-fetch/fetch@1.3.2': {}
 
-  '@bramus/specificity@2.4.2':
+  '@bramus/specificity@2.4.3':
     dependencies:
       css-tree: 3.2.1
 
@@ -11612,6 +11684,37 @@ snapshots:
   '@effect/sql-sqlite-do@4.0.0-rc.116(effect@4.0.0-rc.116)':
     dependencies:
       effect: 4.0.0-rc.116
+
+  '@effect/tsgo-darwin-arm64@0.51.0':
+    optional: true
+
+  '@effect/tsgo-darwin-x64@0.51.0':
+    optional: true
+
+  '@effect/tsgo-linux-arm64@0.51.0':
+    optional: true
+
+  '@effect/tsgo-linux-arm@0.51.0':
+    optional: true
+
+  '@effect/tsgo-linux-x64@0.51.0':
+    optional: true
+
+  '@effect/tsgo-win32-arm64@0.51.0':
+    optional: true
+
+  '@effect/tsgo-win32-x64@0.51.0':
+    optional: true
+
+  '@effect/tsgo@0.51.0':
+    optionalDependencies:
+      '@effect/tsgo-darwin-arm64': 0.51.0
+      '@effect/tsgo-darwin-x64': 0.51.0
+      '@effect/tsgo-linux-arm': 0.51.0
+      '@effect/tsgo-linux-arm64': 0.51.0
+      '@effect/tsgo-linux-x64': 0.51.0
+      '@effect/tsgo-win32-arm64': 0.51.0
+      '@effect/tsgo-win32-x64': 0.51.0
 
   '@effect/vitest@4.0.0-rc.116(effect@4.0.0-rc.116)(vitest@5.0.1(@opentelemetry/api@1.9.0)(@types/node@24.13.6)(jsdom@30.1.2(@noble/hashes@2.4.0))(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))':
     dependencies:
@@ -13980,6 +14083,15 @@ snapshots:
       '@sentry/conventions': 0.24.0
       '@sentry/core': 11.1.0
 
+  '@sentry/vite-plugin@5.4.0(supports-color@8.1.1)':
+    dependencies:
+      '@sentry/bundler-plugins': 10.75.2(supports-color@8.1.1)
+    transitivePeerDependencies:
+      - encoding
+      - rollup
+      - supports-color
+      - webpack
+
   '@shadcn/lint@0.1.1(supports-color@8.1.1)(typescript@6.0.3)':
     dependencies:
       '@eslint/core': 0.17.0
@@ -14233,6 +14345,12 @@ snapshots:
       fast-glob: 3.3.3
       minimatch: 10.2.6
       path-browserify: 1.0.1
+
+  '@tsc-rs/darwin-arm64@0.1.0':
+    optional: true
+
+  '@tsc-rs/linux-x64@0.1.0':
+    optional: true
 
   '@turbo/darwin-64@2.11.2':
     optional: true
@@ -16976,7 +17094,7 @@ snapshots:
     dependencies:
       '@asamuzakjp/css-color': 7.1.3
       '@asamuzakjp/dom-selector': 9.2.4
-      '@bramus/specificity': 2.4.2
+      '@bramus/specificity': 2.4.3
       '@csstools/css-syntax-patches-for-csstree': 1.1.15(css-tree@3.2.1)
       '@exodus/bytes': 1.16.0(@noble/hashes@2.4.0)
       css-tree: 3.2.1
@@ -19717,6 +19835,11 @@ snapshots:
     dependencies:
       '@ts-morph/common': 0.27.0
       code-block-writer: 13.0.3
+
+  tsc-rs@0.1.0:
+    optionalDependencies:
+      '@tsc-rs/darwin-arm64': 0.1.0
+      '@tsc-rs/linux-x64': 0.1.0
 
   tsconfig-paths@4.2.0:
     dependencies:

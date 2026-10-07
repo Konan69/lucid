@@ -213,7 +213,7 @@ function keepOnDevice(
 }
 
 /**
- * Builds a session's reading of the catalog of services, for the Integrations sheet: what is
+ * Builds a session's reading of the catalog of services, for the Integrations page: what is
  * typed into its search, and the part of the catalog that answers to it.
  *
  * Ported from the web (`serviceSearch`, `catalogFor` and `services` in
@@ -513,6 +513,19 @@ export function useLiveData(): LiveData {
 /** Reads a live query. The component re-renders when, and only when, the result changes. */
 export function useLive<Value>(query: LiveQuery<Value>): LiveState<Value> {
   return liveStateOf(useAtomValue(query.atom))
+}
+
+/** What a query that has not been asked holds: nothing yet, for as long as it is not asked. */
+const UNASKED: Atom.Atom<LiveResult<never>> = Atom.make(AsyncResult.initial(true))
+
+/**
+ * Reads a live query only once it can be answered, and is `Loading` until then. A Thread started
+ * on this phone is drawn before the server has it (`data/first.ts`), and a query for something
+ * that is not there ends for good and is never asked again; so it is not asked until it is.
+ */
+export function useLiveWhen<Value>(asked: boolean, query: LiveQuery<Value>): LiveState<Value> {
+  const waiting: Atom.Atom<LiveResult<Value>> = UNASKED
+  return liveStateOf(useAtomValue(asked ? query.atom : waiting))
 }
 
 /** The value of a live query when it has one, for lists that draw the same loading or empty. */

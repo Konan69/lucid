@@ -2,7 +2,19 @@ import { PersonId, SessionId } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, it, layer } from '@effect/vitest'
-import { Deferred, Effect, Fiber, Layer, Option, PubSub, Redacted, Stream } from 'effect'
+import {
+  Clock,
+  Deferred,
+  Duration,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  PubSub,
+  Redacted,
+  Scheduler,
+  Stream,
+} from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
@@ -36,7 +48,7 @@ const lifetimeStores = computerStoreLayer.pipe(
 )
 
 /** Session persistence is real; a controlled Computer endpoint isolates lifetime from provider availability. */
-const lifetimeFixture = Effect.fn('Computer.screen.test.lifetime')(function* () {
+const lifetimeFixture = Effect.fn('Computer.screen.test.lifetime')(function* (startedAt: number) {
   const database = yield* Database
   const personId = PersonId.make(NodeCrypto.randomUUID())
   const sessionId = SessionId.make(NodeCrypto.randomUUID())
@@ -46,7 +58,7 @@ const lifetimeFixture = Effect.fn('Computer.screen.test.lifetime')(function* () 
       Effect.ignore,
     ),
   )
-  yield* TestClock.setTime(0)
+  yield* TestClock.setTime(startedAt)
   yield* database.run(
     database
       .insert(personTable)
@@ -62,7 +74,28 @@ const lifetimeFixture = Effect.fn('Computer.screen.test.lifetime')(function* () 
   )
   const moved = yield* PubSub.unbounded<void>()
   const checked = yield* Deferred.make<void>()
+  const sleeping = yield* Deferred.make<void>()
   const stopped = yield* Deferred.make<void>()
+  const clock = yield* Clock.Clock
+  /** Endpoint readiness precedes the tick's sleep. Register the real TestClock sleep in an
+   * immediate child before signaling readiness; suppress automatic yields only in that child
+   * so the signal cannot overtake registration (rc.116 TestClock.make.sleep registers first).
+   */
+  // SAFETY: Object.create keeps the TestClock as the prototype, so every other Clock method is
+  // the real one; only sleep is overridden below.
+  const tickingClock = Object.create(clock) as Clock.Clock
+  tickingClock.sleep = Effect.fn('Computer.screen.test.tick')(function* (
+    duration: Duration.Duration,
+  ) {
+    const sleeper = yield* clock
+      .sleep(duration)
+      .pipe(
+        Effect.provideService(Scheduler.PreventSchedulerYield, true),
+        Effect.forkChild({ startImmediately: true }),
+      )
+    yield* Deferred.succeed(sleeping, undefined)
+    yield* Fiber.join(sleeper)
+  })
   const store = yield* ComputerStore
   const controlled = ComputerStore.of({
     ...store,
@@ -83,8 +116,12 @@ const lifetimeFixture = Effect.fn('Computer.screen.test.lifetime')(function* () 
     Effect.provideService(ComputerStore, controlled),
     Effect.provideService(Changes, changes),
   )
-  const worker = yield* lifetime.pipe(Effect.forkChild)
+  const worker = yield* lifetime.pipe(
+    Effect.provideService(Clock.Clock, tickingClock),
+    Effect.forkChild,
+  )
   yield* Deferred.await(checked)
+  yield* Deferred.await(sleeping)
   return { database, personId, sessionId, moved, stopped, worker }
 })
 
@@ -94,7 +131,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer screen lifetime', () => {
       'revokes screen authority after session deletion without a change notification',
       () =>
         Effect.gen(function* () {
-          const fixture = yield* lifetimeFixture()
+          const fixture = yield* lifetimeFixture(0)
           yield* fixture.database.run(
             fixture.database.delete(sessionTable).where(eq(sessionTable.id, fixture.sessionId)),
           )
@@ -104,14 +141,16 @@ describe.skipIf(!testDatabaseConfigured)('Computer screen lifetime', () => {
     )
     test.effect('revokes screen authority at session expiry using the controllable clock', () =>
       Effect.gen(function* () {
-        const fixture = yield* lifetimeFixture()
-        yield* TestClock.adjust('60 seconds')
+        // One registered tick reaches expiry exactly; a multi-tick jump could outrun real
+        // database I/O and finish before the next sleep registers, leaving the worker waiting.
+        const fixture = yield* lifetimeFixture(55_000)
+        yield* TestClock.adjust('5 seconds')
         expect(yield* Fiber.join(fixture.worker)).toBeUndefined()
       }),
     )
     test.effect('revokes screen authority when the Computer stops and publishes its change', () =>
       Effect.gen(function* () {
-        const fixture = yield* lifetimeFixture()
+        const fixture = yield* lifetimeFixture(0)
         yield* Deferred.succeed(fixture.stopped, undefined)
         yield* PubSub.publish(fixture.moved, undefined)
         expect(yield* Fiber.join(fixture.worker)).toBeUndefined()

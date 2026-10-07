@@ -2,7 +2,7 @@ import { ActionTarget } from '@vivid/contracts'
 import type { Schema } from 'effect'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
-import { Globe, Link2, Monitor, Terminal, type LucideIcon } from 'lucide-react-native'
+import { Globe, Link2, Monitor, type LucideIcon } from 'lucide-react-native'
 import { browserStep, desktopStep } from '@vivid/state'
 import { fieldName, fieldsOf, Shown, shownAs } from '../../data/action'
 import { useTheme } from '../../theme'
@@ -28,7 +28,6 @@ export function Exactly({ target }: { target: ActionTarget }) {
     Connection: ({ account, tool, input }) => (
       <Sending account={account} tool={tool} input={input} />
     ),
-    Command: ({ command }) => <Step icon={TARGET_ICON.Command} text={command} />,
     Browser: ({ action }) => <Step icon={TARGET_ICON.Browser} text={browserStep(action)} />,
     Desktop: ({ action }) => <Step icon={TARGET_ICON.Desktop} text={desktopStep(action)} />,
   })
@@ -73,7 +72,6 @@ function Step({ icon, text }: { icon: LucideIcon; text: string }) {
 /** The mark for each kind of thing an action is done to; a new kind fails to compile here. */
 const TARGET_ICON = {
   Connection: Link2,
-  Command: Terminal,
   Browser: Globe,
   Desktop: Monitor,
 } as const satisfies Record<ActionTarget['_tag'], LucideIcon>

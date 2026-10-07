@@ -12,6 +12,7 @@ import {
   ThreadId,
   type Run,
 } from '@vivid/contracts'
+import { Awaited } from '@vivid/state'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
 import {
@@ -238,7 +239,7 @@ describe('what Vivid did', () => {
   })
 
   it('offers Watch only for the current computer step while the reply is working', () => {
-    const computer = ['run_command', 'browse', 'use_desktop'].map((toolName): ToolPart => ({
+    const computer = ['bash', 'browse', 'use_desktop'].map((toolName): ToolPart => ({
       type: 'dynamic-tool',
       toolName,
       toolCallId: `call-${toolName}`,
@@ -259,7 +260,7 @@ describe('what Vivid did', () => {
         stepsOf([
           {
             type: 'dynamic-tool',
-            toolName: 'run_command',
+            toolName: 'bash',
             toolCallId: 'failed',
             state: 'output-error',
             input: {},
@@ -300,7 +301,9 @@ describe('the card a tool result asks for', () => {
       ready: false,
     }
     expect(cardOf(tool('connect', request))).toEqual(
-      Option.some(Card.Connection({ request, authorization: Option.none() })),
+      Option.some(
+        Card.Connection({ request, authorization: Option.none(), awaited: Awaited.Service() }),
+      ),
     )
   })
 
@@ -317,7 +320,32 @@ describe('the card a tool result asks for', () => {
       fields: [{ name: 'api_key', label: 'API key' }],
     })
     expect(cardOf(tool('add_integration', { ...request, authorization }))).toEqual(
-      Option.some(Card.Connection({ request, authorization: Option.some(authorization) })),
+      Option.some(
+        Card.Connection({
+          request,
+          authorization: Option.some(authorization),
+          awaited: Awaited.Begun({ id: ConnectionId.make('started') }),
+        }),
+      ),
+    )
+  })
+
+  it('carries when Vivid asked, for a request for one more account on a connected service', () => {
+    const request = {
+      kind: 'connection-request' as const,
+      service: ServiceId.make('gmail'),
+      serviceName: 'Gmail',
+      reason: 'To send it from your work address',
+      ready: false as const,
+    }
+    expect(cardOf(tool('connect', { ...request, another: { askedAt: 1_000 } }))).toEqual(
+      Option.some(
+        Card.Connection({
+          request,
+          authorization: Option.none(),
+          awaited: Awaited.Another({ askedAt: 1_000 }),
+        }),
+      ),
     )
   })
 

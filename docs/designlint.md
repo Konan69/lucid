@@ -45,7 +45,7 @@ The component-definition directory turns `no-restyle`, `no-arbitrary-values`, an
 
 ## Current ratchets
 
-Baselines below are the executable ceilings in `.husky/pre-push`, checked on 3 October 2026.
+Baselines below are the executable ceilings in `scripts/gate/ratchets.mjs`, checked on 3 October 2026.
 They are not fresh measurements of source findings. Rule levels come from `.oxlintrc.json`;
 lower a ceiling when findings disappear.
 

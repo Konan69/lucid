@@ -4,7 +4,7 @@ import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import * as NodeProcess from 'node:process'
 import { describe, expect, it } from '@effect/vitest'
-import { HELD, holdable, holderClaim, UNSETTLED } from './boat/holder.ts'
+import { HELD, holdable, holderClaim, snapshotRules, UNSETTLED } from './boat/holder.ts'
 import * as Protocol from './boat/protocol.ts'
 
 const machine = Protocol.ProviderId.make('bx_23456789')
@@ -29,6 +29,29 @@ describe.each(['sh', 'bash'])('the machine’s holder record under %s', (shell) 
     }).status
   const record = (directory: string) =>
     NodeFS.readFileSync(NodePath.join(directory, '.vivid', 'holder'), 'utf8')
+
+  /**
+   * The rules are shell too, and what matters is the file a Computer ends up with: Boat reads
+   * `.boxignore` in the home directory and leaves what it names out of every snapshot.
+   */
+  it('gives a Computer its snapshot rules once and never rewrites a file that is there', () => {
+    const directory = home()
+    const rules = () =>
+      NodeChildProcess.spawnSync(shell, ['-c', snapshotRules], {
+        env: { HOME: directory, PATH: NodeProcess.env['PATH'] },
+      }).status
+    const file = NodePath.join(directory, '.boxignore')
+    expect(rules()).toBe(0)
+    const written = NodeFS.readFileSync(file, 'utf8').split('\n')
+    // Caches a tool fills again are left out; a project's own dependency tree is not named.
+    expect(written).toContain('.cache/')
+    expect(written).toContain('.local/share/pnpm/store/')
+    expect(written.some((line) => line.includes('node_modules'))).toBe(false)
+    expect(NodeFS.existsSync(`${file}.new`)).toBe(false)
+    NodeFS.writeFileSync(file, 'mine/\n')
+    expect(rules()).toBe(0)
+    expect(NodeFS.readFileSync(file, 'utf8')).toBe('mine/\n')
+  })
 
   it('makes the first binding the holder and lets it on again', () => {
     const directory = home()

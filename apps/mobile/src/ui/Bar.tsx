@@ -7,11 +7,11 @@ import {
   type NativeStackNavigationOptions,
   type NativeStackNavigationProp,
 } from '@react-navigation/native-stack'
-import { Phone, type LucideIcon } from 'lucide-react-native'
+import { Menu as MenuLines, Phone, type LucideIcon } from 'lucide-react-native'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { Animated, Image, Platform, View } from 'react-native'
-import menuMark from '../../assets/menu.png'
 import { openDrawer } from '../data/drawer'
+import { menuMark, useMenuMark } from '../data/mark'
 import type { Stand } from '../data/stand'
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
@@ -165,14 +165,20 @@ const MENU_LABEL = 'Open menu'
 /** The mark's own size: the 22 points the image is drawn at (`assets/menu.png`). */
 const MENU_MARK = 22
 
-/** iOS: the way to the menu as the system's own bar button, with the mark as its picture. */
-const menuItem = (): NativeStackHeaderItem => ({
+/**
+ * iOS: the way to the menu as the system's own bar button. Its picture is the app's own mark
+ * once that is known to load (`own`, `data/mark.ts`), and the system's three-line symbol until
+ * then, so the button is never blank.
+ */
+const menuItem = (own: boolean): NativeStackHeaderItem => ({
   type: 'button',
   // The picture is the whole button; the name is for assistive technology only.
   label: '',
   accessibilityLabel: MENU_LABEL,
-  // Tinted, so the system draws it in the bar's own ink as it does a symbol.
-  icon: { type: 'image', source: menuMark, tinted: true },
+  // The image is tinted, so the system draws it in the bar's own ink as it does a symbol.
+  icon: own
+    ? { type: 'image', source: menuMark, tinted: true }
+    : { type: 'sfSymbol', name: 'line.3.horizontal' },
   variant: 'plain',
   glassEffect: false,
   sharesBackground: true,
@@ -180,9 +186,10 @@ const menuItem = (): NativeStackHeaderItem => ({
   onPress: openDrawer,
 })
 
-/** Android: the same mark in a button the app draws, in its solid bar. */
+/** Android: the same mark, or the three lines until it loads, in a button the app draws. */
 function MenuButton() {
   const { colors: c } = useTheme()
+  const own = useMenuMark()
   return (
     <Press
       accessibilityRole="button"
@@ -197,11 +204,15 @@ function MenuButton() {
         backgroundColor: pressed ? c['wash-pressed'] : 'transparent',
       })}
     >
-      <Image
-        source={menuMark}
-        // The mark is black on clear; the tint draws it in the bar's ink.
-        style={{ width: MENU_MARK, height: MENU_MARK, tintColor: c['ink-2'] }}
-      />
+      {own ? (
+        <Image
+          source={menuMark}
+          // The mark is black on clear; the tint draws it in the bar's ink.
+          style={{ width: MENU_MARK, height: MENU_MARK, tintColor: c['ink-2'] }}
+        />
+      ) : (
+        <MenuLines pointerEvents="none" size={21} strokeWidth={1.7} color={c['ink-2']} />
+      )}
     </Press>
   )
 }
@@ -220,15 +231,15 @@ function MenuButton() {
  * (`assets/menu.png`, drawn at 22 points for each screen density). The installed
  * react-native-screens loads a bar button's image with its density and draws it as a template
  * (`ios/helpers/image/RNSImageLoadingHelper.mm`), so it arrives in an update like any other
- * asset and needs no new binary.
+ * asset and needs no new binary. It is used only once it is known to load (`data/mark.ts`).
  *
  * Vivid's face used to be the button; the owner asked for a menu icon here and Vivid in the
  * centre (5 October 2026). `unstable_headerLeftItems` is iOS's, so Android gets the same mark in
  * a button drawn by the app in its solid bar.
  */
-const menuOptions = (): NativeStackNavigationOptions =>
+const menuOptions = (own: boolean): NativeStackNavigationOptions =>
   Platform.OS === 'ios'
-    ? { unstable_headerLeftItems: () => [menuItem()] }
+    ? { unstable_headerLeftItems: () => [menuItem(own)] }
     : { headerLeft: () => <MenuButton /> }
 
 /** Nobody else is here. One value, for the same reason as `NO_ACTIONS`. */
@@ -400,22 +411,26 @@ export function VividAtTop({ stand }: { stand: Stand }) {
  * the owner asked for Vivid in the centre, and the title is where the Person chose the Thread,
  * its row in the menu.
  *
- * `inverted` says the screen's scroller is a Thread's upside-down list, which the system's edge
- * effect frosts whole (`NO_SCROLL_EDGES`); the greeting's scroller is the right way up and keeps
- * the effect. Both are named every time, because the two share one route and `setOptions` merges.
+ * `inverted` says the screen's scroller is a Thread's upside-down list and that it is on screen,
+ * which the system's edge effect frosts whole (`NO_SCROLL_EDGES`); the greeting's scroller is the
+ * right way up and keeps the effect. A Thread says it only once its list is laid out, because
+ * the change is the one moment the list can be told. Both are named every time, because the two
+ * share one route and `setOptions` merges.
  */
 export function VividBar({ inverted, present, actions }: BarEnd & { inverted: boolean }) {
   const vivid = useAppearance()
   const end: BarEnd = { present, actions: [...actions, callAction(vivid.name)] }
   const people = present.map((person) => [person.id, person.name, person.image])
+  // Part of what the bar looks like: the options are applied again when the mark is known to load.
+  const own = useMenuMark()
   useBar(
-    JSON.stringify(['vivid', inverted, people, shownOf(end.actions)]),
+    JSON.stringify(['vivid', inverted, own, people, shownOf(end.actions)]),
     end.actions,
     (press) => ({
       title: '',
       ...PLAIN,
       scrollEdgeEffects: edgesFor(inverted),
-      ...menuOptions(),
+      ...menuOptions(own),
       ...endOptions(end, press),
     }),
   )
