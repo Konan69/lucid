@@ -36,7 +36,9 @@ function lost(cause: ErrorOptions['cause'], signal: Signal): never {
  * are resumable before a stream exists (chat.ts:1008–1018); typed status text passes through. */
 function acquisitionLost(cause: ErrorOptions['cause'], signal: Signal): never {
   if (aborted(cause, signal)) throw cause
-  if (cause instanceof TypeError || (cause instanceof Error && cause.name === 'TimeoutError'))
+  const exception =
+    cause instanceof Error || ('DOMException' in globalThis && cause instanceof DOMException)
+  if (cause instanceof TypeError || (exception && cause.name === 'TimeoutError'))
     return lost(cause, signal)
   throw cause
 }

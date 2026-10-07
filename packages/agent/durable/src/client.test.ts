@@ -223,3 +223,19 @@ it.each([false, true])(
     expect(partial.value.parts[1]).toMatchObject({ state: 'input-streaming' })
   },
 )
+
+/** TimeoutError is a transport acquisition failure too; a DOM exception does not require an
+ * Error prototype across every browser realm. A plain status Error is passed through unchanged. */
+it.each([new DOMException('Timed out', 'TimeoutError'), new Error('Turn was refused')])(
+  'classifies the acquisition exception $name without changing a refusal',
+  async (cause) => {
+    const source: ChatTransport<UIMessage> = {
+      sendMessages: () => Promise.reject(cause),
+      reconnectToStream: () => Promise.reject(cause),
+    }
+    const failed = resumable(source).reconnectToStream({ chatId: 'chat' })
+    if (cause.name === 'TimeoutError')
+      await expect(failed).rejects.toMatchObject({ name: 'ConnectionLost', cause })
+    else await expect(failed).rejects.toBe(cause)
+  },
+)
