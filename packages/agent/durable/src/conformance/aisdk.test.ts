@@ -542,7 +542,7 @@ it.live('step 1 snapshot reconnect after a network interruption does not duplica
         ),
     })
     const chat = new PlainChat({ transport: resumable(transport) })
-    try {
+    yield* Effect.gen(function* () {
       yield* Effect.promise(() => chat.sendMessage({ text: 'Build' }))
       yield* Deferred.await(entered)
       expect(chat.status).toBe('error')
@@ -558,10 +558,14 @@ it.live('step 1 snapshot reconnect after a network interruption does not duplica
       if (chat.lastMessage === undefined) throw new Error('Expected the resumed message')
       expect(texts(chat.lastMessage)).toEqual(['Starting.', 'Finished.'])
       expect(chat.lastMessage.parts.filter((part) => part.type === 'step-start')).toHaveLength(2)
-    } finally {
-      Deferred.doneUnsafe(release, Effect.void)
-      yield* Effect.promise(() => opened.root.waitForIdle(context))
-    }
+    }).pipe(
+      Effect.ensuring(
+        Effect.gen(function* () {
+          Deferred.doneUnsafe(release, Effect.void)
+          yield* Effect.promise(() => opened.root.waitForIdle(context))
+        }),
+      ),
+    )
   }),
 )
 // AI SDK packages/ai/src/ui/chat.test.ts: should continue an active text part when resuming after a disconnect.
@@ -585,15 +589,19 @@ it.live('resumeStream reconnects to an in-progress run through respond', () =>
         ),
     })
     const chat = new PlainChat({ transport })
-    try {
+    yield* Effect.gen(function* () {
       const resumed = chat.resumeStream()
       yield* Deferred.await(attached)
       Deferred.doneUnsafe(opened.release, Effect.void)
       yield* Effect.promise(() => resumed)
-    } finally {
-      Deferred.doneUnsafe(opened.release, Effect.void)
-      yield* Effect.promise(() => opened.root.waitForIdle(context))
-    }
+    }).pipe(
+      Effect.ensuring(
+        Effect.gen(function* () {
+          Deferred.doneUnsafe(opened.release, Effect.void)
+          yield* Effect.promise(() => opened.root.waitForIdle(context))
+        }),
+      ),
+    )
     expect(chat.status).toBe('ready')
     expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
     if (chat.lastMessage === undefined) throw new Error('Expected the resumed message')
@@ -605,7 +613,7 @@ it.live('resumeStream reconnects to an in-progress run through respond', () =>
 it.live('reconnectToStream returns the in-progress run through respond', () =>
   Effect.gen(function* () {
     const opened = yield* running()
-    try {
+    yield* Effect.gen(function* () {
       const stream = yield* Effect.promise(() =>
         opened.transport.reconnectToStream({
           chatId: 'chat',
@@ -616,10 +624,14 @@ it.live('reconnectToStream returns the in-progress run through respond', () =>
       if (stream === null) throw new Error('Expected the in-progress stream')
       const result = yield* consumeReadable(stream, Option.none())
       expect(texts(result.message)).toEqual(['Starting.', 'Finished.'])
-    } finally {
-      Deferred.doneUnsafe(opened.release, Effect.void)
-      yield* Effect.promise(() => opened.root.waitForIdle(context))
-    }
+    }).pipe(
+      Effect.ensuring(
+        Effect.gen(function* () {
+          Deferred.doneUnsafe(opened.release, Effect.void)
+          yield* Effect.promise(() => opened.root.waitForIdle(context))
+        }),
+      ),
+    )
   }),
 )
 // A retained step 2 needs a step-scoped prefix: reset-step cannot remove earlier SDK steps.
@@ -700,7 +712,7 @@ it.live.each(['text-end', 'tool-input-start', 'tool-input-available'])(
           ),
       })
       const chat = new PlainChat({ transport: resumable(transport) })
-      try {
+      yield* Effect.gen(function* () {
         yield* Effect.promise(() => chat.sendMessage({ text: 'Build in steps' }))
         yield* Deferred.await(entered)
         expect(chat.status).toBe('error')
@@ -730,9 +742,13 @@ it.live.each(['text-end', 'tool-input-start', 'tool-input-available'])(
           text: texts(chat.lastMessage),
           tools: chat.lastMessage.parts.filter((part) => part.type === 'tool-work').length,
         }).toEqual({ text: ['Starting.', 'Fin', 'Finished.'], tools: 1 })
-      } finally {
-        Deferred.doneUnsafe(release, Effect.void)
-        yield* Effect.promise(() => opened.root.waitForIdle(context))
-      }
+      }).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            Deferred.doneUnsafe(release, Effect.void)
+            yield* Effect.promise(() => opened.root.waitForIdle(context))
+          }),
+        ),
+      )
     }),
 )

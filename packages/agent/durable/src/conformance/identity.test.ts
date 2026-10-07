@@ -95,7 +95,7 @@ it.live(
         ),
       )
       expect(response.status).toBe(200)
-      try {
+      yield* Effect.gen(function* () {
         yield* Deferred.await(entered)
         Deferred.doneUnsafe(release, Effect.void)
         expect(yield* Effect.promise(() => response.text())).toContain('tool-approval-request')
@@ -145,9 +145,13 @@ it.live(
         )
         expect(final.chunks.some((chunk) => chunk.type === 'tool-output-denied')).toBe(true)
         expect(fixture.paid).toEqual([100])
-      } finally {
-        Deferred.doneUnsafe(release, Effect.void)
-      }
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            Deferred.doneUnsafe(release, Effect.void)
+          }),
+        ),
+      )
     }),
 )
 /** J6: a hook can leave a plain task pending, but possessing its task id never creates a hold. */
@@ -193,7 +197,7 @@ it.live('rejects a pending plain tool task used as a hold id', () =>
       ),
       Option.none(),
     ).pipe(Effect.forkScoped({ startImmediately: true }))
-    try {
+    yield* Effect.gen(function* () {
       yield* Deferred.await(entered)
       const id = Option.getOrThrow(task)
       const live = yield* Effect.promise(() =>
@@ -226,10 +230,21 @@ it.live('rejects a pending plain tool task used as a hold id', () =>
         catch: (cause) => new FixtureFailed({ cause }),
       }).pipe(Effect.flip)
       expect(rejection2.cause).toBeInstanceOf(CallNotWaiting)
-    } finally {
-      Deferred.doneUnsafe(release, Effect.void)
-      yield* Fiber.join(observing)
-    }
+    }).pipe(
+      Effect.ensuring(
+        Effect.gen(function* () {
+          Deferred.doneUnsafe(release, Effect.void)
+          // A reader failure during mandatory cleanup is a test defect; retain its tagged cause.
+          yield* Fiber.join(observing).pipe(
+            Effect.catchTag('ReadFailed', (error) =>
+              Effect.sync(() => {
+                throw error
+              }),
+            ),
+          )
+        }),
+      ),
+    )
   }),
 )
 /** J6: snapshot presentation retains each generation's own result-task provenance for reused ids. */

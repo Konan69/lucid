@@ -4,7 +4,7 @@ import { consumeReadable, hold } from '../fixtures/reading.ts'
 
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { isToolUIPart, lastAssistantMessageIsCompleteWithApprovalResponses } from 'ai'
-import { expect, it, onTestFinished } from '@effect/vitest'
+import { expect, it } from '@effect/vitest'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeEvents from 'node:events'
 import * as NodeURL from 'node:url'
@@ -14,6 +14,7 @@ import { Predicate } from 'effect'
 import { PlainChat } from '../fixtures/chat.ts'
 import { abort, answer, attachRun, decide, history, respond, streamRun, waiting } from '../main.ts'
 import { call, context, modelText, shop } from './fixtures/host.ts'
+/** Reserve a durable late question before parking this same run on its payment approval. */
 const parkedQuestion = Effect.fn('Test.parkedQuestion')(function* () {
   const fixture = yield* shop()
   const opened = yield* fixture.open()
@@ -258,9 +259,11 @@ it.live(
         [NodeURL.fileURLToPath(new URL('../fixtures/answer.ts', import.meta.url)), fixture.file],
         { stdio: ['ignore', 'ignore', 'inherit'] },
       )
-      onTestFinished(() => {
-        child.kill('SIGKILL')
-      })
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          child.kill('SIGKILL')
+        }),
+      )
       const [code, death] = yield* Effect.promise(() => NodeEvents.EventEmitter.once(child, 'exit'))
       expect(code).toBeNull()
       expect(death).toBe('SIGKILL')
