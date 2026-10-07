@@ -489,15 +489,24 @@ function approvalOptions(name: string): import('ai').ToolExecutionOptions<SdkVal
   }
 }
 
+/** Prototype properties are not declarations, even for tool names such as constructor or __proto__. */
+function ownOption<Value>(
+  options: Readonly<Record<string, Value>>,
+  name: string,
+): Option.Option<Value> {
+  return Object.hasOwn(options, name) ? Option.fromNullishOr(options[name]) : Option.none()
+}
+
 /** Input-only predicates are synchronous replay rules; a Promise is never interpreted as true. */
 function approvalForTool(
   name: string,
   tool: Pick<Tool<unknown, unknown, unknown>, 'needsApproval'>,
   lookups: Lookups,
 ): Plan['approval'] {
-  if (Object.hasOwn(lookups.approval, name)) {
-    const rule = lookups.approval[name]
-    if (rule !== undefined) return Predicate.isFunction(rule) ? rule : () => rule
+  const override = ownOption(lookups.approval, name)
+  if (Option.isSome(override)) {
+    const rule = override.value
+    return Predicate.isFunction(rule) ? rule : () => rule
   }
   const rule = tool.needsApproval
   if (rule === undefined) return () => false
@@ -528,7 +537,10 @@ function executionForTool(tool: Tool, source: Source): Execution {
 function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
   const executionMode = lookups.sequential.has(name) ? 'sequential' : lookups.execution
   const approval = approvalForTool(name, tool, lookups)
-  const source = tool.execute === undefined ? (lookups.answers[name] ?? 'wait') : 'server'
+  const source =
+    tool.execute === undefined
+      ? Option.getOrElse(ownOption(lookups.answers, name), () => 'wait' as const)
+      : 'server'
   const execution = executionForTool(tool, source)
   const server: Server = {
     name,
@@ -547,7 +559,10 @@ function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
       execution: lookups.execution,
     },
     executionMode,
-    replay: source === 'server' ? (lookups.replay[name] ?? 'unsafe') : 'safe',
+    replay:
+      source === 'server'
+        ? Option.getOrElse(ownOption(lookups.replay, name), () => 'unsafe' as const)
+        : 'safe',
     execute: executeForPi((args, api, context) => invoke(server, args, api, context)),
   }
 }
@@ -558,8 +573,8 @@ function unsupported(name: string, tool: Tool, lookups: Lookups): Option.Option<
   if (tool.type === 'dynamic') return Option.some('dynamic SDK UI tool parts')
   if (Predicate.isFunction(tool.description)) return Option.some('context-dependent descriptions')
   if (tool.deferLoading === true) return Option.some('deferred tool discovery')
-  if (tool.strict === true) return Option.some('strict provider sampling')
-  if (tool.providerOptions !== undefined) return Option.some('provider-specific tool options')
+  if (tool.providerOptions !== undefined && Object.keys(tool.providerOptions).length > 0)
+    return Option.some('provider-specific tool options')
   const callback = (['onInputStart', 'onInputDelta', 'onInputAvailable'] as const).find(
     (field) => tool[field] !== undefined,
   )
@@ -567,9 +582,14 @@ function unsupported(name: string, tool: Tool, lookups: Lookups): Option.Option<
   return unsupportedApproval(name, tool, lookups)
 }
 
-/** A host override retains existing answer semantics; otherwise refuse an unrepresentable second hold. */
+/** A disabled host policy overrides the SDK; any enabled policy needs an unrepresentable second hold. */
 function unsupportedApproval(name: string, tool: Tool, lookups: Lookups): Option.Option<string> {
-  if (tool.execute !== undefined || Object.hasOwn(lookups.approval, name)) return Option.none()
+  if (tool.execute !== undefined) return Option.none()
+  const override = ownOption(lookups.approval, name)
+  if (Option.isSome(override))
+    return override.value === false
+      ? Option.none()
+      : Option.some('approval before person-supplied output')
   if (tool.needsApproval === undefined || tool.needsApproval === false) return Option.none()
   return Option.some('approval before person-supplied output')
 }
@@ -593,12 +613,17 @@ const registration = Effect.fn('Durable.registerTool')(function* (
     },
     catch: (cause) => new ToolSchemaFailed({ toolName: name, cause }),
   })
+  // SDK strict only affects supporting providers. Pi's prefer mode likewise permits unsupported
+  // providers; it also falls back for schemas outside Pi's strict subset (constrained-sampling.js).
+  const constrainedSampling =
+    tool.strict === true ? { type: 'json_schema' as const, strict: 'prefer' as const } : tool.strict
   // TypeBox 1.3.27 TSchema is structural (an empty interface), so the SDK's schema needs no cast.
   return withPlan(
     {
       name,
       description: Predicate.isString(tool.description) ? tool.description : '',
       parameters,
+      constrainedSampling,
       replay: bridged.replay,
       executionMode: bridged.executionMode,
       execute: bridged.execute,
