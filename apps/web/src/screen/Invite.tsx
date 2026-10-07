@@ -1,7 +1,8 @@
 import type { InvitationId, InvitationPreview } from '@vivid/contracts'
 import { Effect, Result } from 'effect'
 import { use, useState } from 'react'
-import { change } from '../data/live'
+import { act } from '../data/app'
+import { change, changing } from '../data/live'
 import { Route, router } from '../data/route'
 import { PersonAvatar } from '../ui/Person'
 import { Button } from '../ui/button'
@@ -44,6 +45,24 @@ const REFUSALS = {
 } as const
 
 /**
+ * Accepts one invitation. The invitation's own answers are taken out of the failure channel by
+ * tag, inside the operation, and never guessed from a message. What is left in the channel is
+ * then only infrastructure and the unexpected, which must not be reported as a bad invitation.
+ */
+const accepting = (id: InvitationId) =>
+  changing((client) =>
+    client.AcceptInvitation({ invitationId: id }).pipe(
+      Effect.as('joined' as const),
+      Effect.catchTags({
+        MailboxUnconfirmed: () => Effect.succeed('unconfirmed' as const),
+        Forbidden: () => Effect.succeed('refused' as const),
+        Conflict: () => Effect.succeed('refused' as const),
+        NotFound: () => Effect.succeed('refused' as const),
+      }),
+    ),
+  )
+
+/**
  * An invitation to a Company, opened from its link. It says who invited the Person and to what,
  * before anything happens; joining is their choice. An invitation that was used, withdrawn or has
  * run out says so plainly instead of failing when the button is pressed.
@@ -52,24 +71,14 @@ export function Invite({ id }: { id: InvitationId }) {
   const preview = use(previewOf(id))
   const [refusal, setRefusal] = useState<keyof typeof REFUSALS | null>(null)
 
-  async function join() {
-    // The invitation's own answers are taken out of the failure channel by tag, inside the
-    // operation, and never guessed from a message. What is left in the channel is then only
-    // infrastructure and the unexpected, which must not be reported as a bad invitation.
-    const result = await change((client) =>
-      client.AcceptInvitation({ invitationId: id }).pipe(
-        Effect.as('joined' as const),
-        Effect.catchTags({
-          MailboxUnconfirmed: () => Effect.succeed('unconfirmed' as const),
-          Forbidden: () => Effect.succeed('refused' as const),
-          Conflict: () => Effect.succeed('refused' as const),
-          NotFound: () => Effect.succeed('refused' as const),
-        }),
-      ),
-    )
-    if (Result.isFailure(result)) return setRefusal('failed')
-    if (result.success !== 'joined') return setRefusal(result.success)
-    router.go(Route.New())
+  /** Joins, then goes to Vivid; a refusal is said under the button in its own sentence. */
+  function join() {
+    return Effect.gen(function* () {
+      const result = yield* accepting(id)
+      if (Result.isFailure(result)) setRefusal('failed')
+      else if (result.success !== 'joined') setRefusal(result.success)
+      else router.go(Route.New())
+    })
   }
 
   return (
@@ -98,7 +107,7 @@ export function Invite({ id }: { id: InvitationId }) {
               <Button variant="ghost" onClick={() => router.go(Route.New())}>
                 Not now
               </Button>
-              <Button onClick={() => void join()}>Join {preview.company.name}</Button>
+              <Button onClick={() => void act(join())}>Join {preview.company.name}</Button>
             </div>
           ) : (
             <p className="text-label text-attention">This invitation is no longer open.</p>

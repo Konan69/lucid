@@ -22,11 +22,12 @@ import {
   whichAccount,
   type ServiceAccounts,
 } from '@vivid/state'
-import { Option, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import { Building2, Pencil, Plus, Search, Unplug } from 'lucide-react'
 import { useState, type ReactElement, type ReactNode } from 'react'
+import { act } from '../../data/app'
 import {
-  change,
+  changing,
   live,
   LiveState,
   services,
@@ -161,14 +162,12 @@ export function Connections({ me }: { me: MeResponse }) {
    * click itself, before the server is asked anything; `follow` closes a tab the answer does not
    * need.
    */
-  async function connect(
-    service: Service['id'],
-    signIn: boolean,
-    name: Option.Option<AccountName>,
-  ) {
-    const tab = signIn ? window.open('about:blank', '_blank') : null
-    mark(service, Option.some('starting'))
-    settle(service, await begin({ id: service }, tab, { shared: admin && forCompany, name }))
+  function connect(service: Service['id'], signIn: boolean, name: Option.Option<AccountName>) {
+    return Effect.gen(function* () {
+      const tab = signIn ? window.open('about:blank', '_blank') : null
+      mark(service, Option.some('starting'))
+      settle(service, yield* begin({ id: service }, tab, { shared: admin && forCompany, name }))
+    })
   }
 
   /**
@@ -179,33 +178,42 @@ export function Connections({ me }: { me: MeResponse }) {
    * tab is opened once the answer is a sign-in page. A browser allows that for a few seconds
    * after the click; when it has stopped allowing it, the tile says to allow pop-ups.
    */
-  async function resume(connection: Connection) {
-    mark(connection.id, Option.some('starting'))
-    const result = await change((client) => client.ResumeConnection({ id: connection.id }))
-    settle(connection.id, Result.isFailure(result) ? Began.Refused() : follow(result.success, null))
+  function resume(connection: Connection) {
+    return Effect.gen(function* () {
+      mark(connection.id, Option.some('starting'))
+      const result = yield* changing((client) => client.ResumeConnection({ id: connection.id }))
+      settle(
+        connection.id,
+        Result.isFailure(result) ? Began.Refused() : follow(result.success, null),
+      )
+    })
   }
 
   const disconnect = (connection: Connection) =>
-    void orSay(
-      change((client) => client.RemoveConnection({ id: connection.id })),
-      `${connection.serviceName} could not be disconnected. Try again.`,
+    void act(
+      orSay(
+        changing((client) => client.RemoveConnection({ id: connection.id })),
+        `${connection.serviceName} could not be disconnected. Try again.`,
+      ),
     )
 
   /** Gives an account the Person's own name for it, or takes that name away with none. */
   const rename = (connection: Connection, name: Option.Option<AccountName>) =>
-    void orSay(
-      change((client) =>
-        client.RenameConnection({ id: connection.id, name: Option.getOrNull(name) }),
+    void act(
+      orSay(
+        changing((client) =>
+          client.RenameConnection({ id: connection.id, name: Option.getOrNull(name) }),
+        ),
+        'That name was not saved. Try again.',
       ),
-      'That name was not saved. Try again.',
     )
 
   const acts: Acts = {
     // How a connected service is entered is not on its accounts, so a sign-in is allowed for:
     // a tab the answer does not need is closed again.
-    onAdd: (group, name) => void connect(group.service, true, name),
+    onAdd: (group, name) => void act(connect(group.service, true, name)),
     onRename: rename,
-    onResume: (connection) => void resume(connection),
+    onResume: (connection) => void act(resume(connection)),
     onDisconnect: disconnect,
   }
 
@@ -225,10 +233,12 @@ export function Connections({ me }: { me: MeResponse }) {
         ready={connections.filter((item) => ConnectionState.guards.Ready(item.state))}
         presses={presses}
         onConnect={(service, name) =>
-          void connect(
-            service.id,
-            ServiceAuthorization.isAnyOf(['SignIn', 'KnownAfterInstall'])(service.authorization),
-            name,
+          void act(
+            connect(
+              service.id,
+              ServiceAuthorization.isAnyOf(['SignIn', 'KnownAfterInstall'])(service.authorization),
+              name,
+            ),
           )
         }
         whose={

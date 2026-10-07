@@ -8,7 +8,8 @@ import { ArrowDown } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { arrival } from '../data/arrival'
-import { change, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
+import { act } from '../data/app'
+import { change, changing, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
 import { Route, router } from '../data/route'
 import { orSay } from '../data/said'
 import { FirstWords, firstWords } from '../data/threads'
@@ -94,9 +95,11 @@ const isWaiting = (working: boolean, visible: ReadonlyArray<FlueConversationMess
 
 /** Stops Vivid in this Thread, and says so when the server did not take it. */
 const stop = (id: ThreadId) =>
-  void orSay(
-    change((sdk) => sdk.StopThread({ id })),
-    'Vivid could not be stopped just now. Try again.',
+  void act(
+    orSay(
+      changing((sdk) => sdk.StopThread({ id })),
+      'Vivid could not be stopped just now. Try again.',
+    ),
   )
 
 /** The title shown while a new Thread's first words are still in flight. */

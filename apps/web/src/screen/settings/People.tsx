@@ -6,10 +6,11 @@ import {
   type PeopleResponse,
   type Role,
 } from '@vivid/contracts'
-import { Result } from 'effect'
+import { Effect, Result } from 'effect'
 import { Building2, UserPlus } from 'lucide-react'
 import { useId, useState } from 'react'
-import { change, live, LiveState, useLive } from '../../data/live'
+import { act } from '../../data/app'
+import { changing, live, LiveState, useLive } from '../../data/live'
 import { Route, router } from '../../data/route'
 import { PersonAvatar } from '../../ui/Person'
 import { Button } from '../../ui/button'
@@ -97,10 +98,12 @@ function CompanyPeople({
   const [refusal, setRefusal] = useState<string | null>(null)
   const admin = manages(role)
 
-  async function attempt(action: Parameters<typeof change>[0], failed: string) {
-    const result = await change(action)
-    setRefusal(Result.isFailure(result) ? failed : null)
-    return Result.isSuccess(result)
+  function attempt(action: Parameters<typeof changing>[0], failed: string) {
+    return Effect.gen(function* () {
+      const result = yield* changing(action)
+      setRefusal(Result.isFailure(result) ? failed : null)
+      return Result.isSuccess(result)
+    })
   }
 
   return (
@@ -125,15 +128,19 @@ function CompanyPeople({
             mine={member.person.id === me.person.id}
             admin={admin}
             onRole={(next) =>
-              void attempt(
-                (client) => client.ChangeRole({ membershipId: member.membershipId, role: next }),
-                'That role could not be changed.',
+              void act(
+                attempt(
+                  (client) => client.ChangeRole({ membershipId: member.membershipId, role: next }),
+                  'That role could not be changed.',
+                ),
               )
             }
             onRemove={() =>
-              void attempt(
-                (client) => client.RemoveMember({ membershipId: member.membershipId }),
-                'That person could not be removed.',
+              void act(
+                attempt(
+                  (client) => client.RemoveMember({ membershipId: member.membershipId }),
+                  'That person could not be removed.',
+                ),
               )
             }
           />
@@ -151,9 +158,11 @@ function CompanyPeople({
               key={invitation.id}
               invitation={invitation}
               onRevoke={() =>
-                void attempt(
-                  (client) => client.RevokeInvitation({ id: invitation.id }),
-                  'That invitation could not be withdrawn.',
+                void act(
+                  attempt(
+                    (client) => client.RevokeInvitation({ id: invitation.id }),
+                    'That invitation could not be withdrawn.',
+                  ),
                 )
               }
             />
@@ -167,9 +176,8 @@ function CompanyPeople({
             <Button
               variant="outline"
               onClick={() =>
-                void attempt(
-                  (client) => client.LeaveCompany(),
-                  'You could not leave just now.',
+                void act(
+                  attempt((client) => client.LeaveCompany(), 'You could not leave just now.'),
                 ).then((left) => {
                   if (left) router.go(Route.New())
                 })
@@ -253,13 +261,15 @@ function Invite({ company, onClose }: { company: string; onClose: () => void }) 
   // (Escape, a click outside, the close button) it plays out before `onClose` is told.
   const surface = useSurface(onClose)
 
-  async function invite() {
-    const result = await change((client) => client.InviteMember({ email: email.trim(), role }))
-    if (Result.isFailure(result)) {
-      setRefusal('That invitation could not be made. They may already be a member.')
-      return
-    }
-    setSent(result.success)
+  function invite() {
+    return Effect.gen(function* () {
+      const result = yield* changing((client) => client.InviteMember({ email: email.trim(), role }))
+      if (Result.isFailure(result)) {
+        setRefusal('That invitation could not be made. They may already be a member.')
+        return
+      }
+      setSent(result.success)
+    })
   }
 
   if (sent !== null) {
@@ -301,7 +311,7 @@ function Invite({ company, onClose }: { company: string; onClose: () => void }) 
           className="contents"
           onSubmit={(event) => {
             event.preventDefault()
-            void invite()
+            void act(invite())
           }}
         >
           <FieldGroup>

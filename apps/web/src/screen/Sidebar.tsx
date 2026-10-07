@@ -1,7 +1,7 @@
 import type { CompanyMembership, MeResponse, Project } from '@vivid/contracts'
 import { SwitchWorkspaceRequest, Workspace } from '@vivid/contracts'
 import { projects as projectsData } from '@vivid/state'
-import { Option, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import {
   Building2,
   ChevronsUpDown,
@@ -14,8 +14,9 @@ import {
   Settings as SettingsIcon,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
+import { act } from '../data/app'
 import { IconButton } from '../ui/button'
-import { change, live, useLiveValue } from '../data/live'
+import { changing, live, useLiveValue } from '../data/live'
 import { Route, router } from '../data/route'
 import { useScope } from '../data/scope'
 import { PersonAvatar } from '../ui/Person'
@@ -273,19 +274,21 @@ function WorkspaceSwitcher({
     Company: ({ company }) => `company:${company.id}`,
   })
 
-  async function enter(to: 'personal' | CompanyMembership) {
-    const switched = await change((client) =>
-      client.SwitchWorkspace({
-        to:
-          to === 'personal'
-            ? SwitchWorkspaceRequest.cases.Personal.make({})
-            : SwitchWorkspaceRequest.cases.Company.make({ companyId: to.company.id }),
-      }),
-    )
-    // Only once the server has moved the Person: a Thread started a moment too early would be
-    // made in the space they were leaving. A refused switch leaves them exactly where they were.
-    // The list of Threads is then a different list, so the address must not point into the old one.
-    if (Result.isSuccess(switched)) router.go(Route.New())
+  function enter(to: 'personal' | CompanyMembership) {
+    return Effect.gen(function* () {
+      const switched = yield* changing((client) =>
+        client.SwitchWorkspace({
+          to:
+            to === 'personal'
+              ? SwitchWorkspaceRequest.cases.Personal.make({})
+              : SwitchWorkspaceRequest.cases.Company.make({ companyId: to.company.id }),
+        }),
+      )
+      // Only once the server has moved the Person: a Thread started a moment too early would be
+      // made in the space they were leaving. A refused switch leaves them exactly where they were.
+      // The list of Threads is then a different list, so the address must not point into the old one.
+      if (Result.isSuccess(switched)) router.go(Route.New())
+    })
   }
 
   return (
@@ -317,7 +320,7 @@ function WorkspaceSwitcher({
               <DropdownMenuRadioItem
                 value={PERSONAL}
                 closeOnClick
-                onClick={() => void enter('personal')}
+                onClick={() => void act(enter('personal'))}
               >
                 <PersonAvatar name={me.person.name} image={me.person.image ?? null} size={16} />
                 <span className="min-w-0 flex-1 truncate">{me.person.name}</span>
@@ -331,7 +334,7 @@ function WorkspaceSwitcher({
                     key={membership.company.id}
                     value={`company:${membership.company.id}`}
                     closeOnClick
-                    onClick={() => void enter(membership)}
+                    onClick={() => void act(enter(membership))}
                   >
                     <Building2 strokeWidth={1.6} />
                     <span className="min-w-0 flex-1 truncate">{membership.company.name}</span>

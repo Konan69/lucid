@@ -12,7 +12,7 @@ import { Effect, Option, Result, Schedule } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import * as Atom from 'effect/unstable/reactivity/Atom'
 import { VividRpcClient } from '@vivid/client-runtime'
-import { change, run } from './app'
+import { change, changing, run } from './app'
 import { Route, router } from './route'
 import { engine } from './runtime'
 import { said, sayWith } from './said'
@@ -186,7 +186,7 @@ export function useLiveValue<Value>(query: LiveQuery<Value>): Option.Option<Valu
   return LiveState.$is('Ready')(state) ? Option.some(state.value) : Option.none()
 }
 
-export { change }
+export { change, changing }
 
 const seen = new Map<ThreadId, number>()
 

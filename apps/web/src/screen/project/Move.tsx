@@ -3,7 +3,8 @@ import { projects as projectsData } from '@vivid/state'
 import { Option } from 'effect'
 import { Check, Plus } from 'lucide-react'
 import { useState } from 'react'
-import { change, live, useLiveValue } from '../../data/live'
+import { act } from '../../data/app'
+import { changing, live, useLiveValue } from '../../data/live'
 import { orSay } from '../../data/said'
 import {
   Dialog,
@@ -21,17 +22,19 @@ import { Mark } from './Mark'
  * confirmed. A refusal puts the Thread back where it was and says so.
  */
 export function fileThread(thread: Thread, projectId: ProjectId | null) {
-  void orSay(
-    change(
-      (client) => client.PatchThread({ id: thread.id, patch: { projectId } }),
-      () =>
-        live.threads.expect((current) => ({
-          threads: current.threads.map((each) =>
-            each.id === thread.id ? { ...each, projectId } : each,
-          ),
-        })),
+  void act(
+    orSay(
+      changing(
+        (client) => client.PatchThread({ id: thread.id, patch: { projectId } }),
+        () =>
+          live.threads.expect((current) => ({
+            threads: current.threads.map((each) =>
+              each.id === thread.id ? { ...each, projectId } : each,
+            ),
+          })),
+      ),
+      `“${thread.title}” could not be moved just now. Try again.`,
     ),
-    `“${thread.title}” could not be moved just now. Try again.`,
   )
 }
 

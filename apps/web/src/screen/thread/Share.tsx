@@ -5,10 +5,11 @@ import {
   type PersonId,
   type Thread,
 } from '@vivid/contracts'
-import { Option, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import { Building2, Check, Lock, Users } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { change, live, useLiveValue } from '../../data/live'
+import { act } from '../../data/app'
+import { changing, live, useLiveValue } from '../../data/live'
 import { PersonAvatar } from '../../ui/Person'
 import { Button } from '../../ui/button'
 import { cn } from '../../ui/cn'
@@ -62,14 +63,16 @@ export function Share({
     onSome: (value) => value.members.filter((member) => member.person.id !== me),
   })
 
-  async function save() {
-    const audience = audienceFor(reach, chosen)
-    const result = await change((client) => client.ShareThread({ id: thread.id, audience }))
-    if (Result.isFailure(result)) {
-      setRefusal('That could not be saved. Try again.')
-      return
-    }
-    onClose()
+  function save() {
+    return Effect.gen(function* () {
+      const audience = audienceFor(reach, chosen)
+      const result = yield* changing((client) => client.ShareThread({ id: thread.id, audience }))
+      if (Result.isFailure(result)) {
+        setRefusal('That could not be saved. Try again.')
+        return
+      }
+      onClose()
+    })
   }
 
   const toggle = (id: PersonId) =>
@@ -125,7 +128,10 @@ export function Share({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button disabled={reach === 'people' && chosen.length === 0} onClick={() => void save()}>
+          <Button
+            disabled={reach === 'people' && chosen.length === 0}
+            onClick={() => void act(save())}
+          >
             Save
           </Button>
         </DialogFooter>

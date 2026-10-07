@@ -5,9 +5,10 @@ import {
   type Rule,
   type RuleDecision,
 } from '@vivid/contracts'
-import { Result } from 'effect'
+import { Effect, Result } from 'effect'
 import { useState } from 'react'
-import { change, live, LiveState, useLive } from '../../data/live'
+import { act } from '../../data/app'
+import { changing, live, LiveState, useLive } from '../../data/live'
 import { orSay } from '../../data/said'
 import { Button } from '../../ui/button'
 import { Input } from '../../ui/input'
@@ -42,15 +43,19 @@ export function Rules({ me }: { me: MeResponse }) {
   const admin = company !== null && company.role !== 'member'
 
   /** Saves a rule and says whether it was kept, so the form only clears what was really saved. */
-  async function add(action: string, decision: RuleDecision, scope: RuleScope) {
-    const result = await change((client) => client.CreateRule({ action, decision, scope }))
-    setRefusal(Result.isFailure(result) ? 'That rule could not be saved.' : null)
-    return Result.isSuccess(result)
+  function add(action: string, decision: RuleDecision, scope: RuleScope) {
+    return Effect.gen(function* () {
+      const result = yield* changing((client) => client.CreateRule({ action, decision, scope }))
+      setRefusal(Result.isFailure(result) ? 'That rule could not be saved.' : null)
+      return Result.isSuccess(result)
+    })
   }
   const remove = (rule: Rule) =>
-    void orSay(
-      change((client) => client.DeleteRule({ id: rule.id })),
-      'That rule could not be removed. Try again.',
+    void act(
+      orSay(
+        changing((client) => client.DeleteRule({ id: rule.id })),
+        'That rule could not be removed. Try again.',
+      ),
     )
 
   return (
@@ -115,8 +120,8 @@ function NewRule({
   onAdd,
 }: {
   placeholder: string
-  /** Resolves to whether the rule was saved. */
-  onAdd: (action: string, decision: RuleDecision) => Promise<boolean>
+  /** Saves the rule when started, and ends on whether it was saved. */
+  onAdd: (action: string, decision: RuleDecision) => Effect.Effect<boolean>
 }) {
   const [action, setAction] = useState('')
   const [decision, setDecision] = useState<RuleDecision>('Ask')
@@ -127,7 +132,7 @@ function NewRule({
         event.preventDefault()
         if (action.trim().length === 0) return
         // Cleared only once it is saved: a refused rule is still in the field to send again.
-        void onAdd(action.trim(), decision).then((saved) => {
+        void act(onAdd(action.trim(), decision)).then((saved) => {
           if (saved) setAction('')
         })
       }}

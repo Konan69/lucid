@@ -1,4 +1,4 @@
-import { Option, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import { Check } from 'lucide-react'
 import { useId, useState, useSyncExternalStore, type FormEvent } from 'react'
 import {
@@ -8,7 +8,7 @@ import {
   reload,
   signIn,
 } from '../data/account'
-import { run, send } from '../data/app'
+import { act, running, send } from '../data/app'
 import { readAddress, SAID, Standing } from '../data/google'
 import { googleHandoff } from '../data/handoff'
 import { Way } from '../data/signin'
@@ -162,21 +162,23 @@ export function Welcome({ returnTo }: { returnTo: string }) {
   const handoff = useSyncExternalStore(googleHandoff.subscribe, googleHandoff.current)
   const copy = COPY[mode]
 
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    setBusy('email')
-    setNotice(null)
-    const request =
-      mode === 'create'
-        ? createAccount({ name: name.trim(), email: email.trim(), password })
-        : signIn({ email: email.trim(), password })
-    const result = await run(request)
-    if (Result.isFailure(result)) {
-      setNotice({ tone: 'danger', message: result.failure.message })
-      setBusy('none')
-      return
-    }
-    reload(destination)
+  function submit(event: FormEvent) {
+    return Effect.gen(function* () {
+      event.preventDefault()
+      setBusy('email')
+      setNotice(null)
+      const request =
+        mode === 'create'
+          ? createAccount({ name: name.trim(), email: email.trim(), password })
+          : signIn({ email: email.trim(), password })
+      const result = yield* running(request)
+      if (Result.isFailure(result)) {
+        setNotice({ tone: 'danger', message: result.failure.message })
+        setBusy('none')
+        return
+      }
+      reload(destination)
+    })
   }
 
   /**
@@ -185,19 +187,21 @@ export function Welcome({ returnTo }: { returnTo: string }) {
    *
    * In the desktop app nothing leaves: the hand-off starts and its card takes the form's place.
    */
-  async function google() {
-    setNotice(null)
-    if (!GOOGLE_HERE) {
-      googleHandoff.start(destination)
-      return
-    }
-    setBusy('google')
-    reloadOnReturn()
-    const result = await run(continueWithGoogle(destination))
-    if (Result.isFailure(result)) {
-      setNotice(SAID[result.failure.outcome])
-      setBusy('none')
-    }
+  function google() {
+    return Effect.gen(function* () {
+      setNotice(null)
+      if (!GOOGLE_HERE) {
+        googleHandoff.start(destination)
+        return
+      }
+      setBusy('google')
+      reloadOnReturn()
+      const result = yield* running(continueWithGoogle(destination))
+      if (Result.isFailure(result)) {
+        setNotice(SAID[result.failure.outcome])
+        setBusy('none')
+      }
+    })
   }
 
   return (
@@ -223,7 +227,7 @@ export function Welcome({ returnTo }: { returnTo: string }) {
             <>
               <form
                 onSubmit={(event) => {
-                  void submit(event)
+                  void act(submit(event))
                 }}
                 className="flex flex-col gap-3 rounded-panel bg-surface-3 p-6 edge"
               >
@@ -260,7 +264,7 @@ export function Welcome({ returnTo }: { returnTo: string }) {
                   resting={busy !== 'none'}
                   leaving={busy === 'google'}
                   onStart={() => {
-                    void google()
+                    void act(google())
                   }}
                 />
               </form>

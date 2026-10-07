@@ -1,8 +1,9 @@
 import { createFlueClient } from '@flue/sdk'
 import { ThreadId, type ProjectId } from '@vivid/contracts'
 import { titleFromMessage } from '@vivid/state'
-import { Data, Result } from 'effect'
-import { change, live } from './live'
+import { Data, Effect, Result } from 'effect'
+import { act } from './app'
+import { changing, live } from './live'
 import { engine } from './runtime'
 import { Route, router } from './route'
 import { scope } from './scope'
@@ -44,35 +45,40 @@ const stand = (id: ThreadId, standing: FirstWords) => {
  * Makes the Thread if this page has not yet, then sends its first words, recording where they
  * stand at each step. The Thread must exist before the gateway will take a message for it.
  */
-async function deliver(id: ThreadId, words: string, projectId: ProjectId | null) {
-  stand(id, FirstWords.Sending({ words, projectId }))
-  if (!made.has(id)) {
-    const created = await change((client) =>
-      client.CreateThread({ id, title: titleFromMessage(words), projectId }),
-    )
-    if (Result.isFailure(created)) {
-      stand(id, FirstWords.Unsent({ words, projectId }))
-      return
+const deliver = (id: ThreadId, words: string, projectId: ProjectId | null) =>
+  Effect.gen(function* () {
+    stand(id, FirstWords.Sending({ words, projectId }))
+    if (!made.has(id)) {
+      const created = yield* changing((client) =>
+        client.CreateThread({ id, title: titleFromMessage(words), projectId }),
+      )
+      if (Result.isFailure(created)) {
+        stand(id, FirstWords.Unsent({ words, projectId }))
+        return
+      }
+      made.add(id)
+      // The screen asked for this Thread before it existed and was told there was no such Thread.
+      // Now there is, so the question is asked again.
+      engine.reopen()
     }
-    made.add(id)
-    // The screen asked for this Thread before it existed and was told there was no such Thread.
-    // Now there is, so the question is asked again.
-    engine.reopen()
-  }
-  const sent = await createFlueClient({ url: `/api/vivid/${encodeURIComponent(id)}` })
-    .send({ message: { kind: 'user', body: words } })
-    .then(
-      () => true,
-      () => false,
+    // Flue's client answers with a Promise. Both of its endings are turned into a value here, so
+    // this wait cannot reject: a send that did not go through is `false`, not a failure.
+    const sent = yield* Effect.promise(() =>
+      createFlueClient({ url: `/api/vivid/${encodeURIComponent(id)}` })
+        .send({ message: { kind: 'user', body: words } })
+        .then(
+          () => true,
+          () => false,
+        ),
     )
-  if (sent) {
-    held.delete(id)
-    landed.add(id)
-    tell()
-  } else {
-    stand(id, FirstWords.Unsent({ words, projectId }))
-  }
-}
+    if (sent) {
+      held.delete(id)
+      landed.add(id)
+      tell()
+    } else {
+      stand(id, FirstWords.Unsent({ words, projectId }))
+    }
+  })
 
 export const firstWords = {
   subscribe: (watcher: () => void) => {
@@ -92,7 +98,7 @@ export const firstWords = {
   again: (id: ThreadId) => {
     const standing = held.get(id)
     if (standing !== undefined && FirstWords.$is('Unsent')(standing)) {
-      void deliver(id, standing.words, standing.projectId)
+      void act(deliver(id, standing.words, standing.projectId))
     }
   },
 }
@@ -113,18 +119,22 @@ export function startThread(message: string, projectId: ProjectId | null = scope
   const id = ThreadId.make(crypto.randomUUID())
   stand(id, FirstWords.Sending({ words: message, projectId }))
   router.go(Route.Thread({ id }))
-  void deliver(id, message, projectId)
+  void act(deliver(id, message, projectId))
   return id
 }
 
-/** Opens an empty Thread, for when the Person wants the page before the words. */
-export async function openThread(projectId: ProjectId | null = scope.filing()) {
-  const id = ThreadId.make(crypto.randomUUID())
-  const created = await change((client) =>
-    client.CreateThread({ id, title: 'New thread', projectId }),
-  )
-  if (Result.isSuccess(created)) router.go(Route.Thread({ id }))
-  return created
-}
+/**
+ * Opens an empty Thread, for when the Person wants the page before the words. This describes the
+ * opening; whoever calls it starts it, and reads where it is filed when it starts.
+ */
+export const openThread = (projectId: ProjectId | null = scope.filing()) =>
+  Effect.gen(function* () {
+    const id = ThreadId.make(crypto.randomUUID())
+    const created = yield* changing((client) =>
+      client.CreateThread({ id, title: 'New thread', projectId }),
+    )
+    if (Result.isSuccess(created)) router.go(Route.Thread({ id }))
+    return created
+  })
 
 export { live }

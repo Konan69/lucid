@@ -1,4 +1,4 @@
-import { Option, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
 
 /**
  * Things the app has to tell the Person that have no place of their own on screen.
@@ -91,13 +91,15 @@ export const say = (words: string) => sayWith(words, Option.none())
 
 /**
  * Follows a change whose refusal has nowhere on screen to be said, and says it. The result is
- * handed on, so a caller that also needs it can still have it.
+ * handed on, so a caller that also needs it can still have it. This describes the following; the
+ * handler that owns the press starts it (`act` in `app.ts`).
  */
-export async function orSay<Value, Failure>(
-  made: Promise<Result.Result<Value, Failure>>,
+export const orSay = <Value, Failure>(
+  made: Effect.Effect<Result.Result<Value, Failure>>,
   words: string,
-) {
-  const result = await made
-  if (Result.isFailure(result)) say(words)
-  return result
-}
+) =>
+  Effect.gen(function* () {
+    const result = yield* made
+    if (Result.isFailure(result)) say(words)
+    return result
+  })

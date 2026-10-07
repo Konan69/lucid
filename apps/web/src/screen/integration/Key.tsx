@@ -1,7 +1,8 @@
 import type { ConnectionId } from '@vivid/contracts'
-import { Redacted, Result } from 'effect'
+import { Effect, Redacted, Result } from 'effect'
 import { useId, useState } from 'react'
-import { change } from '../../data/live'
+import { act } from '../../data/app'
+import { changing } from '../../data/live'
 import { Button } from '../../ui/button'
 import {
   Dialog,
@@ -34,22 +35,26 @@ export function EnterKey({ keying, onClose }: { keying: Keying; onClose: () => v
   // Sent away (Escape, a click outside, the close button) it plays out before `onClose` is told.
   const surface = useSurface(onClose)
 
-  async function submit(form: HTMLFormElement) {
-    // Each field is read from its own input, by the name the service gave it: an input's value is
-    // always text, where a form's entries could also be files.
-    const typed = (name: string) => {
-      const input = form.elements.namedItem(name)
-      return input instanceof HTMLInputElement ? input.value : ''
-    }
-    const fields = Object.fromEntries(
-      keying.fields.map((field) => [field.name, Redacted.make(typed(field.name))]),
-    )
-    const result = await change((client) => client.CompleteConnection({ id: keying.id, fields }))
-    if (Result.isFailure(result)) {
-      setRefusal('That was not accepted. Check it and try again.')
-      return
-    }
-    onClose()
+  function submit(form: HTMLFormElement) {
+    return Effect.gen(function* () {
+      // Each field is read from its own input, by the name the service gave it: an input's value is
+      // always text, where a form's entries could also be files.
+      const typed = (name: string) => {
+        const input = form.elements.namedItem(name)
+        return input instanceof HTMLInputElement ? input.value : ''
+      }
+      const fields = Object.fromEntries(
+        keying.fields.map((field) => [field.name, Redacted.make(typed(field.name))]),
+      )
+      const result = yield* changing((client) =>
+        client.CompleteConnection({ id: keying.id, fields }),
+      )
+      if (Result.isFailure(result)) {
+        setRefusal('That was not accepted. Check it and try again.')
+        return
+      }
+      onClose()
+    })
   }
 
   return (
@@ -67,7 +72,7 @@ export function EnterKey({ keying, onClose }: { keying: Keying; onClose: () => v
           className="contents"
           onSubmit={(event) => {
             event.preventDefault()
-            void submit(event.currentTarget)
+            void act(submit(event.currentTarget))
           }}
         >
           <FieldGroup>

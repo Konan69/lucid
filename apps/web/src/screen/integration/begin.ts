@@ -1,6 +1,6 @@
 import { ConnectionStep, type AccountName, type Service } from '@vivid/contracts'
-import { Data, Option, Result } from 'effect'
-import { change } from '../../data/live'
+import { Data, Effect, Option, Result } from 'effect'
+import { changing } from '../../data/live'
 import type { Keying } from './Key'
 import { showSignIn } from './signin'
 
@@ -62,19 +62,22 @@ export interface Beginning {
 
 /**
  * Starts a Connection to a service from the catalog, for this Person or for their Company. A
- * service the Person already connected is begun the same way: that adds one more account.
+ * service the Person already connected is begun the same way: that adds one more account. This
+ * describes the beginning; the press that owns it starts it (`act` in `data/app.ts`).
  */
-export async function begin(
+export function begin(
   service: Pick<Service, 'id'>,
   tab: Window | null,
   { shared, name }: Beginning,
-): Promise<Began> {
-  const result = await change((client) =>
-    client.BeginConnection({ service: service.id, name: Option.getOrNull(name), shared }),
-  )
-  if (Result.isFailure(result)) {
-    if (tab !== null) tab.close()
-    return Began.Refused()
-  }
-  return follow(result.success, tab)
+): Effect.Effect<Began> {
+  return Effect.gen(function* () {
+    const result = yield* changing((client) =>
+      client.BeginConnection({ service: service.id, name: Option.getOrNull(name), shared }),
+    )
+    if (Result.isFailure(result)) {
+      if (tab !== null) tab.close()
+      return Began.Refused()
+    }
+    return follow(result.success, tab)
+  })
 }
