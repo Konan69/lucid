@@ -1,5 +1,7 @@
 PostgreSQL port and round-trip report — 7 October 2026
 
+Latest Turn 6 status: Part A (`8f8c9190`) and Part B (`37a2cca0`) are complete; 134 owned Effect findings became zero. Package tests pass with and without PostgreSQL. Build and packed-package verification are blocked by unowned `src/holds.ts:459:14` TS2883; the tools lane must annotate readerDecision. The newest results and blocker are in the final Turn 6 section; earlier tables are historical. The delivery message provides the report/head SHA.
+
 Branch: `feat/pi-durable-pg`. The first sections preserve the Round 10 measurements and checks at `5ac2c192`. Round 11 results and decisions follow below, based on merged head `f77167f0`; the delivery message gives the final report commit and head SHA. No push, merge, deployment or pull request.
 
 Commits, in order:
@@ -196,3 +198,111 @@ Only PostgreSQL storage and Runnable example were edited. They now explain the p
 **Round 11 limits**
 
 No live provider, frontend, app database, SSH, remote host, push, merge, deployment or pull request. No root gate or whole-repository typecheck. PostgreSQL 16/17, transaction-mode poolers, Node 22, remote-network latency, sustained throughput, concurrent large entries, V8 maximum string sizes and mid-commit backend death were not checked. Tests used Node 24, PostgreSQL 18, real leased connections and the faux provider. Package-wide erasableSyntaxOnly remains deferred as allowed by PK1; emitted/source entry points have the build guard and plain Node proof. Compiler exit 0 follows the existing shared policy for advisory Effect diagnostics; those diagnostics have not been suppressed or fixed in other lanes.
+
+**Turn 6: waiting refusal and owned Effect rules — 7 October 2026**
+
+Baseline `24f3fb4b`, branch `feat/pi-durable-pg`. The final delivery gives the head/report commit. `8f8c9190` fixes Part A; `37a2cca0` fixes Part B. The final documentation commit records the results and explains finite numeric envelopes beside the port. Only assigned files and exact allowlist entries changed; no other lane's file, compiler policy, dependency, frontend component, styling or hook implementation changed. The React test's stock Probe syntax and JSX are unchanged; only its async test orchestration changed.
+
+Part A: both Promise and Effect examples explicitly map TurnWaiting to HTTP 409. Two new cases in serve.test.ts check the exact typed refusal text, retain the original approval identity, and approve successfully afterwards. One uses real TCP and the runnable host; the other calls the Effect example with the real Pi/faux-provider fixture. Removing the Effect mapping makes the latter fail with TurnWaiting; restoring it makes both pass. TurnStranded belongs to followRun, which this example does not expose, as its one comment states. The Runnable example README now explains the 409.
+
+Part B decisions:
+
+- **134 owned Effect findings became zero**: 107 asyncFunction, 24 schemaNumber, one multipleCatchTag, one globalErrorInEffectFailure and one unnecessaryEffectGen. No casts, widened error channels, removed assertions or file-level switches were used. The final package graph still prints **559 findings outside these owned paths**; its inherited nonfatal policy was not changed. A strict whole-package verdict requires the other lanes' changes.
+- Pi's Storage port stays Promise-native. The **25 storage.ts and two pg.ts next-line asyncFunction directives** name the Storage Promise contract and the actual SQLite reference method or branch (readScopedEntry cites readEntry's ancestry branch; checkDelta cites checkDocumentActions). Allocation, SQL order, transaction boundaries and driver calls are unchanged. Every boundary still has an exact audit entry. No new Effect runtime enters storage or its driver.
+- Numeric database envelopes, Chord offsets, token counts and example/benchmark numeric ingress use Finite/FiniteFromString. These are finite domain values: SQL ids/versions are integers, JSON cannot persist NaN/infinity as numbers, and token counts/body limits/ports cannot be nonfinite. BIGINT stays decimal text until checked conversion; persisted JSON payloads remain TEXT. The finite-envelope reason is also stated beside the code.
+- The owned migration runner uses non-async Promise chaining at the facade boundary. It retains contiguous-version validation as a rejection, the same transaction, and the original statement/version-update order. No extra driver call is introduced. The example's Promise ingress likewise uses direct Promise functions and chains; the Effect example remains an Effect program, with one catchTags map. Iterator cleanup retains the original body failure and the incoming socket's destroyOnReturn:false rule. The fixed after-disconnect log remains unchanged.
+- Our tests use @effect/vitest and Effect.gen, with live mode for real database/TCP/React/child-process IO and pure Effect.sync for literal equality. Every original name, assertion count and observable step remains. Promise APIs enter through Effect.promise; expected rejections enter through Effect.tryPromise with a typed observation that retains the original cause and throw semantics. SDK/transaction/cleanup callbacks return plain Promises where their contract requires them. Test resources are still registered before writes; additional standalone-facade cleanup handles failed Effect cases.
+- Pi's published registerStorageConformance is still called with Vitest's actual describe/expect/it and a Promise fixture callback. The upstream runner registers its unchanged 23 Promise cases; it is not adapted to Effect. With a non-async fixture callback, asyncFunction reports **zero at our call site**; the published JavaScript suite is outside this TypeScript diagnostic graph.
+- The requested `git grep -l "it.effect\|it.live" origin/main -- 'apps/web/src/**/*.test.tsx'` found no converted React test. Both web test files on the available origin/main are synchronous. The conversion follows main's desktop signin.test.ts Effect-test/resource shape and the stock React act Promise seam. No UI, component, markup, copy or stock useChat behavior was redesigned; all three hook cases pass.
+- Benchmark orchestration now returns Effects. Only each CLI's module entry runs an Effect runtime. Scopes release storage before the pool, and remove fresh schemas even when initialization fails. The existing test-only query counter remains outside the product path. The full smallest-scale benchmark was rerun to prove the changed CLI.
+
+**Case/expectation preservation**
+
+Counts use the requested source-case pattern `^\s*(it|test)[.(]` and `expect\(`. They count declarations, without expanding each tables. Before means after Part A and before Part B; Part A separately added two cases and nine assertions to serve.test.ts. Pi's 23 registered cases are counted by the real run, separately from source declarations.
+
+| File                        | Cases before | Cases after | Expects before | Expects after |
+| --------------------------- | -----------: | ----------: | -------------: | ------------: |
+| examples/entry.test.ts      |            1 |           1 |              2 |             2 |
+| examples/serve.test.ts      |            9 |           9 |             77 |            77 |
+| postgres/large.test.ts      |            1 |           1 |              3 |             3 |
+| postgres/literal.test.ts    |            1 |           1 |              1 |             1 |
+| postgres/migrations.test.ts |            8 |           8 |             19 |            19 |
+| postgres/ownership.test.ts  |            6 |           6 |             20 |            20 |
+| postgres/quoting.test.ts    |            3 |           3 |             16 |            16 |
+| postgres/run.test.ts        |            2 |           2 |             17 |            17 |
+| postgres/storage.test.ts    |            3 |           3 |              9 |             9 |
+| postgres/trips.test.ts      |            2 |           2 |              7 |             7 |
+| react/chat.test.tsx         |            3 |           3 |              9 |             9 |
+
+An AST check also found zero async function declarations/callbacks in all eleven owned test files, including React. No new fails/skip marker was added. The PostgreSQL describe.skipIf absence rule and the two existing live skips remain; focused -t selections below are temporary filters, not skipped conformance cases.
+
+**Turn 6 benchmark**
+
+Real PostgreSQL 18 in disposable durable-pg-round12-pg, random loopback port 44625; SQLite is Pi's unchanged :memory: opener. Smallest scale is 1,000 entries / 200 tasks / 200 documents. Each operation was measured once and its expected result verified. Start load at 20:37:30 was **3.29 / 2.29 / 1.87** against **16 cores**; completion/build start load was **2.40 / 2.22 / 1.88**, with 12 GB available and 3 GB swap used. No time threshold, no sleeps, no polling. These local milliseconds are observations, not production throughput claims.
+
+**Read workloads**
+
+| Workload                                  | PG calls |    PG ms | SQLite ms |
+| ----------------------------------------- | -------: | -------: | --------: |
+| seed 1k (1000/200/200)                    |    10367 | 7749.905 |    57.431 |
+| exact entry lookup                        |        1 |    1.270 |     0.341 |
+| entry page scan (100)                     |        2 |    3.231 |     0.427 |
+| filtered task scan (50)                   |        1 |    1.271 |     0.154 |
+| exact document address among many         |        1 |    0.875 |     0.081 |
+| document replay tail (0)                  |        1 |    2.002 |     0.181 |
+| document replay tail (16)                 |        1 |    2.655 |     0.126 |
+| document replay tail (128)                |        1 |    3.657 |     0.504 |
+| document replay tail (1024)               |        1 |   11.960 |     2.571 |
+| ancient historical read before newer base |        1 |    2.565 |     0.284 |
+| recent historical read after newer base   |        1 |    2.879 |     0.503 |
+| fork-depth history scan (100)             |        8 |    6.521 |     0.893 |
+| fork-depth head lookup                    |       18 |   11.122 |     0.207 |
+
+**Write workloads**
+
+| Workload                                    | PG calls |  PG ms | SQLite ms |
+| ------------------------------------------- | -------: | -----: | --------: |
+| commit one entry                            |        2 |  2.696 |     0.056 |
+| commit 100 entries                          |        2 | 12.034 |     0.652 |
+| commit mixed entry/task/submission/document |        6 |  7.638 |     0.375 |
+| stream entry append                         |        2 |  1.876 |     0.030 |
+| stream task update + document revision      |        8 |  5.999 |     0.229 |
+| stream submission + entry                   |        2 |  2.125 |     0.069 |
+
+The historical before/after call table above remains the baseline: one-entry commits retain **2 calls**, down from 7; 100 entries retain 2, down from 304. Scoped ancestry and document snapshot rules are unchanged. The repeated mutable-id case still proves ordered upserts rather than a reordered multi-row write.
+
+The focused bounded-heap run at load **1.50 / 1.49 / 1.59 on 16 cores** also passed both child cases. With the converted Effect CLI, 16 MiB committed in **357.032 ms** (22.314 ms/MiB), read in 180.327 ms, peak RSS 275.875 MiB, longest callback 38.216 ms; 64 MiB committed in **1,627.426 ms** (25.429 ms/MiB), read in 744.100 ms, peak RSS 525.906 MiB, longest callback 161.268 ms. Equality and exit 0 remain the only test assertions, with the same 1024 MiB heap cap. The largest callback remains well below a second; no bound-parameter threshold was added.
+
+**Turn 6 commands and results**
+
+Package commands run from packages/agent/durable, root checks from the root. Every heavy command ran serially; Vitest always used maxWorkers=2 and serial files. VIVID_TEST_DATABASE_URL referred only to the lane's disposable database; DURABLE_LIVE=0 prevents provider calls.
+
+| Command                                                                                                                              | Result                                                                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `git status --short`; `git log --oneline -5`                                                                                         | Clean baseline 24f3fb4b inspected.                                                                                                                                                           |
+| `pnpm exec vitest run src/examples/serve.test.ts --maxWorkers=2 --no-file-parallelism -t 'waiting turn\|refuses a message'`          | **2 passed**. Removing the Effect mapping and selecting waiting turn gave **1 failed** with TurnWaiting, proving the regression; mapping restored before commit.                             |
+| `pnpm exec vitest run src/examples src/react --maxWorkers=2 --no-file-parallelism`                                                   | **3 files, 19 passed** (15 serve, one source-entry audit, three stock-hook cases).                                                                                                           |
+| `VIVID_TEST_DATABASE_URL=<disposable-url> pnpm exec vitest run src/postgres --maxWorkers=2 --no-file-parallelism --reporter=verbose` | **8 files, 64 passed; 23/23 upstream conformance**, unchanged and none skipped. Includes 52 database and 12 formatter cases.                                                                 |
+| `VIVID_TEST_DATABASE_URL=<disposable-url> DURABLE_LIVE=0 pnpm exec vitest run --maxWorkers=2 --no-file-parallelism`                  | **71 files passed, 1 skipped; 671 passed, 1 unchanged expected failure, 2 live skipped** (674 total), 107.66 s.                                                                              |
+| `env -u VIVID_TEST_DATABASE_URL DURABLE_LIVE=0 pnpm exec vitest run --maxWorkers=2 --no-file-parallelism`                            | **64 files passed, 8 skipped; 619 passed, 1 unchanged expected failure, 54 database/live skipped** (674 total), 99.55 s.                                                                     |
+| `pnpm typecheck`                                                                                                                     | Exit **0**; **0 owned printed Effect findings**, **0 ordinary TypeScript errors**. The shared nonfatal policy still prints 559 Effect findings in unowned files. That policy was not edited. |
+| `pnpm exec oxlint --type-aware packages/agent/durable/src`                                                                           | Exit **0**, **0 errors and 0 warnings**.                                                                                                                                                     |
+| `pnpm audit:effect-boundaries`                                                                                                       | **422 files, 374 findings, 0 unallowlisted**; no stale or duplicate entry.                                                                                                                   |
+| `pnpm exec oxfmt --check packages/agent/durable scripts/effect-boundary-allowlist.json`                                              | Passed.                                                                                                                                                                                      |
+| `pnpm check:versions`; `git diff --check`                                                                                            | Passed.                                                                                                                                                                                      |
+| `VIVID_TEST_DATABASE_URL=<disposable-url> VIVID_DURABLE_POSTGRES_BENCHMARK=1 pnpm exec node src/postgres/bench/main.ts`              | Exit **0**; both backend tables above, with expected results checked and resources released.                                                                                                 |
+| `pnpm build`                                                                                                                         | **Failed, exit 1**: unowned src/holds.ts:459:14 TS2883 on exported readerDecision. No owned compiler finding.                                                                                |
+| `pnpm check:package`                                                                                                                 | **Failed, exit 1** at its mandatory clean-build step, with the same TS2883. Packed consumer checks did not run; no stale dist was accepted.                                                  |
+| `docker exec durable-pg-round12-pg pg_isready -U vivid -d vivid_test`                                                                | Accepting connections.                                                                                                                                                                       |
+| `docker exec durable-pg-round12-pg psql -U vivid -d vivid_test` (catalog queries)                                                    | **0 remaining durable schemas, 0 advisory locks**.                                                                                                                                           |
+| `docker rm -f durable-pg-round12-pg`                                                                                                 | Removed only the container this lane started.                                                                                                                                                |
+
+The build blocker is exact:
+
+```text
+src/holds.ts(459,14): error TS2883: The inferred type of 'readerDecision' cannot be named without a reference to 'Harness' from '../node_modules/@earendil-works/pi-durable/dist/harness/types'. This is likely not portable. A type annotation is necessary.
+```
+
+The tools lane must supply a portable public type annotation for the exported readerDecision in src/holds.ts; it is explicitly outside this turn's owned paths. Build and packed-package checks must then be rerun. This lane did not bypass the build, edit a foreign file, disable a rule or weaken a case. **The full done state is blocked, not ready to merge.** Owned Part A/B fixes and focused/package tests are complete.
+
+Not checked: a strict whole-package Effect verdict after the other lanes' integration, packaged consumers (blocked before packing), Node 22, PostgreSQL 16/17, alternate drivers, transaction-mode poolers, remote latency, live providers, sustained throughput, concurrent large records or frontend rendering. No root gate or root typecheck, SSH, push, merge, deployment, PR, credential-store or app-database access. The permitted stock-hook test ran headlessly in jsdom and kept the Probe's UI syntax unchanged.

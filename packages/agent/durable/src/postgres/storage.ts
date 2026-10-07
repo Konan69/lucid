@@ -146,6 +146,9 @@ type ScopeColumns = {
  * unchanged JSON text. Only the corresponding reader is used for each table.
  */
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.MutableJson))
+/** Pi Storage's extracted ids, versions and Chord offsets are finite domain
+ * numbers. JSON cannot persist NaN or infinities as numbers; payload JSON remains
+ * the reference's text, while these envelopes reject impossible numeric rows. */
 const EntryEnvelope = Schema.Struct({
   id: Schema.Finite,
   conversationId: Schema.Finite,

@@ -19,7 +19,8 @@ import { ConnectionSettingInvalid, RawNul, StorageOwned, StorageDisconnected } f
 
 /** pg/lib/query.js:_checkForMultirow returns one result per simple-protocol
  * statement. Decode scalar metadata/ownership rows once at the SDK ingress.
- * JSON records remain TEXT, so this never rewrites their keys or numbers. */
+ * JSON records remain TEXT, so this never rewrites their keys or numbers.
+ * Numeric envelope fields are finite SQL integers; BIGINT still arrives as text. */
 const QueryEnvelope = Schema.Struct({
   rows: Schema.Array(
     Schema.Record(
