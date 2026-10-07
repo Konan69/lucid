@@ -28,8 +28,7 @@ for (const changed of ['free', 'throws'] as const)
       await chat.sendMessage({ text: 'Pay' })
       const rows = await waiting(opened.harness, opened.root.id, context)
       if (rows[0] === undefined) throw new Error('Expected held call')
-      const messageId = chat.lastMessage?.id
-      if (messageId === undefined) throw new Error('Expected assistant id')
+      if (chat.lastMessage === undefined) throw new Error('Expected assistant id')
       await fixture.close(opened.harness)
       Object.defineProperty(definition, 'needsApproval', {
         value: () => {

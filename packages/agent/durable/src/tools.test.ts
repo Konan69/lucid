@@ -12,7 +12,13 @@ import { expect, it } from '@effect/vitest'
 import { Effect, Option } from 'effect'
 import { z } from 'zod'
 
-import { streamRun, toolsExtension, ToolSchemaFailed, type Replay } from './core.ts'
+import {
+  streamRun,
+  toolsExtension,
+  ToolSchemaFailed,
+  type ToolsOptions,
+  type Replay,
+} from './core.ts'
 import { memory } from './fixtures/harness.ts'
 import { consume } from './fixtures/reading.ts'
 import { PlainChat } from './fixtures/chat.ts'
@@ -480,7 +486,7 @@ for (const name of ['constructor', '__proto__'])
 for (const option of ['approval', 'answers', 'replay', 'sequential'] as const)
   it.live(`refuses an unknown ${option} tool name`, () =>
     Effect.gen(function* () {
-      const options = {
+      const options: ToolsOptions = {
         approval: option === 'approval' ? { typo: true } : {},
         answers: option === 'answers' ? { typo: 'wait' as const } : {},
         replay: option === 'replay' ? { typo: 'safe' as const } : {},

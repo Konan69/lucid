@@ -12,6 +12,8 @@ import {
 import { z } from 'zod'
 import { PlainChat } from '../fixtures/chat.ts'
 import { abort, history, waiting } from '../main.ts'
+import { PiFailed } from '../errors.ts'
+import { Delivery } from '../delivery.ts'
 import { Holds } from '../holds.ts'
 import { connectionLostInput } from '../client.ts'
 import { call, consume, context, host, modelText, texts, signal } from './fixtures/host.ts'
@@ -214,7 +216,8 @@ it.live('reports a missing late-answer receipt through waiting as a typed failur
     await chat.sendMessage({ text: 'Ask' })
     await opened.root.waitForIdle(context)
     const rows = await waiting(opened.harness, opened.root.id, context)
-    if (rows[0] === undefined) throw new Error('Expected question')
+    const held = rows[0]
+    if (held === undefined) throw new Error('Expected question')
     const other = await host({}, {})
     const foreign = await other.open()
     foreign.faux.setResponses([fauxAssistantMessage('One.'), fauxAssistantMessage('Two.')])
@@ -225,17 +228,17 @@ it.live('reports a missing late-answer receipt through waiting as a typed failur
     expect(await opened.harness.submission(absent.id, context)).toBeUndefined()
     await opened.root.commit(async (tx) => {
       const document = await tx.doc(Holds, opened.root.id)
-      const question = document.asked[rows[0].holdId]
+      const question = document.asked[held.holdId]
       if (question === undefined) throw new Error('Expected retained question')
-      question.delivery = {
-        _tag: 'Submitted',
+      question.delivery = Delivery.cases.Submitted.make({
         attempt: 0,
         output: 'retained',
         submissionId: absent.id,
-      }
+      })
     }, context)
-    await expect(waiting(opened.harness, opened.root.id, context)).rejects.toMatchObject({
-      _tag: 'PiFailed',
+    const failed = waiting(opened.harness, opened.root.id, context)
+    await expect(failed).rejects.toBeInstanceOf(PiFailed)
+    await expect(failed).rejects.toMatchObject({
       operation: 'submission',
       message: expect.stringContaining('Recorded answer submission is missing'),
     })

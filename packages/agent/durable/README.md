@@ -92,7 +92,7 @@ Tool parts and `waiting().input` contain the model's raw arguments, rather than 
 Tool `errorText` includes Pi's `<harness>\n[error] …\n</harness>` wrapping instead of the bare SDK message.
 A denial reaches the model as an error tool result, rather than the SDK's `execution-denied` result.
 Invalid arguments become Pi validation errors; tool-call repair and SDK `invalid` parts are not supported.
-Input-dependent approval cannot compare argument rewrites by earlier hooks with the original model call, because Pi's public hook reads do not expose that call; install rewriting hooks after the bridge.
+Argument-rewriting hooks with input-dependent approval are unsupported: Pi's public hook reads do not expose the original model call needed to compare decisions.
 
 Tool arguments emit one `tool-input-start`, raw JSON growth as `tool-input-delta`, and final `tool-input-available` only at `message_end`; approvals cannot precede that final input. Parsed-only partials and grammar/custom input produce no synthesized JSON deltas. If raw text stops extending the sent prefix, further deltas stop until the final input arrives. Removed or shortened calls rebuild the current step with reset-step. Reconnect emits the captured raw prefix once and then new suffixes. Anonymous identity barriers and sequential withholding preserve the same rules for starts and deltas. Aborted inputs end with `tool-input-error` rather than becoming approvable.
 

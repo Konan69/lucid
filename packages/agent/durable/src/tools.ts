@@ -744,7 +744,7 @@ const before = Effect.fn('Durable.beforeTool')(function* (
   const plan = Option.fromNullishOr(owner.plans.get(call.name))
   if (Option.isNone(plan)) return Option.none<{ block: string }>()
   const stored = yield* readPinnedDecision(api, context)
-  // Pi harness/tool.ts:71–86 stops later hooks and settles a model-visible error on any block.
+  // Pi harness/tool.ts:67–80 stops later hooks and settles a model-visible error on any block.
   if (Option.isSome(stored) && stored.value.owner !== owner.name)
     return Option.some({ block: new ToolNameDuplicated({ toolName: call.name }).message })
   const chosen = Option.isSome(stored) ? stored.value.decision : yield* decision(plan.value, call)
@@ -801,6 +801,7 @@ const validateOptionNames = Effect.fn('Durable.validateToolOptionNames')(functio
           toolName: name,
           cause: new Error(`Unknown tool name in ${option}`),
         })
+  return undefined
 })
 
 /** Names must be unique across selected extensions: hooks cannot see the composed phase agent.
