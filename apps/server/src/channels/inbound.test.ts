@@ -50,12 +50,12 @@ const started = Effect.fn('Channels.test.started')(function* (
   return { threadId: link.value.threadId.value, run }
 })
 
+/** Inbound queues and recorded admissions belong to one case, including its restart probe. */
 describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
   it.effect(
     'a crash after the outbound claim and before the send leaves unknown and never resends',
     () =>
       Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
         const caseContext = yield* Layer.build(channelTestLayer)
         return yield* Effect.gen(function* () {
           const test = yield* linked()
@@ -81,7 +81,6 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
   )
   it.effect('claims historic replay without opening a Thread or admitting a Run', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(channelTestLayer)
       return yield* Effect.gen(function* () {
         const test = yield* linked()
@@ -102,7 +101,6 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
 
   it.effect('an unlinked sender is ignored and never reaches a Thread or reply transport', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(channelTestLayer)
       return yield* Effect.gen(function* () {
         const test = yield* fixture()
@@ -119,7 +117,6 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
     'first text opens a personal Thread, later text reuses it, replay starts one Run, deletion opens a new Thread',
     () =>
       Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
         const caseContext = yield* Layer.build(channelTestLayer)
         return yield* Effect.gen(function* () {
           const test = yield* linked()
@@ -154,7 +151,6 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
 
   it.effect('a channel Run sends its plain final text once, split into bounded parts', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(channelTestLayer)
       return yield* Effect.gen(function* () {
         const test = yield* linked()
@@ -181,7 +177,6 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
 
   it.effect('two quick texts sharing a Flue response send that response exactly once', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(channelTestLayer)
       return yield* Effect.gen(function* () {
         const test = yield* linked()
@@ -209,7 +204,6 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
 
   it.effect('Failed, Stopped, Unknown and empty Completed outcomes are not-sent', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(channelTestLayer)
       return yield* Effect.gen(function* () {
         const test = yield* linked()
@@ -241,7 +235,6 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
     'a fresh reply service resumes a persisted route and sends by address before inbound replay',
     () =>
       Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
         const caseContext = yield* Layer.build(channelTestLayer)
         return yield* Effect.gen(function* () {
           const test = yield* linked()
@@ -292,7 +285,6 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
     'a proven refusal before dispatch records not-sent, without a remembered inbound handle',
     () =>
       Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
         const caseContext = yield* Layer.build(channelTestLayer)
         return yield* Effect.gen(function* () {
           const test = yield* linked()
@@ -318,7 +310,6 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
 
   it.effect('a hung send times out with unknown evidence and never retries', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(channelTestLayer)
       return yield* Effect.gen(function* () {
         const test = yield* linked()
@@ -345,7 +336,6 @@ describe.skipIf(!testDatabaseConfigured)('channel inbound and replies', () => {
 
   it.effect('a Run started from the app sends nothing to the channel', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(channelTestLayer)
       return yield* Effect.gen(function* () {
         const test = yield* linked()

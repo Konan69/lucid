@@ -248,19 +248,19 @@ const credential = Schema.NonEmptyString.check(
  * for an enrolment, `ChannelRecipientMissing` or `ChannelSendUnknown` for a send, and
  * `ChannelDisconnected` for the inbound stream, which its reader opens again.
  */
-export const photonLayer = Layer.effect(
-  ChannelProvider,
-  Effect.gen(function* () {
-    const projectId = yield* requiredSetting(
-      'VIVID_PHOTON_PROJECT_ID',
-      credential,
-      'the Photon project id',
-    )
-    const projectSecret = yield* requiredSetting(
-      'VIVID_PHOTON_PROJECT_SECRET',
-      Schema.RedactedFromValue(credential),
-      'the Photon project secret',
-    )
-    return yield* makePhoton({ projectId, projectSecret })
-  }).pipe(Effect.withSpan('Channels.configurePhoton')),
-)
+export const configurePhoton = Effect.gen(function* () {
+  const projectId = yield* requiredSetting(
+    'VIVID_PHOTON_PROJECT_ID',
+    credential,
+    'the Photon project id',
+  )
+  const projectSecret = yield* requiredSetting(
+    'VIVID_PHOTON_PROJECT_SECRET',
+    Schema.RedactedFromValue(credential),
+    'the Photon project secret',
+  )
+  return yield* makePhoton({ projectId, projectSecret })
+}).pipe(Effect.withSpan('Channels.configurePhoton'))
+
+/** Startup uses the same credential validation and provider construction tested at acquisition. */
+export const photonLayer = Layer.effect(ChannelProvider, configurePhoton)

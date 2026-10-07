@@ -27,10 +27,10 @@ describe('channel reconnect policy', () => {
   )
 })
 
+/** Each consumer gets its own inbound queue so message defects cannot consume another case's input. */
 describe.skipIf(!testDatabaseConfigured)('channel stream lifetime', () => {
   it.effect('one defective message cannot end the scoped consumer', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(channelTestLayer)
       return yield* Effect.gen(function* () {
         const test = yield* fixture()
@@ -66,7 +66,6 @@ describe.skipIf(!testDatabaseConfigured)('channel stream lifetime', () => {
 
   it.effect('reconnects on the Schedule and consumes linked text through Conversation', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(channelTestLayer)
       return yield* Effect.gen(function* () {
         const test = yield* fixture()

@@ -20,11 +20,10 @@ const firstChannel = (response: ChannelListResponse) => {
   return channel
 }
 
-/** Refusals are asserted through the public RPC seam, including authenticated personal ownership. */
+/** Public RPC refusals retain real ownership checks; provider enrolment records are acquired per case. */
 describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
   it.effect('a channel Vivid does not text on yet stands Unavailable and refuses a number', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(channelTestLayer)
       return yield* Effect.gen(function* () {
         const test = yield* fixture()
@@ -49,7 +48,6 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
     'rejects local numbers, malformed numbers and email enrolment before provider I/O',
     () =>
       Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
         const caseContext = yield* Layer.build(channelTestLayer)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -68,7 +66,6 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
 
   it.effect('connects immediately with the assigned line and reuses the enrolment on repeat', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(channelTestLayer)
       return yield* Effect.gen(function* () {
         const test = yield* fixture()
@@ -94,7 +91,6 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
     'refuses another Person’s claimed address without enrolling it or exposing that Person',
     () =>
       Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
         const caseContext = yield* Layer.build(channelTestLayer)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -116,7 +112,6 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
 
   it.effect('preserves provider refusals without creating a link', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(channelTestLayer)
       return yield* Effect.gen(function* () {
         const test = yield* fixture()
@@ -137,7 +132,6 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
 
   it.effect('disconnect removes ownership and the enrolment and can be repeated', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(channelTestLayer)
       return yield* Effect.gen(function* () {
         const test = yield* fixture()
@@ -163,7 +157,6 @@ describe.skipIf(!testDatabaseConfigured)('personal channel linking', () => {
 
   it.effect('WatchChannels emits Connected after Connect and NotConnected after Disconnect', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(channelTestLayer)
       return yield* Effect.gen(function* () {
         const test = yield* fixture()

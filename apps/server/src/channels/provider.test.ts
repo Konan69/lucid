@@ -1,9 +1,9 @@
 import { NodeHttpClient } from '@effect/platform-node'
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, it, layer } from '@effect/vitest'
 import { ConfigProvider, Effect, Layer, Result } from 'effect'
 import { ConfigurationError } from '../config.ts'
 import { normalizeChannelAddress } from './address.ts'
-import { photonLayer } from './photon.ts'
+import { photonLayer, configurePhoton } from './photon.ts'
 import { ChannelProvider } from './provider.ts'
 
 const settings = {
@@ -17,57 +17,59 @@ const settings = {
  * supplied value. Building dials nothing, so no transport is stubbed.
  */
 describe('Photon settings', () => {
-  for (const [name, values, variable] of [
-    [
-      'the project id is missing',
-      { ...settings, VIVID_PHOTON_PROJECT_ID: undefined },
-      'VIVID_PHOTON_PROJECT_ID',
-    ],
-    [
-      'the project id is blank',
-      { ...settings, VIVID_PHOTON_PROJECT_ID: ' ' },
-      'VIVID_PHOTON_PROJECT_ID',
-    ],
-    [
-      'the project secret is missing',
-      { ...settings, VIVID_PHOTON_PROJECT_SECRET: undefined },
-      'VIVID_PHOTON_PROJECT_SECRET',
-    ],
-    [
-      'the project secret is empty',
-      { ...settings, VIVID_PHOTON_PROJECT_SECRET: '' },
-      'VIVID_PHOTON_PROJECT_SECRET',
-    ],
-  ] as const) {
-    it.effect(`does not build when ${name}`, () =>
-      Effect.gen(function* () {
-        const failure = yield* Layer.build(
-          photonLayer.pipe(
-            Layer.provide(NodeHttpClient.layerUndici),
-            Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(values))),
-          ),
-        ).pipe(Effect.scoped, Effect.flip)
-        expect(failure).toBeInstanceOf(ConfigurationError)
-        expect(failure).toMatchObject({ variable })
-        expect(JSON.stringify(failure)).not.toContain(settings.VIVID_PHOTON_PROJECT_SECRET)
-      }),
-    )
-  }
-
-  it.effect('builds with both credentials and texts on iMessage only', () =>
-    Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
-      const caseContext = yield* Layer.build(
-        photonLayer.pipe(
-          Layer.provide(NodeHttpClient.layerUndici),
-          Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(settings))),
-        ),
+  layer(NodeHttpClient.layerUndici)((it) => {
+    for (const [name, values, variable] of [
+      [
+        'the project id is missing',
+        { ...settings, VIVID_PHOTON_PROJECT_ID: undefined },
+        'VIVID_PHOTON_PROJECT_ID',
+      ],
+      [
+        'the project id is blank',
+        { ...settings, VIVID_PHOTON_PROJECT_ID: ' ' },
+        'VIVID_PHOTON_PROJECT_ID',
+      ],
+      [
+        'the project secret is missing',
+        { ...settings, VIVID_PHOTON_PROJECT_SECRET: undefined },
+        'VIVID_PHOTON_PROJECT_SECRET',
+      ],
+      [
+        'the project secret is empty',
+        { ...settings, VIVID_PHOTON_PROJECT_SECRET: '' },
+        'VIVID_PHOTON_PROJECT_SECRET',
+      ],
+    ] as const) {
+      it.effect(`does not build when ${name}`, () =>
+        Effect.gen(function* () {
+          const failure = yield* configurePhoton.pipe(
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.fromUnknown(values),
+            ),
+            Effect.scoped,
+            Effect.flip,
+          )
+          expect(failure).toBeInstanceOf(ConfigurationError)
+          expect(failure).toMatchObject({ variable })
+          expect(JSON.stringify(failure)).not.toContain(settings.VIVID_PHOTON_PROJECT_SECRET)
+        }),
       )
-      return yield* Effect.gen(function* () {
-        expect((yield* ChannelProvider).channels).toEqual(['iMessage'])
-      }).pipe(Effect.provide(caseContext))
-    }).pipe(Effect.scoped),
-  )
+    }
+
+    layer(
+      photonLayer.pipe(
+        Layer.provide(NodeHttpClient.layerUndici),
+        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(settings))),
+      ),
+    )((it) => {
+      it.effect('builds with both credentials and texts on iMessage only', () =>
+        Effect.gen(function* () {
+          expect((yield* ChannelProvider).channels).toEqual(['iMessage'])
+        }).pipe(Effect.scoped),
+      )
+    })
+  })
 })
 
 describe('channel address', () => {
