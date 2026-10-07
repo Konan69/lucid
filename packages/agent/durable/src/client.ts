@@ -32,6 +32,17 @@ function lost(options: ErrorOptions, signal: Signal): never {
   throw new ConnectionLost(options)
 }
 
+/** At acquisition an HTTP refusal is the SDK's plain Error, not a dropped connection.
+ * Fetch rejects with TypeError; TimeoutError names timeout exceptions across realms. Only those
+ * are resumable before a stream exists (chat.ts:1008–1018); typed status text passes through. */
+function acquisitionLost(options: ErrorOptions, signal: Signal): never {
+  if (aborted(options, signal)) throw options.cause
+  const cause = options.cause
+  if (cause instanceof TypeError || (cause instanceof Error && cause.name === 'TimeoutError'))
+    return lost(options, signal)
+  throw cause
+}
+
 /** Preserve the started call's identity and SDK flags without inventing a parsed partial input. */
 function interrupted(start: Started): Interrupted {
   const { type: _type, ...identity } = start
@@ -112,13 +123,13 @@ export function resumable<M extends UIMessage>(transport: ChatTransport<M>): Cha
       return Promise.resolve()
         .then(() => transport.sendMessages(input))
         .then((stream) => guarded(stream, input.abortSignal))
-        .catch((cause) => lost({ cause }, input.abortSignal))
+        .catch((cause) => acquisitionLost({ cause }, input.abortSignal))
     },
     reconnectToStream: function reconnectForSdk(input) {
       return Promise.resolve()
         .then(() => transport.reconnectToStream(input))
         .then((stream) => (stream === null ? null : guarded(stream, input.abortSignal)))
-        .catch((cause) => lost({ cause }, input.abortSignal))
+        .catch((cause) => acquisitionLost({ cause }, input.abortSignal))
     },
   }
 }

@@ -17,7 +17,7 @@ import { waitForFrame } from '../fixtures/provider.ts'
 import { resumable, ConnectionLost, connectionLostInput } from '../client.ts'
 import { ChatTurn } from '../core.ts'
 import { PlainChat } from '../fixtures/chat.ts'
-import { respond, waiting, decodeTurn, attachRun, streamRun } from '../main.ts'
+import { respond, waiting, decodeTurn, attachRun, streamRun, TurnWaiting } from '../main.ts'
 import { context, host, signal, texts, consume } from './fixtures/host.ts'
 
 /** A later response may already be present when a disconnected client resumes from its second step. */
@@ -672,5 +672,79 @@ it.each(['parallel', 'sequential', 'retry', 'steer'] as const)(
     } finally {
       release.resolve()
     }
+  },
+)
+
+/** A status refusal remains actionable typed text; it must not reconnect to another person's run. */
+it('preserves a 409 through resumable at transport acquisition', async () => {
+  const opened = await (
+    await host(
+      { pay: tool({ inputSchema: z.object({ amount: z.number() }), execute: async () => 'paid' }) },
+      { approval: { pay: true } },
+    )
+  ).open()
+  opened.faux.setResponses([
+    fauxAssistantMessage([fauxToolCall('pay', { amount: 1 }, { id: 'pay' })], {
+      stopReason: 'toolUse',
+    }),
+  ])
+  const first = new PlainChat({ transport: opened.transport })
+  await first.sendMessage({ text: 'First' })
+  const second = new PlainChat({ transport: resumable(opened.transport) })
+  await second.sendMessage({ text: 'Refused' })
+  expect(second.status).toBe('error')
+  expect(second.error).not.toBeInstanceOf(ConnectionLost)
+  if (second.error === undefined) throw new Error('Expected HTTP refusal')
+  expect(second.error.message).toBe(new TurnWaiting({ conversationId: opened.root.id }).message)
+})
+
+/** chat.ts:437–473 replaces a known user using sendMessage({messageId, text}). Lost HTTP
+ * admission is retried with that identity: absent turns are admitted once and present turns join. */
+it.each([false, true])(
+  'retries a lost POST with the SDK user identity (admitted=%s)',
+  async (admitted) => {
+    const opened = await (
+      await host(
+        {
+          pay: tool({ inputSchema: z.object({ amount: z.number() }), execute: async () => 'paid' }),
+        },
+        { approval: { pay: true } },
+      )
+    ).open()
+    opened.faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('pay', { amount: 1 }, { id: 'pay' })], {
+        stopReason: 'toolUse',
+      }),
+    ])
+    let lost = false
+    const chat = new PlainChat({
+      transport: resumable(
+        new DefaultChatTransport<UIMessage>({
+          api: 'http://durable.test/chat',
+          fetch: async (url, init) => {
+            const request = new Request(url, init)
+            if (request.method === 'POST' && !lost) {
+              lost = true
+              if (admitted)
+                await (await respond(opened.harness, opened.root.id, request, context)).text()
+              throw new TypeError('fetch network failed')
+            }
+            return respond(opened.harness, opened.root.id, request, context)
+          },
+        }),
+      ),
+    })
+    await chat.sendMessage({ text: 'Pay once' })
+    expect(chat.error).toBeInstanceOf(ConnectionLost)
+    const user = chat.messages[0]
+    if (user === undefined || user.role !== 'user') throw new Error('Expected user')
+    chat.clearError()
+    await chat.resumeStream()
+    if (!admitted) expect(chat.messages).toEqual([user])
+    await chat.sendMessage({ messageId: user.id, text: 'Pay once' })
+    expect(chat.status).toBe('ready')
+    expect(opened.faux.state.callCount).toBe(1)
+    expect(chat.messages.filter((message) => message.role === 'user')).toEqual([user])
+    expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
   },
 )

@@ -55,7 +55,9 @@ const transport = resumable(new DefaultChatTransport({ api: '/chat' }))
 if (chat.error instanceof ConnectionLost) await chat.resumeStream()
 ```
 
-The wrapper works on chunks returned by any `ChatTransport`, including transports that do not use HTTP. A non-abort connection failure first closes unfinished tool inputs with a reserved local error, then throws the plain `ConnectionLost` Error with the original cause. The SDK therefore discards its private resumable state and whole-run replay replaces the partial message by id. `stop()` and AbortError pass through unchanged. The local marker is never a tool settlement, even if a stale client posts it back.
+The wrapper works on chunks returned by any `ChatTransport`, including transports that do not use HTTP. At acquisition, only a `TypeError` or `TimeoutError` becomes `ConnectionLost`; HTTP refusals keep their original status text. Once a chunk stream exists, a non-abort reading failure first closes unfinished tool inputs with a reserved local error, then throws the plain `ConnectionLost` Error with the original cause. The SDK therefore discards its private resumable state and whole-run replay replaces the partial message by id. `stop()` and AbortError pass through unchanged. The local marker is never a tool settlement, even if a stale client posts it back.
+
+Resume only after `ConnectionLost`, not after an HTTP refusal. If a lost POST resumes with no stream, it may not have been admitted: resend its existing user id with `chat.sendMessage({ messageId: user.id, text })`, which joins the same submission or admits it once.
 
 The client uses the SDK's stock `lastAssistantMessageIsCompleteWithApprovalResponses` or `lastAssistantMessageIsCompleteWithToolCalls` predicate for continuation. Approvals use `part.approval.id`; applications do not need to derive hold ids. After reloading, seed the message list from history rather than a retained partial message. Without the wrapper, same-instance resumes can repeat earlier steps.
 
