@@ -101,7 +101,7 @@ const fixture = Effect.fn('fixture')(function* (options: {
     execute: () =>
       Effect.sync(() => Queue.offerUnsafe(heard, 'execute')).pipe(
         Effect.andThen(
-          options.execute === undefined ? Effect.succeed(Option.some(failed)) : options.execute,
+          options.execute === undefined ? Effect.succeedSome(failed) : options.execute,
         ),
       ),
   })
@@ -158,7 +158,7 @@ describe('this computer’s link to Vivid', () => {
       // proves when); the link's part is to send nothing in that case.
       const { next, requests, answers } = yield* fixture({
         enrolments: [Effect.succeed(allowed)],
-        execute: Effect.succeed(Option.none()),
+        execute: Effect.succeedNone,
       })
       expect(yield* next).toBe('enrol')
       expect(yield* next).toBe('watch')

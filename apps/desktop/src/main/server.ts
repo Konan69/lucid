@@ -46,7 +46,6 @@ export const chooseServer = Effect.fn('DesktopServer.choose')(function* (
 ) {
   const canonical = ServerAddress.make(new URL(origin).origin)
   const result = yield* probeServer(canonical).pipe(
-    Effect.provide(FetchHttpClient.layer),
     Effect.provideService(FetchHttpClient.RequestInit, { credentials: 'omit', redirect: 'error' }),
   )
   if (ServerChoice.guards.Chosen(result)) yield* settings.set(canonical)

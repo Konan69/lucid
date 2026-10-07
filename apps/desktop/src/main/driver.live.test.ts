@@ -27,7 +27,7 @@ describe.skipIf(!live)('Native desktop control', () => {
       'opens, reads, clicks, types, presses, captures, stops, refuses and links, for real',
       () =>
         Effect.gen(function* () {
-          const result = yield* (yield* NativeProof).run()
+          const result = yield* (yield* NativeProof).run
           expect(result.output).toContain(passed)
         }),
       60_000,

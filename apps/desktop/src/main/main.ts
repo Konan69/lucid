@@ -6,6 +6,9 @@ import * as NodeProcess from 'node:process'
 import * as NodeOS from 'node:os'
 import { DeviceName, DeviceWork } from '@vivid/contracts'
 import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
+import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
+import type * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as Exit from 'effect/Exit'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
@@ -205,9 +208,10 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
   // Everything Vivid holds on this computer outside the app's own window lives in this scope:
   // the Computer process and the fibers around it. Quitting closes it, which kills the Computer;
   // the Computer also ends by itself when this process does (`--parent-pid`).
+  const context = yield* Effect.context<never>()
   const held = yield* Scope.make()
   app.on('before-quit', () => {
-    Effect.runFork(Scope.close(held, Exit.void))
+    Effect.runForkWith(context)(Scope.close(held, Exit.void))
   })
   // The notice calls `stop` only while a turn is up, which is after `windows` exists.
   let stopTurn = (): void => undefined
@@ -248,7 +252,7 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
   if (Option.isNone(identity)) console.error('desktop: this computer cannot be linked to Vivid')
   const computer = yield* deviceLink({
     connect: Option.match(identity, {
-      onNone: () => Effect.succeed(Option.none()),
+      onNone: () => Effect.succeedNone,
       onSome: (known) =>
         connectDevice({
           server: input.server,
@@ -291,7 +295,7 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
     if (change === 'Restart') computer.restart()
     else computer.wake()
   })
-  Effect.runFork(computer.run)
+  yield* Effect.forkDetach(computer.run, { startImmediately: true })
   return { computer, control }
 })
 
@@ -321,9 +325,10 @@ const signInThroughBrowser = Effect.fn('DesktopMain.signIn')(function* (input: {
   readonly server: () => ServerSettings
   readonly surfaces: ThemeSurfaces
 }) {
+  const context = yield* Effect.context<never>()
   const untilQuit = yield* Scope.make()
   app.once('will-quit', () => {
-    Effect.runFork(Scope.close(untilQuit, Exit.void))
+    Effect.runForkWith(context)(Scope.close(untilQuit, Exit.void))
   })
   return yield* googleSignIn({
     server: input.server,
@@ -370,6 +375,7 @@ const shippedHome = Effect.fn('DesktopMain.shippedHome')(function* () {
  * convenience cache; renderer, token, and runtime metadata failures stop startup instead.
  */
 const boot = Effect.fn('DesktopMain.boot')(function* () {
+  const context = yield* Effect.context<DesktopSettings | HttpClient.HttpClient>()
   registerProtocolClient()
 
   const surfaces = yield* loadThemeSurfaces(themeTokensPath())
@@ -392,7 +398,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
     root,
     session: desktopSession,
     server: () => serverSettings,
-    run: (program) => Effect.runPromise(program),
+    run: (program) => Effect.runPromiseWith(context)(program),
   })
   const information = yield* appInfo()
   const placementPath = NodePath.join(app.getPath('userData'), PLACEMENT_FILE)
@@ -411,7 +417,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
   /** A different server, or none: every page closes and the window loads what that means. */
   const serverChanged = (value: ServerSettings): void => {
     Option.map(browser, (available) => available.reset())
-    Effect.runFork(signIn.cancel) // a sign-in belongs to the server it began on
+    Effect.runForkWith(context)(signIn.cancel) // a sign-in belongs to the server it began on
     // The left server's storage is cleared (`leaving.ts`) only after the window has loaded what
     // replaces its document: that document writes as it unloads, which would follow the clear.
     const clearLeft = clearingLeft(storageLeftBehind(serverSettings, value), desktopSession)
@@ -453,7 +459,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
       signIn,
       onServerChanged: serverChanged,
     },
-    runtime: { run: (program) => Effect.runPromise(program) },
+    runtime: { run: (program) => Effect.runPromiseWith(context)(program) },
     isTrustedSender: (id, url, request) =>
       Option.exists(
         mainWindow,
@@ -474,7 +480,7 @@ const boot = Effect.fn('DesktopMain.boot')(function* () {
         runNonFatal(openExternalUrl(url), 'desktop: failed to open external URL'),
       onPlacementChanged: (next: WindowPlacement) => {
         placement = next
-        Effect.runSync(
+        Effect.runSyncWith(context)(
           writeWindowPlacement(placementPath, next).pipe(
             Effect.matchEffect({
               onFailure: () =>
@@ -534,8 +540,12 @@ if (!hasSingleInstanceLock) {
     Effect.flatMap(shippedHome),
     Effect.flatMap((home) =>
       boot().pipe(
+        // @effect-diagnostics-next-line strictEffectProvide:off -- Electron main startup owns the application settings Layer.
         Effect.provide(
-          settingsLayer(NodePath.join(app.getPath('userData'), 'settings.json'), home),
+          Layer.mergeAll(
+            settingsLayer(NodePath.join(app.getPath('userData'), 'settings.json'), home),
+            FetchHttpClient.layer,
+          ),
         ),
       ),
     ),

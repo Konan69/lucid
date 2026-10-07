@@ -1,4 +1,5 @@
 import * as Effect from 'effect/Effect'
+import type * as HttpClient from 'effect/unstable/http/HttpClient'
 import type * as Schema from 'effect/Schema'
 import {
   BridgeRequest,
@@ -57,7 +58,9 @@ export const handleBridgeRequest = Effect.fn('DesktopBridge.handleRequest')(func
 ) {
   const request = yield* decodeBridgeRequest(payload)
   if (!authorize(request)) return yield* new InvalidBridgeMessage({ direction: 'request' })
-  const response = yield* BridgeRequest.match<Effect.Effect<BridgeResponse>>(request, {
+  const response = yield* BridgeRequest.match<
+    Effect.Effect<BridgeResponse, never, HttpClient.HttpClient>
+  >(request, {
     GetAppVersion: () =>
       Effect.succeed(BridgeResponse.cases.AppVersion.make({ value: handlers.getAppVersion() })),
     GetServer: () =>

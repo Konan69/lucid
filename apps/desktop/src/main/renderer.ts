@@ -57,6 +57,7 @@ export function registerPackagedRenderer(
     desktopSession.protocol.handle(scheme, (request) =>
       run(
         handle(request).pipe(
+          // @effect-diagnostics-next-line strictEffectProvide:off -- Electron protocol.handle invokes this request callback with its cookie-aware transport.
           Effect.provide(forwarding),
           Effect.provideService(FetchHttpClient.Fetch, (input, options) =>
             desktopSession.fetch(input instanceof URL ? input.href : input, {

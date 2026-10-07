@@ -38,13 +38,15 @@ const stopNative = Effect.fn('NativePages.stop')(function* (
     catch: (cause) =>
       Option.isSome(missingProcess(cause)) ? new NativeProcessGone({}) : new NativeProofFailed({}),
   }).pipe(
-    Effect.catchTag('NativeProcessGone', () => Effect.void),
-    Effect.catchTag('NativeProofFailed', (failure) => Effect.die(failure)),
+    Effect.catchTags({
+      NativeProcessGone: () => Effect.void,
+      NativeProofFailed: (failure) => Effect.die(failure),
+    }),
   )
 })
 
 export interface NativeProofService {
-  readonly run: () => Effect.Effect<{ output: string }, NativeProofFailed>
+  readonly run: Effect.Effect<{ output: string }, NativeProofFailed>
 }
 export class NativeProof extends Context.Service<NativeProof, NativeProofService>()(
   'Test/NativePages',
@@ -151,7 +153,9 @@ const launchProof = Effect.fn('Test.launchNativeProof')(function* (proof: Native
     }),
     (process) => finish(process, proof),
   )
-  return NativeProof.of({ run: Effect.fn('Test.nativePages')(() => passed(launched, proof)) })
+  return NativeProof.of({
+    run: Effect.suspend(() => passed(launched, proof)).pipe(Effect.withSpan('Test.nativePages')),
+  })
 })
 
 /**

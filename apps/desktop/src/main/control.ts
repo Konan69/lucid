@@ -649,11 +649,7 @@ const perform = (acting: Acting, action: BrowserAction) =>
     Click: ({ target }) => unseen(onFront(acting, (page) => click(page, target))),
     Type: ({ target, text }) => unseen(onFront(acting, (page) => type(page, target, text))),
     Press: ({ key }) => unseen(onFront(acting, (page) => press(page, key, acting.mac))),
-    Screenshot: () =>
-      Effect.map(
-        Effect.flatMap(front(acting), (page) => page.capture),
-        Option.some,
-      ),
+    Screenshot: () => Effect.flatMap(front(acting), (page) => page.capture).pipe(Effect.asSome),
     Scroll: ({ direction, notches }) =>
       unseen(onFront(acting, (page) => scroll(page, scrollDelta(direction, notches)))),
     Back: () => unseen(travel(acting, 'Back')),

@@ -1,4 +1,5 @@
 import * as Effect from 'effect/Effect'
+import type * as HttpClient from 'effect/unstable/http/HttpClient'
 import { ipcMain, type WebContents } from 'electron'
 import {
   BRIDGE_EVENT_CHANNEL,
@@ -15,7 +16,11 @@ import { handleBridgeRequest, type BridgeHandlers } from './requests.ts'
 /** Electron owns Promise execution; main supplies its one Effect runtime boundary. */
 export interface BridgeRuntime {
   readonly run: (
-    program: Effect.Effect<typeof BridgeResponse.Encoded, InvalidBridgeMessage>,
+    program: Effect.Effect<
+      typeof BridgeResponse.Encoded,
+      InvalidBridgeMessage,
+      HttpClient.HttpClient
+    >,
   ) => Promise<typeof BridgeResponse.Encoded>
 }
 
