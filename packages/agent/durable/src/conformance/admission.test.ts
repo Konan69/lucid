@@ -15,6 +15,7 @@ import {
   streamRun,
   history,
   TurnWithdrawn,
+  TurnStranded,
   TurnBusy,
   LimitInvalid,
   TurnRegenerate,
@@ -376,3 +377,102 @@ it.each(['running', 'ended'] as const)(
     })
   },
 )
+
+/** A failed predecessor leaves queued inputs in Pi's inbox. Library POSTs withdraw only their
+ * own input and answer 409; retries observe the same durable withdrawal instead of hanging. */
+it.each(['followUp', 'steer'] as const)(
+  'withdraws a %s POST stranded by model failure',
+  async (whenBusy) => {
+    const entered = signal()
+    const release = signal()
+    onTestFinished(() => release.resolve())
+    const opened = await (await host({}, {}, { retry: { enabled: false, baseDelayMs: 0 } })).open()
+    opened.faux.setResponses([
+      async () => {
+        entered.resolve()
+        await release.promise
+        return fauxAssistantMessage('partial', {
+          stopReason: 'error',
+          errorMessage: 'invalid model request',
+        })
+      },
+    ])
+    const first = new PlainChat({ transport: opened.transport })
+    const sending = first.sendMessage({ text: 'Predecessor' })
+    await entered.promise
+    const admitted = queued(opened.harness, 'stranded-post')
+    const chat = new PlainChat({
+      generateId: () => 'stranded-post',
+      transport: new DefaultChatTransport<UIMessage>({
+        api: 'http://durable.test/chat',
+        fetch: async (url, init) =>
+          respond(
+            opened.harness,
+            opened.root.id,
+            { request: new Request(url, init), options: { whenBusy } },
+            context,
+          ),
+      }),
+    })
+    const posting = chat.sendMessage({ text: 'Not placed' })
+    await admitted
+    release.resolve()
+    await sending
+    await posting
+    expect(chat.status).toBe('error')
+    expect(chat.error === undefined ? undefined : chat.error.message).toBe(
+      new TurnWithdrawn({ messageId: 'stranded-post' }).message,
+    )
+    await expect(
+      streamRun(
+        opened.harness,
+        {
+          conversationId: opened.root.id,
+          content: 'Not placed',
+          requestId: 'stranded-post',
+        },
+        context,
+      ),
+    ).rejects.toBeInstanceOf(TurnWithdrawn)
+    expect(
+      (await history(opened.harness, opened.root.id, { limit: 10 }, context)).messages.flatMap(
+        texts,
+      ),
+    ).not.toContain('Not placed')
+  },
+)
+
+/** A host-owned input remains untouched on both the run-end event and a subsequent idle watch.
+ * A later submission places it, after which following the same id succeeds. */
+it('reports a stranded host input without withdrawing it, then follows its placed run', async () => {
+  const opened = await working()
+  opened.faux.setResponses([
+    fauxAssistantMessage('partial', {
+      stopReason: 'error',
+      errorMessage: 'invalid model request',
+    }),
+  ])
+  const submission = await opened.root.submit(
+    { type: 'input', content: 'Host queued', requestId: 'host-stranded' },
+    context,
+  )
+  const followed = followRun(opened.harness, opened.root.id, 'host-stranded', context)
+  const rejected = expect(followed).rejects.toBeInstanceOf(TurnStranded)
+  opened.release.resolve()
+  await opened.sending
+  await rejected
+  await opened.root.waitForIdle(context)
+  expect((await submission.status(context)).status).toBe('queued')
+  await expect(
+    followRun(opened.harness, opened.root.id, 'host-stranded', context),
+  ).rejects.toBeInstanceOf(TurnStranded)
+  opened.faux.setResponses([
+    fauxAssistantMessage('Queued answer.'),
+    fauxAssistantMessage('Next answer.'),
+  ])
+  await opened.root.submit({ type: 'input', content: 'Unstick', requestId: 'unstick' }, context)
+  const result = await consume(
+    await followRun(opened.harness, opened.root.id, 'host-stranded', context),
+  )
+  expect(texts(result.message)).toEqual(['Queued answer.'])
+})

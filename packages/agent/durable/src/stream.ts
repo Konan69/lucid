@@ -445,6 +445,7 @@ export const followRun: (
   | PiFailed
   | RunMissing
   | DurableErrors.TurnWithdrawn
+  | DurableErrors.TurnStranded
   | WatchFailure
 > = Effect.fn('Durable.followRun')(function* (harness, conversationId, requestId, context) {
   const scope = yield* Scope.make()
@@ -457,7 +458,15 @@ export const followRun: (
     const record = yield* Pi.request(conversation, requestId, context)
     if (Option.isNone(record) || record.value.type !== 'input')
       return yield* new RunMissing({ conversationId })
-    if (record.value.status === 'queued') yield* placed(original, record.value.id)
+    if (record.value.status === 'queued') {
+      const submission = yield* Pi.submission(harness, record.value.id, context)
+      if (Option.isNone(submission)) return yield* new RunMissing({ conversationId })
+      yield* placed(
+        original,
+        { harness, submission: submission.value, conversationId, messageId: requestId },
+        context,
+      )
+    }
     const watched = yield* Pi.watch(harness, conversationId, context).pipe(Scope.provide(scope))
     const receipt = yield* reacquireInput(
       harness,

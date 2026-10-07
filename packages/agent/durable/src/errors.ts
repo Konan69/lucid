@@ -162,6 +162,20 @@ export class BusyPolicyInvalid extends Schema.TaggedError<BusyPolicyInvalid>()(
   }
 }
 
+/** Host-admitted inputs remain queued after a predecessor fails; following never withdraws them. */
+export class TurnStranded extends Schema.TaggedError<TurnStranded>()(
+  'TurnStranded',
+  {
+    messageId: Schema.String,
+  },
+  { title: 'TurnStranded' },
+) {
+  /** Explain why following can succeed after a later submission without changing this receipt. */
+  override get message() {
+    return 'Input is still queued behind a run that ended without placing it; Pi places it with the next submission'
+  }
+}
+
 /** None of the stored assistant messages made the tool calls named by a resume. */
 export class RunMissing extends Schema.TaggedError<RunMissing>()(
   'RunMissing',

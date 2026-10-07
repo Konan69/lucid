@@ -13,6 +13,7 @@ export {
   TurnInvalid,
   TurnRegenerate,
   TurnWithdrawn,
+  TurnStranded,
   TurnBusy,
   TurnConflict,
   BusyPolicyInvalid,

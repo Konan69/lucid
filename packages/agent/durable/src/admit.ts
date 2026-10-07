@@ -1,12 +1,12 @@
 import type { Context } from '@earendil-works/chord'
 import {
   ConversationBusy,
-  type AgentEvent,
+  LiveDoc,
+  type Submission,
   type Conversation,
   type Harness,
   type ConversationId,
   type InputSubmissionDraft,
-  type SubmissionId,
   type SubmissionRecord,
 } from '@earendil-works/pi-durable'
 import { Effect, Exit, Option, Scope, Stream } from 'effect'
@@ -16,6 +16,7 @@ import {
   TurnBusy,
   TurnConflict,
   TurnWithdrawn,
+  TurnStranded,
   WatchClosed,
   WatchOverflowed,
 } from './errors.ts'
@@ -41,32 +42,67 @@ type AdmissionFailure =
   | WatchClosed
   | WatchOverflowed
 
-/** events.js:218–219 publishes submission receipts before run_start. Observe the submitted input's
- * own placement or settlement, including all unanswered reasons (types.d.ts:318–348); abort of a
- * queued input is unanswered/aborted without an entry (inbox.js:85–93). No run_start is required. */
-export const placed = Effect.fn('Durable.awaitPlacement')(function* (
+/** An event watch is open before admission. events.js:216 emits run_end before submission
+ * receipts in that commit, so re-read this receipt on run_end: placed successors proceed, but a
+ * queued input is stranded (Pi README:322). The initial idle check covers following after failure.
+ * No timer or mutation is part of this observer; only library admission may withdraw its input. */
+export const placed: (
   watched: Watching,
-  submissionId: SubmissionId,
-) {
-  const arrived = yield* Stream.runHead(
-    Stream.filter(
-      watched.stream,
-      (
-        event,
-      ): event is Extract<AgentEvent, { type: 'submission' }> & { readonly record: InputReceipt } =>
-        event.type === 'submission' &&
-        event.record.type === 'input' &&
-        event.record.id === submissionId &&
-        event.record.status !== 'queued',
-    ),
-  )
-  if (Option.isNone(arrived))
-    return yield* new PiFailed({
-      operation: 'watch',
-      cause: new Error('Submission observation ended before its receipt settled'),
-    })
-  return arrived.value.record
-})
+  input: {
+    harness: Harness
+    submission: Submission
+    conversationId: ConversationId
+    messageId: string
+  },
+  context: Context,
+) => Effect.Effect<InputReceipt, PiFailed | TurnStranded | WatchClosed | WatchOverflowed> =
+  Effect.fn('Durable.awaitPlacement')(function* (watched, input, context) {
+    if (watched.snapshot.run === undefined) {
+      const live = yield* Pi.snapshot(input.harness, LiveDoc, input.conversationId, context)
+      if (Option.isNone(live) || live.value.run === undefined) {
+        const receipt = yield* Pi.inputStatus(input.submission, context)
+        if (receipt.status !== 'queued') return receipt
+        return yield* new TurnStranded({ messageId: input.messageId })
+      }
+    }
+    const arrived = yield* Stream.runHead(
+      watched.stream.pipe(
+        Stream.mapEffect((event) =>
+          Effect.gen(function* () {
+            if (
+              event.type === 'submission' &&
+              event.record.type === 'input' &&
+              event.record.id === input.submission.id &&
+              event.record.status !== 'queued'
+            )
+              return Option.some(event.record)
+            if (event.type !== 'run_end') return Option.none<InputReceipt>()
+            const receipt = yield* Pi.inputStatus(input.submission, context)
+            if (receipt.status === 'queued')
+              return yield* new TurnStranded({ messageId: input.messageId })
+            return Option.some(receipt)
+          }),
+        ),
+        Stream.filter(Option.isSome),
+        Stream.map((record) => record.value),
+      ),
+    )
+    if (Option.isNone(arrived))
+      return yield* new PiFailed({
+        operation: 'watch',
+        cause: new Error('Submission watch ended before placement'),
+      })
+    return arrived.value
+  })
+
+/** This is a single public Pi call, kept here because admission owns withdrawal and pi.ts is
+ * outside this lane's paths. Submission.abort is serialized (submissions.js:65–79); a racing
+ * placement wins and is read back, never mistaken for a withdrawn input. */
+const withdrawSubmission = (submission: Submission, context: Context) =>
+  Effect.tryPromise({
+    try: () => submission.abort(context),
+    catch: (cause) => new PiFailed({ operation: 'abort', cause }),
+  })
 
 /** A never-placed input has no Person entry to acknowledge or assistant run to replay. */
 function withdrawn(receipt: InputReceipt) {
@@ -154,7 +190,24 @@ export const admit: (
     yield* Pi.verifyInput(conversation, input.draft, context)
     let receipt = yield* Pi.inputStatus(submission, context)
     const queued = receipt.status === 'queued'
-    if (queued) receipt = yield* placed(watched, submission.id)
+    if (queued)
+      receipt = yield* placed(
+        watched,
+        {
+          harness,
+          submission,
+          conversationId: input.conversationId,
+          messageId: input.draft.requestId,
+        },
+        context,
+      ).pipe(
+        Effect.catchTag('TurnStranded', () =>
+          Effect.gen(function* () {
+            yield* withdrawSubmission(submission, context)
+            return yield* Pi.inputStatus(submission, context)
+          }),
+        ),
+      )
     if (withdrawn(receipt)) return yield* new TurnWithdrawn({ messageId: input.draft.requestId })
     const alreadyRunning =
       watched.snapshot.run !== undefined && watched.snapshot.run.inputs.includes(submission.id)

@@ -287,5 +287,10 @@
     "file": "packages/agent/durable/src/holds.ts",
     "classification": "third-party-adapter",
     "symbols": ["readPinnedDecision", "pinDecision", "taskDecision"]
+  },
+  {
+    "file": "packages/agent/durable/src/admit.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["withdrawSubmission"]
   }
 ]
