@@ -1,3 +1,6 @@
+import { runForPi } from '../pi.ts'
+import { FixtureFailed } from '../fixtures/harness.ts'
+import { consumeReadable, ReadFailed } from '../fixtures/reading.ts'
 import { Chat } from '@ai-sdk/react'
 import { expect, it } from '@effect/vitest'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
@@ -8,9 +11,9 @@ import {
   isToolUIPart,
   type UIMessage,
 } from 'ai'
-import { Deferred, Effect, Schema } from 'effect'
+import { Deferred, Effect, Schema, Fiber, Stream, Exit, Option } from 'effect'
+
 import { z } from 'zod'
-import { onTestFinished } from 'vitest'
 
 import * as Core from '../core.ts'
 import {
@@ -25,9 +28,9 @@ import {
   type Metadata,
 } from '../main.ts'
 import { waitForFrame } from '../fixtures/provider.ts'
-import { call, consume, context, host, shop, signal } from './fixtures/host.ts'
+import { call, context, host, shop } from './fixtures/host.ts'
 
-type Opened = Awaited<ReturnType<Awaited<ReturnType<typeof host>>['open']>>
+import type { Opened } from './fixtures/host.ts'
 const decodeMetadata = Schema.decodeUnknownSync(Core.Metadata)
 
 /** A host reads the exported metadata type without casting an SDK message or depending on internals. */
@@ -49,8 +52,10 @@ function client(opened: Opened) {
 }
 
 /** Read raw Pi responses, independently of the bridge's translator and history metadata helpers. */
-async function records(opened: Opened) {
-  const page = await opened.root.entries({}, 100, undefined, context)
+const records = Effect.fn('Test.records')(function* (opened: Opened) {
+  const page = yield* Effect.promise(() =>
+    Promise.resolve(opened.root.entries({}, 100, undefined, context)),
+  )
   return page.items
     .toReversed()
     .flatMap((entry) =>
@@ -58,15 +63,21 @@ async function records(opened: Opened) {
         ? []
         : entry.model.flatMap((message) => (message.role === 'assistant' ? [message] : [])),
     )
-}
+})
 
 /** Usage expectations come from persisted provider responses, never scripted faux counters. */
-async function parity(opened: Opened, chat: Chat<UIMessage<Metadata>>, responses: number) {
-  const messages = await records(opened)
+const parity = Effect.fn('Test.parity')(function* (
+  opened: Opened,
+  chat: Chat<UIMessage<Metadata>>,
+  responses: number,
+) {
+  const messages = yield* records(opened)
   expect(messages).toHaveLength(responses)
   const last = chat.lastMessage
   if (last === undefined) throw new Error('Expected streamed assistant')
-  const page = await history(opened.harness, opened.root.id, { limit: 50 }, context)
+  const page = yield* Effect.promise(() =>
+    Promise.resolve(history(opened.harness, opened.root.id, { limit: 50 }, context)),
+  )
   const assistant = page.messages.find((message) => message.role === 'assistant')
   if (assistant === undefined) throw new Error('Expected persisted assistant')
   const metadata = decodeMetadata(assistant.metadata)
@@ -80,27 +91,34 @@ async function parity(opened: Opened, chat: Chat<UIMessage<Metadata>>, responses
   expect(metadata).not.toHaveProperty('startedAt')
   expect(metadata).not.toHaveProperty('endedAt')
   return last
-}
+})
 
 /** One response has identical typed metadata in the real SDK store and raw settled history. */
 it.live('returns Pi model and usage metadata identically live and in history', () =>
-  Effect.promise(async () => {
-    const fixture = await host({}, {})
-    const opened = await fixture.open()
+  Effect.gen(function* () {
+    const fixture = yield* host({}, {})
+    const opened = yield* fixture.open()
     opened.faux.setResponses([fauxAssistantMessage('Recorded reply.')])
     const chat = client(opened)
-    await chat.sendMessage({ text: 'Describe the records' })
+    yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ text: 'Describe the records' })))
     expect(chat.error).toBeUndefined()
-    const last = await parity(opened, chat, 1)
+    const last = yield* parity(opened, chat, 1)
     expect(modelIds(last)).toEqual(['faux/faux-1'])
     const input = chat.messages.find((message) => message.role === 'user')
     if (input === undefined) throw new Error('Expected admitted user message')
-    const stored = await consume(await followRun(opened.harness, opened.root.id, input.id, context))
+    const stored = yield* consumeReadable(
+      yield* Effect.promise(() =>
+        Promise.resolve(followRun(opened.harness, opened.root.id, input.id, context)),
+      ),
+      Option.none(),
+    )
     expect(stored.chunks[0]).toMatchObject({ type: 'start', messageMetadata: last.metadata })
     expect(stored.chunks.at(-1)).toEqual({ type: 'finish', messageMetadata: last.metadata })
-    await fixture.close(opened.harness)
-    const restarted = await fixture.open()
-    const page = await history(restarted.harness, restarted.root.id, { limit: 50 }, context)
+    yield* fixture.close(opened.harness)
+    const restarted = yield* fixture.open()
+    const page = yield* Effect.promise(() =>
+      Promise.resolve(history(restarted.harness, restarted.root.id, { limit: 50 }, context)),
+    )
     const assistant = page.messages.find((message) => message.role === 'assistant')
     if (assistant === undefined) throw new Error('Expected assistant after restart')
     expect(assistant.metadata).toEqual(last.metadata)
@@ -109,25 +127,29 @@ it.live('returns Pi model and usage metadata identically live and in history', (
 
 /** A tool boundary changes the configured model; repeated use of that model names it once. */
 it.live('sums all tool-round usage and names each recorded model once', () =>
-  Effect.promise(async () => {
-    const entered = signal()
-    const release = signal()
-    const fixture = await host(
+  Effect.gen(function* () {
+    const entered = Deferred.makeUnsafe<void>()
+    const release = Deferred.makeUnsafe<void>()
+    const fixture = yield* host(
       {
         work: tool({
           inputSchema: z.object({}),
-          execute: async () => {
-            entered.resolve()
-            await release.promise
-            return 'worked'
-          },
+          execute: () =>
+            runForPi(
+              Effect.gen(function* () {
+                Deferred.doneUnsafe(entered, Effect.void)
+                yield* Deferred.await(release)
+                return 'worked'
+              }),
+              undefined,
+            ),
         }),
       },
       {},
       {},
       { models: [{ id: 'faux-1' }, { id: 'faux-2' }] },
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([
       call('work', {}, 'first'),
       call('work', {}, 'second'),
@@ -136,36 +158,45 @@ it.live('sums all tool-round usage and names each recorded model once', () =>
     const chat = client(opened)
     const sending = chat.sendMessage({ text: 'Use both models' })
     try {
-      await entered.promise
-      await opened.root.configure({ model: { provider: 'faux', modelId: 'faux-2' } }, context)
-      release.resolve()
-      await sending
+      yield* Deferred.await(entered)
+      yield* Effect.promise(() =>
+        Promise.resolve(
+          opened.root.configure({ model: { provider: 'faux', modelId: 'faux-2' } }, context),
+        ),
+      )
+      Deferred.doneUnsafe(release, Effect.void)
+      yield* Effect.promise(() => Promise.resolve(sending))
       expect(chat.error).toBeUndefined()
-      expect(modelIds(await parity(opened, chat, 3))).toEqual(['faux/faux-1', 'faux/faux-2'])
+      expect(modelIds(yield* parity(opened, chat, 3))).toEqual(['faux/faux-1', 'faux/faux-2'])
     } finally {
-      release.resolve()
-      await sending
+      Deferred.doneUnsafe(release, Effect.void)
+      yield* Effect.promise(() => Promise.resolve(sending))
     }
   }),
 )
 
 /** POST continuation must retain usage from rounds before the client's newest answered call. */
 it.live('retains earlier response usage after a stock client tool answer', () =>
-  Effect.promise(async () => {
-    const fixture = await host(
+  Effect.gen(function* () {
+    const fixture = yield* host(
       {
-        work: tool({ inputSchema: z.object({}), execute: async () => 'worked' }),
+        work: tool({
+          inputSchema: z.object({}),
+          execute: () => {
+            return Promise.resolve('worked')
+          },
+        }),
         ask: tool({ inputSchema: z.object({ question: z.string() }) }),
       },
       {},
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([
       call('work', {}, 'worked'),
       call('ask', { question: 'Which?' }, 'asked'),
       fauxAssistantMessage('Answered.'),
     ])
-    const completed = signal()
+    const completed = Deferred.makeUnsafe<void, FixtureFailed>()
     const chat = new Chat<UIMessage<Metadata>>({
       transport: new DefaultChatTransport({
         api: 'http://durable.test/chat',
@@ -176,36 +207,37 @@ it.live('retains earlier response usage after a stock client tool answer', () =>
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
       onFinish: ({ message }) => {
         if (message.parts.some((part) => part.type === 'text' && part.text === 'Answered.'))
-          completed.resolve()
+          Deferred.doneUnsafe(completed, Effect.void)
       },
-      onError: (error) => completed.reject(error),
+      onError: (error) =>
+        Deferred.doneUnsafe(completed, Effect.fail(new FixtureFailed({ cause: error }))),
     })
-    await chat.sendMessage({ text: 'Work then ask me' })
-    await chat.addToolOutput({ tool: 'ask', toolCallId: 'asked', output: 'savings' })
-    await completed.promise
-    expect(modelIds(await parity(opened, chat, 3))).toEqual(['faux/faux-1'])
+    yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ text: 'Work then ask me' })))
+    yield* Effect.promise(() =>
+      Promise.resolve(chat.addToolOutput({ tool: 'ask', toolCallId: 'asked', output: 'savings' })),
+    )
+    yield* Deferred.await(completed)
+    expect(modelIds(yield* parity(opened, chat, 3))).toEqual(['faux/faux-1'])
   }),
 )
 
 /** A frame receipt freezes Pi's partial; the reconnect start must carry its recorded model already. */
 it.live('includes captured metadata on a reconnect start in the middle of text', () =>
   Effect.gen(function* () {
-    const received = signal()
+    const received = Deferred.makeUnsafe<void>()
     const release = yield* Deferred.make<void>()
-    const fixture = yield* Effect.promise(() =>
-      host(
-        {},
-        {},
-        {},
-        {
-          onFrame: (event, abortSignal) =>
-            event.type === 'text_delta'
-              ? waitForFrame(Deferred.await(release), abortSignal)
-              : Effect.void,
-        },
-      ),
+    const fixture = yield* host(
+      {},
+      {},
+      {},
+      {
+        onFrame: (event, abortSignal) =>
+          event.type === 'text_delta'
+            ? waitForFrame(Deferred.await(release), abortSignal)
+            : Effect.void,
+      },
     )
-    const opened = yield* Effect.promise(() => fixture.open())
+    const opened = yield* fixture.open()
     opened.faux.setResponses([fauxAssistantMessage('A reply observed in flight.')])
     const stream = yield* Effect.promise(() =>
       streamRun(
@@ -214,18 +246,21 @@ it.live('includes captured metadata on a reconnect start in the middle of text',
         context,
       ),
     )
-    const sending = consume(
-      stream.pipeThrough(
-        new TransformStream({
-          transform(chunk, controller) {
-            controller.enqueue(chunk)
-            if (chunk.type === 'text-delta') received.resolve()
-          },
-        }),
+    const sending = yield* Effect.forkScoped(
+      consumeReadable(
+        stream.pipeThrough(
+          new TransformStream({
+            transform(chunk, controller) {
+              controller.enqueue(chunk)
+              if (chunk.type === 'text-delta') Deferred.doneUnsafe(received, Effect.void)
+            },
+          }),
+        ),
+        Option.none(),
       ),
     )
     yield* Effect.gen(function* () {
-      yield* Effect.promise(() => received.promise)
+      yield* Deferred.await(received)
       const attached = yield* Effect.promise(() =>
         attachRun(opened.harness, opened.root.id, context),
       )
@@ -240,7 +275,14 @@ it.live('includes captured metadata on a reconnect start in the middle of text',
       yield* Effect.promise(() => reader.cancel())
     }).pipe(
       Effect.ensuring(Deferred.succeed(release, undefined)),
-      Effect.ensuring(Effect.promise(() => sending)),
+      // Reader failure during cleanup remains a test failure, as the old hot Promise did.
+      Effect.ensuring(
+        Effect.gen(function* () {
+          const result = yield* Fiber.await(sending)
+          if (Exit.isFailure(result)) return yield* Effect.die(result.cause)
+          return undefined
+        }),
+      ),
     )
   }),
 )
@@ -248,27 +290,34 @@ it.live('includes captured metadata on a reconnect start in the middle of text',
 /** Parking is an HTTP finish while Pi remains active. Both its attachment and the ended receipt
  * carry exactly the stored usage; the facade must not silently drop metadata on either finish. */
 it.live('carries metadata on parked finishes and ended approval replay', () =>
-  Effect.promise(async () => {
-    const fixture = await shop()
-    const opened = await fixture.open()
+  Effect.gen(function* () {
+    const fixture = yield* shop()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([
       call('pay', { amount: 100 }, 'payment'),
       fauxAssistantMessage('Paid.'),
     ])
-    const initial = await consume(
-      await streamRun(
-        opened.harness,
-        { conversationId: opened.root.id, content: 'Pay', requestId: 'metadata-pay' },
-        context,
+    const initial = yield* consumeReadable(
+      yield* Effect.promise(() =>
+        Promise.resolve(
+          streamRun(
+            opened.harness,
+            { conversationId: opened.root.id, content: 'Pay', requestId: 'metadata-pay' },
+            context,
+          ),
+        ),
       ),
+      Option.none(),
     )
     expect(initial.chunks.at(-1)).toEqual({
       type: 'finish',
       messageMetadata: initial.message.metadata,
     })
-    const attached = await attachRun(opened.harness, opened.root.id, context)
+    const attached = yield* Effect.promise(() =>
+      Promise.resolve(attachRun(opened.harness, opened.root.id, context)),
+    )
     if (attached.status !== 'running') throw new Error('Expected held run')
-    const replayed = await consume(attached.stream)
+    const replayed = yield* consumeReadable(attached.stream, Option.none())
     expect(replayed.chunks[0]).toMatchObject({
       type: 'start',
       messageMetadata: initial.message.metadata,
@@ -280,24 +329,34 @@ it.live('carries metadata on parked finishes and ended approval replay', () =>
     const part = initial.message.parts.find(isToolUIPart)
     if (part === undefined || part.state !== 'approval-requested')
       throw new Error('Expected approval')
-    await decide(
-      opened.harness,
-      opened.root.id,
-      { holdId: holdId(part.approval.id), approved: true },
-      context,
+    yield* Effect.promise(() =>
+      Promise.resolve(
+        decide(
+          opened.harness,
+          opened.root.id,
+          { holdId: holdId(part.approval.id), approved: true },
+          context,
+        ),
+      ),
     )
-    await opened.root.waitForIdle(context)
-    const settled = await history(opened.harness, opened.root.id, { limit: 50 }, context)
+    yield* Effect.promise(() => Promise.resolve(opened.root.waitForIdle(context)))
+    const settled = yield* Effect.promise(() =>
+      Promise.resolve(history(opened.harness, opened.root.id, { limit: 50 }, context)),
+    )
     const assistant = settled.messages.find((message) => message.role === 'assistant')
     if (assistant === undefined) throw new Error('Expected settled history')
-    const tail = await consume(
-      await continueRun(
-        opened.harness,
-        opened.root.id,
-        { messageId: initial.message.id, known: new Set(['payment']) },
-        context,
+    const tail = yield* consumeReadable(
+      yield* Effect.promise(() =>
+        Promise.resolve(
+          continueRun(
+            opened.harness,
+            opened.root.id,
+            { messageId: initial.message.id, known: new Set(['payment']) },
+            context,
+          ),
+        ),
       ),
-      initial.message,
+      Option.some(initial.message),
     )
     expect(tail.chunks[0]).toMatchObject({ type: 'start', messageMetadata: assistant.metadata })
     expect(tail.chunks.at(-1)).toEqual({ type: 'finish', messageMetadata: assistant.metadata })
@@ -309,30 +368,37 @@ it.live('carries metadata on parked finishes and ended approval replay', () =>
 /** A non-retried error is the same failure in live, every stored replay and the reloaded metadata.
  * Pending failures are kept as Option in the core and published only at terminal, not on retries. */
 it.live('preserves a failed run through replay, user retry, history and restart', () =>
-  Effect.promise(async () => {
-    const fixture = await host({}, {}, { retry: { enabled: false, baseDelayMs: 0 } })
-    const opened = await fixture.open()
+  Effect.gen(function* () {
+    const fixture = yield* host({}, {}, { retry: { enabled: false, baseDelayMs: 0 } })
+    const opened = yield* fixture.open()
     const failure = 'invalid model request'
     opened.faux.setResponses([
       fauxAssistantMessage('Half an answer.', { stopReason: 'error', errorMessage: failure }),
     ])
     const chat = client(opened)
-    await chat.sendMessage({ text: 'Fail once' })
+    yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ text: 'Fail once' })))
     expect(chat.status).toBe('error')
     if (chat.error === undefined || chat.lastMessage === undefined)
       throw new Error('Expected failed assistant')
     expect(chat.error.message).toBe(failure)
     expect(decodeMetadata(chat.lastMessage.metadata).failure).toBe(failure)
-    const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+    const page = yield* Effect.promise(() =>
+      Promise.resolve(history(opened.harness, opened.root.id, { limit: 10 }, context)),
+    )
     const saved = page.messages.find((message) => message.role === 'assistant')
     if (saved === undefined) throw new Error('Expected failed history message')
     expect(saved.parts).toEqual(chat.lastMessage.parts)
     expect(saved.metadata).toEqual(chat.lastMessage.metadata)
     const user = chat.messages[0]
     if (user === undefined || user.role !== 'user') throw new Error('Expected admitted user')
-    const chunks = []
-    for await (const chunk of await followRun(opened.harness, opened.root.id, user.id, context))
-      chunks.push(chunk)
+    const chunks = yield* Stream.runCollect(
+      Stream.fromAsyncIterable(
+        yield* Effect.promise(() =>
+          Promise.resolve(followRun(opened.harness, opened.root.id, user.id, context)),
+        ),
+        (cause) => new ReadFailed({ cause }),
+      ),
+    )
     expect(chunks.slice(-3)).toEqual([
       { type: 'message-metadata', messageMetadata: saved.metadata },
       { type: 'error', errorText: failure },
@@ -340,24 +406,26 @@ it.live('preserves a failed run through replay, user retry, history and restart'
     ])
     const retry = client(opened)
     retry.messages = [user]
-    await retry.sendMessage()
+    yield* Effect.promise(() => Promise.resolve(retry.sendMessage()))
     expect(retry.status).toBe('error')
     if (retry.error === undefined) throw new Error('Expected replay failure')
     expect(retry.error.message).toBe(failure)
     expect(opened.faux.state.callCount).toBe(1)
-    await fixture.close(opened.harness)
-    const restarted = await fixture.open()
-    const replayed = []
-    for await (const chunk of await followRun(
-      restarted.harness,
-      restarted.root.id,
-      user.id,
-      context,
-    ))
-      replayed.push(chunk)
+    yield* fixture.close(opened.harness)
+    const restarted = yield* fixture.open()
+    const replayed = yield* Stream.runCollect(
+      Stream.fromAsyncIterable(
+        yield* Effect.promise(() =>
+          Promise.resolve(followRun(restarted.harness, restarted.root.id, user.id, context)),
+        ),
+        (cause) => new ReadFailed({ cause }),
+      ),
+    )
     expect(replayed).toEqual(chunks)
     expect(
-      (await history(restarted.harness, restarted.root.id, { limit: 10 }, context)).messages,
+      (yield* Effect.promise(() =>
+        Promise.resolve(history(restarted.harness, restarted.root.id, { limit: 10 }, context)),
+      )).messages,
     ).toEqual(page.messages)
   }),
 )
@@ -367,78 +435,98 @@ it.live('preserves a failed run through replay, user retry, history and restart'
 it.live(
   'keeps a proven failed steer origin live; restart lacks its terminal-answer membership proof',
   () =>
-    Effect.promise(async () => {
-      const working = signal()
-      const releaseWork = signal()
-      const failing = signal()
-      const releaseFailure = signal()
-      const joined = signal()
-      onTestFinished(() => {
-        releaseWork.resolve()
-        releaseFailure.resolve()
-      })
-      const fixture = await host(
+    Effect.gen(function* () {
+      const working = Deferred.makeUnsafe<void>()
+      const releaseWork = Deferred.makeUnsafe<void>()
+      const failing = Deferred.makeUnsafe<void>()
+      const releaseFailure = Deferred.makeUnsafe<void>()
+      const joined = Deferred.makeUnsafe<void>()
+      const fixture = yield* host(
         {
           work: tool({
             inputSchema: z.object({}),
-            execute: async () => {
-              working.resolve()
-              await releaseWork.promise
-              return 'worked'
-            },
+            execute: () =>
+              runForPi(
+                Effect.gen(function* () {
+                  Deferred.doneUnsafe(working, Effect.void)
+                  yield* Deferred.await(releaseWork)
+                  return 'worked'
+                }),
+                undefined,
+              ),
           }),
         },
         {},
         { retry: { enabled: false, baseDelayMs: 0 } },
       )
-      const opened = await fixture.open()
+      const opened = yield* fixture.open()
+      // Scoped shutdown cannot join a tool/provider that is still parked on either gate.
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          Deferred.doneUnsafe(releaseWork, Effect.void)
+          Deferred.doneUnsafe(releaseFailure, Effect.void)
+        }),
+      )
       opened.faux.setResponses([
         call('work', {}, 'work'),
-        async () => {
-          failing.resolve()
-          await releaseFailure.promise
-          return fauxAssistantMessage('Failed after steer.', {
-            stopReason: 'error',
-            errorMessage: 'invalid model request',
-          })
-        },
+        () =>
+          runForPi(
+            Effect.gen(function* () {
+              Deferred.doneUnsafe(failing, Effect.void)
+              yield* Deferred.await(releaseFailure)
+              return fauxAssistantMessage('Failed after steer.', {
+                stopReason: 'error',
+                errorMessage: 'invalid model request',
+              })
+            }),
+            undefined,
+          ),
       ])
       const first = client(opened)
       const sending = first.sendMessage({ text: 'First' })
-      await working.promise
+      yield* Deferred.await(working)
       const steered = new Chat<UIMessage<Metadata>>({
         transport: new DefaultChatTransport({
           api: 'http://durable.test/chat',
-          fetch: async (url, init) => {
-            const response = await respond(
-              opened.harness,
-              opened.root.id,
-              { request: new Request(url, init), options: { whenBusy: 'steer' } },
-              context,
-            )
-            joined.resolve()
-            return response
-          },
+          fetch: (url, init) =>
+            runForPi(
+              Effect.gen(function* () {
+                const response = yield* Effect.promise(() =>
+                  Promise.resolve(
+                    respond(
+                      opened.harness,
+                      opened.root.id,
+                      { request: new Request(url, init), options: { whenBusy: 'steer' } },
+                      context,
+                    ),
+                  ),
+                )
+                Deferred.doneUnsafe(joined, Effect.void)
+                return response
+              }),
+              undefined,
+            ),
         }),
       })
-      const queued = signal()
+      const queued = Deferred.makeUnsafe<void>()
       const stop = opened.harness.subscribeCommits((publication) => {
         if (
           publication.changes.some(
             (change) => change.type === 'submission' && change.value.status === 'queued',
           )
         )
-          queued.resolve()
+          Deferred.doneUnsafe(queued, Effect.void)
       })
+      yield* Effect.addFinalizer(() => Effect.sync(stop))
       const steering = steered.sendMessage({ text: 'Steer' })
-      await queued.promise
+      yield* Deferred.await(queued)
       stop()
-      releaseWork.resolve()
-      await failing.promise
-      await joined.promise
-      releaseFailure.resolve()
-      await sending
-      await steering
+      Deferred.doneUnsafe(releaseWork, Effect.void)
+      yield* Deferred.await(failing)
+      yield* Deferred.await(joined)
+      Deferred.doneUnsafe(releaseFailure, Effect.void)
+      yield* Effect.promise(() => Promise.resolve(sending))
+      yield* Effect.promise(() => Promise.resolve(steering))
       expect(first.status).toBe('error')
       expect(steered.status).toBe('error')
       if (first.lastMessage === undefined || steered.lastMessage === undefined)
@@ -449,16 +537,18 @@ it.live(
       if (steeredUser === undefined || steeredUser.role !== 'user')
         throw new Error('Expected steer input')
       const originalId = first.lastMessage.id
-      await fixture.close(opened.harness)
-      const restarted = await fixture.open()
-      const chunks = []
-      for await (const chunk of await followRun(
-        restarted.harness,
-        restarted.root.id,
-        steeredUser.id,
-        context,
-      ))
-        chunks.push(chunk)
+      yield* fixture.close(opened.harness)
+      const restarted = yield* fixture.open()
+      const chunks = yield* Stream.runCollect(
+        Stream.fromAsyncIterable(
+          yield* Effect.promise(() =>
+            Promise.resolve(
+              followRun(restarted.harness, restarted.root.id, steeredUser.id, context),
+            ),
+          ),
+          (cause) => new ReadFailed({ cause }),
+        ),
+      )
       // Unanswered receipts have no shared answer entry. Without the original run_end observation,
       // Pi's public reads do not prove whether this placed user steered or began a successor run.
       const start = chunks.find((chunk) => chunk.type === 'start')

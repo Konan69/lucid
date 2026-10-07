@@ -25,7 +25,7 @@ it.live('stores and streams only the last yielded result', () =>
       {
         generate: tool({
           inputSchema: z.object({}),
-          // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
+          // @effect-diagnostics-next-line asyncFunction:off -- subject: the SDK takes the last async-generator yield and ignores its return value
           async *execute() {
             yield { phase: 'preliminary' }
             yield { phase: 'final' }
@@ -80,7 +80,7 @@ it.live('reports a throw after a yield as a tool error and continues', () =>
       {
         generate: tool({
           inputSchema: z.object({}),
-          // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
+          // @effect-diagnostics-next-line asyncFunction:off -- subject: an async generator throws after its preliminary yield
           async *execute() {
             yield 'preliminary'
             throw new Error('generation failed after yield')
@@ -127,7 +127,7 @@ it.live('calls iterator return and resolves generator finally on run cancellatio
           inputSchema: z.object({}),
           execute(_input, options) {
             const generator =
-              // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
+              // @effect-diagnostics-next-line asyncFunction:off -- subject: abort must call iterator return and resolve native generator finally
               (async function* () {
                 try {
                   yield 'preliminary'
@@ -205,7 +205,7 @@ it.live('aborts a suspended generator and runs the next turn before generator cl
       {
         generate: tool({
           inputSchema: z.object({}),
-          // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
+          // @effect-diagnostics-next-line asyncFunction:off -- subject: a native pending generator await queues return without blocking Pi abort
           async *execute() {
             try {
               yield 'preliminary'
@@ -283,14 +283,14 @@ it.live('does not call iterator return after normal exhaustion', () =>
             [Symbol.asyncIterator]() {
               return this
             },
-            // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
+            // @effect-diagnostics-next-line asyncFunction:off -- subject: a native async iterator reaches normal exhaustion
             async next() {
               pulls++
               return pulls === 1
                 ? { done: false as const, value: 'final' }
                 : { done: true as const, value: undefined }
             },
-            // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
+            // @effect-diagnostics-next-line asyncFunction:off -- subject: normal exhaustion must not call native async iterator return
             async return() {
               returned++
               return { done: true as const, value: undefined }
@@ -342,7 +342,7 @@ it.live('observes a rejecting iterator return during abort', () =>
                 value: undefined,
               }))
             },
-            // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
+            // @effect-diagnostics-next-line asyncFunction:off -- subject: abort must observe a native async iterator return rejection
             async return(): Promise<IteratorResult<string>> {
               returned++
               throw new Error('cleanup rejection')
@@ -387,7 +387,7 @@ it.live.each([
     let executions = 0
     const registration = {
       inputSchema: z.object({}),
-      // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
+      // @effect-diagnostics-next-line asyncFunction:off -- subject: static and dynamic approved generators keep their last native yield
       execute: async function* () {
         executions++
         yield { status: 'loading' }
