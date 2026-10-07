@@ -21,15 +21,13 @@ export function slotCount(cores) {
  * the moment the owning process ends, however it ends. A lock file with a process id in it has
  * neither property: two gates could both take over a dead owner's file, and a reused process
  * id kept a dead lock alive. Returns the release, or nothing while another process holds it.
- * Other systems have no abstract namespace; there the name is a socket file in the temporary
- * directory, which is exclusive but can outlive a killed owner until it is removed by hand.
+ * The gate runs on Linux (the Cloudbox, GitHub's runners, the developer's WSL); another system
+ * has no abstract namespace and fails here with the kernel's own error.
  */
 export async function takeLock(name) {
-  const address =
-    NodeOS.platform() === 'linux' ? `\0vivid-gate-${name}` : `${NodeOS.tmpdir()}/vivid-gate-${name}`
   const server = NodeNet.createServer()
   try {
-    server.listen(address)
+    server.listen(`\0vivid-gate-${name}`)
     await NodeEvents.once(server, 'listening')
   } catch (error) {
     if (error.code === 'EADDRINUSE') return undefined
