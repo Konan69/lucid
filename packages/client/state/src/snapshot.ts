@@ -383,7 +383,7 @@ function makeHeld(origin: string, store: SnapshotStore) {
         Queue.offerUnsafe(changes, undefined)
       }
       if (changed !== written) wake()
-      yield* keepLatest(changes, persist())
+      return yield* keepLatest(changes, persist())
     }),
   }
 }

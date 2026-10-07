@@ -233,7 +233,7 @@ describe('live state', () => {
   )
 
   it.effect('debounces new ask arguments and retains the last answer while pending', () => {
-    const program = Effect.fn('LiveTest.ask')(function* () {
+    const program = Effect.gen(function* () {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
       const plans = yield* Queue.unbounded<Effect.Effect<void, MarkThreadReadFailure>>()
       const argumentsAtom = Atom.make('first')
@@ -273,14 +273,14 @@ describe('live state', () => {
       yield* TestClock.adjust(0)
       expect(liveStateOf(live.registry.get(answer))).toEqual(LiveState.Ready({ value: 'NEXT' }))
       unsubscribe()
-    })()
+    }).pipe(Effect.withSpan('LiveTest.ask'))
     return program.pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())))
   })
 
   it.effect(
     'beats on mount, every interval and at once when what it says changes, then stops',
     () => {
-      const program = Effect.fn('LiveTest.beat')(function* () {
+      const program = Effect.gen(function* () {
         // The atom runtime waits on real timers, so the test holds those, as the search test does.
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
         const plans = yield* Queue.unbounded<Effect.Effect<void, MarkThreadReadFailure>>()
@@ -307,7 +307,7 @@ describe('live state', () => {
         vi.advanceTimersByTime(30_000)
         yield* TestClock.adjust(0)
         expect(yield* Queue.size(said)).toBe(0)
-      })()
+      }).pipe(Effect.withSpan('LiveTest.beat'))
       return program.pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())))
     },
   )

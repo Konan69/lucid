@@ -243,7 +243,7 @@ const launched = Effect.fn('Test.launched')(function* (stored: Option.Option<str
     registry: live.registry,
     queries,
     origin: ORIGIN,
-    expiry: Effect.succeed(Option.some(LATER)),
+    expiry: Effect.succeedSome(LATER),
     now: () => NOW,
     store: {
       read: Ref.get(store),

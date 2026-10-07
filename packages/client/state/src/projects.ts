@@ -71,7 +71,7 @@ export const trailTo = (
 
 /** The Threads the Person can open that are filed in one Project, most recently moved first. */
 export const threadsIn = (
-  threads: typeof ThreadListResponse.Type,
+  threads: ThreadListResponse,
   projectId: ProjectId,
 ): ReadonlyArray<Thread> =>
   Arr.sort(
