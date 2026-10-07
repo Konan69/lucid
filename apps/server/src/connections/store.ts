@@ -498,7 +498,10 @@ const rememberListCatalog = Effect.fn('Connections.rememberListCatalog')(functio
 ) {
   const scope = yield* Effect.scope
   const cached = yield* Effect.cachedWithTTL(catalog, listCatalogLifetime)
-  return cached.pipe(Effect.forkIn(scope, { startImmediately: true }), Effect.flatMap(Fiber.join))
+  // Return the reusable read program without starting a catalogue lookup during acquisition.
+  return yield* Effect.succeed(
+    cached.pipe(Effect.forkIn(scope, { startImmediately: true }), Effect.flatMap(Fiber.join)),
+  )
 })
 
 /** Capture authority once; the adapter owns discovery and catalog cache lifetimes. */
