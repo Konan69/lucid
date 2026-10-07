@@ -17,6 +17,7 @@ import {
   HoldIdInvalid,
   RunMissing,
   TurnWithdrawn,
+  TurnWaiting,
   TurnBusy,
   TurnConflict,
   TurnInvalid,
@@ -31,7 +32,10 @@ const decodeLimit = Schema.decodeUnknownPromise(Schema.NumberFromString)
 const refusals = [
   { status: 413, errors: [PartTooLarge] },
   { status: 404, errors: [ConversationMissing] },
-  { status: 409, errors: [CallNotWaiting, RunMissing, TurnWithdrawn, TurnBusy, TurnConflict] },
+  {
+    status: 409,
+    errors: [CallNotWaiting, RunMissing, TurnWithdrawn, TurnWaiting, TurnBusy, TurnConflict],
+  },
   {
     status: 400,
     errors: [

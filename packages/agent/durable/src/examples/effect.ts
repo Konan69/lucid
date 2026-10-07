@@ -76,7 +76,8 @@ const get = Effect.fn('Example.get')(function* (
   })
 })
 
-/** The host runs this Effect at its framework entry; authorization precedes durable access. */
+/** The host runs this Effect at its framework entry; authorization precedes durable access.
+ * TurnStranded belongs to followRun, which this example does not expose. */
 export function chat(
   harness: Harness,
   conversationId: ConversationId,
@@ -107,6 +108,9 @@ export function chat(
       Effect.succeed(new Response(error.message, { status: 409 })),
     ),
     Effect.catchTag('TurnConflict', (error) =>
+      Effect.succeed(new Response(error.message, { status: 409 })),
+    ),
+    Effect.catchTag('TurnWaiting', (error) =>
       Effect.succeed(new Response(error.message, { status: 409 })),
     ),
     Effect.catchTag('TurnBusy', (error) =>

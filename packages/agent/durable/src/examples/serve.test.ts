@@ -21,6 +21,9 @@ import {
 import { Effect, Schema } from 'effect'
 
 import { start } from './serve.ts'
+import { chat as effectChat } from './effect.ts'
+import { context, shop, call } from '../conformance/fixtures/host.ts'
+import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { resumable } from '../client.ts'
 
 const decodeListeningAddress = Schema.decodeUnknownSync(Schema.URLFromString)
@@ -303,6 +306,95 @@ it.live.each(['echo', 'slow', 'approve', 'deny', 'ask', 'pay'] as const)(
         expect(contents(after)).toEqual(contents(continued.messages))
       }),
     ),
+)
+
+// A refused follow-up must leave the original approval usable, with no new durable turn.
+it.live('refuses a message while approval waits and still settles that approval', () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const dataDirectory = yield* Effect.acquireRelease(
+        Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'durable-example-test-')),
+        ),
+        (directory) =>
+          Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
+      )
+      const host = yield* Effect.acquireRelease(
+        start({ host: '127.0.0.1', port: 0, dataDirectory }),
+        (opened) => opened.close(),
+      )
+      const chat = client(host.address, 'waiting-refusal')
+      yield* Effect.promise(() => chat.sendMessage({ text: 'approve' }))
+      const id = approval(chat)
+      const refused = yield* Effect.promise(() =>
+        fetch(`${host.address}/chat`, {
+          method: 'POST',
+          body: JSON.stringify({
+            id: chat.id,
+            messages: [
+              { id: 'new-input', role: 'user', parts: [{ type: 'text', text: 'a new message' }] },
+            ],
+          }),
+        }),
+      )
+      expect(refused.status).toBe(409)
+      expect(yield* Effect.promise(() => refused.text())).toBe(
+        'Conversation is waiting for a decision or answer; resolve it before sending another message',
+      )
+      expect(approval(chat)).toBe(id)
+      const finished = observed(
+        chat,
+        () => chat.status === 'ready' && text(chat) === 'Payment confirmed.',
+      )
+      yield* Effect.promise(() =>
+        Promise.resolve(chat.addToolApprovalResponse({ id, approved: true })),
+      )
+      yield* Effect.promise(() => finished)
+      expect(text(chat)).toBe('Payment confirmed.')
+      const cleared = yield* Effect.promise(() => fetch(`${host.address}/chat/${chat.id}/waiting`))
+      expect(decodeWaiting(yield* Effect.promise(() => cleared.text()))).toEqual([])
+    }),
+  ),
+)
+
+// The Effect route must match the Promise host before headers and preserve its waiting tool.
+it.live('the Effect example maps a waiting turn to 409 and preserves approval', () =>
+  Effect.gen(function* () {
+    const fixture = yield* Effect.promise(() => shop())
+    const opened = yield* Effect.promise(() => fixture.open())
+    opened.faux.setResponses([call('pay', { amount: 17 }, 'pay'), fauxAssistantMessage('Paid.')])
+    const transport = opened.transport
+    const chat = new Chat<UIMessage>({
+      id: 'effect-waiting',
+      transport,
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+    })
+    yield* Effect.promise(() => chat.sendMessage({ text: 'approve' }))
+    const refused = yield* effectChat(
+      opened.harness,
+      opened.root.id,
+      new Request('http://durable.test/chat', {
+        method: 'POST',
+        body: JSON.stringify({
+          messages: [
+            { id: 'new-input', role: 'user', parts: [{ type: 'text', text: 'a new message' }] },
+          ],
+        }),
+      }),
+      context,
+    )
+    expect(refused.status).toBe(409)
+    expect(yield* Effect.promise(() => refused.text())).toBe(
+      'Conversation is waiting for a decision or answer; resolve it before sending another message',
+    )
+    const finished = observed(chat, () => chat.status === 'ready' && text(chat) === 'Paid.')
+    yield* Effect.promise(() =>
+      Promise.resolve(chat.addToolApprovalResponse({ id: approval(chat), approved: true })),
+    )
+    yield* Effect.promise(() => finished)
+    expect(fixture.paid).toEqual([17])
+    expect(text(chat)).toBe('Paid.')
+  }),
 )
 
 // Reject oversized and malformed ingress before conversation creation; preflight is development CORS.
