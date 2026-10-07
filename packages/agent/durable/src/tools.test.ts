@@ -12,7 +12,13 @@ import { expect, it } from '@effect/vitest'
 import { Effect, Option } from 'effect'
 import { z } from 'zod'
 
-import { streamRun, toolsExtension, ToolSchemaFailed, type Replay } from './core.ts'
+import {
+  streamRun,
+  toolsExtension,
+  ToolSchemaFailed,
+  type ToolsOptions,
+  type Replay,
+} from './core.ts'
 import { memory } from './fixtures/harness.ts'
 import { consume } from './fixtures/reading.ts'
 import { PlainChat } from './fixtures/chat.ts'
@@ -475,3 +481,48 @@ for (const name of ['constructor', '__proto__'])
       await answer(other.harness, other.root.id, { holdId: held.holdId, output: 'yes' }, context)
     }),
   )
+
+/** A misspelt safety option must fail registration rather than silently leave a tool ungated. */
+for (const option of ['approval', 'answers', 'replay', 'sequential'] as const)
+  it.live(`refuses an unknown ${option} tool name`, () =>
+    Effect.gen(function* () {
+      const options: ToolsOptions = {
+        approval: option === 'approval' ? { typo: true } : {},
+        answers: option === 'answers' ? { typo: 'wait' as const } : {},
+        replay: option === 'replay' ? { typo: 'safe' as const } : {},
+        sequential: option === 'sequential' ? ['typo'] : [],
+      }
+      const failure = yield* Effect.flip(
+        toolsExtension(
+          'options',
+          { pay: tool({ inputSchema: z.object({}), execute: async () => 'paid' }) },
+          options,
+        ),
+      )
+      expect(failure).toBeInstanceOf(ToolSchemaFailed)
+      expect(failure).toMatchObject({ toolName: 'typo' })
+      expect(failure.message).toContain(option)
+    }),
+  )
+
+/** ToolScope is the default context, not an implicit resolver for an SDK context contract. */
+it.live('refuses contextSchema without a context resolver at registration', () =>
+  Effect.gen(function* () {
+    const failure = yield* Effect.flip(
+      toolsExtension(
+        'context',
+        {
+          scoped: tool({
+            inputSchema: z.object({}),
+            contextSchema: z.object({ owner: z.string() }),
+            execute: async () => 'unused',
+          }),
+        },
+        {},
+      ),
+    )
+    expect(failure).toBeInstanceOf(ToolSchemaFailed)
+    expect(failure).toMatchObject({ toolName: 'scoped' })
+    expect(failure.message).toContain('context resolver')
+  }),
+)

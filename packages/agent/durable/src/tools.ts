@@ -18,6 +18,8 @@ import { Cause, Data, Effect, Match, Option, Predicate, Schema } from 'effect'
 
 import {
   ToolApprovalUnsupported,
+  ToolApprovalFailed,
+  ToolNameDuplicated,
   ToolApprovalContextUnavailable,
   ToolContextFailed,
   ToolFailed,
@@ -544,12 +546,17 @@ function approvalForTool(
     const answer = rule(input, approvalOptions(name))
     if (Predicate.isBoolean(answer)) return answer
     // A rejected unsupported Promise must not escape as an unhandled rejection.
-    if (Predicate.isPromiseLike(answer))
+    if (Predicate.isPromiseLike(answer)) {
       answer.then(
         () => {},
         () => {},
       )
-    throw new ToolApprovalUnsupported({ toolName: name })
+      throw new ToolApprovalUnsupported({ toolName: name })
+    }
+    throw new ToolApprovalFailed({
+      toolName: name,
+      cause: new Error('Approval function must return a boolean'),
+    })
   }
 }
 
@@ -629,6 +636,9 @@ function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
 
 /** Pi Tool lacks SDK lifecycle, discovery and kind contracts; refuse behavior that would silently change. */
 function unsupported(name: string, tool: Tool, lookups: Lookups): Option.Option<string> {
+  // A declared SDK contract requires host authority; ToolScope alone is only the undeclared default.
+  if (tool.contextSchema !== undefined && Option.isNone(lookups.context))
+    return Option.some('contextSchema without a context resolver')
   if (tool.type === 'provider') return Option.some('provider-defined and provider-executed tools')
   if (Predicate.isFunction(tool.description)) return Option.some('context-dependent descriptions')
   if (tool.deferLoading === true) return Option.some('deferred tool discovery')
@@ -714,7 +724,7 @@ const registration = Effect.fn('Durable.registerTool')(function* (
 
 /** The hook only waits for plans that hold; a durable denial is Pi's existing block result. */
 const before = Effect.fn('Durable.beforeTool')(function* (
-  plans: ReadonlyMap<string, Plan>,
+  owner: { name: string; plans: ReadonlyMap<string, Plan> },
   call: Parameters<ToolHooks['beforeTool']>[0],
   api: Parameters<ToolHooks['beforeTool']>[1],
   context: Context,
@@ -731,12 +741,17 @@ const before = Effect.fn('Durable.beforeTool')(function* (
     }),
   )
   if (CallLookup.guards.Duplicate(found)) return Option.some({ block: 'duplicate tool call id' })
-  const plan = Option.fromNullishOr(plans.get(call.name))
+  const plan = Option.fromNullishOr(owner.plans.get(call.name))
   if (Option.isNone(plan)) return Option.none<{ block: string }>()
   const stored = yield* readPinnedDecision(api, context)
-  const chosen = Option.isSome(stored) ? stored.value : yield* decision(plan.value, call)
-  const checked = yield* pinDecision(api, chosen, context)
-  return yield* CallDecision.match(checked, {
+  // Pi harness/tool.ts:67–80 stops later hooks and settles a model-visible error on any block.
+  if (Option.isSome(stored) && stored.value.owner !== owner.name)
+    return Option.some({ block: new ToolNameDuplicated({ toolName: call.name }).message })
+  const chosen = Option.isSome(stored) ? stored.value.decision : yield* decision(plan.value, call)
+  const checked = yield* pinDecision(api, { owner: owner.name, decision: chosen }, context)
+  if (checked.owner !== owner.name)
+    return Option.some({ block: new ToolNameDuplicated({ toolName: call.name }).message })
+  return yield* CallDecision.match(checked.decision, {
     Blocked: (blocked) => Effect.succeed(Option.some({ block: blocked.reason })),
     Free: () => Effect.succeed(Option.none<{ block: string }>()),
     Held: () => settlement(api, call.id, context).pipe(Effect.map(blockSettlement)),
@@ -755,18 +770,39 @@ function blockSettlement(settled: Settlement): Option.Option<{ block: string }> 
 }
 
 /** Pi's named hook adapter forwards cancellation into the sole settlement program. */
-function beforeForPi(plans: ReadonlyMap<string, Plan>) {
+function beforeForPi(owner: { name: string; plans: ReadonlyMap<string, Plan> }) {
   return function beforeTool(
     call: Parameters<ToolHooks['beforeTool']>[0],
     api: Parameters<ToolHooks['beforeTool']>[1],
     context: Context,
   ) {
     return Pi.runForPi(
-      before(plans, call, api, context).pipe(Effect.map(Option.getOrUndefined)),
+      before(owner, call, api, context).pipe(Effect.map(Option.getOrUndefined)),
       context.abortSignal,
     )
   }
 }
+
+/** Validate policy references before constructing any tool, so typos cannot silently remove a gate. */
+const validateOptionNames = Effect.fn('Durable.validateToolOptionNames')(function* (
+  tools: ToolSet,
+  lookups: Lookups,
+) {
+  const references = [
+    ['approval', Object.keys(lookups.approval)],
+    ['answers', Object.keys(lookups.answers)],
+    ['replay', Object.keys(lookups.replay)],
+    ['sequential', [...lookups.sequential]],
+  ] as const
+  for (const [option, names] of references)
+    for (const name of names)
+      if (!Object.hasOwn(tools, name))
+        return yield* new ToolSchemaFailed({
+          toolName: name,
+          cause: new Error(`Unknown tool name in ${option}`),
+        })
+  return undefined
+})
 
 /** Names must be unique across selected extensions: hooks cannot see the composed phase agent.
  * SDK needsApproval and host approval predicates must be pure, synchronous and input-only. */
@@ -783,6 +819,7 @@ export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* (
     approval: options.approval ?? {},
     answers: options.answers ?? {},
   }
+  yield* validateOptionNames(tools, lookups)
   const bridged = yield* Effect.forEach(Object.entries(tools), ([toolName, tool]) =>
     Effect.try({
       try: () => ({ toolName, tool, bridged: bridge(toolName, tool, lookups) }),
@@ -803,6 +840,6 @@ export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* (
       return Option.isNone(plan) ? [] : [[tool.name, plan.value] as const]
     }),
   )
-  const waits = hook(ToolTask, { beforeTool: beforeForPi(plans) })
+  const waits = hook(ToolTask, { beforeTool: beforeForPi({ name, plans }) })
   return defineExtension({ name, tools: registrations, hooks: [waits] })
 })

@@ -136,6 +136,15 @@ for (const policy of ['host', 'sdk'] as const)
           state: 'output-error',
           errorText: expect.stringContaining('pay'),
         })
+        if (failure === 'value') {
+          if (chat.lastMessage === undefined) throw new Error('Expected assistant')
+          const part = chat.lastMessage.parts.find(isToolUIPart)
+          expect(part).toMatchObject({
+            errorText: expect.stringContaining('must return a boolean'),
+          })
+          if (part === undefined || !('errorText' in part)) throw new Error('Expected tool error')
+          expect(part.errorText).not.toContain('asynchronous')
+        }
         expect(executions).toBe(0)
         expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
         await opened.root.waitForIdle(context)

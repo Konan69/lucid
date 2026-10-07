@@ -391,17 +391,20 @@ export const CallDecision = Schema.TaggedUnion({
 export type CallDecision = typeof CallDecision.Type
 export const decisionMemo = 'durable.tool.decision'
 
-const decodeDecision = Schema.decodeUnknownEffect(CallDecision)
+/** Task memos are shared across hooks; an extension may only trust its own first-writer pin. */
+const DecisionPin = Schema.Struct({ owner: Schema.String, decision: CallDecision })
+export type DecisionPin = typeof DecisionPin.Type
+const decodeDecision = Schema.decodeUnknownEffect(DecisionPin)
 /** Memo reads are public Pi I/O; an absent memo means hooks have not pinned this attempt yet. */
 export const readPinnedDecision = Effect.fn('Durable.readPinnedDecision')(function* (
   api: HookApi,
   context: Context,
-): Effect.fn.Return<Option.Option<CallDecision>, PiFailed> {
+): Effect.fn.Return<Option.Option<DecisionPin>, PiFailed> {
   const stored = yield* Effect.tryPromise({
     try: () => api.memo(decisionMemo, context),
     catch: (cause) => new PiFailed({ operation: 'snapshot', cause }),
   })
-  if (stored === undefined) return Option.none<CallDecision>()
+  if (stored === undefined) return Option.none<DecisionPin>()
   return Option.some(
     yield* decodeDecision(stored).pipe(
       Effect.mapError((cause) => new PiFailed({ operation: 'snapshot', cause })),
@@ -411,9 +414,9 @@ export const readPinnedDecision = Effect.fn('Durable.readPinnedDecision')(functi
 /** Pin before waiting; after process death Pi returns the durable first writer without rerunning policy. */
 export const pinDecision = Effect.fn('Durable.pinDecision')(function* (
   api: HookApi,
-  chosen: CallDecision,
+  chosen: DecisionPin,
   context: Context,
-): Effect.fn.Return<CallDecision, PiFailed> {
+): Effect.fn.Return<DecisionPin, PiFailed> {
   const stored = yield* Effect.tryPromise({
     try: () => api.memo(decisionMemo, chosen, context),
     catch: (cause) => new PiFailed({ operation: 'commit', cause }),
@@ -445,12 +448,29 @@ export const taskDecision: (
       onNone: () => Effect.succeed(Option.none<CallDecision>()),
       onSome: (value) =>
         decodeDecision(value).pipe(
-          Effect.map(Option.some),
+          Effect.map((pin) => Option.some(pin.decision)),
           Effect.mapError((cause) => new PiFailed({ operation: 'snapshot', cause })),
         ),
     })
   },
 )
+
+/** Both pull and presentation readers prefer the durable hook pin over a changed registration. */
+export const readerDecision = Effect.fn('Durable.readerDecision')(function* (
+  harness: Harness,
+  input: { taskId: Option.Option<TaskId>; plan: Option.Option<Plan>; call: ToolCall },
+  context: Context,
+): Effect.fn.Return<CallDecision, PiFailed> {
+  const stored = yield* Option.match(input.taskId, {
+    onNone: () => Effect.succeed(Option.none<CallDecision>()),
+    onSome: (taskId) => taskDecision(harness, taskId, context),
+  })
+  if (Option.isSome(stored)) return stored.value
+  return yield* Option.match(input.plan, {
+    onNone: () => Effect.succeed(CallDecision.cases.Free.make({})),
+    onSome: (plan) => decision(plan, input.call),
+  })
+})
 
 /** Identical parsing and a contained synchronous policy are used in hooks and every active reader.
  * SDK input is opaque until the SDK validator decodes it; transforms need not produce JSON. */
@@ -466,7 +486,9 @@ export const decision = Effect.fn('Durable.toolDecision')(function* (
     Effect.try({
       try: () => plan.approval(parsed.success),
       catch: (cause) =>
-        cause instanceof ToolApprovalUnsupported || cause instanceof ToolApprovalContextUnavailable
+        cause instanceof ToolApprovalUnsupported ||
+        cause instanceof ToolApprovalFailed ||
+        cause instanceof ToolApprovalContextUnavailable
           ? cause
           : new ToolApprovalFailed({ toolName: call.name, cause }),
     }),
@@ -777,11 +799,14 @@ export function answerObserved(
   )
 }
 
+/** Persist this fallback even when the person supplies no reason, preserving existing receipt presentation. */
+const defaultDenialReason = 'The person denied this call'
+
 /** Direct and batch admission share one decision-to-settlement rule and model-visible denial text. */
 function decisionSettlement(approval: Decision): Settlement {
   return approval.approved
     ? { kind: 'approved' }
-    : { kind: 'denied', reason: approval.reason ?? 'The person denied this call' }
+    : { kind: 'denied', reason: approval.reason ?? defaultDenialReason }
 }
 
 /** Error outputs use the same task-scoped first-writer admission as successful client outputs. */

@@ -12,6 +12,8 @@ import {
 import { z } from 'zod'
 import { PlainChat } from '../fixtures/chat.ts'
 import { abort, history, waiting } from '../main.ts'
+import { PiFailed } from '../errors.ts'
+import { Delivery } from '../delivery.ts'
 import { Holds } from '../holds.ts'
 import { connectionLostInput } from '../client.ts'
 import { call, consume, context, host, modelText, texts, signal } from './fixtures/host.ts'
@@ -198,5 +200,47 @@ it.live('automatically resumes stock Chat after a client tool error', () =>
     if (chat.lastMessage === undefined) throw new Error('Expected final SDK message')
     expect(texts(chat.lastMessage)).toEqual(['Handled.'])
     expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
+  }),
+)
+
+/** A corrupt durable receipt is an authority failure, not an untyped Effect defect. */
+it.live('reports a missing late-answer receipt through waiting as a typed failure', () =>
+  Effect.promise(async () => {
+    const fixture = await host(
+      { ask: tool({ inputSchema: z.object({}) }) },
+      { answers: { ask: 'later' } },
+    )
+    const opened = await fixture.open()
+    opened.faux.setResponses([call('ask', {}, 'ask'), fauxAssistantMessage('Asked.')])
+    const chat = new PlainChat({ transport: opened.transport })
+    await chat.sendMessage({ text: 'Ask' })
+    await opened.root.waitForIdle(context)
+    const rows = await waiting(opened.harness, opened.root.id, context)
+    const held = rows[0]
+    if (held === undefined) throw new Error('Expected question')
+    const other = await host({}, {})
+    const foreign = await other.open()
+    foreign.faux.setResponses([fauxAssistantMessage('One.'), fauxAssistantMessage('Two.')])
+    await foreign.root.submit({ type: 'input', content: 'One' }, context)
+    await foreign.root.waitForIdle(context)
+    const absent = await foreign.root.submit({ type: 'input', content: 'Two' }, context)
+    await foreign.root.waitForIdle(context)
+    expect(await opened.harness.submission(absent.id, context)).toBeUndefined()
+    await opened.root.commit(async (tx) => {
+      const document = await tx.doc(Holds, opened.root.id)
+      const question = document.asked[held.holdId]
+      if (question === undefined) throw new Error('Expected retained question')
+      question.delivery = Delivery.cases.Submitted.make({
+        attempt: 0,
+        output: 'retained',
+        submissionId: absent.id,
+      })
+    }, context)
+    const failed = waiting(opened.harness, opened.root.id, context)
+    await expect(failed).rejects.toBeInstanceOf(PiFailed)
+    await expect(failed).rejects.toMatchObject({
+      operation: 'submission',
+      message: expect.stringContaining('Recorded answer submission is missing'),
+    })
   }),
 )
