@@ -536,13 +536,17 @@ export function translate(state: RunState, event: AgentEvent): Step {
       state: initialRunState,
       chunks: [{ type: 'start', messageId: runMessageId(started.inputs) }],
     })),
-    Match.when({ type: 'run_end' }, (): Step => ({
-      state,
-      chunks: [
-        ...state.failure.map((errorText): Chunk => ({ type: 'error', errorText })),
-        { type: 'finish' },
-      ],
-    })),
+    Match.when({ type: 'run_end' }, (ended): Step => {
+      const closed = closeRun(state, runMessageId(ended.inputs))
+      return {
+        state: closed.state,
+        chunks: [
+          ...closed.chunks,
+          ...state.failure.map((errorText): Chunk => ({ type: 'error', errorText })),
+          { type: 'finish' },
+        ],
+      }
+    }),
     Match.when({ type: 'turn_start' }, () => startTurn(state)),
     Match.when({ type: 'message_start' }, (started) =>
       started.message.role === 'assistant'
@@ -703,7 +707,10 @@ export function replayAfter(
       chunks: [
         { type: 'start' },
         ...called.chunks.filter(
-          (chunk) => chunk.type === 'tool-input-start' || chunk.type === 'tool-input-available',
+          (chunk) =>
+            chunk.type === 'tool-input-start' ||
+            chunk.type === 'tool-input-available' ||
+            chunk.type === 'tool-input-error',
         ),
       ],
     },
@@ -861,4 +868,17 @@ export function rebuild(entries: readonly EntryRecord[]): Rebuilt {
 /** Pi events.js changes runs by their first input; steer inputs never change assistant identity. */
 export function runMessageId(inputs: readonly SubmissionId[]) {
   return `run:${Option.getOrThrow(Arr.head(inputs))}`
+}
+
+/** A closed run never ends in a step containing tool parts: an empty closing step makes both
+ * stock automatic predicates false, identically in live, history and terminal replay. SDK
+ * process-ui-message-stream.ts:926-975 does not publish step chunks; the identity-only start
+ * publishes the closing boundary without fabricating metadata or another content part. */
+export function closeRun(state: RunState, messageId: string): Step {
+  if (state.calls.size === 0) return { state, chunks: [] }
+  const closed = startTurn(state)
+  return {
+    state: closed.state,
+    chunks: [...closed.chunks, { type: 'finish-step' }, { type: 'start', messageId }],
+  }
 }

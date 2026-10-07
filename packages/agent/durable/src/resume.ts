@@ -12,7 +12,9 @@ import { Effect, Option, Predicate, Schema } from 'effect'
 import {
   type Chunk,
   type Step,
-  initialRunState,
+  type Rebuilt,
+  closeRun,
+  rebuild,
   replay,
   replayAfter,
   runMessageId,
@@ -22,7 +24,11 @@ import { RunMissing, type PiFailed } from './errors.ts'
 import * as Pi from './pi.ts'
 
 /** A resume names the assistant run as well as the tool parts that the client already holds. */
-export type ResumeInput = { readonly messageId: string; readonly known: ReadonlySet<string> }
+export type ResumeInput = {
+  readonly messageId: string
+  readonly known: ReadonlySet<string>
+  readonly steps?: number
+}
 /** A replay prefix owns its complete translator state and per-chunk task provenance. */
 export type Prefix = {
   readonly step: Step
@@ -129,11 +135,17 @@ export const inputReplay: (
       ? []
       : yield* entriesOf(reader, {
           first: receipt.entry,
-          last: receipt.status === 'done' ? Option.some(receipt.answer) : Option.none(),
+          last: Option.none(),
         })
-  const entries = receipt.status === 'unanswered' ? closedEntries(placed) : placed
+  const entries = closedEntries(placed)
   const prefix = Option.getOrThrow(replay({ ...base, entries, run: { inputs: [receipt.id] } }))
-  return { step: prefix, live: false, known: new Set<string>(), origins: prefix.origins }
+  const closed = closeRun(prefix.state, runMessageId([receipt.id]))
+  return {
+    step: { state: closed.state, chunks: [...prefix.chunks, ...closed.chunks] },
+    live: false,
+    known: new Set<string>(),
+    origins: prefix.origins,
+  }
 })
 
 /** A placed input belongs to this conversation and retains its authoritative entry through settlement. */
@@ -186,33 +198,61 @@ export const selectRun: (
     return yield* new RunMissing({ conversationId: reader.conversation.id })
   const placed = yield* entriesOf(reader, {
     first: receipt.entry,
-    last: receipt.status === 'done' ? Option.some(receipt.answer) : Option.none(),
+    last: Option.none(),
   })
-  const entries = receipt.status === 'unanswered' ? closedEntries(placed) : placed
+  const entries = closedEntries(placed)
   // A completed run must not borrow the newer run's generation or live continuation.
   const { run: _run, generation: _generation, ...stored } = snapshot
   const captured = active ? { ...snapshot, entries } : { ...stored, entries }
   const prefix = replayAfter(captured, input.known)
   if (Option.isNone(prefix))
     return yield* new RunMissing({ conversationId: reader.conversation.id })
-  if (receipt.status === 'unanswered' || (!active && intent === 'Complete'))
-    return Option.some(completed(input))
+  if (!active) return Option.some(completed(input, prefix.value, rebuild(entries), intent))
   return Option.some({ ...prefix.value, known: input.known })
 })
 
-/** An empty terminal step stops stock automatic predicates while preserving the finished parts.
- * SDK start-step/finish-step do not write Chat state; the second identity-only start publishes it. */
-function completed(input: ResumeInput) {
-  const chunks: Chunk[] = [
-    { type: 'start', messageId: input.messageId },
-    { type: 'start-step' },
-    { type: 'finish-step' },
-    { type: 'start', messageId: input.messageId },
-  ]
+/** Durable step count distinguishes a retained closing boundary from a client that lost it.
+ * A settlement-bearing closed resume restores terminal parts before closing; a content-free
+ * acknowledgement appends nothing when the client's copy already has the durable boundary. */
+function completed(
+  input: ResumeInput,
+  prefix: Omit<Prefix, 'known'>,
+  stored: Rebuilt,
+  intent: 'Replay' | 'Complete',
+): Prefix {
+  const closed = closeRun(stored.state, input.messageId)
+  const expected = closed.state.turn
+  const correction = intent === 'Replay' ? terminalCorrection(input, prefix, stored) : []
+  const closing = input.steps === expected ? [] : closed.chunks
+  const ending: readonly Chunk[] =
+    closing.length === 0 && correction.length > 0
+      ? [{ type: 'start', messageId: input.messageId }]
+      : closing
   return {
-    step: { state: initialRunState, chunks },
+    step: {
+      state: closed.state,
+      chunks: [{ type: 'start', messageId: input.messageId }, ...correction, ...ending],
+    },
     live: false,
     known: input.known,
-    origins: new Map<Chunk, TaskId>(),
+    origins: stored.origins,
   }
+}
+
+/** Rebuilding the retained current step also removes the client's unsatisfied approval payload.
+ * The SDK's output-error update preserves approval fields; reset-step is its honest removal API.
+ * Earlier steps remain untouched, and a closed copy with its boundary needs no replayed parts. */
+function terminalCorrection(
+  input: ResumeInput,
+  prefix: Omit<Prefix, 'known'>,
+  stored: Rebuilt,
+): readonly Chunk[] {
+  if (input.steps === undefined || input.steps === 0)
+    return prefix.step.chunks.filter((chunk) => chunk.type !== 'start')
+  if (input.steps > stored.state.turn) return []
+  let step = 0
+  const from = stored.chunks.findIndex(
+    (chunk) => chunk.type === 'start-step' && ++step === input.steps,
+  )
+  return from === -1 ? [] : [{ type: 'reset-step' }, ...stored.chunks.slice(from + 1)]
 }

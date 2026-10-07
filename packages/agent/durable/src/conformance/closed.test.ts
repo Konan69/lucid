@@ -89,7 +89,7 @@ for (const predicate of [
       await sending
       await done.promise
       expect(chat.status).toBe('ready')
-      expect(posts).toBe(predicate === lastAssistantMessageIsCompleteWithToolCalls ? 2 : 1)
+      expect(posts).toBe(1)
       if (chat.lastMessage === undefined) throw new Error('Expected aborted assistant')
       expect(chat.lastMessage.parts.find((part) => 'toolCallId' in part)).toMatchObject({
         state: 'output-error',
@@ -108,6 +108,13 @@ for (const predicate of [
       for await (const chunk of stream) chunks.push(chunk)
       expect(chunks).toEqual([
         { type: 'start', messageId: chat.lastMessage.id },
+        {
+          type: 'tool-input-error',
+          toolCallId: 'partial',
+          toolName: 'pay',
+          input: {},
+          errorText: 'Tool input was interrupted before it completed',
+        },
         { type: 'start-step' },
         { type: 'finish-step' },
         { type: 'start', messageId: chat.lastMessage.id },
@@ -183,10 +190,7 @@ it.live('acknowledges a finished message without another automatic tool POST', (
     await chat.sendMessage()
     expect(posts).toBe(1)
     expect(chat.status).toBe('ready')
-    expect(chat.lastMessage).toEqual({
-      ...message,
-      parts: [...message.parts, { type: 'step-start' }],
-    })
+    expect(chat.lastMessage).toEqual(message)
   }),
 )
 

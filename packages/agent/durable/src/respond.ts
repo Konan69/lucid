@@ -66,6 +66,7 @@ export const ChatTurn = Schema.TaggedUnion({
   Input: { messageId: Schema.String, parts: InputParts },
   Resume: {
     messageId: Schema.optionalKey(Schema.String),
+    steps: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
     known: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
     decisions: Schema.Array(
       Schema.Struct({
@@ -158,6 +159,7 @@ function resumed(message: Extract<typeof Message.Type, { role: 'assistant' }>) {
     'output' in part ? [{ callId: part.toolCallId, output: part.output }] : [],
   )
   const resume = {
+    steps: parts.filter((part) => part.type === 'step-start').length,
     known: tools.map((part) => part.toolCallId),
     decisions,
     outputs,
@@ -339,7 +341,7 @@ export const respondWithPolicy: (
                 : continueRun)(
                 harness,
                 conversationId,
-                { messageId: resume.messageId, known: new Set(resume.known) },
+                { messageId: resume.messageId, steps: resume.steps, known: new Set(resume.known) },
                 context,
               ),
         ),

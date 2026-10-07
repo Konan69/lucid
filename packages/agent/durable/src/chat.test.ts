@@ -90,6 +90,7 @@ it.live('approves a call and continues the same message', () =>
       root.id,
       ChatTurn.cases.Resume.make({
         messageId: before.message.id,
+        steps: before.message.parts.filter((part) => part.type === 'step-start').length,
         known: ['call-pay'],
         decisions: [
           {
@@ -145,6 +146,7 @@ it.live('answers a tool that has no server execute', () =>
       root.id,
       ChatTurn.cases.Resume.make({
         messageId: before.message.id,
+        steps: before.message.parts.filter((part) => part.type === 'step-start').length,
         known: ['call-ask'],
         decisions: [],
         outputs: [{ callId: 'call-ask', output: 'savings' }],

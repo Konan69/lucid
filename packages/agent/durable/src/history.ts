@@ -12,7 +12,7 @@ import {
 import type { UIMessage, UIMessageChunk } from 'ai'
 import { Data, Effect, Match, Option, Predicate, Schema, Stream } from 'effect'
 import { emptyRound, present, type Desk } from './calls.ts'
-import { rebuild, type Rebuilt } from './chunks.ts'
+import { closeRun, rebuild, type Rebuilt } from './chunks.ts'
 import { noDesk, readDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
 import { readMessage } from './reading.ts'
@@ -270,6 +270,7 @@ const assistantMessage = Effect.fn('Durable.historyAssistant')(function* (
   const chunks: readonly UIMessageChunk[] = [
     { type: 'start', messageId: `entry:${identity}` },
     ...shown.chunks,
+    ...closeRun(step.state, `entry:${identity}`).chunks,
     { type: 'finish-step' },
     { type: 'finish' },
   ]

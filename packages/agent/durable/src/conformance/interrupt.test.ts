@@ -90,7 +90,7 @@ it.live.each([
     release.resolve()
     await sent
     expect(chat.status).toBe('ready')
-    expect(posts).toBe(predicate === lastAssistantMessageIsCompleteWithToolCalls ? 2 : 1)
+    expect(posts).toBe(1)
     if (chat.lastMessage === undefined) throw new Error('Expected aborted assistant')
     expect(chat.lastMessage.parts.find(isToolUIPart)).toMatchObject({
       state: 'output-error',
