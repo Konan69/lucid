@@ -11,13 +11,13 @@ const backoff = Schedule.exponential('2 seconds').pipe(
 )
 /** Progress is the reconnect input; reset the policy without losing the scoped connection lifetime. */
 export const channelReconnect = Schedule.fromStep(
-  Effect.fn('Channels.reconnectSchedule')(function* () {
+  Effect.gen(function* () {
     let step = yield* Schedule.toStep(backoff)
     return Effect.fn('Channels.reconnectStep')(function* (now: number, received: boolean) {
       if (received) step = yield* Schedule.toStep(backoff)
       return yield* step(now, undefined)
     })
-  })(),
+  }).pipe(Effect.withSpan('Channels.reconnectSchedule')),
 )
 
 /** Failure evidence is a tag only; defects carry no possibly private exception payload. */
@@ -35,7 +35,7 @@ const handle = (receiver: ChannelReceiver['Service']) =>
 
 /** One scoped consumer reconnects on Schedule; one message's failure or defect cannot end the stream. */
 export const channelWorkerLayer = Layer.effectDiscard(
-  Effect.fn('Channels.worker')(function* () {
+  Effect.gen(function* () {
     const provider = yield* ChannelProvider
     const receiver = yield* ChannelReceiver
     if (provider.channels.length === 0) return
@@ -57,5 +57,5 @@ export const channelWorkerLayer = Layer.effectDiscard(
       return received
     })
     yield* consume().pipe(Effect.repeat(channelReconnect), Effect.forkScoped)
-  })(),
+  }).pipe(Effect.withSpan('Channels.worker')),
 )

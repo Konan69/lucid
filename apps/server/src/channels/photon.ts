@@ -112,17 +112,18 @@ const disconnected = () => new ChannelDisconnected({ channel: 'iMessage' })
 const invalidMessage = () => new InvalidChannelMessage({ channel: 'iMessage' })
 
 /** Spectrum lacks cancellation input; dispose late acquisition when the reply deadline interrupts it. */
-const openPhoton = async (config: PhotonCredentials, signal: AbortSignal) => {
-  const application = await Spectrum({
+const openPhoton = (config: PhotonCredentials, signal: AbortSignal) =>
+  Spectrum({
     providers: [imessage.config({})],
     projectId: config.projectId,
     projectSecret: Redacted.value(config.projectSecret),
     telemetry: false,
     options: { logLevel: 'silent', flattenGroups: false },
+  }).then((application) => {
+    // The Promise adapter must also dispose an SDK instance acquired after interruption.
+    if (signal.aborted) return application.stop().then(() => application)
+    return application
   })
-  if (signal.aborted) await application.stop()
-  return application
-}
 
 /** Acquire only while consuming inbound or sending; listing addresses performs no SDK I/O. */
 const connectPhoton = Effect.fn('Channels.connectPhoton')((config: PhotonCredentials) =>
@@ -249,7 +250,7 @@ const credential = Schema.NonEmptyString.check(
  */
 export const photonLayer = Layer.effect(
   ChannelProvider,
-  Effect.fn('Channels.configurePhoton')(function* () {
+  Effect.gen(function* () {
     const projectId = yield* requiredSetting(
       'VIVID_PHOTON_PROJECT_ID',
       credential,
@@ -261,5 +262,5 @@ export const photonLayer = Layer.effect(
       'the Photon project secret',
     )
     return yield* makePhoton({ projectId, projectSecret })
-  })(),
+  }).pipe(Effect.withSpan('Channels.configurePhoton')),
 )

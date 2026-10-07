@@ -56,15 +56,17 @@ describe('Photon settings', () => {
 
   it.effect('builds with both credentials and texts on iMessage only', () =>
     Effect.gen(function* () {
-      expect((yield* ChannelProvider).channels).toEqual(['iMessage'])
-    }).pipe(
-      Effect.provide(
+      // Each case owns fresh mutable services and their resource scope.
+      const caseContext = yield* Layer.build(
         photonLayer.pipe(
           Layer.provide(NodeHttpClient.layerUndici),
           Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(settings))),
         ),
-      ),
-    ),
+      )
+      return yield* Effect.gen(function* () {
+        expect((yield* ChannelProvider).channels).toEqual(['iMessage'])
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped),
   )
 })
 
