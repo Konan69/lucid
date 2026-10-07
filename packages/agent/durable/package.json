@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/main.ts",
-    "./core": "./src/core.ts"
+    "./core": "./src/core.ts",
+    "./postgres": "./src/postgres/main.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -24,14 +25,24 @@
     "@effect/vitest": "catalog:",
     "@opentelemetry/api": "1.9.0",
     "@types/node": "catalog:",
+    "@types/pg": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@typescript/native": "catalog:",
     "jsdom": "30.1.2",
+    "pg": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
     "zod": "4.5.4"
+  },
+  "peerDependencies": {
+    "pg": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "pg": {
+      "optional": true
+    }
   }
 }

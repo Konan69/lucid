@@ -146,5 +146,80 @@
     "file": "packages/agent/durable/src/fixtures/answer.ts",
     "classification": "test-process-entrypoint",
     "symbols": ["<module>", "execute", "main"]
+  },
+  {
+    "file": "packages/agent/durable/src/postgres/bench/main.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["readNumbers", "writeNumbers", "withPostgres", "withSqlite", "main", "<module>"]
+  },
+  {
+    "file": "packages/agent/durable/src/postgres/database.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["exec", "run", "get", "all", "transaction", "close"]
+  },
+  {
+    "file": "packages/agent/durable/src/postgres/migrations.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["applyPostgresMigrations"]
+  },
+  {
+    "file": "packages/agent/durable/src/postgres/pg.ts",
+    "classification": "third-party-adapter",
+    "symbols": [
+      "run",
+      "exec",
+      "get",
+      "all",
+      "runOperation",
+      "query",
+      "transaction",
+      "runTransaction",
+      "close",
+      "rollback",
+      "openPgDatabase",
+      "openPgStorage"
+    ]
+  },
+  {
+    "file": "packages/agent/durable/src/postgres/storage.ts",
+    "classification": "third-party-adapter",
+    "symbols": [
+      "open",
+      "commit",
+      "mintId",
+      "conversation",
+      "scanConversations",
+      "scanEntries",
+      "readEntry",
+      "readLatestHeadMarker",
+      "readEntries",
+      "task",
+      "scanTasks",
+      "submission",
+      "scanSubmissions",
+      "submissionByRequest",
+      "findDocument",
+      "document",
+      "scanDocuments",
+      "close",
+      "closeDatabase",
+      "admitRead",
+      "readConversation",
+      "materializeDocument",
+      "checkGlobalIds",
+      "checkDocumentActions",
+      "checkDelta",
+      "currentDocumentId",
+      "applyTableWrite",
+      "writeConversation",
+      "writeEntry",
+      "claimId",
+      "applyDocumentActions"
+    ]
+  },
+  {
+    "file": "packages/agent/durable/src/postgres/testing.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["postgresFixture", "open"]
   }
 ]
