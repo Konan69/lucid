@@ -1,6 +1,7 @@
 import type { Context } from '@earendil-works/chord'
 import { LiveDoc, type Harness, type ConversationId } from '@earendil-works/pi-durable'
 import * as Pi from './pi.ts'
+import { holdIdOf } from './holds.ts'
 import { waiting } from './waiting.ts'
 import type { ConversationMissing, PiFailed } from './errors.ts'
 import { Effect, Option, Schema } from 'effect'
@@ -37,11 +38,12 @@ export const isParked: (
     const rows = (yield* waiting(harness, conversationId, context)).filter(
       (row) => row.kind !== 'later',
     )
-    const held = new Set(rows.map((row) => row.callId))
+    const held = new Set(rows.map((row) => row.holdId))
     return (
       rows.length > 0 &&
       slots.every(
-        (slot) => slot.status !== 'pending' || slot.taskId === undefined || held.has(slot.callId),
+        (slot) =>
+          slot.status !== 'pending' || slot.taskId === undefined || held.has(holdIdOf(slot.taskId)),
       )
     )
   },

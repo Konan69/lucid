@@ -488,18 +488,30 @@ it('reports a stranded host input without withdrawing it, then follows its place
 /** A new message cannot be answered while this Chat's predecessor waits for a person.
  * Both installed stock predicates (ui/last-assistant-message-is-complete-*.ts) require a last
  * assistant message: remove the refused user before approving, then the stock flow works. */
-it.each(['followUp', 'steer', 'reject'] as const)(
-  'refuses new %s input while parked without queuing it',
-  async (whenBusy) => {
+it.each(
+  (['followUp', 'steer', 'reject'] as const).flatMap((whenBusy) =>
+    (['approval', 'answer'] as const).map((kind) => ({ whenBusy, kind })),
+  ),
+)(
+  'refuses new $whenBusy input while parked on $kind without queuing it',
+  async ({ whenBusy, kind }) => {
     const fixture = await shop()
     const opened = await fixture.open()
-    opened.faux.setResponses([call('pay', { amount: 3 }, 'pay'), fauxAssistantMessage('Paid.')])
+    opened.faux.setResponses([
+      kind === 'approval'
+        ? call('pay', { amount: 3 }, 'pay')
+        : call('ask', { question: 'Account?' }, 'ask'),
+      fauxAssistantMessage('Paid.'),
+    ])
     const finished = signal()
     const chat = new PlainChat({
-      onFinish: () => {
-        if (fixture.paid.length > 0) finished.resolve()
+      onFinish: ({ message }) => {
+        if (texts(message).includes('Paid.')) finished.resolve()
       },
-      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+      sendAutomaticallyWhen:
+        kind === 'approval'
+          ? lastAssistantMessageIsCompleteWithApprovalResponses
+          : lastAssistantMessageIsCompleteWithToolCalls,
       transport: new DefaultChatTransport<UIMessage>({
         api: 'http://durable.test/chat',
         fetch: async (url, init) =>
@@ -515,8 +527,7 @@ it.each(['followUp', 'steer', 'reject'] as const)(
     const held = chat.lastMessage
     if (held === undefined) throw new Error('Expected held assistant')
     const part = held.parts.find(isToolUIPart)
-    if (part === undefined || part.state !== 'approval-requested')
-      throw new Error('Expected approval')
+    if (part === undefined) throw new Error('Expected waiting call')
     await chat.sendMessage({ text: 'Another message' })
     expect(chat.status).toBe('error')
     if (chat.error === undefined) throw new Error('Expected waiting refusal')
@@ -532,10 +543,13 @@ it.each(['followUp', 'steer', 'reject'] as const)(
     expect(lastAssistantMessageIsCompleteWithToolCalls({ messages: chat.messages })).toBe(false)
     chat.messages = chat.messages.slice(0, -1)
     chat.clearError()
-    await chat.addToolApprovalResponse({ id: part.approval.id, approved: true })
+    if (kind === 'approval') {
+      if (part.state !== 'approval-requested') throw new Error('Expected approval')
+      await chat.addToolApprovalResponse({ id: part.approval.id, approved: true })
+    } else await chat.addToolOutput({ tool: 'ask', toolCallId: part.toolCallId, output: 'yes' })
     await finished.promise
     expect(chat.status).toBe('ready')
-    expect(fixture.paid).toEqual([3])
+    expect(fixture.paid).toEqual(kind === 'approval' ? [3] : [])
     if (chat.lastMessage === undefined) throw new Error('Expected final message')
     expect(texts(chat.lastMessage)).toEqual(['Paid.'])
   },
