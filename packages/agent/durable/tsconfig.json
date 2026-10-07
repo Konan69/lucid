@@ -5,6 +5,7 @@
     "types": ["node"],
     "noEmit": true,
     "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
     "tsBuildInfoFile": ".cache/typescript/tsconfig.tsbuildinfo",
     "jsx": "react-jsx"
   },

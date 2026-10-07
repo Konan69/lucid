@@ -4,8 +4,12 @@
 import { AbstractChat, type ChatInit, type ChatState, type ChatStatus, type UIMessage } from 'ai'
 
 class PlainState implements ChatState<UIMessage> {
+  readonly onMessage: (message: UIMessage) => void
+
   /** Publish actual SDK store writes for deterministic tests of in-flight message states. */
-  constructor(readonly onMessage: (message: UIMessage) => void) {}
+  constructor(onMessage: (message: UIMessage) => void) {
+    this.onMessage = onMessage
+  }
 
   status: ChatStatus = 'ready'
   error: ChatState<UIMessage>['error'] = undefined
