@@ -167,7 +167,7 @@
   {
     "file": "packages/agent/durable/src/examples/serve.ts",
     "classification": "http-framework-entrypoint",
-    "symbols": ["readBody", "requestRoute", "response", "writeResponse"]
+    "symbols": ["readBody", "requestRoute", "response", "writeResponse", "next", "finish"]
   },
   {
     "file": "packages/agent/durable/src/examples/serve.ts",
@@ -192,7 +192,15 @@
   {
     "file": "packages/agent/durable/src/postgres/bench/main.ts",
     "classification": "third-party-adapter",
-    "symbols": ["readNumbers", "writeNumbers", "withPostgres", "withSqlite", "main", "<module>"]
+    "symbols": [
+      "readNumbers",
+      "writeNumbers",
+      "withPostgres",
+      "withSqlite",
+      "main",
+      "<module>",
+      "releaseSchema"
+    ]
   },
   {
     "file": "packages/agent/durable/src/postgres/database.ts",
@@ -211,7 +219,7 @@
   {
     "file": "packages/agent/durable/src/postgres/migrations.ts",
     "classification": "third-party-adapter",
-    "symbols": ["applyPostgresMigrations"]
+    "symbols": ["applyPostgresMigrations", "applyHistory"]
   },
   {
     "file": "packages/agent/durable/src/postgres/pg.ts",
@@ -272,7 +280,7 @@
   {
     "file": "packages/agent/durable/src/postgres/testing.ts",
     "classification": "third-party-adapter",
-    "symbols": ["postgresFixture", "open"]
+    "symbols": ["postgresFixture", "open", "rejected"]
   },
   {
     "file": "packages/agent/durable/src/postgres/bench/database.ts",

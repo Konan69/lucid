@@ -56,7 +56,7 @@ const ChatPath = Schema.Struct({
 const Mapping = Schema.Struct({ conversation_id: ConversationMissing.fields.conversationId })
 const StartOptions = Schema.Struct({
   host: Schema.String.check(Schema.isMinLength(1)),
-  port: Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 0, maximum: 65535 })),
+  port: Schema.Finite.check(Schema.isInt(), Schema.isBetween({ minimum: 0, maximum: 65535 })),
   dataDirectory: Schema.String.check(Schema.isMinLength(1)),
 })
 export type StartOptions = typeof StartOptions.Type
@@ -65,7 +65,7 @@ const decodeMapping = Schema.decodeUnknownEffect(Mapping)
 const decodeEnvelope = Schema.decodeUnknownEffect(ChatEnvelope)
 const decodePath = Schema.decodeUnknownEffect(ChatPath)
 const decodeStart = Schema.decodeUnknownEffect(StartOptions)
-const decodeLength = Schema.decodeUnknownSync(Schema.NumberFromString)
+const decodeLength = Schema.decodeUnknownSync(Schema.FiniteFromString)
 const decodeIngress = Schema.decodeUnknownEffect(
   Schema.Struct({ method: Schema.String, url: Schema.String }),
 )
@@ -73,7 +73,7 @@ const decodeAddress = Schema.decodeUnknownResult(
   Schema.Struct({
     address: Schema.String,
     family: Schema.Literals(['IPv4', 'IPv6']),
-    port: Schema.Number,
+    port: Schema.Finite,
   }),
 )
 
@@ -279,76 +279,94 @@ const conversation = Effect.fn('Example.conversation')(function* (
 })
 
 /** Node's framework body reader bounds accumulated bytes before buffering or decoding JSON. */
-async function readBody(request: NodeHttp.IncomingMessage) {
+function readBody(request: NodeHttp.IncomingMessage): Promise<string> {
   const length = request.headers['content-length']
-  if (length !== undefined) {
-    const bytes = decodeLength(length)
-    if (bytes > maximumBody) {
-      request.resume()
-      throw new BodyTooLarge({})
-    }
+  if (length !== undefined && decodeLength(length) > maximumBody) {
+    request.resume()
+    return Promise.reject(new BodyTooLarge({}))
   }
   let size = 0
   const chunks: Buffer[] = []
-  for await (const chunk of request.iterator({ destroyOnReturn: false })) {
-    if (!Buffer.isBuffer(chunk)) throw new BodyUnreadable({ cause: 'Expected a byte stream' })
-    size += chunk.byteLength
-    if (size > maximumBody) {
-      request.resume()
-      throw new BodyTooLarge({})
-    }
-    chunks.push(chunk)
+  const reader = request.iterator({ destroyOnReturn: false })
+  /** Await one framework chunk at a time. Returning early preserves the previous
+   * iterator close rule without destroying the host's incoming socket. */
+  function next(): Promise<string> {
+    return reader.next().then((item) => {
+      if (item.done) return Buffer.concat(chunks).toString('utf8')
+      const chunk = item.value
+      if (!Buffer.isBuffer(chunk))
+        return finish(new BodyUnreadable({ cause: 'Expected a byte stream' }))
+      size += chunk.byteLength
+      if (size > maximumBody) {
+        request.resume()
+        return finish(new BodyTooLarge({}))
+      }
+      chunks.push(chunk)
+      return next()
+    })
   }
-  return Buffer.concat(chunks).toString('utf8')
+  /** AsyncIteratorClose on a thrown body failure keeps that original failure.
+   * AsyncIterator.return is optional; call it with its receiver when present. */
+  function finish(error: BodyTooLarge | BodyUnreadable): Promise<never> {
+    if (reader.return === undefined) return Promise.reject(error)
+    return reader
+      .return()
+      .catch(() => {})
+      .then(() => {
+        throw error
+      })
+  }
+  return next()
 }
 
 /** Node's Promise HTTP ingress calls the one imported Promise entry directly,
  * as reviewed in a020c7be. Wrapping route rejection in Effect.promise would turn
  * an expected transport failure into a defect. Resource mapping remains Effect. */
-async function requestRoute(host: Host, request: Request, body: string): Promise<Response> {
+function requestRoute(host: Host, request: Request, body: string): Promise<Response> {
   const url = new URL(request.url)
   if (url.pathname === '/chat') {
     if (request.method !== 'POST')
-      return new Response(null, { status: 405, headers: { Allow: 'POST' } })
-    // Decode the turn before allocating any Pi conversation or mapping row.
-    // Malformed new ids must remain absent; use the public codec, not a second
-    // hand-written chat validator. Route admission retains its normal checks.
-    const json = await decodeJson(body)
-    await decodeTurn(json)
-    const envelope = await runForNode(decodeEnvelope(json))
-    const id = await runForNode(conversation(host, envelope.id, true))
-    return route(host.harness, id, request, context)
+      return Promise.resolve(new Response(null, { status: 405, headers: { Allow: 'POST' } }))
+    // Public turn validation must settle before conversation or mapping writes.
+    return decodeJson(body)
+      .then((json) => decodeTurn(json).then(() => runForNode(decodeEnvelope(json))))
+      .then((envelope) => runForNode(conversation(host, envelope.id, true)))
+      .then((id) => route(host.harness, id, request, context))
   }
   const match = /^\/chat\/([^/]+)\/([^/]+)$/u.exec(url.pathname)
-  if (match === null) return new Response(null, { status: 404 })
-  const path = await runForNode(decodePath({ id: match[1], action: match[2] }))
-  const method =
-    path.action === 'stream' || path.action === 'history' || path.action === 'waiting'
-      ? 'GET'
-      : 'POST'
-  if (request.method !== method)
-    return new Response(null, { status: 405, headers: { Allow: method } })
-  const id = await runForNode(conversation(host, path.id, false))
-  url.pathname = path.action === 'stream' ? '/chat' : `/${path.action}`
-  return route(host.harness, id, new Request(url, request), context)
+  if (match === null) return Promise.resolve(new Response(null, { status: 404 }))
+  return runForNode(decodePath({ id: match[1], action: match[2] })).then((path) => {
+    const method =
+      path.action === 'stream' || path.action === 'history' || path.action === 'waiting'
+        ? 'GET'
+        : 'POST'
+    if (request.method !== method)
+      return new Response(null, { status: 405, headers: { Allow: method } })
+    return runForNode(conversation(host, path.id, false)).then((id) => {
+      url.pathname = path.action === 'stream' ? '/chat' : `/${path.action}`
+      return route(host.harness, id, new Request(url, request), context)
+    })
+  })
 }
 
 /** Node's Promise-only framework ingress bounds bytes before constructing the
  * shared Request; expected route statuses remain the Promise route's authority. */
-async function response(
+function response(
   host: Host,
   incoming: NodeHttp.IncomingMessage,
   signal: AbortSignal,
 ): Promise<Response> {
-  if (incoming.method === 'OPTIONS') return new Response(null, { status: 204 })
-  const input = await runForNode(decodeIngress({ method: incoming.method, url: incoming.url }))
-  const body = input.method === 'POST' ? await readBody(incoming) : ''
-  const url = new URL(input.url, 'http://example.invalid')
-  const request =
-    input.method === 'POST'
-      ? new Request(url, { method: input.method, body, signal })
-      : new Request(url, { method: input.method, signal })
-  return requestRoute(host, request, body)
+  if (incoming.method === 'OPTIONS') return Promise.resolve(new Response(null, { status: 204 }))
+  return runForNode(decodeIngress({ method: incoming.method, url: incoming.url })).then((input) =>
+    (input.method === 'POST' ? readBody(incoming) : Promise.resolve('')).then((body) => {
+      const url = new URL(input.url, 'http://example.invalid')
+      const request =
+        input.method === 'POST'
+          ? new Request(url, { method: input.method, body, signal })
+          : new Request(url, { method: input.method, signal })
+      return requestRoute(host, request, body)
+    }),
+  )
 }
 
 /** Only host ingress failures are mapped here; main.route owns bridge statuses. */
@@ -374,16 +392,19 @@ function cors(outgoing: NodeHttp.ServerResponse) {
 }
 
 /** Web stream cancellation detaches only this HTTP observation, preserving Pi's durable run. */
-async function writeResponse(
+function writeResponse(
   outgoing: NodeHttp.ServerResponse,
   result: Response,
   signal: AbortSignal,
-) {
+): Promise<void> {
   outgoing.statusCode = result.status
   result.headers.forEach((value, name) => outgoing.setHeader(name, value))
   outgoing.flushHeaders()
-  if (result.body === null) outgoing.end()
-  else await result.body.pipeTo(NodeStream.Writable.toWeb(outgoing), { signal })
+  if (result.body === null) {
+    outgoing.end()
+    return Promise.resolve()
+  }
+  return result.body.pipeTo(NodeStream.Writable.toWeb(outgoing), { signal })
 }
 
 /** The HTTP framework is the only runtime Promise ingress; expected route statuses come from main. */
@@ -526,20 +547,21 @@ const configured = Effect.fn('Example.configured')(function* () {
 })
 
 /** Importing start has no CLI side effects; signal handlers exist only for the executable example. */
-async function main() {
-  const host = await runForNode(configured())
-  const close = () => {
-    process.removeListener('SIGINT', close)
-    process.removeListener('SIGTERM', close)
-    void runForNode(host.close()).catch((error: Error) => {
-      console.error(error)
-      process.exitCode = 1
-    })
-  }
-  process.once('SIGINT', close)
-  process.once('SIGTERM', close)
-  // Publish readiness only after immediate shutdown signals can be handled safely.
-  console.log(`Durable example listening at ${host.address} (data: ${host.dataDirectory})`)
+function main(): Promise<void> {
+  return runForNode(configured()).then((host) => {
+    const close = () => {
+      process.removeListener('SIGINT', close)
+      process.removeListener('SIGTERM', close)
+      void runForNode(host.close()).catch((error: Error) => {
+        console.error(error)
+        process.exitCode = 1
+      })
+    }
+    process.once('SIGINT', close)
+    process.once('SIGTERM', close)
+    // Publish readiness only after immediate shutdown signals can be handled safely.
+    console.log(`Durable example listening at ${host.address} (data: ${host.dataDirectory})`)
+  })
 }
 
 const executable = process.argv[1]

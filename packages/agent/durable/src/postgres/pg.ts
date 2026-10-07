@@ -24,7 +24,7 @@ const QueryEnvelope = Schema.Struct({
   rows: Schema.Array(
     Schema.Record(
       Schema.String,
-      Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Null]),
+      Schema.Union([Schema.String, Schema.Finite, Schema.Boolean, Schema.Null]),
     ),
   ),
 })
@@ -404,6 +404,7 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
  * no pool is constructed or ended.
  * SQLite file creation, WAL/checkpoint and busy-timeout options do not apply to
  * PostgreSQL; connection/durability settings remain with the supplied host pool. */
+// @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/node.ts:openNodeSqliteDatabase.
 export async function openPgDatabase(pool: Pool, schema: string): Promise<PgDatabase> {
   validateSchema(schema)
   const client = await pool.connect()
@@ -453,6 +454,7 @@ export async function openPgDatabase(pool: Pool, schema: string): Promise<PgData
  * also releases the lock when the connection or owning process dies.
  * Migrations create the schema
  * transactionally; PostgreSQL SQL/JSON predicates require PostgreSQL 16 or newer. */
+// @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/node.ts:openNodeSqliteStorage.
 export async function openPgStorage(pool: Pool, schema: string): Promise<PostgresStorage> {
   return PostgresStorage.open(await openPgDatabase(pool, schema), schema)
 }
