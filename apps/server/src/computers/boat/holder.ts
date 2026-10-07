@@ -138,9 +138,49 @@ export const holderClaim = (input: { readonly id: ProviderId; readonly intent: s
     'exec 9>&-',
   ].join('\n')
 
-/** One wake: the holder is settled first, and only its own desktop is then opened. */
+/**
+ * What Boat leaves out of a Computer's snapshots, as the `.boxignore` in its home directory
+ * (gitignore syntax, relative to that directory; Boat's "Snapshots & Copies", "Excluding files").
+ *
+ * Boat captures every file each minute, counts a hard link as a full copy, and will only start a
+ * machine whose captured data fits the size it runs on. Download caches are the files that grow
+ * without anyone meaning them to and that every tool rebuilds, so they are kept out. Dependency
+ * trees inside a project (`node_modules`) stay in: a Person's project must come back whole after
+ * a stop, and Vivid stops the Computer whenever it is idle.
+ *
+ * This is the guard for the Computer's own use. What filled a Person's Computer on 6 October 2026
+ * was not that: it was another system's build trees (5.8 million files, 117.5 GiB captured), and
+ * what prevents that is that nothing but Vivid's product runs on a Person's Computer.
+ */
+const SNAPSHOT_RULES = [
+  '# Written by Vivid. Boat leaves these out of this Computer’s snapshots: they are caches',
+  '# that tools fill again by themselves. Add lines for anything else that need not be kept.',
+  '.cache/',
+  '.npm/',
+  '.pnpm-store/',
+  '.local/share/pnpm/store/',
+  '.turbo/',
+  '.gradle/caches/',
+  '.m2/repository/',
+  '.cargo/registry/',
+]
+
+/**
+ * The shell that puts those rules in place on a machine that has none. A file that is already
+ * there is the Person's or Vivid's own and is left alone. It never fails the command it is part
+ * of: a Computer without the file still starts.
+ */
+export const snapshotRules = [
+  `if [ -n "\${HOME-}" ] && [ ! -e "$HOME/.boxignore" ]; then`,
+  `  printf '%s\\n' ${SNAPSHOT_RULES.map((line) => `'${line}'`).join(' ')} > "$HOME/.boxignore.new" &&`,
+  '    mv -f "$HOME/.boxignore.new" "$HOME/.boxignore" || true',
+  'fi',
+].join('\n')
+
+/** One wake: the holder is settled first, then the snapshot rules, and only then is its own
+ * desktop opened. */
 export const wakeCommand = (input: { readonly id: ProviderId; readonly intent: string }): string =>
-  `${holderClaim(input)}\n/opt/vivid/python/bin/python3 /opt/vivid/computer/desktop.py start`
+  `${holderClaim(input)}\n${snapshotRules}\n/opt/vivid/python/bin/python3 /opt/vivid/computer/desktop.py start`
 
 /** One command that settles the holder before anything else is done on the machine. */
 export interface HolderStep {

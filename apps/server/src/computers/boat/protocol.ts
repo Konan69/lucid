@@ -9,10 +9,12 @@ export const ProviderId = Schema.String.check(
   Schema.isPattern(new RegExp(`^bx_[${providerAlphabet}]{${providerLength}}$`, 'u')),
 ).pipe(Schema.brand('BoatMachineId'))
 export type ProviderId = typeof ProviderId.Type
-/** Boat's machine sizes, smallest first. The order is used: a start that finds no machine of its
- * size free moves to the sizes after it (`transport.ts`, `sizes`), never to a smaller one, which
- * Boat refuses when the disk does not fit (`type_too_small`). */
-export const Size = Schema.Literals(['small', 'default', 'large'])
+/** Boat's machine sizes, smallest first, with the data each can hold (its documentation,
+ * "Machine types": 12, 50, 125 and 251 GB). The order is used: a start that finds no machine of
+ * its size free, or whose data does not fit it, moves to the sizes after it (`transport.ts`,
+ * `sizes`), never to a smaller one. `xlarge` is the last resort and Boat gives it only on its
+ * larger plans (`machine_class_plan_required` otherwise). */
+export const Size = Schema.Literals(['small', 'default', 'large', 'xlarge'])
 export const Lifetime = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 2592000 }))
 /** Operator-published frozen Computer release; names are versioned and never point at a Person's machine. */
 export const TemplateName = Schema.String.check(
@@ -127,9 +129,18 @@ export const Written = Schema.Struct({
   encoding: Schema.Literal('utf8'),
   size: Schema.Int,
 })
+/**
+ * Boat's refusal. `code` is its closed word for what happened. `message` is a sentence for a
+ * person and is read in one place only, to tell which `resume_failed` this is (`transport.ts`,
+ * `OUTGROWN`); it is never kept, logged or shown, because Boat may put anything in it.
+ */
 export const ErrorReply = Schema.Struct({
   ok: Schema.Literal(false),
-  error: Schema.Struct({ code: Schema.String, status: Schema.Int }),
+  error: Schema.Struct({
+    code: Schema.String,
+    status: Schema.Int,
+    message: Schema.optionalKey(Schema.String),
+  }),
 })
 
 /** Base64 file ingress used for native full-size desktop pictures. */

@@ -23,6 +23,22 @@ type Request = typeof Request.Type
 const jsonBody = HttpClientRequest.schemaBodyJson(Schema.Json)
 const decodeError = HttpClientResponse.schemaBodyJson(Protocol.ErrorReply)
 const decodeFrame = Schema.decodeUnknownEffect(Schema.fromJsonString(Protocol.CommandFrame))
+/** How Boat's `resume_failed` says a machine's data does not fit the size asked for. Only the
+ * words that make it that answer are matched; the figures in it are Boat's and are not kept. */
+const OUTGROWN = /needs [\d.]+ GiB of disk but the largest/u
+/** Which of Boat's answers about a size or the account a refused resume is, when it is one
+ * (`started` says what each means and where it was seen). */
+const sizeAnswer = (
+  told: (typeof Protocol.ErrorReply.Type)['error'],
+): Option.Option<'none-free' | 'limited' | 'plan' | 'outgrown'> => {
+  if (told.code === 'no_ready_machine') return Option.some('none-free')
+  if (told.code === 'rate_limited') return Option.some('limited')
+  if (told.code === 'machine_class_plan_required') return Option.some('plan')
+  const outgrown =
+    told.code === 'type_too_small' ||
+    (told.code === 'resume_failed' && told.message !== undefined && OUTGROWN.test(told.message))
+  return outgrown ? Option.some('outgrown') : Option.none()
+}
 /** Longest line of a streamed command that is kept while waiting for its end. Boat sends output in
  * pieces of the size it read them, far below this; a line that passes it is not Boat's protocol. */
 const FRAME_CHARACTERS = 1_048_576
@@ -157,15 +173,26 @@ const requests = (
     return response
   })
   /**
-   * A resume that may not wait (`failFast`), and which of its three answers Boat gave.
+   * A resume that may not wait (`failFast`), and which of its answers Boat gave.
    *
-   * Two refusals are answers about the size that was asked for, not failures of the start, so they
-   * are returned and the caller moves to the next size. `no_ready_machine` is Boat's own 503 when
-   * it has no machine of that size free: "Nothing was started or counted" (body seen 5 October
-   * 2026; v1 `NoReadyMachine`). `type_too_small` is its refusal of a size whose disk the machine's
-   * data does not fit (v1 `ResumeRequest.type`; documented, not seen, so its status is not
-   * assumed). Both are told by the code in Boat's error body. Anything else that is not 2xx, an
-   * edge's HTML 503 included, has no such code and is the failure `refused` makes of it.
+   * Three refusals are answers about the size that was asked for, not failures of the start, so
+   * they are returned and the caller moves to the next size. All are told by Boat's error body.
+   *
+   * - `none-free`: `no_ready_machine`, Boat's own 503 when it has no machine of that size free:
+   *   "Nothing was started or counted" (body seen 5 October 2026; v1 `NoReadyMachine`).
+   * - `outgrown`: the machine's data does not fit that size. Boat documents `type_too_small`
+   *   (v1 `ResumeRequest.type`), which has not been seen. What it sent on 7 October 2026 was 409
+   *   `resume_failed` with the message "This Sandbox needs 125.4 GiB of disk but the largest
+   *   'large' machine holds 125.0 GiB. Resume it as a bigger type (--type)." A `resume_failed`
+   *   is read as this answer only when its message says so (`OUTGROWN`); any other is a failure.
+   * - `plan`: `machine_class_plan_required`, a 403 for a size the account's plan does not include
+   *   ("requires the $100/month Boat plan or higher", same day, for `xlarge`).
+   * - `limited`: `rate_limited`, a 429: "25 sandbox starts per hour (create, fork and resume each
+   *   count as one start)" (same day). It is about the account, not the size, so the caller
+   *   stops asking.
+   *
+   * Anything else that is not 2xx, an edge's HTML 503 included, has no such code and is the
+   * failure `refused` makes of it.
    */
   const started = (path: string, body: Schema.Json) =>
     Effect.gen(function* () {
@@ -181,12 +208,9 @@ const requests = (
       if (response.status >= 500 && response.status !== 503) return yield* refused(response)
       // An edge's 503 may never finish its body. The code is looked for briefly; without it the
       // answer is the outage its status says it is, told at once and not when the start runs out.
-      const code = Option.map(
-        yield* decodeError(response).pipe(Effect.timeout('5 seconds'), Effect.option),
-        (reply) => reply.error.code,
-      )
-      if (Option.contains(code, 'no_ready_machine')) return 'none-free' as const
-      if (Option.contains(code, 'type_too_small')) return 'too-small' as const
+      const reply = yield* decodeError(response).pipe(Effect.timeout('5 seconds'), Effect.option)
+      const answer = Option.flatMap(reply, ({ error }) => sizeAnswer(error))
+      if (Option.isSome(answer)) return answer.value
       return yield* refused(response)
     }).pipe(
       Effect.timeout('60 seconds'),

@@ -4,6 +4,7 @@ import {
   MachineCreationUnresolved,
   MachineHeld,
   MachineNoCapacity,
+  MachineOutgrown,
   MachineState,
   MachineOperationFailed,
   type MachineKey,
@@ -108,12 +109,27 @@ const bind = Effect.fn('Machine.boat.reconcileBinding')(function* (
  * Starts a stopped machine on the first size that takes it: the configured one, then each larger
  * one (`api.sizes`). Every try is a resume that may not wait (`api.resume`), so each is answered in
  * about two seconds and a refused one leaves the machine stopped. A size is passed over when Boat
- * has no machine of it free, or when the machine's disk has outgrown it. When no size takes the
- * machine the start fails `MachineNoCapacity` with the machine untouched.
+ * has no machine of it free, when the machine's data has outgrown it, or when the account's plan
+ * does not include it.
+ *
+ * When no size takes the machine it is untouched, and the start says which of two things that
+ * was. Some size would hold it and had no machine free, or the account's starts for the hour are
+ * spent: `MachineNoCapacity`, which ends by itself. No size the plan allows can hold it:
+ * `MachineOutgrown`, which ends only when files are removed or the plan changes, and says
+ * whether Boat named a larger size the plan refused.
  */
 const start = Effect.fn('Machine.boat.start')(function* (api: Transport, id: ProviderId) {
+  const answers: Array<
+    Exclude<Effect.Success<ReturnType<Transport['resume']>>, 'started' | 'limited'>
+  > = []
   for (const size of api.sizes) {
-    if ((yield* api.resume(id, size)) !== 'started') continue
+    const answer = yield* api.resume(id, size)
+    // The account has no starts left this hour: another size would be refused the same way.
+    if (answer === 'limited') return yield* Effect.fail(new MachineNoCapacity({ limited: true }))
+    if (answer !== 'started') {
+      answers.push(answer)
+      continue
+    }
     // A larger size costs more for as long as the machine runs, so the log says when it happened.
     if (size !== api.sizes[0])
       yield* Effect.logWarning('Computer started on a larger size than the configured one', {
@@ -122,7 +138,14 @@ const start = Effect.fn('Machine.boat.start')(function* (api: Transport, id: Pro
       })
     return undefined
   }
-  return yield* Effect.fail(new MachineNoCapacity())
+  if (answers.includes('none-free'))
+    return yield* Effect.fail(new MachineNoCapacity({ limited: false }))
+  // Said in the log with each size's answer: what to do about it is an operator's decision.
+  yield* Effect.logError('Computer holds more data than any machine it may be started on', {
+    sizes: api.sizes.join(','),
+    answers: answers.join(','),
+  })
+  return yield* Effect.fail(new MachineOutgrown({ upgrade: answers.includes('plan') }))
 })
 
 /**

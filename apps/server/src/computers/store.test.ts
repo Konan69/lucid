@@ -16,6 +16,7 @@ import {
   Queue,
   Fiber,
   Stream,
+  Predicate,
 } from 'effect'
 import {
   ActionTarget,
@@ -64,6 +65,7 @@ import {
   MachineExecutionUnknown,
   MachineNotRunning,
   MachineOperationFailed,
+  MachineOutgrown,
   MachineRequestRejected,
   MachineUnreachable,
   type MachineKey,
@@ -113,6 +115,8 @@ interface EvidenceService {
   readonly executionGate: Ref.Ref<Option.Option<Deferred.Deferred<void>>>
   readonly executing: Queue.Queue<MachineKey>
   readonly bootFailed: Ref.Ref<boolean>
+  /** While true a start is refused because the Computer holds more than any machine may. */
+  readonly bootOutgrown: Ref.Ref<boolean>
   /** While true the provider cannot be asked anything: every call fails as an outage. */
   readonly outage: Ref.Ref<boolean>
   readonly beforeGateReturn: Ref.Ref<Effect.Effect<void>>
@@ -140,6 +144,7 @@ const evidenceLayer = Layer.effect(
       executing: yield* Queue.unbounded<MachineKey>(),
       executionGate: yield* Ref.make<Option.Option<Deferred.Deferred<void>>>(Option.none()),
       bootFailed: yield* Ref.make(false),
+      bootOutgrown: yield* Ref.make(false),
       outage: yield* Ref.make(false),
       beforeGateReturn: yield* Ref.make(Effect.void),
       boot: yield* Ref.make<Option.Option<Deferred.Deferred<void>>>(Option.none()),
@@ -175,6 +180,8 @@ const providerLayer = Layer.effect(
       yield* Queue.offer(evidence.started, key)
       const wait = yield* Ref.get(evidence.boot)
       if (Option.isSome(wait)) yield* Deferred.await(wait.value)
+      if (yield* Ref.get(evidence.bootOutgrown))
+        return yield* Effect.fail(new MachineOutgrown({ upgrade: true }))
       if (yield* Ref.get(evidence.bootFailed))
         return yield* Effect.fail(new MachineOperationFailed({ operation: 'startup' }))
       const state = ComputerState.cases.Running.make({
@@ -1204,6 +1211,41 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
       expect(yield* Ref.get(evidence.calls)).toHaveLength(1)
       expect(yield* Ref.get(evidence.ensures)).toHaveLength(3)
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect(
+    'says why a Computer that has outgrown its machines cannot start, and does not ask at every action',
+    () =>
+      Effect.gen(function* () {
+        const { first } = yield* fixture()
+        const store = yield* ComputerStore
+        const evidence = yield* ProviderEvidence
+        yield* Ref.set(evidence.bootOutgrown, true)
+        const refused = yield* store.run(first.id, request).pipe(Effect.flip)
+        // The Person, and Vivid in its own words, can tell what would cure it.
+        expect(Predicate.isTagged(refused, 'ComputerStartFailed') && refused.reason).toBe(
+          'Vivid’s computer holds more data than the largest machine its provider plan allows. It starts again once the plan is upgraded or files are removed from it.',
+        )
+        // Asking again cannot cure it and every start is counted by the provider, so the next
+        // actions are refused with the same reason and the provider is left alone.
+        expect((yield* store.run(first.id, request).pipe(Effect.flip))._tag).toBe(
+          'ComputerStartFailed',
+        )
+        expect(
+          (yield* store.desktop(first.id, DesktopAction.cases.Look.make({})).pipe(Effect.flip))
+            ._tag,
+        ).toBe('ComputerStartFailed')
+        expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
+        // After the rest an action asks once more.
+        yield* TestClock.adjust('10 minutes')
+        yield* store.run(first.id, request).pipe(Effect.flip)
+        expect(yield* Ref.get(evidence.ensures)).toHaveLength(2)
+        // A Person's Start never waits for the rest: they changed something, or want to know.
+        yield* Ref.set(evidence.bootOutgrown, false)
+        yield* start(first)
+        expect(yield* Ref.get(evidence.ensures)).toHaveLength(3)
+        expect((yield* store.run(first.id, request)).stdout).toBe('hello')
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
 
   it.effect('a screen the provider refuses is said on that read and never recorded', () =>

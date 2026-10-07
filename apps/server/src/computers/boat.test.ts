@@ -95,6 +95,12 @@ interface EvidenceService {
   readonly breakResume: Ref.Ref<boolean>
   /** The sizes whose disk the machine's data no longer fits; Boat refuses them `type_too_small`. */
   readonly outgrown: Ref.Ref<ReadonlySet<Size>>
+  /** The sizes the account's plan does not include; Boat refuses them for the plan. */
+  readonly unplanned: Ref.Ref<ReadonlySet<Size>>
+  /** While true Boat fails a resume as it did when a restore never started: nothing about size. */
+  readonly restoreFails: Ref.Ref<boolean>
+  /** While true the account has used up its starts for the hour. */
+  readonly startsSpent: Ref.Ref<boolean>
   readonly created: Ref.Ref<number>
   readonly intents: Ref.Ref<ReadonlyArray<string>>
   readonly commands: Ref.Ref<ReadonlyArray<string>>
@@ -140,6 +146,9 @@ const evidenceLayer = Layer.effect(
       placedAfter: yield* Ref.make(Option.none<number>()),
       breakResume: yield* Ref.make(false),
       outgrown: yield* Ref.make<ReadonlySet<Size>>(new Set()),
+      unplanned: yield* Ref.make<ReadonlySet<Size>>(new Set()),
+      restoreFails: yield* Ref.make(false),
+      startsSpent: yield* Ref.make(false),
       created: yield* Ref.make(0),
       intents: yield* Ref.make<ReadonlyArray<string>>([]),
       commands: yield* Ref.make<ReadonlyArray<string>>([]),
@@ -224,23 +233,51 @@ const reported = Effect.fn('BoatTest.reported')(function* (evidence: EvidenceSer
  * leaves the machine as it was: stopped. */
 const resumed = Effect.fn('BoatTest.resumed')(function* (evidence: EvidenceService, size: Size) {
   yield* Ref.update(evidence.resumes, (sizes) => [...sizes, size])
-  if ((yield* Ref.get(evidence.outgrown)).has(size)) return 'too-small' as const
+  if ((yield* Ref.get(evidence.unplanned)).has(size)) return 'plan' as const
+  if ((yield* Ref.get(evidence.outgrown)).has(size)) return 'outgrown' as const
   if (!(yield* Ref.get(evidence.free)).has(size)) return 'none-free' as const
   yield* Ref.set(evidence.state, 'ready')
   return 'started' as const
 })
-/** Boat's refusal of a size the machine's disk does not fit (v1 `ResumeRequest.type`). */
-const typeTooSmall = HttpServerResponse.jsonUnsafe(
-  {
-    ok: false,
-    type: 'sandbox.error',
-    status: 400,
-    code: 'type_too_small',
-    message: 'fixture',
-    requestId: 'fixture',
-    error: { code: 'type_too_small', message: 'fixture', status: 400 },
-  },
-  { status: 400 },
+/** Boat's refusals of a resume, by its code and sentence. */
+const resumeRefused = (status: number, code: string, message: string) =>
+  HttpServerResponse.jsonUnsafe(
+    {
+      ok: false,
+      type: 'sandbox.error',
+      status,
+      code,
+      message,
+      requestId: 'fixture',
+      error: { code, message, status },
+    },
+    { status },
+  )
+/** A size the machine's data does not fit, as Boat said it on 7 October 2026. Its documented
+ * `type_too_small` (v1 `ResumeRequest.type`) was not what it sent. */
+const outgrownSize = (size: Size) =>
+  resumeRefused(
+    409,
+    'resume_failed',
+    `This Sandbox needs 125.4 GiB of disk but the largest '${size}' machine holds 125.0 GiB. Resume it as a bigger type (--type).`,
+  )
+/** A size the account's plan does not include (same day, for `xlarge`). */
+const planRequired = resumeRefused(
+  403,
+  'machine_class_plan_required',
+  "The 16 vCPU / 32 GB 'xlarge' Sandbox requires the $100/month Boat plan or higher.",
+)
+/** The account's starts for the hour are spent (same day; it is refused for every machine). */
+const startsLimited = resumeRefused(
+  429,
+  'rate_limited',
+  'Rate limit hit: 25 sandbox starts per hour (create, fork and resume each count as one start).',
+)
+/** A resume that failed for a reason that is not the size (same day, on another machine). */
+const restoreFailed = resumeRefused(
+  409,
+  'resume_failed',
+  'Resume failed: incremental restore never started: {"error":"HTTP error! status: 413"}',
 )
 /** Boat's own answer to a `failFast` start it has no machine for (body seen 5 October 2026). */
 const noReadyMachine = HttpServerResponse.jsonUnsafe(
@@ -706,9 +743,18 @@ const serverLayer = Layer.effect(
           yield* Ref.update(evidence.resumes, (sizes) => [...sizes, asked.type])
           return rejected(503)
         }
+        if (yield* Ref.get(evidence.restoreFails)) {
+          yield* Ref.update(evidence.resumes, (sizes) => [...sizes, asked.type])
+          return restoreFailed
+        }
+        if (yield* Ref.get(evidence.startsSpent)) {
+          yield* Ref.update(evidence.resumes, (sizes) => [...sizes, asked.type])
+          return startsLimited
+        }
         const answer = yield* resumed(evidence, asked.type)
         if (answer === 'none-free') return noReadyMachine
-        if (answer === 'too-small') return typeTooSmall
+        if (answer === 'outgrown') return outgrownSize(asked.type)
+        if (answer === 'plan') return planRequired
         return HttpServerResponse.jsonUnsafe({
           ok: true,
           type: 'sandbox.resuming',
@@ -1786,7 +1832,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         yield* Ref.set(evidence.free, new Set<Size>())
         expect((yield* machine.ensure(key).pipe(Effect.flip))._tag).toBe('MachineNoCapacity')
         // Never a smaller size than its own: Boat refuses one the disk does not fit.
-        expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
+        expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large', 'xlarge'])
         expect(yield* Ref.get(evidence.state)).toBe('archived')
         expect((yield* machine.status(key))._tag).toBe('Stopped')
         yield* Ref.set(evidence.free, new Set<Size>(['default']))
@@ -1846,6 +1892,70 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       yield* Ref.set(evidence.outgrown, new Set<Size>(['default']))
       expect((yield* machine.ensure(key))._tag).toBe('Running')
       expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('says a Computer has outgrown every machine its plan allows, and starts nothing', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const evidence = yield* Evidence
+      yield* machine.ensure(key)
+      yield* machine.stop(key)
+      yield* Ref.set(evidence.resumes, [])
+      // Production, 7 October 2026: the data fits neither size the plan includes, and the one
+      // size that would hold it is refused for the plan.
+      yield* Ref.set(evidence.outgrown, new Set<Size>(['default', 'large']))
+      yield* Ref.set(evidence.unplanned, new Set<Size>(['xlarge']))
+      const failure = yield* Effect.flip(machine.ensure(key))
+      expect(failure._tag).toBe('MachineOutgrown')
+      expect(Predicate.isTagged(failure, 'MachineOutgrown') && failure.upgrade).toBe(true)
+      // It does not end by itself, so it is the Computer's state and not an outage.
+      expect(isOutage(failure)).toBe(false)
+      expect(machineFailureReason(failure)).toContain(
+        'once the plan is upgraded or files are removed',
+      )
+      expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large', 'xlarge'])
+      expect((yield* machine.inspect(key))._tag).toBe('Stopped')
+      // The plan now includes the larger size: the same start takes it.
+      yield* Ref.set(evidence.unplanned, new Set<Size>())
+      expect((yield* machine.ensure(key))._tag).toBe('Running')
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('stops asking when the account has no starts left this hour', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const evidence = yield* Evidence
+      yield* machine.ensure(key)
+      yield* machine.stop(key)
+      yield* Ref.set(evidence.resumes, [])
+      yield* Ref.set(evidence.startsSpent, true)
+      const failure = yield* Effect.flip(machine.ensure(key))
+      // It ends by itself within the hour, so it is told like a provider with no machine free
+      // and the Computer stays stopped and whole. One size was asked, not every size.
+      expect(Predicate.isTagged(failure, 'MachineNoCapacity') && failure.limited).toBe(true)
+      expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
+      expect((yield* machine.inspect(key))._tag).toBe('Stopped')
+      yield* Ref.set(evidence.startsSpent, false)
+      expect((yield* machine.ensure(key))._tag).toBe('Running')
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('reads a resume that failed for another reason as a failure, not as a size', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const evidence = yield* Evidence
+      yield* machine.ensure(key)
+      yield* machine.stop(key)
+      yield* Ref.set(evidence.resumes, [])
+      yield* Ref.set(evidence.restoreFails, true)
+      const failure = yield* Effect.flip(machine.ensure(key))
+      // Boat uses one code for both; only its sentence about the disk makes it a size's answer.
+      expect(failure._tag).toBe('MachineRequestRejected')
+      expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
 
