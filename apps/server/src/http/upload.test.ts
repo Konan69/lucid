@@ -27,12 +27,14 @@ const testLayer = Layer.mergeAll(
 class UploadFixtureFailure extends Schema.TaggedError<UploadFixtureFailure>()(
   'UploadFixtureFailure',
   { message: Schema.String, cause: Schema.Unknown },
+  { title: 'Upload fixture failed' },
 ) {}
 
 /** A free receipt for another socket violates reuse without an underlying Node failure. */
 class UploadSocketMismatch extends Schema.TaggedError<UploadSocketMismatch>()(
   'UploadSocketMismatch',
   { message: Schema.String },
+  { title: 'Upload fixture reused another socket' },
 ) {}
 
 const refusal = Schema.Struct({ error: Schema.String })

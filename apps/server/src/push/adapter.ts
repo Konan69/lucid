@@ -156,7 +156,7 @@ const inspectReceipt = Effect.fn('PushAdapter.receipt')(function* (ticket: strin
 })
 
 /** Each exchange Scope owns the scoped client response; the ten-second deadline includes decoding. */
-const makePushAdapter = Effect.gen(function* () {
+const makePushAdapter = Effect.fn('PushAdapter.make')(function* () {
   // Keep stable authorities without shadowing the caller's Scope, Clock or request span.
   const services = Context.pick(
     HttpClient.HttpClient,
@@ -190,4 +190,4 @@ const makePushAdapter = Effect.gen(function* () {
 })
 
 /** The delivery Layer captures the same HTTP client and signing configuration as direct acquisition. */
-export const pushAdapterLayer = Layer.effect(PushAdapter, makePushAdapter)
+export const pushAdapterLayer = Layer.effect(PushAdapter, makePushAdapter())

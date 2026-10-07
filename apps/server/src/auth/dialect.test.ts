@@ -58,9 +58,13 @@ const adapterOf = Effect.fn('DialectTest.adapterOf')(function* (auth: AuthInstan
 })
 
 /** Preserve the original adapter rejection as the success value without an unknown error channel. */
-class AdapterRejected extends Schema.TaggedError<AdapterRejected>()('AdapterRejected', {
-  cause: Schema.Unknown,
-}) {}
+class AdapterRejected extends Schema.TaggedError<AdapterRejected>()(
+  'AdapterRejected',
+  {
+    cause: Schema.Unknown,
+  },
+  { title: 'Test adapter rejected the operation' },
+) {}
 
 /** A Promise of the official adapter, with its rejection as the value under test. */
 const rejection = <A>(run: () => PromiseLike<A>) =>

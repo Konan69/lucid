@@ -380,15 +380,16 @@ layer(
                 context: 'Two confirmed meetings overlap tomorrow at 10:00. Choose which to move.',
               },
             }
-            const open = Effect.gen(function* () {
+            // Each opening owns its service scope; repeat the same input to verify deduplication.
+            const open = Effect.fn('Delivery.test.openAttention')(function* () {
               const context = yield* Layer.build(test.services)
               return yield* openAttentionThread(input).pipe(
                 Effect.provideService(Conversation, test.conversation),
                 Effect.provide(context),
               )
             })
-            expect(yield* open).toEqual({ title: 'Calendar clash' })
-            yield* open
+            expect(yield* open()).toEqual({ title: 'Calendar clash' })
+            yield* open()
             const database = yield* Database
             const created = yield* database.run(
               database.select().from(threads).where(eq(threads.personId, test.ada)),

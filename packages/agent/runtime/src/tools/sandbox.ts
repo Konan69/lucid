@@ -21,9 +21,13 @@ import { warnFailure } from './result.ts'
 import { Scope, type RunScoped } from './scope.ts'
 
 /** Carries the Computer's words that the model must read verbatim at the Flue sandbox boundary. */
-export class ComputerSaid extends Schema.TaggedError<ComputerSaid>()('ComputerSaid', {
-  message: Schema.String,
-}) {}
+export class ComputerSaid extends Schema.TaggedError<ComputerSaid>()(
+  'ComputerSaid',
+  {
+    message: Schema.String,
+  },
+  { title: 'The Computer’s response' },
+) {}
 
 /** Where Vivid's commands start and relative paths resolve: the home of the Computer's user. Boat
  * names that user `user` on every machine (its SSH key call answers `sshUser: "user"`). */

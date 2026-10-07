@@ -87,7 +87,8 @@ describe('scoped tool execution', () => {
         const call = Effect.promise(() =>
           expect(scenario.call()).rejects.toEqual(new Error(scenario.message)),
         )
-        const answer = Effect.gen(function* () {
+        // Reply to every attempt Flue makes while exercising this scenario's sandbox call.
+        const answer = Effect.fn('Test.Computer.reply')(function* () {
           // Flue's writeFileCreatingParents retries a failed write after a mkdir command.
           const attempts = scenario.tag === 'ComputerFileWrite' ? 3 : 1
           for (let attempt = 0; attempt < attempts; attempt++) {
@@ -114,8 +115,9 @@ describe('scoped tool execution', () => {
               exit: Exit.succeed(outcome),
             })
           }
+          return undefined
         })
-        yield* Effect.all([call, answer], { concurrency: 2 })
+        yield* Effect.all([call, answer()], { concurrency: 2 })
       }
       // A tagged authority failure is still converted to the same generic Flue Error.
       const absent = scopeLayer('absent-thread', { kind: 'user', body: 'Read.' }, Option.none())

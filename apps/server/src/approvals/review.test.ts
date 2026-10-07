@@ -43,13 +43,14 @@ layer(testDatabaseLayer)((it) => {
               working: true,
             },
           ])
-          const review = Effect.gen(function* () {
+          // The stalled reviewer stays scoped to the pending fiber that the deadline interrupts.
+          const review = Effect.fn('Reviewer.test.stalled')(function* () {
             const context = yield* Layer.build(stalled(test.personalId))
             return yield* Effect.gen(function* () {
               return yield* (yield* Reviewer).review(test.vivid, connectionAction)
             }).pipe(Effect.provide(context))
           })
-          const pending = yield* review.pipe(Effect.forkChild)
+          const pending = yield* review().pipe(Effect.forkChild)
           // The deadline covers reading the request and asking, so it holds whichever is slow.
           yield* TestClock.adjust('2999 millis')
           expect(pending.pollUnsafe()).toBeUndefined()

@@ -28,6 +28,7 @@ export class InstallationUnavailable extends Schema.TaggedError<InstallationUnav
 class InstallationAbsent extends Schema.TaggedError<InstallationAbsent>()(
   'InstallationAbsent',
   {},
+  { title: 'This app has no saved identity' },
 ) {}
 
 /** Reads the kept identity. A missing file and a damaged one both mean there is none to use. */

@@ -35,11 +35,13 @@ const isPostgresFailure = Schema.is(PostgresFailure)
 class TemplateMigrationFailed extends Schema.TaggedError<TemplateMigrationFailed>()(
   'TemplateMigrationFailed',
   { config: Schema.String, message: Schema.String },
+  { title: 'Test database template migration failed' },
 ) {}
 /** Only duplicate_database is recoverable when two runs race to publish the template. */
 class TemplateRenameFailed extends Schema.TaggedError<TemplateRenameFailed>()(
   'TemplateRenameFailed',
   { cause: Schema.Unknown, message: Schema.String },
+  { title: 'Test database template rename failed' },
 ) {}
 
 /**
@@ -169,9 +171,9 @@ const chooseTemplate = Effect.fn('TestDatabase.chooseTemplate')(function* (
  * fixture or migration writes to it. The prefix starts with the supplied database's own name, so
  * whoever owns that database (a gate run) can also find everything made under it.
  */
-export default function setup(project: TestProject) {
+const prepareTemplate = Effect.fn('TestDatabase.prepareTemplate')(function* (project: TestProject) {
   const supplied = NodeProcess.env.VIVID_TEST_DATABASE_URL
-  if (supplied === undefined) return Effect.runPromise(Effect.succeed(() => {}))
+  if (supplied === undefined) return () => {}
   const owner = new URL(supplied).pathname.slice(1).slice(0, 24)
   const prefix = `${owner}_${NodeCrypto.randomBytes(4).toString('hex')}`
   const admin = new Pg.Client({ connectionString: supplied })
@@ -188,18 +190,26 @@ export default function setup(project: TestProject) {
     for (const suite of decodeNames(suites.rows))
       yield* Effect.promise(() => admin.query(`DROP DATABASE ${suite.name} WITH (FORCE)`))
   }).pipe(Effect.ensuring(Effect.promise(() => admin.end())))
-  const cleanup = () => Effect.runPromise(cleanupProgram)
-  const program = Effect.gen(function* () {
-    yield* Effect.promise(() => admin.connect())
-    return yield* Effect.gen(function* () {
-      const template = yield* migratedTemplate(admin, supplied, prefix)
-      project.provide('serverDatabaseTemplate', template)
-      project.provide('serverDatabasePrefix', prefix)
-      return cleanup
-    }).pipe(
-      // Preserve the rethrow after cleanup for typed failures, defects and interruption alike.
-      Effect.onError(() => cleanupProgram),
-    )
-  })
+  yield* Effect.promise(() => admin.connect())
+  return yield* Effect.gen(function* () {
+    const template = yield* migratedTemplate(admin, supplied, prefix)
+    project.provide('serverDatabaseTemplate', template)
+    project.provide('serverDatabasePrefix', prefix)
+    return () => teardown(cleanupProgram)
+  }).pipe(
+    // Preserve the rethrow after cleanup for typed failures, defects and interruption alike.
+    Effect.onError(() => cleanupProgram),
+  )
+})
+
+/** Vitest invokes the returned global teardown once all workers have stopped. */
+function teardown(program: Effect.Effect<void>) {
+  // oxlint-disable-next-line vivid/no-runpromise-in-library -- Vitest's returned global teardown callback is the process entry that closes the test databases.
   return Effect.runPromise(program)
+}
+
+/** Vitest awaits global setup before starting the workers that clone the migrated template. */
+export default function setup(project: TestProject) {
+  // oxlint-disable-next-line vivid/no-runpromise-in-library -- Vitest invokes this global setup entry before any server test worker starts.
+  return Effect.runPromise(prepareTemplate(project))
 }

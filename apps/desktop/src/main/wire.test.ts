@@ -5,6 +5,7 @@ import * as Schema from 'effect/Schema'
 import * as NodeFS from 'node:fs'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
+import * as NodeProcess from 'node:process'
 import {
   Framed,
   ComputerCall,
@@ -189,7 +190,7 @@ describe('the Computer’s JSON lines', () => {
       // On POSIX, a drive-prefixed directory is relative; on Windows the temp directory is
       // already a drive path. Both exercise the real file ingress without changing process cwd.
       const prefix =
-        process.platform === 'win32'
+        NodeProcess.platform === 'win32'
           ? NodePath.join(NodeOS.tmpdir(), 'vivid-picture-')
           : 'C:\\vivid-picture-'
       const directory = yield* Effect.acquireRelease(

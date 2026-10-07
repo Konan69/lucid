@@ -87,6 +87,7 @@ import {
 class WebhookFixtureFailure extends Schema.TaggedError<WebhookFixtureFailure>()(
   'WebhookFixtureFailure',
   { message: Schema.String, cause: Schema.Unknown },
+  { title: 'Webhook fixture failed' },
 ) {}
 
 /** The delivery authority records calls while storing real Runs, so history joins remain real. */

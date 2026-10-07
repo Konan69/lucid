@@ -1,7 +1,7 @@
 import type { DeliveredMessage, ToolContext } from '@flue/runtime'
 import { VividRpcClient } from '@vivid/client-runtime'
 import type { LibraryFolderId, ThreadOrigin } from '@vivid/contracts'
-import { Context, Effect, Layer, Option } from 'effect'
+import { Context, Effect, Layer, Option, Predicate } from 'effect'
 import { actingLayer, runtimeClientLayer, type Acting } from '../client.ts'
 import { recoverAuthority, resolveAuthority } from '../delivery.ts'
 import { settle, type ToolFailure, type ToolResult } from './result.ts'
@@ -85,7 +85,7 @@ export function scopedRunner(layer: Layer.Layer<Scope, ToolFailure>) {
         (failure) =>
           // @effect-diagnostics-next-line globalErrorInEffectFailure:off -- Flue's sandbox verbs reject with an Error whose message the model reads; this is the one conversion to that contract.
           new Error(
-            failure._tag === 'ComputerSaid'
+            Predicate.isTagged(failure, 'ComputerSaid')
               ? failure.message
               : 'The Computer could not be reached. Try again.',
           ),

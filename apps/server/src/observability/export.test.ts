@@ -153,7 +153,8 @@ const PRIVATE = 'PrivateTokenABC123'
 const receiving = Effect.fn('Test.receiving')(function* (answer: Setup['answer']) {
   const posts = yield* Ref.make<ReadonlyArray<Post>>([])
   const arrivals = yield* Queue.unbounded<string>()
-  const keep = Effect.gen(function* () {
+  // Export reception must not create spans that would themselves be exported back here.
+  const keep = Effect.fnUntraced(function* keep() {
     const request = yield* HttpServerRequest.HttpServerRequest
     const text = yield* request.text
     yield* Ref.update(posts, (all) => [
@@ -171,9 +172,9 @@ const receiving = Effect.fn('Test.receiving')(function* (answer: Setup['answer']
     arrivals,
     posts,
     routes: Layer.mergeAll(
-      HttpRouter.add('POST', TRACES, keep),
-      HttpRouter.add('POST', LOGS, keep),
-      HttpRouter.add('POST', METRICS, keep),
+      HttpRouter.add('POST', TRACES, keep()),
+      HttpRouter.add('POST', LOGS, keep()),
+      HttpRouter.add('POST', METRICS, keep()),
     ),
   }
 })

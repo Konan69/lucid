@@ -112,6 +112,7 @@ describe('Routine Library authority', () => {
                 return client.ReadPage({ address: 'https://example.com' })
               },
             )
+            // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- This partial assertion matches the response tag and title; it does not construct a domain value.
             expect(result).toMatchObject({ _tag: 'Read', title: 'Example Domain' })
           }
           expect(clients[0]).not.toBe(clients[1])

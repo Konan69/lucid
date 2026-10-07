@@ -86,7 +86,7 @@ const read = Effect.fn('Code.readPublicPage')(function* (request: ReadPageReques
 })
 
 /** One ten-second deadline includes all DNS, redirects and body bytes. */
-const makePageReader = Effect.gen(function* () {
+const makePageReader = Effect.fn('Code.makePageReader')(function* () {
   const context = yield* Effect.context<PageNetwork | import('./address.ts').PageResolver>()
   return PageReader.of({
     read: Effect.fn('Code.ReadPage')((request) =>
@@ -110,7 +110,7 @@ const makePageReader = Effect.gen(function* () {
 })
 
 /** The reader Layer keeps the same DNS and network capture for production composition. */
-export const pageReaderLayer = Layer.effect(PageReader, makePageReader)
+export const pageReaderLayer = Layer.effect(PageReader, makePageReader())
 
 export const publicPageLayer = pageReaderLayer.pipe(
   Layer.provide(Layer.merge(pageResolverLayer, pageNetworkLayer)),
