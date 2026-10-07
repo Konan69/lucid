@@ -63,27 +63,26 @@ the build goes on and succeeds on Railway. Two consequences:
   run, and the plan caps domains per service. After each deploy, delete every server domain except
   the first one, which `PUBLIC_URL` uses. Remove this step when the provider waits for the build.
 
-### Deploying from the Boat machine
+### Running the stack's own deploy
 
-The deploy uploads each service's build context to Railway, and from a home connection that
-upload is reset part-way often enough to cost several attempts. Run from the developer's Boat
-machine the same two uploads take seconds, so that is where a deploy is run (6 October 2026). The
-state still belongs to the deploy checkout: the Boat machine is given a copy for one run and
-hands it back.
+Since the services build from the repository, the deploy uploads nothing. On 7 October 2026 it ran
+from the developer's PC in eighteen seconds. Before that it uploaded each service's build context,
+which a home connection reset part-way, and was run from the developer's Boat machine for that
+reason; that route is no longer needed.
 
-1. Send the Boat machine the committed tree (`git archive` of the commit on `main`, not a
-   checkout) and a copy of the deploy checkout's `.alchemy/`. Put installed packages one directory
-   above the tree, never inside it: the upload walks the build context and follows the package
-   manager's links without end.
-2. Send `.env.production` and the two tokens (`RAILWAY_API_TOKEN`, `GITHUB_TOKEN`) over the
-   connection's standard input into files only the owner can read. They are never typed into a
-   command line and never printed.
-3. Run `alchemy plan --stage production --env-file <file>` there and read it, as "Before a
-   production deploy" says. Then the same with `deploy ... --yes`.
-4. When Railway reports the new deployment as succeeded: delete the extra generated server
-   domain, copy `.alchemy/` back over the deploy checkout's, fast-forward that checkout to the
-   commit that was deployed, and remove the settings, the tokens and the state copy from the Boat
-   machine. The state files hold the settings' values, so they are a secret too.
+1. Fast-forward the deploy checkout to `main`. Its `.alchemy/` is the state: copy it aside first.
+   The state files hold the settings' values, so the copy is a secret too.
+2. Give the run `RAILWAY_API_TOKEN` and `GITHUB_TOKEN` in its environment. They are never typed
+   into a command line and never printed.
+3. Run `alchemy plan --stage production --env-file <file>` and read it, as "Before a production
+   deploy" says. Then the same with `deploy ... --yes`. That run was made from an export of the
+   committed tree (`git archive HEAD`) with the checkout's `node_modules` one directory above it
+   and `.alchemy` linked in, as the uploads needed; whether the checkout itself now serves was
+   not tried.
+4. Delete the extra generated server domain, then test a sign-in on the real origin. `/health`
+   answers 200 even while `PUBLIC_URL` holds the wrong domain and every new sign-in is refused; a
+   deployment reads that variable when it starts, so if the sign-in is refused, redeploy the
+   server after the domain is gone.
 
 ### Before a production deploy
 
