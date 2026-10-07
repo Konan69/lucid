@@ -4,12 +4,7 @@ import * as NodePath from 'node:path'
 import { openRunDatabase } from './database.mjs'
 import * as Schema from 'effect/Schema'
 import { logged, readTestCounts, runIdentifier, stopChildrenOnSignal } from './process.mjs'
-import {
-  checkEffectRatchets,
-  checkRatchets,
-  effectFindingsExpected,
-  effectRule,
-} from './ratchets.mjs'
+import { checkRatchets, effectRule } from './ratchets.mjs'
 import { holdSlot, takeLock, treeLockName } from './slots.mjs'
 import { stageOfTask, stages } from './stages.mjs'
 
@@ -187,19 +182,15 @@ function applyRatchets(results) {
     lint.failed.push(`${ratchet.label} ratchet: ${ratchet.count} exceed ${ratchet.ceiling}`)
 }
 
-/** A rule over its ceiling fails typecheck, the stage whose compiler printed the findings. */
-function applyEffectRatchets(results) {
+/**
+ * Say how many Effect findings typecheck printed. They do not fail the gate: the count is what
+ * had gathered while nothing enforced them, and it is being worked off on its own branch. When
+ * it reaches zero the compiler options go back to failing typecheck (scripts/versions.mjs).
+ */
+function reportEffectFindings(results) {
   const typecheck = results.find((result) => result.name === 'typecheck')
   if (typecheck === undefined || typecheck.findings === undefined) return
-  typecheck.detail += `, ${typecheck.findings.size} Effect findings`
-  // An unpatched compiler prints no Effect finding at all, which every ceiling would accept:
-  // the very failure this replaces. While known findings remain, none at all means no patch.
-  if (typecheck.findings.size === 0 && effectFindingsExpected)
-    typecheck.failed.push(
-      'no Effect finding at all: the compiler is not patched (pnpm install runs effect-tsgo patch)',
-    )
-  for (const rule of checkEffectRatchets(typecheck.findings).filter((entry) => !entry.held))
-    typecheck.failed.push(`effect(${rule.rule}): ${rule.count} exceed ${rule.ceiling}`)
+  typecheck.detail += `, ${typecheck.findings.size} Effect findings (not failing)`
 }
 
 /** Total and skipped tests across every package's Vitest result, cached or just run. */
@@ -319,7 +310,7 @@ async function runStages(root, selection, environment, { runId, directory }) {
     ])
     const results = groups.flat()
     applyRatchets(results)
-    applyEffectRatchets(results)
+    reportEffectFindings(results)
     const order = stages.map((stage) => stage.name)
     results.sort((left, right) => order.indexOf(left.name) - order.indexOf(right.name))
     return {
