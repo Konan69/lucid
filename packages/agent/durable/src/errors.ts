@@ -107,6 +107,42 @@ export class LimitInvalid extends Schema.TaggedError<LimitInvalid>()(
   }
 }
 
+/** Pi withdrew this input before placing any Person entry. Retrying that id cannot invent a run. */
+export class TurnWithdrawn extends Schema.TaggedError<TurnWithdrawn>()(
+  'TurnWithdrawn',
+  { messageId: Schema.String },
+  { title: 'TurnWithdrawn' },
+) {
+  /** Clients must send a new input rather than await a run that never admitted this one. */
+  override get message() {
+    return 'Input was withdrawn before it was placed; send it again'
+  }
+}
+
+/** The host's reject policy refuses admission before Pi creates a submission. */
+export class TurnBusy extends Schema.TaggedError<TurnBusy>()(
+  'TurnBusy',
+  { conversationId: ConversationId },
+  { title: 'TurnBusy' },
+) {
+  /** This retryable admission refusal is independent of tool approvals. */
+  override get message() {
+    return 'Conversation already has a run in progress'
+  }
+}
+
+/** Invalid host busy policy, decoded independently of the client's chat body. */
+export class BusyPolicyInvalid extends Schema.TaggedError<BusyPolicyInvalid>()(
+  'BusyPolicyInvalid',
+  { value: Schema.Unknown },
+  { title: 'BusyPolicyInvalid' },
+) {
+  /** Never echo an untrusted policy value. */
+  override get message() {
+    return 'Busy policy must be steer, followUp, or reject'
+  }
+}
+
 /** None of the stored assistant messages made the tool calls named by a resume. */
 export class RunMissing extends Schema.TaggedError<RunMissing>()(
   'RunMissing',

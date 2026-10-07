@@ -21,13 +21,14 @@ import {
   translate,
 } from './chunks.ts'
 import { RunMissing, type PiFailed, type WatchClosed, type WatchOverflowed } from './errors.ts'
+import { admit, placed } from './admit.ts'
 import { readDesk, noDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
 import { captureRun, inputReplay, selectRun, type Prefix, type ResumeInput } from './resume.ts'
 import {
   inputContent,
-  inputLimit,
-  type PartLimit,
+  inputPolicy,
+  type InputPolicy,
   type InputPart,
   type InputOptions,
 } from './input.ts'
@@ -41,7 +42,7 @@ export type RunInput = {
 }
 
 /** The public optional wire policy is normalized before any watch or Pi admission. */
-type PreparedInput = Omit<RunInput, 'options'> & { readonly options: PartLimit }
+type PreparedInput = Omit<RunInput, 'options'> & { readonly options: InputPolicy }
 
 export type WatchFailure = PiFailed | WatchClosed | WatchOverflowed
 
@@ -189,12 +190,17 @@ export const prepareRun: (
   | DurableErrors.PartUnsupported
   | PiFailed
   | DurableErrors.TurnInvalid
+  | DurableErrors.BusyPolicyInvalid
+  | DurableErrors.TurnBusy
+  | DurableErrors.TurnWithdrawn
+  | WatchClosed
+  | WatchOverflowed
 > = Effect.fn('Durable.prepareRun')(function* (
   harness: Harness,
   input: RunInput,
   context: Context,
 ) {
-  const options = yield* inputLimit(input.options === undefined ? {} : input.options)
+  const options = yield* inputPolicy(input.options === undefined ? {} : input.options)
   return yield* prepareInput(harness, { ...input, options }, context)
 })
 
@@ -205,35 +211,43 @@ export const prepareInput: (
   context: Context,
 ) => Effect.Effect<
   Stream.Stream<UIMessageChunk, WatchFailure>,
-  Exclude<Effect.Error<ReturnType<typeof prepareRun>>, DurableErrors.LimitInvalid>
+  Exclude<
+    Effect.Error<ReturnType<typeof prepareRun>>,
+    DurableErrors.LimitInvalid | DurableErrors.BusyPolicyInvalid
+  >
 > = Effect.fn('Durable.prepareInput')(function* (
   harness: Harness,
   input: PreparedInput,
   context: Context,
 ) {
-  const content = yield* inputContent(input.content, input.options)
+  const content = yield* inputContent(input.content, input.options.limit)
   const scope = yield* Scope.make()
   return yield* Effect.gen(function* () {
-    const conversation = yield* Pi.conversation(harness, input.conversationId, context)
-    const watched = yield* Pi.watch(harness, input.conversationId, context).pipe(
-      Scope.provide(scope),
-    )
-    const submission = yield* Pi.submit(
-      conversation,
-      { type: 'input', content, requestId: input.requestId },
+    const { conversation, watched, receipt } = yield* admit(
+      harness,
+      {
+        conversationId: input.conversationId,
+        draft: {
+          type: 'input',
+          content,
+          requestId: input.requestId,
+          whenBusy: input.options.whenBusy,
+        },
+      },
       context,
+      scope,
     )
     const reader = { harness, conversation, context }
-    const receipt = yield* Pi.status(submission, context)
-    if (receipt.type !== 'input')
-      return yield* Effect.die(new Error('Pi input admission returned a write'))
     const terminal = receipt.status === 'done' || receipt.status === 'unanswered'
     const existing =
-      watched.snapshot.run !== undefined && watched.snapshot.run.inputs.includes(submission.id)
+      watched.snapshot.run !== undefined && watched.snapshot.run.inputs.includes(receipt.id)
     if (terminal || existing) {
-      const prefix = terminal
-        ? yield* inputReplay(reader, receipt, watched.snapshot)
-        : Option.getOrThrow(attachedPrefix(replay(yield* captureRun(reader, watched.snapshot))))
+      const found = terminal
+        ? Option.some(yield* inputReplay(reader, receipt, watched.snapshot, input.requestId))
+        : attachedPrefix(replay(yield* captureRun(reader, watched.snapshot)))
+      if (Option.isNone(found))
+        return yield* new RunMissing({ conversationId: input.conversationId })
+      const prefix = found.value
       const live = terminal
         ? Stream.empty
         : yield* Pi.watchLive(harness, input.conversationId, context).pipe(Scope.provide(scope))
@@ -243,16 +257,11 @@ export const prepareInput: (
     const live = yield* Pi.watchLive(harness, input.conversationId, context).pipe(
       Scope.provide(scope),
     )
-    return follow(
-      { harness, conversation, context },
-      matching(watched.stream, submission.id),
-      live,
-      {
-        state: initialRunState,
-        round: emptyRound,
-        settled: false,
-      },
-    ).pipe(Stream.ensuring(Scope.close(scope, Exit.void)))
+    return follow({ harness, conversation, context }, matching(watched.stream, receipt.id), live, {
+      state: initialRunState,
+      round: emptyRound,
+      settled: false,
+    }).pipe(Stream.ensuring(Scope.close(scope, Exit.void)))
   }).pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))))
 })
 
@@ -275,9 +284,19 @@ const resume = Effect.fn('Durable.resumeStream')(function* (
     : noDesk
   const settled =
     watched.snapshot.generation === undefined || watched.snapshot.generation.message === undefined
+  // startRun creates the generation task before pi.live.generation exists. events.js:235–240
+  // publishes its turn_start in that earlier commit; an attached snapshot must open that first
+  // step itself rather than wait for a message_start that carries no turn boundary.
+  const step =
+    prefix.live && prefix.step.state.turn === 0
+      ? {
+          state: { ...prefix.step.state, turn: 1 },
+          chunks: [...prefix.step.chunks, { type: 'start-step' } as const],
+        }
+      : prefix.step
   const written = writeStep(
     { state: initialRunState, round: { ...emptyRound, muted: prefix.known }, settled: false },
-    prefix.step,
+    step,
     settled,
     desk,
   )
@@ -400,4 +419,54 @@ const continueWith = Effect.fn('Durable.continueWith')(function* (
   )
   if (Option.isNone(found)) return yield* new RunMissing({ conversationId })
   return found.value
+})
+
+/**
+ * Follow a host-admitted request, never whichever run is newest. Its one-shot Stream owns an
+ * already-open observation. Waiting for a queued input uses its own receipt; withdrawal fails
+ * before exposing a stream. Cancellation only detaches, and reacquisition needs no client message.
+ */
+export const followRun: (
+  harness: Harness,
+  conversationId: ConversationId,
+  requestId: string,
+  context: Context,
+) => Effect.Effect<
+  Stream.Stream<UIMessageChunk, WatchFailure>,
+  | DurableErrors.ConversationMissing
+  | PiFailed
+  | RunMissing
+  | DurableErrors.TurnWithdrawn
+  | WatchFailure
+> = Effect.fn('Durable.followRun')(function* (harness, conversationId, requestId, context) {
+  const scope = yield* Scope.make()
+  return yield* Effect.gen(function* () {
+    const conversation = yield* Pi.conversation(harness, conversationId, context)
+    const initialScope = yield* Scope.fork(scope)
+    const original = yield* Pi.watch(harness, conversationId, context).pipe(
+      Scope.provide(initialScope),
+    )
+    const record = yield* Pi.request(conversation, requestId, context)
+    if (Option.isNone(record) || record.value.type !== 'input')
+      return yield* new RunMissing({ conversationId })
+    if (record.value.status === 'queued') yield* placed(original, record.value.id)
+    const watched = yield* Pi.watch(harness, conversationId, context).pipe(Scope.provide(scope))
+    yield* Scope.close(initialScope, Exit.void)
+    const handle = yield* Pi.submission(harness, record.value.id, context)
+    if (Option.isNone(handle)) return yield* new RunMissing({ conversationId })
+    const receipt = yield* Pi.inputStatus(handle.value, context)
+    const reader = { harness, conversation, context }
+    const terminal = receipt.status === 'done' || receipt.status === 'unanswered'
+    const found = terminal
+      ? Option.some(yield* inputReplay(reader, receipt, watched.snapshot, requestId))
+      : watched.snapshot.run !== undefined && watched.snapshot.run.inputs.includes(receipt.id)
+        ? attachedPrefix(replay(yield* captureRun(reader, watched.snapshot)))
+        : Option.none<Prefix>()
+    if (Option.isNone(found)) return yield* new RunMissing({ conversationId })
+    const live = terminal
+      ? Stream.empty
+      : yield* Pi.watchLive(harness, conversationId, context).pipe(Scope.provide(scope))
+    const stream = yield* resume(reader, watched, found.value, live)
+    return stream.pipe(Stream.ensuring(Scope.close(scope, Exit.void)))
+  }).pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))))
 })

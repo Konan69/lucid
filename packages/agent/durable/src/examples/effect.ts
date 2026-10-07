@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
-import { createUIMessageStreamResponse } from 'ai'
+import { createUIMessageStreamResponse, type UIMessageChunk } from 'ai'
 import { Effect, Match, Option, Schema, Stream } from 'effect'
 
 import * as Durable from '@vivid/durable/core'
@@ -50,7 +50,13 @@ const post = Effect.fn('Example.post')(function* (
     },
     context,
   )
-  return createUIMessageStreamResponse({ stream: yield* Stream.toReadableStreamEffect(stream) })
+  // Admission failures precede headers; later watch failures use the SDK's error chunk.
+  const observed = stream.pipe(
+    Stream.catch((error) =>
+      Stream.succeed<UIMessageChunk>({ type: 'error', errorText: error.message }),
+    ),
+  )
+  return createUIMessageStreamResponse({ stream: yield* Stream.toReadableStreamEffect(observed) })
 })
 
 /** Reconnect returns 204 when idle, which the SDK interprets as no active stream. */
@@ -92,6 +98,12 @@ export function chat(
     ),
     Effect.catchTag('PartTooLarge', () =>
       Effect.succeed(new Response('File part too large', { status: 413 })),
+    ),
+    Effect.catchTag('TurnWithdrawn', (error) =>
+      Effect.succeed(new Response(error.message, { status: 409 })),
+    ),
+    Effect.catchTag('TurnBusy', (error) =>
+      Effect.succeed(new Response(error.message, { status: 409 })),
     ),
     Effect.catchTag('RunMissing', () =>
       Effect.succeed(new Response('No run made these tool calls', { status: 409 })),

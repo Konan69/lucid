@@ -17,7 +17,8 @@ import type { ResumeInput } from './resume.ts'
 import { prepareRun } from './stream.ts'
 import { turnFailure, TurnBody, respondWithPolicy, type TurnInput } from './respond.ts'
 import type { ToolsOptions } from './tools.ts'
-import { inputLimit, type InputOptions } from './input.ts'
+import { httpStream } from './http.ts'
+import { inputPolicy, type InputOptions } from './input.ts'
 
 /** A host can bound decoded parts while preserving the four-argument Request ingress. */
 export type RequestInput = Request | { readonly request: Request; readonly options: InputOptions }
@@ -107,6 +108,19 @@ export const continueRun = (
     ),
   )
 
+/** A host-admitted request is followed by its durable identity, with the core's already-open watch. */
+export const followRun = (
+  harness: Harness,
+  conversationId: ConversationId,
+  requestId: string,
+  context: Context,
+): Promise<ReadableStream<UIMessageChunk>> =>
+  Effect.runPromise(
+    Core.followRun(harness, conversationId, requestId, context).pipe(
+      Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream)),
+    ),
+  )
+
 /** A decoded turn shares the core and maps chat failures. Stale run message ids settle nothing.
  * Client outputs match call ids, requiring provider uniqueness within one run; approvals are task-scoped. */
 export const respondTurn = (
@@ -120,8 +134,14 @@ export const respondTurn = (
 /** Both Request and decoded-turn adapters share exactly the same expected HTTP error mapping. */
 function turnResponse(program: ReturnType<typeof Core.respond>) {
   return program.pipe(
-    Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream)),
+    Effect.flatMap((stream) => Stream.toReadableStreamEffect(httpStream(stream))),
     Effect.map((stream) => createUIMessageStreamResponse({ stream })),
+    Effect.catchTag('TurnWithdrawn', (error) =>
+      Effect.succeed(new Response(error.message, { status: 409 })),
+    ),
+    Effect.catchTag('TurnBusy', (error) =>
+      Effect.succeed(new Response(error.message, { status: 409 })),
+    ),
     Effect.catchTag('RunMissing', () =>
       Effect.succeed(new Response('No run made these tool calls', { status: 409 })),
     ),
@@ -146,7 +166,7 @@ export async function respond(
   context: Context,
 ): Promise<Response> {
   const { request, options } = 'request' in input ? input : { request: input, options: {} }
-  const limit = await Effect.runPromise(inputLimit(options))
+  const policy = await Effect.runPromise(inputPolicy(options))
   // AI SDK HttpChatTransport.reconnectToStream sends a bodyless GET and treats 204 as idle.
   if (request.method === 'GET') {
     return Effect.runPromise(
@@ -155,7 +175,7 @@ export async function respond(
           Option.match(attached, {
             onNone: () => Effect.succeed(new Response(null, { status: 204 })),
             onSome: (stream) =>
-              Stream.toReadableStreamEffect(stream).pipe(
+              Stream.toReadableStreamEffect(httpStream(stream)).pipe(
                 Effect.map((readable) => createUIMessageStreamResponse({ stream: readable })),
               ),
           }),
@@ -177,7 +197,7 @@ export async function respond(
   if (Result.isFailure(turn)) return new Response(turn.failure.message, { status: 400 })
   return Effect.runPromise(
     turnResponse(
-      respondWithPolicy(harness, conversationId, { turn: turn.success, limit }, context),
+      respondWithPolicy(harness, conversationId, { turn: turn.success, policy }, context),
     ),
   )
 }
@@ -192,6 +212,9 @@ export {
   ConversationMissing,
   PiFailed,
   TurnInvalid,
+  TurnWithdrawn,
+  TurnBusy,
+  BusyPolicyInvalid,
   PartUnsupported,
   PartTooLarge,
   LimitInvalid,

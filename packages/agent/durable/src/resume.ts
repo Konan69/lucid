@@ -20,7 +20,7 @@ import {
   runMessageId,
 } from './chunks.ts'
 import type { Reader } from './desk.ts'
-import { RunMissing, type PiFailed } from './errors.ts'
+import { RunMissing, TurnWithdrawn, type PiFailed } from './errors.ts'
 import * as Pi from './pi.ts'
 
 /** A resume names the assistant run as well as the tool parts that the client already holds. */
@@ -82,7 +82,9 @@ export const captureRun: (
 ) => Effect.Effect<SnapshotEvent, RunMissing | PiFailed> = Effect.fn('Durable.captureRun')(
   function* (reader: Reader, snapshot: SnapshotEvent) {
     if (snapshot.run === undefined) return snapshot
-    const first = Option.getOrThrow(Option.fromNullishOr(snapshot.run.inputs[0]))
+    const first = snapshot.run.inputs[0]
+    if (first === undefined)
+      return yield* new RunMissing({ conversationId: reader.conversation.id })
     const handle = yield* Pi.submission(reader.harness, first, reader.context)
     if (Option.isNone(handle))
       return yield* new RunMissing({ conversationId: reader.conversation.id })
@@ -124,21 +126,22 @@ export const inputReplay: (
   reader: Reader,
   receipt: Extract<SubmissionRecord, { type: 'input' }>,
   snapshot: SnapshotEvent,
-) => Effect.Effect<Prefix, PiFailed> = Effect.fn('Durable.inputReplay')(function* (
+  messageId: string,
+) => Effect.Effect<Prefix, PiFailed | TurnWithdrawn | RunMissing> = Effect.fn(
+  'Durable.inputReplay',
+)(function* (
   reader: Reader,
   receipt: Extract<SubmissionRecord, { type: 'input' }>,
   snapshot: SnapshotEvent,
+  messageId: string,
 ) {
   const { run: _run, generation: _generation, ...base } = snapshot
-  const placed =
-    receipt.entry === undefined
-      ? []
-      : yield* entriesOf(reader, {
-          first: receipt.entry,
-          last: Option.none(),
-        })
+  if (receipt.entry === undefined) return yield* new TurnWithdrawn({ messageId })
+  const placed = yield* entriesOf(reader, { first: receipt.entry, last: Option.none() })
   const entries = closedEntries(placed)
-  const prefix = Option.getOrThrow(replay({ ...base, entries, run: { inputs: [receipt.id] } }))
+  const found = replay({ ...base, entries, run: { inputs: [receipt.id] } })
+  if (Option.isNone(found)) return yield* new RunMissing({ conversationId: reader.conversation.id })
+  const prefix = found.value
   const closed = closeRun(prefix.state, runMessageId([receipt.id]))
   return {
     step: { state: closed.state, chunks: [...prefix.chunks, ...closed.chunks] },

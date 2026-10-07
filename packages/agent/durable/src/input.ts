@@ -2,7 +2,14 @@ import type { UserInput } from '@earendil-works/pi-durable'
 import type { TextContent, ImageContent } from '@earendil-works/pi-ai'
 import { Effect, Option, Predicate, Schema } from 'effect'
 
-import { LimitInvalid, PartTooLarge, PartUnsupported, TurnInvalid } from './errors.ts'
+import {
+  BusyPolicyInvalid,
+  LimitInvalid,
+  PartTooLarge,
+  PartUnsupported,
+  TurnInvalid,
+} from './errors.ts'
+import { busyPolicy, BusyPolicy } from './busy.ts'
 import { base64Head, base64Size } from './base64.ts'
 import { imageMatches } from './images.ts'
 
@@ -21,7 +28,7 @@ export const InputPart = Schema.Union([
 ])
 export type InputPart = typeof InputPart.Type
 /** Host policy, in decoded bytes per image. Supply a nonnegative integer; absence imposes no bound. */
-export type InputOptions = { readonly maxPartBytes?: number }
+export type InputOptions = { readonly maxPartBytes?: number; readonly whenBusy?: BusyPolicy }
 
 /** Absence is explicit after the host ingress; every internal consumer sees a valid byte policy. */
 export const PartLimit = Schema.TaggedUnion({
@@ -51,6 +58,19 @@ export const inputLimit: (options: InputOptions) => Effect.Effect<PartLimit, Lim
       ? PartLimit.cases.Unbounded.make({})
       : PartLimit.cases.Bounded.make({ bytes: decoded.maxPartBytes })
   })
+
+/** Admission consumes one total policy; followUp is Pi's default when the host gives no choice. */
+export const InputPolicy = Schema.Struct({ limit: PartLimit, whenBusy: BusyPolicy })
+export type InputPolicy = typeof InputPolicy.Type
+export const inputPolicy: (
+  options: InputOptions,
+) => Effect.Effect<InputPolicy, LimitInvalid | BusyPolicyInvalid> = Effect.fn(
+  'Durable.inputPolicy',
+)(function* (options) {
+  const limit = yield* inputLimit(options)
+  const whenBusy = yield* busyPolicy(options)
+  return InputPolicy.make({ limit, whenBusy })
+})
 
 /** Empty text beside a file is valid SDK input; admission omits it from the persisted Pi content. */
 export const InputParts = Schema.Array(InputPart).check(

@@ -167,3 +167,18 @@ Run these from the package directory with a key supplied for this work; no fixtu
 The truncated-input regression (a tool call closed on a provider's mid-stream block update, so an approval was requested on incomplete arguments) is proven two ways. The source-derived provider wrapper runs the approval suites on a real SQLite harness. And on 6 October 2026 the live approval case ran against a real provider through Pi AI's `openai-completions` implementation (EXPLABS): the provider sent truncated tool-call block updates (`partialArgs` present), the current translator passed, and the same run with the old block-closing dispatch restored showed the client `{ account: '' }` for a call whose recorded arguments were `{ account: 'savings', amount, memo }`. That one provider is the only real one run; the other implementations are covered by the wrapper only. OpenRouter remains opt-in for a host that supplies its own key. Both live cases stay skipped without `DURABLE_LIVE=1`.
 
 A closed run never ends with a step containing tool parts. Live, history and terminal replay append one empty closing step when needed, so both stock automatic-send predicates stay false. A stale closed-run decision restores the durable terminal result and cannot execute a tool.
+
+A host that admits input directly through Pi's `Conversation.submit` can call
+`followRun(harness, conversationId, requestId, context)` without a client message. It waits on
+that submission's placement, replays its run and follows its live tail; settled runs replay their
+stored outcome. The returned stream is one-shot, its watch is already open, and cancelling a
+reader only detaches it. Unknown request ids fail `RunMissing`; never-placed withdrawn inputs fail
+`TurnWithdrawn`. Each reader owns an independent watch, including after reopening and `harness.resume()`.
+
+Input policy accepts `whenBusy: 'followUp' | 'steer' | 'reject'` in the same options as `maxPartBytes`.
+The default is Pi's `followUp` (`harness/submissions.js:149`); `steer` joins the current run at its
+next tool boundary, while `reject` fails immediately with `TurnBusy` and HTTP 409. Admission waits
+on the input's own receipt, rather than on a future `run_start`: aborting a queued input fails
+`TurnWithdrawn` and HTTP 409, including on retry with the same message id. Send a new message id to
+admit it again. Observation failures after headers become SDK error chunks rather than successful
+completion. Busy policy and decoded byte limits are validated before admission.

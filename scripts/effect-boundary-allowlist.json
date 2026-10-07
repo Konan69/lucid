@@ -59,7 +59,10 @@
       "watchLive",
       "entries",
       "submission",
-      "status"
+      "status",
+      "inputStatus",
+      "request",
+      "readRequest"
     ]
   },
   {
@@ -89,7 +92,8 @@
       "respond",
       "respondTurn",
       "abort",
-      "history"
+      "history",
+      "followRun"
     ]
   },
   {

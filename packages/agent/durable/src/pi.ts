@@ -14,6 +14,7 @@ import type {
   AgentEvent,
   WatchHandle,
   Submission,
+  SubmissionRecord,
   SubmissionId,
   Cursor,
 } from '@earendil-works/pi-durable'
@@ -330,3 +331,57 @@ export const status = (input: Submission, context: Context) =>
     try: () => input.status(context),
     catch: (cause) => new PiFailed({ operation: 'status', cause }),
   })
+
+/** Conversation.submit admits only inputs, but Pi's generic handle also types write receipts. Narrow
+ * at this SDK read boundary; an incompatible receipt is a Pi status-contract failure, not a defect. */
+export const inputStatus: (
+  input: Submission,
+  context: Context,
+) => Effect.Effect<Extract<SubmissionRecord, { type: 'input' }>, PiFailed> = (input, context) =>
+  Effect.tryPromise({
+    try: () => input.status(context),
+    catch: (cause) => new PiFailed({ operation: 'status', cause }),
+  }).pipe(
+    Effect.flatMap((record) =>
+      record.type === 'input'
+        ? Effect.succeed(record)
+        : Effect.fail(
+            new PiFailed({
+              operation: 'status',
+              cause: new Error('Input admission returned a write receipt'),
+            }),
+          ),
+    ),
+  )
+
+/** Exact host request lookup uses Pi's public transaction surface (types.d.ts:677), not a Storage
+ * dependency or scan. The read-only commit returns the authoritative immutable receipt. */
+export const request: (
+  owner: Conversation,
+  requestId: string,
+  context: Context,
+) => Effect.Effect<Option.Option<SubmissionRecord>, PiFailed> = Effect.fn('Durable.request')(
+  function* (owner, requestId, context) {
+    return yield* Effect.tryPromise({
+      try: () => owner.commit(requestForPi(owner.id, requestId, context.abortSignal), context),
+      catch: (cause) => new PiFailed({ operation: 'commit', cause }),
+    }).pipe(Effect.map(Option.fromNullishOr))
+  },
+)
+
+/** The Promise-only transaction callback delegates exactly one typed Pi receipt lookup. */
+function requestForPi(
+  conversationId: ConversationId,
+  requestId: string,
+  signal: Context['abortSignal'],
+) {
+  return function readRequest(tx: Tx) {
+    return runForPi(
+      Effect.tryPromise({
+        try: () => tx.submissionByRequest(conversationId, requestId),
+        catch: (cause) => new PiFailed({ operation: 'submission', cause }),
+      }),
+      signal,
+    )
+  }
+}

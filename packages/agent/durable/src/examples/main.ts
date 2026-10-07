@@ -16,6 +16,8 @@ import {
   HistoryPageInvalid,
   HoldIdInvalid,
   RunMissing,
+  TurnWithdrawn,
+  TurnBusy,
   TurnInvalid,
   PartUnsupported,
   PartTooLarge,
@@ -23,21 +25,29 @@ import {
 
 const decodeLimit = Schema.decodeUnknownPromise(Schema.NumberFromString)
 
+/** The transport statuses group domain failures by what the caller can do next. */
+const refusals = [
+  { status: 413, errors: [PartTooLarge] },
+  { status: 404, errors: [ConversationMissing] },
+  { status: 409, errors: [CallNotWaiting, RunMissing, TurnWithdrawn, TurnBusy] },
+  {
+    status: 400,
+    errors: [
+      Schema.SchemaError,
+      HoldIdInvalid,
+      TurnInvalid,
+      PartUnsupported,
+      HistoryCursorInvalid,
+      HistoryPageInvalid,
+    ],
+  },
+] as const
+
 /** Expected ingress/admission failures have transport meanings; unexpected failures still reject. */
 function routeFailure(error: Error): Response {
-  if (error instanceof PartTooLarge) return new Response(error.message, { status: 413 })
-  if (error instanceof ConversationMissing) return new Response(error.message, { status: 404 })
-  if (error instanceof CallNotWaiting || error instanceof RunMissing)
-    return new Response(error.message, { status: 409 })
-  if (
-    error instanceof Schema.SchemaError ||
-    error instanceof HoldIdInvalid ||
-    error instanceof TurnInvalid ||
-    error instanceof PartUnsupported ||
-    error instanceof HistoryCursorInvalid ||
-    error instanceof HistoryPageInvalid
-  )
-    return new Response(error.message, { status: 400 })
+  for (const refusal of refusals)
+    if (refusal.errors.some((type) => error instanceof type))
+      return new Response(error.message, { status: refusal.status })
   throw error
 }
 

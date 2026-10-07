@@ -45,3 +45,12 @@ Ordered user text/file parts pass through one admission converter in input.ts. O
 A resume without settlements for a completed run acknowledges the same message without replaying its parts. Aborted runs are bounded by their generation task provenance, including parked aborts with no partial entry. Keep RunMissing for unrelated call ids. A closed run whose last step contains tool parts has one empty closing step, identically in live, history and terminal replay. The decoded client step count determines whether a stale resume already retains that durable boundary or lost it. A settlement-bearing closed resume rebuilds its current step with durable terminal results and never applies the settlement; an already closed copy receives only start/finish. An identity-only start publishes a newly appended boundary because SDK step chunks alone do not publish Chat state.
 
 OpenAI Responses summaries append a trailing separator on reasoning_summary_part.done (openai-responses-shared.js:502), then output_item.done replaces thinking with a shorter join (:584). The provider wrapper publishes both states, with a receipt gate so the transient suffix reaches Pi. Non-prefix text or reasoning replacements and removed blocks reset only the current SDK step and rebuild its latest content; earlier steps remain intact. conformance/shapes.test.ts compares live, attachment before/after replacement, and history. The reused-id partial and aborted-input tests gate provider frames rather than depending on a token-rate timer. The mode test records openness at the observed commit; it does not establish indefinite hanging.
+
+Admission observes the submitted input's own `submission` event, not just `run_start`.
+`admit.ts` waits for placement or settlement before returning the HTTP-ready stream. Pi aborts
+queued inputs as unanswered/aborted with no entry; these fail TurnWithdrawn on the original and
+repeated POST, never acknowledge an empty assistant. InputOptions.whenBusy is decoded to the
+closed steer/followUp/reject policy (default followUp, Pi submissions.js:149); busy reject maps
+ConversationBusy to TurnBusy before any admission write. FollowRun resolves requestId through
+public Tx.submissionByRequest in a read-only commit and uses the same snapshot/live observer for
+host-admitted inputs. It is one-shot; cancellation only closes observation.

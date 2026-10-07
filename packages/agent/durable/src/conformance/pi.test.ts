@@ -10,7 +10,7 @@ import { tool } from 'ai'
 import { describe, expect, it, onTestFinished } from 'vitest'
 import { z } from 'zod'
 
-import { attachRun, streamRun } from '../main.ts'
+import { attachRun, followRun, streamRun } from '../main.ts'
 import { consume, context, host, modelText, signal, texts } from './fixtures/host.ts'
 
 /**
@@ -67,7 +67,7 @@ it('streams a busy follow-up as its own run', async () => {
     context,
   )
   await entered.promise
-  const second = await streamRun(
+  const second = streamRun(
     harness,
     { conversationId: root.id, content: 'Second', requestId: 'second' },
     context,
@@ -75,7 +75,7 @@ it('streams a busy follow-up as its own run', async () => {
   // submit() is asynchronous inside stream start; the model gate makes both admissions observable.
   release.resolve()
   const a = await consume(first)
-  const b = await consume(second)
+  const b = await consume(await second)
   expect(texts(a.message)).toEqual(['First.'])
   expect(texts(b.message)).toEqual(['Second.'])
   expect(b.message.id).not.toBe(a.message.id)
@@ -107,12 +107,12 @@ it('joins repeated request ids while queued without a second model response', as
   )
   await entered.promise
   const input = { conversationId: root.id, content: 'Repeat', requestId: 'repeat' }
-  const one = await streamRun(harness, input, context)
-  const two = await streamRun(harness, input, context)
+  const one = streamRun(harness, input, context)
+  const two = streamRun(harness, input, context)
   release.resolve()
   await consume(first)
-  const a = await consume(one)
-  const b = await consume(two)
+  const a = await consume(await one)
+  const b = await consume(await two)
   await root.waitForIdle(context)
   expect(a.message).toEqual(b.message)
   expect(texts(a.message)).toEqual(['Once.'])
@@ -215,3 +215,21 @@ it.each(['unsafe', 'safe'] as const)(
     expect(texts(result.message)).toEqual(['Finished.'])
   },
 )
+
+/** A real process dies after durable tool intent; request-only recovery replays the same run. */
+it('follows a host request after process restart and harness.resume', async () => {
+  const fixture = await host(
+    { work: tool({ inputSchema: z.object({}), execute: async () => 'recovered' }) },
+    { replay: { work: 'safe' } },
+  )
+  await crash(fixture.file, 'safe')
+  const opened = await fixture.open()
+  opened.faux.setResponses([fauxAssistantMessage('Recovered host run.')])
+  const stream = await followRun(opened.harness, opened.root.id, 'crash', context)
+  opened.harness.resume()
+  const result = await consume(stream)
+  expect(texts(result.message)).toEqual(['Recovered host run.'])
+  expect(result.message.parts).toContainEqual(
+    expect.objectContaining({ type: 'tool-work', state: 'output-available', output: 'recovered' }),
+  )
+})

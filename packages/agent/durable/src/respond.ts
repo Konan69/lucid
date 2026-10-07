@@ -22,7 +22,7 @@ import * as Pi from './pi.ts'
 import { LiveDoc } from '@earendil-works/pi-durable'
 import { completeTurn, continueRun, prepareInput } from './stream.ts'
 import { waiting } from './waiting.ts'
-import { InputPart, InputParts, type InputOptions, inputLimit, type PartLimit } from './input.ts'
+import { InputPart, InputParts, type InputOptions, inputPolicy, type InputPolicy } from './input.ts'
 
 /** The transport-neutral turn carries only the client's newest input or named tool settlements. */
 export const ChatTurn = Schema.TaggedUnion({
@@ -262,6 +262,11 @@ export const respond: (
   >,
   | DurableErrors.ConversationMissing
   | DurableErrors.LimitInvalid
+  | DurableErrors.BusyPolicyInvalid
+  | DurableErrors.TurnBusy
+  | DurableErrors.TurnWithdrawn
+  | DurableErrors.WatchClosed
+  | DurableErrors.WatchOverflowed
   | DurableErrors.PartTooLarge
   | DurableErrors.PartUnsupported
   | DurableErrors.PiFailed
@@ -274,31 +279,34 @@ export const respond: (
   context: Context,
 ) {
   const { turn, options } = 'turn' in input ? input : { turn: input, options: {} }
-  const limit = yield* inputLimit(options)
-  return yield* respondWithPolicy(harness, conversationId, { turn, limit }, context)
+  const policy = yield* inputPolicy(options)
+  return yield* respondWithPolicy(harness, conversationId, { turn, policy }, context)
 })
 
 /** Request ingress can validate the host policy before reading its body and pass the trusted state. */
 export const respondWithPolicy: (
   harness: Harness,
   conversationId: ConversationId,
-  input: { readonly turn: ChatTurn; readonly limit: PartLimit },
+  input: { readonly turn: ChatTurn; readonly policy: InputPolicy },
   context: Context,
 ) => Effect.Effect<
   Effect.Success<ReturnType<typeof respond>>,
-  Exclude<Effect.Error<ReturnType<typeof respond>>, DurableErrors.LimitInvalid>
+  Exclude<
+    Effect.Error<ReturnType<typeof respond>>,
+    DurableErrors.LimitInvalid | DurableErrors.BusyPolicyInvalid
+  >
 > = Effect.fn('Durable.respondWithPolicy')(function* (
   harness: Harness,
   conversationId: ConversationId,
-  input: { readonly turn: ChatTurn; readonly limit: PartLimit },
+  input: { readonly turn: ChatTurn; readonly policy: InputPolicy },
   context: Context,
 ) {
-  const { turn, limit } = input
+  const { turn, policy } = input
   return yield* ChatTurn.match(turn, {
     Input: ({ parts, messageId }): ResponseEffect =>
       prepareInput(
         harness,
-        { conversationId, content: parts, requestId: messageId, options: limit },
+        { conversationId, content: parts, requestId: messageId, options: policy },
         context,
       ),
     Resume: (resume): ResponseEffect =>

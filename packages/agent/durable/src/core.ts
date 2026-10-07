@@ -10,6 +10,9 @@ export {
   ConversationMissing,
   PiFailed,
   TurnInvalid,
+  TurnWithdrawn,
+  TurnBusy,
+  BusyPolicyInvalid,
   PartUnsupported,
   PartTooLarge,
   LimitInvalid,
@@ -40,9 +43,18 @@ export {
 export { type Replay, type ToolsOptions, toolsExtension } from './tools.ts'
 export { ChatTurn, TurnBody, decodeTurn, respond, type TurnInput } from './respond.ts'
 export { InputPart, InputParts, type InputOptions } from './input.ts'
-export { attachRun, continueRun, type RunInput, prepareRun, streamRun } from './stream.ts'
+export {
+  attachRun,
+  followRun,
+  continueRun,
+  type RunInput,
+  prepareRun,
+  streamRun,
+} from './stream.ts'
 export type { ResumeInput } from './resume.ts'
 
 export { abort } from './abort.ts'
 
 export { HistoryCursor, type HistoryPage, type HistoryRequest, history } from './history.ts'
+
+export { BusyPolicy } from './busy.ts'
