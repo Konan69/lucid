@@ -53,19 +53,21 @@ function admissionSettled(event: AgentEvent): boolean {
   )
 }
 
+type ObservedInput = {
+  harness: Harness
+  submission: Submission
+  conversationId: ConversationId
+  messageId: string
+  policy: 'follow' | 'admit'
+}
+
 /** An event watch is open before admission. events.js:216 emits run_end before submission
  * receipts in that commit, so re-read this receipt on run_end: placed successors proceed, but a
  * queued input is stranded (Pi README:322). The initial idle check covers following after failure.
  * No timer or mutation is part of this observer; only library admission may withdraw its input. */
 export const placed: (
   watched: Watching,
-  input: {
-    harness: Harness
-    submission: Submission
-    conversationId: ConversationId
-    messageId: string
-    policy: 'follow' | 'admit'
-  },
+  input: ObservedInput,
   context: Context,
 ) => Effect.Effect<
   InputReceipt,
@@ -103,10 +105,7 @@ export const placed: (
             }
             return Option.none<InputReceipt>()
           }
-          const receipt = yield* Pi.inputStatus(input.submission, context)
-          if (receipt.status === 'queued')
-            return yield* new TurnStranded({ messageId: input.messageId })
-          return Option.some(yield* endedOrigin(input.harness, event, receipt, context))
+          return yield* endedPlacement(input, event, context)
         }),
       ),
       Stream.filter(Option.isSome),
@@ -139,6 +138,25 @@ const endedOrigin = Effect.fn('Durable.endedInputOrigin')(function* (
       cause: new Error('Observed run has no first input receipt'),
     })
   return yield* Pi.inputStatus(input.value, context)
+})
+
+/** A run-end signal only strands an input while the conversation is idle. A buffered end from
+ * an older run must not withdraw work queued behind its already-running successor. */
+const endedPlacement = Effect.fn('Durable.endedPlacement')(function* (
+  input: ObservedInput,
+  event: Extract<AgentEvent, { type: 'run_end' }>,
+  context: Context,
+) {
+  const receipt = yield* Pi.inputStatus(input.submission, context)
+  if (receipt.status === 'queued') {
+    // An older buffered run_end may arrive after a successor has started. Only idle
+    // with this input still queued is stranded; a successor's boundary may place it.
+    const live = yield* Pi.snapshot(input.harness, LiveDoc, input.conversationId, context)
+    if (Option.isNone(live) || live.value.run === undefined)
+      return yield* new TurnStranded({ messageId: input.messageId })
+    return Option.none<InputReceipt>()
+  }
+  return Option.some(yield* endedOrigin(input.harness, event, receipt, context))
 })
 
 /** This is a single public Pi call, kept here because admission owns withdrawal and pi.ts is
