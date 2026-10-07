@@ -34,10 +34,24 @@ import {
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { expect, it } from '@effect/vitest'
 import { Schema } from 'effect'
-import { tool } from 'ai'
+import {
+  DefaultChatTransport,
+  isToolUIPart,
+  lastAssistantMessageIsCompleteWithApprovalResponses,
+  tool,
+} from 'ai'
+import { PlainChat } from '../fixtures/chat.ts'
 import { z } from 'zod'
 import { postgresFixture } from '../postgres/testing.ts'
-import { streamRun, toolsExtension, abort, history, followRun } from '../main.ts'
+import {
+  streamRun,
+  toolsExtension,
+  abort,
+  history,
+  followRun,
+  respond,
+  attachRun,
+} from '../main.ts'
 
 const context = BACKGROUND_CONTEXT
 const databaseUrl = process.env['VIVID_TEST_DATABASE_URL']
@@ -429,4 +443,242 @@ for (const backend of backends) {
       expect(entries.map(taskOf)).toEqual(entries.map(() => task))
     }),
   )
+}
+
+/** Pi inbox.ts places writes BEFORE users, and appends all selected user entries together.
+ * Prove the adjacency used only for terminal/unanswered bounds on both real stores. */
+for (const backend of backends) {
+  it.live(`${backend}: idle placement of stranded and new inputs is adjacent`, () =>
+    Effect.gen(function* () {
+      const store = yield* storageFor(backend)
+      const { root, faux } = yield* opened(yield* store.open(), [])
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined))
+      faux.setResponses([
+        () =>
+          runForPi(
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as(
+                fauxAssistantMessage('', { stopReason: 'error', errorMessage: '400 Bad Request' }),
+              ),
+            ),
+            undefined,
+          ),
+        fauxAssistantMessage('Combined.'),
+      ])
+      yield* Effect.promise(() =>
+        root.submit({ type: 'input', content: 'Fail', requestId: 'fail' }, context),
+      )
+      yield* Deferred.await(entered)
+      const queued = yield* Effect.promise(() =>
+        root.submit(
+          { type: 'input', content: 'Queued', requestId: 'queued', whenBusy: 'steer' },
+          context,
+        ),
+      )
+      yield* Deferred.succeed(release, undefined)
+      yield* Effect.promise(() => root.waitForIdle(context))
+      expect((yield* Effect.promise(() => queued.status(context))).status).toBe('queued')
+      const next = yield* Effect.promise(() =>
+        root.submit({ type: 'input', content: 'Next', requestId: 'next' }, context),
+      )
+      yield* Effect.promise(() => root.waitForIdle(context))
+      const first = yield* Effect.promise(() => queued.status(context))
+      const second = yield* Effect.promise(() => next.status(context))
+      if (first.entry === undefined || second.entry === undefined)
+        throw new Error('Expected both placed entries')
+      expect(second.entry).toBe(first.entry + 1)
+      const entries = (yield* Effect.promise(() => root.entries({}, 100, undefined, context))).items
+      expect(
+        entries
+          .filter((entry) => entry.id === first.entry || entry.id === second.entry)
+          .map((entry) => ({ kind: entry.kind, byTaskId: entry.byTaskId })),
+      ).toEqual([
+        { kind: 'pi.user', byTaskId: undefined },
+        { kind: 'pi.user', byTaskId: undefined },
+      ])
+    }),
+  )
+  it.live(`${backend}: a new idle run cannot be adjacent to an empty failed run`, () =>
+    Effect.gen(function* () {
+      const store = yield* storageFor(backend)
+      const { harness, root, faux } = yield* opened(yield* store.open(), [])
+      yield* Effect.promise(() =>
+        root.configure({ model: { provider: 'missing', modelId: 'missing' } }, context),
+      )
+      const empty = yield* Effect.promise(() =>
+        root.submit({ type: 'input', content: 'Empty', requestId: 'empty' }, context),
+      )
+      yield* Effect.promise(() => root.waitForIdle(context))
+      expect(yield* assistants(root)).toEqual([])
+      yield* Effect.promise(() =>
+        root.configure({ model: { provider: 'faux', modelId: 'faux-1' } }, context),
+      )
+      faux.setResponses([fauxAssistantMessage('Successor.')])
+      const next = yield* Effect.promise(() =>
+        root.submit({ type: 'input', content: 'Next', requestId: 'next' }, context),
+      )
+      yield* Effect.promise(() => root.waitForIdle(context))
+      const first = yield* Effect.promise(() => empty.status(context))
+      const second = yield* Effect.promise(() => next.status(context))
+      if (first.entry === undefined || second.entry === undefined)
+        throw new Error('Expected both placed entries')
+      expect(second.entry).toBeGreaterThan(first.entry + 1)
+      const replayed = yield* consumeReadable(
+        yield* Effect.promise(() => followRun(harness, root.id, 'empty', context)),
+        Option.none(),
+      )
+      expect(replayed.message.id).toBe(`input:${first.entry}`)
+      expect(replayed.message.parts).toEqual([])
+    }),
+  )
+}
+
+/** Approvals come from the SDK part, rather than a bridge waiting-list shortcut. */
+function approvalId(chat: PlainChat, callId: string) {
+  const message = chat.lastMessage
+  if (message === undefined) throw new Error('Expected assistant message')
+  const part = message.parts
+    .filter(isToolUIPart)
+    .find((candidate) => candidate.toolCallId === callId)
+  if (part === undefined || part.state !== 'approval-requested')
+    throw new Error('Expected approval')
+  return part.approval.id
+}
+/** A stranded steer plus a fresh input starts one run with two unattributed user entries.
+ * Handovers must not rename it, truncate it, or prevent the next approval POST. */
+for (const backend of backends) {
+  for (const ending of ['approve', 'abort'] as const) {
+    it.live(
+      `${backend}: multiple initial inputs retain identity through approvals and ${ending}`,
+      () =>
+        Effect.gen(function* () {
+          const store = yield* storageFor(backend)
+          const paid: number[] = []
+          const extension = yield* Effect.promise(() =>
+            toolsExtension(
+              'payments',
+              {
+                work: tool({ inputSchema: z.object({}), execute: () => Promise.resolve('worked') }),
+                pay: tool({
+                  inputSchema: z.object({ amount: z.number() }),
+                  execute: ({ amount }) => {
+                    paid.push(amount)
+                    return Promise.resolve({ receipt: amount })
+                  },
+                }),
+              },
+              { approval: { pay: true } },
+            ),
+          )
+          const { harness, root, faux } = yield* opened(yield* store.open(), [extension])
+          const entered = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
+          yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined))
+          faux.setResponses([
+            () =>
+              runForPi(
+                Deferred.succeed(entered, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.as(
+                    fauxAssistantMessage('', {
+                      stopReason: 'error',
+                      errorMessage: '400 Bad Request',
+                    }),
+                  ),
+                ),
+                undefined,
+              ),
+            fauxAssistantMessage([fauxToolCall('work', {}, { id: 'work' })], {
+              stopReason: 'toolUse',
+            }),
+            fauxAssistantMessage([fauxToolCall('pay', { amount: 100 }, { id: 'c1' })], {
+              stopReason: 'toolUse',
+            }),
+            fauxAssistantMessage([fauxToolCall('pay', { amount: 200 }, { id: 'c2' })], {
+              stopReason: 'toolUse',
+            }),
+            fauxAssistantMessage('Done.'),
+          ])
+          yield* Effect.promise(() =>
+            root.submit({ type: 'input', content: 'Fail', requestId: 'fail' }, context),
+          )
+          yield* Deferred.await(entered)
+          yield* Effect.promise(() =>
+            root.submit(
+              { type: 'input', content: 'Steer', requestId: 'steer', whenBusy: 'steer' },
+              context,
+            ),
+          )
+          yield* Deferred.succeed(release, undefined)
+          yield* Effect.promise(() => root.waitForIdle(context))
+          let completed = yield* Deferred.make<void, FixtureFailed>()
+          const chat = new PlainChat({
+            transport: new DefaultChatTransport({
+              api: 'http://durable.test/chat',
+              fetch: (url, init) => respond(harness, root.id, new Request(url, init), context),
+            }),
+            sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+            onFinish: () => Deferred.doneUnsafe(completed, Effect.void),
+            onError: (cause) =>
+              Deferred.doneUnsafe(completed, Effect.fail(new FixtureFailed({ cause }))),
+          })
+          yield* Effect.promise(() => chat.sendMessage({ text: 'Next' }))
+          yield* Deferred.await(completed)
+          const liveMessage = chat.lastMessage
+          if (liveMessage === undefined) throw new Error('Expected parked message')
+          const entries = yield* assistants(root)
+          const first = entries[1]
+          if (first === undefined) throw new Error('Expected combined run assistant')
+          expect(liveMessage.id).toBe(`gen:${taskOf(first)}`)
+          const attached = yield* Effect.promise(() => attachRun(harness, root.id, context))
+          if (attached.status !== 'running') throw new Error('Expected running attachment')
+          expect((yield* consumeReadable(attached.stream, Option.none())).message.id).toBe(
+            liveMessage.id,
+          )
+          completed = yield* Deferred.make<void, FixtureFailed>()
+          yield* Effect.promise(() =>
+            Promise.resolve(
+              chat.addToolApprovalResponse({
+                id: approvalId(chat, 'c1'),
+                approved: true,
+              }),
+            ),
+          )
+          yield* Deferred.await(completed)
+          expect(paid).toEqual([100])
+          const continued = chat.lastMessage
+          if (continued === undefined) throw new Error('Expected continued assistant')
+          expect(continued.id).toBe(liveMessage.id)
+          const second = approvalId(chat, 'c2')
+          if (ending === 'approve') {
+            completed = yield* Deferred.make<void, FixtureFailed>()
+            yield* Effect.promise(() =>
+              Promise.resolve(chat.addToolApprovalResponse({ id: second, approved: true })),
+            )
+            yield* Deferred.await(completed)
+            expect(paid).toEqual([100, 200])
+          } else yield* Effect.promise(() => root.abort(context))
+          yield* Effect.promise(() => root.waitForIdle(context))
+          const saved = yield* Effect.promise(() =>
+            history(harness, root.id, { limit: 20 }, context),
+          )
+          const savedAssistant = saved.messages.findLast((message) => message.role === 'assistant')
+          if (savedAssistant === undefined) throw new Error('Expected saved assistant')
+          expect(savedAssistant.id).toBe(liveMessage.id)
+          const stored = yield* consumeReadable(
+            yield* Effect.promise(() => followRun(harness, root.id, 'steer', context)),
+            Option.none(),
+          )
+          expect(stored.message.id).toBe(liveMessage.id)
+          expect(stored.message.parts.filter(isToolUIPart).map((part) => part.toolCallId)).toEqual([
+            'work',
+            'c1',
+            'c2',
+          ])
+        }),
+    )
+  }
 }

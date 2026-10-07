@@ -127,9 +127,11 @@ export const resolveRunIdentity: (
     const receipt = yield* Pi.status(handle.value, reader.context)
     if (!placedFor(receipt, reader.conversation.id))
       return yield* new RunMissing({ conversationId: reader.conversation.id })
-    const entries = closedEntries(
-      yield* entriesOf(reader, { first: receipt.entry, last: Option.none() }),
+    const entries = yield* runEntries(
+      reader,
+      live,
       receipt,
+      yield* entriesOf(reader, { first: receipt.entry, last: Option.none() }),
     )
     return { messageId: assistantMessageId(identityFor(live, receipt, entries)), receipt, entries }
   },
@@ -147,13 +149,14 @@ export const captureRun: (
   const resolved = yield* resolveRunIdentity(reader, snapshot.run.inputs)
   const { receipt } = resolved
   const messageId = Option.some(resolved.messageId)
+  const ownEntries = new Set(resolved.entries.map((entry) => entry.id))
   // Usually the atomic model view contains the whole run. Compaction can remove its first input;
   // recover raw entries only then, bounded by the snapshot's tail so the prefix cannot outrun events.
   if (snapshot.entries.some((entry) => entry.id === receipt.entry))
     return {
       ...snapshot,
       messageId,
-      entries: snapshot.entries.filter((entry) => entry.id >= receipt.entry),
+      entries: snapshot.entries.filter((entry) => ownEntries.has(entry.id)),
     }
   const tail = Option.fromNullishOr(snapshot.entries.at(-1))
   if (Option.isNone(tail)) return yield* new RunMissing({ conversationId: reader.conversation.id })
@@ -161,26 +164,61 @@ export const captureRun: (
   return { ...snapshot, messageId, entries }
 })
 
-/**
- * The done receipt's answer is the final boundary of its run. Pi generation.js:408–421 places
- * queued users in that same commit under the predecessor task, so byTaskId cannot distinguish
- * those successor inputs from earlier steers. Steers precede this answer; the first pi.user after
- * it begins the next run. Keep intervening tool results (terminateRun settles against the earlier
- * calling assistant), and keep task-attributed steers inside an unanswered/active run as before.
- */
-function closedEntries(
+/** Consecutive initial Person entries are one idle inbox-placement commit. Pi inbox.ts:75–81
+ * appends selected users together AFTER all queued writes. Separate idle admissions allocate a
+ * receipt and generation between their users, as the SQLite/PostgreSQL proofs establish. An
+ * unexpected gap conservatively cuts short; it can never borrow the next run's assistant. */
+function initialInputs(entries: readonly EntryRecord[]): ReadonlySet<EntryId> {
+  const inputs = new Set<EntryId>()
+  let previous: Option.Option<EntryId> = Option.none()
+  for (const entry of entries) {
+    if (entry.kind !== 'pi.user' || (Option.isSome(previous) && entry.id !== previous.value + 1))
+      break
+    inputs.add(entry.id)
+    previous = Option.some(entry.id)
+  }
+  return inputs
+}
+
+/** One bounds rule serves identity, snapshots and stored replay. Active membership comes from
+ * the LiveDoc read made BEFORE entries, through each input's public receipt. A done receipt's
+ * answer separates later user inputs even when Pi placed them under the predecessor task. An
+ * unanswered run retains only its adjacent initial users plus task-attributed steers. */
+const runEntries = Effect.fn('Durable.runEntries')(function* (
+  reader: Reader,
+  live: Option.Option<Readonly<LiveState>>,
+  receipt: ResolvedRun['receipt'],
   entries: readonly EntryRecord[],
-  receipt: Extract<SubmissionRecord, { type: 'input' }>,
-) {
+): Effect.fn.Return<readonly EntryRecord[], PiFailed | RunMissing> {
+  let inputs = initialInputs(entries)
+  if (
+    Option.isSome(live) &&
+    live.value.run !== undefined &&
+    live.value.run.inputs[0] === receipt.id
+  ) {
+    const placed = new Set<EntryId>()
+    for (const id of live.value.run.inputs) {
+      const handle = yield* Pi.submission(reader.harness, id, reader.context)
+      if (Option.isNone(handle))
+        return yield* new RunMissing({ conversationId: reader.conversation.id })
+      const input = yield* Pi.status(handle.value, reader.context)
+      if (!placedFor(input, reader.conversation.id))
+        return yield* new RunMissing({ conversationId: reader.conversation.id })
+      placed.add(input.entry)
+    }
+    inputs = placed
+  }
   const next = entries.findIndex(
     (entry, index) =>
       index > 0 &&
       (entry.kind === 'pi.reset' ||
         (entry.kind === 'pi.user' &&
-          (receipt.status === 'done' ? entry.id > receipt.answer : entry.byTaskId === undefined))),
+          (receipt.status === 'done'
+            ? entry.id > receipt.answer
+            : entry.byTaskId === undefined && !inputs.has(entry.id)))),
   )
   return next === -1 ? entries : entries.slice(0, next)
-}
+})
 
 /** Idempotent admission of a terminal input returns its stored run instead of awaiting an old run_start. */
 export const inputReplay: (
@@ -276,7 +314,7 @@ export const selectRun: (
     first: receipt.entry,
     last: Option.none(),
   })
-  const entries = closedEntries(placed, receipt)
+  const entries = yield* runEntries(reader, Option.none(), receipt, placed)
   const assistant = entries.find((entry) => entry.kind === 'pi.assistant')
   if (
     assistant === undefined ||
