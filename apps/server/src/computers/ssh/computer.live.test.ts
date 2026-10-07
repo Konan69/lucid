@@ -40,7 +40,7 @@ const measured = <A, E, R>(step: string, program: Effect.Effect<A, E, R>) =>
     }),
   )
 
-layer(NodeHttpClient.layerUndici, { excludeTestServices: true })((it) => {
+layer(NodeHttpClient.layerUndici, { excludeTestServices: true, timeout: 180_000 })((it) => {
   it.effect.skipIf(!enabled)(
     'runs, writes, reads and cancels on a real Computer, with a key of its own for each opening',
     () =>

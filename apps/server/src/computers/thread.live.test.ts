@@ -69,7 +69,7 @@ const cleanupComputer = Effect.fn('ThreadProof.cleanupComputer')(function* (
 describe.skipIf(process.env['VIVID_LIVE_THREAD_COMPUTER'] !== '1')(
   'Thread Computer live chain',
   () => {
-    layer(chainLayer, { excludeTestServices: true })((it) => {
+    layer(chainLayer, { excludeTestServices: true, timeout: 240_000 })((it) => {
       it.effect(
         'wakes Boat, types, clicks, reads and streams its scoped session receipt',
         () =>

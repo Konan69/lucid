@@ -23,7 +23,7 @@ import { computerMachineKey } from './store.ts'
  * the machine's record is exactly what it was.
  */
 describe.skipIf(process.env['VIVID_LIVE_MACHINE_HELD'] !== '1')('A held machine, live', () => {
-  layer(chainLayer, { excludeTestServices: true })((it) => {
+  layer(chainLayer, { excludeTestServices: true, timeout: 120_000 })((it) => {
     it.effect(
       'refuses a second server that names a machine another account holds, and changes nothing on it',
       () =>
