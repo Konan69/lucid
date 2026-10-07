@@ -1,10 +1,11 @@
+import * as Layer from 'effect/Layer'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
 import * as NodeProcess from 'node:process'
 import * as NodeStream from 'node:stream'
 import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem'
 import { expect } from 'vitest'
-import { it } from '@effect/vitest'
+import { layer as testLayer } from '@effect/vitest'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as FileSystem from 'effect/FileSystem'
@@ -132,278 +133,293 @@ const settled = ({ running, reportDir, entered }: Held) =>
     }
   })
 
-/** P0a: a real V8 heap OOM under the cap writes a report that names the process that died. */
-it.effect(
-  'finds heap evidence in the report of a process that exhausted its heap',
-  () =>
-    Effect.gen(function* () {
-      const seen = yield* owned('grow', settled)
-      expect(seen.used).toEqual({ began: true, heap: true, foreign: false })
-      expect(seen.end).toEqual(Option.some(ProcessEnd.cases.Signaled.make({ signal: 'SIGABRT' })))
-      expect(seen.pid).not.toBe(NodeProcess.pid)
-      expect([seen.kept, seen.removed]).toEqual([true, true])
+// FileSystem is stateless; each case owns its process and report-directory scope.
+testLayer(NodeFileSystem.layer)((it) => {
+  /** P0a: a real V8 heap OOM under the cap writes a report that names the process that died. */
 
-      // The OOM ended only the child: this process starts and observes the next one normally.
-      const next = yield* owned('exit', settled)
-      expect(next.used).toEqual({ began: true, heap: false, foreign: false })
-      expect(next.end).toEqual(Option.some(ProcessEnd.cases.Exited.make({ code: 1 })))
-    }).pipe(Effect.provide(NodeFileSystem.layer)),
-  CRASH_TIMEOUT_MS,
-)
+  it.effect(
+    'finds heap evidence in the report of a process that exhausted its heap',
+    () =>
+      Effect.gen(function* () {
+        const seen = yield* owned('grow', settled)
+        expect(seen.used).toEqual({ began: true, heap: true, foreign: false })
+        expect(seen.end).toEqual(Option.some(ProcessEnd.cases.Signaled.make({ signal: 'SIGABRT' })))
+        expect(seen.pid).not.toBe(NodeProcess.pid)
+        expect([seen.kept, seen.removed]).toEqual([true, true])
 
-/** P0b: the same signal without Node's OOM handler is not heap evidence. */
-it.effect(
-  'finds no heap evidence when a process aborts without exhausting its heap',
-  () =>
+        // The OOM ended only the child: this process starts and observes the next one normally.
+        const next = yield* owned('exit', settled)
+        expect(next.used).toEqual({ began: true, heap: false, foreign: false })
+        expect(next.end).toEqual(Option.some(ProcessEnd.cases.Exited.make({ code: 1 })))
+      }),
+    CRASH_TIMEOUT_MS,
+  )
+
+  /** P0b: the same signal without Node's OOM handler is not heap evidence. */
+
+  it.effect(
+    'finds no heap evidence when a process aborts without exhausting its heap',
+    () =>
+      Effect.gen(function* () {
+        const seen = yield* owned('abort', settled)
+        expect(seen.used).toEqual({ began: true, heap: false, foreign: false })
+        expect(seen.end).toEqual(Option.some(ProcessEnd.cases.Signaled.make({ signal: 'SIGABRT' })))
+        expect([seen.kept, seen.removed]).toEqual([true, true])
+      }),
+    CRASH_TIMEOUT_MS,
+  )
+
+  /** P0b: an ordinary exit is reported by code and is not heap evidence. */
+
+  it.effect('finds no heap evidence when a process exits', () =>
     Effect.gen(function* () {
-      const seen = yield* owned('abort', settled)
+      const seen = yield* owned('exit', settled)
       expect(seen.used).toEqual({ began: true, heap: false, foreign: false })
-      expect(seen.end).toEqual(Option.some(ProcessEnd.cases.Signaled.make({ signal: 'SIGABRT' })))
+      expect(seen.end).toEqual(Option.some(ProcessEnd.cases.Exited.make({ code: 1 })))
       expect([seen.kept, seen.removed]).toEqual([true, true])
-    }).pipe(Effect.provide(NodeFileSystem.layer)),
-  CRASH_TIMEOUT_MS,
-)
+    }),
+  )
 
-/** P0b: an ordinary exit is reported by code and is not heap evidence. */
-it.effect('finds no heap evidence when a process exits', () =>
-  Effect.gen(function* () {
-    const seen = yield* owned('exit', settled)
-    expect(seen.used).toEqual({ began: true, heap: false, foreign: false })
-    expect(seen.end).toEqual(Option.some(ProcessEnd.cases.Exited.make({ code: 1 })))
-    expect([seen.kept, seen.removed]).toEqual([true, true])
-  }).pipe(Effect.provide(NodeFileSystem.layer)),
-)
+  /**
+   * A process that would never end by itself is ended by `stop`, and `stop` returns only with the
+   * exit receipt: `end` is read without waiting. The report directory outlives the process.
+   */
 
-/**
- * A process that would never end by itself is ended by `stop`, and `stop` returns only with the
- * exit receipt: `end` is read without waiting. The report directory outlives the process.
- */
-it.effect('stops a running process and returns only after its exit', () =>
-  Effect.gen(function* () {
-    const seen = yield* owned('idle', ({ entered }) => Deferred.await(entered))
-    expect(seen.used).toBe(true)
-    expect(seen.end).toEqual(Option.some(ProcessEnd.cases.Signaled.make({ signal: 'SIGKILL' })))
-    expect([seen.kept, seen.removed]).toEqual([true, true])
-  }).pipe(Effect.provide(NodeFileSystem.layer)),
-)
+  it.effect('stops a running process and returns only after its exit', () =>
+    Effect.gen(function* () {
+      const seen = yield* owned('idle', ({ entered }) => Deferred.await(entered))
+      expect(seen.used).toBe(true)
+      expect(seen.end).toEqual(Option.some(ProcessEnd.cases.Signaled.make({ signal: 'SIGKILL' })))
+      expect([seen.kept, seen.removed]).toEqual([true, true])
+    }),
+  )
 
-/**
- * One run of the SDK's worker on the owned platform, with a handler that is never reached. `run`
- * never succeeds (Worker.ts:48-56); its typed failure is the observation.
- */
-const runOnce = (running: Running) =>
-  Effect.gen(function* () {
-    const workers = yield* Worker.WorkerPlatform
-    const run = Effect.flatMap(workers.spawn(0), (worker) => worker.run(() => Effect.void))
-    return yield* Effect.flip(run)
-  }).pipe(Effect.provide(layer(running)))
+  /**
+   * One run of the SDK's worker on the owned platform, with a handler that is never reached. `run`
+   * never succeeds (Worker.ts:48-56); its typed failure is the observation.
+   */
+  const runOnce = (running: Running) =>
+    Effect.gen(function* () {
+      const context = yield* Layer.build(layer(running))
+      const workers = yield* Worker.WorkerPlatform.pipe(Effect.provide(context))
+      const run = Effect.flatMap(workers.spawn(0), (worker) => worker.run(() => Effect.void))
+      return yield* Effect.flip(run).pipe(Effect.provide(context))
+    }).pipe(Effect.scoped)
 
-/**
- * The process is already gone when the SDK first attaches. Both runs are made after the native end
- * was observed, the second standing for the SDK's retry of a failed run (RpcClient.ts:1337).
- */
-const attachedLate = ({ running, entered }: Held) =>
-  Effect.gen(function* () {
-    const began = yield* Deferred.await(entered)
-    yield* Deferred.await(running.ended)
-    return { began, first: yield* runOnce(running), retry: yield* runOnce(running) }
-  })
+  /**
+   * The process is already gone when the SDK first attaches. Both runs are made after the native end
+   * was observed, the second standing for the SDK's retry of a failed run (RpcClient.ts:1337).
+   */
+  const attachedLate = ({ running, entered }: Held) =>
+    Effect.gen(function* () {
+      const began = yield* Deferred.await(entered)
+      yield* Deferred.await(running.ended)
+      return { began, first: yield* runOnce(running), retry: yield* runOnce(running) }
+    })
 
-/**
- * Death before the SDK attaches. The official platform would register its `exit` listener too late
- * and never fail this run (NodeWorker.ts:93-102). Here each run fails with the SDK's typed
- * `WorkerError`, at once and without a new process: nothing is thrown, the `TestClock` is never
- * moved, and a red run shows as a hang, not as a wrong answer.
- */
-it.effect('fails every SDK run with a typed error when the process ended before it attached', () =>
-  Effect.gen(function* () {
-    const seen = yield* owned('exit', attachedLate)
-    expect(seen.used.began).toBe(true)
-    expect(seen.end).toEqual(Option.some(ProcessEnd.cases.Exited.make({ code: 1 })))
-    for (const failure of [seen.used.first, seen.used.retry]) {
-      expect(failure).toBeInstanceOf(WorkerError)
-      expect(failure.reason).toBeInstanceOf(WorkerReceiveError)
-      expect(failure.message).toBe('Extraction process ended')
+  /**
+   * Death before the SDK attaches. The official platform would register its `exit` listener too late
+   * and never fail this run (NodeWorker.ts:93-102). Here each run fails with the SDK's typed
+   * `WorkerError`, at once and without a new process: nothing is thrown, the `TestClock` is never
+   * moved, and a red run shows as a hang, not as a wrong answer.
+   */
+
+  it.effect(
+    'fails every SDK run with a typed error when the process ended before it attached',
+    () =>
+      Effect.gen(function* () {
+        const seen = yield* owned('exit', attachedLate)
+        expect(seen.used.began).toBe(true)
+        expect(seen.end).toEqual(Option.some(ProcessEnd.cases.Exited.make({ code: 1 })))
+        for (const failure of [seen.used.first, seen.used.retry]) {
+          expect(failure).toBeInstanceOf(WorkerError)
+          expect(failure.reason).toBeInstanceOf(WorkerReceiveError)
+          expect(failure.message).toBe('Extraction process ended')
+        }
+      }),
+  )
+
+  /**
+   * Fork the production entry and record its first native message with the test's own listener,
+   * added in the same synchronous step as `fork`. `None` means the process ended without sending one.
+   */
+  const readied = (reportDir: string) => {
+    const first = Deferred.makeUnsafe<Option.Option<NodeChildProcess.Serializable>>()
+    const spawn = () => {
+      const child = forkExtractor(EXTRACTION_HEAP_MB)(reportDir)
+      child.once('message', (message) => {
+        Deferred.doneUnsafe(first, Effect.succeedSome(message))
+      })
+      child.once('exit', () => {
+        Deferred.doneUnsafe(first, Effect.succeedNone)
+      })
+      return child
     }
-  }).pipe(Effect.provide(NodeFileSystem.layer)),
-)
-
-/**
- * Fork the production entry and record its first native message with the test's own listener,
- * added in the same synchronous step as `fork`. `None` means the process ended without sending one.
- */
-const readied = (reportDir: string) => {
-  const first = Deferred.makeUnsafe<Option.Option<NodeChildProcess.Serializable>>()
-  const spawn = () => {
-    const child = forkExtractor(EXTRACTION_HEAP_MB)(reportDir)
-    child.once('message', (message) => {
-      Deferred.doneUnsafe(first, Effect.succeed(Option.some(message)))
-    })
-    child.once('exit', () => {
-      Deferred.doneUnsafe(first, Effect.succeed(Option.none()))
-    })
-    return child
+    return { spawn, first }
   }
-  return { spawn, first }
-}
 
-/**
- * Attach the official worker RPC only after the ready message `[0]` (NodeWorkerRunner.ts:120) has
- * already been emitted natively, then extract a real PDF. A lost ready message would leave the
- * request in the SDK buffer for ever (Worker.ts:234-241).
- */
-const askedLate = (
-  running: Running,
-  first: Deferred.Deferred<Option.Option<NodeChildProcess.Serializable>>,
-) =>
-  Effect.gen(function* () {
-    const ready = yield* Deferred.await(first)
-    const protocol = yield* RpcClient.makeProtocolWorker({ size: 1 }).pipe(
-      Effect.provide(layer(running)),
-    )
-    const client = yield* RpcClient.make(ExtractionRpcs).pipe(
-      Effect.provideService(RpcClient.Protocol, protocol),
-    )
-    const bytes = NodeFS.readFileSync(new URL('../fixtures/readable.pdf', import.meta.url))
-    return { ready, pages: yield* client.ExtractPdf({ bytes: new Uint8Array(bytes) }) }
-  })
+  /**
+   * Attach the official worker RPC only after the ready message `[0]` (NodeWorkerRunner.ts:120) has
+   * already been emitted natively, then extract a real PDF. A lost ready message would leave the
+   * request in the SDK buffer for ever (Worker.ts:234-241).
+   */
+  const askedLate = (
+    running: Running,
+    first: Deferred.Deferred<Option.Option<NodeChildProcess.Serializable>>,
+  ) =>
+    Effect.gen(function* () {
+      const ready = yield* Deferred.await(first)
+      const protocol = yield* RpcClient.makeProtocolWorker({ size: 1 }).pipe(
+        Effect.provide(yield* Layer.build(layer(running))),
+      )
+      const client = yield* RpcClient.make(ExtractionRpcs).pipe(
+        Effect.provideService(RpcClient.Protocol, protocol),
+      )
+      const bytes = NodeFS.readFileSync(new URL('../fixtures/readable.pdf', import.meta.url))
+      return { ready, pages: yield* client.ExtractPdf({ bytes: new Uint8Array(bytes) }) }
+    })
 
-/**
- * Readiness before the SDK attaches, through the production entry, the official runner and the
- * official RPC. The inbox held the early `[0]` and handed it over at attach, so the call is answered.
- * The `TestClock` is never moved; a red run shows as a hang.
- */
-it.effect('answers over the official RPC when the process was ready before the SDK attached', () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem
-    const reportDir = yield* fs.makeTempDirectoryScoped({ prefix: 'vivid-extraction-' })
-    const early = readied(reportDir)
-    const asked = yield* Effect.acquireUseRelease(
-      start(early.spawn),
-      (running) => askedLate(running, early.first),
-      (running) => stop(running),
-    )
-    expect(asked.ready).toEqual(Option.some([0]))
-    expect(asked.pages).toEqual(['Vivid extraction fixture'])
-  }).pipe(Effect.provide(NodeFileSystem.layer)),
-)
+  /**
+   * Readiness before the SDK attaches, through the production entry, the official runner and the
+   * official RPC. The inbox held the early `[0]` and handed it over at attach, so the call is answered.
+   * The `TestClock` is never moved; a red run shows as a hang.
+   */
 
-/**
- * Configuration sources that can bypass Vivid's old-generation policy. Embedded quotes previously
- * hid the percentage flag, and config/env files supplied it without appearing in either live
- * input. Ordinary loader and absolute old-generation flags must remain supported.
- */
-it.effect.each([
-  { execArgv: [], nodeOptions: Option.none<string>(), expected: 'Holds' },
-  {
-    execArgv: ['--require', '/app/preflight.cjs', '--import', 'file:///app/loader.mjs'],
-    nodeOptions: Option.none<string>(),
-    expected: 'Holds',
-  },
-  {
-    execArgv: ['--max-old-space-size=4096'],
-    nodeOptions: Option.none<string>(),
-    expected: 'Holds',
-  },
-  {
-    execArgv: [],
-    nodeOptions: Option.some('--max-old-space-size=4096 --enable-source-maps'),
-    expected: 'Holds',
-  },
-  {
-    execArgv: ['--max-old-space-size-percentage=50'],
-    nodeOptions: Option.none<string>(),
-    expected: 'PercentageNamed',
-  },
-  {
-    execArgv: ['--max_old_space_size_percentage', '50'],
-    nodeOptions: Option.none<string>(),
-    expected: 'PercentageNamed',
-  },
-  {
-    execArgv: [],
-    nodeOptions: Option.some('--import tsx --max-old-space-size-percentage=75'),
-    expected: 'PercentageNamed',
-  },
-  {
-    execArgv: [],
-    nodeOptions: Option.some('--max-old-"space"-size-percentage=50'),
-    expected: 'OptionsQuoted',
-  },
-  {
-    execArgv: [],
-    nodeOptions: Option.some('--require "./my path/a.js"'),
-    expected: 'OptionsQuoted',
-  },
-  { execArgv: [], nodeOptions: Option.some(''), expected: 'Holds' },
-  {
-    execArgv: ['--experimental-default-config-file'],
-    nodeOptions: Option.none<string>(),
-    expected: 'OptionsFromFile',
-  },
-  {
-    execArgv: ['--experimental-config-file=node.config.json'],
-    nodeOptions: Option.none<string>(),
-    expected: 'OptionsFromFile',
-  },
-  {
-    execArgv: ['--env-file-if-exists=.env'],
-    nodeOptions: Option.none<string>(),
-    expected: 'OptionsFromFile',
-  },
-])('classifies inherited extraction configuration: %$', ({ execArgv, nodeOptions, expected }) =>
-  Effect.gen(function* () {
-    const result = yield* admit({ execArgv, nodeOptions }).pipe(Effect.result)
-    if (expected === 'Holds') {
-      expect(Result.isSuccess(result)).toBe(true)
-      return
-    }
-    expect(Result.isFailure(result)).toBe(true)
-    if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(ExtractionConfigurationError)
-      expect(result.failure.reason).toBe(expected)
-    }
-  }),
-)
-
-/**
- * Mutation after startup is a live fork input, so ConfigProvider cannot express this case. Scope
- * restores the actual variable on every exit; cases in this file run sequentially in one worker.
- * A mistaken fork is still owned and stopped by the production lifecycle before assertion failure.
- */
-it.effect('refuses to fork when inherited configuration changed after startup', () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem
-    const reportDir = yield* fs.makeTempDirectoryScoped({ prefix: 'vivid-extraction-' })
-    yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        const previous = Option.fromUndefinedOr(NodeProcess.env['NODE_OPTIONS'])
-        NodeProcess.env['NODE_OPTIONS'] = '--max-old-space-size-percentage=50'
-        return previous
+  it.effect(
+    'answers over the official RPC when the process was ready before the SDK attached',
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const reportDir = yield* fs.makeTempDirectoryScoped({ prefix: 'vivid-extraction-' })
+        const early = readied(reportDir)
+        const asked = yield* Effect.acquireUseRelease(
+          start(early.spawn),
+          (running) => askedLate(running, early.first),
+          (running) => stop(running),
+        )
+        expect(asked.ready).toEqual(Option.some([0]))
+        expect(asked.pages).toEqual(['Vivid extraction fixture'])
       }),
-      (previous) =>
+  )
+
+  /**
+   * Configuration sources that can bypass Vivid's old-generation policy. Embedded quotes previously
+   * hid the percentage flag, and config/env files supplied it without appearing in either live
+   * input. Ordinary loader and absolute old-generation flags must remain supported.
+   */
+  it.effect.each([
+    { execArgv: [], nodeOptions: Option.none<string>(), expected: 'Holds' },
+    {
+      execArgv: ['--require', '/app/preflight.cjs', '--import', 'file:///app/loader.mjs'],
+      nodeOptions: Option.none<string>(),
+      expected: 'Holds',
+    },
+    {
+      execArgv: ['--max-old-space-size=4096'],
+      nodeOptions: Option.none<string>(),
+      expected: 'Holds',
+    },
+    {
+      execArgv: [],
+      nodeOptions: Option.some('--max-old-space-size=4096 --enable-source-maps'),
+      expected: 'Holds',
+    },
+    {
+      execArgv: ['--max-old-space-size-percentage=50'],
+      nodeOptions: Option.none<string>(),
+      expected: 'PercentageNamed',
+    },
+    {
+      execArgv: ['--max_old_space_size_percentage', '50'],
+      nodeOptions: Option.none<string>(),
+      expected: 'PercentageNamed',
+    },
+    {
+      execArgv: [],
+      nodeOptions: Option.some('--import tsx --max-old-space-size-percentage=75'),
+      expected: 'PercentageNamed',
+    },
+    {
+      execArgv: [],
+      nodeOptions: Option.some('--max-old-"space"-size-percentage=50'),
+      expected: 'OptionsQuoted',
+    },
+    {
+      execArgv: [],
+      nodeOptions: Option.some('--require "./my path/a.js"'),
+      expected: 'OptionsQuoted',
+    },
+    { execArgv: [], nodeOptions: Option.some(''), expected: 'Holds' },
+    {
+      execArgv: ['--experimental-default-config-file'],
+      nodeOptions: Option.none<string>(),
+      expected: 'OptionsFromFile',
+    },
+    {
+      execArgv: ['--experimental-config-file=node.config.json'],
+      nodeOptions: Option.none<string>(),
+      expected: 'OptionsFromFile',
+    },
+    {
+      execArgv: ['--env-file-if-exists=.env'],
+      nodeOptions: Option.none<string>(),
+      expected: 'OptionsFromFile',
+    },
+  ])('classifies inherited extraction configuration: %$', ({ execArgv, nodeOptions, expected }) =>
+    Effect.gen(function* () {
+      const result = yield* admit({ execArgv, nodeOptions }).pipe(Effect.result)
+      if (expected === 'Holds') {
+        expect(Result.isSuccess(result)).toBe(true)
+        return
+      }
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure).toBeInstanceOf(ExtractionConfigurationError)
+        expect(result.failure.reason).toBe(expected)
+      }
+    }),
+  )
+
+  /**
+   * Mutation after startup is a live fork input, so ConfigProvider cannot express this case. Scope
+   * restores the actual variable on every exit; cases in this file run sequentially in one worker.
+   * A mistaken fork is still owned and stopped by the production lifecycle before assertion failure.
+   */
+
+  it.effect('refuses to fork when inherited configuration changed after startup', () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const reportDir = yield* fs.makeTempDirectoryScoped({ prefix: 'vivid-extraction-' })
+      yield* Effect.acquireRelease(
         Effect.sync(() => {
-          Option.match(previous, {
-            onNone: () => {
-              delete NodeProcess.env['NODE_OPTIONS']
-            },
-            onSome: (value) => {
-              NodeProcess.env['NODE_OPTIONS'] = value
-            },
-          })
+          const previous = Option.fromUndefinedOr(NodeProcess.env['NODE_OPTIONS'])
+          NodeProcess.env['NODE_OPTIONS'] = '--max-old-space-size-percentage=50'
+          return previous
         }),
-    )
-    const fixture = launch('exit', reportDir)
-    let spawned = false
-    const result = yield* Effect.acquireUseRelease(
-      start(() => {
-        spawned = true
-        return fixture.spawn()
-      }),
-      () => Effect.void,
-      stop,
-    ).pipe(Effect.result)
-    expect(result).toEqual(Result.fail(new ExtractionUnavailable()))
-    expect(spawned).toBe(false)
-  }).pipe(Effect.provide(NodeFileSystem.layer)),
-)
+        (previous) =>
+          Effect.sync(() => {
+            Option.match(previous, {
+              onNone: () => {
+                delete NodeProcess.env['NODE_OPTIONS']
+              },
+              onSome: (value) => {
+                NodeProcess.env['NODE_OPTIONS'] = value
+              },
+            })
+          }),
+      )
+      const fixture = launch('exit', reportDir)
+      let spawned = false
+      const result = yield* Effect.acquireUseRelease(
+        start(() => {
+          spawned = true
+          return fixture.spawn()
+        }),
+        () => Effect.void,
+        stop,
+      ).pipe(Effect.result)
+      expect(result).toEqual(Result.fail(new ExtractionUnavailable()))
+      expect(spawned).toBe(false)
+    }),
+  )
+})

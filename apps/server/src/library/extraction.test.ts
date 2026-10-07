@@ -4,7 +4,7 @@ import * as NodeProcess from 'node:process'
 import * as NodeURL from 'node:url'
 import * as NodeServices from '@effect/platform-node/NodeServices'
 import { expect } from 'vitest'
-import { it } from '@effect/vitest'
+import { it, layer as testLayer } from '@effect/vitest'
 import * as Cause from 'effect/Cause'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
@@ -254,23 +254,25 @@ const decodePages = Schema.decodeUnknownEffect(Pages)
  * it forks inherits the loader from `execArgv`. Scope owns the CLI's process group; stdout EOF,
  * natural exit 0, then decoded pages prove extraction and that no process or handle was left.
  */
-it.effect('E8 extracts a real PDF when started by the production tsx command', () =>
-  Effect.gen(function* () {
-    const handle = yield* ChildProcess.make(
-      NodeProcess.execPath,
-      [
-        NodeURL.fileURLToPath(import.meta.resolve('tsx/cli')),
-        'src/library/fixtures/process/main.ts',
-      ],
-      {
-        cwd: NodeURL.fileURLToPath(new URL('../../', import.meta.url)),
-        stdin: 'ignore',
-        stderr: 'inherit',
-        forceKillAfter: '1 second',
-      },
-    )
-    const printed = yield* Stream.mkString(Stream.decodeText(handle.stdout))
-    expect(yield* handle.exitCode, printed).toBe(0)
-    expect(yield* decodePages(printed)).toEqual(['Vivid extraction fixture'])
-  }).pipe(Effect.provide(NodeServices.layer)),
-)
+testLayer(NodeServices.layer)((it) => {
+  it.effect('E8 extracts a real PDF when started by the production tsx command', () =>
+    Effect.gen(function* () {
+      const handle = yield* ChildProcess.make(
+        NodeProcess.execPath,
+        [
+          NodeURL.fileURLToPath(import.meta.resolve('tsx/cli')),
+          'src/library/fixtures/process/main.ts',
+        ],
+        {
+          cwd: NodeURL.fileURLToPath(new URL('../../', import.meta.url)),
+          stdin: 'ignore',
+          stderr: 'inherit',
+          forceKillAfter: '1 second',
+        },
+      )
+      const printed = yield* Stream.mkString(Stream.decodeText(handle.stdout))
+      expect(yield* handle.exitCode, printed).toBe(0)
+      expect(yield* decodePages(printed)).toEqual(['Vivid extraction fixture'])
+    }),
+  )
+})
