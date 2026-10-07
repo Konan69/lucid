@@ -200,3 +200,10 @@ The product references are under `docs/`, numbered in reading order: `docs/01-pr
 ## Design stack
 
 UI work follows the design stack in `AGENTS.md` ("Design stack (UI work)"): load the named skills in order (direction, polish, motion, review), render every state, and get a criticised second pass before committing.
+
+Inside T3 Code a session can show an HTML page in the thread: `html_preview` renders it off-screen and returns the picture, and `html_render` publishes it above the reply. Both are `t3-code` tools; when they are listed as deferred, load them with ToolSearch. Use the page in two places:
+
+- **Mockup before building.** When a design is being decided, draw the proposed screen, or two or three variants side by side, in the project's own tokens at the surface's width, beside a capture of the screen as it is now. The developer chooses from the page and the build follows the choice. The page says that it is a mockup.
+- **Board of what was checked.** After the pass on a device or in a browser, publish the captures as one page, each with a line saying what it shows and where it was taken.
+
+A mockup settles direction; the built screen still gets its pass on a device.

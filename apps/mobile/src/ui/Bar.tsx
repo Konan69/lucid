@@ -411,9 +411,11 @@ export function VividAtTop({ stand }: { stand: Stand }) {
  * the owner asked for Vivid in the centre, and the title is where the Person chose the Thread,
  * its row in the menu.
  *
- * `inverted` says the screen's scroller is a Thread's upside-down list, which the system's edge
- * effect frosts whole (`NO_SCROLL_EDGES`); the greeting's scroller is the right way up and keeps
- * the effect. Both are named every time, because the two share one route and `setOptions` merges.
+ * `inverted` says the screen's scroller is a Thread's upside-down list and that it is on screen,
+ * which the system's edge effect frosts whole (`NO_SCROLL_EDGES`); the greeting's scroller is the
+ * right way up and keeps the effect. A Thread says it only once its list is laid out, because
+ * the change is the one moment the list can be told. Both are named every time, because the two
+ * share one route and `setOptions` merges.
  */
 export function VividBar({ inverted, present, actions }: BarEnd & { inverted: boolean }) {
   const vivid = useAppearance()

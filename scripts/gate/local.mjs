@@ -4,7 +4,7 @@ import * as NodePath from 'node:path'
 import { openRunDatabase } from './database.mjs'
 import * as Schema from 'effect/Schema'
 import { logged, readTestCounts, runIdentifier, stopChildrenOnSignal } from './process.mjs'
-import { checkRatchets } from './ratchets.mjs'
+import { checkRatchets, effectRule } from './ratchets.mjs'
 import { holdSlot, takeLock, treeLockName } from './slots.mjs'
 import { stageOfTask, stages } from './stages.mjs'
 
@@ -18,6 +18,7 @@ const TurboSummary = Schema.Struct({
       taskId: Schema.String,
       task: Schema.String,
       logFile: Schema.String,
+      directory: Schema.String,
       cache: Schema.Struct({ status: Schema.String }),
       execution: Schema.Struct({
         startTime: Schema.Number,
@@ -89,19 +90,34 @@ function stageResult(stage, tasks, run) {
     detail: `${cached}/${real.length} cached`,
     log,
     output,
+    findings: effectFindings(real, run.root),
   }
 }
 
 /**
- * What each package's `vitest run` is given. The JSON result is how the verdict counts tests.
- * With a base, Vitest runs only the test files whose imports reach a file changed since that
- * commit; a package nothing reaches then has no test to run, which is a pass. A file a test
- * reads without importing it (a migration, a fixture read from disk) is not in that graph,
- * which is why an affected run is the working loop and the full run is the gate for main.
+ * Effect findings, once each: a package's declaration and test projects both check its
+ * production files, so the same line can be printed by two of its tasks.
  */
-function vitestArguments(base) {
-  const report = ['--reporter=default', '--reporter=json', `--outputFile.json=${testResult}`]
-  return base === undefined ? report : [...report, `--changed=${base}`, '--passWithNoTests']
+function effectFindings(tasks, root) {
+  return new Set(
+    tasks.flatMap((task) => {
+      const file = NodePath.join(root, task.logFile)
+      if (!NodeFS.existsSync(file)) return []
+      return NodeFS.readFileSync(file, 'utf8')
+        .split('\n')
+        .filter((line) => effectRule(line) !== undefined)
+        .map((line) => `${task.directory}/${line.trim()}`)
+    }),
+  )
+}
+
+/**
+ * What each package's test runner (`scripts/test.mjs`) is given. It writes the counts the verdict
+ * reads and runs only the test files whose inputs changed since they passed. With a base, Vitest
+ * further narrows to files whose imports reach a file changed since that commit.
+ */
+function testArguments(base) {
+  return base === undefined ? [] : ['--', `--changed=${base}`, '--passWithNoTests']
 }
 
 /**
@@ -112,7 +128,7 @@ async function runLane(lane, laneStages, run) {
   const tasks = laneStages.flatMap((stage) => stage.tasks)
   const before = existingSummaries(run.root)
   const concurrency = lane === 'checks' ? '1' : String(run.testTasks)
-  const forwarded = lane === 'tests' ? ['--', ...vitestArguments(run.base)] : []
+  const forwarded = lane === 'tests' ? testArguments(run.base) : []
   const turbo = await logged(
     [
       'node',
@@ -164,6 +180,17 @@ function applyRatchets(results) {
   const broken = checkRatchets(lint.output).filter((ratchet) => !ratchet.held)
   for (const ratchet of broken)
     lint.failed.push(`${ratchet.label} ratchet: ${ratchet.count} exceed ${ratchet.ceiling}`)
+}
+
+/**
+ * Say how many Effect findings typecheck printed. They do not fail the gate: the count is what
+ * had gathered while nothing enforced them, and it is being worked off on its own branch. When
+ * it reaches zero the compiler options go back to failing typecheck (scripts/versions.mjs).
+ */
+function reportEffectFindings(results) {
+  const typecheck = results.find((result) => result.name === 'typecheck')
+  if (typecheck === undefined || typecheck.findings === undefined) return
+  typecheck.detail += `, ${typecheck.findings.size} Effect findings (not failing)`
 }
 
 /** Total and skipped tests across every package's Vitest result, cached or just run. */
@@ -223,12 +250,33 @@ export async function runLocal(root, selection, environment) {
   }
 }
 
+/**
+ * Lint stays one package at a time, but that one process may use several cores: up to four of
+ * each kind of worker, never more than half the machine. docs/checks.md measured one worker of
+ * each as the safe default for a developer's own run; a second Go worker cost 0.3 GiB and the
+ * whole-workspace run with eight threads was 1.7 times faster than with one. A value already
+ * in the environment wins.
+ */
+function lintWorkers(environment) {
+  const workers = String(Math.max(1, Math.min(4, Math.floor(NodeOS.availableParallelism() / 2))))
+  return {
+    GOMAXPROCS: environment.GOMAXPROCS === undefined ? workers : environment.GOMAXPROCS,
+    VIVID_LINT_THREADS:
+      environment.VIVID_LINT_THREADS === undefined ? workers : environment.VIVID_LINT_THREADS,
+  }
+}
+
 async function runStages(root, selection, environment, { runId, directory }) {
   const selected = stages.filter((stage) => selection.stages.includes(stage.name))
-  const needsDatabase = selected.some((stage) => stage.lane === 'tests')
+  const needsDatabase = selected.some((stage) => stage.name === 'test')
   const database = needsDatabase ? await openRunDatabase(root, environment, runId) : undefined
   stopChildrenOnSignal(() => (database === undefined ? Promise.resolve() : database.close()))
-  const env = { ...environment, CI: '1', TURBO_TELEMETRY_DISABLED: '1' }
+  const env = {
+    ...environment,
+    CI: '1',
+    TURBO_TELEMETRY_DISABLED: '1',
+    ...lintWorkers(environment),
+  }
   delete env.VIVID_TEST_DATABASE_URL
   if (database !== undefined) {
     env.VIVID_TEST_DATABASE_URL = database.url
@@ -262,6 +310,7 @@ async function runStages(root, selection, environment, { runId, directory }) {
     ])
     const results = groups.flat()
     applyRatchets(results)
+    reportEffectFindings(results)
     const order = stages.map((stage) => stage.name)
     results.sort((left, right) => order.indexOf(left.name) - order.indexOf(right.name))
     return {

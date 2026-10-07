@@ -3,9 +3,9 @@ import { Data, Option } from 'effect'
 import { ArrowUp, Check, PenLine } from 'lucide-react-native'
 import { useState, type ReactNode } from 'react'
 import { ActivityIndicator, Pressable, View } from 'react-native'
-import Animated, { Easing, LinearTransition, ReduceMotion } from 'react-native-reanimated'
+import Animated from 'react-native-reanimated'
 import { useTheme } from '../../theme'
-import { APPEAR, LEAVE } from '../../ui/motion/morph'
+import { APPEAR } from '../../ui/motion/morph'
 import { Dot, Field, Label, Notice, Press, radius, TARGET } from '../../ui/ui'
 
 /** One answer on offer: what it is called, and what picking it means in a line. */
@@ -45,15 +45,6 @@ const STANDING_BACK = 0.45
 const KEYCAP = 24
 
 /**
- * How the card closes down to its answer: what stays glides to where it now belongs, as one
- * layout transition on the UI thread, in the web's `--dur-enter` on the product's settling curve
- * (`ui/motion/Rise.tsx`). With reduced motion the answered card is simply drawn.
- */
-const FOLD = LinearTransition.duration(m['dur-enter'])
-  .easing(Easing.bezier(0.2, 0, 0, 1))
-  .reduceMotion(ReduceMotion.System)
-
-/**
  * A question from Vivid, and the ways to answer it. Every question a Person answers by pressing
  * goes through this one piece, a real Input request in a Thread (`InputCard` in `Cards.tsx`). It
  * is presentational: it is told the title, the choices and where the question stands, and owns
@@ -79,9 +70,15 @@ const FOLD = LinearTransition.duration(m['dur-enter'])
  *   keyboard over the rows the Person was reading. Pressing the row opens the field in its place.
  * - There are no letter shortcuts or arrow keys; the letters are only the rows' names.
  *
- * An answered card holds only what it shows. The rows that were not chosen leave the tree as
- * they fade, and a card first drawn already answered (every answered question when a Thread is
- * opened again) never draws them at all.
+ * An answered card holds only what it shows, and it is drawn that way at once: the rows that
+ * were not chosen are gone, the chosen one is where it now belongs, and only its check fades in.
+ * The card used to fold down to its answer, each row gliding to its new place as the others faded
+ * out (a layout transition on the card, its rows and its note, and an exit on every row). It is a
+ * row of a Thread's list, which is upside down and moves under it: answering is the moment Vivid
+ * starts again, so new rows arrive and the card's own row shifts while it is folding. On the
+ * owner's iPhone the card then came out jumbled and stayed that way (7 October 2026): rows that
+ * were leaving were left on screen, and what stayed was drawn where the fold had been cut short.
+ * Nothing in a row of that list changes place on a transition now.
  */
 export function Question({
   status,
@@ -103,8 +100,7 @@ export function Question({
 }) {
   const { colors: c } = useTheme()
   return (
-    <Animated.View
-      layout={FOLD}
+    <View
       style={{
         padding: 14,
         gap: 8,
@@ -124,7 +120,7 @@ export function Question({
       </Label>
       <Body asked={asked} choices={choices} allowsOwn={allowsOwn} />
       {Option.isSome(problem) && <Notice message={problem.value} />}
-    </Animated.View>
+    </View>
   )
 }
 
@@ -173,7 +169,7 @@ const underOf = (asked: Asked, allowsOwn: boolean): Under =>
  *
  * An open question and an answered one are the same `Answers` in the same place, told different
  * things. Drawn as two branches they would be two components to React: answering would take every
- * row out and put the chosen one back, and nothing could fold.
+ * row out and put the chosen one back, and the chosen row would blink.
  */
 function Body({
   asked,
@@ -196,11 +192,9 @@ function Body({
 /** A quiet line under the title or the answer: who it is waiting on, or who answered. */
 function Note({ children }: { children: string }) {
   return (
-    <Animated.View layout={FOLD}>
-      <Label size="label" tone="ink-2">
-        {children}
-      </Label>
-    </Animated.View>
+    <Label size="label" tone="ink-2">
+      {children}
+    </Label>
   )
 }
 
@@ -250,8 +244,7 @@ function Answers({
   if (choices.length === 0 && !allowsOwn && Option.isNone(written)) return null
   return (
     // The container clips its rows to its corners, so a pressed fill never squares them off.
-    <Animated.View
-      layout={FOLD}
+    <View
       style={{
         marginTop: 2,
         borderRadius: radius.row,
@@ -302,7 +295,7 @@ function Answers({
           <Check size={16} strokeWidth={2} color={c['ink-2']} />
         </Animated.View>
       )}
-    </Animated.View>
+    </View>
   )
 }
 
@@ -329,8 +322,8 @@ function Keycap({ children }: { children: ReactNode }) {
 
 /**
  * One answer: its keycap, its label, and a smaller line under it when it has one. It is the same
- * row whether the question is open or answered, so the chosen one never redraws: it glides to
- * the top as the others fade where they stood, goes quiet, and its spinner gives way to a check.
+ * row whether the question is open or answered, so the chosen one never redraws: the others go,
+ * it goes quiet, and its spinner gives way to a check.
  *
  * The press is answered by a fill across the whole row, not by the row sinking (`Press`): a row
  * that shrank inside its container would leave its fill short of the container's edges.
@@ -354,8 +347,6 @@ function Row({
   const chosen = standing === 'chosen'
   return (
     <Animated.View
-      layout={FOLD}
-      exiting={LEAVE}
       style={{
         // The rows that were not pressed stand back while the one that was is on its way.
         opacity: standing === 'waiting' ? STANDING_BACK : 1,
@@ -459,8 +450,6 @@ function OwnResting({ held, onOpen }: { held: boolean; onOpen: () => void }) {
   const { colors: c } = useTheme()
   return (
     <Animated.View
-      layout={FOLD}
-      exiting={LEAVE}
       style={{
         opacity: held ? STANDING_BACK : 1,
         transitionProperty: 'opacity',
@@ -521,9 +510,7 @@ function OwnWriting({
   }
   return (
     <Animated.View
-      layout={FOLD}
       entering={APPEAR}
-      exiting={LEAVE}
       style={{
         minHeight: ROW,
         flexDirection: 'row',

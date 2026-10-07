@@ -1,4 +1,11 @@
-import { Easing, FadeIn, FadeOut, LinearTransition, ReduceMotion } from 'react-native-reanimated'
+import {
+  Easing,
+  FadeIn,
+  FadeInDown,
+  FadeOut,
+  LinearTransition,
+  ReduceMotion,
+} from 'react-native-reanimated'
 
 /**
  * How a control changes shape. A control that grows, shrinks or moves does it as one layout
@@ -13,6 +20,9 @@ import { Easing, FadeIn, FadeOut, LinearTransition, ReduceMotion } from 'react-n
  * - `ROW_MORPH`, `APPEAR`, `LEAVE`: `src/features/connection/ConnectionEnvironmentRow.tsx`
  *   (`LinearTransition.duration(250)`, `FadeIn.duration(200)`, `FadeOut.duration(150)`).
  * - `MENU_APPEAR`: `src/components/AndroidAnchoredMenu.tsx` (`FadeIn.duration(120)`).
+ * - `SAID`, `ANSWERED`: `src/features/threads/ThreadFeed.tsx` (a fresh message of the user's
+ *   enters with `FadeInUp.duration(220)`, a fresh one of the assistant's with
+ *   `FadeIn.duration(220)`).
  */
 
 /** A control whose own outline changes: a segment's thumb, a button that gains a label. */
@@ -31,3 +41,15 @@ export const LEAVE = FadeOut.duration(150).reduceMotion(ReduceMotion.System)
 
 /** A menu or popover: it is asked for, so it is there almost at once. */
 export const MENU_APPEAR = FadeIn.duration(120).reduceMotion(ReduceMotion.System)
+
+/**
+ * A message the Person has just sent: it fades in while rising into its place from the composer
+ * it was typed in. The reference's feed is the right way up and its message comes down into
+ * place as the feed scrolls up to it (`FadeInUp`); a Thread's list here is anchored at its foot
+ * and does not scroll for a new message, so the message itself rises (`FadeInDown`, the same
+ * distance and length). With reduced motion it is simply there.
+ */
+export const SAID = FadeInDown.duration(220).reduceMotion(ReduceMotion.System)
+
+/** A reply that has just started: it fades in where it stands, as the reference's does. */
+export const ANSWERED = FadeIn.duration(220).reduceMotion(ReduceMotion.System)

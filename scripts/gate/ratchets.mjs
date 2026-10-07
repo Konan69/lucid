@@ -206,3 +206,16 @@ export function checkRatchets(lintOutput) {
     return { label: ratchet.label, ceiling: ratchet.ceiling, count, held: count <= ratchet.ceiling }
   })
 }
+
+/**
+ * The rule of one compiler output line, when the line is an Effect language service finding.
+ * The patched native compiler (`effect-tsgo patch`) gives every Effect diagnostic a code in the
+ * 377000s and ends a one-line message with `effect(<rule>)`. A message that continues on later
+ * lines carries only its code on the first one, and is then counted under that code.
+ */
+export function effectRule(line) {
+  const code = /\): (?:error|warning|suggestion|message) (TS377\d+): /u.exec(line)
+  if (code === null) return undefined
+  const named = /effect\((\w+)\)\s*$/u.exec(line)
+  return named === null ? code[1] : named[1]
+}

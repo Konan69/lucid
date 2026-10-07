@@ -159,3 +159,11 @@ minimumReleaseAgeExclude:
   - effect@4.0.0-rc.116
   - turbo@2.11.2
   - '@earendil-works/pi-codemode@1.0.0'
+  - '@effect/tsgo-darwin-arm64@0.51.0'
+  - '@effect/tsgo-darwin-x64@0.51.0'
+  - '@effect/tsgo-linux-arm64@0.51.0'
+  - '@effect/tsgo-linux-arm@0.51.0'
+  - '@effect/tsgo-linux-x64@0.51.0'
+  - '@effect/tsgo-win32-arm64@0.51.0'
+  - '@effect/tsgo-win32-x64@0.51.0'
+  - '@effect/tsgo@0.51.0'

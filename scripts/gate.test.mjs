@@ -8,8 +8,16 @@ import * as NodeTest from 'node:test'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
 import { parse, report, selectStages, withoutRepositoryEnvironment } from './gate.mjs'
-import { refusedHost, shellWord, snapshot, treeName } from './gate/cloud.mjs'
-import { checkRatchets, countFindings, ratchets } from './gate/ratchets.mjs'
+import {
+  followScript,
+  refusedHost,
+  remoteScript,
+  shellWord,
+  snapshot,
+  snapshotIgnore,
+  treeName,
+} from './gate/cloud.mjs'
+import { checkRatchets, countFindings, effectRule, ratchets } from './gate/ratchets.mjs'
 import { slotCount, takeLock } from './gate/slots.mjs'
 import { stageNames, stageOfTask, stages } from './gate/stages.mjs'
 
@@ -81,6 +89,15 @@ void test('a ratchet fails only above its ceiling, and every ratchet names a dis
   assert.equal(new Set(rules).size, rules.length)
 })
 
+void test('an Effect finding is recognised by its code and named by its rule', () => {
+  const named =
+    'src/a.ts(5,3): error TS377001: This Effect value is neither yielded nor used. effect(floatingEffect)'
+  const continued = 'src/a.ts(9,3): error TS377030: This has unknown in the error channel.'
+  assert.equal(effectRule(named), 'floatingEffect')
+  assert.equal(effectRule(continued), 'TS377030')
+  assert.equal(effectRule('src/a.ts(1,1): error TS2322: Type string is not assignable.'), undefined)
+})
+
 void test('every Turbo stage task exists as a script or a root task', () => {
   const turbo = decodeTurboConfig(
     NodeFS.readFileSync(NodePath.join(repositoryRoot, 'turbo.json'), 'utf8'),
@@ -141,7 +158,7 @@ void test('test tasks hash every test setting except the database address', () =
       ['VIVID_TEST_*', 'VIVID_LIVE_*', 'EXPLABS_API_KEY', '!VIVID_TEST_DATABASE_URL'],
       key,
     )
-    assert.deepEqual(task.passThroughEnv, ['VIVID_TEST_DATABASE_URL'], key)
+    assert.deepEqual(task.passThroughEnv, ['VIVID_TEST_DATABASE_URL', 'VIVID_GATE_CACHE'], key)
   }
 })
 
@@ -183,6 +200,63 @@ void test('a lock is exclusive, and the kernel frees it when its owner ends', as
   after()
   assert.equal(slotCount(8), 2)
   assert.equal(slotCount(2), 1)
+})
+
+/**
+ * The machine's side, run here against a temporary home: the real script the client sends, up
+ * to the point where it would install. What it must hold: runs for different branches reuse the
+ * same few trees (one tree per branch is how a machine's disk filled), and the snapshot ignore
+ * file is in place before any tree exists.
+ */
+void test('the machine keeps a fixed set of warm trees and tells Boat what not to snapshot', (t) => {
+  const { root, env } = repository(t)
+  const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'vivid-gate-home-'))
+  t.after(() => NodeFS.rmSync(home, { recursive: true, force: true }))
+  const fast = NodePath.join(home, 'vivid-gate/fast')
+  NodeFS.mkdirSync(fast, { recursive: true })
+  git(fast, ['init', '--quiet', '--bare', 'repo.git'], env)
+  const first = git(root, ['rev-parse', 'HEAD'], env)
+  NodeFS.writeFileSync(NodePath.join(root, 'second.txt'), 'another branch\n')
+  git(root, ['add', '.'], env)
+  git(root, ['commit', '--quiet', '-m', 'second'], env)
+  const second = git(root, ['rev-parse', 'HEAD'], env)
+  git(
+    root,
+    [
+      'push',
+      '--quiet',
+      NodePath.join(fast, 'repo.git'),
+      `${first}:refs/gate/a`,
+      `${second}:refs/gate/b`,
+    ],
+    env,
+  )
+  const machine = { ...env, HOME: home, VIVID_GATE_PREPARE_ONLY: '1' }
+  const bash = (script, args) =>
+    NodeChildProcess.spawnSync('bash', ['-s', '--', ...args], {
+      input: script,
+      env: machine,
+      encoding: 'utf8',
+    })
+  for (const [sha, run] of [
+    [first, 'run-a'],
+    [second, 'run-b'],
+  ]) {
+    assert.equal(bash(remoteScript, [sha, run, 'label', 'full']).status, 0)
+    const followed = bash(followScript, [run])
+    assert.equal(followed.status, 0, followed.stdout + followed.stderr)
+    assert.match(followed.stdout, /slot-0/u)
+  }
+  const trees = NodeFS.readdirSync(NodePath.join(fast, 'trees')).filter(
+    (name) => !name.endsWith('.lock'),
+  )
+  assert.deepEqual(trees, ['slot-0'])
+  assert.equal(git(NodePath.join(fast, 'trees/slot-0'), ['rev-parse', 'HEAD'], env), second)
+  assert.deepEqual(
+    NodeFS.readFileSync(NodePath.join(fast, '.boxignore'), 'utf8').trim().split('\n'),
+    snapshotIgnore,
+  )
+  assert.ok(snapshotIgnore.includes('node_modules/'))
 })
 
 void test('arguments select a mode, and an unknown stage is refused', () => {

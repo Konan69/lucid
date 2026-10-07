@@ -1,5 +1,5 @@
 import { useAtomMount, useAtomSet, useAtomValue } from '@effect/atom-react'
-import { useFlueAgent } from '@flue/react'
+import { useFlueAgent, type UseFlueAgentOptions } from '@flue/react'
 import type { FlueConversationMessage } from '@flue/sdk'
 import {
   ThreadAudience,
@@ -23,25 +23,28 @@ import { useIsFocused } from '@react-navigation/native'
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
+import { again, First, firstKey, isOnItsWay, isSettled, withFirst } from '../data/first'
 import { commit } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
 import { useDrawerOpened } from '../data/drawer'
 import { inFront, onForeground } from '../data/foreground'
-import { LiveState, refusalOf, useLive, useLiveData } from '../data/live'
+import { LiveState, refusalOf, useLiveData, useLiveWhen } from '../data/live'
 import { isShown, lastWordsOf, type Around } from '../data/message'
 import { endingOf, newestRun } from '../data/outcome'
 import { Stand, standIn } from '../data/stand'
-import { conversation, say, UNDELIVERED, UNTITLED } from '../data/threads'
+import { conversation, firstWay, say, UNDELIVERED, UNTITLED } from '../data/threads'
 import { Composer } from '../ui/Composer'
 import { BarRoom, NO_ACTIONS, NOBODY, VividAtTop, VividBar, type BarAction } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
 import { HANG } from '../ui/Presence'
-import { Thinking } from '../ui/Thinking'
+import { Dots } from '../ui/Dots'
+import { Thinking, THINKING_CLEAR, THINKING_ROOM } from '../ui/Thinking'
 import {
   Button,
   EDGE,
   Empty,
+  Face,
   GUTTER,
   Label,
   Notice,
@@ -52,7 +55,7 @@ import {
 } from '../ui/ui'
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
-import { useFront, useMe } from '../workspace'
+import { useFirst, useFront, useMe } from '../workspace'
 import { Message } from './chat/Message'
 import { Opening } from './home/First'
 import { Share } from './chat/Share'
@@ -71,19 +74,27 @@ import { Share } from './chat/Share'
  * are said only while they really are looking (`useLooking`). The screen reads the query that
  * marks the Thread read (`seenThread`) then, and the Thread's plain query otherwise: the same
  * detail is drawn either way, and a reply that lands while the screen is covered stays unread.
+ *
+ * A Thread started from the greeting is drawn here before the server has it, with its first
+ * words already in the conversation (`data/first.ts`). Until those words are with Vivid nothing
+ * is asked of the server about the Thread and nobody is said to be present in it: there may be
+ * no such Thread yet.
  */
 export function Chat({ id, writing }: { id: ThreadId; writing: boolean }) {
   const data = useLiveData()
   const looking = useLooking()
-  const detail = useLive(looking ? data.seenThread(id) : data.live.thread.get(id))
+  const first = useFirst(id)
+  const settled = isSettled(first)
+  const detail = useLiveWhen(settled, looking ? data.seenThread(id) : data.live.thread.get(id))
   if (LiveState.$is('Failed')(detail)) return <Gone />
   return (
     <>
-      {looking && <Present id={id} />}
+      {looking && settled && <Present id={id} />}
       <Conversation
         key={id}
         id={id}
         writing={writing}
+        first={first}
         detail={LiveState.$is('Ready')(detail) ? Option.some(detail.value) : Option.none()}
       />
     </>
@@ -174,6 +185,7 @@ function Top({
   present,
   working,
   opening,
+  listed,
   onShare,
 }: {
   thread: Option.Option<Thread>
@@ -182,6 +194,8 @@ function Top({
   opening: boolean
   /** Vivid is answering on this phone right now, which the Thread's record may not say yet. */
   working: boolean
+  /** The Thread's upside-down list is on screen, for the system's edge effect (`VividBar`). */
+  listed: boolean
   onShare: () => void
 }) {
   const me = useMe()
@@ -208,8 +222,10 @@ function Top({
   return (
     <>
       <VividBar
-        // A Thread's list is upside down, which the system's edge effect cannot be given.
-        inverted
+        // A Thread's list is upside down, which the system's edge effect cannot be given. It is
+        // said only once the list is there, and so said again for every list: the system is
+        // told to leave a scroller alone only at the moment this changes (`NO_SCROLL_EDGES`).
+        inverted={listed}
         present={others.map((seen) => seen.person)}
         actions={Option.match(sharing, {
           onNone: () => NO_ACTIONS,
@@ -332,18 +348,26 @@ function useSend(
 function Conversation({
   id,
   writing,
+  first,
   detail,
 }: {
   id: ThreadId
   writing: boolean
+  /** The words the Thread was started with on this phone, when it was (`data/first.ts`). */
+  first: Option.Option<First>
   detail: Option.Option<ThreadDetail>
 }) {
   // The name this Person or their Company gave Vivid, live.
   const vivid = useAppearance()
   const me = useMe()
   const data = useLiveData()
+  const front = useFront()
   const client = useMemo(() => conversation(data.session, id), [data.session, id])
-  const agent = useFlueAgent({ client })
+  // The conversation is opened only once the Thread's first words are with Vivid. Before that
+  // there may be no Thread, and after it the stream's first look finds the message already
+  // there, as it did when a Thread was only opened once it had started.
+  const settled = isSettled(first)
+  const agent = useFlueAgent(settled ? { client } : UNOPENED)
   // A phone suspends the app when it is not in front, and the stream with it; coming back
   // catches the conversation up. The subscription lives exactly as long as this view does.
   const wake = useMemo(() => onForeground(() => agent.refresh()), [agent])
@@ -356,26 +380,38 @@ function Conversation({
   const typed = useDraft(place)
   const setTyping = useAtomSet(data.typingIn(id))
   const [sharing, setSharing] = useState(false)
+  // Whether the conversation's list has been laid out, which is when the bar can speak for it.
+  const [listed, setListed] = useState(false)
   const thread = Option.map(detail, (value) => value.thread)
   const sending = useSend(id, thread, agent, place)
   const { shared } = sending
-  const working =
-    agent.status === 'submitted' ||
-    agent.status === 'streaming' ||
-    Option.exists(thread, (value) => value.attention === 'Working')
+  const working = isWorking(agent.status, thread)
   const stopping = useStop(id, working)
   const around: Around = {
     me: me.person.id,
     shared,
     runs: Option.match(detail, { onNone: () => [], onSome: (value) => value.runs }),
   }
-  const shown = agent.messages.filter(isShown)
+  const shown = withFirst(id, first, {
+    messages: agent.messages.filter(isShown),
+    ready: agent.historyReady,
+  })
+  // First words count as on their way from the send until the Thread's own two sources have both
+  // spoken: after that, whether Vivid is working is theirs to say. Without the second half the
+  // thinking would stop for the moment between the server taking the words and the Thread's
+  // record arriving.
+  // A conversation that could not be read has spoken too: it will not become ready, and the
+  // trouble under it says why.
+  const read = agent.historyReady || agent.error !== undefined
+  const starting = isOnItsWay(first, read && Option.isSome(detail))
   // Thinking starts at the send; the composer's button waits for Vivid to have really started.
-  const thinking = working || sending.pending
+  const thinking = working || sending.pending || starting
   const page = pageOf(agent.historyReady, shown.length, thinking)
   // The stream keeps a message it could not send, under the id it showed it with, so the Thread
-  // can draw it as not sent instead of as said. Sending again clears the list.
-  const undelivered = new Set(agent.failedSends.map((send) => send.id))
+  // can draw it as not sent instead of as said. Sending again clears the list. First words that
+  // did not arrive are drawn the same way, under their own key.
+  const lost = Option.filter(first, First.$is('Unsent'))
+  const undelivered = new Set([...agent.failedSends.map((send) => send.id), ...lostKeys(id, lost)])
 
   function type(next: string) {
     // Whether there is something typed is part of what the Thread's presence says; see
@@ -390,38 +426,16 @@ function Conversation({
     return sending.say(words)
   }
 
-  // What went wrong at the foot of the conversation, and the one thing to do about it. A message
-  // that did not arrive comes first: its button sends those words again, as the same delivery.
-  // Otherwise it is the conversation's own stream that failed, and its button opens it again.
-  const trouble = Option.orElse(
-    Option.map(sending.unsent, (unsent): Trouble => ({
-      message: unsent.why,
-      action: 'Send again',
-      onAct: () => {
-        // Sending is felt, from here as from the composer's own button.
-        commit()
-        void speak(unsent.words)
-      },
-    })),
-    () =>
-      Option.map(Option.fromUndefinedOr(agent.error), (error): Trouble => ({
-        message: error.message,
-        action: 'Try again',
-        onAct: () => agent.refresh(),
-      })),
-  )
+  const trouble = troubleOf({
+    lost,
+    unsent: sending.unsent,
+    error: Option.fromUndefinedOr(agent.error),
+    onFirst: () => void again(firstWay(data), front.firsts, id),
+    onSay: (words) => void speak(words),
+    onOpen: () => agent.refresh(),
+  })
 
-  // How the newest Run ended, when it ended without an answer; said once Vivid has stopped, where
-  // the answer would have been. "Try again" says the Person's last words again, as a new message.
-  const ended = Option.map(
-    working ? Option.none() : Option.flatMap(newestRun(around.runs), endingOf),
-    (ending): Ended => ({
-      words: ending.words,
-      onAgain: ending.again
-        ? Option.map(lastWordsOf(shown, around), (words) => () => void speak(words))
-        : Option.none(),
-    }),
-  )
+  const ended = endedOf(working, shown, around, (words) => void speak(words))
 
   return (
     <AboveKeyboardBelowBar>
@@ -430,6 +444,7 @@ function Conversation({
         present={Option.match(detail, { onNone: () => [], onSome: (value) => value.present })}
         working={thinking}
         opening={page === 'Opening'}
+        listed={listed && page === 'Conversation'}
         onShare={() => setSharing(true)}
       />
       <View ref={wake} style={{ flex: 1 }}>
@@ -437,6 +452,9 @@ function Conversation({
           messages={shown}
           page={page}
           working={working}
+          thinking={thinking}
+          rising={Option.map(first, ({ start }) => ({ id: firstKey(id), at: start.at }))}
+          onListed={() => setListed(true)}
           ended={ended}
           trouble={trouble}
           around={around}
@@ -445,13 +463,19 @@ function Conversation({
           onContinue={speak}
         />
       </View>
-      <Between refused={stopping.refused} thinking={thinking} />
+      {stopping.refused && (
+        <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
+          <Notice message="Vivid could not be stopped just now. Try again." />
+        </View>
+      )}
       <Composer
         value={typed}
         autoFocus={writing}
         placeholder={shared ? `Message everyone and ${vivid.name}` : `Message ${vivid.name}`}
         working={working}
-        disabled={false}
+        // Nothing more can be said in a Thread until its first words are with Vivid; what is
+        // typed meanwhile stays in the composer.
+        disabled={!settled}
         onChange={type}
         // Emptying the composer, which `speak` does, is also what removes this Thread's kept draft.
         onSend={() => void speak(typed.trim())}
@@ -469,12 +493,91 @@ function Conversation({
   )
 }
 
+/** No conversation to open yet. One value, so the hook is not handed a new one each render. */
+const UNOPENED: UseFlueAgentOptions = {}
+
 /** Something that went wrong under the conversation: what to say, and the one thing to do. */
 interface Trouble {
   readonly message: string
   readonly action: string
   readonly onAct: () => void
 }
+
+/**
+ * Whether Vivid is at work in a Thread: the conversation's stream says so on this phone, or the
+ * Thread's record does, which is how work started anywhere else is known here.
+ */
+const isWorking = (
+  status: ReturnType<typeof useFlueAgent>['status'],
+  thread: Option.Option<Thread>,
+): boolean =>
+  status === 'submitted' ||
+  status === 'streaming' ||
+  Option.exists(thread, (value) => value.attention === 'Working')
+
+/**
+ * How the newest Run ended, when it ended without an answer; said once Vivid has stopped, where
+ * the answer would have been. "Try again" says the Person's last words again, as a new message.
+ */
+const endedOf = (
+  working: boolean,
+  shown: ReadonlyArray<FlueConversationMessage>,
+  around: Around,
+  onSay: (words: string) => void,
+): Option.Option<Ended> =>
+  Option.map(
+    working ? Option.none() : Option.flatMap(newestRun(around.runs), endingOf),
+    (ending): Ended => ({
+      words: ending.words,
+      onAgain: ending.again
+        ? Option.map(lastWordsOf(shown, around), (words) => () => onSay(words))
+        : Option.none(),
+    }),
+  )
+
+/**
+ * What went wrong at the foot of the conversation, and the one thing to do about it. First words
+ * that did not arrive come first, since nothing else can be said until they have: their button
+ * sends them again from where they stopped. Then a later message that did not arrive: its button
+ * sends those words again, as the same delivery. Otherwise it is the conversation's own stream
+ * that failed, and its button opens it again. Sending is felt, from here as from the composer's
+ * own button.
+ */
+const troubleOf = (at: {
+  readonly lost: Option.Option<Extract<First, { readonly _tag: 'Unsent' }>>
+  readonly unsent: Option.Option<Unsent>
+  readonly error: Option.Option<Error>
+  readonly onFirst: () => void
+  readonly onSay: (words: string) => void
+  readonly onOpen: () => void
+}): Option.Option<Trouble> =>
+  Option.firstSomeOf([
+    Option.map(at.lost, (unsent): Trouble => ({
+      message: unsent.why,
+      action: 'Send again',
+      onAct: () => {
+        commit()
+        at.onFirst()
+      },
+    })),
+    Option.map(at.unsent, (unsent): Trouble => ({
+      message: unsent.why,
+      action: 'Send again',
+      onAct: () => {
+        commit()
+        at.onSay(unsent.words)
+      },
+    })),
+    Option.map(at.error, (error): Trouble => ({
+      message: error.message,
+      action: 'Try again',
+      onAct: at.onOpen,
+    })),
+  ])
+
+/** The key first words that did not arrive are drawn under, so they are drawn as not sent. */
+const lostKeys = (id: ThreadId, lost: Option.Option<First>): ReadonlyArray<string> =>
+  Option.match(lost, { onNone: () => [], onSome: () => [firstKey(id)] })
 
 /** A Run that ended without an answer: what to say, and the way to ask again when that can help. */
 interface Ended {
@@ -486,6 +589,15 @@ interface MessagesProps {
   readonly messages: ReadonlyArray<FlueConversationMessage>
   readonly page: Page
   readonly working: boolean
+  /** Vivid is at work or about to be: from the send, before the Thread's record says so. */
+  readonly thinking: boolean
+  /**
+   * The message that left the composer before this list was drawn, and when: a Thread's first
+   * words, which are already in the list the first time it is laid out and still rise into it.
+   */
+  readonly rising: Option.Option<{ readonly id: string; readonly at: number }>
+  /** The list has been laid out. */
+  readonly onListed: () => void
   readonly ended: Option.Option<Ended>
   readonly trouble: Option.Option<Trouble>
   readonly around: Around
@@ -522,31 +634,6 @@ function Messages(props: MessagesProps) {
   return <Blank ready={props.page === 'Opening'} />
 }
 
-/**
- * What stands between the conversation and the composer: that the last Stop was refused, and
- * that Vivid is thinking (`ui/Thinking.tsx`).
- *
- * The thinking line is here and not a row of the list: reading back up the conversation must not
- * scroll away the one thing that says Vivid is at work. It stands on the conversation's own
- * inset, so the orb is where Vivid's face will be beside the answer.
- */
-function Between({ refused, thinking }: { refused: boolean; thinking: boolean }) {
-  return (
-    <>
-      {refused && (
-        <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
-          <Notice message="Vivid could not be stopped just now. Try again." />
-        </View>
-      )}
-      {thinking && (
-        <View style={[styles.column, { paddingHorizontal: GUTTER - 4, paddingTop: 6 }]}>
-          <Thinking />
-        </View>
-      )}
-    </>
-  )
-}
-
 /** How far from the newest words still counts as reading them, in points. */
 const FOLLOWING = 80
 
@@ -577,24 +664,57 @@ const FOLLOWING = 80
  * points (`TopFade`), so words leave softly instead of being cut. Not seen on an iPhone from
  * here: there is no iOS device or simulator to run it on.
  *
+ * That was not all of it: with the keyboard up the conversation was still blurred (the owner,
+ * 7 October 2026). A list that was never told otherwise keeps the system's effect on all four
+ * of its edges, and the keyboard is one more thing for an edge to soften against. So the list is
+ * also told, every time one is laid out (`onListed`, which is what makes the bar say `inverted`).
+ * Two things here exist for that telling to reach it. The library looks for the screen's
+ * scroller down the first child of each view and nowhere else (`RNSScrollViewFinder`,
+ * `findScrollViewInFirstDescendantChainFrom`), so the list's box is the first child here and the
+ * bar's room, which is above it on screen, is written after it (`column-reverse`). And the room
+ * the thinking bubble needs is kept inside the list, not made between the list and the composer.
+ *
+ * A message that has just arrived comes in with motion, and nothing else does (`Message`,
+ * `fresh`). The reference decides that from the message's own time (T3 Code mobile
+ * `ThreadFeed.tsx`, `isFreshTimestamp`, three seconds). The conversation's stream does not stamp
+ * a Person's words, so the list keeps which messages it already had (`known`): those it was first
+ * drawn with, less a Thread's first words while they are within that window of their send
+ * (`rising`). Whatever comes after is new, until the list is next scrolled.
+ *
  * When the Person has scrolled away and words arrive, their place is held and a "Latest messages"
  * action with the real count of arrivals brings them back. Whether they are away is kept as the
  * message count at the moment they left; it changes only when they cross the threshold.
  */
 function Transcript(props: MessagesProps) {
-  const { messages, working } = props
+  const { messages, working, thinking, rising } = props
   const list = useRef<FlatList<FlueConversationMessage>>(null)
   const [awayAt, setAwayAt] = useState<Option.Option<number>>(Option.none())
   const arrived = Option.match(awayAt, {
     onNone: () => 0,
     onSome: (seen) => messages.length - seen,
   })
+  // The messages that are not new here. Those the list was first drawn with are not, except a
+  // Thread's first words when they were sent a moment ago; the clock is read once, when the list
+  // is made, and never while rendering.
+  const [known, setKnown] = useState<ReadonlySet<string>>(() => {
+    const now = Date.now()
+    const risen = (key: string) =>
+      Option.exists(rising, (first) => first.id === key && now - first.at < FRESH)
+    return new Set(messages.map((message) => message.id).filter((key) => !risen(key)))
+  })
 
   function follow(event: NativeSyntheticEvent<NativeScrollEvent>) {
     const near = event.nativeEvent.contentOffset.y < FOLLOWING
-    setAwayAt((now) => {
-      if (near) return Option.isNone(now) ? now : Option.none()
-      return Option.isSome(now) ? now : Option.some(messages.length)
+    // A row is only ever drawn a second time after the list has moved, so moving it is when
+    // everything in it stops being new: a message scrolled back to does not arrive again.
+    setKnown((current) =>
+      messages.every((message) => current.has(message.id))
+        ? current
+        : new Set(messages.map((message) => message.id)),
+    )
+    setAwayAt((current) => {
+      if (near) return Option.isNone(current) ? current : Option.none()
+      return Option.isSome(current) ? current : Option.some(messages.length)
     })
   }
 
@@ -609,9 +729,14 @@ function Transcript(props: MessagesProps) {
     if (list.current !== null) list.current.scrollToOffset({ offset: 0, animated: true })
   }
 
+  // Vivid has been asked and has not begun: the newest thing in the Thread is not its reply.
+  const newest = messages[messages.length - 1]
+  const awaited =
+    thinking && Option.isNone(props.trouble) && newest !== undefined && newest.role !== 'assistant'
+
   return (
-    <View style={{ flex: 1 }}>
-      <BarRoom />
+    // The list's box is written first and drawn second: see the note above about the scroller.
+    <View style={{ flex: 1, flexDirection: 'column-reverse' }}>
       <View style={{ flex: 1, overflow: 'hidden' }} onLayout={resized}>
         <FlatList
           ref={list}
@@ -621,23 +746,34 @@ function Transcript(props: MessagesProps) {
           keyExtractor={(message) => message.id}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
+          onLayout={props.onListed}
           onScroll={follow}
           scrollEventThrottle={32}
           contentContainerStyle={[
             styles.column,
-            { paddingHorizontal: GUTTER - 4, paddingVertical: 16, gap: 22 },
+            {
+              paddingHorizontal: GUTTER - 4,
+              // The list is upside down, so its top is the foot of the conversation: the room
+              // the thinking bubble floats in, kept whether or not it is there.
+              paddingTop: THINKING_ROOM,
+              paddingBottom: 16,
+              gap: 22,
+            },
           ]}
           // The last thing in an inverted list is the first thing on screen: the room Vivid's
           // avatar hangs into, so the oldest words rest under its name and not behind it.
           ListFooterComponent={<View style={{ height: HANG }} />}
           // The first thing in an inverted list is the last thing on screen.
-          ListHeaderComponent={<Tail ended={props.ended} trouble={props.trouble} />}
+          ListHeaderComponent={
+            <Tail awaited={awaited} ended={props.ended} trouble={props.trouble} />
+          }
           renderItem={({ item, index }) => (
             <Message
               message={item}
               around={props.around}
               detail={props.detail}
               working={working}
+              fresh={!known.has(item.id)}
               latest={index === 0}
               unsent={props.unsent}
               onContinue={props.onContinue}
@@ -645,11 +781,31 @@ function Transcript(props: MessagesProps) {
           )}
         />
         <TopFade />
-        {arrived > 0 && <LatestButton count={arrived} onPress={latest} />}
+        {/* Always there, so the bubble inside it can fade out when the work ends. */}
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: THINKING_CLEAR,
+            alignItems: 'center',
+          }}
+        >
+          {thinking && <Thinking />}
+        </View>
+        {arrived > 0 && <LatestButton count={arrived} lifted={thinking} onPress={latest} />}
       </View>
+      <BarRoom />
     </View>
   )
 }
+
+/**
+ * How long after they are sent a Thread's first words still count as arriving, in milliseconds:
+ * the reference's `FRESH_ENTRY_WINDOW_MS`. A Thread opened again later than that draws them whole.
+ */
+const FRESH = 3000
 
 /**
  * How far under the bar the conversation fades out, in points: as far as Vivid's avatar and its
@@ -685,12 +841,27 @@ function TopFade() {
 }
 
 /** The way back to the newest words after reading up, with how many arrived while away. */
-function LatestButton({ count, onPress }: { count: number; onPress: () => void }) {
+function LatestButton({
+  count,
+  lifted,
+  onPress,
+}: {
+  count: number
+  /** The thinking bubble is in the room at the foot, so this stands above it. */
+  lifted: boolean
+  onPress: () => void
+}) {
   const { colors: c } = useTheme()
   return (
     <View
       pointerEvents="box-none"
-      style={{ position: 'absolute', left: 0, right: 0, bottom: 12, alignItems: 'center' }}
+      style={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: lifted ? THINKING_ROOM + 4 : 12,
+        alignItems: 'center',
+      }}
     >
       <Press
         accessibilityRole="button"
@@ -752,19 +923,23 @@ function Blank({ ready }: { ready: boolean }) {
 }
 
 /**
- * What sits under the newest message: that Vivid's last Run came to nothing, or that something
- * did not arrive. That Vivid is thinking is not said here but under the list, just above the
- * composer, where it stays while the conversation is read (`ui/Thinking.tsx`).
+ * What sits under the newest message: Vivid about to speak, that its last Run came to nothing,
+ * or that something did not arrive. That Vivid is thinking is also said in a bubble floating
+ * over the foot of the list, where it stays while the conversation is read (`ui/Thinking.tsx`).
  */
 function Tail({
+  awaited,
   ended,
   trouble,
 }: {
+  /** Vivid has been asked and its reply has not begun. */
+  awaited: boolean
   ended: Option.Option<Ended>
   trouble: Option.Option<Trouble>
 }) {
   return (
     <View style={{ gap: 12 }}>
+      {awaited && <Waiting />}
       {Option.isSome(ended) && (
         <View style={{ gap: 8 }}>
           <Label size="label" tone="ink-2">
@@ -789,6 +964,30 @@ function Tail({
           />
         </View>
       )}
+    </View>
+  )
+}
+
+/**
+ * Where Vivid's reply will be, before it has begun: its face, as beside every reply, and three
+ * dots bouncing where the words will start (`ui/Dots.tsx`). The place used to be empty from the
+ * send until the first word, and the owner asked for the dots there (7 October 2026). It is laid
+ * out as a reply is (`FromVivid`, `screen/chat/Message.tsx`), so the reply takes its place
+ * without anything moving.
+ *
+ * It says nothing to a screen reader: the thinking bubble already says Vivid is thinking.
+ */
+function Waiting() {
+  return (
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={{ flexDirection: 'row', gap: 10 }}
+    >
+      <View style={{ marginTop: 1 }}>
+        <Face size={24} mood="thinking" label="" />
+      </View>
+      <Dots />
     </View>
   )
 }

@@ -34,7 +34,7 @@
         "$TURBO_ROOT$/tools/oxlint/**",
         "$TURBO_ROOT$/apps/web/src/styles/**"
       ],
-      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS"],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS", "VIVID_LINT_THREADS"],
       "outputs": []
     },
     "checkinputs": {
@@ -61,7 +61,7 @@
         "!docs/**",
         "!**/*.md"
       ],
-      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS"],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS", "VIVID_LINT_THREADS"],
       "outputs": []
     },
     "//#typecheck:root": {
@@ -95,10 +95,16 @@
     },
     "test": {
       "dependsOn": ["checkinputs"],
-      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/test.mjs"
+      ],
       "outputs": [".cache/gate/tests.json"],
       "env": ["VIVID_TEST_*", "VIVID_LIVE_*", "EXPLABS_API_KEY", "!VIVID_TEST_DATABASE_URL"],
-      "passThroughEnv": ["VIVID_TEST_DATABASE_URL"]
+      "passThroughEnv": ["VIVID_TEST_DATABASE_URL", "VIVID_GATE_CACHE"]
     },
     "dev": {
       "cache": false,
@@ -204,7 +210,7 @@
         "$TURBO_ROOT$/tools/oxlint/**",
         "$TURBO_ROOT$/apps/web/src/styles/**"
       ],
-      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS"],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS", "VIVID_LINT_THREADS"],
       "outputs": []
     },
     "@vivid/agent-runtime#typecheck": {
@@ -234,7 +240,7 @@
         "$TURBO_ROOT$/tools/oxlint/**",
         "$TURBO_ROOT$/apps/web/src/styles/**"
       ],
-      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS"],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS", "VIVID_LINT_THREADS"],
       "outputs": []
     },
     "@vivid/server#typecheck": {
@@ -270,7 +276,7 @@
         "$TURBO_ROOT$/tools/oxlint/**",
         "$TURBO_ROOT$/apps/web/src/styles/**"
       ],
-      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS"],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS", "VIVID_LINT_THREADS"],
       "outputs": []
     },
     "@vivid/mobile#typecheck": {
@@ -300,36 +306,60 @@
         "$TURBO_ROOT$/tools/oxlint/**",
         "$TURBO_ROOT$/apps/web/src/styles/**"
       ],
-      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS"],
+      "passThroughEnv": ["GOMAXPROCS", "GOMEMLIMIT", "GOGC", "NODE_OPTIONS", "VIVID_LINT_THREADS"],
       "outputs": []
     },
     "@vivid/skills#test": {
       "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"],
-      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/test.mjs"
+      ],
       "outputs": [".cache/gate/tests.json"],
       "env": ["VIVID_TEST_*", "VIVID_LIVE_*", "EXPLABS_API_KEY", "!VIVID_TEST_DATABASE_URL"],
-      "passThroughEnv": ["VIVID_TEST_DATABASE_URL"]
+      "passThroughEnv": ["VIVID_TEST_DATABASE_URL", "VIVID_GATE_CACHE"]
     },
     "@vivid/agent-runtime#test": {
       "dependsOn": ["checkinputs", "@vivid/server#checkinputs"],
-      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/test.mjs"
+      ],
       "outputs": [".cache/gate/tests.json"],
       "env": ["VIVID_TEST_*", "VIVID_LIVE_*", "EXPLABS_API_KEY", "!VIVID_TEST_DATABASE_URL"],
-      "passThroughEnv": ["VIVID_TEST_DATABASE_URL"]
+      "passThroughEnv": ["VIVID_TEST_DATABASE_URL", "VIVID_GATE_CACHE"]
     },
     "@vivid/server#test": {
       "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"],
-      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/test.mjs"
+      ],
       "outputs": [".cache/gate/tests.json"],
       "env": ["VIVID_TEST_*", "VIVID_LIVE_*", "EXPLABS_API_KEY", "!VIVID_TEST_DATABASE_URL"],
-      "passThroughEnv": ["VIVID_TEST_DATABASE_URL"]
+      "passThroughEnv": ["VIVID_TEST_DATABASE_URL", "VIVID_GATE_CACHE"]
     },
     "@vivid/mobile#test": {
       "dependsOn": ["checkinputs", "@vivid/web#checkinputs"],
-      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/test.mjs"
+      ],
       "outputs": [".cache/gate/tests.json"],
       "env": ["VIVID_TEST_*", "VIVID_LIVE_*", "EXPLABS_API_KEY", "!VIVID_TEST_DATABASE_URL"],
-      "passThroughEnv": ["VIVID_TEST_DATABASE_URL"]
+      "passThroughEnv": ["VIVID_TEST_DATABASE_URL", "VIVID_GATE_CACHE"]
     },
     "//#test:tooling": {
       "inputs": [
@@ -340,9 +370,6 @@
         ".husky/**",
         ".github/**",
         "tools/**",
-        "infra/**",
-        ".agents/skills/infra/**",
-        "docs/19-infrastructure.md",
         "apps/**/package.json",
         "packages/**/package.json",
         "apps/**/tsconfig*.json",
@@ -350,9 +377,6 @@
         "apps/*/drizzle/**",
         "apps/*/product-drizzle/**",
         "packages/**/drizzle/**",
-        "apps/web/wrangler.jsonc",
-        "apps/server/src/**",
-        "packages/agent/runtime/src/**",
         "!**/node_modules/**",
         "!*.md"
       ],
@@ -361,10 +385,33 @@
     },
     "@vivid/desktop#test": {
       "dependsOn": ["checkinputs", "@vivid/tokens#typeinputs"],
-      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/test.mjs"
+      ],
       "outputs": [".cache/gate/tests.json"],
       "env": ["VIVID_TEST_*", "VIVID_LIVE_*", "EXPLABS_API_KEY", "!VIVID_TEST_DATABASE_URL"],
-      "passThroughEnv": ["VIVID_TEST_DATABASE_URL"]
+      "passThroughEnv": ["VIVID_TEST_DATABASE_URL", "VIVID_GATE_CACHE"]
+    },
+    "//#test:infra": {
+      "inputs": [
+        "*",
+        "scripts/infra-verify.mjs",
+        "scripts/infra-verify.test.mjs",
+        ".github/workflows/**",
+        "apps/web/wrangler.jsonc",
+        "apps/server/src/**",
+        "packages/agent/runtime/src/**",
+        ".agents/skills/infra/**",
+        "docs/19-infrastructure.md",
+        "infra/**",
+        "!**/node_modules/**",
+        "!*.md"
+      ],
+      "outputs": []
     }
   }
 }

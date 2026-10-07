@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "typecheck": "node ../../scripts/types.mjs",
     "lint": "node ../../scripts/lint.mjs",
-    "test": "vitest run"
+    "test": "node ../../scripts/test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

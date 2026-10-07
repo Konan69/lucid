@@ -13,7 +13,7 @@
     "start": "pnpm build && electron .",
     "typecheck": "node ../../scripts/types.mjs tsconfig.main.json tsconfig.preload.json",
     "lint": "node ../../scripts/lint.mjs",
-    "test": "vitest run",
+    "test": "node ../../scripts/test.mjs",
     "package": "pnpm dist",
     "dist": "pnpm build && electron-builder"
   },

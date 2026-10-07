@@ -12,7 +12,7 @@
     "dev": "vite dev",
     "docs": "flue docs",
     "start": "node dist/server.mjs",
-    "test": "vitest run",
+    "test": "node ../../../scripts/test.mjs",
     "typecheck": "node ../../../scripts/types.mjs tsconfig.tests.json",
     "lint": "node ../../../scripts/lint.mjs",
     "db:generate": "echo 'Flue owns runtime schema migrations'",

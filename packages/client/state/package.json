@@ -9,7 +9,7 @@
   "scripts": {
     "typecheck": "node ../../../scripts/types.mjs tsconfig.tests.json",
     "lint": "node ../../../scripts/lint.mjs",
-    "test": "vitest run",
+    "test": "node ../../../scripts/test.mjs",
     "types": "node ../../../scripts/types.mjs tsconfig.types.json"
   },
   "dependencies": {

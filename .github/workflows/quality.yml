@@ -70,6 +70,10 @@ jobs:
       # An administration connection to a disposable server. The gate creates one empty database
       # per run on it and gives that to the suites; without this the gate fails, it does not skip.
       VIVID_TEST_DATABASE_URL: postgresql://vivid:vivid@localhost:55440/postgres
+      # A pull request runs the test files whose inputs changed since they last passed. The
+      # default branch runs every file and trusts no record, so a dependency the per-file keys
+      # cannot see is caught here at the latest.
+      VIVID_TEST_ALL: ${{ github.event_name == 'push' && '1' || '0' }}
     services:
       postgres:
         image: postgres:18-alpine
@@ -106,7 +110,9 @@ jobs:
       - name: Restore Turbo task cache
         uses: actions/cache@v4
         with:
-          path: .turbo/cache
+          path: |
+            .turbo/cache
+            .cache/gate/passed
           key: turbo-${{ runner.os }}-test-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
             turbo-${{ runner.os }}-test-${{ hashFiles('pnpm-lock.yaml') }}-

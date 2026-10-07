@@ -37,6 +37,19 @@ tests lane:  test per package                         beside the checks lane
 - At most one gate per four cores does work at once on a machine, across checkouts. Lint and typecheck stay serialized as designed above; the measured peak for one typed lint process is still about 3.6 GiB.
 - `affected` gives each package's Vitest the commit where the branch left the default branch (`--changed`), so only test files whose imports reach a changed file run. A file a test reads without importing is outside that graph; the full gate is the merge gate.
 
+### Which test files run
+
+"Run only the tests that changed" cannot mean the test files that were edited: a test's result changes when anything it loads changes. So each package's test script is `scripts/test.mjs`, and a test file runs only when its inputs differ from the last time it passed.
+
+- A file's key is the content of every module it loads, read from Vitest's own transform of each module (static and dynamic imports as Vite resolved them, so path aliases, package exports and Flue's Markdown imports are followed exactly as the run follows them), plus the package's inputs: the lockfile, the compiler and runner configuration, the setup files and what they load, the test settings in the environment, and every tracked file in the package that is not code (fixtures, migrations, Markdown read from disk).
+- A file whose key already passed is replayed with its counts, so the verdict still reports the whole suite. A failed file is never recorded.
+- An import graph cannot see everything. A module that starts another program, reads files by its own location or the working directory, imports a computed path, or loads modules by its own means makes every test that reaches it "wide": that test is keyed on Turbo's hash of the whole package task and runs whenever anything in the package or its dependencies changed. Test code that touches the file system at all is wide too. `node scripts/test.mjs --plan` in a package lists the wide files and the reason for each. In the server package 27 of 168 files are wide.
+- A type-only change runs no test: erased imports are not in the graph, and typecheck is the stage that owns types.
+- `--all` (or `VIVID_TEST_ALL=1`) runs every file and trusts no record. GitHub's job for the default branch does that, so a dependency the keys miss is caught there at the latest.
+- The records are small files named by key, shared by every checkout on a machine through the gate's cache directory.
+
+On a remote machine the gate keeps one warm tree per concurrent gate (one for every four cores) and takes the first free one, whatever the branch; it writes a `.boxignore` beside them so a Boat machine does not snapshot dependency trees or caches. One tree per branch, without that file, filled a machine's disk in a day.
+
 Measured on the eight-core Cloudbox on 6 October 2026, same repository state, other threads' gates running beside it:
 
 | Run                                               |                                               Before |                                                           After |
@@ -48,6 +61,23 @@ Measured on the eight-core Cloudbox on 6 October 2026, same repository state, ot
 | Server suite alone (164 files)                    |                                 226 s at two workers | 134 s at four workers under load; about 60 s on a quiet machine |
 
 A tree with a deliberate lint finding, type error, format error and failing test fails in exactly those four stages. The old hook's serial sequence, run against the new tree, also passes.
+
+## Effect language service
+
+Typecheck runs the native TypeScript 7 compiler. `effect-language-service patch` patches the JavaScript `typescript` package, which typecheck does not run, so from the move to TypeScript 7 until 7 October 2026 no Effect diagnostic reached the gate: a floating Effect and a `new Promise` in a contracts file passed typecheck. `@effect/tsgo` is the service for the native compiler (its README: "If you are using TypeScript 7.0 or newer, use `@effect/tsgo`"); `prepare` now runs `effect-tsgo patch --typescript` as well, and the plugin block in `tsconfig.base.json` is read by both.
+
+The first patched run reported 1,677 findings that had gathered meanwhile, none of them a plain TypeScript error: 741 `strictEffectProvide` (most are tests that give a Layer to each case with `Effect.provide` where `layer(...)` builds it once for the file), 406 `unnecessaryFailYieldableError`, 188 `schemaNumber`, 84 `asyncFunction`, 52 `multipleEffectProvide`, and 29 smaller rules. For now the compiler prints every finding and exits 0 (`ignoreEffect...InTscExitCode`), and the gate's typecheck line says how many there are without failing. They are being fixed on their own branch; when the count is zero the options go back to `false`, so an Effect error or warning fails typecheck again, and `scripts/versions.mjs` goes back to requiring that.
+
+## ts-rust, evaluated
+
+`tsc-rs` 0.1.0 (pingdotgg/ts-rust, a Rust port of the native compiler with the Effect rules built in) was run over the gate's whole typecheck graph on 7 October 2026, in dependency order, declarations included, on the PC at load 15:
+
+| Compiler                                                   |   Cold | Warm (build info kept) | Diagnostics                                                                                               |
+| ---------------------------------------------------------- | -----: | ---------------------: | --------------------------------------------------------------------------------------------------------- |
+| native `tsc` 7.0.2 with `@effect/tsgo` 0.51.0, one checker | 40.8 s |                  8.8 s | 1,677 Effect findings, 0 errors                                                                           |
+| `tsc-rs` 0.1.0                                             | 19.7 s |                  4.1 s | the same 1,677 with one message worded in another order, and 3 errors the native compiler does not report |
+
+It takes the same flags, writes declarations and build info, honours the Effect plugin options, and is twice as fast cold and warm. It is not the gate's compiler yet for one reason: on `packages/agent/runtime/src/tools/sandbox.ts` it reports TS7031 (implicit any) for a destructured parameter with a default, `(path, { recursive } = {}) =>`, whose type comes from the interface the object implements. The code is valid and the native compiler accepts it, so a tree the gate passes today would fail. With the per-package cache and build info, typecheck is 0 to 16 seconds of a gate run; halving it is worth taking when that error is fixed upstream, by pointing `scripts/types.mjs` at the other binary.
 
 ## Reference and limits
 

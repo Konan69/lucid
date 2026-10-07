@@ -10,7 +10,7 @@
  *   TypeScript program in memory (docs/checks.md measured 3.6 GiB for one tsgolint process), so
  *   two of them never overlap.
  * - `tests` runs beside it. Vitest workers are plain Node processes with no compiler heap, and
- *   the test tasks depend only on input-hash tasks that execute nothing, so the two invocations
+ *   the tasks here depend only on input-hash tasks that execute nothing, so the two invocations
  *   never build the same output.
  */
 export const stages = [
@@ -29,7 +29,10 @@ export const stages = [
   { name: 'format', lane: 'checks', tasks: ['format:root'] },
   // `types` emits the declarations that `typecheck` consumers read; Turbo orders them.
   { name: 'typecheck', lane: 'checks', tasks: ['types', 'typecheck', 'typecheck:root'] },
-  { name: 'tooling', lane: 'checks', tasks: ['test:tooling'] },
+  // The tooling tests run compilers only on small fixtures, so they sit beside the tests. The
+  // infrastructure check reads server and runtime source and is a task of its own: a server
+  // change reruns that second of work, not every tooling test.
+  { name: 'tooling', lane: 'tests', tasks: ['test:tooling', 'test:infra'] },
   { name: 'test', lane: 'tests', tasks: ['test'] },
 ]
 

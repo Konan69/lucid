@@ -10,7 +10,7 @@
   "scripts": {
     "typecheck": "tsc --checkers 1 --noEmit",
     "lint": "node ../../../scripts/lint.mjs",
-    "test": "vitest run"
+    "test": "node ../../../scripts/test.mjs"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
