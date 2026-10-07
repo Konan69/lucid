@@ -3,12 +3,17 @@ import * as NodeEvents from 'node:events'
 import * as NodeURL from 'node:url'
 import { onTestFinished } from 'vitest'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
-import { tool } from 'ai'
+import { tool, isToolUIPart, type ToolSet } from 'ai'
+import { PlainChat } from '../fixtures/chat.ts'
 import { expect, it } from '@effect/vitest'
 import { Effect, Schema } from 'effect'
 import { z } from 'zod'
 
 import { attachRun, streamRun } from '../main.ts'
+import {
+  toolsExtension as coreToolsExtension,
+  type ToolsOptions as CoreToolsOptions,
+} from '../core.ts'
 import { call, consume, context, host, signal, texts } from './fixtures/host.ts'
 
 const decodeScope = Schema.decodeUnknownSync(
@@ -103,9 +108,8 @@ it.live.each(['resolver', 'schema'] as const)('continues after a %s context fail
       {
         context: () => {
           resolutions++
-          return kind === 'resolver'
-            ? Effect.fail(new Error('owner unavailable'))
-            : Effect.succeed({ owner: 123 })
+          if (kind === 'resolver') throw new Error('owner unavailable')
+          return { owner: 123 }
         },
       },
     )
@@ -152,7 +156,7 @@ it.live('validates and transforms resolved context once per execution', () =>
       {
         context: (scope) => {
           resolutions++
-          return Effect.succeed({ owner: `owner-${scope.conversationId}` })
+          return { owner: `owner-${scope.conversationId}` }
         },
       },
     )
@@ -218,6 +222,16 @@ it.live('preserves ToolScope after process death and safe replay', () =>
   }),
 )
 
+/** Install an Effect registration into the real harness without routing it through the Promise facade. */
+const coreHost = Effect.fn('Conformance.coreContextHost')(function* (
+  tools: ToolSet,
+  options: CoreToolsOptions,
+) {
+  const fixture = yield* Effect.promise(() => host({}, {}))
+  const extension = yield* coreToolsExtension('context', tools, options)
+  return yield* Effect.promise(() => fixture.open([extension]))
+})
+
 /** Incorrect Effect-entry callback results must not escape as unnamed fiber defects or double prefixes. */
 for (const sample of [
   {
@@ -249,9 +263,9 @@ for (const sample of [
   },
 ])
   it.live(`reports ${sample.name} from a context resolver as one named tool error`, () =>
-    Effect.promise(async () => {
+    Effect.gen(function* () {
       let executions = 0
-      const fixture = await host(
+      const opened = yield* coreHost(
         {
           scoped: tool({
             inputSchema: z.object({}),
@@ -267,35 +281,71 @@ for (const sample of [
           context: sample.resolve,
         },
       )
-      const opened = await fixture.open()
-      opened.faux.setResponses([
-        call('scoped', {}, 'invalid-context'),
-        (request) => {
-          expect(request.messages.at(-1)).toMatchObject({
-            role: 'toolResult',
-            isError: true,
-            content: [
-              {
-                type: 'text',
-                text: `<harness>\n[error] Tool scoped context failed: ${sample.diagnostic}\n</harness>`,
-              },
-            ],
-          })
-          return fauxAssistantMessage('Recovered.')
-        },
-      ])
-      const result = await consume(
-        await streamRun(
-          opened.harness,
-          { conversationId: opened.root.id, content: 'Try', requestId: sample.name },
-          context,
-        ),
-      )
-      expect(result.message.parts.find((part) => part.type === 'tool-scoped')).toMatchObject({
-        state: 'output-error',
-        errorText: `<harness>\n[error] Tool scoped context failed: ${sample.diagnostic}\n</harness>`,
+      yield* Effect.promise(async () => {
+        opened.faux.setResponses([
+          call('scoped', {}, 'invalid-context'),
+          (request) => {
+            expect(request.messages.at(-1)).toMatchObject({
+              role: 'toolResult',
+              isError: true,
+              content: [
+                {
+                  type: 'text',
+                  text: `<harness>\n[error] Tool scoped context failed: ${sample.diagnostic}\n</harness>`,
+                },
+              ],
+            })
+            return fauxAssistantMessage('Recovered.')
+          },
+        ])
+        const result = await consume(
+          await streamRun(
+            opened.harness,
+            { conversationId: opened.root.id, content: 'Try', requestId: sample.name },
+            context,
+          ),
+        )
+        expect(result.message.parts.find((part) => part.type === 'tool-scoped')).toMatchObject({
+          state: 'output-error',
+          errorText: `<harness>\n[error] Tool scoped context failed: ${sample.diagnostic}\n</harness>`,
+        })
+        expect(executions).toBe(0)
+        expect(texts(result.message)).toEqual(['Recovered.'])
       })
-      expect(executions).toBe(0)
-      expect(texts(result.message)).toEqual(['Recovered.'])
     }),
   )
+
+/** Promise hosts must retain the SDK's value-or-Promise context resolver contract. */
+it.live.each(['value', 'promise'] as const)(
+  'converts a Promise-entry %s context resolver once',
+  (kind) =>
+    Effect.promise(async () => {
+      let resolutions = 0
+      const fixture = await host(
+        {
+          scoped: tool({
+            inputSchema: z.object({}),
+            contextSchema: z.object({ owner: z.string() }),
+            execute: async (_input, options) => options.context,
+          }),
+        },
+        {
+          context: (scope) => {
+            resolutions++
+            const value = { owner: `owner-${scope.conversationId}` }
+            return kind === 'value' ? value : Promise.resolve(value)
+          },
+        },
+      )
+      const opened = await fixture.open()
+      opened.faux.setResponses([call('scoped', {}, 'scope'), fauxAssistantMessage('Done.')])
+      const chat = new PlainChat({ transport: opened.transport })
+      await chat.sendMessage({ text: 'Scope' })
+      if (chat.lastMessage === undefined) throw new Error('Expected assistant')
+      expect(chat.lastMessage.parts.find(isToolUIPart)).toMatchObject({
+        state: 'output-available',
+        output: { owner: `owner-${opened.root.id}` },
+      })
+      expect(resolutions).toBe(1)
+    }),
+)

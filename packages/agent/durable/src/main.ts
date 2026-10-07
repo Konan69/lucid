@@ -1,5 +1,5 @@
 import type { Context } from '@earendil-works/chord'
-import type { ConversationId, Harness } from '@earendil-works/pi-durable'
+import type { ConversationId, Harness, Extension } from '@earendil-works/pi-durable'
 import { createUIMessageStreamResponse, type UIMessageChunk } from 'ai'
 import { Effect, Function, Option, Result, Schema, Stream } from 'effect'
 
@@ -7,7 +7,7 @@ import * as Core from './core.ts'
 import { HoldIdInvalid, TurnInvalid } from './errors.ts'
 import { prepareRun } from './stream.ts'
 import { reconnectRequest, turnFailure, TurnBody, respondWithPolicy } from './respond.ts'
-import type { ToolsOptions } from './tools.ts'
+import type { ToolsOptions as EffectToolsOptions, ToolScope } from './tools.ts'
 import { inputLimit, type InputOptions } from './input.ts'
 
 /** A host can bound decoded parts while preserving the four-argument Request ingress. */
@@ -19,12 +19,29 @@ const decodeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(TurnBody)
 /** Compile the object ingress once; reject the original tagged class at the Promise boundary. */
 export const decodeTurn = Function.flow(Core.decodeTurn, (effect) => Effect.runPromise(effect))
 
-/** Promise facade; tool registration has one Effect implementation. */
+/** Promise hosts resolve per-call authority with a value or Promise; core hosts return an Effect. */
+export type ToolsOptions = Omit<EffectToolsOptions, 'context'> & {
+  readonly context?: (scope: ToolScope) => unknown | PromiseLike<unknown>
+}
+
+/** Convert the resolver once at this Promise facade, before registering the shared Effect bridge. */
 export const toolsExtension = (
   name: string,
   tools: Parameters<typeof Core.toolsExtension>[1],
   options: ToolsOptions = {},
-) => Effect.runPromise(Core.toolsExtension(name, tools, options))
+): Promise<Extension> => {
+  const { context, ...settings } = options
+  if (context === undefined) return Effect.runPromise(Core.toolsExtension(name, tools, settings))
+  const resolved: EffectToolsOptions = {
+    ...settings,
+    context: (scope) =>
+      Effect.tryPromise({
+        try: async () => context(scope),
+        catch: Function.identity,
+      }),
+  }
+  return Effect.runPromise(Core.toolsExtension(name, tools, resolved))
+}
 
 /** Preserve the original tagged error classes at the Promise rejection boundary. */
 export const decide = (...args: Parameters<typeof Core.decide>) =>
@@ -187,7 +204,7 @@ export {
 } from './errors.ts'
 export type { Answer, Decision, Settlement, Plan, Source } from './holds.ts'
 export type { Waiting } from './waiting.ts'
-export type { Replay, ToolsOptions } from './tools.ts'
+export type { Replay } from './tools.ts'
 export type { Rejoin, RunInput } from './stream.ts'
 export type { ResumeInput } from './resume.ts'
 export type { RunState, Step, Chunk } from './chunks.ts'
