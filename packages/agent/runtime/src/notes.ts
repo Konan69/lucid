@@ -121,13 +121,15 @@ const open = new Map<string, Promise<AgentFS>>()
  * per platform; an installation that keeps no notes, or an image the binary does not support,
  * must still start, so the package is never loaded when the module is.
  */
-async function openStore(path: string) {
-  const { AgentFS: store } = await import('agentfs-sdk')
-  // AgentFS makes directories only for its own default location, not for a path it is given. The
-  // notes directory is required but need not exist yet (a fresh checkout, a new volume), and
-  // without this every note call would fail until someone made it by hand.
-  await NodeFS.promises.mkdir(NodePath.dirname(path), { recursive: true })
-  return store.open({ path })
+function openStore(path: string) {
+  return import('agentfs-sdk').then(({ AgentFS: store }) => {
+    // AgentFS makes directories only for its own default location, not for a path it is given. The
+    // notes directory is required but need not exist yet (a fresh checkout, a new volume), and
+    // without this every note call would fail until someone made it by hand.
+    return NodeFS.promises
+      .mkdir(NodePath.dirname(path), { recursive: true })
+      .then(() => store.open({ path }))
+  })
 }
 
 /** Open, or reuse, the Person's filesystem. A failed open is forgotten so the next call tries again. */
