@@ -213,7 +213,7 @@ function keepOnDevice(
 }
 
 /**
- * Builds a session's reading of the catalog of services, for the Integrations sheet: what is
+ * Builds a session's reading of the catalog of services, for the Integrations page: what is
  * typed into its search, and the part of the catalog that answers to it.
  *
  * Ported from the web (`serviceSearch`, `catalogFor` and `services` in

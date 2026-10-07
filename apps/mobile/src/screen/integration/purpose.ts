@@ -2,7 +2,7 @@ import type { Service } from '@vivid/contracts'
 import { Array as Arr, Option } from 'effect'
 
 /**
- * What a Person uses a service for, in the order the Integrations sheet shows the groups:
+ * What a Person uses a service for, in the order the Integrations page shows the groups:
  * everyday things first (mail, files, chat), then work, then the specialist tools.
  *
  * The same shelves, names and order as the web (`apps/web/src/screen/integration/purpose.ts`),

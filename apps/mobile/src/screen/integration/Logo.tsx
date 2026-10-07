@@ -8,7 +8,7 @@ import { ServiceMark } from '../../ui/Mark'
 const ICON_SIZE = 128
 
 /**
- * A service's artwork in a rounded square, for a row of the Integrations sheet.
+ * A service's artwork in a rounded square, for a row of the Integrations page.
  *
  * The artwork Vivid draws itself wins (`ServiceMark`, the shared figures of `@vivid/marks`): it
  * is sharp at any size and needs no network. A service it has none for takes the icon of its

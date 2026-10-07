@@ -1,15 +1,18 @@
 import type {
+  ConnectionId,
   LibraryFolderId,
   LibraryShelf,
   MeResponse,
   ProjectId,
   Role,
+  Service,
   ThreadId,
 } from '@vivid/contracts'
 import { useNavigation } from '@react-navigation/native'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import { createContext, useContext, useSyncExternalStore } from 'react'
 import type { Front, FrontStore } from './data/front'
+import type { KeyFields, PressKey } from './data/integration'
 
 /**
  * Where a signed-in Person can be in the app. Every place is a screen on one native stack, so
@@ -27,6 +30,22 @@ import type { Front, FrontStore } from './data/front'
  * - `Settings`: the Person's own settings; `People` is who is in the Company they are working in,
  *   and `Memory` is what Vivid has kept about the Person, for them to correct or remove.
  *   `Texting` is where they connect their phone number so they can text Vivid.
+ * - `Integrations`: the services Vivid can use, and the catalog to connect more from. A screen
+ *   and not a sheet over Settings, because the two sheets below are presented from it, and the
+ *   platform cannot present one over a React Native `Modal`.
+ * - `Account`: one connected account's own bottom sheet (name it, add another, disconnect it),
+ *   by its id, so it is drawn from the live list and shows the account as it stands now.
+ * - `NameAccount`: the bottom sheet that asks what to call an account before it is begun, on a
+ *   service that does not say who signs in. It is opened over the Integrations page and over a
+ *   Thread, from the card that asks for one more account. `shared` is whether the account is
+ *   for the Person's Company (an admin's choice) and not for the Person alone. `card` is the card
+ *   in a Thread that asked, when one did (the tool call it stands for), so the account it begins
+ *   is that card's to carry on from. Route params are plain data, so absence is `null` here and
+ *   an `Option` the moment it is read.
+ * - `Key`: the bottom sheet that takes the key a service asks for. It carries which Integration
+ *   the key is for, the service's name, the fields it asks for (their names and labels, never
+ *   what is typed) and `press`, what the press that asked is filed under in the integration
+ *   flow, so the row or card that asked hears the key was taken.
  * - `Notifications`: what finished or needs the Person while they were elsewhere, in the drawer.
  */
 export type Routes = {
@@ -41,6 +60,15 @@ export type Routes = {
   People: undefined
   Memory: undefined
   Texting: undefined
+  Integrations: undefined
+  Account: { id: ConnectionId }
+  NameAccount: {
+    service: Service['id']
+    serviceName: string
+    shared: boolean
+    card: string | null
+  }
+  Key: { id: ConnectionId; name: string; fields: KeyFields; press: PressKey }
   Notifications: undefined
 }
 
