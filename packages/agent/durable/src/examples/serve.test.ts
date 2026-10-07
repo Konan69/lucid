@@ -452,11 +452,8 @@ it.live.each(['slow', 'approve'] as const)(
           (directory) =>
             Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
         )
-        const measured = Date.now()
-        const phase = (step: string) => console.log(step, Date.now() - measured)
         const crashed = yield* processHost(dataDirectory)
         const firstAddress = yield* Effect.promise(() => boundAddress(crashed))
-        phase('bound')
         const original = client(firstAddress, `crash-${kind}`)
         if (kind === 'slow') {
           const shown = observed(
@@ -465,7 +462,6 @@ it.live.each(['slow', 'approve'] as const)(
           )
           const sent = original.sendMessage({ text: 'slow' })
           yield* Effect.promise(() => shown)
-          phase('partial')
           expect(text(original)).not.toContain('The final sentence')
           yield* Effect.promise(() => killHost(crashed))
           yield* Effect.promise(() => sent)
@@ -476,17 +472,13 @@ it.live.each(['slow', 'approve'] as const)(
           ])
           yield* Effect.promise(() => killHost(crashed))
         }
-        phase('killed')
         const reopened = yield* Effect.acquireRelease(
           Effect.promise(() => start({ host: '127.0.0.1', port: 0, dataDirectory })),
           (host) => Effect.promise(() => host.close()),
         )
-        phase('reopened')
         const resumed = client(reopened.address, original.id)
         resumed.messages = yield* Effect.promise(() => history(reopened.address, original.id))
-        phase('history')
         yield* Effect.promise(() => resumed.resumeStream())
-        phase('resumed')
         if (kind === 'approve') {
           expect(approval(resumed)).toBe(approval(original))
           const finished = observed(

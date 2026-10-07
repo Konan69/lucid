@@ -150,16 +150,16 @@
   {
     "file": "packages/agent/durable/src/examples/serve.ts",
     "classification": "third-party-resource-adapter",
-    "symbols": ["conversation", "open", "configured"]
+    "symbols": ["registry", "conversation", "open", "configured"]
   },
   {
     "file": "packages/agent/durable/src/examples/serve.ts",
     "classification": "http-framework-entrypoint",
-    "symbols": ["readBody", "requestRoute", "response", "writeResponse", "dispatch"]
+    "symbols": ["readBody", "requestRoute", "response", "writeResponse"]
   },
   {
     "file": "packages/agent/durable/src/examples/serve.ts",
     "classification": "cli-entrypoint",
-    "symbols": ["main", "close"]
+    "symbols": ["start", "main", "close"]
   }
 ]
