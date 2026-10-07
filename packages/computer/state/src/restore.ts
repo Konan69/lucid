@@ -76,10 +76,10 @@ export const restoreComputer = Effect.fn('Computer.restore')(function* (input: {
   const archive = yield* ComputerArchive
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
-  const manifest = yield* Option.match(yield* archive.readManifest(input.computerId), {
-    onNone: () => Effect.fail(new NothingToRestore({ computerId: input.computerId })),
-    onSome: Effect.succeed,
-  })
+  const manifest = yield* Effect.fromOption(
+    yield* archive.readManifest(input.computerId),
+    () => new NothingToRestore({ computerId: input.computerId }),
+  )
 
   const onDisk = Effect.fn('Computer.restore.onDisk')(function* () {
     const found = yield* describeHome(input.home)
