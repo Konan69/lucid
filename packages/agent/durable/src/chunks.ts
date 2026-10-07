@@ -237,6 +237,21 @@ function startResponse(state: RunState, partial: AssistantMessage): Step {
   )
 }
 
+/** SnapshotEvent omits run.taskId. Between a successor's allocation (events.js:235–240)
+ * and its first partial, an attachment can miss turn_start while replaying its predecessor.
+ * A normally completed response cannot be retried: its closed blocks belong to the previous
+ * step. Recover that boundary before opening the new response. Explicit turn_start already
+ * cleared the blocks, while failed/aborted attempts still rebuild their existing step. */
+function beginResponse(state: RunState, message: AssistantMessage): Step {
+  const completed =
+    state.blocks.size > 0 &&
+    [...state.blocks.values()].every(Reported.$is('Closed')) &&
+    Option.isNone(state.failure) &&
+    !state.interrupted
+  const turn = completed ? startTurn(state) : { state, chunks: [] }
+  return join(turn, startResponse(turn.state, message))
+}
+
 /**
  * Pi's throttled final partial may never commit. Emit the terminal value's unsent text suffix
  * before closing, opening the block first when nothing was streamed. Never duplicate its prefix.
@@ -584,7 +599,7 @@ export function translate(state: RunState, event: AgentEvent): Step {
     Match.when({ type: 'turn_start' }, () => startTurn(state)),
     Match.when({ type: 'message_start' }, (started) =>
       started.message.role === 'assistant'
-        ? startResponse(state, started.message)
+        ? beginResponse(state, started.message)
         : { state, chunks: [] },
     ),
     Match.when({ type: 'turn_end' }, (): Step => ({ state, chunks: [{ type: 'finish-step' }] })),
