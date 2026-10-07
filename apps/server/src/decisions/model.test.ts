@@ -53,7 +53,6 @@ it.effect.each([
     }),
   )
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(
       decisionModelLayer.pipe(
         Layer.provide(transport),
@@ -87,7 +86,6 @@ it.effect.each([
     lines.push(message)
   })
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(
       decisionModelLayer.pipe(
         Layer.provide(
@@ -172,7 +170,8 @@ it.effect.each(['10 seconds', '1200 millis'] as const)('bounds a stalled request
 )
 
 /** The real gateway Layer owns availability, so every differently-budgeted caller shares one gate.
- * Only the HTTP seam is scripted; provider validation and the production gate both run. */
+ * Only the HTTP seam is scripted; provider validation and the production gate both run.
+ * Acquisition stays per case because backoff availability and request recordings are mutable. */
 const configuredGateway = (transport: Layer.Layer<HttpClient.HttpClient>) =>
   decisionModelLayer.pipe(
     Layer.provide(transport),
@@ -218,7 +217,6 @@ it.effect('shares provider backoff and admits only one successful recovery probe
       ),
     )
     yield* Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(configuredGateway(transport))
       return yield* Effect.gen(function* () {
         // Preflight observes admission without transport or a lease. Repeated
@@ -288,7 +286,6 @@ it.effect('requires calibrated timeouts and gives a recovery probe its own budge
     }),
   )
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(configuredGateway(transport))
     return yield* Effect.gen(function* () {
       for (const attempt of [1, 2]) {
@@ -334,7 +331,6 @@ it.effect.each([
     }),
   )
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(configuredGateway(transport))
     return yield* Effect.gen(function* () {
       expect((yield* Effect.flip(decide(definition, 'first'))).reason).toBe(
@@ -350,7 +346,6 @@ it.effect.each([
 it.effect('malformed answers do not open the process gate', () => {
   let calls = 0
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(
       configuredGateway(
         Layer.succeed(
@@ -388,7 +383,6 @@ it.effect('an interrupted recovery probe cannot leave availability stuck', () =>
       }),
     )
     yield* Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(configuredGateway(transport))
       return yield* Effect.gen(function* () {
         yield* Effect.flip(decide(definition, 'first'))
@@ -436,7 +430,6 @@ it.effect('an older in-flight success cannot close newly opened backoff', () =>
       ),
     )
     yield* Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(configuredGateway(transport))
       return yield* Effect.gen(function* () {
         const older = yield* decide(definition, 'older').pipe(Effect.forkChild)
@@ -470,7 +463,6 @@ it.effect.each(['TransportError', 'EncodeError', 'Defect'] as const)(
       }),
     )
     return Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(configuredGateway(transport))
       return yield* Effect.gen(function* () {
         expect((yield* Effect.flip(decide(definition, 'first'))).reason).toBe('Provider')
@@ -499,7 +491,6 @@ it.effect('concurrent timeouts do not open admission without a later attempt', (
       }),
     )
     yield* Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(configuredGateway(transport))
       return yield* Effect.gen(function* () {
         const burst = yield* Effect.forEach(
@@ -547,7 +538,6 @@ it.effect('expired suspicion cannot corroborate a later isolated timeout', () =>
     }),
   )
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(configuredGateway(transport))
     return yield* Effect.gen(function* () {
       for (const attempt of [1, 2]) {
@@ -588,7 +578,6 @@ it.effect('a success between timeouts resets the evidence', () => {
     }),
   )
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(configuredGateway(transport))
     return yield* Effect.gen(function* () {
       for (const attempt of [1, 2]) {
@@ -621,7 +610,6 @@ it.effect.each([401])('HTTP %s closes credentials for five minutes with one erro
     }),
   )
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(configuredGateway(transport))
     return yield* Effect.gen(function* () {
       expect((yield* Effect.flip(decide(definition, 'rejected'))).reason).toBe('Authentication')
@@ -677,7 +665,6 @@ it.effect('short-budget timeouts do not corroborate process-wide outage', () => 
     }),
   )
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(configuredGateway(transport))
     return yield* Effect.gen(function* () {
       for (const attempt of [1, 2, 3]) {
@@ -724,7 +711,6 @@ it.effect.each([100, 1800, 2000])('a healthy probe outlives a %sms caller budget
       ),
     )
     yield* Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(configuredGateway(transport))
       return yield* Effect.gen(function* () {
         yield* Effect.flip(decide(definition, 'outage'))
@@ -778,7 +764,6 @@ it.effect('a forbidden recovery payload releases the outage gate for other calle
     }),
   )
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(configuredGateway(transport))
     return yield* Effect.gen(function* () {
       expect((yield* Effect.flip(decide(definition, 'outage'))).reason).toBe('Provider')
@@ -812,7 +797,6 @@ it.effect('Layer shutdown interrupts a detached recovery probe', () =>
       }),
     )
     yield* Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(configuredGateway(transport))
       return yield* Effect.gen(function* () {
         yield* Effect.flip(decide(definition, 'outage'))
@@ -845,7 +829,6 @@ it.effect('persistent 403 responses warn once per minute without closing admissi
     }),
   )
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(configuredGateway(transport))
     return yield* Effect.gen(function* () {
       for (const attempt of [1, 2, 3]) {
@@ -914,7 +897,6 @@ it.effect.each([
       }),
     )
     yield* Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(configuredGateway(transport))
       return yield* Effect.gen(function* () {
         const pending = yield* decide(definition, 'caller interrupted').pipe(Effect.forkChild)

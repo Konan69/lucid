@@ -26,7 +26,6 @@ const Ticket = Decision.make({
 describe.skipIf(!liveDecisionEnabled)('Jev through the gateway', () => {
   it.live('answers classify, rate and probability in one request', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(liveDecisionLayer)
       return yield* Effect.gen(function* () {
         const start = yield* Clock.currentTimeMillis
