@@ -5,15 +5,26 @@ import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
   tool,
+  isToolUIPart,
   type UIMessage,
 } from 'ai'
 import { Deferred, Effect, Schema } from 'effect'
 import { z } from 'zod'
 
 import * as Core from '../core.ts'
-import { attachRun, history, respond, streamRun, type Metadata } from '../main.ts'
+import {
+  attachRun,
+  continueRun,
+  decide,
+  followRun,
+  history,
+  holdId,
+  respond,
+  streamRun,
+  type Metadata,
+} from '../main.ts'
 import { waitForFrame } from '../fixtures/provider.ts'
-import { call, consume, context, host, signal } from './fixtures/host.ts'
+import { call, consume, context, host, shop, signal } from './fixtures/host.ts'
 
 type Opened = Awaited<ReturnType<Awaited<ReturnType<typeof host>>['open']>>
 const decodeMetadata = Schema.decodeUnknownSync(Core.Metadata)
@@ -81,6 +92,11 @@ it.live('returns Pi model and usage metadata identically live and in history', (
     expect(chat.error).toBeUndefined()
     const last = await parity(opened, chat, 1)
     expect(modelIds(last)).toEqual(['faux/faux-1'])
+    const input = chat.messages.find((message) => message.role === 'user')
+    if (input === undefined) throw new Error('Expected admitted user message')
+    const stored = await consume(await followRun(opened.harness, opened.root.id, input.id, context))
+    expect(stored.chunks[0]).toMatchObject({ type: 'start', messageMetadata: last.metadata })
+    expect(stored.chunks.at(-1)).toEqual({ type: 'finish', messageMetadata: last.metadata })
     await fixture.close(opened.harness)
     const restarted = await fixture.open()
     const page = await history(restarted.harness, restarted.root.id, { limit: 50 }, context)
@@ -225,5 +241,66 @@ it.live('includes captured metadata on a reconnect start in the middle of text',
       Effect.ensuring(Deferred.succeed(release, undefined)),
       Effect.ensuring(Effect.promise(() => sending)),
     )
+  }),
+)
+
+/** Parking is an HTTP finish while Pi remains active. Both its attachment and the ended receipt
+ * carry exactly the stored usage; the facade must not silently drop metadata on either finish. */
+it.live('carries metadata on parked finishes and ended approval replay', () =>
+  Effect.promise(async () => {
+    const fixture = await shop()
+    const opened = await fixture.open()
+    opened.faux.setResponses([
+      call('pay', { amount: 100 }, 'payment'),
+      fauxAssistantMessage('Paid.'),
+    ])
+    const initial = await consume(
+      await streamRun(
+        opened.harness,
+        { conversationId: opened.root.id, content: 'Pay', requestId: 'metadata-pay' },
+        context,
+      ),
+    )
+    expect(initial.chunks.at(-1)).toEqual({
+      type: 'finish',
+      messageMetadata: initial.message.metadata,
+    })
+    const attached = await attachRun(opened.harness, opened.root.id, context)
+    if (attached.status !== 'running') throw new Error('Expected held run')
+    const replayed = await consume(attached.stream)
+    expect(replayed.chunks[0]).toMatchObject({
+      type: 'start',
+      messageMetadata: initial.message.metadata,
+    })
+    expect(replayed.chunks.at(-1)).toEqual({
+      type: 'finish',
+      messageMetadata: initial.message.metadata,
+    })
+    const part = initial.message.parts.find(isToolUIPart)
+    if (part === undefined || part.state !== 'approval-requested')
+      throw new Error('Expected approval')
+    await decide(
+      opened.harness,
+      opened.root.id,
+      { holdId: holdId(part.approval.id), approved: true },
+      context,
+    )
+    await opened.root.waitForIdle(context)
+    const settled = await history(opened.harness, opened.root.id, { limit: 50 }, context)
+    const assistant = settled.messages.find((message) => message.role === 'assistant')
+    if (assistant === undefined) throw new Error('Expected settled history')
+    const tail = await consume(
+      await continueRun(
+        opened.harness,
+        opened.root.id,
+        { messageId: initial.message.id, known: new Set(['payment']) },
+        context,
+      ),
+      initial.message,
+    )
+    expect(tail.chunks[0]).toMatchObject({ type: 'start', messageMetadata: assistant.metadata })
+    expect(tail.chunks.at(-1)).toEqual({ type: 'finish', messageMetadata: assistant.metadata })
+    expect(tail.message.metadata).toEqual(assistant.metadata)
+    expect(fixture.paid).toEqual([100])
   }),
 )

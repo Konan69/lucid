@@ -20,7 +20,9 @@ const Tokens = Schema.Struct({
 /**
  * Pi generation.js:523–528 persists each provider message and its usage together. Models name the
  * recorded provider/model pair; token counts sum those durable responses, including failed attempts.
- * Pi records response timestamps, but no run start/end timestamp: neither is invented here.
+ * Pi records response timestamps, but no run start/end timestamp. EntryRecord (types.d.ts:272–288)
+ * also has no creation time; provider-message timestamps are not entry/run lifecycle times, so
+ * neither start nor end is invented here.
  */
 export const Metadata = Schema.Struct({
   models: Schema.Array(Model),
