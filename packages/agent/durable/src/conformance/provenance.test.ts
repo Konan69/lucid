@@ -1,3 +1,7 @@
+import { Deferred, Effect, Option } from 'effect'
+import { FixtureFailed } from '../fixtures/harness.ts'
+import { consumeReadable } from '../fixtures/reading.ts'
+import { runForPi } from '../pi.ts'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeEvents from 'node:events'
 import * as NodeFSP from 'node:fs/promises'
@@ -29,186 +33,205 @@ import {
 } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { expect, it } from '@effect/vitest'
-import { Effect, Schema } from 'effect'
+import { Schema } from 'effect'
 import { tool } from 'ai'
 import { z } from 'zod'
-import { onTestFinished } from 'vitest'
 import { postgresFixture } from '../postgres/testing.ts'
 import { streamRun, toolsExtension, abort, history, followRun } from '../main.ts'
-import { consume, signal } from './fixtures/host.ts'
 
 const context = BACKGROUND_CONTEXT
 const databaseUrl = process.env['VIVID_TEST_DATABASE_URL']
 const backends =
   databaseUrl === undefined ? (['sqlite'] as const) : (['sqlite', 'postgres'] as const)
 type Backend = (typeof backends)[number]
-
 /** Repeat the same public Harness proofs against either real storage. Each test owns its
  * SQLite directory or PostgreSQL schema, and cleanup is registered before initialization writes. */
-async function storageFor(backend: Backend) {
+const storageFor = Effect.fn('Test.storageFor')(function* (backend: Backend) {
   if (backend === 'postgres') {
     if (databaseUrl === undefined) throw new Error('Expected disposable test database')
     const fixture = postgresFixture(databaseUrl)
-    return { open: fixture.open, child: ['postgres', fixture.schema] }
+    return {
+      open: () => Effect.promise<Storage>(() => fixture.open()),
+      child: ['postgres', fixture.schema],
+    }
   }
-  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'durable-identity-'))
-  onTestFinished(() => NodeFSP.rm(directory, { recursive: true, force: true }))
+  const directory = yield* Effect.promise(() =>
+    NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'durable-identity-')),
+  )
+  yield* Effect.addFinalizer(() =>
+    Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
+  )
   const file = NodePath.join(directory, 'session.sqlite')
   const storages = new Set<Storage>()
-  onTestFinished(async () => {
-    for (const storage of storages) await storage.close(context)
-  })
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      for (const storage of storages) yield* Effect.promise(() => storage.close(context))
+    }),
+  )
   return {
     child: ['sqlite', file],
-    open: async () => {
-      const storage = await openNodeSqliteStorage(file)
+    open: Effect.fn('Test.openIdentityStorage')(function* (): Effect.fn.Return<Storage> {
+      const storage = yield* Effect.promise(() => openNodeSqliteStorage(file))
       storages.add(storage)
       return storage
-    },
+    }),
   }
-}
-
+})
 /** Native tools/hooks leave identity ownership with Pi; no bridge translator is under test yet. */
-async function opened(storage: Storage, extensions: readonly Extension[]) {
+const opened = Effect.fn('Test.opened')(function* (
+  storage: Storage,
+  extensions: readonly Extension[],
+) {
   const faux = fauxProvider()
   const models = createModels()
   models.setProvider(faux.provider)
   const registry = createRegistry()
   for (const extension of extensions) registry.install(extension)
-  const harness = await Harness.open(storage, { models, registry }, context)
-  onTestFinished(() => harness.close(context))
-  const root = await harness.root(context, {
-    agent: { model: { provider: 'faux', modelId: 'faux-1' } },
-  })
+  const harness = yield* Effect.promise(() => Harness.open(storage, { models, registry }, context))
+  yield* Effect.addFinalizer(() => Effect.promise(() => harness.close(context)))
+  const root = yield* Effect.promise(() =>
+    harness.root(context, {
+      agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+    }),
+  )
   return { harness, root, faux }
-}
-
+})
 /** The exact-frame document watch retains the FIRST task for each run even if later reads
  * observe handover. A receipt gate confirms delivery; no timer samples a mutable run. */
-async function starts(harness: Harness, root: Conversation) {
-  const watch = await harness.watchDoc(LiveDoc, root.id, context)
+const starts = Effect.fn('Test.starts')(function* (harness: Harness, root: Conversation) {
+  const watch = yield* Effect.promise(() => harness.watchDoc(LiveDoc, root.id, context))
   if (watch === undefined) throw new Error('Expected live document')
-  onTestFinished(() => watch.stop().then(() => {}))
+  yield* Effect.addFinalizer(() => Effect.promise(() => watch.stop().then(() => {})))
   const tasks = new Map<SubmissionId, TaskId>()
-  const delivered = new Map<SubmissionId, ReturnType<typeof signal>>()
+  const delivered = new Map<SubmissionId, Deferred.Deferred<void, FixtureFailed>>()
   watch.start(function recordLive(live) {
     if (live !== null && live.run !== undefined) {
       const input = live.run.inputs[0]
       if (input === undefined) throw new Error('Expected first run input')
       if (!tasks.has(input)) tasks.set(input, live.run.taskId)
       const receipt = delivered.get(input)
-      if (receipt !== undefined) receipt.resolve()
+      if (receipt !== undefined) Deferred.doneUnsafe(receipt, Effect.void)
     }
     return Promise.resolve()
   })
   return {
     tasks,
-    wait: async (input: SubmissionId) => {
+    wait: Effect.fn('Test.waitForRunStart')(function* (input: SubmissionId) {
       if (tasks.has(input)) return
-      const receipt = signal()
+      const receipt = yield* Deferred.make<void, FixtureFailed>()
       delivered.set(input, receipt)
-      await receipt.promise
-    },
+      yield* Deferred.await(receipt)
+    }),
   }
-}
-
+})
 /** Fork-aware entries are ordered independently of the document watcher and message translator. */
-async function assistants(root: Conversation) {
-  return (await root.entries({}, 100, undefined, context)).items
+const assistants = Effect.fn('Test.assistants')(function* (root: Conversation) {
+  return (yield* Effect.promise(() => root.entries({}, 100, undefined, context))).items
     .toReversed()
     .filter((entry) => entry.kind === 'pi.assistant')
-}
-
+})
 /** An attributed assistant is required by the proposed gen:<task> contract, never guessed. */
 function taskOf(entry: EntryRecord): TaskId {
   if (entry.byTaskId === undefined) throw new Error('Expected assistant task attribution')
   return entry.byTaskId
 }
-
 /** Array absence is an assertion failure; an entry's attribution is checked separately. */
 function taskAt(entries: readonly EntryRecord[], index: number): TaskId {
   const entry = entries.at(index)
   if (entry === undefined) throw new Error('Expected assistant entry')
   return taskOf(entry)
 }
-
-const decodeTask = Schema.decodeUnknownSync(
-  Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
-)
-
+const decodeTask = Schema.decodeUnknownSync(Schema.Int.check(Schema.isGreaterThan(0)))
 for (const backend of backends) {
   /** Idle admission appends the Person entry, receipt and generation on one serialized commit.
    * Concurrent conversations may interleave commits, never the identities within that commit. */
   it.live(
     `${backend}: idle receipts immediately precede generation tasks under concurrent admission`,
     () =>
-      Effect.promise(async () => {
-        const store = await storageFor(backend)
-        const { harness, root, faux } = await opened(await store.open(), [])
-        const other = await harness.createConversation(
-          {
-            ownership: { kind: 'ownerless' },
-            agent: { model: { provider: 'faux', modelId: 'faux-1' } },
-          },
-          context,
+      Effect.gen(function* () {
+        const store = yield* storageFor(backend)
+        const { harness, root, faux } = yield* opened(yield* store.open(), [])
+        const other = yield* Effect.promise(() =>
+          harness.createConversation(
+            {
+              ownership: { kind: 'ownerless' },
+              agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+            },
+            context,
+          ),
         )
-        const first = await starts(harness, root)
-        const second = await starts(harness, other)
+        const first = yield* starts(harness, root)
+        const second = yield* starts(harness, other)
         faux.setResponses([fauxAssistantMessage('First.'), fauxAssistantMessage('Second.')])
-        const admissions = await Promise.all([
-          root.submit({ type: 'input', content: 'First', requestId: 'first' }, context),
-          other.submit({ type: 'input', content: 'Second', requestId: 'second' }, context),
-        ])
+        const admissions = yield* Effect.all(
+          [
+            Effect.promise(() =>
+              root.submit({ type: 'input', content: 'First', requestId: 'first' }, context),
+            ),
+            Effect.promise(() =>
+              other.submit({ type: 'input', content: 'Second', requestId: 'second' }, context),
+            ),
+          ],
+          { concurrency: 'unbounded' },
+        )
         const [one, two] = admissions
         if (one === undefined || two === undefined) throw new Error('Expected both admissions')
-        await Promise.all([first.wait(one.id), second.wait(two.id)])
+        yield* Effect.all([first.wait(one.id), second.wait(two.id)], { concurrency: 'unbounded' })
         expect(first.tasks.get(one.id)).toBe(one.id + 1)
         expect(second.tasks.get(two.id)).toBe(two.id + 1)
-        await harness.waitForIdle(context)
-        expect(taskAt(await assistants(root), 0)).toBe(one.id + 1)
-        expect(taskAt(await assistants(other), 0)).toBe(two.id + 1)
+        yield* Effect.promise(() => harness.waitForIdle(context))
+        expect(taskAt(yield* assistants(root), 0)).toBe(one.id + 1)
+        expect(taskAt(yield* assistants(other), 0)).toBe(two.id + 1)
       }),
   )
   /** generation.abort commits an aborted outcome WITHOUT GenerationResult, although the
    * tools checkpoint and attributed assistant already exist. Closed-resume design must
    * account for this before replacing the current terminal correction contract. */
   it.live(`${backend}: an aborted first generation has an assistant entry but no result`, () =>
-    Effect.promise(async () => {
-      const store = await storageFor(backend)
-      const extension = await toolsExtension(
-        'approval',
-        {
-          pay: tool({ inputSchema: z.object({}), execute: async () => 'paid' }),
-        },
-        { approval: { pay: true } },
+    Effect.gen(function* () {
+      const store = yield* storageFor(backend)
+      const extension = yield* Effect.promise(() =>
+        toolsExtension(
+          'approval',
+          {
+            pay: tool({
+              inputSchema: z.object({}),
+              execute: () => runForPi(Effect.succeed('paid'), undefined),
+            }),
+          },
+          { approval: { pay: true } },
+        ),
       )
-      const { harness, root, faux } = await opened(await store.open(), [extension])
-      const observed = await starts(harness, root)
+      const { harness, root, faux } = yield* opened(yield* store.open(), [extension])
+      const observed = yield* starts(harness, root)
       faux.setResponses([
         fauxAssistantMessage([fauxToolCall('pay', {}, { id: 'pay' })], { stopReason: 'toolUse' }),
       ])
-      const parked = await consume(
-        await streamRun(
-          harness,
-          {
-            conversationId: root.id,
-            requestId: 'held',
-            content: 'Pay',
-          },
-          context,
+      const parked = yield* consumeReadable(
+        yield* Effect.promise(() =>
+          streamRun(
+            harness,
+            {
+              conversationId: root.id,
+              requestId: 'held',
+              content: 'Pay',
+            },
+            context,
+          ),
         ),
+        Option.none(),
       )
       expect(parked.chunks.some((chunk) => chunk.type === 'tool-approval-request')).toBe(true)
-      const entries = await assistants(root)
+      const entries = yield* assistants(root)
       const first = taskAt(entries, 0)
       expect([...observed.tasks.values()]).toContain(first)
-      const waiting = await harness.getTask(first, context)
+      const waiting = yield* Effect.promise(() => harness.getTask(first, context))
       if (waiting === undefined) throw new Error('Expected waiting generation')
       const assistant = entries[0]
       if (assistant === undefined) throw new Error('Expected calling assistant')
       expect(waiting.state.checkpoint).toMatchObject({ phase: 'tools', assistant: assistant.id })
-      await abort(harness, root.id, context)
-      const task = await harness.getTask(first, context)
+      yield* Effect.promise(() => abort(harness, root.id, context))
+      const task = yield* Effect.promise(() => harness.getTask(first, context))
       if (task === undefined || task.state.status !== 'terminal')
         throw new Error('Expected terminal generation')
       expect(task.state.outcome.status).toBe('aborted')
@@ -218,62 +241,65 @@ for (const backend of backends) {
   )
   for (const mode of ['idle', 'queued', 'after-abort'] as const)
     it.live(`${backend}: first generation attribution for ${mode} admission`, () =>
-      Effect.promise(async () => {
-        const store = await storageFor(backend)
-        const { harness, root, faux } = await opened(await store.open(), [])
-        const observed = await starts(harness, root)
-        const entered = signal()
-        const release = signal()
-        onTestFinished(() => release.resolve())
+      Effect.gen(function* () {
+        const store = yield* storageFor(backend)
+        const { harness, root, faux } = yield* opened(yield* store.open(), [])
+        const observed = yield* starts(harness, root)
+        const entered = yield* Deferred.make<void, FixtureFailed>()
+        const release = yield* Deferred.make<void, FixtureFailed>()
+        yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined))
         faux.setResponses([
           mode === 'idle'
             ? fauxAssistantMessage('First.')
-            : async (_messages, options) => {
-                entered.resolve()
-                if (options === undefined || options.signal === undefined)
-                  throw new Error('Expected provider abort signal')
-                const cancelled = () => release.resolve()
-                options.signal.addEventListener('abort', cancelled, { once: true })
-                await release.promise
-                options.signal.removeEventListener('abort', cancelled)
-                return fauxAssistantMessage('First.')
-              },
+            : (_messages, options) =>
+                runForPi(
+                  Effect.gen(function* () {
+                    Deferred.doneUnsafe(entered, Effect.void)
+                    if (options === undefined || options.signal === undefined)
+                      throw new Error('Expected provider abort signal')
+                    const cancelled = () => Deferred.doneUnsafe(release, Effect.void)
+                    options.signal.addEventListener('abort', cancelled, { once: true })
+                    yield* Deferred.await(release)
+                    options.signal.removeEventListener('abort', cancelled)
+                    return fauxAssistantMessage('First.')
+                  }),
+                  undefined,
+                ),
           fauxAssistantMessage('Successor.'),
         ])
-        const first = await root.submit(
-          { type: 'input', content: 'First', requestId: 'first' },
-          context,
+        const first = yield* Effect.promise(() =>
+          root.submit({ type: 'input', content: 'First', requestId: 'first' }, context),
         )
-        await observed.wait(first.id)
-        if (mode !== 'idle') await entered.promise
+        yield* observed.wait(first.id)
+        if (mode !== 'idle') yield* Deferred.await(entered)
         const next =
           mode === 'queued'
-            ? await root.submit({ type: 'input', content: 'Next', requestId: 'next' }, context)
+            ? yield* Effect.promise(() =>
+                root.submit({ type: 'input', content: 'Next', requestId: 'next' }, context),
+              )
             : first
-        if (mode === 'after-abort') await root.abort(context)
-        release.resolve()
-        await root.waitForIdle(context)
+        if (mode === 'after-abort') yield* Effect.promise(() => root.abort(context))
+        Deferred.doneUnsafe(release, Effect.void)
+        yield* Effect.promise(() => root.waitForIdle(context))
         if (mode === 'after-abort') {
-          const successor = await root.submit(
-            { type: 'input', content: 'After abort', requestId: 'after' },
-            context,
+          const successor = yield* Effect.promise(() =>
+            root.submit({ type: 'input', content: 'After abort', requestId: 'after' }, context),
           )
-          await observed.wait(successor.id)
-          await root.waitForIdle(context)
-          expect(taskAt(await assistants(root), -1)).toBe(observed.tasks.get(successor.id))
+          yield* observed.wait(successor.id)
+          yield* Effect.promise(() => root.waitForIdle(context))
+          expect(taskAt(yield* assistants(root), -1)).toBe(observed.tasks.get(successor.id))
         } else {
-          await observed.wait(next.id)
-          const entries = await assistants(root)
+          yield* observed.wait(next.id)
+          const entries = yield* assistants(root)
           expect(taskAt(entries, 0)).toBe(observed.tasks.get(first.id))
           expect(taskAt(entries, -1)).toBe(observed.tasks.get(next.id))
         }
       }),
     )
-
   for (const mode of ['tools', 'continuation'] as const)
     it.live(`${backend}: generation handover after ${mode} keeps distinct assistant tasks`, () =>
-      Effect.promise(async () => {
-        const store = await storageFor(backend)
+      Effect.gen(function* () {
+        const store = yield* storageFor(backend)
         const extension = defineExtension({
           name: 'identity',
           tools: [
@@ -295,8 +321,8 @@ for (const backend of backends) {
             }),
           ],
         })
-        const { harness, root, faux } = await opened(await store.open(), [extension])
-        const observed = await starts(harness, root)
+        const { harness, root, faux } = yield* opened(yield* store.open(), [extension])
+        const observed = yield* starts(harness, root)
         faux.setResponses([
           mode === 'tools'
             ? fauxAssistantMessage([fauxToolCall('work', {}, { id: 'work' })], {
@@ -305,46 +331,51 @@ for (const backend of backends) {
             : fauxAssistantMessage('First.'),
           fauxAssistantMessage('Final.'),
         ])
-        const input = await root.submit(
-          { type: 'input', content: 'Start', requestId: 'start' },
-          context,
+        const input = yield* Effect.promise(() =>
+          root.submit({ type: 'input', content: 'Start', requestId: 'start' }, context),
         )
-        await observed.wait(input.id)
-        await root.waitForIdle(context)
-        const entries = await assistants(root)
+        yield* observed.wait(input.id)
+        yield* Effect.promise(() => root.waitForIdle(context))
+        const entries = yield* assistants(root)
         expect(entries).toHaveLength(2)
         const tasks = entries.map(taskOf)
         expect(tasks[0]).toBe(observed.tasks.get(input.id))
         expect(new Set(tasks).size).toBe(2)
       }),
     )
-
   it.live(
     `${backend}: fork preserves prefix generation ids and gives the child a distinct task`,
     () =>
-      Effect.promise(async () => {
-        const store = await storageFor(backend)
-        const { harness, root, faux } = await opened(await store.open(), [])
+      Effect.gen(function* () {
+        const store = yield* storageFor(backend)
+        const { harness, root, faux } = yield* opened(yield* store.open(), [])
         faux.setResponses([fauxAssistantMessage('Parent.'), fauxAssistantMessage('Child.')])
-        await root.submit({ type: 'input', content: 'Parent', requestId: 'parent' }, context)
-        await root.waitForIdle(context)
-        const prefix = await assistants(root)
+        yield* Effect.promise(() =>
+          root.submit({ type: 'input', content: 'Parent', requestId: 'parent' }, context),
+        )
+        yield* Effect.promise(() => root.waitForIdle(context))
+        const prefix = yield* assistants(root)
         const last = prefix.at(-1)
         if (last === undefined) throw new Error('Expected fork boundary')
-        const child = await root.fork(last.id, { ownership: { kind: 'ownerless' } }, context)
-        const observed = await starts(harness, child)
-        const input = await child.submit(
-          { type: 'input', content: 'Child', requestId: 'child' },
-          context,
+        const child = yield* Effect.promise(() =>
+          root.fork(last.id, { ownership: { kind: 'ownerless' } }, context),
         )
-        await observed.wait(input.id)
-        await child.waitForIdle(context)
-        const entries = await assistants(child)
+        const observed = yield* starts(harness, child)
+        const input = yield* Effect.promise(() =>
+          child.submit({ type: 'input', content: 'Child', requestId: 'child' }, context),
+        )
+        yield* observed.wait(input.id)
+        yield* Effect.promise(() => child.waitForIdle(context))
+        const entries = yield* assistants(child)
         expect(entries[0]).toEqual(prefix[0])
         expect(taskAt(entries, -1)).toBe(observed.tasks.get(input.id))
         expect(taskAt(entries, -1)).not.toBe(taskAt(prefix, 0))
-        const parent = await history(harness, root.id, { limit: 10 }, context)
-        const saved = await history(harness, child.id, { limit: 10 }, context)
+        const parent = yield* Effect.promise(() =>
+          history(harness, root.id, { limit: 10 }, context),
+        )
+        const saved = yield* Effect.promise(() =>
+          history(harness, child.id, { limit: 10 }, context),
+        )
         const parentAssistant = parent.messages.find((message) => message.role === 'assistant')
         const shared = saved.messages.find((message) => message.role === 'assistant')
         const own = saved.messages.findLast((message) => message.role === 'assistant')
@@ -352,14 +383,16 @@ for (const backend of backends) {
           throw new Error('Expected forked assistant messages')
         expect(shared.id).toBe(parentAssistant.id)
         expect(own.id).not.toBe(shared.id)
-        const followed = await consume(await followRun(harness, child.id, 'child', context))
+        const followed = yield* consumeReadable(
+          yield* Effect.promise(() => followRun(harness, child.id, 'child', context)),
+          Option.none(),
+        )
         expect(followed.message.id).toBe(own.id)
       }),
   )
-
   it.live(`${backend}: SIGKILL and retry of the first generation retain its task attribution`, () =>
-    Effect.promise(async () => {
-      const store = await storageFor(backend)
+    Effect.gen(function* () {
+      const store = yield* storageFor(backend)
       const child = NodeChildProcess.spawn(
         process.execPath,
         [
@@ -368,25 +401,29 @@ for (const backend of backends) {
         ],
         { stdio: ['ignore', 'pipe', 'inherit', 'ipc'] },
       )
-      onTestFinished(() => {
-        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
-      })
-      const exited = NodeEvents.EventEmitter.once(child, 'exit')
-      const [message] = await Promise.race([
-        NodeEvents.EventEmitter.once(child, 'message'),
-        exited.then(() => {
-          throw new Error('Generation child exited before its task receipt')
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
         }),
-      ])
+      )
+      const exited = NodeEvents.EventEmitter.once(child, 'exit')
+      const [message] = yield* Effect.promise(() =>
+        Promise.race([
+          NodeEvents.EventEmitter.once(child, 'message'),
+          exited.then(() => {
+            throw new Error('Generation child exited before its task receipt')
+          }),
+        ]),
+      )
       // IPC supplies only the task id; the stored assistant entries independently validate it.
       const task = decodeTask(message)
       child.kill('SIGKILL')
-      await exited
-      const { harness, root, faux } = await opened(await store.open(), [])
+      yield* Effect.promise(() => exited)
+      const { harness, root, faux } = yield* opened(yield* store.open(), [])
       faux.setResponses([fauxAssistantMessage('Recovered.')])
       harness.resume()
-      await root.waitForIdle(context)
-      const entries = await assistants(root)
+      yield* Effect.promise(() => root.waitForIdle(context))
+      const entries = yield* assistants(root)
       expect(entries.length).toBeGreaterThan(0)
       expect(taskAt(entries, 0)).toBe(task)
       expect(entries.map(taskOf)).toEqual(entries.map(() => task))
