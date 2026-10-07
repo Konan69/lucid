@@ -76,7 +76,7 @@ export class SkillStore extends Context.Service<SkillStore, SkillStoreService>()
 /** Authorize against the readable row first, so foreign identifiers always remain NotFound. */
 const editable = Effect.fn('SkillStore.editable')(function* (actor: Actor, row: SkillRow) {
   if (row.personId === actor.person.id) return
-  if (row.companyId === null) yield* new SkillNotEditable({ id: row.id })
+  if (row.companyId === null) return yield* new SkillNotEditable({ id: row.id })
   yield* requireAdmin(actor.workspace).pipe(
     Effect.mapError(() => new SkillNotEditable({ id: row.id })),
   )
@@ -107,7 +107,7 @@ const uniqueName = Effect.fn('SkillStore.uniqueName')(function* (
     .where(sql`(${skillScope(owner)}) AND ${eq(skills.name, name)} AND ${ne(skills.id, id)}`)
     .limit(1)
   if (collisions.length > 0)
-    yield* new SkillNameTaken({ id, name, scope: scopeOf(owner.companyId) })
+    return yield* new SkillNameTaken({ id, name, scope: scopeOf(owner.companyId) })
 })
 
 /** Reads and writes use the same visibility condition, including personal skills in a Company. */
@@ -192,7 +192,7 @@ const makePatch = (database: Database['Service']) =>
 /** Delete confirms visibility and authority before touching the row, even for Company admins. */
 const makeRemove = (database: Database['Service']) =>
   Effect.fn('SkillStore.remove')(function* (actor: Actor, id: SkillId) {
-    if (builtins.some((skill) => skill.id === id)) yield* new SkillReadOnly({ id })
+    if (builtins.some((skill) => skill.id === id)) return yield* new SkillReadOnly({ id })
     const row = yield* loadRow(database, actor, id)
     yield* editable(actor, row)
     const removed = yield* database.run(
@@ -201,7 +201,7 @@ const makeRemove = (database: Database['Service']) =>
         .where(sql`(${visibleSkills(actor)}) AND ${eq(skills.id, id)}`)
         .returning({ id: skills.id }),
     )
-    if (removed.length === 0) yield* new SkillMissing({ id })
+    if (removed.length === 0) return yield* new SkillMissing({ id })
   })
 
 /** Decode and project each persisted row at the owning database boundary. */
