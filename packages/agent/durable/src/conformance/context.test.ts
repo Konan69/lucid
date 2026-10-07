@@ -231,6 +231,11 @@ for (const sample of [
     diagnostic: 'Context resolver must return an Effect',
   },
   {
+    name: 'rejected Promise',
+    resolve: () => Promise.reject(new Error('invalid resolver rejection')),
+    diagnostic: 'Context resolver must return an Effect',
+  },
+  {
     name: 'synchronous throw',
     resolve: () => {
       throw new Error('resolver sync boom')

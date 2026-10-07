@@ -246,13 +246,13 @@ const resolveContext = Effect.fn('Durable.toolContext')(function* (
 ) {
   return yield* Effect.suspend(() => {
     const resolved = resolve(scope)
-    if (Effect.isEffect(resolved)) return resolved
     // Invalid Promise resolvers are not awaited; observe rejection while reporting the contract error.
     if (Predicate.isPromiseLike(resolved))
       resolved.then(
         () => {},
         () => {},
       )
+    if (Effect.isEffect(resolved)) return resolved
     return Effect.fail(new Error('Context resolver must return an Effect'))
   }).pipe(
     Effect.catchCause((cause) =>
