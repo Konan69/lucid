@@ -60,7 +60,7 @@ export interface RoutineSchedulerService {
     payload: string,
     invocation: RoutineInvocation,
   ) => Effect.Effect<Occurrence, RoutineDeliveryError>
-  readonly runDue: () => Effect.Effect<void, RoutineDeliveryError | InvalidRoutineSchedule>
+  readonly runDue: Effect.Effect<void, RoutineDeliveryError | InvalidRoutineSchedule>
 }
 
 export class RoutineScheduler extends Context.Service<RoutineScheduler, RoutineSchedulerService>()(
@@ -392,7 +392,7 @@ export const routineSchedulerServiceLayer = Layer.effect(
     })
 
     /** Every claimed tick already has a receipt; failed admissions remain replayable on later passes. */
-    const runDue = Effect.fn('RoutineScheduler.runDue')(function* () {
+    const runDue = Effect.gen(function* () {
       const due = yield* routines.claimDue
       yield* Effect.forEach(due, ({ record }) => publish(changes)(record), { discard: true })
       const outcomes = yield* Effect.forEach(due, ({ record, attempt }) =>
@@ -401,7 +401,7 @@ export const routineSchedulerServiceLayer = Layer.effect(
       const integrationOutcome = yield* Effect.exit(integrationPass())
       for (const outcome of outcomes) yield* outcome
       yield* integrationOutcome
-    })
+    }).pipe(Effect.withSpan('RoutineScheduler.runDue'))
     return RoutineScheduler.of({ run, webhook, runDue })
   }),
 )
@@ -410,7 +410,7 @@ export const routineSchedulerServiceLayer = Layer.effect(
 export const routineSchedulerLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const scheduler = yield* RoutineScheduler
-    const pass = scheduler.runDue().pipe(
+    const pass = scheduler.runDue.pipe(
       // Recorded before `ignore` discards the failure; the retry on the next pass is unchanged.
       observeFailures('schedule'),
       Effect.tapError((error) => Effect.logError('Routine scheduler pass failed', error)),

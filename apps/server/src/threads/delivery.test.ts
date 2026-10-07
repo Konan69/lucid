@@ -290,19 +290,14 @@ type Harness = Effect.Success<ReturnType<typeof harness>>
 /** The real gateway, authentication and Conversation remain in the request path. */
 const gateway = Effect.fn('Gateway.test.request')(function* (test: Harness, request: Request) {
   const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
-  return yield* Effect.gen(function* () {
-    // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
-    const context = yield* Layer.build(silentChangesLayer.pipe(Layer.provideMerge(testConfigLayer)))
-    return yield* handle.pipe(
+  return yield* handle.pipe(
       Effect.provideService(Conversation, test.conversation),
       Effect.provideService(Runtime, test.runtime),
       Effect.provideService(
         HttpServerRequest.HttpServerRequest,
         HttpServerRequest.fromWeb(request),
-      ),
-      Effect.provide(context),
+      )
     )
-  })
 })
 
 /** Only Ben can see this private Thread; Ada stays a Company Member to test the narrower audience. */
@@ -357,7 +352,7 @@ const signals = [
   { type: 'answer', origin: StoredRunOrigin.cases.Decision.make({}) },
 ] as const
 
-layer(databaseLayer)((it) => {
+layer(databaseLayer.pipe(Layer.provideMerge(silentChangesLayer), Layer.provideMerge(testConfigLayer)))((it) => {
   describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
     it.effect(
       'a standing finding opens one private Thread and Run through normal admission; a child cannot fan out',
@@ -387,7 +382,7 @@ layer(databaseLayer)((it) => {
               },
             }
             const open = Effect.gen(function* () {
-              // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
+
               const context = yield* Layer.build(test.services)
               return yield* openAttentionThread(input).pipe(
                 Effect.provideService(Conversation, test.conversation),
@@ -414,7 +409,7 @@ layer(databaseLayer)((it) => {
             expect(yield* automaticallyNotifies(source.runId)).toBe(false)
             expect(yield* automaticallyNotifies(childRun.id)).toBe(false)
             const refused = yield* Effect.gen(function* () {
-              // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
+
               const context = yield* Layer.build(test.services)
               return yield* openAttentionThread({ ...input, threadId: child.id }).pipe(
                 Effect.provideService(Conversation, test.conversation),
@@ -609,7 +604,7 @@ layer(databaseLayer)((it) => {
         const busy = yield* store.create(actor, { name: 'Busy', prompt: 'Review', trigger })
         const healthy = yield* store.create(actor, { name: 'Healthy', prompt: 'Review', trigger })
         const threadStore = yield* Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
+
           const context = yield* Layer.build(test.services)
           return yield* ThreadStore.pipe(Effect.provide(context))
         })
@@ -628,7 +623,7 @@ layer(databaseLayer)((it) => {
         )
         const ada = yield* test.conversation.admit(said(busyThread.id, test.ada))
         yield* TestClock.setTime(60_000)
-        const pass = yield* Effect.result(scheduler.runDue())
+        const pass = yield* Effect.result(scheduler.runDue)
         expect(Result.isFailure(pass) && pass.failure).toBeInstanceOf(Conflict)
         const waiting = (yield* store.list(actor)).find((routine) => routine.id === busy.id)
         if (waiting === undefined) expect.fail('Missing Busy Routine')
@@ -639,7 +634,7 @@ layer(databaseLayer)((it) => {
         if (running === undefined) expect.fail('Missing Healthy Routine')
         expect(running.runs).toMatchObject([{ status: 'running' }])
         yield* test.finish(ada.runId)
-        yield* scheduler.runDue()
+        yield* scheduler.runDue
         const replayed = (yield* store.list(actor)).find((routine) => routine.id === busy.id)
         if (replayed === undefined) expect.fail('Missing replayed Routine')
         expect(replayed.runs.map((run) => run.id)).toEqual(waiting.runs.map((run) => run.id))
@@ -697,12 +692,7 @@ layer(databaseLayer)((it) => {
           const test = yield* harness()
           const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
           const send = Effect.fn('Gateway.test.send')(function* () {
-            return yield* Effect.gen(function* () {
-              // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
-              const context = yield* Layer.build(
-                silentChangesLayer.pipe(Layer.provideMerge(testConfigLayer)),
-              )
-              return yield* handle.pipe(
+            return yield* handle.pipe(
                 Effect.provideService(Conversation, test.conversation),
                 Effect.provideService(Runtime, test.runtime),
                 Effect.provideService(
@@ -722,10 +712,8 @@ layer(databaseLayer)((it) => {
                       }),
                     }),
                   ),
-                ),
-                Effect.provide(context),
+                )
               )
-            })
           })
           const first = yield* send()
           // Discarding the first response represents admission succeeding before HTTP delivery fails.
@@ -747,12 +735,7 @@ layer(databaseLayer)((it) => {
         const test = yield* harness()
         yield* test.conversation.admit(said(test.threadId, test.ada))
         const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
-        const response = yield* Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
-          const context = yield* Layer.build(
-            silentChangesLayer.pipe(Layer.provideMerge(testConfigLayer)),
-          )
-          return yield* handle.pipe(
+        const response = yield* handle.pipe(
             Effect.provideService(Conversation, test.conversation),
             Effect.provideService(Runtime, test.runtime),
             Effect.provideService(
@@ -768,10 +751,8 @@ layer(databaseLayer)((it) => {
                   body: JSON.stringify({ kind: 'user', body: 'Please help' }),
                 }),
               ),
-            ),
-            Effect.provide(context),
+            )
           )
-        })
         expect(response.status).toBe(409)
         expect(response.body).toHaveProperty(
           'text',
@@ -858,17 +839,10 @@ layer(databaseLayer)((it) => {
           const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
           yield* server
             .serve(
-              Effect.gen(function* () {
-                // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
-                const context = yield* Layer.build(
-                  silentChangesLayer.pipe(Layer.provideMerge(testConfigLayer)),
-                )
-                return yield* handle.pipe(
+              handle.pipe(
                   Effect.provideService(Conversation, test.conversation),
-                  Effect.provideService(Runtime, test.runtime),
-                  Effect.provide(context),
-                )
-              }),
+                  Effect.provideService(Runtime, test.runtime)
+                ),
             )
             .pipe(Effect.provideContext(serverContext))
           const url = new URL(HttpServer.formatAddress(server.address))
