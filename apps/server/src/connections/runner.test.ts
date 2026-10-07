@@ -80,7 +80,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
               }),
             })
             const outcome = yield* Effect.gen(function* () {
-              // Preserve local provision: rebuild against this case's overridden authorities.
+              // The store captures this phase-specific database failure before approved execution.
               const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
               return yield* connectionRunner({
                 person: ownerActor.person,

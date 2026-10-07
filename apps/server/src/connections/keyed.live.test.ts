@@ -37,7 +37,16 @@ const configured = executorLayer.pipe(
  * credentials into product records, audit or model views. Only Gate/model judgement is supplied
  * by the existing test Layer; the provider registration, discovery and call are real. */
 describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
-  layer(connectionTestLayer, { excludeTestServices: true })((it) => {
+  layer(
+    auditLayer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(configured, connectionAddressLayer).pipe(
+          Layer.provideMerge(connectionTestLayer),
+        ),
+      ),
+    ),
+    { excludeTestServices: true },
+  )((it) => {
     it.effect(
       'adds GitHub, completes the key card, discovers tools and isolates a second Person',
       () =>
@@ -60,92 +69,78 @@ describe.skipIf(!enabled)('keyed MCP product acceptance', () => {
           })
           const registered = yield* Ref.make<Option.Option<ConnectionId>>(Option.none())
           yield* Effect.gen(function* () {
-            // This composed fixture owns per-case state and resources; build it in the test scope.
-            const context = yield* Layer.build(connectionAddressLayer)
+            // Rebuild the store under the harness's live Executor and persisted audit authorities.
+            const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
             return yield* Effect.gen(function* () {
-              // This composed fixture owns per-case state and resources; build it in the test scope.
-              const context = yield* Layer.build(configured)
-              return yield* Effect.gen(function* () {
-                // Preserve local provision: rebuild against this case's overridden authorities.
-                const context = yield* Layer.build(Layer.fresh(auditLayer))
-                return yield* Effect.gen(function* () {
-                  // Preserve local provision: rebuild against this case's overridden authorities.
-                  const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
-                  return yield* Effect.gen(function* () {
-                    const store = yield* ConnectionStore
-                    yield* Effect.addFinalizer(() =>
-                      Effect.gen(function* () {
-                        const id = yield* Ref.get(registered)
-                        if (Option.isSome(id)) {
-                          const cleanup = yield* store
-                            .remove(ownerActor, id.value)
-                            .pipe(Effect.exit)
-                          expect(cleanup._tag).toBe('Success')
-                        }
-                      }),
-                    )
-                    const result = yield* connectionHandlers
-                      .AddIntegration({
-                        address: 'https://api.githubcopilot.com/mcp/',
-                        name: 'GitHub proof',
-                        shared: false,
-                      })
-                      .pipe(Effect.provideService(AuthContext, vivid))
-                    if (!AddIntegrationOutcome.guards.NeedsKey(result))
-                      return expect.fail(`Expected NeedsKey, received ${result._tag}`)
-                    yield* Ref.set(registered, Option.some(result.step.connection.id))
-                    expect(result.step.fields).toEqual([
-                      { name: 'token', label: 'Personal access token' },
-                    ])
-                    const token = NodeProcess.env['VIVID_TEST_GITHUB_TOKEN']
-                    if (token === undefined) return expect.fail('Supply test token authority')
-                    const completed = yield* connectionHandlers
-                      .CompleteConnection({
-                        id: result.step.connection.id,
-                        fields: { token: Redacted.make(token) },
-                      })
-                      .pipe(Effect.provideService(AuthContext, person))
-                    expect(ConnectionState.guards.Ready(completed.connection.state)).toBe(true)
-                    const found = yield* connectionHandlers
-                      .FindTools({ query: 'GitHub', limit: 100 })
-                      .pipe(Effect.provideService(AuthContext, vivid))
-                    expect(found.tools.length).toBeGreaterThan(0)
-                    const hidden = yield* connectionHandlers
-                      .FindTools({ query: 'GitHub', limit: 100 })
-                      .pipe(Effect.provideService(AuthContext, other))
-                    expect(hidden.tools).toHaveLength(0)
-                    expect(yield* store.records(memberActor)).toHaveLength(0)
-                    const refused = yield* connectionHandlers
-                      .UseTool({
-                        connectionId: result.step.connection.id,
-                        tool: 'get_me',
-                        input: {},
-                        summary: 'Read account',
-                        rationale: 'Verify account access',
-                      })
-                      .pipe(Effect.provideService(AuthContext, other))
-                    expect(refused._tag).toBe('Rejected')
-                    const records = yield* store.records(ownerActor)
-                    const database = yield* Database
-                    const audit = yield* database.run(
-                      database
-                        .select()
-                        .from(auditEntries)
-                        .where(eq(auditEntries.personId, ownerActor.person.id)),
-                    )
-                    expect(audit.length).toBeGreaterThan(0)
-                    expect(
-                      JSON.stringify({ result, completed, found, records, audit }).includes(token),
-                    ).toBe(false)
-                    NodeProcess.stdout.write(
-                      `keyed product tools=${found.tools.length} second-person-tools=${hidden.tools.length}\n`,
-                    )
-                    return yield* Effect.void
-                  }).pipe(Effect.scoped, Effect.provide(context))
-                }).pipe(Effect.scoped, Effect.provide(context))
-              }).pipe(Effect.scoped, Effect.provide(context))
+              const store = yield* ConnectionStore
+              yield* Effect.addFinalizer(() =>
+                Effect.gen(function* () {
+                  const id = yield* Ref.get(registered)
+                  if (Option.isSome(id)) {
+                    const cleanup = yield* store.remove(ownerActor, id.value).pipe(Effect.exit)
+                    expect(cleanup._tag).toBe('Success')
+                  }
+                }),
+              )
+              const result = yield* connectionHandlers
+                .AddIntegration({
+                  address: 'https://api.githubcopilot.com/mcp/',
+                  name: 'GitHub proof',
+                  shared: false,
+                })
+                .pipe(Effect.provideService(AuthContext, vivid))
+              if (!AddIntegrationOutcome.guards.NeedsKey(result))
+                return expect.fail(`Expected NeedsKey, received ${result._tag}`)
+              yield* Ref.set(registered, Option.some(result.step.connection.id))
+              expect(result.step.fields).toEqual([
+                { name: 'token', label: 'Personal access token' },
+              ])
+              const token = NodeProcess.env['VIVID_TEST_GITHUB_TOKEN']
+              if (token === undefined) return expect.fail('Supply test token authority')
+              const completed = yield* connectionHandlers
+                .CompleteConnection({
+                  id: result.step.connection.id,
+                  fields: { token: Redacted.make(token) },
+                })
+                .pipe(Effect.provideService(AuthContext, person))
+              expect(ConnectionState.guards.Ready(completed.connection.state)).toBe(true)
+              const found = yield* connectionHandlers
+                .FindTools({ query: 'GitHub', limit: 100 })
+                .pipe(Effect.provideService(AuthContext, vivid))
+              expect(found.tools.length).toBeGreaterThan(0)
+              const hidden = yield* connectionHandlers
+                .FindTools({ query: 'GitHub', limit: 100 })
+                .pipe(Effect.provideService(AuthContext, other))
+              expect(hidden.tools).toHaveLength(0)
+              expect(yield* store.records(memberActor)).toHaveLength(0)
+              const refused = yield* connectionHandlers
+                .UseTool({
+                  connectionId: result.step.connection.id,
+                  tool: 'get_me',
+                  input: {},
+                  summary: 'Read account',
+                  rationale: 'Verify account access',
+                })
+                .pipe(Effect.provideService(AuthContext, other))
+              expect(refused._tag).toBe('Rejected')
+              const records = yield* store.records(ownerActor)
+              const database = yield* Database
+              const audit = yield* database.run(
+                database
+                  .select()
+                  .from(auditEntries)
+                  .where(eq(auditEntries.personId, ownerActor.person.id)),
+              )
+              expect(audit.length).toBeGreaterThan(0)
+              expect(
+                JSON.stringify({ result, completed, found, records, audit }).includes(token),
+              ).toBe(false)
+              NodeProcess.stdout.write(
+                `keyed product tools=${found.tools.length} second-person-tools=${hidden.tools.length}\n`,
+              )
+              return yield* Effect.void
             }).pipe(Effect.scoped, Effect.provide(context))
-          }).pipe(Effect.scoped)
+          }).pipe(Effect.scoped, Effect.scoped, Effect.scoped, Effect.scoped)
         }).pipe(Effect.scoped, Effect.provideService(Logger.CurrentLoggers, new Set([]))),
       { timeout: 120_000 },
     )

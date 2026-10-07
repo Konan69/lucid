@@ -67,6 +67,7 @@ describe('Executor settings', () => {
   ] as const) {
     it.effect(`does not build when ${name}`, () =>
       Effect.gen(function* () {
+        // Building the failing production layer is the assertion: acquisition must report the missing setting.
         const failure = yield* Layer.build(
           executorLayer.pipe(
             Layer.provide(FetchHttpClient.layer),
@@ -114,7 +115,7 @@ it.effect('cannot distinguish declared writes from host-defaulted writes', () =>
       appOwnership: 'Shared',
     })
     const tools = yield* Effect.gen(function* () {
-      // This composed fixture owns per-case state and resources; build it in the test scope.
+      // This recorder controls the two indistinguishable upstream write declarations.
       const context = yield* Layer.build(hosted.configured)
       return yield* Effect.flatMap(Executor, (executor) => executor.tools(references)).pipe(
         Effect.provide(context),
@@ -122,7 +123,7 @@ it.effect('cannot distinguish declared writes from host-defaulted writes', () =>
     }).pipe(Effect.scoped)
     expect(tools.map((tool) => tool.effect)).toEqual(['write', 'write'])
     const judged = yield* Effect.gen(function* () {
-      // This composed fixture owns per-case state and resources; build it in the test scope.
+      // An empty classification cache judges this case's host-defaulted tool hints.
       const context = yield* Layer.build(
         toolEffectsLayer.pipe(
           Layer.provide(
@@ -185,7 +186,7 @@ it.effect('does not echo a token when credential submission fails', () =>
       label: 'Private',
     })
     const error = yield* Effect.gen(function* () {
-      // This composed fixture owns per-case state and resources; build it in the test scope.
+      // The credential recorder owns the rejected token submission and its redacted failure.
       const context = yield* Layer.build(hosted.configured)
       return yield* Effect.gen(function* () {
         return yield* (yield* Executor).complete({

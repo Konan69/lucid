@@ -62,7 +62,6 @@ it.effect.each([
   { read: 0, label: 'destructive', expected: 'write' },
 ])('classifies $label at $read as $expected', ({ read, label, expected }) =>
   Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(provider(() => Effect.succeed(answer(read, label))))
     return yield* Effect.gen(function* () {
       expect(yield* (yield* ToolEffects).classify(request)).toBe(expected)
@@ -76,7 +75,6 @@ it.effect(
     let calls = 0
     const inputs: string[] = []
     return Effect.gen(function* () {
-      // This composed fixture owns per-case state and resources; build it in the test scope.
       const context = yield* Layer.build(
         provider((input) => {
           calls += 1
@@ -122,7 +120,6 @@ it.effect(
 
 it.effect('failed or malformed decisions retain write', () =>
   Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(
       provider(() =>
         Effect.fail(
@@ -142,7 +139,6 @@ it.effect('failed or malformed decisions retain write', () =>
 
 it.effect('missing distributions retain write', () =>
   Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(provider(() => Effect.succeed(answer(2, 'read'))))
     return yield* Effect.gen(function* () {
       expect(yield* (yield* ToolEffects).classify(request)).toBe('write')
@@ -155,7 +151,6 @@ it.effect('missing distributions retain write', () =>
 it.effect('cached classification expires after 24 hours', () => {
   let calls = 0
   return Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(
       provider(() => {
         calls += 1
@@ -180,7 +175,6 @@ it.effect('a stalled classification keeps write within the direct budget', () =>
   let calls = 0
   const started = Deferred.makeUnsafe<void>()
   return Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(
       provider(() => {
         calls += 1
@@ -202,7 +196,6 @@ it.effect('a stalled classification keeps write within the direct budget', () =>
 it.effect('failure retries after one minute and then retains the recovered answer', () => {
   let calls = 0
   return Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(
       provider(() => {
         calls += 1
@@ -234,7 +227,6 @@ it.effect('failure retries after one minute and then retains the recovered answe
 /** The inert unconfigured model would stall if entered; no clock advance is needed. */
 it.effect('unconfigured classification immediately retains write', () =>
   Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(
       toolEffectsLayer.pipe(Layer.provide(unconfiguredDecisionLayer)),
     )
@@ -248,7 +240,6 @@ it.effect('unconfigured classification immediately retains write', () =>
 it.effect('cold discovery batches bounded misses and reuses them during execution', () => {
   const sizes: number[] = []
   return Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(
       provider(({ decisions }) => {
         sizes.push(Object.keys(decisions).length)
@@ -310,7 +301,6 @@ it.effect('pending discovery and direct use share one provider request', () => {
       }),
     )
     yield* Effect.gen(function* () {
-      // This composed fixture owns per-case state and resources; build it in the test scope.
       const context = yield* Layer.build(modelLayer)
       return yield* Effect.gen(function* () {
         const effects = yield* ToolEffects
@@ -337,7 +327,6 @@ it.effect('stalled discovery returns writes within its budget then retries after
   let calls = 0
   const started = Deferred.makeUnsafe<void>()
   return Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(
       provider(({ decisions }) => {
         calls += 1
@@ -381,7 +370,6 @@ it.effect('stalled discovery returns writes within its budget then retries after
 it.effect.each(['direct', 'batch'] as const)('oversized metadata bypasses Jev in %s', (mode) => {
   let calls = 0
   return Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(
       provider(() => {
         calls += 1
@@ -430,7 +418,6 @@ it.effect.each(['direct', 'batch'] as const)('oversized metadata bypasses Jev in
 it.effect('one malformed batch answer keeps every tool write for a minute', () => {
   let calls = 0
   return Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(
       provider(({ decisions }) => {
         calls += 1
@@ -501,7 +488,6 @@ it.effect('Backoff exits are not cached beyond provider recovery', () => {
     }),
   )
   return Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(
       toolEffectsLayer.pipe(
         Layer.provide(
@@ -531,7 +517,6 @@ it.effect.each(['direct', 'batch'] as const)(
   (mode) => {
     const questions: string[] = []
     return Effect.gen(function* () {
-      // This composed fixture owns per-case state and resources; build it in the test scope.
       const context = yield* Layer.build(
         provider(({ decisions }) => {
           questions.push(...Object.values(decisions).map((question) => question.instructions))
@@ -573,7 +558,6 @@ it.effect.each(['direct', 'batch'] as const)(
 it.effect('logs one warning per failed batch, not one per tool', () => {
   const lines: string[] = []
   return Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(
       provider(() =>
         Effect.fail(
@@ -617,7 +601,6 @@ it.effect('logs one warning per failed batch, not one per tool', () => {
 it.effect.each(['direct', 'batch'] as const)('terse descriptions bypass Jev in %s', (mode) => {
   let calls = 0
   return Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(
       provider(() => {
         calls += 1
@@ -675,7 +658,6 @@ it.effect('a cancelled caller leaves a bounded lookup to fill the cache', () =>
       }),
     )
     yield* Effect.gen(function* () {
-      // This composed fixture owns per-case state and resources; build it in the test scope.
       const context = yield* Layer.build(modelLayer)
       return yield* Effect.gen(function* () {
         const effects = yield* ToolEffects
@@ -711,7 +693,6 @@ it.effect('Layer shutdown interrupts abandoned lookup work', () =>
       ),
     )
     yield* Effect.gen(function* () {
-      // This composed fixture owns per-case state and resources; build it in the test scope.
       const context = yield* Layer.build(modelLayer)
       return yield* Effect.gen(function* () {
         const pending = yield* (yield* ToolEffects)
@@ -734,7 +715,6 @@ it.effect('Layer shutdown interrupts abandoned lookup work', () =>
 it.effect.each(['direct', 'batch'] as const)('Executor substitutes bypass Jev in %s', (mode) => {
   let calls = 0
   return Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(
       provider(() => {
         calls += 1
@@ -787,7 +767,6 @@ it.effect('the calibration budget measures an outlier without changing productio
       }),
     )
     yield* Effect.gen(function* () {
-      // This composed fixture owns per-case state and resources; build it in the test scope.
       const context = yield* Layer.build(
         toolEffectsTestLayer('10 seconds').pipe(Layer.provide(modelLayer)),
       )
@@ -820,7 +799,6 @@ it.effect('403 warning suppression preserves the metadata failure TTL', () => {
     }),
   )
   return Effect.gen(function* () {
-    // This composed fixture owns per-case state and resources; build it in the test scope.
     const context = yield* Layer.build(
       toolEffectsLayer.pipe(
         Layer.provide(

@@ -31,17 +31,15 @@ const configured = executorLayer.pipe(
  * discovery seam together. The deliberate fixture Layer disables semantic classification;
  * neither the store, Executor adapter nor discovery's permission filtering is mocked. */
 describe.skipIf(!enabled)('GitHub personal ownership acceptance', () => {
-  layer(connectionTestLayer, { excludeTestServices: true })((it) => {
-    it.effect(
-      'withholds a Person’s GitHub tools from another Person in the same Company',
-      () =>
-        Effect.gen(function* () {
-          const { ownerActor, memberActor } = yield* fixture()
-          yield* Effect.gen(function* () {
-            // This composed fixture owns per-case state and resources; build it in the test scope.
-            const context = yield* Layer.build(configured)
-            return yield* Effect.gen(function* () {
-              // Preserve local provision: rebuild against this case's overridden authorities.
+  layer(configured.pipe(Layer.provideMerge(connectionTestLayer)), { excludeTestServices: true })(
+    (it) => {
+      it.effect(
+        'withholds a Person’s GitHub tools from another Person in the same Company',
+        () =>
+          Effect.gen(function* () {
+            const { ownerActor, memberActor } = yield* fixture()
+            yield* Effect.gen(function* () {
+              // The store captures the live GitHub authority while SQL ownership remains real.
               const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
               return yield* Effect.gen(function* () {
                 const store = yield* ConnectionStore
@@ -78,10 +76,10 @@ describe.skipIf(!enabled)('GitHub personal ownership acceptance', () => {
                 expect(JSON.stringify(records).includes(token)).toBe(false)
                 console.log('ok', own.tools.length)
               }).pipe(Effect.scoped, Effect.provide(context))
-            }).pipe(Effect.scoped, Effect.provide(context))
-          }).pipe(Effect.scoped)
-        }).pipe(Effect.scoped, Effect.provideService(Logger.CurrentLoggers, new Set([]))),
-      { timeout: 120_000 },
-    )
-  })
+            }).pipe(Effect.scoped, Effect.scoped)
+          }).pipe(Effect.scoped, Effect.provideService(Logger.CurrentLoggers, new Set([]))),
+        { timeout: 120_000 },
+      )
+    },
+  )
 })

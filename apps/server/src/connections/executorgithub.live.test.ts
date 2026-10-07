@@ -30,55 +30,57 @@ const configured = executorLayer.pipe(
  */
 describe.skipIf(!enabled)('GitHub personal credential acceptance', () => {
   for (const entry of ['catalogue', 'address']) {
-    layer(connectionAddressLayer, { excludeTestServices: true })((it) => {
+    layer(configured.pipe(Layer.provideMerge(connectionAddressLayer)), {
+      excludeTestServices: true,
+    })((it) => {
       it.effect(
         `connects by ${entry} with a personal token and discovers tools`,
         () =>
           Effect.gen(function* () {
-            // This composed fixture owns per-case state and resources; build it in the test scope.
-            const context = yield* Layer.build(configured)
-            return yield* Effect.gen(function* () {
-              const executor = yield* Executor
-              const input = {
-                connectionId: ConnectionId.make(crypto.randomUUID()),
-                service: ServiceId.make(
-                  entry === 'catalogue' ? 'curated/github-com-mcp' : 'github-personal-proof',
-                ),
-                owner: ExecutorOwnerId.make('github-personal-proof'),
-                subject: 'github-personal-proof',
-                label: 'GitHub personal proof',
-                returnAddress: 'https://vivid.example.test/api/connections/return',
-              }
-              const step = yield* entry === 'catalogue'
-                ? executor.begin(input)
-                : Effect.gen(function* () {
-                    const reader = yield* ConnectionAddress
-                    const source = yield* reader.inspect('https://api.githubcopilot.com/mcp/')
-                    return yield* executor.add({ ...input, source })
-                  })
-              // Register cleanup before assertions or token submission can fail.
-              yield* Effect.addFinalizer(() =>
-                Effect.gen(function* () {
-                  const removed = yield* executor.remove(step.references).pipe(Effect.exit)
-                  expect(removed._tag).toBe('Success')
-                }),
-              )
-              expect(ExecutorStep.guards.EnterKey(step)).toBe(true)
-              if (!ExecutorStep.guards.EnterKey(step))
-                return expect.fail('GitHub must offer personal token entry')
-              const token = NodeProcess.env['VIVID_TEST_GITHUB_TOKEN']
-              if (token === undefined)
-                return expect.fail('Supply the personal token in test authority')
-              const references = yield* executor.complete({
-                references: step.references,
-                fields: { token: Redacted.make(token) },
-              })
-              const tools = yield* executor.tools(references)
-              expect(tools.length).toBeGreaterThan(0)
-              NodeProcess.stdout.write(`GitHub ${entry} tools=${tools.length}\n`)
-              return yield* Effect.void
-            }).pipe(Effect.scoped, Effect.provide(context))
-          }).pipe(Effect.scoped, Effect.provideService(Logger.CurrentLoggers, new Set([]))),
+            const executor = yield* Executor
+            const input = {
+              connectionId: ConnectionId.make(crypto.randomUUID()),
+              service: ServiceId.make(
+                entry === 'catalogue' ? 'curated/github-com-mcp' : 'github-personal-proof',
+              ),
+              owner: ExecutorOwnerId.make('github-personal-proof'),
+              subject: 'github-personal-proof',
+              label: 'GitHub personal proof',
+              returnAddress: 'https://vivid.example.test/api/connections/return',
+            }
+            const step = yield* entry === 'catalogue'
+              ? executor.begin(input)
+              : Effect.gen(function* () {
+                  const reader = yield* ConnectionAddress
+                  const source = yield* reader.inspect('https://api.githubcopilot.com/mcp/')
+                  return yield* executor.add({ ...input, source })
+                })
+            // Register cleanup before assertions or token submission can fail.
+            yield* Effect.addFinalizer(() =>
+              Effect.gen(function* () {
+                const removed = yield* executor.remove(step.references).pipe(Effect.exit)
+                expect(removed._tag).toBe('Success')
+              }),
+            )
+            expect(ExecutorStep.guards.EnterKey(step)).toBe(true)
+            if (!ExecutorStep.guards.EnterKey(step))
+              return expect.fail('GitHub must offer personal token entry')
+            const token = NodeProcess.env['VIVID_TEST_GITHUB_TOKEN']
+            if (token === undefined)
+              return expect.fail('Supply the personal token in test authority')
+            const references = yield* executor.complete({
+              references: step.references,
+              fields: { token: Redacted.make(token) },
+            })
+            const tools = yield* executor.tools(references)
+            expect(tools.length).toBeGreaterThan(0)
+            NodeProcess.stdout.write(`GitHub ${entry} tools=${tools.length}\n`)
+            return yield* Effect.void
+          }).pipe(
+            Effect.scoped,
+            Effect.scoped,
+            Effect.provideService(Logger.CurrentLoggers, new Set([])),
+          ),
         { timeout: 120_000 },
       )
     })
@@ -87,14 +89,12 @@ describe.skipIf(!enabled)('GitHub personal credential acceptance', () => {
 
 /** Public MCP remains on URL import and returns Done without a credential card. */
 describe.skipIf(!enabled)('public MCP regression', () => {
-  layer(connectionAddressLayer, { excludeTestServices: true })((it) => {
-    it.effect(
-      'adds DeepWiki without requesting a key',
-      () =>
-        Effect.gen(function* () {
-          // This composed fixture owns per-case state and resources; build it in the test scope.
-          const context = yield* Layer.build(configured)
-          return yield* Effect.gen(function* () {
+  layer(configured.pipe(Layer.provideMerge(connectionAddressLayer)), { excludeTestServices: true })(
+    (it) => {
+      it.effect(
+        'adds DeepWiki without requesting a key',
+        () =>
+          Effect.gen(function* () {
             const executor = yield* Executor
             const source = yield* (yield* ConnectionAddress).inspect('https://mcp.deepwiki.com/mcp')
             const step = yield* executor.add({
@@ -116,9 +116,13 @@ describe.skipIf(!enabled)('public MCP regression', () => {
             const tools = yield* executor.tools(step.references)
             expect(tools.length).toBeGreaterThan(0)
             NodeProcess.stdout.write(`public tools=${tools.length}\n`)
-          }).pipe(Effect.scoped, Effect.provide(context))
-        }).pipe(Effect.scoped, Effect.provideService(Logger.CurrentLoggers, new Set([]))),
-      { timeout: 120_000 },
-    )
-  })
+          }).pipe(
+            Effect.scoped,
+            Effect.scoped,
+            Effect.provideService(Logger.CurrentLoggers, new Set([])),
+          ),
+        { timeout: 120_000 },
+      )
+    },
+  )
 })

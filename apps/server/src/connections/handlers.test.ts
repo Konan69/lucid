@@ -62,7 +62,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection transport authentication', 
           threadId,
         })
         yield* Effect.gen(function* () {
-          // Preserve local provision: rebuild against this case's overridden authorities.
+          // The discovery store must capture the setup-required catalog instead of the default fake.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* Effect.gen(function* () {
             const found = yield* connectionHandlers.FindTools({ query: 'records' })
@@ -188,7 +188,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
           })
           expect(
             yield* Effect.gen(function* () {
-              // Preserve local provision: rebuild against this case's overridden authorities.
+              // Bind resume to the authority that records whether setup is renewed.
               const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
               return yield* connectionHandlers
                 .ResumeConnection({ id: begun.connection.id })
@@ -246,7 +246,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
             sessionId: SessionId.make('lost-session'),
           })
           const failure = yield* Effect.gen(function* () {
-            // Preserve local provision: rebuild against this case's overridden authorities.
+            // Capture the lost-response adapter before checking persisted replacement authorization.
             const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
             return yield* connectionHandlers
               .ResumeConnection({ id: begun.connection.id })
@@ -376,7 +376,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
           ),
         })
         const outcome = yield* Effect.gen(function* () {
-          // Preserve local provision: rebuild against this case's overridden authorities.
+          // The approved action store must retain the failing discovery adapter.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* connectionRunner({
             person: ownerActor.person,

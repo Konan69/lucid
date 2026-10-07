@@ -153,7 +153,7 @@ describe('public integration addresses', () => {
       Effect.gen(function* () {
         const { client, pages, requests } = yield* fixture()
         const result = yield* Effect.gen(function* () {
-          // This composed fixture owns per-case state and resources; build it in the test scope.
+          // The page reader must use this listener so linked-document requests reach its recorder.
           const context = yield* Layer.build(pages)
           return yield* inspectAddress('https://integration.example/linkedredirect').pipe(
             Effect.provideService(HttpClient.HttpClient, client),
@@ -173,7 +173,7 @@ describe('public integration addresses', () => {
       Effect.gen(function* () {
         const { client, pages, requests } = yield* fixture()
         const result = yield* Effect.gen(function* () {
-          // This composed fixture owns per-case state and resources; build it in the test scope.
+          // Bind page access to the MCP fixture before testing content negotiation.
           const context = yield* Layer.build(pages)
           return yield* inspectAddress('https://integration.example/negotiated').pipe(
             Effect.provideService(HttpClient.HttpClient, client),
@@ -193,7 +193,7 @@ describe('public integration addresses', () => {
       Effect.gen(function* () {
         const { client, pages, requests } = yield* fixture()
         const result = yield* Effect.gen(function* () {
-          // This composed fixture owns per-case state and resources; build it in the test scope.
+          // Public query-parameter inspection uses this case's page transport.
           const context = yield* Layer.build(pages)
           return yield* inspectAddress('https://integration.example/spec?format=json').pipe(
             Effect.provideService(HttpClient.HttpClient, client),
@@ -215,7 +215,7 @@ describe('public integration addresses', () => {
           const { client, requests, pages } = yield* fixture()
           const inspect = (path: string) =>
             Effect.gen(function* () {
-              // This composed fixture owns per-case state and resources; build it in the test scope.
+              // Both page and MCP probes must hit the same recorded network boundary.
               const context = yield* Layer.build(pages)
               return yield* inspectAddress(`https://integration.example${path}`).pipe(
                 Effect.provideService(HttpClient.HttpClient, client),
@@ -278,17 +278,15 @@ describe('public integration addresses', () => {
           })
         }),
     )
-    it.effect(
-      'refuses private literals, credential URLs and names resolving to loopback at socket creation',
-      () =>
-        Effect.gen(function* () {
-          // This composed fixture owns per-case state and resources; build it in the test scope.
-          const context = yield* Layer.build(
-            makeConnectionAddressLayer((_hostname, _options, callback) =>
-              callback(null, [{ address: '127.0.0.1', family: 4 }]),
-            ),
-          )
-          return yield* Effect.gen(function* () {
+    it.layer(
+      makeConnectionAddressLayer((_hostname, _options, callback) =>
+        callback(null, [{ address: '127.0.0.1', family: 4 }]),
+      ),
+    )('private destination policy', (it) => {
+      it.effect(
+        'refuses private literals, credential URLs and names resolving to loopback at socket creation',
+        () =>
+          Effect.gen(function* () {
             for (const address of [
               'http://127.1/',
               'http://2130706433/',
@@ -308,8 +306,8 @@ describe('public integration addresses', () => {
             expect(
               yield* reader.inspect('https://integration.example/').pipe(Effect.flip),
             ).toBeInstanceOf(ConnectionAddressUnreachable)
-          }).pipe(Effect.provide(context))
-        }).pipe(Effect.scoped, Effect.scoped),
-    )
+          }).pipe(Effect.scoped, Effect.scoped),
+      )
+    })
   })
 })

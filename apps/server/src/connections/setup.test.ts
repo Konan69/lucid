@@ -91,7 +91,7 @@ it.effect(
     Effect.gen(function* () {
       const http = yield* remote()
       yield* Effect.gen(function* () {
-        // This composed fixture owns per-case state and resources; build it in the test scope.
+        // This HTTP feed records discovery of absent and unknown installation hints.
         const context = yield* Layer.build(http.configured)
         return yield* Effect.gen(function* () {
           const executor = yield* Executor
@@ -127,7 +127,7 @@ describe.skipIf(!testDatabaseConfigured)('setup-required public discovery', () =
           })
           const store = connectionStoreLayer.pipe(Layer.provide(http.configured))
           yield* Effect.gen(function* () {
-            // Preserve local provision: rebuild against this case's overridden authorities.
+            // The store and catalogue cache must use this case's controlled HTTP feed.
             const context = yield* Layer.build(Layer.fresh(store))
             return yield* Effect.gen(function* () {
               const found = yield* connectionHandlers.FindIntegrations({ query: 'Acme' })
@@ -218,10 +218,10 @@ describe.skipIf(!testDatabaseConfigured)('catalogue Begin without auth hints', (
             new URL('/api/connections/return', (yield* ServerConfig).PUBLIC_URL).href,
           )
           yield* Effect.gen(function* () {
-            // This composed fixture owns per-case state and resources; build it in the test scope.
+            // This installation recorder owns the account requirements selected by the current variant.
             const context = yield* Layer.build(host.configured)
             return yield* Effect.gen(function* () {
-              // Preserve local provision: rebuild against this case's overridden authorities.
+              // Capture the variant's installed Executor rather than the shared probe adapter.
               const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
               return yield* Effect.gen(function* () {
                 const store = yield* ConnectionStore

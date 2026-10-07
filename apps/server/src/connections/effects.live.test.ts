@@ -1,9 +1,8 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Layer, References } from 'effect'
+import { Effect, Layer, References, Logger } from 'effect'
 import { ServiceId } from '@vivid/contracts'
 import {
   effectScoreCount,
-  effectScoreLogLayer,
   LIVE_METADATA_BUDGET,
   LIVE_METADATA_COHORT_BUDGET_MILLIS,
   liveDecisionEnabled,
@@ -23,10 +22,11 @@ describe.skipIf(!liveDecisionEnabled)('Gateway read effects', () => {
     () => {
       const lines: string[] = []
       return Effect.gen(function* () {
-        // This composed fixture owns per-case state and resources; build it in the test scope.
-        const context = yield* Layer.build(effectScoreLogLayer(lines))
+        const loggers = new Set([
+          Logger.consoleLogFmt,
+          Logger.make(({ message }) => lines.push(JSON.stringify(message))),
+        ])
         return yield* Effect.gen(function* () {
-          // This composed fixture owns per-case state and resources; build it in the test scope.
           const context = yield* Layer.build(
             toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
           )
@@ -58,7 +58,7 @@ describe.skipIf(!liveDecisionEnabled)('Gateway read effects', () => {
         }).pipe(
           Effect.scoped,
           Effect.provideService(References.MinimumLogLevel, 'Debug'),
-          Effect.provide(context),
+          Effect.provideService(Logger.CurrentLoggers, loggers),
         )
       }).pipe(Effect.scoped)
     },

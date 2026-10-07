@@ -42,7 +42,7 @@ describe('Google Integrations', () => {
         'Google Tasks',
       ])
       const listed = yield* Effect.gen(function* () {
-        // This composed fixture owns per-case state and resources; build it in the test scope.
+        // Read the initial catalogue through this case's controlled HTTP feed.
         const context = yield* Layer.build(hosted.configured)
         return yield* Effect.flatMap(Executor, (executor) => executor.catalog).pipe(
           Effect.provide(context),
@@ -67,8 +67,8 @@ describe('Google Integrations', () => {
         }),
       )
       const without = yield* Effect.gen(function* () {
-        // This composed fixture owns per-case state and resources; build it in the test scope.
-        const context = yield* Layer.build(hosted.configured)
+        // Bypass catalogue memoization so the refused second feed is actually requested.
+        const context = yield* Layer.build(Layer.fresh(hosted.configured))
         return yield* Effect.flatMap(Executor, (executor) => executor.catalog).pipe(
           Effect.provide(context),
         )
@@ -100,7 +100,7 @@ describe('Google Integrations', () => {
           returnAddress: hostedReturnAddress,
         }
         const { first, second } = yield* Effect.gen(function* () {
-          // This composed fixture owns per-case state and resources; build it in the test scope.
+          // This installation recorder proves two sign-ins reuse one deployed Google source.
           const context = yield* Layer.build(hosted.configured)
           return yield* Effect.gen(function* () {
             const executor = yield* Executor
@@ -266,7 +266,7 @@ describe.skipIf(!testDatabaseConfigured)('Google fixed callback', () => {
             expect(yield* Ref.get(probe.signIns)).toBe(1)
           })
           yield* Effect.gen(function* () {
-            // Preserve local provision: rebuild against this case's overridden authorities.
+            // Capture the callback Executor that records the exact concurrent sign-in targets.
             const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
             return yield* run().pipe(Effect.provide(context))
           }).pipe(Effect.scoped, Effect.provideService(Executor, google))

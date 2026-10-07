@@ -56,10 +56,10 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
             ]),
           )
           yield* Effect.gen(function* () {
-            // This composed fixture owns per-case state and resources; build it in the test scope.
+            // The return fixture records real OAuth submissions and callback target selection.
             const context = yield* Layer.build(remote.configured)
             return yield* Effect.gen(function* () {
-              // Preserve local provision: rebuild against this case's overridden authorities.
+              // Capture the hosted Executor so callback state uses this case's remote grant.
               const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
               return yield* Effect.gen(function* () {
                 const store = yield* ConnectionStore

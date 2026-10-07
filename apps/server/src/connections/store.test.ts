@@ -89,6 +89,9 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         expect((yield* (yield* ConnectionStore).list(ownerActor)).connections).toEqual([])
       }),
     )
+  })
+
+  layer(connectionTestLayer)('clock: starts no setup sweep of its own', (it) => {
     it.effect('starts no setup sweep of its own', () =>
       Effect.gen(function* () {
         const executor = yield* Executor
@@ -109,7 +112,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
             ),
         })
         yield* Effect.gen(function* () {
-          // Preserve local provision: rebuild against this case's overridden authorities.
+          // The new store captures the counter whose absence of background work is asserted.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* Effect.gen(function* () {
             yield* ConnectionStore
@@ -119,7 +122,9 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         }).pipe(Effect.scoped, Effect.provideService(Executor, controlled))
       }),
     )
+  })
 
+  layer(connectionTestLayer)((it) => {
     it.effect('preserves the insert failure when provider compensation also fails', () =>
       Effect.gen(function* () {
         const { ownerActor } = yield* fixture()
@@ -136,7 +141,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
             ),
         })
         const failure = yield* Effect.gen(function* () {
-          // Preserve local provision: rebuild against this case's overridden authorities.
+          // Capture the failing compensation adapter while retaining the real rejected insert.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* Effect.gen(function* () {
             return yield* (yield* ConnectionStore).begin(ownerActor, {
@@ -189,7 +194,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           },
         })
         yield* Effect.gen(function* () {
-          // Preserve local provision: rebuild against this case's overridden authorities.
+          // Use the callback recorder that checks both admin and initiating-Person targets.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* Effect.gen(function* () {
             const resumedStore = yield* ConnectionStore
@@ -309,7 +314,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           }),
         })
         yield* Effect.gen(function* () {
-          // Preserve local provision: rebuild against this case's overridden authorities.
+          // Connection locking is measured through this case's controlled resume adapter.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* Effect.gen(function* () {
             const scoped = yield* ConnectionStore
@@ -406,7 +411,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           }).pipe(Effect.withSpan('Executor.Test.unavailable')),
         })
         yield* Effect.gen(function* () {
-          // Preserve local provision: rebuild against this case's overridden authorities.
+          // Give the unavailable catalogue its own list cache; a previous success must not mask it.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* Effect.gen(function* () {
             const offlineStore = yield* ConnectionStore
@@ -448,7 +453,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           }).pipe(Effect.withSpan('Executor.Test.slowCatalog')),
         })
         yield* Effect.gen(function* () {
-          // Preserve local provision: rebuild against this case's overridden authorities.
+          // A private pending-list cache exposes deduplication when its first reader is interrupted.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* Effect.gen(function* () {
             const store = yield* ConnectionStore
@@ -479,68 +484,78 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         }).pipe(Effect.scoped, Effect.provideService(Executor, controlled))
       }),
     )
+  })
 
-    /** List failures are paced like catalog downloads; successful reads must still see refreshed sites. */
-    it.effect('recovers catalog icons after backoff and observes subsequent catalog changes', () =>
-      Effect.gen(function* () {
-        const { ownerActor } = yield* fixture()
-        const step = yield* (yield* ConnectionStore).begin(ownerActor, {
-          service: serviceId,
-          name: 'Catalog recovery',
-          shared: false,
-        })
-        const executor = yield* Executor
-        const site = yield* Ref.make<Option.Option<string>>(Option.none())
-        const calls = yield* Ref.make(0)
-        const controlled = Executor.of({
-          ...executor,
-          catalog: Effect.gen(function* () {
-            yield* Ref.update(calls, (count) => count + 1)
-            const domain = yield* Ref.get(site)
-            if (Option.isNone(domain))
-              return yield* ServiceUnavailable.make({
-                service: 'connections',
-                message: 'Unavailable',
-              })
-            return (yield* executor.catalog).map((entry) =>
-              ExecutorServiceEntry.make({ ...entry, domain: domain.value }),
-            )
-          }).pipe(Effect.withSpan('Executor.Test.recoveringCatalog')),
-        })
-        yield* Effect.gen(function* () {
-          // Preserve local provision: rebuild against this case's overridden authorities.
-          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
-          return yield* Effect.gen(function* () {
-            const store = yield* ConnectionStore
-            expect((yield* store.list(ownerActor)).connections).toMatchObject([
-              { id: step.connection.id, mark: null },
-            ])
-            yield* Ref.set(site, Option.some('workspace.google.com'))
-            yield* TestClock.adjust('29 seconds')
-            expect((yield* store.list(ownerActor)).connections).toMatchObject([
-              { id: step.connection.id, mark: null },
-            ])
-            expect(yield* Ref.get(calls)).toBe(1)
-            yield* TestClock.adjust('1 second')
-            expect((yield* store.list(ownerActor)).connections).toMatchObject([
-              {
-                id: step.connection.id,
-                mark: 'https://www.google.com/s2/favicons?domain=google.com',
-              },
-            ])
-            expect(yield* Ref.get(calls)).toBe(2)
-            yield* Ref.set(site, Option.some('deepwiki.com'))
-            expect((yield* store.list(ownerActor)).connections).toMatchObject([
-              {
-                id: step.connection.id,
-                mark: 'https://www.google.com/s2/favicons?domain=deepwiki.com',
-              },
-            ])
-            expect(yield* Ref.get(calls)).toBe(3)
-          }).pipe(Effect.provide(context))
-        }).pipe(Effect.scoped, Effect.provideService(Executor, controlled))
-      }),
-    )
+  layer(connectionTestLayer)(
+    'clock: recovers catalog icons after backoff and observes subsequent catalog changes',
+    (it) => {
+      /** List failures are paced like catalog downloads; successful reads must still see refreshed sites. */
+      it.effect(
+        'recovers catalog icons after backoff and observes subsequent catalog changes',
+        () =>
+          Effect.gen(function* () {
+            const { ownerActor } = yield* fixture()
+            const step = yield* (yield* ConnectionStore).begin(ownerActor, {
+              service: serviceId,
+              name: 'Catalog recovery',
+              shared: false,
+            })
+            const executor = yield* Executor
+            const site = yield* Ref.make<Option.Option<string>>(Option.none())
+            const calls = yield* Ref.make(0)
+            const controlled = Executor.of({
+              ...executor,
+              catalog: Effect.gen(function* () {
+                yield* Ref.update(calls, (count) => count + 1)
+                const domain = yield* Ref.get(site)
+                if (Option.isNone(domain))
+                  return yield* ServiceUnavailable.make({
+                    service: 'connections',
+                    message: 'Unavailable',
+                  })
+                return (yield* executor.catalog).map((entry) =>
+                  ExecutorServiceEntry.make({ ...entry, domain: domain.value }),
+                )
+              }).pipe(Effect.withSpan('Executor.Test.recoveringCatalog')),
+            })
+            yield* Effect.gen(function* () {
+              // Start an empty icon cache so this case measures the complete failure backoff.
+              const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+              return yield* Effect.gen(function* () {
+                const store = yield* ConnectionStore
+                expect((yield* store.list(ownerActor)).connections).toMatchObject([
+                  { id: step.connection.id, mark: null },
+                ])
+                yield* Ref.set(site, Option.some('workspace.google.com'))
+                yield* TestClock.adjust('29 seconds')
+                expect((yield* store.list(ownerActor)).connections).toMatchObject([
+                  { id: step.connection.id, mark: null },
+                ])
+                expect(yield* Ref.get(calls)).toBe(1)
+                yield* TestClock.adjust('1 second')
+                expect((yield* store.list(ownerActor)).connections).toMatchObject([
+                  {
+                    id: step.connection.id,
+                    mark: 'https://www.google.com/s2/favicons?domain=google.com',
+                  },
+                ])
+                expect(yield* Ref.get(calls)).toBe(2)
+                yield* Ref.set(site, Option.some('deepwiki.com'))
+                expect((yield* store.list(ownerActor)).connections).toMatchObject([
+                  {
+                    id: step.connection.id,
+                    mark: 'https://www.google.com/s2/favicons?domain=deepwiki.com',
+                  },
+                ])
+                expect(yield* Ref.get(calls)).toBe(3)
+              }).pipe(Effect.provide(context))
+            }).pipe(Effect.scoped, Effect.provideService(Executor, controlled))
+          }),
+      )
+    },
+  )
+
+  layer(connectionTestLayer)((it) => {
     it.effect('searches the full catalog and preserves failures other than unavailability', () =>
       Effect.gen(function* () {
         const store = yield* ConnectionStore
@@ -567,7 +582,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           ).pipe(Effect.withSpan('Executor.Test.rejectedCatalog')),
         })
         const failure = yield* Effect.gen(function* () {
-          // Preserve local provision: rebuild against this case's overridden authorities.
+          // Capture the full catalogue feed and its non-availability failure independently of list caching.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* Effect.gen(function* () {
             return yield* (yield* ConnectionStore).find('Records')
@@ -599,7 +614,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
             ),
           })
           yield* Effect.gen(function* () {
-            // Preserve local provision: rebuild against this case's overridden authorities.
+            // This store sees SetupRequired before any provider begin or product insert.
             const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
             return yield* Effect.gen(function* () {
               const store = yield* ConnectionStore
@@ -651,7 +666,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           }),
         })
         const found = yield* Effect.gen(function* () {
-          // Preserve local provision: rebuild against this case's overridden authorities.
+          // Bind catalogue lookup to the deferred inspection observed by this search.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* Effect.gen(function* () {
             return yield* (yield* ConnectionStore).find('records')
@@ -746,56 +761,58 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         yield* Ref.set(probe.step, 'Done')
       }),
     )
-    it.effect(
-      'audits shared callbacks in their Company and personal callbacks in personal space',
-      () =>
-        Effect.gen(function* () {
-          const { ownerActor, personalActor } = yield* fixture()
-          const store = yield* ConnectionStore
-          const probe = yield* ConnectionProbe
-          yield* Ref.set(probe.step, 'OpenSignIn')
-          const shared = yield* store.begin(ownerActor, {
-            service: serviceId,
-            name: 'Shared sign-in',
-            shared: true,
-          })
-          const personal = yield* store.begin(ownerActor, {
-            service: serviceId,
-            name: 'Personal sign-in',
-            shared: false,
-          })
-          const database = yield* Database
-          const expected = (yield* store.get(ownerActor, shared.connection.id)).companyId
-          yield* Effect.gen(function* () {
-            // This composed fixture owns per-case state and resources; build it in the test scope.
-            const context = yield* Layer.build(
-              Layer.fresh(connectionStoreLayer.pipe(Layer.provide(auditLayer))),
+    it.layer(auditLayer)('callback audit persistence', (it) => {
+      it.effect(
+        'audits shared callbacks in their Company and personal callbacks in personal space',
+        () =>
+          Effect.gen(function* () {
+            const { ownerActor, personalActor } = yield* fixture()
+            const store = yield* ConnectionStore
+            const probe = yield* ConnectionProbe
+            yield* Ref.set(probe.step, 'OpenSignIn')
+            const shared = yield* store.begin(ownerActor, {
+              service: serviceId,
+              name: 'Shared sign-in',
+              shared: true,
+            })
+            const personal = yield* store.begin(ownerActor, {
+              service: serviceId,
+              name: 'Personal sign-in',
+              shared: false,
+            })
+            const database = yield* Database
+            const expected = (yield* store.get(ownerActor, shared.connection.id)).companyId
+            yield* Effect.gen(function* () {
+              // Capture the nested real audit implementation before completing the two callbacks.
+              const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+              return yield* Effect.gen(function* () {
+                const recorded = yield* ConnectionStore
+                yield* recorded.callback(
+                  { ...personalActor, by: 'person' },
+                  shared.connection.id,
+                  Redacted.make(`https://example.test/return?state=${shared.connection.id}`),
+                )
+                yield* recorded.callback(
+                  ownerActor,
+                  personal.connection.id,
+                  Redacted.make(`https://example.test/return?state=${personal.connection.id}`),
+                )
+              }).pipe(Effect.provide(context))
+            }).pipe(Effect.scoped)
+            const rows = yield* database.run(
+              database
+                .select({ companyId: auditEntries.companyId })
+                .from(auditEntries)
+                .where(eq(auditEntries.personId, ownerActor.person.id)),
             )
-            return yield* Effect.gen(function* () {
-              const recorded = yield* ConnectionStore
-              yield* recorded.callback(
-                { ...personalActor, by: 'person' },
-                shared.connection.id,
-                Redacted.make(`https://example.test/return?state=${shared.connection.id}`),
-              )
-              yield* recorded.callback(
-                ownerActor,
-                personal.connection.id,
-                Redacted.make(`https://example.test/return?state=${personal.connection.id}`),
-              )
-            }).pipe(Effect.provide(context))
-          }).pipe(Effect.scoped)
-          const rows = yield* database.run(
-            database
-              .select({ companyId: auditEntries.companyId })
-              .from(auditEntries)
-              .where(eq(auditEntries.personId, ownerActor.person.id)),
-          )
-          expect(rows.map((row) => row.companyId)).toEqual(expect.arrayContaining([expected, null]))
-          expect(rows).toHaveLength(2)
-          yield* Ref.set(probe.step, 'Done')
-        }),
-    )
+            expect(rows.map((row) => row.companyId)).toEqual(
+              expect.arrayContaining([expected, null]),
+            )
+            expect(rows).toHaveLength(2)
+            yield* Ref.set(probe.step, 'Done')
+          }),
+      )
+    })
     it.effect('does not persist a failed sign-in start and removes its pending resources', () =>
       Effect.gen(function* () {
         const { ownerActor } = yield* fixture()
@@ -816,7 +833,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const before = yield* Ref.get(probe.removals)
         const events = yield* Ref.get(probe.events)
         const failure = yield* Effect.gen(function* () {
-          // Preserve local provision: rebuild against this case's overridden authorities.
+          // Use the injected sign-in failure to observe provider compensation after rejection.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* Effect.gen(function* () {
             return yield* (yield* ConnectionStore).begin(ownerActor, {
@@ -856,7 +873,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           ),
         })
         const failure = yield* Effect.gen(function* () {
-          // Preserve local provision: rebuild against this case's overridden authorities.
+          // Capture both failures so unavailable cleanup cannot replace the sign-in failure.
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* Effect.gen(function* () {
             return yield* (yield* ConnectionStore).begin(ownerActor, {

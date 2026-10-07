@@ -136,7 +136,6 @@ const scenario = <E>(
     // A scenario may fork fibers and register finalizers; they end with the scenario, before
     // the recorded requests are checked.
     yield* Effect.gen(function* () {
-      // This composed fixture owns per-case state and resources; build it in the test scope.
       const context = yield* Layer.build(remote.configured)
       return yield* run(remote).pipe(Effect.scoped, Effect.provide(context))
     }).pipe(Effect.scoped)
@@ -1609,7 +1608,6 @@ it.effect('releases an unread Executor 401 before returning access denied', () =
     const remote = yield* unreadTransport()
     const path = `${hostedPrefix}/apps/app/profiles/profile`
     yield* Effect.gen(function* () {
-      // This composed fixture owns per-case state and resources; build it in the test scope.
       const context = yield* Layer.build(remote.configured)
       return yield* Effect.gen(function* () {
         const result = yield* (yield* Executor).status(references).pipe(Effect.result)
