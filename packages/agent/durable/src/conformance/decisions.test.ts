@@ -1,10 +1,11 @@
+import { runForPi } from '../pi.ts'
 import { ToolApprovalUnsupported } from '../main.ts'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeEvents from 'node:events'
 import * as NodeURL from 'node:url'
 type SdkInput = Parameters<NonNullable<ReturnType<typeof import('ai').asSchema>['validate']>>[0]
 import { expect, it } from '@effect/vitest'
-import { onTestFinished } from 'vitest'
+
 import {
   type CommitPublication,
   type TaskId,
@@ -14,17 +15,18 @@ import {
 } from '@earendil-works/pi-durable'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { tool, isToolUIPart, lastAssistantMessageIsCompleteWithApprovalResponses } from 'ai'
-import { Effect, Option, Predicate } from 'effect'
+import { Effect, Option, Predicate, Deferred } from 'effect'
+import { FixtureFailed } from '../fixtures/harness.ts'
 import { z } from 'zod'
 import { PlainChat } from '../fixtures/chat.ts'
 import { waiting, history, toolsExtension, abort, decide } from '../main.ts'
-import { call, context, host, signal } from './fixtures/host.ts'
+import { call, context, host } from './fixtures/host.ts'
 
 /** Hook and presentation must use identical Pi coercion and SDK defaults/transforms. */
 for (const policy of ['host', 'sdk'] as const)
   for (const parsing of ['coercion', 'default', 'transform'] as const)
     it.live(`holds ${policy} approval with SDK ${parsing}`, () =>
-      Effect.promise(async () => {
+      Effect.gen(function* () {
         const observed: number[] = []
         let executions = 0
         const schema =
@@ -44,16 +46,16 @@ for (const policy of ['host', 'sdk'] as const)
         const definition = tool({
           inputSchema: schema,
           needsApproval: policy === 'sdk' ? predicate : false,
-          execute: async () => {
+          execute: () => {
             executions++
-            return 'paid'
+            return Promise.resolve('paid')
           },
         })
-        const fixture = await host(
+        const fixture = yield* host(
           { pay: definition },
           policy === 'host' ? { approval: { pay: predicate } } : {},
         )
-        const opened = await fixture.open()
+        const opened = yield* fixture.open()
         opened.faux.setResponses([
           call(
             'pay',
@@ -62,28 +64,35 @@ for (const policy of ['host', 'sdk'] as const)
           ),
           fauxAssistantMessage('Resolved.'),
         ])
-        const completed = signal()
+        const completed = Deferred.makeUnsafe<void, FixtureFailed>()
         const chat = new PlainChat({
           transport: opened.transport,
           sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
           onFinish: () => {
-            if (opened.faux.state.callCount === 2) completed.resolve()
+            if (opened.faux.state.callCount === 2) Deferred.doneUnsafe(completed, Effect.void)
           },
-          onError: (error) => completed.reject(error),
+          onError: (error) =>
+            Deferred.doneUnsafe(completed, Effect.fail(new FixtureFailed({ cause: error }))),
         })
-        await chat.sendMessage({ text: 'Pay' })
+        yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ text: 'Pay' })))
         const part = Option.fromNullishOr(chat.lastMessage).pipe(
           Option.map((message) => message.parts.find(isToolUIPart)),
           Option.getOrUndefined,
         )
         expect(part).toMatchObject({ state: 'approval-requested' })
-        expect(await waiting(opened.harness, opened.root.id, context)).toHaveLength(1)
+        expect(
+          yield* Effect.promise(() =>
+            Promise.resolve(waiting(opened.harness, opened.root.id, context)),
+          ),
+        ).toHaveLength(1)
         expect(executions).toBe(0)
         expect(observed.every((value) => value === (parsing === 'transform' ? 4 : 5))).toBe(true)
         if (part === undefined || part.state !== 'approval-requested')
           throw new Error('Expected approval')
-        await chat.addToolApprovalResponse({ id: part.approval.id, approved: true })
-        await completed.promise
+        yield* Effect.promise(() =>
+          Promise.resolve(chat.addToolApprovalResponse({ id: part.approval.id, approved: true })),
+        )
+        yield* Deferred.await(completed)
         expect(executions).toBe(1)
       }),
     )
@@ -92,7 +101,7 @@ for (const policy of ['host', 'sdk'] as const)
 for (const policy of ['host', 'sdk'] as const)
   for (const failure of ['throw', 'value', 'promise', 'options'] as const)
     it.live(`contains ${policy} approval ${failure} as a named tool error`, () =>
-      Effect.promise(async () => {
+      Effect.gen(function* () {
         let executions = 0
         const predicate = (_input: SdkInput, options: { toolCallId: string }) => {
           if (failure === 'throw') throw new Error('Policy failed')
@@ -102,9 +111,9 @@ for (const policy of ['host', 'sdk'] as const)
         }
         const definition = tool({
           inputSchema: z.object({}),
-          execute: async () => {
+          execute: () => {
             executions++
-            return 'paid'
+            return Promise.resolve('paid')
           },
         })
         const options = {}
@@ -115,8 +124,8 @@ for (const policy of ['host', 'sdk'] as const)
             value: { pay: predicate },
             enumerable: true,
           })
-        const fixture = await host({ pay: definition }, options)
-        const opened = await fixture.open()
+        const fixture = yield* host({ pay: definition }, options)
+        const opened = yield* fixture.open()
         opened.faux.setResponses([
           call('pay', {}, 'pay'),
           (request) => {
@@ -125,7 +134,7 @@ for (const policy of ['host', 'sdk'] as const)
           },
         ])
         const chat = new PlainChat({ transport: opened.transport })
-        await chat.sendMessage({ text: 'Pay' })
+        yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ text: 'Pay' })))
         expect(chat.status).toBe('ready')
         expect(
           Option.fromNullishOr(chat.lastMessage).pipe(
@@ -146,9 +155,15 @@ for (const policy of ['host', 'sdk'] as const)
           expect(part.errorText).not.toContain('asynchronous')
         }
         expect(executions).toBe(0)
-        expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
-        await opened.root.waitForIdle(context)
-        const saved = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+        expect(
+          yield* Effect.promise(() =>
+            Promise.resolve(waiting(opened.harness, opened.root.id, context)),
+          ),
+        ).toEqual([])
+        yield* Effect.promise(() => Promise.resolve(opened.root.waitForIdle(context)))
+        const saved = yield* Effect.promise(() =>
+          Promise.resolve(history(opened.harness, opened.root.id, { limit: 10 }, context)),
+        )
         expect(
           Option.fromNullishOr(saved.messages.at(-1)).pipe(
             Option.map((message) => message.parts.find(isToolUIPart)),
@@ -163,31 +178,46 @@ for (const policy of ['host', 'sdk'] as const)
 /** Public getTask exposes live memos, but task-only publications cannot refresh a LiveDoc watch.
  * Pi types.ts:541–551 and scheduler.ts:1297–1301 also remove memos at terminal settlement. */
 it.live('proves the public memo read and its notification and terminal limits', () =>
-  Effect.promise(async () => {
-    const recorded = signal()
-    const release = signal()
-    onTestFinished(() => release.resolve())
+  Effect.gen(function* () {
+    const recorded = Deferred.makeUnsafe<void>()
+    const release = Deferred.makeUnsafe<void>()
     let taskId = Option.none<TaskId>()
     let publication = Option.none<CommitPublication>()
     const observer = defineExtension({
       name: 'memo-probe',
       hooks: [
         hook(ToolTask, {
-          beforeTool: async (_call, api, hookContext) => {
-            taskId = Option.some(api.taskId)
-            await api.memo('review.approval', { held: true, kind: 'approval' }, hookContext)
-            recorded.resolve()
-            await release.promise
-            return { block: 'Memo probe complete' }
-          },
+          beforeTool: (_call, api, hookContext) =>
+            runForPi(
+              Effect.gen(function* () {
+                taskId = Option.some(api.taskId)
+                yield* Effect.promise(() =>
+                  Promise.resolve(
+                    api.memo('review.approval', { held: true, kind: 'approval' }, hookContext),
+                  ),
+                )
+                Deferred.doneUnsafe(recorded, Effect.void)
+                yield* Deferred.await(release)
+                return { block: 'Memo probe complete' }
+              }),
+              undefined,
+            ),
         }),
       ],
     })
-    const fixture = await host(
-      { pay: tool({ inputSchema: z.object({}), execute: async () => 'unreachable' }) },
+    const fixture = yield* host(
+      {
+        pay: tool({
+          inputSchema: z.object({}),
+          execute: () => {
+            return Promise.resolve('unreachable')
+          },
+        }),
+      },
       {},
     )
-    const opened = await fixture.open([observer])
+    const opened = yield* fixture.open([observer])
+    yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined))
     const unsubscribe = opened.harness.subscribeCommits((commit) => {
       if (
         commit.changes.some(
@@ -199,20 +229,25 @@ it.live('proves the public memo read and its notification and terminal limits', 
       )
         publication = Option.some(commit)
     })
-    onTestFinished(unsubscribe)
+    yield* Effect.addFinalizer(() => Effect.sync(unsubscribe))
     opened.faux.setResponses([call('pay', {}, 'pay'), fauxAssistantMessage('Probe complete.')])
     const chat = new PlainChat({ transport: opened.transport })
     const sending = chat.sendMessage({ text: 'Probe' })
-    await recorded.promise
+    yield* Deferred.await(recorded)
     if (Option.isNone(taskId) || Option.isNone(publication))
       throw new Error('Expected committed memo')
-    const live = await opened.harness.getTask(taskId.value, context)
+    const pinnedTaskId = taskId.value
+    const live = yield* Effect.promise(() =>
+      Promise.resolve(opened.harness.getTask(pinnedTaskId, context)),
+    )
     expect(live).toMatchObject({ memos: { 'review.approval': { held: true, kind: 'approval' } } })
     expect(publication.value.changes.map((change) => change.type)).toEqual(['task'])
-    release.resolve()
-    await sending
-    await opened.root.waitForIdle(context)
-    const terminal = await opened.harness.getTask(taskId.value, context)
+    Deferred.doneUnsafe(release, Effect.void)
+    yield* Effect.promise(() => Promise.resolve(sending))
+    yield* Effect.promise(() => Promise.resolve(opened.root.waitForIdle(context)))
+    const terminal = yield* Effect.promise(() =>
+      Promise.resolve(opened.harness.getTask(pinnedTaskId, context)),
+    )
     expect(terminal).toMatchObject({ state: { status: 'terminal' } })
     if (terminal === undefined) throw new Error('Expected terminal task')
     expect(Object.hasOwn(terminal, 'memos')).toBe(false)
@@ -223,40 +258,47 @@ it.live('proves the public memo read and its notification and terminal limits', 
 for (const approved of [true, false])
   for (const changed of ['policy', 'registration', 'duplicates'] as const)
     it.live(`keeps approved=${approved} history after changing ${changed}`, () =>
-      Effect.promise(async () => {
+      Effect.gen(function* () {
         const tools = {
           pay: tool({
             inputSchema: z.object({}),
             needsApproval: true,
-            execute: async () => 'paid',
+            execute: () => {
+              return Promise.resolve('paid')
+            },
           }),
         }
-        const fixture = await host(tools, {})
-        const opened = await fixture.open()
+        const fixture = yield* host(tools, {})
+        const opened = yield* fixture.open()
         opened.faux.setResponses([call('pay', {}, 'pay'), fauxAssistantMessage('Settled.')])
-        const finished = signal()
+        const finished = Deferred.makeUnsafe<void, FixtureFailed>()
         const chat = new PlainChat({
           transport: opened.transport,
           sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
           onFinish: () => {
-            if (opened.faux.state.callCount === 2) finished.resolve()
+            if (opened.faux.state.callCount === 2) Deferred.doneUnsafe(finished, Effect.void)
           },
-          onError: (error) => finished.reject(error),
+          onError: (error) =>
+            Deferred.doneUnsafe(finished, Effect.fail(new FixtureFailed({ cause: error }))),
         })
-        await chat.sendMessage({ text: 'Pay' })
+        yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ text: 'Pay' })))
         if (chat.lastMessage === undefined) throw new Error('Expected assistant')
         const part = chat.lastMessage.parts.find(isToolUIPart)
         if (part === undefined || part.state !== 'approval-requested')
           throw new Error('Expected approval')
-        await chat.addToolApprovalResponse({
-          id: part.approval.id,
-          approved,
-          reason: approved ? undefined : 'Budget closed',
-        })
-        await finished.promise
-        await opened.root.waitForIdle(context)
+        yield* Effect.promise(() =>
+          Promise.resolve(
+            chat.addToolApprovalResponse({
+              id: part.approval.id,
+              approved,
+              reason: approved ? undefined : 'Budget closed',
+            }),
+          ),
+        )
+        yield* Deferred.await(finished)
+        yield* Effect.promise(() => Promise.resolve(opened.root.waitForIdle(context)))
         const expected = chat.lastMessage.parts.find(isToolUIPart)
-        await fixture.close(opened.harness)
+        yield* fixture.close(opened.harness)
         if (changed === 'policy')
           Object.defineProperty(tools.pay, 'needsApproval', {
             value: () => {
@@ -267,19 +309,27 @@ for (const approved of [true, false])
         const observers =
           changed === 'duplicates'
             ? [
-                await toolsExtension('later-duplicate', {
-                  pay: tool({
-                    inputSchema: z.object({}),
-                    needsApproval: () => {
-                      throw new Error('New duplicate policy')
-                    },
-                    execute: async () => 'different',
-                  }),
-                }),
+                yield* Effect.promise(() =>
+                  Promise.resolve(
+                    toolsExtension('later-duplicate', {
+                      pay: tool({
+                        inputSchema: z.object({}),
+                        needsApproval: () => {
+                          throw new Error('New duplicate policy')
+                        },
+                        execute: () => {
+                          return Promise.resolve('different')
+                        },
+                      }),
+                    }),
+                  ),
+                ),
               ]
             : []
-        const reopened = await fixture.open(observers)
-        const saved = await history(reopened.harness, reopened.root.id, { limit: 10 }, context)
+        const reopened = yield* fixture.open(observers)
+        const saved = yield* Effect.promise(() =>
+          Promise.resolve(history(reopened.harness, reopened.root.id, { limit: 10 }, context)),
+        )
         const assistant = saved.messages.at(-1)
         if (assistant === undefined) throw new Error('Expected history')
         expect(assistant.parts.find(isToolUIPart)).toEqual(expected)
@@ -288,11 +338,11 @@ for (const approved of [true, false])
 
 /** An impure rule violates the contract, but pull admission still trusts the hook's pinned decision. */
 it.live('waiting stays exact through a pinned memo after an impure policy changes', () =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     let allow = true
     let policies = 0
     let executions = 0
-    const fixture = await host(
+    const fixture = yield* host(
       {
         pay: tool({
           inputSchema: z.object({}),
@@ -300,86 +350,122 @@ it.live('waiting stays exact through a pinned memo after an impure policy change
             policies++
             return allow
           },
-          execute: async () => {
+          execute: () => {
             executions++
-            return 'paid'
+            return Promise.resolve('paid')
           },
         }),
       },
       {},
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([call('pay', {}, 'pay'), fauxAssistantMessage('Settled.')])
-    const finished = signal()
+    const finished = Deferred.makeUnsafe<void, FixtureFailed>()
     const chat = new PlainChat({
       transport: opened.transport,
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
       onFinish: () => {
-        if (opened.faux.state.callCount === 2) finished.resolve()
+        if (opened.faux.state.callCount === 2) Deferred.doneUnsafe(finished, Effect.void)
       },
-      onError: (error) => finished.reject(error),
+      onError: (error) =>
+        Deferred.doneUnsafe(finished, Effect.fail(new FixtureFailed({ cause: error }))),
     })
-    await chat.sendMessage({ text: 'Pay' })
+    yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ text: 'Pay' })))
     allow = false
     const before = policies
-    const rows = await waiting(opened.harness, opened.root.id, context)
+    const rows = yield* Effect.promise(() =>
+      Promise.resolve(waiting(opened.harness, opened.root.id, context)),
+    )
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ kind: 'approval' })
     expect(policies).toBe(before)
-    if (rows[0] === undefined) throw new Error('Expected pinned approval')
-    await chat.addToolApprovalResponse({ id: rows[0].holdId, approved: true })
-    await finished.promise
+    const held = rows[0]
+    if (held === undefined) throw new Error('Expected pinned approval')
+    yield* Effect.promise(() =>
+      Promise.resolve(chat.addToolApprovalResponse({ id: held.holdId, approved: true })),
+    )
+    yield* Deferred.await(finished)
     expect(executions).toBe(1)
   }),
 )
 
 /** The composed agent exposes duplicate registrations even though HookApi cannot select their winner. */
 it.live('fails a duplicate bridged name on first presentation without hanging', () =>
-  Effect.promise(async () => {
-    const first = await toolsExtension(
-      'first',
-      { pay: tool({ inputSchema: z.object({}), execute: async () => 'first' }) },
-      { approval: { pay: true } },
+  Effect.gen(function* () {
+    const first = yield* Effect.promise(() =>
+      Promise.resolve(
+        toolsExtension(
+          'first',
+          {
+            pay: tool({
+              inputSchema: z.object({}),
+              execute: () => {
+                return Promise.resolve('first')
+              },
+            }),
+          },
+          { approval: { pay: true } },
+        ),
+      ),
     )
-    const fixture = await host(
-      { pay: tool({ inputSchema: z.object({}), execute: async () => 'last' }) },
+    const fixture = yield* host(
+      {
+        pay: tool({
+          inputSchema: z.object({}),
+          execute: () => {
+            return Promise.resolve('last')
+          },
+        }),
+      },
       {},
     )
-    const opened = await fixture.open([first])
+    const opened = yield* fixture.open([first])
     opened.faux.setResponses([call('pay', {}, 'pay')])
     const chat = new PlainChat({ transport: opened.transport })
-    await chat.sendMessage({ text: 'Pay' })
+    yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ text: 'Pay' })))
     expect(chat.status).toBe('error')
     expect(chat.error).toMatchObject({ message: expect.stringContaining('pay') })
-    await abort(opened.harness, opened.root.id, context)
-    await opened.root.waitForIdle(context)
+    yield* Effect.promise(() => Promise.resolve(abort(opened.harness, opened.root.id, context)))
+    yield* Effect.promise(() => Promise.resolve(opened.root.waitForIdle(context)))
   }),
 )
 
 /** Host asynchronous declarations are rejected before a task can invoke them. */
 it.live('refuses a recognized async host approval policy at registration', () =>
-  Effect.promise(async () => {
-    await expect(
-      toolsExtension(
-        'host',
-        { pay: tool({ inputSchema: z.object({}), execute: async () => 'paid' }) },
-        Object.defineProperty({}, 'approval', {
-          value: { pay: async () => true },
-          enumerable: true,
-        }),
-      ),
-    ).rejects.toBeInstanceOf(ToolApprovalUnsupported)
-  }),
+  Effect.promise(() =>
+    Promise.resolve(
+      expect(
+        toolsExtension(
+          'host',
+          {
+            pay: tool({
+              inputSchema: z.object({}),
+              execute: () => {
+                return Promise.resolve('paid')
+              },
+            }),
+          },
+          Object.defineProperty({}, 'approval', {
+            value: {
+              pay: // @effect-diagnostics-next-line asyncFunction:off -- subject: registration must refuse a native async approval predicate
+                async () => true,
+            },
+            enumerable: true,
+          }),
+        ),
+      ).rejects.toBeInstanceOf(ToolApprovalUnsupported),
+    ),
+  ),
 )
 
 /** Actual process death loses closures. Resume without a reader isolates hook calls from presentation.
  * A following public hook is the receipt that the bridge reused its memo and passed approval. */
 it.live('pins a held decision across process death without rerunning its hook policy', () =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     let policies = 0
     let executions = 0
-    const passed = signal()
-    const fixture = await host(
+    const passed = Deferred.makeUnsafe<void>()
+    const fixture = yield* host(
       {
         pay: tool({
           inputSchema: z.object({}),
@@ -387,9 +473,9 @@ it.live('pins a held decision across process death without rerunning its hook po
             policies++
             return true
           },
-          execute: async () => {
+          execute: () => {
             executions++
-            return 'paid'
+            return Promise.resolve('paid')
           },
         }),
       },
@@ -404,56 +490,73 @@ it.live('pins a held decision across process death without rerunning its hook po
       ],
       { stdio: ['pipe', 'pipe', 'inherit'] },
     )
-    onTestFinished(async () => {
-      if (child.exitCode !== null || child.signalCode !== null) return
-      const exited = NodeEvents.EventEmitter.once(child, 'exit')
-      child.kill('SIGKILL')
-      await exited
-    })
-    await Promise.race([
-      NodeEvents.EventEmitter.once(child.stdout, 'data'),
-      NodeEvents.EventEmitter.once(child, 'exit').then(() => {
-        throw new Error('Crash fixture exited before pin')
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        if (child.exitCode !== null || child.signalCode !== null) return
+        const exited = NodeEvents.EventEmitter.once(child, 'exit')
+        child.kill('SIGKILL')
+        yield* Effect.promise(() => exited)
       }),
-    ])
+    )
+    yield* Effect.promise(() =>
+      Promise.resolve(
+        Promise.race([
+          NodeEvents.EventEmitter.once(child.stdout, 'data'),
+          NodeEvents.EventEmitter.once(child, 'exit').then(() => {
+            throw new Error('Crash fixture exited before pin')
+          }),
+        ]),
+      ),
+    )
     const exited = NodeEvents.EventEmitter.once(child, 'exit')
     expect(child.exitCode).toBeNull()
     expect(child.kill('SIGKILL')).toBe(true)
-    await exited
+    yield* Effect.promise(() => Promise.resolve(exited))
     expect(child.signalCode).toBe('SIGKILL')
     const after = defineExtension({
       name: 'after-pin',
       hooks: [
         hook(ToolTask, {
           beforeTool: () => {
-            passed.resolve()
+            Deferred.doneUnsafe(passed, Effect.void)
           },
         }),
       ],
     })
-    const reopened = await fixture.open([after])
-    const bridge = (await reopened.root.agent(context)).extensions.find(
-      (extension) => extension.name === 'conformance',
-    )
+    const reopened = yield* fixture.open([after])
+    const bridge = (yield* Effect.promise(() =>
+      Promise.resolve(reopened.root.agent(context)),
+    )).extensions.find((extension) => extension.name === 'conformance')
     if (bridge === undefined) throw new Error('Expected bridge extension')
-    await reopened.root.configure({ extensions: [bridge, after] }, context)
+    yield* Effect.promise(() =>
+      Promise.resolve(reopened.root.configure({ extensions: [bridge, after] }, context)),
+    )
     reopened.faux.setResponses([fauxAssistantMessage('Recovered.')])
-    const rows = await waiting(reopened.harness, reopened.root.id, context)
+    const rows = yield* Effect.promise(() =>
+      Promise.resolve(waiting(reopened.harness, reopened.root.id, context)),
+    )
     expect(rows).toHaveLength(1)
     expect(policies).toBe(0)
     reopened.harness.resume()
-    if (rows[0] === undefined) throw new Error('Expected durable approval')
-    await decide(
-      reopened.harness,
-      reopened.root.id,
-      { holdId: rows[0].holdId, approved: true },
-      context,
+    const held = rows[0]
+    if (held === undefined) throw new Error('Expected durable approval')
+    yield* Effect.promise(() =>
+      Promise.resolve(
+        decide(
+          reopened.harness,
+          reopened.root.id,
+          { holdId: held.holdId, approved: true },
+          context,
+        ),
+      ),
     )
-    await passed.promise
+    yield* Deferred.await(passed)
     expect(policies).toBe(0)
-    await reopened.root.waitForIdle(context)
+    yield* Effect.promise(() => Promise.resolve(reopened.root.waitForIdle(context)))
     expect(executions).toBe(1)
-    const saved = await history(reopened.harness, reopened.root.id, { limit: 10 }, context)
+    const saved = yield* Effect.promise(() =>
+      Promise.resolve(history(reopened.harness, reopened.root.id, { limit: 10 }, context)),
+    )
     const assistant = saved.messages.at(-1)
     if (assistant === undefined) throw new Error('Expected history')
     expect(assistant.parts.find(isToolUIPart)).toMatchObject({
@@ -467,27 +570,31 @@ it.live('pins a held decision across process death without rerunning its hook po
 
 /** Aborting a held task produces its existing tool error, even after the policy becomes broken. */
 it.live('reads an aborted held call without evaluating the current policy', () =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     const definition = tool({
       inputSchema: z.object({}),
       needsApproval: true,
-      execute: async () => 'paid',
+      execute: () => {
+        return Promise.resolve('paid')
+      },
     })
-    const fixture = await host({ pay: definition }, {})
-    const opened = await fixture.open()
+    const fixture = yield* host({ pay: definition }, {})
+    const opened = yield* fixture.open()
     opened.faux.setResponses([call('pay', {}, 'pay')])
     const chat = new PlainChat({ transport: opened.transport })
-    await chat.sendMessage({ text: 'Pay' })
-    await abort(opened.harness, opened.root.id, context)
-    await opened.root.waitForIdle(context)
-    await fixture.close(opened.harness)
+    yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ text: 'Pay' })))
+    yield* Effect.promise(() => Promise.resolve(abort(opened.harness, opened.root.id, context)))
+    yield* Effect.promise(() => Promise.resolve(opened.root.waitForIdle(context)))
+    yield* fixture.close(opened.harness)
     Object.defineProperty(definition, 'needsApproval', {
       value: () => {
         throw new Error('Aborted history evaluated policy')
       },
     })
-    const reopened = await fixture.open()
-    const saved = await history(reopened.harness, reopened.root.id, { limit: 10 }, context)
+    const reopened = yield* fixture.open()
+    const saved = yield* Effect.promise(() =>
+      Promise.resolve(history(reopened.harness, reopened.root.id, { limit: 10 }, context)),
+    )
     const assistant = saved.messages.at(-1)
     if (assistant === undefined) throw new Error('Expected aborted history')
     expect(assistant.parts.find(isToolUIPart)).toMatchObject({ state: 'output-error' })
