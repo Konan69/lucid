@@ -23,6 +23,12 @@ const testLayer = Layer.mergeAll(
   silentChangesLayer,
   NodeServices.layer,
 )
+/** Native HTTP fixture failures retain the underlying Node error for diagnosis. */
+class UploadFixtureFailure extends Schema.TaggedError<UploadFixtureFailure>()(
+  'UploadFixtureFailure',
+  { message: Schema.String, cause: Schema.Unknown },
+) {}
+
 const refusal = Schema.Struct({ error: Schema.String })
 const decodeRefusal = Schema.decodeUnknownEffect(refusal)
 const decodeRefusalText = Schema.decodeUnknownEffect(Schema.fromJsonString(refusal))
@@ -37,6 +43,7 @@ const storageRefusal = 'Vivid could not store this file. Try again.'
  * before deleting the directory; NodeFileSystem.makeTempDirectoryScoped's own finalizer does
  * not force removal and would defect on the missing path, masking the route's actual 500.
  */
+/** The one-shot filesystem fault is acquired per case so later uploads keep the real adapter. */
 const removedTemporaryDirectoryLayer = Layer.effect(
   FileSystem.FileSystem,
   Effect.gen(function* () {
@@ -115,8 +122,9 @@ interface UploadResponseReceipt {
  */
 const uploadResponse = Effect.fn('LibraryUploadTest.uploadResponse')(
   (outgoing: NodeHttp.ClientRequest, body: Buffer) =>
-    Effect.callback<UploadResponseReceipt, Error>((resume) => {
-      const fail = (error: Error) => resume(Effect.fail(error))
+    Effect.callback<UploadResponseReceipt, UploadFixtureFailure>((resume) => {
+      const fail = (error: Error) =>
+        resume(Effect.fail(new UploadFixtureFailure({ message: error.message, cause: error })))
       let responseStarted = false
       outgoing.once('error', fail)
       outgoing.once('close', () => {
@@ -161,7 +169,7 @@ const uploadResponse = Effect.fn('LibraryUploadTest.uploadResponse')(
  */
 const freedUpload = Effect.fn('LibraryUploadTest.freedUpload')(
   (agent: NodeHttp.Agent, outgoing: NodeHttp.ClientRequest) =>
-    Effect.callback<NodeNet.Socket, Error>((resume) => {
+    Effect.callback<NodeNet.Socket, UploadFixtureFailure>((resume) => {
       const cleanup = () => {
         agent.off('free', onFree)
         outgoing.off('error', onError)
@@ -169,12 +177,19 @@ const freedUpload = Effect.fn('LibraryUploadTest.freedUpload')(
       }
       const onError = (error: Error) => {
         cleanup()
-        resume(Effect.fail(error))
+        resume(Effect.fail(new UploadFixtureFailure({ message: error.message, cause: error })))
       }
       const onFree = (socket: NodeNet.Socket) => {
         cleanup()
         if (socket !== outgoing.socket) {
-          resume(Effect.fail(new Error('Upload agent freed a different socket')))
+          resume(
+            Effect.fail(
+              new UploadFixtureFailure({
+                message: 'Upload agent freed a different socket',
+                cause: undefined,
+              }),
+            ),
+          )
           return
         }
         resume(Effect.succeed(socket))
@@ -332,8 +347,10 @@ const forwardingHop = Effect.fn('LibraryUploadTest.forwardingHop')(function* (
         owned.closeAllConnections()
       }),
   )
-  yield* Effect.callback<void, Error>((resume) => {
-    server.on('error', (error) => resume(Effect.fail(error)))
+  yield* Effect.callback<void, UploadFixtureFailure>((resume) => {
+    server.on('error', (error) =>
+      resume(Effect.fail(new UploadFixtureFailure({ message: error.message, cause: error }))),
+    )
     server.listen({ host: '127.0.0.1', port: 0 }, () => resume(Effect.void))
   })
   const address = yield* decodeForwardingAddress(server.address())
@@ -483,7 +500,7 @@ describe.skipIf(!testDatabaseConfigured)('Library upload limits over Node HTTP',
       () =>
         Effect.gen(function* () {
           const { people, store, address } = yield* httpFixture().pipe(
-            Effect.provide(removedTemporaryDirectoryLayer),
+            Effect.provide(yield* Layer.build(removedTemporaryDirectoryLayer)),
           )
           if (!NetAddress.isInetAddress(address))
             expect.fail('Upload storage failure requires the mounted TCP server')

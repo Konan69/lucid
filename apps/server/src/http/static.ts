@@ -59,7 +59,7 @@ export function staticRoutes(directory: Option.Option<string>) {
       yield* router.add(
         'GET',
         '/*',
-        Effect.fn('Static.serve')(function* () {
+        Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest
           const name = yield* pathname(request.url)
           if (
@@ -75,7 +75,8 @@ export function staticRoutes(directory: Option.Option<string>) {
           const cache =
             file !== index && hashed ? 'public, max-age=31536000, immutable' : 'no-cache'
           return yield* HttpServerResponse.file(file, { headers: { 'cache-control': cache } })
-        })().pipe(
+        }).pipe(
+          Effect.withSpan('Static.serve'),
           Effect.catchTag('StaticPathRejected', () =>
             Effect.succeed(HttpServerResponse.empty({ status: 400 })),
           ),
