@@ -156,7 +156,7 @@ const inspectReceipt = Effect.fn('PushAdapter.receipt')(function* (ticket: strin
 })
 
 /** Each exchange Scope owns the scoped client response; the ten-second deadline includes decoding. */
-export const makePushAdapter = Effect.gen(function* () {
+const makePushAdapter = Effect.gen(function* () {
   // Keep stable authorities without shadowing the caller's Scope, Clock or request span.
   const services = Context.pick(
     HttpClient.HttpClient,

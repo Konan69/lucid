@@ -1,12 +1,12 @@
 import * as NodeHttp from 'node:http'
 import { describe, expect, it, layer } from '@effect/vitest'
-import { Deferred, Effect, Fiber, Layer, Option, Predicate, Ref } from 'effect'
+import { Context, Deferred, Effect, Fiber, Layer, Option, Predicate, Ref } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { ReadPageOutcome } from '@vivid/contracts'
 import { refusalLogs } from '../observability/testlogger.ts'
 import { PageResolver, publicAddress } from './address.ts'
 import { PageNetwork, pageNetworkLayer, type PageResponse } from './network.ts'
-import { PageReader, pageReaderLayer, makePageReader } from './page.ts'
+import { PageReader, pageReaderLayer } from './page.ts'
 import { budgets } from './budgets.ts'
 
 const publicResolverValue = PageResolver.of({
@@ -276,7 +276,8 @@ describe('Public pages', () => {
           }).pipe(
             Effect.provideServiceEffect(
               PageReader,
-              makePageReader.pipe(
+              Layer.build(Layer.fresh(pageReaderLayer)).pipe(
+                Effect.map((context) => Context.get(context, PageReader)),
                 Effect.provideService(PageNetwork, current),
                 Effect.provideService(PageResolver, publicResolverValue),
               ),

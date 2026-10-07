@@ -86,7 +86,7 @@ const read = Effect.fn('Code.readPublicPage')(function* (request: ReadPageReques
 })
 
 /** One ten-second deadline includes all DNS, redirects and body bytes. */
-export const makePageReader = Effect.gen(function* () {
+const makePageReader = Effect.gen(function* () {
   const context = yield* Effect.context<PageNetwork | import('./address.ts').PageResolver>()
   return PageReader.of({
     read: Effect.fn('Code.ReadPage')((request) =>

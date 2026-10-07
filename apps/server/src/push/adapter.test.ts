@@ -5,6 +5,7 @@ import { NodeHttpClient, NodeHttpServer, NodeHttpServerRequest } from '@effect/p
 import * as Undici from '@effect/platform-node/Undici'
 import { expect, it } from '@effect/vitest'
 import {
+  Context,
   Deferred,
   Effect,
   Fiber,
@@ -24,7 +25,7 @@ import * as HttpServer from 'effect/unstable/http/HttpServer'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
 import { NotificationId, PushDestination, PushPayload, ThreadId } from '@vivid/contracts'
-import { PushAdapter, pushAdapterLayer, makePushAdapter } from './adapter.ts'
+import { PushAdapter, pushAdapterLayer } from './adapter.ts'
 import { PushConfig } from './config.ts'
 import { PushAcceptance } from './receipts.ts'
 import { testPushConfig } from './testing.ts'
@@ -76,7 +77,10 @@ it.effect(
         }).pipe(
           Effect.provideServiceEffect(
             PushAdapter,
-            makePushAdapter.pipe(Effect.provideService(HttpClient.HttpClient, transport)),
+            Layer.build(Layer.fresh(pushAdapterLayer)).pipe(
+              Effect.map((context) => Context.get(context, PushAdapter)),
+              Effect.provideService(HttpClient.HttpClient, transport),
+            ),
           ),
           Effect.scoped,
           Effect.provideService(PushConfig, testPushConfig),
@@ -138,7 +142,10 @@ it.effect(
       }).pipe(
         Effect.provideServiceEffect(
           PushAdapter,
-          makePushAdapter.pipe(Effect.provideService(HttpClient.HttpClient, transport)),
+          Layer.build(Layer.fresh(pushAdapterLayer)).pipe(
+            Effect.map((context) => Context.get(context, PushAdapter)),
+            Effect.provideService(HttpClient.HttpClient, transport),
+          ),
         ),
         Effect.scoped,
         Effect.provideService(PushConfig, testPushConfig),
@@ -151,7 +158,10 @@ it.effect(
       }).pipe(
         Effect.provideServiceEffect(
           PushAdapter,
-          makePushAdapter.pipe(Effect.provideService(HttpClient.HttpClient, receiptTransport)),
+          Layer.build(Layer.fresh(pushAdapterLayer)).pipe(
+            Effect.map((context) => Context.get(context, PushAdapter)),
+            Effect.provideService(HttpClient.HttpClient, receiptTransport),
+          ),
         ),
         Effect.scoped,
         Effect.provideService(PushConfig, testPushConfig),

@@ -1,4 +1,4 @@
-import { expect, it, layer } from '@effect/vitest'
+import { expect, it } from '@effect/vitest'
 import { NodeHttpClient, NodeHttpServer } from '@effect/platform-node'
 import { cutFault, ServiceId } from '@vivid/contracts'
 import { getTableName } from 'drizzle-orm'
@@ -324,13 +324,19 @@ const capturing = () => {
   const capture = Logger.make((entry) => {
     lines.push(Logger.formatSimple.log(entry))
   })
-  return { lines, layer: Logger.layer([capture], { mergeWithExisting: true }) }
+  return { lines, capture }
 }
 
-it.effect('exports a typed failure with its tag, as expected, at its boundary', () =>
+/** Each case acquires its own HTTP receiver and client so listening sockets, routes and recorded export posts cannot leak into another case. */
+const withReceiver = <A, E, R>(program: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+    const context = yield* Layer.build(NodeHttpServer.layerTest)
+    return yield* program.pipe(Effect.provide(context))
+  }).pipe(Effect.scoped)
+
+it.effect('exports a typed failure with its tag, as expected, at its boundary', () =>
+  withReceiver(
+    Effect.gen(function* () {
       const refuse = Effect.fn('Probe.refuse')(function* () {
         return yield* new ProbeRefused({ message: 'not today' })
       }, observeFailures('rpc'))
@@ -362,14 +368,13 @@ it.effect('exports a typed failure with its tag, as expected, at its boundary', 
           'deployment.environment.name': 'production',
         })
       expect(new Set(scopes)).toEqual(new Set(['vivid-server']))
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect('marks a defect as a defect and logs it as an error', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const crash = Effect.fn('Probe.crash')(function* () {
         return yield* Effect.die(new TypeError('cannot read the thing'))
       }, observeFailures('schedule'))
@@ -383,14 +388,13 @@ it.effect('marks a defect as a defect and logs it as an error', () =>
       })
       const line = lines.find((entry) => entry.body.stringValue === Message.defect)
       expect(line === undefined ? '' : line.severityText).toBe('Error')
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect('records nothing for an interruption', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const leave = Effect.fn('Probe.leave')(function* () {
         return yield* Effect.interrupt
       }, observeFailures('http'))
@@ -400,14 +404,13 @@ it.effect('records nothing for an interruption', () =>
       expect(span === undefined ? [] : Object.keys(valuesOf(span.attributes))).toEqual([])
       expect(spanNamed(spans, 'Probe.leave')).toHaveLength(1)
       expect(lines.filter((line) => 'vivid.boundary' in valuesOf(line.attributes))).toEqual([])
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect('records a refusal as a span event and a log line', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const decide = Effect.fn('Probe.decide')(function* () {
         yield* recordRefusal(Refusal.cases.DeviceRefused.make({ reason: 'NotAllowed' }))
         return 'declined'
@@ -426,14 +429,13 @@ it.effect('records a refusal as a span event and a log line', () =>
       const line = lines.find((entry) => entry.body.stringValue === Message.refusal)
       expect(line === undefined ? '' : line.severityText).toBe('Info')
       expect(line === undefined ? {} : valuesOf(line.attributes)).toEqual(refusal)
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect('exports the type of a failure whose message is private prose, and no prose', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       // What a model provider's error looks like: the Person's own words, quoted back. No pattern
       // marks this as private, which is why the export keeps a list of what may leave instead.
       const prose = 'Ada asked where her mother lives now and the answer was 12 Marsh Lane'
@@ -466,14 +468,13 @@ it.effect('exports the type of a failure whose message is private prose, and no 
       expect(text).not.toContain('Marsh Lane')
       expect(text).not.toContain('Ada')
       expect(text).not.toContain('Probe.echo (')
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect("exports none of a Drizzle query error's statement or parameters", () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const table = getTableName(threads)
       const driver = Object.assign(new Error('duplicate key value violates unique constraint'), {
         code: '23505',
@@ -503,17 +504,14 @@ it.effect("exports none of a Drizzle query error's statement or parameters", () 
       })
       for (const secret of ['private line', 'insert into', 'dami@example.com', 'duplicate key'])
         expect(text).not.toContain(secret)
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect('exports a table name only when Vivid declares that table, and no constraint', () => {
   const stdout = capturing()
-  return Effect.gen(function* () {
-    const caseContext = yield* Layer.build(
-      stdout.layer.pipe(Layer.provideMerge(NodeHttpServer.layerTest)),
-    )
-    return yield* Effect.gen(function* () {
+  return withReceiver(
+    Effect.gen(function* () {
       // `table` and `constraint` are properties of whatever was thrown. A driver sets them from
       // the schema; anything else can set them from anything.
       const foreign = Object.assign(new Error('refused'), {
@@ -543,14 +541,15 @@ it.effect('exports a table name only when Vivid declares that table, and no cons
       expect(recorded).toHaveLength(1)
       expect(recorded[0]).toContain(`vivid.failure.constraint=${PRIVATE}_constraint`)
       expect(recorded[0]).toContain(`db.collection.name=${PRIVATE}_table`)
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped)
+    }),
+  ).pipe(
+    Effect.updateService(Logger.CurrentLoggers, (loggers) => new Set([...loggers, stdout.capture])),
+  )
 })
 
 it.effect('records every reason of a combined cause and classifies the span by the defect', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const both = Effect.fn('Probe.both')(function* () {
         return yield* Effect.failCause(
           Cause.combine(
@@ -574,14 +573,13 @@ it.effect('records every reason of a combined cause and classifies the span by t
         ['Warn', 'ProbeRefused'],
         ['Error', 'RangeError'],
       ])
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect('exports no failure type that is a property of what was thrown', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       // Each of these has the shape of an identifier, which is why shape decides nothing: the type
       // exported is the one a class gives, and a foreign failure's tag or name is not one.
       const tagged = Effect.fn('Probe.tagged')(function* () {
@@ -618,17 +616,14 @@ it.effect('exports no failure type that is a property of what was thrown', () =>
       })
       // The tracer's exception events for the same failures carry the name as text; none leaves.
       expect(text).not.toContain(PRIVATE)
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect('exports a refusal field only when its value is one of a closed set', () => {
   const stdout = capturing()
-  return Effect.gen(function* () {
-    const caseContext = yield* Layer.build(
-      stdout.layer.pipe(Layer.provideMerge(NodeHttpServer.layerTest)),
-    )
-    return yield* Effect.gen(function* () {
+  return withReceiver(
+    Effect.gen(function* () {
       const decide = Effect.fn('Probe.decide')(function* () {
         // A service id is an open string: an Integration a Person imported names its own.
         yield* recordRefusal(
@@ -660,14 +655,15 @@ it.effect('exports a refusal field only when its value is one of a closed set', 
       expect(stdout.lines.some((line) => line.includes(`vivid.refusal.service=${PRIVATE}`))).toBe(
         true,
       )
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped)
+    }),
+  ).pipe(
+    Effect.updateService(Logger.CurrentLoggers, (loggers) => new Set([...loggers, stdout.capture])),
+  )
 })
 
 it.effect('keeps ambient OTEL_RESOURCE_ATTRIBUTES out of the resource', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const { collect, flush, run } = yield* observed({
         ...plain,
         ambient: { OTEL_RESOURCE_ATTRIBUTES: 'vivid.secret=hunter2hunter2,team=payments' },
@@ -686,14 +682,13 @@ it.effect('keeps ambient OTEL_RESOURCE_ATTRIBUTES out of the resource', () =>
         ])
       expect(text).not.toContain('hunter2hunter2')
       expect(text).not.toContain('payments')
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect('names the commit on the resource only when it is a commit', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       // What `VIVID_COMMIT` would hold if a credential were pasted into it.
       const { collect, flush, run } = yield* observed({ ...plain, commit: `ghp_${PRIVATE}` })
       yield* run(Effect.logInfo(Message.refusal).pipe(Effect.withSpan('Probe.work')))
@@ -708,14 +703,13 @@ it.effect('names the commit on the resource only when it is a commit', () =>
           'deployment.environment.name': 'production',
         })
       expect(text).not.toContain(PRIVATE)
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect("exports no part of a client's fault report", () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const fault = cutFault({
         surface: 'mobile',
         thrown: new Error('Skia is not linked for dami@example.com'),
@@ -741,14 +735,13 @@ it.effect("exports no part of a client's fault report", () =>
       expect(spanNamed(spans, 'http.server POST')).toHaveLength(1)
       for (const secret of ['Skia', 'dami@example.com', 'Composer', 'ios 0.1.0', 'mobile'])
         expect(text).not.toContain(secret)
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect("exports no query, path or header of a provider's sign-in return", () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       // The real route (`connections/return.ts`) needs a database. What is under test is the span
       // the HTTP server makes for any request at that address, so a handler with the same shape
       // stands in: a named program that fails under `observeFailures('http')` and is answered.
@@ -795,16 +788,15 @@ it.effect("exports no query, path or header of a provider's sign-in return", () 
         'content-type',
       ])
         expect(text).not.toContain(secret)
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect(
   'exports no span under a malformed or all-zero inbound trace id, and no such parent',
   () =>
-    Effect.gen(function* () {
-      const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-      return yield* Effect.gen(function* () {
+    withReceiver(
+      Effect.gen(function* () {
         const inbound = Effect.fn('Probe.inbound')(function* () {
           yield* recordRefusal(Refusal.cases.DeviceRefused.make({ reason: 'NotAllowed' }))
           return HttpServerResponse.empty({ status: 204 })
@@ -873,14 +865,13 @@ it.effect(
         expect(text).not.toContain('Lovelace')
         expect(text).not.toContain('463ac35c9f6413ad463ac35c')
         expect(text).not.toContain('0'.repeat(16))
-      }).pipe(Effect.provide(caseContext))
-    }).pipe(Effect.scoped),
+      }),
+    ),
 )
 
 it.effect('files a 64-bit B3 trace under its 128-bit form, on spans, links and lines alike', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const short = '463ac35c9f6413ad'
       const caller = 'a2fb4a1d1a96d312'
       const wide = `0000000000000000${short}`
@@ -922,8 +913,8 @@ it.effect('files a 64-bit B3 trace under its 128-bit form, on spans, links and l
       expect(linked === undefined ? [] : linked.links).toEqual([{ traceId: wide }])
       const refusals = lines.filter((line) => line.body.stringValue === Message.refusal)
       expect(refusals.map((line) => line.traceId)).toEqual([wide])
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 /** One product call, served the way `rpc/server.ts` serves `VividRpc` over plain HTTP. */
@@ -942,9 +933,8 @@ const probeRoutes = RpcServer.layerHttp({ group: probes, path: '/rpc', protocol:
 )
 
 it.effect('builds no span name from what a request carries, over HTTP or RPC', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       // A dotted identifier: the one shape of data the span-name rule cannot tell from a name
       // written in code, so the one that would be exported if a producer ever built a name from it.
       const marker = 'Ada.Lovelace'
@@ -1009,8 +999,8 @@ it.effect('builds no span name from what a request carries, over HTTP or RPC', (
       expect(names.filter((name) => name.includes('Ada') || name.includes('Lovelace'))).toEqual([])
       // And nowhere else in what left.
       expect(text).not.toContain('Lovelace')
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 /** What a drop report says, read from its stdout line: the signal, the count, and the pause. */
@@ -1030,11 +1020,8 @@ const paused = (signal: 'traces' | 'logs', dropped: number) =>
 
 it.effect('bounds what a backend that never answers can hold, and reports each pause once', () => {
   const stdout = capturing()
-  return Effect.gen(function* () {
-    const caseContext = yield* Layer.build(
-      stdout.layer.pipe(Layer.provideMerge(NodeHttpServer.layerTest)),
-    )
-    return yield* Effect.gen(function* () {
+  return withReceiver(
+    Effect.gen(function* () {
       const { arrivals, flush, run } = yield* observed({ ...plain, answer: Effect.never })
       const refuse = Effect.fn('Probe.refuse')(function* () {
         return yield* new ProbeRefused({ message: 'not today' })
@@ -1086,8 +1073,10 @@ it.effect('bounds what a backend that never answers can hold, and reports each p
       expect(new Set(reports().slice(2).map(reported))).toEqual(
         new Set([paused('traces', perSignal), paused('logs', perSignal)]),
       )
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped)
+    }),
+  ).pipe(
+    Effect.updateService(Logger.CurrentLoggers, (loggers) => new Set([...loggers, stdout.capture])),
+  )
 })
 
 /**
@@ -1103,11 +1092,8 @@ const stalling = (closed: Queue.Queue<void>) =>
 
 it.effect('gives a refused export one attempt, keeps nothing of it, and reports the drop', () => {
   const stdout = capturing()
-  return Effect.gen(function* () {
-    const caseContext = yield* Layer.build(
-      stdout.layer.pipe(Layer.provideMerge(NodeHttpServer.layerTest)),
-    )
-    return yield* Effect.gen(function* () {
+  return withReceiver(
+    Effect.gen(function* () {
       // A backend that answers at once, refuses, and asks to be tried again in an hour. rc.116
       // `OtlpExporter.ts` would wait that hour with the batch in hand, once per batch. The hour is
       // short on purpose: the logs exporter wakes every second of the time that passes below. The refusal
@@ -1154,17 +1140,16 @@ it.effect('gives a refused export one attempt, keeps nothing of it, and reports 
         expect(reports().filter((line) => reported(line) === paused(signal, 1))).toHaveLength(
           ROUNDS,
         )
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped)
+    }),
+  ).pipe(
+    Effect.updateService(Logger.CurrentLoggers, (loggers) => new Set([...loggers, stdout.capture])),
+  )
 })
 
 it.effect('holds a place until the answer ends, and gives the connection back with it', () => {
   const stdout = capturing()
-  return Effect.gen(function* () {
-    const caseContext = yield* Layer.build(
-      stdout.layer.pipe(Layer.provideMerge(NodeHttpServer.layerTest)),
-    )
-    return yield* Effect.gen(function* () {
+  return withReceiver(
+    Effect.gen(function* () {
       // A backend that answers `200`, starts the body and never finishes it (`stalling`).
       const closed = yield* Queue.unbounded<void>()
       const { arrivals, flush, run } = yield* observed({
@@ -1218,17 +1203,16 @@ it.effect('holds a place until the answer ends, and gives the connection back wi
       expect(new Set(reports().slice(2).map(reported))).toEqual(
         new Set([paused('traces', perSignal), paused('logs', perSignal)]),
       )
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped)
+    }),
+  ).pipe(
+    Effect.updateService(Logger.CurrentLoggers, (loggers) => new Set([...loggers, stdout.capture])),
+  )
 })
 
 it.effect('pauses a signal for a minute after one failed export, then sends again', () => {
   const stdout = capturing()
-  return Effect.gen(function* () {
-    const caseContext = yield* Layer.build(
-      stdout.layer.pipe(Layer.provideMerge(NodeHttpServer.layerTest)),
-    )
-    return yield* Effect.gen(function* () {
+  return withReceiver(
+    Effect.gen(function* () {
       // A backend that is down for its first two posts, one of each signal, and well after.
       const answers = yield* Ref.make(0)
       const { arrivals, collect, flush, run } = yield* observed({
@@ -1273,8 +1257,10 @@ it.effect('pauses a signal for a minute after one failed export, then sends agai
       expect(spans.map((span) => span.name)).toEqual(['Probe.before', 'Probe.after'])
       // Nothing was dropped after the first two, so stdout has no further report.
       expect(reports()).toHaveLength(2)
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped)
+    }),
+  ).pipe(
+    Effect.updateService(Logger.CurrentLoggers, (loggers) => new Set([...loggers, stdout.capture])),
+  )
 })
 
 /** The instance type of the classes `declared` makes. */
@@ -1372,9 +1358,8 @@ const outcomeOf = <A>({ kind, label, value }: HostileCase, exit: Exit.Exit<A, un
 const unchanged = ({ kind, label }: HostileCase) => ({ label, kind, reasons: 1, same: true })
 
 it.effect('ends a span whose failure cannot be read, and hands the caller that failure only', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const { collect, flush, run } = yield* observed(plain)
       const raise = Effect.fn('Probe.hostile')(function* ({ kind, value }: HostileCase) {
         return yield* kind === 'Fail' ? Effect.fail(value) : Effect.die(value)
@@ -1412,14 +1397,13 @@ it.effect('ends a span whose failure cannot be read, and hands the caller that f
         spanNamed(spans, 'Probe.hostile').map((span) => valuesOf(span.attributes)['error.type']),
       ).toEqual(expected.map((entry) => (entry === error ? 'Error' : '_OTHER')))
       expect(text).not.toContain(PRIVATE)
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect('still exports an ordinary failed span with its type, on the span and its event', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const crash = Effect.fn('Probe.crash')(function* () {
         return yield* Effect.die(new TypeError('cannot read the thing'))
       }, observeFailures('rpc'))
@@ -1435,16 +1419,15 @@ it.effect('still exports an ordinary failed span with its type, on the span and 
               .filter((event) => event.name === 'exception')
               .map((event) => valuesOf(event.attributes)),
       ).toEqual([{ 'exception.type': 'TypeError' }])
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect(
   'leaves off an attribute or an annotation that is not a plain value, and exports the rest',
   () =>
-    Effect.gen(function* () {
-      const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-      return yield* Effect.gen(function* () {
+    withReceiver(
+      Effect.gen(function* () {
         const { collect, flush, run } = yield* observed(plain)
         // A value that throws when anything reads it, under a key the allowlist names.
         const annotate = Effect.fn('Probe.annotated')(function* () {
@@ -1475,8 +1458,8 @@ it.effect(
             .filter((line) => line.body.stringValue === Message.failure)
             .map((line) => valuesOf(line.attributes)),
         ).toEqual([{}])
-      }).pipe(Effect.provide(caseContext))
-    }).pipe(Effect.scoped),
+      }),
+    ),
 )
 
 /**
@@ -1488,9 +1471,8 @@ const doubling = () =>
   Array.from({ length: 30 }).reduce<ReadonlyArray<unknown>>((previous) => [previous, previous], [0])
 
 it.effect('gives the exporter no object to walk, wherever one is attached', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const { collect, flush, run } = yield* observed(plain)
       const graph = doubling()
       const caller = Tracer.externalSpan({
@@ -1563,14 +1545,13 @@ it.effect('gives the exporter no object to walk, wherever one is attached', () =
       // A message that is not one of the fixed ones is the placeholder, whatever it was.
       expect(bodies('Probe.message')).toEqual([[OMITTED, []]])
       expect(bodies('Probe.neighbour').map(([body]) => body)).toEqual([Message.refusal])
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect('drops a value too long to be an attribute without reading it', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const { collect, flush, run } = yield* observed(plain)
       // Ten megabytes under a key the allowlist names. Only its length is asked.
       const long = 'x'.repeat(10 * 1024 * 1024)
@@ -1596,8 +1577,8 @@ it.effect('drops a value too long to be an attribute without reading it', () =>
       ).toEqual([{}])
       // Nothing of it was serialized: everything that left is a few kilobytes.
       expect(text.length).toBeLessThan(64 * 1024)
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 /** A getter that throws as soon as it is read, with private text for a message. */
@@ -1606,9 +1587,8 @@ const throwing = (): never => {
 }
 
 it.effect('makes a span from options or a parent that cannot be read, and changes no outcome', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const { collect, flush, run } = yield* observed(plain)
       // A parent whose trace id throws when read: rc.116 `SpanImpl` reads it for the child's own.
       const parent = () =>
@@ -1668,14 +1648,13 @@ it.effect('makes a span from options or a parent that cannot be read, and change
       expect(spanNamed(spans, 'Probe.direct')).toHaveLength(1)
       expect(spanNamed(spans, 'Probe.neighbour')).toHaveLength(1)
       expect(text).not.toContain(PRIVATE)
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect('forwards at most 128 links, whatever the collection that holds them answers', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const { collect, flush, run } = yield* observed(plain)
       const link: Tracer.SpanLink = {
         span: Tracer.externalSpan({
@@ -1739,16 +1718,15 @@ it.effect('forwards at most 128 links, whatever the collection that holds them a
       expect(linksOf('Probe.unsized')).toEqual([])
       expect(linksOf('Probe.added')).toEqual([128])
       expect(text).not.toContain(PRIVATE)
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect(
   'files a line under its trace whether or not its span is sampled, and under no id that is not one',
   () =>
-    Effect.gen(function* () {
-      const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-      return yield* Effect.gen(function* () {
+    withReceiver(
+      Effect.gen(function* () {
         const { collect, flush, run } = yield* observed(plain)
         // A line under a span that is not sampled, whose parent is: the trace is exported, so the
         // line belongs to it although its own span is not.
@@ -1787,14 +1765,13 @@ it.effect(
           lines.filter((line) => line.body.stringValue === body).map((line) => line.traceId)
         expect(tracesOf(Message.failure)).toEqual([parent === undefined ? '' : parent.traceId])
         expect(tracesOf(Message.defect)).toEqual(malformed.map(() => undefined))
-      }).pipe(Effect.provide(caseContext))
-    }).pipe(Effect.scoped),
+      }),
+    ),
 )
 
 it.effect('exports a line logged with a cause that cannot be read, and the log call succeeds', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const { collect, flush, run } = yield* observed(plain)
       const log = Effect.fn('Probe.logged')(function* ({ kind, value }: HostileCase) {
         // Effect's own loggers render a logged cause themselves, with or without export, so they
@@ -1813,8 +1790,8 @@ it.effect('exports a line logged with a cause that cannot be read, and the log c
       const logged = lines.filter((line) => line.body.stringValue === Message.defect)
       expect(logged.map((line) => valuesOf(line.attributes))).toEqual(hostileCases.map(() => ({})))
       expect(text).not.toContain(PRIVATE)
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 /**
@@ -1835,9 +1812,8 @@ const failureLines = (
   })
 
 it.effect('names at most 256 failure types in one process, spans and lines together', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const { collect, flush, run } = yield* observed(plain)
       // Recorded with no span of the exporter's current: the type is on a log line and no span.
       const logged = (failure: Declared | Foreign) =>
@@ -1897,14 +1873,13 @@ it.effect('names at most 256 failure types in one process, spans and lines toget
         ['Bulk0', '_OTHER'],
         ['Bulk2', 'Bulk1'],
       ])
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
 it.effect('exports at most 64 database codes in one process, and none after that', () =>
-  Effect.gen(function* () {
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
+  withReceiver(
+    Effect.gen(function* () {
       const refused = (code: string) =>
         Effect.exit(
           Effect.fail(
@@ -1924,27 +1899,28 @@ it.effect('exports at most 64 database codes in one process, and none after that
         undefined,
         '00000',
       ])
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
+    }),
+  ),
 )
 
-layer(
-  observabilityLayer(ObservabilityConfiguration.Disabled()).pipe(
-    Layer.provide(NodeHttpClient.layerUndici),
-  ),
-)((it) => {
-  it.effect('posts nothing when export is disabled', () =>
+it.effect('posts nothing when export is disabled', () =>
+  withReceiver(
     Effect.gen(function* () {
-      const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-      return yield* Effect.gen(function* () {
-        const { posts, routes } = yield* receiving(answered)
-        yield* Layer.build(HttpRouter.serve(routes, { disableLogger: true }))
-        const refuse = Effect.fn('Probe.refuse')(function* () {
-          return yield* new ProbeRefused({ message: 'not today' })
-        }, observeFailures('rpc'))
-        yield* Effect.scoped(Effect.exit(refuse()).pipe(Effect.scoped))
-        expect(yield* Ref.get(posts)).toEqual([])
-      }).pipe(Effect.provide(caseContext))
-    }).pipe(Effect.scoped),
-  )
-})
+      const { posts, routes } = yield* receiving(answered)
+      yield* Layer.build(HttpRouter.serve(routes, { disableLogger: true }))
+      const refuse = Effect.fn('Probe.refuse')(function* () {
+        return yield* new ProbeRefused({ message: 'not today' })
+      }, observeFailures('rpc'))
+      // Disabled is built only for the refusal; the receiver and router keep their own scope.
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const disabledContext = yield* Layer.build(
+            observabilityLayer(ObservabilityConfiguration.Disabled()),
+          )
+          yield* Effect.exit(refuse()).pipe(Effect.provide(disabledContext))
+        }),
+      )
+      expect(yield* Ref.get(posts)).toEqual([])
+    }),
+  ),
+)
