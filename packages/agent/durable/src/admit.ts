@@ -233,7 +233,8 @@ const admitNewTurn = Effect.fn('Durable.admitNewTurn')(function* (
 ) {
   const prior = yield* Pi.request(owner.conversation, owner.input.draft.requestId, context)
   if (Option.isNone(prior) && (yield* isParked(harness, owner.input.conversationId, context)))
-    yield* new TurnWaiting({ conversationId: owner.input.conversationId })
+    return yield* new TurnWaiting({ conversationId: owner.input.conversationId })
+  return undefined
 })
 
 /** A captured run_end receipt is stronger than an equal final-answer comparison. */
@@ -288,20 +289,20 @@ export const admit: (
         },
         context,
       ).pipe(
-        Effect.catchTag('TurnWaiting', (error) =>
-          Effect.gen(function* () {
-            yield* withdrawSubmission(submission, context)
-            const current = yield* Pi.inputStatus(submission, context)
-            if (withdrawn(current)) return yield* error
-            return current
-          }),
-        ),
-        Effect.catchTag('TurnStranded', () =>
-          Effect.gen(function* () {
-            yield* withdrawSubmission(submission, context)
-            return yield* Pi.inputStatus(submission, context)
-          }),
-        ),
+        Effect.catchTags({
+          TurnWaiting: (error) =>
+            Effect.gen(function* () {
+              yield* withdrawSubmission(submission, context)
+              const current = yield* Pi.inputStatus(submission, context)
+              if (withdrawn(current)) return yield* error
+              return current
+            }),
+          TurnStranded: () =>
+            Effect.gen(function* () {
+              yield* withdrawSubmission(submission, context)
+              return yield* Pi.inputStatus(submission, context)
+            }),
+        }),
       )
     if (withdrawn(receipt)) return yield* new TurnWithdrawn({ messageId: input.draft.requestId })
     const alreadyRunning =

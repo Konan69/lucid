@@ -48,7 +48,7 @@ Wrap the transport in `resumable`. After `ConnectionLost`, call `resumeStream()`
 
 ```ts
 import { DefaultChatTransport } from 'ai'
-import { ConnectionLost, resumable } from '@vivid/durable/client'
+import { ConnectionLost, closeInputs, resumable } from '@vivid/durable/client'
 
 const transport = resumable(new DefaultChatTransport({ api: '/chat' }))
 // Pass transport to the host's Chat or useChat. On a ConnectionLost error:

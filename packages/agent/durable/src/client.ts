@@ -25,7 +25,7 @@ function aborted(cause: ErrorOptions['cause'], signal: Signal): boolean {
   return exception && cause.name === 'AbortError'
 }
 
-/** Preserve the original cancellation object; every other acquisition failure becomes recoverable. */
+/** Preserve cancellation; callers choose this conversion only for network acquisition or read failures. */
 function lost(cause: ErrorOptions['cause'], signal: Signal): never {
   if (aborted(cause, signal)) throw cause
   throw new ConnectionLost(cause)
