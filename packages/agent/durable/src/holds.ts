@@ -799,11 +799,14 @@ export function answerObserved(
   )
 }
 
+/** Persist this fallback even when the person supplies no reason, preserving existing receipt presentation. */
+const defaultDenialReason = 'The person denied this call'
+
 /** Direct and batch admission share one decision-to-settlement rule and model-visible denial text. */
 function decisionSettlement(approval: Decision): Settlement {
   return approval.approved
     ? { kind: 'approved' }
-    : { kind: 'denied', reason: approval.reason ?? 'The person denied this call' }
+    : { kind: 'denied', reason: approval.reason ?? defaultDenialReason }
 }
 
 /** Error outputs use the same task-scoped first-writer admission as successful client outputs. */

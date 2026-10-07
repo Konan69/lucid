@@ -92,7 +92,7 @@ Tool arguments emit one `tool-input-start`, raw JSON growth as `tool-input-delta
 
 ## People in the loop
 
-`waiting(harness, id, context)` returns `{ holdId, callId, toolName, input, kind }` rows. `decide` accepts `{ holdId, approved, reason? }`; `answer` accepts `{ holdId, output }`. Both return the durable settlement. Promise hosts can validate an opaque wire id with `holdId(text)`, which throws `HoldIdInvalid` on malformed input. Wrong-kind or never-waiting tasks fail `CallNotWaiting`.
+`waiting(harness, id, context)` returns `{ holdId, callId, toolName, input, kind }` rows. `decide` accepts `{ holdId, approved, reason? }`; `answer` accepts `{ holdId, output }`. Both return the durable settlement. Promise hosts can validate an opaque wire id with `holdId(text)`, which throws `HoldIdInvalid` on malformed input. Wrong-kind or never-waiting tasks fail `CallNotWaiting`. A denial without a reason stores and shows the default text "The person denied this call".
 
 Hold identity is the Pi tool task, not a provider call id. First settlement wins for that task; approvals remain safe against retries, another tab and reused provider ids. Duplicate call ids in one tool round are blocked before execution, omitted from waiting and never request approval. A parked HTTP stream finishes while Pi's run remains alive. Decisions work with no reader and survive process restart.
 
