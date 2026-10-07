@@ -65,6 +65,9 @@ export interface PostgresExecutor {
  * so the caller cannot mistake it for a guaranteed rollback.
  */
 export interface PostgresDatabase extends PostgresExecutor {
+  /** Cached driver health, without SQL: losing a lease fences volatile mintId
+   * as well as persistence. This PostgreSQL addition never reconnects. */
+  assertConnected(): void
   /** Pi transaction's same barrier/rollback rules, with BEGIN and independent
    * preflight reads sent together in their original order. Read results are
    * decoded by storage before any write; no allocation happens outside the transaction.

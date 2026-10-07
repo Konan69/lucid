@@ -16,6 +16,10 @@ export class CountingDatabase implements PostgresDatabase {
   constructor(database: PostgresDatabase) {
     this.database = database
   }
+  /** Cached health checks introduce no driver round trip. */
+  assertConnected(): void {
+    this.database.assertConnected()
+  }
   /** One unbound driver query. */
   exec(sql: string): Promise<void> {
     this.calls++

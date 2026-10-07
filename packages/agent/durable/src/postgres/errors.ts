@@ -41,3 +41,16 @@ export class StorageOwned extends Schema.TaggedError<StorageOwned>()(
     return `Durable PostgreSQL schema ${this.schema} is already owned by another connection`
   }
 }
+
+/** Pi's SQLite connection does not reconnect. A lost PostgreSQL lease also loses
+ * its ownership lock: fence the entire storage, including volatile minting, with
+ * one diagnostic that tells a host to close/reopen storage and its Harness. */
+export class StorageDisconnected extends Schema.TaggedError<StorageDisconnected>()(
+  'StorageDisconnected',
+  { schema: Schema.String, cause: Schema.Defect() },
+  { title: 'StorageDisconnected' },
+) {
+  override get message() {
+    return `Durable PostgreSQL schema ${this.schema} is disconnected; close it, then reopen the storage and the Harness`
+  }
+}

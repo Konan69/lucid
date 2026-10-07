@@ -15,4 +15,4 @@ export {
   CURRENT_POSTGRES_SCHEMA_VERSION,
 } from './migrations.ts'
 export type { PostgresMigration } from './migrations.ts'
-export { ConnectionSettingInvalid, RawNul, StorageOwned } from './errors.ts'
+export { ConnectionSettingInvalid, RawNul, StorageOwned, StorageDisconnected } from './errors.ts'

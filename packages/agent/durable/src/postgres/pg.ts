@@ -15,7 +15,7 @@ import {
 export { validateSchema } from './database.ts'
 import { PostgresStorage } from './storage.ts'
 import { quoteLiteral } from './literal.ts'
-import { ConnectionSettingInvalid, RawNul, StorageOwned } from './errors.ts'
+import { ConnectionSettingInvalid, RawNul, StorageOwned, StorageDisconnected } from './errors.ts'
 
 /** pg/lib/query.js:_checkForMultirow returns one result per simple-protocol
  * statement. Decode scalar metadata/ownership rows once at the SDK ingress.
@@ -201,23 +201,31 @@ class PgTransaction extends PgExecutor {
 export class PgDatabase extends PgExecutor implements PostgresDatabase {
   private readonly access = new SerialOperationQueue()
   private closed = false
-  private connectionError = Option.none<Error>()
+  private connectionError = Option.none<StorageDisconnected>()
   /** pg Pool removes its idle-client error listener while a connection is leased.
    * pg/lib/client.js:_handleErrorEvent rejects outstanding queries and emits error;
    * retain that cause so idle connection failure cannot become an uncaught event.
    * This is a public driver listener, not reconnect or cross-process coordination. */
   private readonly connectionFailed = (cause: Error) => {
-    this.connectionError = Option.some(cause)
+    if (Option.isNone(this.connectionError))
+      this.connectionError = Option.some(new StorageDisconnected({ schema: this.schema, cause }))
   }
 
   /** Pi NodeSqliteDatabase.constructor, adapted for a host-owned lease. Attach
    * the public client error listener before any asynchronous facade operation. */
   private readonly previousSearchPath: string
   private readonly schemaOwnershipKey: string
-  constructor(client: PoolClient, previousSearchPath: string, schemaOwnershipKey: string) {
+  private readonly schema: string
+  constructor(
+    client: PoolClient,
+    previousSearchPath: string,
+    schemaOwnershipKey: string,
+    schema: string,
+  ) {
     super(client)
     this.previousSearchPath = previousSearchPath
     this.schemaOwnershipKey = schemaOwnershipKey
+    this.schema = schema
     client.on('error', this.connectionFailed)
   }
 
@@ -347,7 +355,12 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
   protected runOperation<T>(operation: () => Promise<T>): Promise<T> {
     return this.access.run(() => {
       this.assertOpen()
-      return operation()
+      return operation().catch((cause: unknown) => {
+        // pg publishes a leased-client error before queued rejections settle.
+        // SQL data errors retain their native cause; connection death is typed.
+        this.assertConnected()
+        throw cause
+      })
     })
   }
 
@@ -371,6 +384,11 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
    * connection stays alive, so reject closed or failed facade operations explicitly. */
   private assertOpen(): void {
     if (this.closed) throw new Error('PgDatabase is closed')
+    this.assertConnected()
+  }
+
+  /** Reuse the original tagged failure and driver cause for every later call. */
+  assertConnected(): void {
     if (Option.isSome(this.connectionError)) throw this.connectionError.value
   }
 }
@@ -410,7 +428,7 @@ export async function openPgDatabase(pool: Pool, schema: string): Promise<PgData
       return claimOwnership(client, schema, key)
         .then(() => client.query(`SET search_path TO "${schema}"`))
         .then(() => {
-          const database = new PgDatabase(client, row.search_path, key)
+          const database = new PgDatabase(client, row.search_path, key, schema)
           client.removeListener('error', initializingError)
           return database
         })

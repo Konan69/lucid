@@ -142,6 +142,8 @@ PostgreSQL 16 or newer is required; the adapter is tested against PostgreSQL 18.
 
 One connection owns a schema at a time, enforced by a nonblocking session advisory lock acquired before migrations. A competing opener receives StorageOwned. Ownership is released on close or backend/process death; reopen after the previous owner closes. Initialization failure destroys the lease. Migrations are transactional and reject newer unsupported schema versions.
 
+A lost connection fences all storage operations, including id minting, with StorageDisconnected carrying the schema and original cause. The storage does not reconnect: close it, then reopen the storage and the Harness.
+
 The [round-trip report](src/postgres/bench/report.md) counts actual driver calls on local PostgreSQL 18; these are not throughput guarantees:
 
 | Workload                                             | Driver calls |
