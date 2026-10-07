@@ -128,6 +128,9 @@ allowBuilds:
   # (`scripts/sentry-upload.mjs`, `apps/web/vite.config.ts`); its install step fetches the
   # prebuilt binary the wrapper runs.
   '@sentry/cli': true
+  # tsc-rs's install step only rewrites its launcher to skip a 22 ms Node start; the launcher as
+  # shipped finds the platform binary by itself, and scripts/types.mjs runs it with Node.
+  tsc-rs: false
   core-js-pure: false
   msgpackr-extract: false
   protobufjs: false
@@ -167,3 +170,6 @@ minimumReleaseAgeExclude:
   - '@effect/tsgo-win32-arm64@0.51.0'
   - '@effect/tsgo-win32-x64@0.51.0'
   - '@effect/tsgo@0.51.0'
+  - '@tsc-rs/darwin-arm64@0.1.0'
+  - '@tsc-rs/linux-x64@0.1.0'
+  - tsc-rs@0.1.0

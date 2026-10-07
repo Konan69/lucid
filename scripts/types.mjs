@@ -8,6 +8,16 @@ const repositoryRoot = NodePath.resolve(
 )
 
 /**
+ * The type checker: tsc-rs (pingdotgg/ts-rust), a Rust port of the native TypeScript compiler
+ * with the same command line and the Effect language service rules built in. Measured on this
+ * repository on 7 Oct 2026 (docs/checks.md): the whole typecheck graph cold in 11 s against 28 s
+ * for native `tsc` 7.0.2 with one checker, at the same 2 GB peak, and the same diagnostics.
+ * Linux x64 and macOS arm64 only. `@typescript/native` stays installed for typed lint and
+ * editors, and `apps/web`'s build still compiles with it.
+ */
+export const typeChecker = 'node_modules/tsc-rs/bin/tsc-rs'
+
+/**
  * Turbo already restores declaration prerequisites and hashes source contents.
  * Project mode checks those contents against incremental data instead of build
  * mode's timestamp shortcut, which can miss errors after restoring newer cache
@@ -18,7 +28,7 @@ const repositoryRoot = NodePath.resolve(
  * https://turborepo.dev/docs/reference/system-environment-variables
  */
 export function runTypes(root, cwd, projects, environment) {
-  const compiler = NodePath.join(root, 'node_modules/@typescript/native/bin/tsc')
+  const compiler = NodePath.join(root, typeChecker)
   const selected = projects.length === 0 ? ['tsconfig.json'] : projects
   const commands =
     environment.TURBO_HASH === undefined

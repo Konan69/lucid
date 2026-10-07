@@ -68,16 +68,21 @@ Typecheck runs the native TypeScript 7 compiler. `effect-language-service patch`
 
 The first patched run reported 1,677 findings that had gathered meanwhile, none of them a plain TypeScript error: 741 `strictEffectProvide` (most are tests that give a Layer to each case with `Effect.provide` where `layer(...)` builds it once for the file), 406 `unnecessaryFailYieldableError`, 188 `schemaNumber`, 84 `asyncFunction`, 52 `multipleEffectProvide`, and 29 smaller rules. For now the compiler prints every finding and exits 0 (`ignoreEffect...InTscExitCode`), and the gate's typecheck line says how many there are without failing. They are being fixed on their own branch; when the count is zero the options go back to `false`, so an Effect error or warning fails typecheck again, and `scripts/versions.mjs` goes back to requiring that.
 
-## ts-rust, evaluated
+## The type checker is ts-rust
 
-`tsc-rs` 0.1.0 (pingdotgg/ts-rust, a Rust port of the native compiler with the Effect rules built in) was run over the gate's whole typecheck graph on 7 October 2026, in dependency order, declarations included, on the PC at load 15:
+Since 7 October 2026 `scripts/types.mjs` runs `tsc-rs` 0.1.0 (pingdotgg/ts-rust), a Rust port of the native TypeScript compiler with the same command line, declarations and build info, and the Effect language service rules built in. `@typescript/native` 7.0.2 stays installed: typed lint and editors use it, `@effect/tsgo` patches it, and `apps/web`'s build compiles with it. `tsc-rs` runs on Linux x64 and macOS arm64 only.
 
-| Compiler                                                   |   Cold | Warm (build info kept) | Diagnostics                                                                                               |
-| ---------------------------------------------------------- | -----: | ---------------------: | --------------------------------------------------------------------------------------------------------- |
-| native `tsc` 7.0.2 with `@effect/tsgo` 0.51.0, one checker | 40.8 s |                  8.8 s | 1,677 Effect findings, 0 errors                                                                           |
-| `tsc-rs` 0.1.0                                             | 19.7 s |                  4.1 s | the same 1,677 with one message worded in another order, and 3 errors the native compiler does not report |
+Measured on the PC over the gate's whole typecheck graph (17 projects, in dependency order, declarations included, Effect rules on, cold):
 
-It takes the same flags, writes declarations and build info, honours the Effect plugin options, and is twice as fast cold and warm. It is not the gate's compiler yet for one reason: on `packages/agent/runtime/src/tools/sandbox.ts` it reports TS7031 (implicit any) for a destructured parameter with a default, `(path, { recursive } = {}) =>`, whose type comes from the interface the object implements. The code is valid and the native compiler accepts it, so a tree the gate passes today would fail. With the per-package cache and build info, typecheck is 0 to 16 seconds of a gate run; halving it is worth taking when that error is fixed upstream, by pointing `scripts/types.mjs` at the other binary.
+| Compiler                                             |   Time | Peak memory, largest process | Diagnostics                               |
+| ---------------------------------------------------- | -----: | ---------------------------: | ----------------------------------------- |
+| native `tsc` 7.0.2, one checker (the gate until now) | 28.3 s |                      1.97 GB | 1,677 Effect findings, 0 errors           |
+| native `tsc` 7.0.2, default checkers                 | 19.1 s |                      3.08 GB | the same                                  |
+| `tsc-rs` 0.1.0                                       | 11.1 s |                      2.07 GB | the same 1,677, and 3 errors more (below) |
+
+The server project alone: 14.2 s, 8.1 s and 5.2 s. Warm, with build info kept: 8.8 s native, 4.1 s `tsc-rs`.
+
+The 3 extra errors were TS7031 (implicit any) on `packages/agent/runtime/src/tools/sandbox.ts`, for `(path, { recursive } = {}) =>` in an object typed by an SDK interface. They are not a fault of the port: TypeScript 6.0.3, 7.0.2 and the 7.1 nightly of 22 September accept the code, and the nightly of 23 September and later report the same error, since microsoft/TypeScript pull request 64043 ("Align object binding defaults with arrays"). The compiler says the element is implicitly `any` while its own next diagnostic gives its type as `boolean | undefined`. The two parameters are annotated in `sandbox.ts` until that is fixed; pingdotgg/ts-rust issue 16 and pull request 17 carry the reproduction and a fix (report the error only when the parameter has no contextual type).
 
 ## Reference and limits
 

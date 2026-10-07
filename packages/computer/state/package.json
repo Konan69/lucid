@@ -8,7 +8,7 @@
     "./src/*": "./src/*"
   },
   "scripts": {
-    "typecheck": "tsc --checkers 1 --noEmit",
+    "typecheck": "node ../../../scripts/types.mjs",
     "lint": "node ../../../scripts/lint.mjs",
     "test": "node ../../../scripts/test.mjs"
   },

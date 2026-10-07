@@ -56,6 +56,11 @@ function fixture(t) {
     NodePath.join(repositoryRoot, 'node_modules/@typescript/native'),
     NodePath.join(root, 'node_modules/@typescript/native'),
   )
+  // The checker scripts/types.mjs runs; its platform package resolves through the real path.
+  NodeFS.symlinkSync(
+    NodeFS.realpathSync(NodePath.join(repositoryRoot, 'node_modules/tsc-rs')),
+    NodePath.join(root, 'node_modules/tsc-rs'),
+  )
   for (const directory of ['packages/contracts/src', 'packages/client/rpc/src']) {
     NodeFS.mkdirSync(NodePath.join(root, directory), { recursive: true })
   }
@@ -182,7 +187,7 @@ void test('restored declaration caches retain production, test, and consumer err
   const consumerFiles = NodeChildProcess.spawnSync(
     process.execPath,
     [
-      NodePath.join(root, 'node_modules/@typescript/native/bin/tsc'),
+      NodePath.join(root, 'node_modules/tsc-rs/bin/tsc-rs'),
       '-p',
       'packages/client/rpc/tsconfig.types.json',
       '--listFilesOnly',
