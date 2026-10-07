@@ -1,7 +1,7 @@
 import { silentChannelRepliesLayer } from '../channels/replies.ts'
 import { ThreadTitles } from './generation.ts'
 import * as NodeCrypto from 'node:crypto'
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import {
   Company,
   CompanyId,
@@ -190,252 +190,258 @@ const recorded = Effect.fn('FirstThread.test.recorded')(function* (personId: Per
   return yield* database.run(database.select().from(threads).where(eq(threads.personId, personId)))
 })
 
-describe.skipIf(!testDatabaseConfigured)('OpenFirstThread RPC', () => {
-  it.effect('compensation never removes a different Thread without its matching receipt', () =>
-    Effect.gen(function* () {
-      const test = yield* fixture()
-      const store = yield* ThreadStore
-      const first = yield* store.openFirst(test.actor)
-      if (!OpenFirstThreadResult.guards.Opened(first)) expect.fail('Expected first arrival')
-      const other = yield* store.create(test.actor, {
-        id: ThreadId.make(NodeCrypto.randomUUID()),
-        title: 'Earlier work',
-        projectId: null,
-      })
-      yield* store.releaseFirst(test.actor.person.id, other.id)
-      expect(yield* recorded(test.actor.person.id)).toHaveLength(2)
-      yield* store.releaseFirst(test.actor.person.id, first.thread)
-      expect(yield* recorded(test.actor.person.id)).toMatchObject([{ id: other.id }])
-      expect(yield* store.openFirst(test.actor)).toEqual(
-        OpenFirstThreadResult.cases.NotFirst.make({}),
-      )
-    }).pipe(Effect.scoped, Effect.provide(stores)),
-  )
-
-  it.effect('the no-Run guard retains a failed unadmitted reservation after a Flue refusal', () =>
-    Effect.gen(function* () {
-      const test = yield* harness()
-      yield* Ref.set(test.refuseAdmission, true)
-      const outcome = yield* test.open(test.actor.workspace).pipe(Effect.result)
-      expect(Result.isFailure(outcome) ? outcome.failure._tag : 'opened').toBe('RuntimeUnavailable')
-      const [thread] = yield* recorded(test.actor.person.id)
-      if (thread === undefined) expect.fail('A recorded Run must protect its Thread')
-      const [run] = yield* (yield* RunStore).list(thread.id)
-      if (run === undefined) expect.fail('Expected the failed reservation')
-      expect(RunState.guards.Failed(run.state)).toBe(true)
-      expect(yield* test.open(test.actor.workspace)).toEqual(
-        OpenFirstThreadResult.cases.Existing.make({ thread: thread.id }),
-      )
-      expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
-    }).pipe(Effect.scoped, Effect.provide(stores)),
-  )
-
-  it.effect(
-    'removes a failed empty opening and the next call opens and starts exactly one Run',
-    () =>
+layer(stores)((it) => {
+  describe.skipIf(!testDatabaseConfigured)('OpenFirstThread RPC', () => {
+    it.effect('compensation never removes a different Thread without its matching receipt', () =>
       Effect.gen(function* () {
-        const test = yield* harness()
-        const database = yield* Database
-        const failure = DatabaseUnavailable.make({ message: 'Reservation unavailable' })
-        yield* Ref.set(test.reservationFailure, Option.some(failure))
-        const first = yield* test.open(test.actor.workspace).pipe(Effect.result)
-        expect(Result.isFailure(first) ? first.failure : 'opened').toEqual(failure)
-        expect(yield* recorded(test.actor.person.id)).toHaveLength(0)
-        expect(
-          yield* database.run(
-            database
-              .select()
-              .from(firstThreads)
-              .where(eq(firstThreads.personId, test.actor.person.id)),
-          ),
-        ).toHaveLength(0)
-        expect(yield* Ref.get(test.deliveries)).toHaveLength(0)
-        const retried = yield* test.open(test.actor.workspace)
-        if (!OpenFirstThreadResult.guards.Opened(retried)) expect.fail('Expected a fresh opening')
-        expect(yield* recorded(test.actor.person.id)).toHaveLength(1)
-        expect(yield* (yield* RunStore).list(retried.thread)).toHaveLength(1)
-        expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
-        expect(yield* test.open(test.actor.workspace)).toEqual(
-          OpenFirstThreadResult.cases.Existing.make({ thread: retried.thread }),
-        )
-      }).pipe(Effect.scoped, Effect.provide(stores)),
-  )
-
-  it.effect('compensation preserves a Thread and receipt after a Run has been admitted', () =>
-    Effect.gen(function* () {
-      const test = yield* harness()
-      const first = yield* test.open(test.actor.workspace)
-      if (!OpenFirstThreadResult.guards.Opened(first)) expect.fail('Expected first arrival')
-      yield* (yield* ThreadStore).releaseFirst(test.actor.person.id, first.thread)
-      expect(yield* recorded(test.actor.person.id)).toHaveLength(1)
-      expect(yield* (yield* RunStore).list(first.thread)).toHaveLength(1)
-      expect(yield* test.open(test.actor.workspace)).toEqual(
-        OpenFirstThreadResult.cases.Existing.make({ thread: first.thread }),
-      )
-      expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
-    }).pipe(Effect.scoped, Effect.provide(stores)),
-  )
-
-  it.effect('opens one private Thread and admits one Vivid signal without a Person message', () =>
-    Effect.gen(function* () {
-      const test = yield* harness()
-      const result = yield* test.open(test.actor.workspace)
-      if (!OpenFirstThreadResult.guards.Opened(result)) expect.fail('Expected first arrival')
-      expect(yield* recorded(test.actor.person.id)).toMatchObject([
-        {
-          id: result.thread,
-          title: 'New thread',
-          companyId: null,
-          audience: 'private',
-          preview: '',
-        },
-      ])
-      const runs = yield* (yield* RunStore).list(result.thread)
-      expect(runs).toHaveLength(1)
-      const [run] = runs
-      if (run === undefined) expect.fail('Expected a first Run')
-      expect(run).toMatchObject({ turn: 1, state: RunState.cases.Working.make({}) })
-      expect(run.origin).toEqual(
-        RunOrigin.cases.FirstConversation.make({
-          person: { id: test.actor.person.id, name: 'Ada', image: null },
-        }),
-      )
-      const sent = yield* Ref.get(test.deliveries)
-      expect(sent).toHaveLength(1)
-      expect(sent[0]).toMatchObject({
-        type: 'first-conversation',
-        attributes: { from: 'Vivid', turn: '1' },
-        attachments: [],
-        scope: { acting: test.actor.person.id, libraryFolder: null },
-      })
-      const [delivery] = sent
-      if (delivery === undefined) expect.fail('Expected runtime admission')
-      expect(delivery.body).toContain('Nothing has been said yet')
-      expect(delivery.body).toContain('Activate the first-conversation skill')
-      expect(
-        JSON.stringify({ body: delivery.body, attributes: delivery.attributes }),
-      ).not.toContain(test.actor.person.id)
-      expect(
-        JSON.stringify({ body: delivery.body, attributes: delivery.attributes }),
-      ).not.toContain(result.thread)
-    }).pipe(Effect.scoped, Effect.provide(stores)),
-  )
-
-  it.effect('returns Existing on the second call without admitting another Run', () =>
-    Effect.gen(function* () {
-      const test = yield* harness()
-      const first = yield* test.open(test.actor.workspace)
-      if (!OpenFirstThreadResult.guards.Opened(first)) expect.fail('Expected first arrival')
-      expect(yield* test.open(test.actor.workspace)).toEqual(
-        OpenFirstThreadResult.cases.Existing.make({ thread: first.thread }),
-      )
-      expect(yield* (yield* RunStore).list(first.thread)).toHaveLength(1)
-      expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
-    }).pipe(Effect.scoped, Effect.provide(stores)),
-  )
-
-  it.effect('two concurrent calls create exactly one Thread and one Run', () =>
-    Effect.gen(function* () {
-      const test = yield* harness()
-      const outcomes = yield* Effect.all(
-        [test.open(test.actor.workspace), test.open(test.workspace)],
-        { concurrency: 'unbounded' },
-      )
-      expect(outcomes.filter(OpenFirstThreadResult.guards.Opened)).toHaveLength(1)
-      expect(outcomes.filter(OpenFirstThreadResult.guards.Existing)).toHaveLength(1)
-      const [stored] = yield* recorded(test.actor.person.id)
-      if (stored === undefined) expect.fail('Expected a first Thread')
-      expect(
-        outcomes.map((outcome) =>
-          OpenFirstThreadResult.match(outcome, {
-            Opened: ({ thread }) => thread,
-            Existing: ({ thread }) => thread,
-            NotFirst: () => expect.fail('Concurrent arrival cannot become NotFirst'),
-          }),
-        ),
-      ).toEqual([stored.id, stored.id])
-      expect(yield* recorded(test.actor.person.id)).toHaveLength(1)
-      expect(yield* (yield* RunStore).list(stored.id)).toHaveLength(1)
-      expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
-    }).pipe(Effect.scoped, Effect.provide(stores)),
-  )
-
-  it.effect(
-    'a prior archived Thread in another workspace returns NotFirst without recording arrival',
-    () =>
-      Effect.gen(function* () {
-        const test = yield* harness()
-        const database = yield* Database
-        const earlier = ThreadId.make(NodeCrypto.randomUUID())
-        yield* (yield* ThreadStore).create(test.actor, {
-          id: earlier,
+        const test = yield* fixture()
+        const store = yield* ThreadStore
+        const first = yield* store.openFirst(test.actor)
+        if (!OpenFirstThreadResult.guards.Opened(first)) expect.fail('Expected first arrival')
+        const other = yield* store.create(test.actor, {
+          id: ThreadId.make(NodeCrypto.randomUUID()),
           title: 'Earlier work',
           projectId: null,
         })
-        yield* database.run(
-          database.update(threads).set({ archived: true }).where(eq(threads.id, earlier)),
-        )
-        expect(yield* test.open(test.workspace)).toEqual(
+        yield* store.releaseFirst(test.actor.person.id, other.id)
+        expect(yield* recorded(test.actor.person.id)).toHaveLength(2)
+        yield* store.releaseFirst(test.actor.person.id, first.thread)
+        expect(yield* recorded(test.actor.person.id)).toMatchObject([{ id: other.id }])
+        expect(yield* store.openFirst(test.actor)).toEqual(
           OpenFirstThreadResult.cases.NotFirst.make({}),
         )
-        expect(yield* recorded(test.actor.person.id)).toHaveLength(1)
-        expect(yield* (yield* RunStore).list(earlier)).toHaveLength(0)
-        expect(yield* Ref.get(test.deliveries)).toHaveLength(0)
-        expect(
-          yield* database.run(
-            database
-              .select()
-              .from(firstThreads)
-              .where(eq(firstThreads.personId, test.actor.person.id)),
-          ),
-        ).toHaveLength(0)
-      }).pipe(Effect.scoped, Effect.provide(stores)),
-  )
+      }).pipe(Effect.scoped),
+    )
 
-  it.effect(
-    'keeps first arrival Person-level after a workspace switch and store reconstruction',
-    () =>
+    it.effect('the no-Run guard retains a failed unadmitted reservation after a Flue refusal', () =>
       Effect.gen(function* () {
         const test = yield* harness()
-        const first = yield* test.open(test.workspace)
-        if (!OpenFirstThreadResult.guards.Opened(first)) expect.fail('Expected first arrival')
-        expect(yield* recorded(test.actor.person.id)).toMatchObject([
-          { id: first.thread, companyId: test.companyId, audience: 'private' },
-        ])
-        const context = yield* Layer.build(
-          threadStoreLayer.pipe(Layer.provide(Layer.succeed(Database, yield* Database))),
+        yield* Ref.set(test.refuseAdmission, true)
+        const outcome = yield* test.open(test.actor.workspace).pipe(Effect.result)
+        expect(Result.isFailure(outcome) ? outcome.failure._tag : 'opened').toBe(
+          'RuntimeUnavailable',
         )
-        const rebuilt = yield* ThreadStore.pipe(Effect.provideContext(context))
-        expect(
-          yield* test.open(test.actor.workspace).pipe(Effect.provideService(ThreadStore, rebuilt)),
-        ).toEqual(OpenFirstThreadResult.cases.Existing.make({ thread: first.thread }))
+        const [thread] = yield* recorded(test.actor.person.id)
+        if (thread === undefined) expect.fail('A recorded Run must protect its Thread')
+        const [run] = yield* (yield* RunStore).list(thread.id)
+        if (run === undefined) expect.fail('Expected the failed reservation')
+        expect(RunState.guards.Failed(run.state)).toBe(true)
+        expect(yield* test.open(test.actor.workspace)).toEqual(
+          OpenFirstThreadResult.cases.Existing.make({ thread: thread.id }),
+        )
         expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
-      }).pipe(Effect.scoped, Effect.provide(stores)),
-  )
+      }).pipe(Effect.scoped),
+    )
 
-  it.effect('runtime and acting Vivid callers cannot create a first Thread', () =>
-    Effect.gen(function* () {
-      const test = yield* harness()
-      const identities = [
-        AuthState.Runtime(),
-        AuthState.Vivid({
-          person: test.actor.person,
-          workspace: test.actor.workspace,
-          threadId: ThreadId.make(NodeCrypto.randomUUID()),
-        }),
-      ]
-      for (const auth of identities) {
-        const outcome = yield* threadHandlers
-          .OpenFirstThread()
-          .pipe(
-            Effect.provideService(AuthContext, auth),
-            Effect.provideService(Conversation, test.conversation),
-            Effect.result,
+    it.effect(
+      'removes a failed empty opening and the next call opens and starts exactly one Run',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* harness()
+          const database = yield* Database
+          const failure = DatabaseUnavailable.make({ message: 'Reservation unavailable' })
+          yield* Ref.set(test.reservationFailure, Option.some(failure))
+          const first = yield* test.open(test.actor.workspace).pipe(Effect.result)
+          expect(Result.isFailure(first) ? first.failure : 'opened').toEqual(failure)
+          expect(yield* recorded(test.actor.person.id)).toHaveLength(0)
+          expect(
+            yield* database.run(
+              database
+                .select()
+                .from(firstThreads)
+                .where(eq(firstThreads.personId, test.actor.person.id)),
+            ),
+          ).toHaveLength(0)
+          expect(yield* Ref.get(test.deliveries)).toHaveLength(0)
+          const retried = yield* test.open(test.actor.workspace)
+          if (!OpenFirstThreadResult.guards.Opened(retried)) expect.fail('Expected a fresh opening')
+          expect(yield* recorded(test.actor.person.id)).toHaveLength(1)
+          expect(yield* (yield* RunStore).list(retried.thread)).toHaveLength(1)
+          expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
+          expect(yield* test.open(test.actor.workspace)).toEqual(
+            OpenFirstThreadResult.cases.Existing.make({ thread: retried.thread }),
           )
-        expect(Result.isFailure(outcome) ? outcome.failure._tag : 'allowed').toBe('Forbidden')
-      }
-      expect(yield* recorded(test.actor.person.id)).toHaveLength(0)
-      expect(yield* Ref.get(test.deliveries)).toHaveLength(0)
-    }).pipe(Effect.scoped, Effect.provide(stores)),
-  )
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect('compensation preserves a Thread and receipt after a Run has been admitted', () =>
+      Effect.gen(function* () {
+        const test = yield* harness()
+        const first = yield* test.open(test.actor.workspace)
+        if (!OpenFirstThreadResult.guards.Opened(first)) expect.fail('Expected first arrival')
+        yield* (yield* ThreadStore).releaseFirst(test.actor.person.id, first.thread)
+        expect(yield* recorded(test.actor.person.id)).toHaveLength(1)
+        expect(yield* (yield* RunStore).list(first.thread)).toHaveLength(1)
+        expect(yield* test.open(test.actor.workspace)).toEqual(
+          OpenFirstThreadResult.cases.Existing.make({ thread: first.thread }),
+        )
+        expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('opens one private Thread and admits one Vivid signal without a Person message', () =>
+      Effect.gen(function* () {
+        const test = yield* harness()
+        const result = yield* test.open(test.actor.workspace)
+        if (!OpenFirstThreadResult.guards.Opened(result)) expect.fail('Expected first arrival')
+        expect(yield* recorded(test.actor.person.id)).toMatchObject([
+          {
+            id: result.thread,
+            title: 'New thread',
+            companyId: null,
+            audience: 'private',
+            preview: '',
+          },
+        ])
+        const runs = yield* (yield* RunStore).list(result.thread)
+        expect(runs).toHaveLength(1)
+        const [run] = runs
+        if (run === undefined) expect.fail('Expected a first Run')
+        expect(run).toMatchObject({ turn: 1, state: RunState.cases.Working.make({}) })
+        expect(run.origin).toEqual(
+          RunOrigin.cases.FirstConversation.make({
+            person: { id: test.actor.person.id, name: 'Ada', image: null },
+          }),
+        )
+        const sent = yield* Ref.get(test.deliveries)
+        expect(sent).toHaveLength(1)
+        expect(sent[0]).toMatchObject({
+          type: 'first-conversation',
+          attributes: { from: 'Vivid', turn: '1' },
+          attachments: [],
+          scope: { acting: test.actor.person.id, libraryFolder: null },
+        })
+        const [delivery] = sent
+        if (delivery === undefined) expect.fail('Expected runtime admission')
+        expect(delivery.body).toContain('Nothing has been said yet')
+        expect(delivery.body).toContain('Activate the first-conversation skill')
+        expect(
+          JSON.stringify({ body: delivery.body, attributes: delivery.attributes }),
+        ).not.toContain(test.actor.person.id)
+        expect(
+          JSON.stringify({ body: delivery.body, attributes: delivery.attributes }),
+        ).not.toContain(result.thread)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('returns Existing on the second call without admitting another Run', () =>
+      Effect.gen(function* () {
+        const test = yield* harness()
+        const first = yield* test.open(test.actor.workspace)
+        if (!OpenFirstThreadResult.guards.Opened(first)) expect.fail('Expected first arrival')
+        expect(yield* test.open(test.actor.workspace)).toEqual(
+          OpenFirstThreadResult.cases.Existing.make({ thread: first.thread }),
+        )
+        expect(yield* (yield* RunStore).list(first.thread)).toHaveLength(1)
+        expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('two concurrent calls create exactly one Thread and one Run', () =>
+      Effect.gen(function* () {
+        const test = yield* harness()
+        const outcomes = yield* Effect.all(
+          [test.open(test.actor.workspace), test.open(test.workspace)],
+          { concurrency: 'unbounded' },
+        )
+        expect(outcomes.filter(OpenFirstThreadResult.guards.Opened)).toHaveLength(1)
+        expect(outcomes.filter(OpenFirstThreadResult.guards.Existing)).toHaveLength(1)
+        const [stored] = yield* recorded(test.actor.person.id)
+        if (stored === undefined) expect.fail('Expected a first Thread')
+        expect(
+          outcomes.map((outcome) =>
+            OpenFirstThreadResult.match(outcome, {
+              Opened: ({ thread }) => thread,
+              Existing: ({ thread }) => thread,
+              NotFirst: () => expect.fail('Concurrent arrival cannot become NotFirst'),
+            }),
+          ),
+        ).toEqual([stored.id, stored.id])
+        expect(yield* recorded(test.actor.person.id)).toHaveLength(1)
+        expect(yield* (yield* RunStore).list(stored.id)).toHaveLength(1)
+        expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'a prior archived Thread in another workspace returns NotFirst without recording arrival',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* harness()
+          const database = yield* Database
+          const earlier = ThreadId.make(NodeCrypto.randomUUID())
+          yield* (yield* ThreadStore).create(test.actor, {
+            id: earlier,
+            title: 'Earlier work',
+            projectId: null,
+          })
+          yield* database.run(
+            database.update(threads).set({ archived: true }).where(eq(threads.id, earlier)),
+          )
+          expect(yield* test.open(test.workspace)).toEqual(
+            OpenFirstThreadResult.cases.NotFirst.make({}),
+          )
+          expect(yield* recorded(test.actor.person.id)).toHaveLength(1)
+          expect(yield* (yield* RunStore).list(earlier)).toHaveLength(0)
+          expect(yield* Ref.get(test.deliveries)).toHaveLength(0)
+          expect(
+            yield* database.run(
+              database
+                .select()
+                .from(firstThreads)
+                .where(eq(firstThreads.personId, test.actor.person.id)),
+            ),
+          ).toHaveLength(0)
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'keeps first arrival Person-level after a workspace switch and store reconstruction',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* harness()
+          const first = yield* test.open(test.workspace)
+          if (!OpenFirstThreadResult.guards.Opened(first)) expect.fail('Expected first arrival')
+          expect(yield* recorded(test.actor.person.id)).toMatchObject([
+            { id: first.thread, companyId: test.companyId, audience: 'private' },
+          ])
+          const context = yield* Layer.build(
+            threadStoreLayer.pipe(Layer.provide(Layer.succeed(Database, yield* Database))),
+          )
+          const rebuilt = yield* ThreadStore.pipe(Effect.provideContext(context))
+          expect(
+            yield* test
+              .open(test.actor.workspace)
+              .pipe(Effect.provideService(ThreadStore, rebuilt)),
+          ).toEqual(OpenFirstThreadResult.cases.Existing.make({ thread: first.thread }))
+          expect(yield* Ref.get(test.deliveries)).toHaveLength(1)
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect('runtime and acting Vivid callers cannot create a first Thread', () =>
+      Effect.gen(function* () {
+        const test = yield* harness()
+        const identities = [
+          AuthState.Runtime(),
+          AuthState.Vivid({
+            person: test.actor.person,
+            workspace: test.actor.workspace,
+            threadId: ThreadId.make(NodeCrypto.randomUUID()),
+          }),
+        ]
+        for (const auth of identities) {
+          const outcome = yield* threadHandlers
+            .OpenFirstThread()
+            .pipe(
+              Effect.provideService(AuthContext, auth),
+              Effect.provideService(Conversation, test.conversation),
+              Effect.result,
+            )
+          expect(Result.isFailure(outcome) ? outcome.failure._tag : 'allowed').toBe('Forbidden')
+        }
+        expect(yield* recorded(test.actor.person.id)).toHaveLength(0)
+        expect(yield* Ref.get(test.deliveries)).toHaveLength(0)
+      }).pipe(Effect.scoped),
+    )
+  })
 })

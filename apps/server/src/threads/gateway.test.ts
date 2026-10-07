@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { CompanyId, PersonId, ThreadId } from '@vivid/contracts'
 import { and, eq } from 'drizzle-orm'
 import { Context, Effect, Exit, Fiber, Layer, Predicate, PubSub, Queue, Stream } from 'effect'
@@ -141,8 +141,9 @@ const requestRead = Effect.fn('GatewayTest.requestRead')(function* (
 ) {
   const database = yield* Database
   const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
-  const response = yield* handle.pipe(
-    Effect.provide(
+  const response = yield* Effect.gen(function* () {
+    // Each scoped read owns its mock ports and bus subscriptions.
+    const context = yield* Layer.build(
       Layer.mock(Runtime, {
         read: Effect.fn('GatewayTest.read')(function* () {
           yield* whileOpening.pipe(
@@ -151,19 +152,20 @@ const requestRead = Effect.fn('GatewayTest.requestRead')(function* (
           )
           return updates()
         }),
-      }),
-    ),
-    Effect.provide(Layer.mock(Conversation, {})),
-    Effect.provide(testConfigLayer),
-    Effect.provideService(
-      HttpServerRequest.HttpServerRequest,
-      HttpServerRequest.fromWeb(
-        new Request(`http://gateway.test/api/vivid/${test.threadId}?view=updates`, {
-          headers: { authorization: `Bearer ${test.token}`, host: 'gateway.test' },
-        }),
+      }).pipe(Layer.provideMerge(Layer.mock(Conversation, {}))),
+    )
+    return yield* handle.pipe(
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(
+          new Request(`http://gateway.test/api/vivid/${test.threadId}?view=updates`, {
+            headers: { authorization: `Bearer ${test.token}`, host: 'gateway.test' },
+          }),
+        ),
       ),
-    ),
-  )
+      Effect.provide(context),
+    )
+  })
   return response
 })
 
@@ -193,78 +195,110 @@ const listening = Effect.fn('GatewayTest.listening')(function* () {
   yield* Queue.take(bus.watching)
 })
 
-const silent = Layer.mergeAll(testDatabaseLayer, silentChangesLayer)
-const audible = busLayer.pipe(Layer.provideMerge(testDatabaseLayer))
+const foundation = Layer.mergeAll(testDatabaseLayer, testConfigLayer)
+const silent = silentChangesLayer
+const audible = busLayer
 
-describe.skipIf(!testDatabaseConfigured)('An open conversation read', () => {
-  /** No change is ever announced here: only asking again after subscribing can end the read. */
-  it.live('refuses when the Person lost the Thread while the runtime was opening it', () =>
-    Effect.gen(function* () {
-      const test = yield* fixture()
-      const response = yield* requestRead(test, removeMembership(test))
-      expect(response.status).toBe(404)
-      expect(Predicate.isTagged(response.body, 'Stream')).toBe(false)
-    }).pipe(Effect.scoped, Effect.provide(silent)),
-  )
-
-  it.live('refuses when the session was removed while the runtime was opening it', () =>
-    Effect.gen(function* () {
-      const test = yield* fixture()
-      const response = yield* requestRead(test, removeSession(test))
-      expect(response.status).toBe(401)
-      expect(Predicate.isTagged(response.body, 'Stream')).toBe(false)
-    }).pipe(Effect.scoped, Effect.provide(silent)),
-  )
-
-  for (const removal of [removeMembership, removeSession]) {
-    it.live(
-      `withholds buffered bytes when ${removal === removeSession ? 'session' : 'membership'} ends before body consumption`,
-      () =>
-        Effect.gen(function* () {
+/** The database is shared; each read owns a fresh bus so subscriptions cannot leak between cases. */
+layer(foundation, { excludeTestServices: true })((it) => {
+  describe.skipIf(!testDatabaseConfigured)('An open conversation read', () => {
+    /** No change is ever announced here: only asking again after subscribing can end the read. */
+    it.effect('refuses when the Person lost the Thread while the runtime was opening it', () =>
+      Effect.gen(function* () {
+        // Each scoped read owns its mock ports and bus subscriptions.
+        const context = yield* Layer.build(silent)
+        return yield* Effect.gen(function* () {
           const test = yield* fixture()
-          const response = yield* requestRead(test, Effect.void)
-          yield* removal(test)
-          const read = yield* consumeRead(response)
-          expect(Exit.isSuccess(yield* Fiber.await(read.ended))).toBe(true)
-          expect(yield* Queue.size(read.received)).toBe(0)
-        }).pipe(Effect.scoped, Effect.provide(silent)),
+          const response = yield* requestRead(test, removeMembership(test))
+          expect(response.status).toBe(404)
+          expect(Predicate.isTagged(response.body, 'Stream')).toBe(false)
+        }).pipe(Effect.scoped, Effect.provide(context))
+      }),
     )
-  }
 
-  /** The Person can still see the Thread; only the session that opened the read is gone. */
-  it.live('ends when its session is signed out, though the Person still sees the Thread', () =>
-    Effect.gen(function* () {
-      const test = yield* fixture()
-      const read = yield* openRead(test)
-      yield* listening()
-      expect(yield* Queue.take(read.received)).toEqual(hello)
-      yield* removeSession(test)
-      yield* (yield* Changes).publish([Topic.person(test.ada)])
-      expect(Exit.isSuccess(yield* Fiber.await(read.ended))).toBe(true)
-    }).pipe(Effect.scoped, Effect.provide(audible)),
-  )
+    it.effect('refuses when the session was removed while the runtime was opening it', () =>
+      Effect.gen(function* () {
+        // Each scoped read owns its mock ports and bus subscriptions.
+        const context = yield* Layer.build(silent)
+        return yield* Effect.gen(function* () {
+          const test = yield* fixture()
+          const response = yield* requestRead(test, removeSession(test))
+          expect(response.status).toBe(401)
+          expect(Predicate.isTagged(response.body, 'Stream')).toBe(false)
+        }).pipe(Effect.scoped, Effect.provide(context))
+      }),
+    )
 
-  it.live('ends when the Person is removed from the Company after it opened', () =>
-    Effect.gen(function* () {
-      const test = yield* fixture()
-      const read = yield* openRead(test)
-      yield* listening()
-      expect(yield* Queue.take(read.received)).toEqual(hello)
-      yield* removeMembership(test)
-      yield* (yield* Changes).publish([Topic.company(test.companyId)])
-      expect(Exit.isSuccess(yield* Fiber.await(read.ended))).toBe(true)
-    }).pipe(Effect.scoped, Effect.provide(audible)),
-  )
+    for (const removal of [removeMembership, removeSession]) {
+      it.effect(
+        `withholds buffered bytes when ${removal === removeSession ? 'session' : 'membership'} ends before body consumption`,
+        () =>
+          Effect.gen(function* () {
+            // Each scoped read owns its mock ports and bus subscriptions.
+            const context = yield* Layer.build(silent)
+            return yield* Effect.gen(function* () {
+              const test = yield* fixture()
+              const response = yield* requestRead(test, Effect.void)
+              yield* removal(test)
+              const read = yield* consumeRead(response)
+              expect(Exit.isSuccess(yield* Fiber.await(read.ended))).toBe(true)
+              expect(yield* Queue.size(read.received)).toBe(0)
+            }).pipe(Effect.scoped, Effect.provide(context))
+          }),
+      )
+    }
 
-  /** Nothing is written and nothing is published when a session runs out; only the clock moves. */
-  it.effect('ends when its session runs out, with no write and no announcement', () =>
-    Effect.gen(function* () {
-      const test = yield* fixture()
-      const read = yield* openRead(test)
-      yield* listening()
-      expect(yield* Queue.take(read.received)).toEqual(hello)
-      yield* TestClock.setTime(expiresAt.getTime())
-      expect(Exit.isSuccess(yield* Fiber.await(read.ended))).toBe(true)
-    }).pipe(Effect.scoped, Effect.provide(audible)),
-  )
+    /** The Person can still see the Thread; only the session that opened the read is gone. */
+    it.effect('ends when its session is signed out, though the Person still sees the Thread', () =>
+      Effect.gen(function* () {
+        // Each scoped read owns its mock ports and bus subscriptions.
+        const context = yield* Layer.build(audible)
+        return yield* Effect.gen(function* () {
+          const test = yield* fixture()
+          const read = yield* openRead(test)
+          yield* listening()
+          expect(yield* Queue.take(read.received)).toEqual(hello)
+          yield* removeSession(test)
+          yield* (yield* Changes).publish([Topic.person(test.ada)])
+          expect(Exit.isSuccess(yield* Fiber.await(read.ended))).toBe(true)
+        }).pipe(Effect.scoped, Effect.provide(context))
+      }),
+    )
+
+    it.effect('ends when the Person is removed from the Company after it opened', () =>
+      Effect.gen(function* () {
+        // Each scoped read owns its mock ports and bus subscriptions.
+        const context = yield* Layer.build(audible)
+        return yield* Effect.gen(function* () {
+          const test = yield* fixture()
+          const read = yield* openRead(test)
+          yield* listening()
+          expect(yield* Queue.take(read.received)).toEqual(hello)
+          yield* removeMembership(test)
+          yield* (yield* Changes).publish([Topic.company(test.companyId)])
+          expect(Exit.isSuccess(yield* Fiber.await(read.ended))).toBe(true)
+        }).pipe(Effect.scoped, Effect.provide(context))
+      }),
+    )
+  })
+})
+
+layer(foundation)((it) => {
+  describe.skipIf(!testDatabaseConfigured)('An open conversation read', () => {
+    /** Nothing is written and nothing is published when a session runs out; only the clock moves. */
+    it.effect('ends when its session runs out, with no write and no announcement', () =>
+      Effect.gen(function* () {
+        // Each scoped read owns its mock ports and bus subscriptions.
+        const context = yield* Layer.build(audible)
+        return yield* Effect.gen(function* () {
+          const test = yield* fixture()
+          const read = yield* openRead(test)
+          yield* listening()
+          expect(yield* Queue.take(read.received)).toEqual(hello)
+          yield* TestClock.setTime(expiresAt.getTime())
+          expect(Exit.isSuccess(yield* Fiber.await(read.ended))).toBe(true)
+        }).pipe(Effect.scoped, Effect.provide(context))
+      }),
+    )
+  })
 })

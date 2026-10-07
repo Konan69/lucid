@@ -183,7 +183,7 @@ export interface RunStoreService {
     ending: RunEnding,
   ) => Effect.Effect<boolean, DatabaseInfrastructureError>
   /** Every Run still marked as working, for picking their observation back up after a restart. */
-  readonly working: () => Effect.Effect<ReadonlyArray<WorkingRun>, DatabaseInfrastructureError>
+  readonly working: Effect.Effect<ReadonlyArray<WorkingRun>, DatabaseInfrastructureError>
   /** A Thread's most recent Runs, oldest first, each naming the Person Vivid acted for. */
   readonly list: (
     threadId: ThreadId,
@@ -421,15 +421,16 @@ const makeEnd = (database: DatabaseService) =>
     return rows.length > 0
   })
 
+/** The query remains lazy and repeatable while the service exposes an Effect value. */
 const makeWorking = (database: DatabaseService) =>
-  Effect.fn('RunStore.working')(function* () {
-    return yield* database.run(
+  database
+    .run(
       database
         .select({ id: runs.id, threadId: runs.threadId, personId: runs.personId })
         .from(runs)
         .where(eq(runs.state, 'working')),
     )
-  })
+    .pipe(Effect.withSpan('RunStore.working'))
 
 const makeList = (database: DatabaseService) =>
   Effect.fn('RunStore.list')(function* (threadId: ThreadId) {

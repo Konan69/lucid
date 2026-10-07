@@ -323,7 +323,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
 
   // A server restarting while Runs are in progress picks each one back up: Flue still knows
   // how they ended, or says it does not, and either way the row stops claiming it is working.
-  yield* Effect.forEach(yield* runs.working(), resume, { discard: true })
+  yield* Effect.forEach(yield* runs.working, resume, { discard: true })
 
   function resume(run: WorkingRun) {
     return personOf(run.personId).pipe(
