@@ -768,6 +768,26 @@ function beforeForPi(plans: ReadonlyMap<string, Plan>) {
   }
 }
 
+/** Validate policy references before constructing any tool, so typos cannot silently remove a gate. */
+const validateOptionNames = Effect.fn('Durable.validateToolOptionNames')(function* (
+  tools: ToolSet,
+  lookups: Lookups,
+) {
+  const references = [
+    ['approval', Object.keys(lookups.approval)],
+    ['answers', Object.keys(lookups.answers)],
+    ['replay', Object.keys(lookups.replay)],
+    ['sequential', [...lookups.sequential]],
+  ] as const
+  for (const [option, names] of references)
+    for (const name of names)
+      if (!Object.hasOwn(tools, name))
+        return yield* new ToolSchemaFailed({
+          toolName: name,
+          cause: new Error(`Unknown tool name in ${option}`),
+        })
+})
+
 /** Names must be unique across selected extensions: hooks cannot see the composed phase agent.
  * SDK needsApproval and host approval predicates must be pure, synchronous and input-only. */
 export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* (
@@ -783,6 +803,7 @@ export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* (
     approval: options.approval ?? {},
     answers: options.answers ?? {},
   }
+  yield* validateOptionNames(tools, lookups)
   const bridged = yield* Effect.forEach(Object.entries(tools), ([toolName, tool]) =>
     Effect.try({
       try: () => ({ toolName, tool, bridged: bridge(toolName, tool, lookups) }),

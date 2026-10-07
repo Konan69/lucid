@@ -475,3 +475,26 @@ for (const name of ['constructor', '__proto__'])
       await answer(other.harness, other.root.id, { holdId: held.holdId, output: 'yes' }, context)
     }),
   )
+
+/** A misspelt safety option must fail registration rather than silently leave a tool ungated. */
+for (const option of ['approval', 'answers', 'replay', 'sequential'] as const)
+  it.live(`refuses an unknown ${option} tool name`, () =>
+    Effect.gen(function* () {
+      const options = {
+        approval: option === 'approval' ? { typo: true } : {},
+        answers: option === 'answers' ? { typo: 'wait' as const } : {},
+        replay: option === 'replay' ? { typo: 'safe' as const } : {},
+        sequential: option === 'sequential' ? ['typo'] : [],
+      }
+      const failure = yield* Effect.flip(
+        toolsExtension(
+          'options',
+          { pay: tool({ inputSchema: z.object({}), execute: async () => 'paid' }) },
+          options,
+        ),
+      )
+      expect(failure).toBeInstanceOf(ToolSchemaFailed)
+      expect(failure).toMatchObject({ toolName: 'typo' })
+      expect(failure.message).toContain(option)
+    }),
+  )
