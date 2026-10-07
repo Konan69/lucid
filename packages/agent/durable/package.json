@@ -34,6 +34,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "example": "node src/examples/serve.ts",
     "check:package": "node scripts/consumer.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --type-aware src",

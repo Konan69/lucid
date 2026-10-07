@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
-import { Schema } from 'effect'
+import { Effect, Schema } from 'effect'
 
 import {
   abort,
@@ -119,4 +119,10 @@ async function dispatch(
     return Response.json(delivered)
   }
   return new Response(null, { status: 404 })
+}
+
+/** Node HTTP/CLI callbacks are Promise-only framework entry points. This runtime entry executes
+ * one supplied program; resource ownership and expected error handling stay with the host. */
+export function runForNode<A, E>(program: Effect.Effect<A, E>): Promise<A> {
+  return Effect.runPromise(program)
 }
