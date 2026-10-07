@@ -34,7 +34,7 @@ const configured = executorLayer.pipe(
  * GitHub with their own token. Only the credential submission receives the redacted token.
  */
 describe.skipIf(!enabled)('GitHub authenticated read acceptance', () => {
-  layer(configured, { excludeTestServices: true })((it) => {
+  layer(configured, { excludeTestServices: true, timeout: 120_000 })((it) => {
     it.effect(
       'reads the authenticated GitHub account with a personal token',
       () =>

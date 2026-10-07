@@ -23,7 +23,7 @@ const decodeAnother = Schema.decodeUnknownOption(AnotherAccountMessage)
 describe.skipIf(process.env['VIVID_LIVE_TOLD_ACCOUNT'] !== '1')(
   'told to connect another account live chain',
   () => {
-    layer(chainLayer, { excludeTestServices: true })((it) => {
+    layer(chainLayer, { excludeTestServices: true, timeout: 180_000 })((it) => {
       it.effect(
         'offers the card for one more account when told to connect another',
         () =>

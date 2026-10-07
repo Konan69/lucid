@@ -87,7 +87,7 @@ const begun = Effect.fn('GoogleProof.begin')(function* <A>(
 describe.skipIf(NodeProcess.env['VIVID_LIVE_GOOGLE'] !== '1')(
   'Google Integrations on Executor',
   () => {
-    layer(liveLayer, { excludeTestServices: true })((it) => {
+    layer(liveLayer, { excludeTestServices: true, timeout: 240_000 })((it) => {
       it.effect(
         'offers the six services, installs each once, and returns Google consent addresses',
         () =>

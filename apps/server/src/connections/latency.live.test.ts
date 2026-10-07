@@ -63,7 +63,7 @@ const requests = [
 /** One claim: real warm gateway attempts return complete usage receipts at the description cap.
  * Cold samples, warm distributions and token counts calibrate optional-work budgets; no latency assertion relies on a sleep. */
 describe.skipIf(!liveDecisionEnabled)('Gateway warm latency', () => {
-  layer(liveDecisionLayer, { excludeTestServices: true })((it) => {
+  layer(liveDecisionLayer, { excludeTestServices: true, timeout: 120_000 })((it) => {
     it.effect(
       'measures warm metadata judgments at the production description cap',
       () =>

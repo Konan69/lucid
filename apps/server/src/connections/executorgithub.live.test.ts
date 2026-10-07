@@ -32,6 +32,7 @@ describe.skipIf(!enabled)('GitHub personal credential acceptance', () => {
   for (const entry of ['catalogue', 'address']) {
     layer(configured.pipe(Layer.provideMerge(connectionAddressLayer)), {
       excludeTestServices: true,
+      timeout: 120_000,
     })((it) => {
       it.effect(
         `connects by ${entry} with a personal token and discovers tools`,
@@ -89,40 +90,41 @@ describe.skipIf(!enabled)('GitHub personal credential acceptance', () => {
 
 /** Public MCP remains on URL import and returns Done without a credential card. */
 describe.skipIf(!enabled)('public MCP regression', () => {
-  layer(configured.pipe(Layer.provideMerge(connectionAddressLayer)), { excludeTestServices: true })(
-    (it) => {
-      it.effect(
-        'adds DeepWiki without requesting a key',
-        () =>
-          Effect.gen(function* () {
-            const executor = yield* Executor
-            const source = yield* (yield* ConnectionAddress).inspect('https://mcp.deepwiki.com/mcp')
-            const step = yield* executor.add({
-              connectionId: ConnectionId.make(crypto.randomUUID()),
-              service: ServiceId.make('deepwiki-proof'),
-              owner: ExecutorOwnerId.make('deepwiki-proof'),
-              subject: 'deepwiki-proof',
-              label: 'DeepWiki',
-              returnAddress: 'https://vivid.example.test/api/connections/return',
-              source,
-            })
-            yield* Effect.addFinalizer(() =>
-              Effect.gen(function* () {
-                const cleanup = yield* executor.remove(step.references).pipe(Effect.exit)
-                expect(cleanup._tag).toBe('Success')
-              }),
-            )
-            expect(ExecutorStep.guards.Done(step)).toBe(true)
-            const tools = yield* executor.tools(step.references)
-            expect(tools.length).toBeGreaterThan(0)
-            NodeProcess.stdout.write(`public tools=${tools.length}\n`)
-          }).pipe(
-            Effect.scoped,
-            Effect.scoped,
-            Effect.provideService(Logger.CurrentLoggers, new Set([])),
-          ),
-        { timeout: 120_000 },
-      )
-    },
-  )
+  layer(configured.pipe(Layer.provideMerge(connectionAddressLayer)), {
+    excludeTestServices: true,
+    timeout: 120_000,
+  })((it) => {
+    it.effect(
+      'adds DeepWiki without requesting a key',
+      () =>
+        Effect.gen(function* () {
+          const executor = yield* Executor
+          const source = yield* (yield* ConnectionAddress).inspect('https://mcp.deepwiki.com/mcp')
+          const step = yield* executor.add({
+            connectionId: ConnectionId.make(crypto.randomUUID()),
+            service: ServiceId.make('deepwiki-proof'),
+            owner: ExecutorOwnerId.make('deepwiki-proof'),
+            subject: 'deepwiki-proof',
+            label: 'DeepWiki',
+            returnAddress: 'https://vivid.example.test/api/connections/return',
+            source,
+          })
+          yield* Effect.addFinalizer(() =>
+            Effect.gen(function* () {
+              const cleanup = yield* executor.remove(step.references).pipe(Effect.exit)
+              expect(cleanup._tag).toBe('Success')
+            }),
+          )
+          expect(ExecutorStep.guards.Done(step)).toBe(true)
+          const tools = yield* executor.tools(step.references)
+          expect(tools.length).toBeGreaterThan(0)
+          NodeProcess.stdout.write(`public tools=${tools.length}\n`)
+        }).pipe(
+          Effect.scoped,
+          Effect.scoped,
+          Effect.provideService(Logger.CurrentLoggers, new Set([])),
+        ),
+      { timeout: 120_000 },
+    )
+  })
 })

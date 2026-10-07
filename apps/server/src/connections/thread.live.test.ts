@@ -19,7 +19,7 @@ const decodeOffer = Schema.decodeUnknownEffect(Offer)
 describe.skipIf(process.env['VIVID_LIVE_THREAD_CONNECTION'] !== '1')(
   'Thread not-connected live chain',
   () => {
-    layer(chainLayer, { excludeTestServices: true })((it) => {
+    layer(chainLayer, { excludeTestServices: true, timeout: 240_000 })((it) => {
       it.effect(
         'offers mail promptly, settles cleanly and resumes after connection completes',
         () =>

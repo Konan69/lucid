@@ -40,7 +40,7 @@ const Found = Schema.Struct({
 const decodeFound = Schema.decodeUnknownEffect(Found)
 
 describe.skipIf(process.env['VIVID_LIVE_DISCOVERY'] !== '1')('Tool discovery runtime proof', () => {
-  layer(chainLayer, { excludeTestServices: true })((it) => {
+  layer(chainLayer, { excludeTestServices: true, timeout: 180_000 })((it) => {
     it.effect(
       'returns the relevant save tool first and logs one measured decision',
       () =>

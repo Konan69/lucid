@@ -66,7 +66,7 @@ const saveThrough = Effect.fn('NamedAccountProof.saveThrough')(function* (
  * and not what Vivid reported. One model attempt per ask, no judge, no retry.
  */
 describe.skipIf(process.env['VIVID_LIVE_NAMED_ACCOUNT'] !== '1')('named account live chain', () => {
-  layer(chainLayer, { excludeTestServices: true })((it) => {
+  layer(chainLayer, { excludeTestServices: true, timeout: 180_000 })((it) => {
     it.effect(
       'saves through the work account when asked, and through the other one when asked for it',
       () =>

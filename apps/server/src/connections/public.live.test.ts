@@ -83,7 +83,7 @@ describe.skipIf(!enabled)('Public integrations through Vivid and Executor', () =
           ),
         ),
       ),
-      { excludeTestServices: true },
+      { excludeTestServices: true, timeout: 120_000 },
     )((it) => {
       it.effect(
         `adds ${source.name} by address, lists its tools and uses one public read`,

@@ -30,7 +30,7 @@ const destinations = [
  * Calling Executor directly ensures Vivid's inspection cannot mask an Executor policy gap.
  */
 describe.skipIf(!enabled)('Public destination live policy', () => {
-  layer(connectionAddressLayer, { excludeTestServices: true })((it) => {
+  layer(connectionAddressLayer, { excludeTestServices: true, timeout: 120_000 })((it) => {
     it.effect(
       'Vivid refuses internal addresses and public names resolving to private addresses',
       () =>
@@ -47,7 +47,7 @@ describe.skipIf(!enabled)('Public destination live policy', () => {
     )
   })
 
-  layer(NodeHttpClient.layerUndici, { excludeTestServices: true })(
+  layer(NodeHttpClient.layerUndici, { excludeTestServices: true, timeout: 120_000 })(
     'Executor destination policy',
     (it) => {
       it.effect(
