@@ -121,6 +121,13 @@ async function project(temporary, archive) {
       'utf8',
     ),
   )
+  // Inspect the declaration consumers actually receive, not the source facade: tuple forwarding
+  // hides parameter names and couples the Promise contract to an Effect implementation signature.
+  const facade = await NodeFSP.readFile(
+    NodePath.join(consumer, 'node_modules', manifest.name, 'dist', 'main.d.ts'),
+    'utf8',
+  )
+  NodeAssert.doesNotMatch(facade, /\.\.\.args|Parameters<typeof Core\./u)
   NodeAssert.deepEqual(installed.exports, manifest.publishConfig.exports)
   NodeAssert.deepEqual(installed.peerDependencies, manifest.peerDependencies)
   return consumer

@@ -1,3 +1,6 @@
+/** Runtime adapters spell out their public parameters so packed declarations remain readable.
+ * Keep the compiled unknown-body decoder as a const ingress; every operation below exposes plain
+ * Promise results, without forwarding an inferred Effect implementation signature. */
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Extension, Harness } from '@earendil-works/pi-durable'
 import {
