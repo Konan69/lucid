@@ -225,10 +225,44 @@ function follow(host, run) {
 }
 
 /**
+ * Why a machine may not run a gate, from what `ssh -G` says a host name resolves to; `undefined`
+ * when it may.
+ *
+ * `cloudbox-vivid` (reached through `boat proxy vivid`) is the production
+ * Vivid Computer of a Person's account. From 3 to 7 October 2026 the name `vivid-boat` pointed at
+ * it and every gate ran there. The warm trees and caches filled its disk: Boat's snapshot of it
+ * held 117.5 GiB in 5.8 million files, Boat refused every start ("needs 125.4 GiB of disk but
+ * the largest 'large' machine holds 125.0 GiB"), and the Person's Vivid had no Computer. Before
+ * that the same sharing woke the machine behind Vivid's back and had Vivid stop it under a
+ * running gate.
+ *
+ * The check is on what the name resolves to, never on the name: an alias that is pointed at that
+ * machine again is refused as well. A Person's Computer is never a build machine.
+ */
+export function refusedHost(resolved) {
+  const hostname = /^hostname (?<value>.+)$/mu.exec(resolved)
+  const proxy = /^proxycommand (?<value>.+)$/mu.exec(resolved)
+  const names = hostname === null ? '' : hostname.groups.value.trim()
+  const command = proxy === null ? '' : proxy.groups.value
+  if (names === 'cloudbox-vivid' || /\bboat proxy vivid\b/u.test(command))
+    return 'it is the production Vivid Computer (cloudbox-vivid), and a Person’s Computer never runs gates, builds or tests: use the CI machine (cloudbox-konan), or --here'
+  return undefined
+}
+
+/** Ask ssh what a host name resolves to and stop before anything is sent to a refused machine. */
+function admitHost(host) {
+  const resolved = NodeChildProcess.spawnSync('ssh', ['-G', host], { encoding: 'utf8' })
+  if (resolved.status !== 0) throw new Error(`ssh does not know the host ${host}`)
+  const reason = refusedHost(resolved.stdout)
+  if (reason !== undefined) throw new Error(`the gate will not run on ${host}: ${reason}`)
+}
+
+/**
  * Gate this checkout in its warm tree on `options.host`. The verdict line it prints is the
  * remote gate's own, and names the commit that was sent.
  */
 export function runCloud(root, options, environment) {
+  admitHost(options.host)
   const name = treeName(root, environment, options.name)
   const { sha, label } = snapshot(root, environment, options.committed)
   const run = `${name}-${runIdentifier()}`

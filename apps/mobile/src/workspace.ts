@@ -10,7 +10,9 @@ import type {
 } from '@vivid/contracts'
 import { useNavigation } from '@react-navigation/native'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
+import { Option } from 'effect'
 import { createContext, useContext, useSyncExternalStore } from 'react'
+import type { First } from './data/first'
 import type { Front, FrontStore } from './data/front'
 import type { KeyFields, PressKey } from './data/integration'
 
@@ -113,6 +115,16 @@ export function useFront(): FrontStore {
 export function useShowing(): Front {
   const front = useFront()
   return useSyncExternalStore(front.subscribe, front.showing, front.showing)
+}
+
+/**
+ * A Thread's first words, when it was started from this phone's greeting and how far they have
+ * got (`data/first.ts`). Nothing for every other Thread.
+ */
+export function useFirst(id: ThreadId): Option.Option<First> {
+  const { firsts } = useFront()
+  const all = useSyncExternalStore(firsts.subscribe, firsts.all, firsts.all)
+  return Option.fromUndefinedOr(all.get(id))
 }
 
 /**

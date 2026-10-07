@@ -282,13 +282,54 @@ const assertMigrationPolicy = (migrationSource) => {
   assert.doesNotMatch(migrationSource, /\bgenerate\b/, 'startup must never generate migrations')
 }
 
+/** The paths a Dockerfile copies out of the repository; a copy from another stage is not one. */
+const copiedPaths = (dockerfile) =>
+  dockerfile
+    .split('\n')
+    .filter((line) => /^(COPY|ADD) /.test(line) && !line.includes('--from='))
+    .flatMap((line) =>
+      line
+        .split(/\s+/)
+        .slice(1, -1)
+        .filter((word) => !word.startsWith('--')),
+    )
+
+/**
+ * Whether one of Railway's watch patterns names a path. The patterns are gitignore-style and
+ * start at the repository's root (Railway "Watch Paths"). Only the forms this stack writes are
+ * read: a literal path, `*` for one segment, and a closing `/**` for a directory and all in it.
+ */
+const watches = (pattern, path) => {
+  const under = pattern.endsWith('/**')
+  const literal = (under ? pattern.slice(0, -3) : pattern)
+    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+    .replaceAll('*', '[^/]*')
+  return new RegExp(`^${literal}${under ? '(/.*)?' : ''}$`).test(`/${path}`)
+}
+
+/**
+ * What an image is built from that its service's watch patterns miss. Railway starts no build
+ * for a push that touches only unwatched paths, so a path listed here would change the image's
+ * inputs without production ever being rebuilt. The Dockerfile and `.dockerignore` are inputs
+ * too, though no `COPY` names them.
+ */
+export const unwatchedPaths = (dockerfile, dockerfilePath, patterns) =>
+  [...copiedPaths(dockerfile), dockerfilePath, '.dockerignore'].filter(
+    (path) => !patterns.some((pattern) => watches(pattern, path)),
+  )
+
 /**
  * Railway startCommand overrides image CMD. Verify their parity so the offline image proof
- * exercises the deployed entry, and require the root context that installs workspace packages.
- * Alchemy's context source uploads these Dockerfiles; it does not bundle the runtime itself.
+ * exercises the deployed entry. Railway builds both images from the repository on a push to
+ * `main` (`builtFromMain` in `infra/railway.ts`), so each service must watch every path its
+ * Dockerfile copies.
  */
 const assertContainerPolicy = (root) => {
   const railwaySource = source(root, 'infra/railway.ts')
+  const trigger = railwaySource.match(/^const builtFromMain = \{([\s\S]*?)^\} as const/m)
+  assert.notEqual(trigger, null, 'the repository source must be declared once')
+  assert.ok(trigger[1].includes("branch: 'main'"), 'production is built from main')
+  assert.ok(trigger[1].includes('autoUpdates: true'), 'a push to main must deploy')
   for (const [name, dockerfilePath] of [
     ['Runtime', 'packages/agent/runtime/Dockerfile'],
     ['Server', 'apps/server/Dockerfile'],
@@ -298,7 +339,18 @@ const assertContainerPolicy = (root) => {
     )
     assert.notEqual(declaration, null, `${name} must declare a Railway Service`)
     const block = declaration[1]
-    assert.ok(block.includes("context: '.'"), `${name} must upload the workspace root`)
+    assert.ok(block.includes('...builtFromMain'), `${name} must be built from the repository`)
+    assert.ok(!block.includes('context:'), `${name} must not upload a working tree`)
+    const named = block.match(/watchPatterns: (\w+)/)
+    assert.notEqual(named, null, `${name} must say which paths rebuild it`)
+    const listed = railwaySource.match(new RegExp(`^const ${named[1]} = \\[([\\s\\S]*?)^\\]`, 'm'))
+    assert.notEqual(listed, null, `${name} must list its watched paths in infra/railway.ts`)
+    const patterns = [...listed[1].matchAll(/'([^']+)'/g)].map((found) => found[1])
+    assert.deepEqual(
+      unwatchedPaths(source(root, dockerfilePath), dockerfilePath, patterns),
+      [],
+      `${name} copies paths that would not rebuild it`,
+    )
     assert.ok(
       block.includes(`dockerfilePath: '${dockerfilePath}'`),
       `${name} must select its checked-in Dockerfile`,

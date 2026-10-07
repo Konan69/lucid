@@ -11,6 +11,7 @@ export const versions = Object.freeze({
   '@effect/ai-typesafe': '4.0.0-rc.116',
   '@effect/language-service': '0.87.2',
   '@effect/tsgo': '0.51.0',
+  'tsc-rs': '0.1.0',
   '@effect/platform-node': '4.0.0-rc.116',
   '@effect/sql-pg': '4.0.0-rc.116',
   '@effect/vitest': '4.0.0-rc.116',
@@ -359,6 +360,28 @@ function overrideErrors(overrides, catalog) {
   })
 }
 
+/**
+ * The type checker and the Effect language service for the native compiler. `effect-tsgo patch`
+ * is what makes the native compiler print Effect diagnostics; without it none is printed at all
+ * (the state from the move to TypeScript 7 until 7 Oct 2026).
+ */
+function compilerToolingErrors(scripts, development) {
+  const errors = []
+  if (
+    scripts.prepare === undefined ||
+    !scripts.prepare.includes('effect-tsgo patch --typescript')
+  ) {
+    errors.push('package.json: prepare must patch the native compiler with effect-tsgo')
+  }
+  if (development['tsc-rs'] !== versions['tsc-rs']) {
+    errors.push(`package.json: tsc-rs must be ${versions['tsc-rs']}`)
+  }
+  if (development['@effect/tsgo'] !== versions['@effect/tsgo']) {
+    errors.push(`package.json: @effect/tsgo must be ${versions['@effect/tsgo']}`)
+  }
+  return errors
+}
+
 /** Report root package policies that keep every compiler path consistent. */
 function rootManifestErrors(manifest, catalog) {
   const errors = []
@@ -380,17 +403,7 @@ function rootManifestErrors(manifest, catalog) {
   if (scripts.prepare === undefined || !scripts.prepare.includes('effect-language-service patch')) {
     errors.push('package.json: prepare must patch TypeScript with effect-language-service')
   }
-  // Typecheck runs the native compiler, which only `effect-tsgo patch` reaches. Without it no
-  // Effect diagnostic is printed at all (the state from the move to TypeScript 7 to 7 Oct 2026).
-  if (
-    scripts.prepare === undefined ||
-    !scripts.prepare.includes('effect-tsgo patch --typescript')
-  ) {
-    errors.push('package.json: prepare must patch the native compiler with effect-tsgo')
-  }
-  if (development['@effect/tsgo'] !== versions['@effect/tsgo']) {
-    errors.push(`package.json: @effect/tsgo must be ${versions['@effect/tsgo']}`)
-  }
+  errors.push(...compilerToolingErrors(scripts, development))
   // The lint runner owns mandatory type-aware analysis; the public command must
   // enter Turbo so successful package checks and their diagnostics can be reused.
   if (scripts.lint === undefined || !scripts.lint.startsWith('turbo run lint lint:root ')) {

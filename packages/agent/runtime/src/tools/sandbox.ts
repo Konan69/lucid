@@ -17,6 +17,7 @@ import {
   ComputerShellOutcome,
 } from '@vivid/contracts'
 import { Effect, Option, Schema } from 'effect'
+import { warnFailure } from './result.ts'
 import { Scope, type RunScoped } from './scope.ts'
 
 /** Carries the Computer's words that the model must read verbatim at the Flue sandbox boundary. */
@@ -33,6 +34,16 @@ const DEFAULT_SECONDS = 120
 const LONGEST_SECONDS = 600
 
 const word = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`
+
+/**
+ * A Computer that could not be used, said in the runtime's log before the model is told.
+ *
+ * These verbs answer Flue by throwing, which no other log sees: on 6 October 2026 the Computer
+ * refused every command for seven hours and this log held nothing about it. A refusal by the
+ * machine's own file system (no such file, not permitted) is an ordinary answer and is not logged.
+ */
+const unusable = (verb: string, tag: string, reason: string) =>
+  warnFailure(verb, tag).pipe(Effect.andThen(Effect.fail(new ComputerSaid({ message: reason }))))
 
 /** Environment for one command, as assignments before it: names are checked, values are quoted. */
 const assignments = (env: Readonly<Record<string, string>>) =>
@@ -106,13 +117,12 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
                 exitCode: done.exitCode,
               })
             },
-            Unavailable: ({ reason }) => Effect.fail(new ComputerSaid({ message: reason })),
+            Unavailable: ({ reason }) => unusable('bash', 'Unavailable', reason),
             OutcomeUnknown: () =>
-              Effect.fail(
-                new ComputerSaid({
-                  message:
-                    'The connection to the Computer was lost while the command ran. It may have run: check before running it again.',
-                }),
+              unusable(
+                'bash',
+                'OutcomeUnknown',
+                'The connection to the Computer was lost while the command ran. It may have run: check before running it again.',
               ),
           },
         )
@@ -131,7 +141,7 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
             Read: ({ content }) => Effect.succeed(content),
             Refused: ({ reason }) =>
               Effect.fail(new ComputerSaid({ message: `${path}: ${reason}` })),
-            Unavailable: ({ reason }) => Effect.fail(new ComputerSaid({ message: reason })),
+            Unavailable: ({ reason }) => unusable('read', 'Unavailable', reason),
           },
         )
       }),
@@ -153,7 +163,7 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
             Written: () => Effect.void,
             Refused: ({ reason }) =>
               Effect.fail(new ComputerSaid({ message: `${path}: ${reason}` })),
-            Unavailable: ({ reason }) => Effect.fail(new ComputerSaid({ message: reason })),
+            Unavailable: ({ reason }) => unusable('write', 'Unavailable', reason),
           })
         }),
         Option.none(),
@@ -163,9 +173,12 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
     readdir: () => unsupported('readdir'),
     // The machine's own `mkdir` and `rm`: their flags mean what Node's options mean (Flue
     // reference, "SandboxDriver": an adapter that runs verbs through the shell does these there).
-    mkdir: (path, { recursive } = {}) =>
+    // The options are annotated because the type checker (tsc-rs 0.1.0, as TypeScript 7.1's
+    // nightlies since 23 Sep 2026, microsoft/TypeScript pull request 64043) reports TS7031 for a
+    // destructured element missing from a `= {}` default even where `SandboxDriver` types it.
+    mkdir: (path, { recursive }: { recursive?: boolean } = {}) =>
       shell(`mkdir ${recursive === true ? '-p ' : ''}-- ${word(path)}`).then(checked),
-    rm: (path, { recursive, force } = {}) =>
+    rm: (path, { recursive, force }: { recursive?: boolean; force?: boolean } = {}) =>
       shell(
         `rm ${recursive === true ? '-r ' : ''}${force === true ? '-f ' : ''}-- ${word(path)}`,
       ).then(checked),

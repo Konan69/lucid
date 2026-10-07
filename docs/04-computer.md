@@ -480,10 +480,19 @@ answered "nothing there" without waking it, and only a tool the model calls wake
 - **Slow sending.** Sending to a machine through the provider's endpoint was measured at about
   60 KB a second, so a 10 MB put takes about three minutes. A put has no deadline of its own, and
   the keepalive keeps answering during it, so a slow upload is not taken for a dead connection.
-- **Waiting for a woken machine.** The store waits at most 90 seconds for the provider to say the
-  machine runs, and answers "did not become ready within 90 seconds" otherwise. Opening SSH then
-  tries every two seconds while the machine cannot be reached, for at most 75 seconds, and answers
-  "not answering" otherwise. Neither hangs. A wrong host key or a refused key is not retried.
+- **Waiting for a woken machine.** The store waits at most 3 minutes for a start, and answers "did
+  not become ready within 3 minutes" otherwise. It was 90 seconds until 7 October 2026, which is
+  what a healthy start takes: measured the evening before on the production machine, 51 to 58
+  seconds from the resume to the provider calling the machine running, then 37 seconds in which
+  its command endpoint answered 502. The first command sent to a woken machine is sent again
+  every two seconds for at most 75 seconds for that reason. Opening SSH then tries every two
+  seconds while the machine cannot be reached, for at most 75 seconds, and answers "not
+  answering" otherwise. None of them hangs. A wrong host key or a refused key is not retried.
+- **A start that failed.** The next action starts the Computer again; nobody has to press Start.
+  The exception is a failure that asking again cannot cure, such as a Computer that holds more
+  data than any machine the provider plan allows: for ten minutes the action is refused with
+  that reason and the provider is not asked, because the provider counts every start against an
+  hourly limit for the whole account.
 
 ### The built code on a Person's Computer, 6 October 2026
 

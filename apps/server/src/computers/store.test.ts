@@ -16,6 +16,7 @@ import {
   Queue,
   Fiber,
   Stream,
+  Predicate,
 } from 'effect'
 import {
   ActionTarget,
@@ -64,6 +65,8 @@ import {
   MachineExecutionUnknown,
   MachineNotRunning,
   MachineOperationFailed,
+  MachineOutgrown,
+  MachineRequestRejected,
   MachineUnreachable,
   type MachineKey,
 } from './machine.ts'
@@ -107,11 +110,15 @@ interface EvidenceService {
   readonly decisions: Ref.Ref<GateDecision>
   readonly actions: Ref.Ref<ReadonlyArray<ProposedAction>>
   readonly viewerReads: Ref.Ref<number>
+  /** While true the provider refuses to issue a screen for a machine that runs. */
+  readonly screenRefused: Ref.Ref<boolean>
   readonly lost: Ref.Ref<boolean>
   readonly boot: Ref.Ref<Option.Option<Deferred.Deferred<void>>>
   readonly executionGate: Ref.Ref<Option.Option<Deferred.Deferred<void>>>
   readonly executing: Queue.Queue<MachineKey>
   readonly bootFailed: Ref.Ref<boolean>
+  /** While true a start is refused because the Computer holds more than any machine may. */
+  readonly bootOutgrown: Ref.Ref<boolean>
   /** While true the provider cannot be asked anything: every call fails as an outage. */
   readonly outage: Ref.Ref<boolean>
   readonly beforeGateReturn: Ref.Ref<Effect.Effect<void>>
@@ -135,10 +142,12 @@ const evidenceLayer = Layer.effect(
       decisions: yield* Ref.make<GateDecision>(GateDecision.cases.Allowed.make({})),
       actions: yield* Ref.make<ReadonlyArray<ProposedAction>>([]),
       viewerReads: yield* Ref.make(0),
+      screenRefused: yield* Ref.make(false),
       lost: yield* Ref.make(false),
       executing: yield* Queue.unbounded<MachineKey>(),
       executionGate: yield* Ref.make<Option.Option<Deferred.Deferred<void>>>(Option.none()),
       bootFailed: yield* Ref.make(false),
+      bootOutgrown: yield* Ref.make(false),
       outage: yield* Ref.make(false),
       beforeGateReturn: yield* Ref.make(Effect.void),
       boot: yield* Ref.make<Option.Option<Deferred.Deferred<void>>>(Option.none()),
@@ -163,7 +172,10 @@ const providerLayer = Layer.effect(
     })
     const status = Effect.fn('Computer.test.status')(function* (key: MachineKey) {
       yield* Ref.update(evidence.viewerReads, (count) => count + 1)
-      return yield* inspect(key)
+      const state = yield* inspect(key)
+      if (ComputerState.guards.Running(state) && (yield* Ref.get(evidence.screenRefused)))
+        return yield* new MachineRequestRejected({ status: 409 })
+      return state
     })
     const ensure = Effect.fn('Computer.test.ensure')(function* (key: MachineKey) {
       yield* Ref.update(evidence.ensures, (calls) => [...calls, key])
@@ -171,6 +183,8 @@ const providerLayer = Layer.effect(
       yield* Queue.offer(evidence.started, key)
       const wait = yield* Ref.get(evidence.boot)
       if (Option.isSome(wait)) yield* Deferred.await(wait.value)
+      if (yield* Ref.get(evidence.bootOutgrown))
+        return yield* new MachineOutgrown({ upgrade: true })
       if (yield* Ref.get(evidence.bootFailed))
         return yield* new MachineOperationFailed({ operation: 'startup' })
       const state = ComputerState.cases.Running.make({
@@ -519,11 +533,26 @@ const asVivid = (person: Person) =>
     }),
   )
 
-/** Subscribe before starting; the running commit wakes the test even if it finishes before the stream is consumed. */
+/** Subscribe before starting and await the Running publication: a persisted row alone can precede idle-timer acquisition, so clock-moving cases must wait for both. */
 const start = Effect.fn('Computer.test.start')(function* (person: Person) {
   const changes = yield* Changes
   const store = yield* ComputerStore
   const moved = yield* changes.subscribe([Topic.person(person.id)])
+  const evidence = yield* ProviderEvidence
+  const publishedRunning = yield* Deferred.make<void>()
+  yield* Ref.set(
+    evidence.onPublish,
+    store.get(person.id).pipe(
+      Effect.flatMap((computer) =>
+        ComputerState.guards.Running(computer.state)
+          ? Deferred.succeed(publishedRunning, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      ),
+      Effect.catch(() =>
+        Effect.sync(() => expect.fail('Startup publication must expose a readable Computer')),
+      ),
+    ),
+  )
   const receipt = yield* computerHandlers.StartComputer().pipe(asPerson(person))
   expect(receipt.computer.state._tag).toBe('Starting')
   const ready = yield* Stream.concat(Stream.make(undefined), moved).pipe(
@@ -532,6 +561,8 @@ const start = Effect.fn('Computer.test.start')(function* (person: Person) {
     Stream.runHead,
   )
   expect(Option.isSome(ready)).toBe(true)
+  yield* Deferred.await(publishedRunning)
+  yield* Ref.set(evidence.onPublish, Effect.void)
 })
 
 /** Keep provider evidence, change subscriptions and lifecycle workers within one case, with a fresh clock installed before their Layer is acquired. The suite shares only its PostgreSQL authority. */
@@ -1085,27 +1116,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         Effect.gen(function* () {
           const { first } = yield* fixture()
           const evidence = yield* ProviderEvidence
-          const store = yield* ComputerStore
-          const publishedRunning = yield* Deferred.make<void>()
-          // The worker can persist Running before its idle timer is armed. Observe the state
-          // at publication, which commitState orders after arming, before advancing this clock.
-          yield* Ref.set(
-            evidence.onPublish,
-            store.get(first.id).pipe(
-              Effect.flatMap((computer) =>
-                ComputerState.guards.Running(computer.state)
-                  ? Deferred.succeed(publishedRunning, undefined).pipe(Effect.asVoid)
-                  : Effect.void,
-              ),
-              Effect.catch(() =>
-                Effect.sync(() =>
-                  expect.fail('Startup publication must expose a readable Computer'),
-                ),
-              ),
-            ),
-          )
           yield* start(first)
-          yield* Deferred.await(publishedRunning)
           yield* TestClock.adjust('19 minutes')
           yield* Ref.set(evidence.commandResult, {
             exitCode: 0,
@@ -1115,6 +1126,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           yield* computerHandlers.GetComputerApps().pipe(asPerson(first))
           yield* TestClock.adjust('1 minute')
           expect(yield* Queue.take(evidence.stopped)).toBe(computerMachineKey(first.id))
+          const store = yield* ComputerStore
           const stopped = yield* store
             .probe(first.id, { command: 'true', timeoutSeconds: 10 })
             .pipe(Effect.result)
@@ -1174,7 +1186,25 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
-    it.effect('bounds wake readiness at 90 seconds and never retries a failed start', () =>
+    it.effect('waits for a start that takes as long as a real one does', () =>
+      Effect.gen(function* () {
+        const { first } = yield* fixture()
+        const store = yield* ComputerStore
+        const evidence = yield* ProviderEvidence
+        const boot = yield* Deferred.make<void>()
+        yield* Ref.set(evidence.boot, Option.some(boot))
+        const action = yield* store.run(first.id, request).pipe(Effect.forkScoped)
+        yield* Queue.take(evidence.started)
+        // A healthy start on the production machine took 95 seconds on 6 October 2026: the old
+        // 90 second deadline ended it and recorded the Computer as failed.
+        yield* TestClock.adjust('95 seconds')
+        yield* Deferred.succeed(boot, undefined)
+        expect((yield* Fiber.join(action)).stdout).toBe('hello')
+        expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('gives a start up after three minutes, and the next action starts it again', () =>
       Effect.gen(function* () {
         const { first } = yield* fixture()
         const store = yield* ComputerStore
@@ -1183,26 +1213,25 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         yield* Ref.set(evidence.boot, Option.some(boot))
         const action = yield* store.run(first.id, request).pipe(Effect.result, Effect.forkScoped)
         yield* Queue.take(evidence.started)
-        yield* TestClock.adjust('90 seconds')
+        yield* TestClock.adjust('3 minutes')
         const result = yield* Fiber.join(action)
-        expect(result._tag).toBe('Failure')
-        if (Result.isFailure(result)) expect(result.failure._tag).toBe('ComputerWakeTimedOut')
-        const changes = yield* Changes
-        const moved = yield* changes.subscribe([Topic.person(first.id)])
-        yield* Stream.concat(Stream.make(undefined), moved).pipe(
-          Stream.mapEffect(() => store.get(first.id)),
-          Stream.filter((computer) => ComputerState.guards.Failed(computer.state)),
-          Stream.runHead,
+        // The action waited for the start and hears how it ended.
+        expect(Result.isFailure(result) && result.failure._tag).toBe('ComputerStartFailed')
+        const recorded = (yield* store.get(first.id)).state
+        expect(ComputerState.guards.Failed(recorded) && recorded.reason).toBe(
+          'The Computer did not become ready within 3 minutes.',
         )
-        expect((yield* store.run(first.id, request).pipe(Effect.flip))._tag).toBe(
-          'ComputerStartFailed',
-        )
-        expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
         expect(yield* Ref.get(evidence.calls)).toEqual([])
+        // Nobody presses Start. The record says the last start failed; the next action starts the
+        // Computer again and runs.
+        yield* Ref.set(evidence.boot, Option.none())
+        expect((yield* store.run(first.id, request)).stdout).toBe('hello')
+        expect(yield* Ref.get(evidence.ensures)).toHaveLength(2)
+        expect((yield* store.get(first.id)).state._tag).toBe('Running')
       }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
-    it.effect('keeps failed starts and keyboard takeover distinct without retrying either', () =>
+    it.effect('starts a failed Computer again for every action, while takeover still refuses', () =>
       Effect.gen(function* () {
         const { first } = yield* fixture()
         const store = yield* ComputerStore
@@ -1215,13 +1244,111 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           (yield* store.desktop(first.id, DesktopAction.cases.Look.make({})).pipe(Effect.flip))
             ._tag,
         ).toBe('ComputerStartFailed')
-        expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
+        // Each action asked the provider again, once: a failed start never ends the trying, and
+        // nothing is retried inside one action.
+        expect(yield* Ref.get(evidence.ensures)).toHaveLength(2)
+        expect(yield* Ref.get(evidence.calls)).toEqual([])
         yield* Ref.set(evidence.bootFailed, false)
-        yield* start(first)
+        expect((yield* store.run(first.id, request)).stdout).toBe('hello')
+        expect(yield* Ref.get(evidence.ensures)).toHaveLength(3)
         yield* store.hold(first.id, true)
         expect((yield* store.run(first.id, request).pipe(Effect.flip))._tag).toBe('ComputerHeld')
-        expect(yield* Ref.get(evidence.calls)).toEqual([])
-        expect(yield* Ref.get(evidence.ensures)).toHaveLength(2)
+        expect(yield* Ref.get(evidence.calls)).toHaveLength(1)
+        expect(yield* Ref.get(evidence.ensures)).toHaveLength(3)
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect(
+      'says why a Computer that has outgrown its machines cannot start, and does not ask at every action',
+      () =>
+        Effect.gen(function* () {
+          const { first } = yield* fixture()
+          const store = yield* ComputerStore
+          const evidence = yield* ProviderEvidence
+          yield* Ref.set(evidence.bootOutgrown, true)
+          const refused = yield* store.run(first.id, request).pipe(Effect.flip)
+          // The Person, and Vivid in its own words, can tell what would cure it.
+          expect(Predicate.isTagged(refused, 'ComputerStartFailed') && refused.reason).toBe(
+            'Vivid’s computer holds more data than the largest machine its provider plan allows. It starts again once the plan is upgraded or files are removed from it.',
+          )
+          // Asking again cannot cure it and every start is counted by the provider, so the next
+          // actions are refused with the same reason and the provider is left alone.
+          expect((yield* store.run(first.id, request).pipe(Effect.flip))._tag).toBe(
+            'ComputerStartFailed',
+          )
+          expect(
+            (yield* store.desktop(first.id, DesktopAction.cases.Look.make({})).pipe(Effect.flip))
+              ._tag,
+          ).toBe('ComputerStartFailed')
+          expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
+          // After the rest an action asks once more.
+          yield* TestClock.adjust('10 minutes')
+          yield* store.run(first.id, request).pipe(Effect.flip)
+          expect(yield* Ref.get(evidence.ensures)).toHaveLength(2)
+          // A Person's Start never waits for the rest: they changed something, or want to know.
+          yield* Ref.set(evidence.bootOutgrown, false)
+          yield* start(first)
+          expect(yield* Ref.get(evidence.ensures)).toHaveLength(3)
+          expect((yield* store.run(first.id, request)).stdout).toBe('hello')
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('a screen the provider refuses is said on that read and never recorded', () =>
+      Effect.gen(function* () {
+        const { first } = yield* fixture()
+        const database = yield* Database
+        const store = yield* ComputerStore
+        const evidence = yield* ProviderEvidence
+        const recorded = database
+          .run(database.select().from(computers).where(eq(computers.personId, first.id)))
+          .pipe(Effect.map((rows) => rows.map((row) => [row.status, row.reason])))
+        yield* start(first)
+        // The machine runs and is in use; only its screen cannot be issued.
+        yield* Ref.set(evidence.screenRefused, true)
+        const shown = (yield* store.get(first.id)).state
+        expect(ComputerState.guards.Failed(shown) && shown.reason).toBe(
+          'The Computer provider refused the operation.',
+        )
+        expect(yield* recorded).toEqual([['running', null]])
+        expect((yield* store.run(first.id, request)).stdout).toBe('hello')
+        expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
+        yield* Ref.set(evidence.screenRefused, false)
+        expect((yield* store.get(first.id)).state._tag).toBe('Running')
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('counts a machine’s idle time from when it is first seen running', () =>
+      Effect.gen(function* () {
+        const { first } = yield* fixture()
+        const store = yield* ComputerStore
+        const evidence = yield* ProviderEvidence
+        const key = computerMachineKey(first.id)
+        yield* start(first)
+        yield* store.stop(first.id)
+        yield* Queue.clear(evidence.stopped)
+        // Hours later someone else starts the machine: another caller over SSH, or the provider.
+        yield* TestClock.adjust('3 hours')
+        yield* Ref.update(evidence.states, (states) =>
+          new Map(states).set(
+            key,
+            ComputerState.cases.Running.make({
+              since: 300,
+              screen: ComputerState.cases.Running.fields.screen.cases.Relay.make({
+                address: computerScreenAddress,
+              }),
+            }),
+          ),
+        )
+        // Vivid notices it. Counted from the record's old activity the idle period ended hours ago
+        // and the machine would be stopped at once, under whoever started it.
+        expect((yield* store.get(first.id)).state._tag).toBe('Running')
+        yield* TestClock.adjust('19 minutes')
+        expect(Option.isNone(yield* Queue.poll(evidence.stopped))).toBe(true)
+        // Only the read that first saw it run starts the idle period. A later read moves nothing:
+        // were it to, a Person looking at the Computer would keep it running for good.
+        expect((yield* store.get(first.id)).state._tag).toBe('Running')
+        yield* TestClock.adjust('1 minute')
+        expect(yield* Queue.take(evidence.stopped)).toBe(key)
       }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
@@ -1542,15 +1669,14 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           const installation = InstallationId.make(NodeCrypto.randomUUID())
           const device = yield* registry.enrol(first.id, { installation, name: 'Test computer' })
           yield* registry.allow(first.id, device.id)
-          yield* registry
-            .watch({
-              ability: { pages: true, apps: false },
-              personId: first.id,
-              sessionId: SessionId.make(NodeCrypto.randomUUID()),
-              device: device.id,
-              installation,
-            })
-            .pipe(Effect.asVoid)
+          const listening = yield* registry.watch({
+            ability: { pages: true, apps: false },
+            personId: first.id,
+            sessionId: SessionId.make(NodeCrypto.randomUUID()),
+            device: device.id,
+            installation,
+          })
+          void listening
           const response = yield* computerHandlers.Browse(personRequest).pipe(asVivid(first))
           expect(response._tag).toBe('RunRequired')
           expect(yield* Ref.get(evidence.calls)).toEqual([])

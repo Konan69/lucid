@@ -2,18 +2,20 @@ import { useAtomValue } from '@effect/atom-react'
 import { useAppearance } from '../data/vivid'
 import { draftPlace, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
-import { useCallback, useState, useSyncExternalStore } from 'react'
+import { ThreadId } from '@vivid/contracts'
+import { randomUUID } from 'expo-crypto'
+import { useCallback, useSyncExternalStore } from 'react'
 import { Keyboard, ScrollView, View } from 'react-native'
 import { arrivalOf, homeShows, Showing, type HomeScreen } from '../data/arrival'
 import { draft, useDraft } from '../data/drafts'
+import { again, begin, startedWith } from '../data/first'
 import { Front } from '../data/front'
 import { LiveState, useLive, useLiveData } from '../data/live'
-import { Start, startThread } from '../data/threads'
+import { firstWay } from '../data/threads'
 import { BarRoom, NO_ACTIONS, NOBODY, VividBar } from '../ui/Bar'
 import { Composer } from '../ui/Composer'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
-import { Thinking } from '../ui/Thinking'
-import { Label, Notice, styles } from '../ui/ui'
+import { Label, styles } from '../ui/ui'
 import { useFront, useGo, useMe, useShowing } from '../workspace'
 import { Chat } from './Chat'
 import { First, Waiting } from './home/First'
@@ -25,9 +27,10 @@ import { useScope } from './project/scope'
  *
  * A Thread used to be a second screen pushed over this one, so a first message ended with the
  * Thread sliding in over the words just typed. Now the greeting is replaced by the conversation
- * where it stands: no screen is pushed, nothing moves, and the bar and the composer are in the
- * same places before and after. Choosing a Thread in the menu, or anywhere else in the app, puts
- * it here the same way.
+ * where it stands: no screen is pushed, and the bar and the composer are in the same places
+ * before and after. It is replaced the moment a first message is sent, with those words already
+ * in the conversation (`useStart`). Choosing a Thread in the menu, or anywhere else in the app,
+ * puts it here the same way.
  *
  * Every Thread the Person has, the places beside Threads, the workspace and Settings are in the
  * menu (`screen/home/Panel.tsx`), one swipe or one tap on the bar's first button away. The menu
@@ -48,7 +51,7 @@ export function Home() {
  * place, and draws nothing under its bar for the moment before it is known which Person this is.
  *
  * It owns no data. What is local is only what the Person is in the middle of: what they have
- * typed, and a send the server refused.
+ * typed.
  */
 function Fresh() {
   // The name this Person or their Company gave Vivid, live.
@@ -61,9 +64,9 @@ function Fresh() {
   const working =
     LiveState.$is('Ready')(threads) &&
     threads.value.threads.some((thread) => thread.attention === 'Working')
-  // Vivid's face thinks while it is at work anywhere: on the first message sent from here, on a
-  // first Thread being opened, or in some other Thread.
-  const mood = start.sending || working || Showing.$is('Waiting')(showing) ? 'thinking' : 'happy'
+  // Vivid's face thinks while it is at work anywhere: on a first Thread being opened, or in some
+  // other Thread.
+  const mood = working || Showing.$is('Waiting')(showing) ? 'thinking' : 'happy'
 
   return (
     <AboveKeyboardBelowBar>
@@ -128,9 +131,8 @@ function Under({ showing, ...writing }: WritingProps & { showing: Showing }) {
 }
 
 /**
- * For someone Vivid has met: the greeting in the middle of the page, that Vivid is thinking
- * while a first message is on its way, anything the last send was refused for, and the composer.
- * The words and the send are `Fresh`'s (`useStart`), which also decides the mood of the face.
+ * For someone Vivid has met: the greeting in the middle of the page, and the composer. The words
+ * and the send are `Fresh`'s (`useStart`), which also decides the mood of the face.
  */
 function Writing({ me, mood, start, placeholder }: WritingProps) {
   return (
@@ -142,25 +144,14 @@ function Writing({ me, mood, start, placeholder }: WritingProps) {
       >
         <First me={me} mood={mood} />
       </ScrollView>
-      {/* Just above the composer, where it is in a Thread too (`ui/Thinking.tsx`). */}
-      {start.sending && (
-        <View style={[styles.column, { paddingHorizontal: 28, paddingBottom: 6 }]}>
-          <Thinking />
-        </View>
-      )}
-      {Option.isSome(start.refusal) && (
-        <View style={{ paddingHorizontal: 12, paddingBottom: 4 }}>
-          <Notice message={start.refusal.value} />
-        </View>
-      )}
       <Composer
         value={start.draft}
         autoFocus={false}
         placeholder={placeholder}
         working={false}
-        disabled={start.sending}
+        disabled={false}
         onChange={start.setDraft}
-        onSend={() => void start.send()}
+        onSend={start.send}
         onStop={() => undefined}
       />
     </>
@@ -191,15 +182,21 @@ function Reconnecting() {
 /**
  * Starting a Thread from the composer under the greeting.
  *
- * The Thread takes the greeting's place only once the message is with Vivid, so words the Person
- * typed are never dropped on the way to a conversation that could not say so. It takes the
- * keyboard too when the keyboard was up (`Front.Thread.writing`), so sending does not put it away. If the Thread was made and the
- * message did not arrive, sending again speaks into that Thread instead of making a second one.
+ * The Thread takes the greeting's place at once, with the words already in its conversation, and
+ * the server is told while it is drawn (`begin`, `data/first.ts`). It used to take the greeting's
+ * place only once the server had made it and taken the message, which left the greeting standing
+ * still for two calls and then brought the Thread in as an outline: the owner asked for the first
+ * message to be mounted at once and to rise into place (7 October 2026). The Thread takes the
+ * keyboard too when the keyboard was up (`Front.Thread.writing`), so sending does not put it away.
+ *
+ * Words are never dropped on the way. They stay kept on the phone under this composer until they
+ * are with Vivid (`firstWay`, `data/threads.ts`), so an app closed mid-send still has them. If
+ * they do not arrive, the Thread says so beside them with the way to send them again, and
+ * sending them from this composer goes on as that same Thread (`startedWith`).
  *
  * The words are kept on the phone as they are typed (`data/drafts.ts`), under the Person's own
- * place for a new Thread, and are only removed once the Thread has started with them. So they are
- * still in the composer after visiting another screen, after the app is closed, and after a send
- * that was refused. Words typed while a send was on its way were not sent, and stay too.
+ * place for a new Thread, so they are still in the composer after visiting another screen and
+ * after the app is closed.
  */
 function useStart() {
   const me = useMe()
@@ -212,47 +209,32 @@ function useStart() {
   const typed = useDraft(place)
   const scoped = useScope()
   const setDraft = (text: string) => draft.keep(place, text)
-  const [sending, setSending] = useState(false)
-  const [last, setLast] = useState<Option.Option<Start>>(Option.none())
 
-  async function send() {
-    const message = typed.trim()
-    if (message.length === 0 || sending) return
-    setSending(true)
-    // A Thread started while the drawer is scoped to a Project is filed in that Project.
-    const projectId = Option.getOrNull(Option.map(scoped, (project) => project.id))
-    // The empty Thread an earlier attempt left behind is spoken into, not made again. It is the
-    // shell's to remember (`front.unsaid`): this screen is taken down between the two attempts
-    // whenever the Person looks at another Thread first.
-    const outcome = await startThread(data, { message, projectId, resume: front.unsaid() })
-    setSending(false)
-    // A Thread that was made and not reached is owed these words; one that started owes nothing.
-    // A refusal to make one changes neither.
-    if (Start.$is('NotSaid')(outcome)) front.owe(Option.some(outcome.id))
-    if (Start.$is('Started')(outcome)) front.owe(Option.none())
-    if (Start.$is('Started')(outcome)) {
-      // Only the words that were sent leave the composer. It stays usable while the send is on
-      // its way, so by now it can hold a second request; emptying it whatever it held used to
-      // throw that away. Anything else is still the Person's and is here when they come back.
-      if (draft.in(place).trim() === message) setDraft('')
-      setLast(Option.none())
-      front.open(outcome.id, Keyboard.isVisible())
+  function send() {
+    const words = typed.trim()
+    if (words.length === 0) return
+    const way = firstWay(data)
+    // Words that are already a Thread's first, and not yet with Vivid, go on as that Thread:
+    // sending them again from here must not start a second one.
+    const begun = startedWith(front.firsts.all(), words, place)
+    if (Option.isSome(begun)) {
+      void again(way, front.firsts, begun.value)
+      front.open(begun.value, Keyboard.isVisible())
       return
     }
-    setLast(Option.some(outcome))
+    // The Thread's id is chosen here, so it can be drawn before the server has made it. The words
+    // stay kept on the phone until they are with Vivid (`taken`), so closing the app before then
+    // does not lose them; the composer they were typed in is not on screen meanwhile.
+    const id = ThreadId.make(randomUUID())
+    void begin(way, front.firsts, id, {
+      words,
+      // A Thread started while the drawer is scoped to a Project is filed in that Project.
+      projectId: Option.getOrNull(Option.map(scoped, (project) => project.id)),
+      at: Date.now(),
+      place,
+    })
+    front.open(id, Keyboard.isVisible())
   }
 
-  return {
-    draft: typed,
-    sending,
-    setDraft,
-    send,
-    refusal: Option.flatMap(last, (outcome) =>
-      Start.$match(outcome, {
-        Started: () => Option.none<string>(),
-        NotCreated: ({ message }) => Option.some(message),
-        NotSaid: ({ message }) => Option.some(message),
-      }),
-    ),
-  }
+  return { draft: typed, setDraft, send }
 }
