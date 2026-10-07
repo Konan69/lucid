@@ -12,19 +12,24 @@ import {
 import { Config, Effect, Option, Redacted } from 'effect'
 import { Pool } from 'pg'
 
-import { openPgStorage } from '../pg.ts'
+import { openPgDatabase } from '../pg.ts'
+import { PostgresStorage } from '../storage.ts'
+import { CountingDatabase } from './database.ts'
+import { streamingWrites } from './stream.ts'
 
 const context = BACKGROUND_CONTEXT
 type Measurement = {
   readonly backend: string
   readonly operation: string
   readonly milliseconds: number
+  readonly queries: number
 }
 
 /** Pi src/testing/storage-benchmark.ts:seedStorageBenchmark and read cases, once
  * at its smallest published scale. Validate results; impose no timing threshold. */
-async function readNumbers(storage: Storage, backend: string): Promise<Measurement[]> {
+async function readNumbers(storage: Storage, backend: string, counter: Option.Option<CountingDatabase>): Promise<Measurement[]> {
   const scale = Option.getOrThrow(Option.fromNullishOr(STORAGE_MEMORY_SCALES[0]))
+  if (Option.isSome(counter)) counter.value.calls = 0
   const started = performance.now()
   const dataset = await seedStorageBenchmark(storage, scale)
   const rows: Measurement[] = [
@@ -32,12 +37,14 @@ async function readNumbers(storage: Storage, backend: string): Promise<Measureme
       backend,
       operation: `seed ${scale.name} (${scale.entryCount}/${scale.taskCount}/${scale.documentCount})`,
       milliseconds: performance.now() - started,
+      queries: Option.match(counter, { onNone: () => 0, onSome: (value) => value.calls }),
     },
   ]
   for (const benchmark of STORAGE_READ_BENCHMARKS) {
+    if (Option.isSome(counter)) counter.value.calls = 0
     const begin = performance.now()
     const result = await benchmark.run(storage, dataset)
-    rows.push({ backend, operation: benchmark.name, milliseconds: performance.now() - begin })
+    rows.push({ backend, operation: benchmark.name, milliseconds: performance.now() - begin, queries: Option.match(counter, { onNone: () => 0, onSome: (value) => value.calls }) })
     if (result !== benchmark.expected(dataset))
       throw new Error(`Read benchmark result differed: ${benchmark.name}`)
   }
@@ -46,27 +53,36 @@ async function readNumbers(storage: Storage, backend: string): Promise<Measureme
 
 /** Pi src/testing/storage-benchmark.ts:seedStorageWriteBenchmark and write cases.
  * Fresh storage ensures immutable root creation does not collide with read seeds. */
-async function writeNumbers(storage: Storage, backend: string): Promise<Measurement[]> {
+async function writeNumbers(storage: Storage, backend: string, counter: Option.Option<CountingDatabase>): Promise<Measurement[]> {
   await seedStorageWriteBenchmark(storage)
   const rows: Measurement[] = []
   for (const benchmark of STORAGE_WRITE_BENCHMARKS) {
+    if (Option.isSome(counter)) counter.value.calls = 0
     const begin = performance.now()
     const result = await benchmark.run(storage)
-    rows.push({ backend, operation: benchmark.name, milliseconds: performance.now() - begin })
+    rows.push({ backend, operation: benchmark.name, milliseconds: performance.now() - begin, queries: Option.match(counter, { onNone: () => 0, onSome: (value) => value.calls }) })
     if (result !== benchmark.expected)
       throw new Error(`Write benchmark result differed: ${benchmark.name}`)
+  }
+  for (const sample of await streamingWrites(storage)) {
+    if (Option.isSome(counter)) counter.value.calls = 0
+    const begin = performance.now()
+    await storage.commit(sample.writes, context)
+    rows.push({ backend, operation: sample.name, milliseconds: performance.now() - begin,
+      queries: Option.match(counter, { onNone: () => 0, onSome: (value) => value.calls }) })
   }
   return rows
 }
 
 /** Cleanup is established before migration writes; only this fresh schema is
  * dropped. No fixtures, credentials, shared database or live provider are used. */
-async function withPostgres<T>(pool: Pool, use: (storage: Storage) => Promise<T>): Promise<T> {
+async function withPostgres<T>(pool: Pool, use: (storage: Storage, counter: Option.Option<CountingDatabase>) => Promise<T>): Promise<T> {
   const schema = `durable_${NodeCrypto.randomUUID().replaceAll('-', '')}`
   let storage = Option.none<Storage>()
   try {
-    storage = Option.some(await openPgStorage(pool, schema))
-    return await use(Option.getOrThrow(storage))
+    const database = new CountingDatabase(await openPgDatabase(pool, schema))
+    storage = Option.some(await PostgresStorage.open(database, schema))
+    return await use(Option.getOrThrow(storage), Option.some(database))
   } finally {
     if (Option.isSome(storage))
       await storage.value
@@ -110,10 +126,10 @@ async function main() {
     throw new Error('Storage benchmark refuses the developer database port')
   const pool = new Pool({ connectionString: url })
   try {
-    const reads = await withPostgres(pool, (storage) => readNumbers(storage, 'PostgreSQL'))
-    reads.push(...(await withSqlite((storage) => readNumbers(storage, 'SQLite'))))
-    const writes = await withPostgres(pool, (storage) => writeNumbers(storage, 'PostgreSQL'))
-    writes.push(...(await withSqlite((storage) => writeNumbers(storage, 'SQLite'))))
+    const reads = await withPostgres(pool, (storage, counter) => readNumbers(storage, 'PostgreSQL', counter))
+    reads.push(...(await withSqlite((storage) => readNumbers(storage, 'SQLite', Option.none()))))
+    const writes = await withPostgres(pool, (storage, counter) => writeNumbers(storage, 'PostgreSQL', counter))
+    writes.push(...(await withSqlite((storage) => writeNumbers(storage, 'SQLite', Option.none()))))
     console.log('Read timings (milliseconds, one measured call per operation):')
     console.table(reads)
     console.log('Write timings (milliseconds, one measured call per operation):')

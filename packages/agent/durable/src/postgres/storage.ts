@@ -35,6 +35,7 @@ import type {
 } from '@earendil-works/pi-durable'
 import type { PostgresDatabase, PostgresExecutor, PostgresValue } from './database.ts'
 import { safeNumber } from './database.ts'
+import { Statements } from './statements.ts'
 import { applyPostgresMigrations } from './migrations.ts'
 
 /** Pi src/ids.ts:idFromNumber, numeric brands at the trusted allocation/driver boundary.
@@ -92,6 +93,19 @@ type RevisionRow = {
 }
 type IdRow = { readonly id: string }
 type MetadataRow = { readonly next_id: string; readonly next_seq: string }
+const decodeMetadataRow = Schema.decodeUnknownSync(Schema.Struct({ next_id: Schema.String, next_seq: Schema.String }))
+const decodeRecordIdRow = Schema.decodeUnknownSync(Schema.Struct({ record_type: Schema.Literals(['conversation', 'entry', 'task', 'submission', 'document']) }))
+
+/** Pi checkGlobalIds visits all created record identities in write order. */
+function globalClaims(writes: readonly StorageWrite[]) {
+  const claims: { readonly id: Id<string>; readonly table: TableName }[] = []
+  for (const write of writes) {
+    if (write.type === 'document.change' || write.type === 'document.retire') continue
+    const document = write.type === 'document.create' || write.type === 'document.copy'
+    claims.push({ id: document ? write.record.id : write.value.id, table: document ? 'document' : write.type })
+  }
+  return claims
+}
 type DocumentAction = {
   create?: DocumentCreate
   copy?: Extract<StorageWrite, { readonly type: 'document.copy' }>['source']
@@ -421,28 +435,43 @@ export class PostgresStorage implements Storage {
   }
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.commit.
-   * Allocate the sequence only inside the transaction, and advance the volatile id watermark only after commit. */
+   * Allocate the sequence only inside the transaction, and advance the volatile id watermark only after commit.
+   * PostgreSQL transports BEGIN and independent metadata/ownership reads as one
+   * ordered batch, then transports each contiguous write segment as one batch.
+   * Unlike multi-row inserts, every claim/upsert retains its original position;
+   * repeated mutable ids and the first database failure retain Pi's behavior.
+   * Domain checks consume prefetched read results in the reference order; later
+   * read-only ownership lookups have no effects when an earlier check rejects.
+   * Conditional document reads/copy errors keep their original write barriers. */
   async commit(writes: readonly StorageWrite[], _context: Context) {
     this.assertOpen()
     const documentActions = this.prepareDocumentActions(writes)
     const candidateNextId = this.candidateNextId(writes)
-    const seq = await this.db.transaction(async (transaction) => {
-      const metadata = Option.getOrUndefined(
-        await transaction.get<MetadataRow>(
-          'SELECT next_id, next_seq FROM durable_metadata WHERE singleton = 1',
-        ),
-      )
-      if (metadata === undefined) throw new Error('Durable PostgreSQL metadata is missing')
+    const claims = globalClaims(writes)
+    const reads = [
+      { sql: 'SELECT next_id, next_seq FROM durable_metadata WHERE singleton = 1', params: [] },
+      ...claims.map((claim) => ({ sql: 'SELECT record_type FROM record_ids WHERE id = ?', params: [claim.id] })),
+    ]
+    const seq = await this.db.transactionWithReads(reads, async (transaction, rows) => {
+      const metadataRow = Option.fromNullishOr(rows[0]?.[0])
+      if (Option.isNone(metadataRow)) throw new Error('Durable PostgreSQL metadata is missing')
+      const metadata = decodeMetadataRow(metadataRow.value)
       const committedSeq = seqFromNumber(safeNumber(metadata.next_seq))
-      await this.checkGlobalIds(transaction, writes)
+      this.checkGlobalIds(claims, rows.slice(1))
       await this.checkDocumentActions(transaction, documentActions)
-      for (const write of writes) await this.applyTableWrite(transaction, write, committedSeq)
-      await this.applyDocumentActions(transaction, documentActions, committedSeq)
-      await transaction.run(
+      const statements = new Statements()
+      for (const write of writes) this.applyTableWrite(statements, write, committedSeq)
+      if (documentActions.size > 0) {
+        if (statements.values.length > 0) await transaction.runBatch(statements.values)
+        statements.values.length = 0
+        await this.applyDocumentActions(transaction, documentActions, committedSeq)
+      }
+      statements.run(
         'UPDATE durable_metadata SET next_id = ?, next_seq = ? WHERE singleton = 1',
         String(maxId(BigInt(metadata.next_id), candidateNextId)),
         BigInt(committedSeq) + 1n,
       )
+      await transaction.runBatch(statements.values)
       return committedSeq
     })
     this.nextId = maxId(this.nextId, candidateNextId)
@@ -913,24 +942,16 @@ export class PostgresStorage implements Storage {
 
   /** Pi SqliteStorage.checkGlobalIds, same checks and order. The pure ownership
    * comparison is split from SQL iteration to meet repository complexity limits. */
-  private async checkGlobalIds(executor: PostgresExecutor, writes: readonly StorageWrite[]) {
+  private checkGlobalIds(
+    claims: ReturnType<typeof globalClaims>,
+    rows: readonly (readonly object[])[],
+  ) {
     const claimed = new Map<Id<string>, TableName>()
-    for (const write of writes) {
-      if (write.type === 'document.change' || write.type === 'document.retire') continue
-      const document = write.type === 'document.create' || write.type === 'document.copy'
-      const table: TableName = document ? 'document' : write.type
-      const id = document ? write.record.id : write.value.id
-      const ownership = await executor.get<RecordIdRow>(
-        'SELECT record_type FROM record_ids WHERE id = ?',
-        id,
-      )
-      checkOwnership(
-        id,
-        table,
-        Option.map(ownership, (row) => row.record_type),
-        Option.fromNullishOr(claimed.get(id)),
-      )
-      claimed.set(id, table)
+    for (const [index, claim] of claims.entries()) {
+      const rowset = Option.getOrThrow(Option.fromNullishOr(rows[index]))
+      const ownership = Option.map(Option.fromNullishOr(rowset[0]), decodeRecordIdRow)
+      checkOwnership(claim.id, claim.table, Option.map(ownership, (row) => row.record_type), Option.fromNullishOr(claimed.get(claim.id)))
+      claimed.set(claim.id, claim.table)
     }
   }
 
@@ -1030,17 +1051,17 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.applyTableWrite.
    * Preserve write order, id claims and task/submission upserts; nullable fields retain genuine domain absence. */
-  private async applyTableWrite(executor: PostgresExecutor, write: StorageWrite, seq: Seq) {
+  private applyTableWrite(executor: Statements, write: StorageWrite, seq: Seq) {
     switch (write.type) {
       case 'conversation':
-        await this.writeConversation(executor, write.value)
+        this.writeConversation(executor, write.value)
         break
       case 'entry':
-        await this.writeEntry(executor, write.value, seq)
+        this.writeEntry(executor, write.value, seq)
         break
       case 'task':
-        await this.claimId(executor, write.value.id, 'task')
-        await executor.run(
+        this.claimId(executor, write.value.id, 'task')
+        executor.run(
           `INSERT INTO tasks (id, conversation_id, kind, status, abort_requested, background, record)
 						VALUES (?, ?, ?, ?, ?, ?, ?)
 						ON CONFLICT(id) DO UPDATE SET conversation_id = excluded.conversation_id, kind = excluded.kind,
@@ -1056,8 +1077,8 @@ export class PostgresStorage implements Storage {
         )
         break
       case 'submission':
-        await this.claimId(executor, write.value.id, 'submission')
-        await executor.run(
+        this.claimId(executor, write.value.id, 'submission')
+        executor.run(
           `INSERT INTO submissions (id, conversation_id, request_id, status, record) VALUES (?, ?, ?, ?, ?)
 						ON CONFLICT(id) DO UPDATE SET conversation_id = excluded.conversation_id,
 						request_id = excluded.request_id, status = excluded.status, record = excluded.record`,
@@ -1077,9 +1098,9 @@ export class PostgresStorage implements Storage {
   }
 
   /** Pi SqliteStorage.applyTableWrite conversation branch; null means genuinely absent ownership. */
-  private async writeConversation(executor: PostgresExecutor, record: ConversationRecord) {
-    await this.claimId(executor, record.id, 'conversation')
-    await executor.run(
+  private writeConversation(executor: Statements, record: ConversationRecord) {
+    this.claimId(executor, record.id, 'conversation')
+    executor.run(
       'INSERT INTO conversations (id, owner_conversation_id, owner_task_id, record) VALUES (?, ?, ?, ?)',
       record.id,
       record.owner === undefined ? null : record.owner.conversationId,
@@ -1088,9 +1109,9 @@ export class PostgresStorage implements Storage {
     )
   }
   /** Pi SqliteStorage.applyTableWrite entry branch; preserve claim-before-insert order. */
-  private async writeEntry(executor: PostgresExecutor, record: EntryRecord, seq: Seq) {
-    await this.claimId(executor, record.id, 'entry')
-    await executor.run(
+  private writeEntry(executor: Statements, record: EntryRecord, seq: Seq) {
+    this.claimId(executor, record.id, 'entry')
+    executor.run(
       'INSERT INTO entries (id, conversation_id, head, commit_seq, record) VALUES (?, ?, ?, ?, ?)',
       record.id,
       record.conversationId,
@@ -1102,8 +1123,8 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.claimId.
    * PostgreSQL ON CONFLICT DO NOTHING replaces SQLite INSERT OR IGNORE for the shared ownership table. */
-  private async claimId(executor: PostgresExecutor, id: Id<string>, table: TableName) {
-    await executor.run(
+  private claimId(executor: Statements, id: Id<string>, table: TableName) {
+    executor.run(
       'INSERT INTO record_ids (id, record_type) VALUES (?, ?) ON CONFLICT DO NOTHING',
       id,
       table,
@@ -1121,13 +1142,14 @@ export class PostgresStorage implements Storage {
     for (const [id, action] of actions) {
       let content = action.content
       if (action.copy !== undefined) content = await this.copyContent(executor, id, action)
+      const statements = new Statements()
       let record: DocumentRecord
       if (action.create !== undefined) {
         const created = { ...action.create, createdAt: seq }
         record = action.retire ? { ...created, retiredAt: seq } : created
         const parts = addressParts(record)
-        await this.claimId(executor, id, 'document')
-        await executor.run(
+        this.claimId(statements, id, 'document')
+        statements.run(
           `INSERT INTO documents
 						(id, kind, family, key_value, scope_kind, owner_id, created_at, retired_at, record)
 						VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1150,10 +1172,10 @@ export class PostgresStorage implements Storage {
 
       if (content !== undefined) {
         if (content.kind === 'base' && isCurrentOnly(record)) {
-          await executor.run('DELETE FROM document_revisions WHERE document_id = ?', id)
+          statements.run('DELETE FROM document_revisions WHERE document_id = ?', id)
         }
         const encodedContent = contentJson(content)
-        await executor.run(
+        statements.run(
           'INSERT INTO document_revisions (document_id, seq, kind, version, content) VALUES (?, ?, ?, ?, ?)',
           id,
           seq,
@@ -1166,7 +1188,7 @@ export class PostgresStorage implements Storage {
       if (action.retire) {
         if (action.create === undefined) {
           record = { ...record, retiredAt: seq }
-          await executor.run(
+          statements.run(
             'UPDATE documents SET retired_at = ?, record = ? WHERE id = ?',
             seq,
             encodeJson(record),
@@ -1174,9 +1196,10 @@ export class PostgresStorage implements Storage {
           )
         }
         if (isCurrentOnly(record)) {
-          await executor.run('DELETE FROM document_revisions WHERE document_id = ?', id)
+          statements.run('DELETE FROM document_revisions WHERE document_id = ?', id)
         }
       }
+      if (statements.values.length > 0) await executor.runBatch(statements.values)
     }
   }
 

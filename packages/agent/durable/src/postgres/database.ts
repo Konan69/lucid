@@ -17,7 +17,14 @@ export type PostgresValue = null | number | bigint | string | Uint8Array
  * Unlike Pi's `T | undefined`, `get` returns Option to satisfy the repository's
  * explicit-absence rule. Storage converts with Option.getOrUndefined at Pi's boundary.
  */
+/** Owned SQL plus bindings, never caller-supplied SQL interpolation. Ordered
+ * batches retain Pi SqliteStorage's individual statements, including duplicate
+ * mutable-id upserts; multi-row INSERT would change their order and errors. */
+export type PostgresStatement = { readonly sql: string; readonly params: readonly PostgresValue[] }
+
 export interface PostgresExecutor {
+  /** One ordered simple-protocol batch; the first failing statement stops the batch. */
+  runBatch(statements: readonly PostgresStatement[]): Promise<void>
   exec(sql: string): Promise<void>
   run(sql: string, ...params: PostgresValue[]): Promise<void>
   get<T extends object>(sql: string, ...params: PostgresValue[]): Promise<Option.Option<T>>
@@ -37,6 +44,11 @@ export interface PostgresExecutor {
  * so the caller cannot mistake it for a guaranteed rollback.
  */
 export interface PostgresDatabase extends PostgresExecutor {
+  /** Pi transaction's same barrier/rollback rules, with BEGIN and independent
+   * preflight reads sent together in their original order. Read results are
+   * decoded by storage before any write; no allocation happens outside the transaction.
+   * This owned-facade extension avoids changing the host Pool's pipeline setting. */
+  transactionWithReads<T>(reads: readonly PostgresStatement[], callback: (transaction: PostgresExecutor, rows: readonly (readonly object[])[]) => Promise<T>): Promise<T>
   transaction<T>(callback: (transaction: PostgresExecutor) => Promise<T>): Promise<T>
   close(): Promise<void>
 }

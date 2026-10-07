@@ -1,15 +1,40 @@
-import type * as NodeBuffer from 'node:buffer'
+import * as NodeBuffer from 'node:buffer'
 import * as Option from 'effect/Option'
-import { types, type Pool, type PoolClient, type QueryResultRow } from 'pg'
+import * as Schema from 'effect/Schema'
+import { escapeLiteral, types, type Pool, type PoolClient, type QueryResultRow } from 'pg'
 
 import {
   validateSchema,
   type PostgresDatabase,
   type PostgresExecutor,
   type PostgresValue,
+  type PostgresStatement,
 } from './database.ts'
 export { validateSchema } from './database.ts'
 import { PostgresStorage } from './storage.ts'
+
+/** pg/lib/query.js:_checkForMultirow returns one result per simple-protocol
+ * statement. Decode scalar metadata/ownership rows once at the SDK ingress.
+ * JSON records remain TEXT, so this never rewrites their keys or numbers. */
+const decodeBatch = Schema.decodeUnknownSync(Schema.Array(Schema.Struct({
+  rows: Schema.Array(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Null]))),
+})))
+
+/** PostgreSQL's extended protocol forbids bound multi-statement queries.
+ * pg's public escapeLiteral safely quotes each scalar, including quotes and
+ * backslashes; byte arrays use lossless hex. This changes transport only, never
+ * statement order, durability settings, or the host connection's configuration. */
+function statementText(statement: PostgresStatement): string {
+  let index = 0
+  return statement.sql.replace(/\?/gu, () => {
+    const value = statement.params[index++]
+    if (value === undefined) throw new Error('PostgreSQL batch binding is missing')
+    if (value === null) return 'NULL'
+    if (Schema.is(Schema.Uint8Array)(value))
+      return `decode(${escapeLiteral(NodeBuffer.Buffer.from(value).toString('hex'))}, 'hex')`
+    return escapeLiteral(String(value))
+  })
+}
 
 /** Pi src/storage/sqlite/node.ts:SerialOperationQueue. PostgreSQL calls are all
  * asynchronous, so every operation holds the barrier until it settles. Failure
@@ -41,6 +66,12 @@ abstract class PgExecutor implements PostgresExecutor {
   /** Pi NodeSqliteExecutor.exec: execute unbound schema statements in the same order as Pi's facade. */
   exec(sql: string): Promise<void> {
     return this.runOperation(() => this.client.query(sql).then(() => {}))
+  }
+
+  /** Pi's exec already permits ordered multiple statements. Bound batches are
+   * added to our facade because pg cannot bind multiple extended-protocol statements. */
+  runBatch(statements: readonly PostgresStatement[]): Promise<void> {
+    return this.exec(statements.map(statementText).join(';\n'))
   }
 
   /** Pi NodeSqliteExecutor.run: execute one bound write, leaving result interpretation to storage reads. */
@@ -135,6 +166,32 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
       return this.client
         .query('BEGIN ISOLATION LEVEL REPEATABLE READ')
         .then(() => this.runTransaction(transaction, callback))
+    })
+  }
+
+  /** Same transaction settlement as Pi NodeSqliteDatabase.transaction. BEGIN
+   * and read-only preflight statements retain their order in one query call.
+   * A read or decoding failure still rolls back before releasing the barrier. */
+  transactionWithReads<T>(
+    reads: readonly PostgresStatement[],
+    callback: (transaction: PostgresExecutor, rows: readonly (readonly object[])[]) => Promise<T>,
+  ): Promise<T> {
+    return this.access.run(() => {
+      this.assertOpen()
+      const transaction = new PgTransaction(this.client)
+      const text = ['BEGIN ISOLATION LEVEL REPEATABLE READ', ...reads.map(statementText)].join(';\n')
+      return this.client.query({ text, types: { getTypeParser: (oid, format) => {
+        if (oid === types.builtins.INT8) return (value: string) => value
+        return types.getTypeParser(oid, format)
+      } } }).then((result) => {
+        return this.runTransaction(transaction, () => {
+          const rows = decodeBatch(result).slice(1).map((item) => item.rows)
+          return callback(transaction, rows)
+        })
+      }, (cause: unknown) => {
+        transaction.active = false
+        return this.rollback(cause)
+      })
     })
   }
 

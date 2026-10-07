@@ -27,5 +27,5 @@ export function postgresFixture(url: string) {
     storages.add(storage)
     return storage
   }
-  return { pool, schema, open }
+  return { pool, schema, open, track: (storage: PostgresStorage) => { storages.add(storage) } }
 }
