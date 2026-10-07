@@ -45,8 +45,11 @@ export const readDesk = Effect.fn('Durable.readDesk')(function* (
 ): Effect.fn.Return<Desk, PiFailed> {
   const { chunks, live: observedLive, origins } = observation
   const agent = yield* Pi.agent(reader.conversation, reader.context)
-  // HookApi cannot resolve its selected registration. Reject ambiguity where the public agent can.
-  const names = new Set(chunks.flatMap((chunk) => ('toolName' in chunk ? [chunk.toolName] : [])))
+  // HookApi cannot resolve its selected registration. Reject ambiguity for active calls only;
+  // completed task provenance and settlements must survive any later registry changes.
+  const names = new Set(
+    chunks.flatMap((chunk) => ('toolName' in chunk && !origins.has(chunk) ? [chunk.toolName] : [])),
+  )
   for (const name of names) {
     const offered = agent.extensions
       .flatMap((extension) => extension.tools ?? [])

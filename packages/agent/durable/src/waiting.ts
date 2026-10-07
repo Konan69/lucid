@@ -39,9 +39,9 @@ export type Waiting = {
  * Every tool call of a conversation that waits for a person, read from durable state only, so the
  * answer is the same before and after a restart and with no client attached.
  *
- * Nothing records "this call is waiting": the hook that waits can only read. A waiting call is
- * therefore derived: a unique pending call of the current round with an allocated task id, whose
- * tool's plan holds it, and that has no settlement for that task yet.
+ * A pending task with no settlement reads its pinned hook memo through getTask. Before the hook
+ * writes that memo, the shared Pi/SDK parsing and pure synchronous policy determine the hold.
+ * An impure policy can confuse live presentation, but a pinned pull remains exact after restart.
  */
 export const waiting: (
   harness: Harness,

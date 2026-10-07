@@ -212,7 +212,7 @@ it.live('proves the public memo read and its notification and terminal limits', 
 
 /** Durable receipts, rather than today's policy or registration, restore approval and denial history. */
 for (const approved of [true, false])
-  for (const changed of ['policy', 'registration'] as const)
+  for (const changed of ['policy', 'registration', 'duplicates'] as const)
     it.live(`keeps approved=${approved} history after changing ${changed}`, () =>
       Effect.promise(async () => {
         const tools = {
@@ -254,8 +254,22 @@ for (const approved of [true, false])
               throw new Error('History evaluated current policy')
             },
           })
-        else Reflect.deleteProperty(tools, 'pay')
-        const reopened = await fixture.open()
+        else if (changed === 'registration') Reflect.deleteProperty(tools, 'pay')
+        const observers =
+          changed === 'duplicates'
+            ? [
+                await toolsExtension('later-duplicate', {
+                  pay: tool({
+                    inputSchema: z.object({}),
+                    needsApproval: () => {
+                      throw new Error('New duplicate policy')
+                    },
+                    execute: async () => 'different',
+                  }),
+                }),
+              ]
+            : []
+        const reopened = await fixture.open(observers)
         const saved = await history(reopened.harness, reopened.root.id, { limit: 10 }, context)
         const assistant = saved.messages.at(-1)
         if (assistant === undefined) throw new Error('Expected history')
@@ -439,5 +453,34 @@ it.live('pins a held decision across process death without rerunning its hook po
       approval: { approved: true },
     })
     expect(policies).toBe(0)
+  }),
+)
+
+/** Aborting a held task produces its existing tool error, even after the policy becomes broken. */
+it.live('reads an aborted held call without evaluating the current policy', () =>
+  Effect.promise(async () => {
+    const definition = tool({
+      inputSchema: z.object({}),
+      needsApproval: true,
+      execute: async () => 'paid',
+    })
+    const fixture = await host({ pay: definition }, {})
+    const opened = await fixture.open()
+    opened.faux.setResponses([call('pay', {}, 'pay')])
+    const chat = new PlainChat({ transport: opened.transport })
+    await chat.sendMessage({ text: 'Pay' })
+    await abort(opened.harness, opened.root.id, context)
+    await opened.root.waitForIdle(context)
+    await fixture.close(opened.harness)
+    Object.defineProperty(definition, 'needsApproval', {
+      value: () => {
+        throw new Error('Aborted history evaluated policy')
+      },
+    })
+    const reopened = await fixture.open()
+    const saved = await history(reopened.harness, reopened.root.id, { limit: 10 }, context)
+    const assistant = saved.messages.at(-1)
+    if (assistant === undefined) throw new Error('Expected aborted history')
+    expect(assistant.parts.find(isToolUIPart)).toMatchObject({ state: 'output-error' })
   }),
 )
