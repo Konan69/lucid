@@ -331,7 +331,9 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
         )
   // Void tools have no JSON value; expose explicit null in both the durable result and model text.
   const text = serialized.text === undefined ? 'null' : serialized.text
-  if (Option.isNone(server.toModelOutput)) return result({ text, output: json })
+  // Later acknowledges an open question; answers.ts admits its real answer as separate user input.
+  if (Execution.$is('Later')(server.execution) || Option.isNone(server.toModelOutput))
+    return result({ text, output: json })
   // ai/src/prompt/create-tool-model-output.ts:32–33 passes the validated input and original output.
   const convert = server.toModelOutput.value
   const model = yield* Effect.tryPromise({

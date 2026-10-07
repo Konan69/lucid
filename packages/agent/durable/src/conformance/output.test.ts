@@ -7,7 +7,7 @@ import { expect, it } from '@effect/vitest'
 import { Effect } from 'effect'
 import { z } from 'zod'
 
-import { history, streamRun } from '../main.ts'
+import { answer, history, streamRun, waiting } from '../main.ts'
 import { call, consume, context, host, signal, texts } from './fixtures/host.ts'
 
 type ModelOutput = Awaited<
@@ -323,5 +323,75 @@ it.live('projects a person-supplied answer through SDK Chat', () =>
     expect(chat.lastMessage.parts.find((part) => part.type === 'tool-ask')).toMatchObject({
       output: { answer: 'savings' },
     })
+  }),
+)
+
+/** The bridge's acknowledgement is not the tool author's output; a late answer is separate user input. */
+it.live('keeps later acknowledgements out of toModelOutput and admits the later answer', () =>
+  Effect.promise(async () => {
+    const converted: { answer: string }[] = []
+    let model: readonly Message[] = []
+    const received = signal()
+    const fixture = await host(
+      {
+        ask: tool({
+          inputSchema: z.object({}),
+          outputSchema: z.object({ answer: z.string() }),
+          toModelOutput: ({ output }) => {
+            converted.push(output)
+            return { type: 'text', value: output.answer.toUpperCase() }
+          },
+        }),
+      },
+      { answers: { ask: 'later' } },
+    )
+    const opened = await fixture.open()
+    opened.faux.setResponses([
+      call('ask', {}, 'later'),
+      (request) => {
+        model = request.messages
+        return fauxAssistantMessage('Waiting for the answer.')
+      },
+    ])
+    const result = await consume(
+      await streamRun(
+        opened.harness,
+        { conversationId: opened.root.id, content: 'Ask', requestId: 'later' },
+        context,
+      ),
+    )
+    expect(result.message.parts.find((part) => part.type === 'tool-ask')).toMatchObject({
+      state: 'output-available',
+      output: { status: 'asked' },
+    })
+    expect(model.at(-1)).toMatchObject({
+      role: 'toolResult',
+      content: [{ type: 'text', text: expect.stringContaining('"status":"asked"') }],
+    })
+    expect(converted).toEqual([])
+    const rows = await waiting(opened.harness, opened.root.id, context)
+    expect(rows).toHaveLength(1)
+    const row = rows[0]
+    if (row === undefined) throw new Error('Expected later question')
+    opened.faux.setResponses([
+      (request) => {
+        model = request.messages
+        received.resolve()
+        return fauxAssistantMessage('Answer received.')
+      },
+    ])
+    await answer(
+      opened.harness,
+      opened.root.id,
+      { holdId: row.holdId, output: { answer: 'yes' } },
+      context,
+    )
+    await received.promise
+    expect(model.at(-1)).toMatchObject({
+      role: 'user',
+      content: '[answer to ask] {"answer":"yes"}',
+    })
+    expect(converted).toEqual([])
+    expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
   }),
 )
