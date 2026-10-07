@@ -27,7 +27,9 @@ export const InputPart = Schema.Union([
   }),
 ])
 export type InputPart = typeof InputPart.Type
-/** Host policy, in decoded bytes per image. Supply a nonnegative integer; absence imposes no bound. */
+/** Per-turn host admission policy: whenBusy is steer/followUp/reject, defaulting to Pi's followUp
+ * (submissions.js:149). It is normalized to a required decoded choice before submission. The
+ * optional per-image byte bound uses decoded bytes; absence imposes no bound. */
 export type InputOptions = { readonly maxPartBytes?: number; readonly whenBusy?: BusyPolicy }
 
 /** Absence is explicit after the host ingress; every internal consumer sees a valid byte policy. */

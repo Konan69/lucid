@@ -2,7 +2,7 @@ import { Effect, Schema } from 'effect'
 import { BusyPolicyInvalid } from './errors.ts'
 import type { InputOptions } from './input.ts'
 
-/** Pi submissions.js:127 rejects before admission; :145 defaults queued inputs to followUp. */
+/** Pi submissions.js:129 rejects before admission; :149 defaults queued inputs to followUp. */
 export const BusyPolicy = Schema.Literals(['steer', 'followUp', 'reject'])
 export type BusyPolicy = typeof BusyPolicy.Type
 const decodeBusy = Schema.decodeUnknownEffect(BusyPolicy)
