@@ -45,7 +45,7 @@ const schemaType = Effect.fn('Code.schemaType')(function* (schema: Schema.Json, 
       .replaceAll('\u2028', '\\u2028')
       .replaceAll('\u2029', '\\u2029')
     return bytes(rendered) > maximum ? 'unknown' : rendered
-  }).pipe(Effect.catch(() => Effect.succeed('unknown')))
+  }).pipe(Effect.orElseSucceed(() => 'unknown'))
 })
 
 /** String literals must remain one executable line, including JavaScript's Unicode separators. */

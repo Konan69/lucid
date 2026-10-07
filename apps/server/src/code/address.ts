@@ -56,12 +56,12 @@ export const pageUrl = Effect.fn('Code.pageUrl')((address: string) =>
     try: () => new URL(address),
     catch: () => new PageFailure({ reason: 'not a public web address' }),
   }).pipe(
-    Effect.flatMap((url) =>
-      (url.protocol === 'http:' || url.protocol === 'https:') &&
-      url.username === '' &&
-      url.password === ''
-        ? Effect.succeed(url)
-        : Effect.fail(new PageFailure({ reason: 'not a public web address' })),
+    Effect.filterOrFail(
+      (url) =>
+        (url.protocol === 'http:' || url.protocol === 'https:') &&
+        url.username === '' &&
+        url.password === '',
+      () => new PageFailure({ reason: 'not a public web address' }),
     ),
   ),
 )

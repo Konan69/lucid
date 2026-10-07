@@ -337,12 +337,10 @@ export class Execution {
   ) {
     const failure = CodeFailure.cases.TimedOut.make({ seconds: budgets.seconds })
     this.terminate(failure)
-    yield* Effect.raceFirst(
-      cancelled.pipe(
-        Effect.andThen(Deferred.await(this.finished)),
-        Effect.catchTag('CodePipeFailure', () => Effect.void),
-      ),
-      Effect.sleep(CodeTiming.graceMs),
+    yield* cancelled.pipe(
+      Effect.andThen(Deferred.await(this.finished)),
+      Effect.catchTag('CodePipeFailure', () => Effect.void),
+      Effect.timeoutOrElse({ duration: CodeTiming.graceMs, orElse: () => Effect.void }),
     )
     return this.failed(failure)
   })
@@ -495,7 +493,7 @@ const execute = Effect.fn('Code.supervise')(function* (
       }),
     ),
   )
-  const deadline = Effect.fn('Code.deadline')(function* () {
+  const deadline = Effect.gen(function* () {
     yield* Effect.sleep(`${budgets.seconds} seconds`)
     // Told to stop, the runner still sends what the program printed (as pi's abort returns
     // buffered output, `runtime/host.js` `Execution.abort`). Grace and admission share
@@ -505,7 +503,7 @@ const execute = Effect.fn('Code.supervise')(function* (
       onSome: (guest) => guest.send(ParentMessage.cases.Cancel.make({})),
     })
     return yield* state.timeout(cancelled)
-  })()
+  }).pipe(Effect.withSpan('Code.deadline'))
   return yield* Effect.raceFirst(state.supervise(program), deadline)
 })
 

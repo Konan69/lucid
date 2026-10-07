@@ -888,20 +888,21 @@ standalone.effect(
       }),
     )
     return Effect.gen(function* () {
-      const process = yield* CodeProcess
-      const result = yield* process.run(
-        {
-          request: { code: 'return 1;', summary: 'Read' },
-          boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
-        },
-        () => Effect.die('A program that never started must not dispatch'),
-      )
-      check(result, 'Failed', { failure: CodeFailure.cases.Unavailable.make({}), calls: [] })
-      expect(messages.some((message) => message.includes('ComputerHeld'))).toBe(true)
-    }).pipe(
-      Effect.provide(codeProcessLayer.pipe(Layer.provide(held))),
-      Effect.provide(Logger.layer([logger])),
-    )
+      // Each case owns fresh mutable services and their resource scope.
+      const caseContext = yield* Layer.build(codeProcessLayer.pipe(Layer.provide(held)))
+      return yield* Effect.gen(function* () {
+        const process = yield* CodeProcess
+        const result = yield* process.run(
+          {
+            request: { code: 'return 1;', summary: 'Read' },
+            boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
+          },
+          () => Effect.die('A program that never started must not dispatch'),
+        )
+        check(result, 'Failed', { failure: CodeFailure.cases.Unavailable.make({}), calls: [] })
+        expect(messages.some((message) => message.includes('ComputerHeld'))).toBe(true)
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped, Effect.provideService(Logger.CurrentLoggers, new Set([logger])))
   },
 )
 
@@ -910,25 +911,8 @@ standalone.effect(
   'ends a program whose answer cannot reach the Computer, and keeps the receipt of the call',
   () =>
     Effect.gen(function* () {
-      const process = yield* CodeProcess
-      const outcome = yield* process.run(
-        {
-          request: { code: 'await tools.find_tools({}); return "answered";', summary: 'Read' },
-          boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
-        },
-        (call) =>
-          Effect.succeed(
-            CallOutcome.cases.Returned.make({ value: null, summary: call.kind, end: 'completed' }),
-          ),
-      )
-      // The call was made and answered on the server; only the program never heard. It is told
-      // to stop and reported, and is not left waiting until the deadline.
-      check(outcome, 'Failed', {
-        failure: CodeFailure.cases.Unavailable.make({}),
-        calls: [{ kind: 'find_tools', end: 'completed' }],
-      })
-    }).pipe(
-      Effect.provide(
+      // Each case owns fresh mutable services and their resource scope.
+      const caseContext = yield* Layer.build(
         codeProcessLayer.pipe(
           Layer.provide(
             localCodeComputer((attachment) => ({
@@ -940,8 +924,31 @@ standalone.effect(
             })),
           ),
         ),
-      ),
-    ),
+      )
+      return yield* Effect.gen(function* () {
+        const process = yield* CodeProcess
+        const outcome = yield* process.run(
+          {
+            request: { code: 'await tools.find_tools({}); return "answered";', summary: 'Read' },
+            boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
+          },
+          (call) =>
+            Effect.succeed(
+              CallOutcome.cases.Returned.make({
+                value: null,
+                summary: call.kind,
+                end: 'completed',
+              }),
+            ),
+        )
+        // The call was made and answered on the server; only the program never heard. It is told
+        // to stop and reported, and is not left waiting until the deadline.
+        check(outcome, 'Failed', {
+          failure: CodeFailure.cases.Unavailable.make({}),
+          calls: [{ kind: 'find_tools', end: 'completed' }],
+        })
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped),
   { timeout: 20_000 },
 )
 
@@ -1012,7 +1019,7 @@ standalone.effect('supervision contains hostile causes and logs only bounded typ
       expect(message).not.toContain(secret)
       expect(message.length).toBeLessThan(400)
     }
-  }).pipe(Effect.provide(Logger.layer([logger])))
+  }).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger])))
 })
 
 /** Safe diagnostics identify typed failures without rendering their payload or defect tags. */
@@ -1051,5 +1058,5 @@ standalone.effect('supervision logs typed Fail tags with bounded count and lengt
       expect(message).not.toContain('Private')
       expect(message.length).toBeLessThan(2200)
     }
-  }).pipe(Effect.provide(Logger.layer([logger])))
+  }).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger])))
 })
