@@ -997,7 +997,7 @@ function superseding(session: HelixSession) {
     const created = yield* decodeCreation(response).pipe(
       Effect.mapError(() => HelixMalformed.make({})),
     )
-    if (created.receipt.length === 0) yield* HelixConflict.make({})
+    if (created.receipt.length === 0) return yield* HelixConflict.make({})
   })
 }
 
@@ -1049,7 +1049,7 @@ const checkIndex = Effect.fn('HelixMemory.checkIndex')(function* (
   const decoded = yield* decodeIndex(response).pipe(Effect.mapError(() => HelixMalformed.make({})))
   for (const actual of decoded.configurations) {
     if (actual.model !== expected.model || actual.dimensions !== expected.dimensions)
-      yield* MemoryIndexMismatch.make({
+      return yield* MemoryIndexMismatch.make({
         expectedModel: expected.model,
         actualModel: actual.model,
         expectedDimensions: expected.dimensions,

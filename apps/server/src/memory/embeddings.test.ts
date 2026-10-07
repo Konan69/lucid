@@ -1,5 +1,5 @@
 import { NodeHttpServer } from '@effect/platform-node'
-import { it } from '@effect/vitest'
+import { layer as testLayer } from '@effect/vitest'
 import { ServiceUnavailable } from '@vivid/contracts'
 import { memoryFailure } from './handlers.js'
 import { ConfigProvider, Effect, Layer, Result } from 'effect'
@@ -31,69 +31,75 @@ const localProvider = (response: HttpServerResponse.HttpServerResponse) =>
 
 /** No fixture vector reaches Helix: these tests check provider protocol failures through the actual HTTP adapter. */
 describe('Embedding HTTP failures', () => {
-  it.effect(
-    'retains Retry-After on a memory unavailable response',
-    () =>
-      Effect.gen(function* () {
-        const embeddings = yield* Embeddings
-        const result = yield* embeddings.embed(['a rate-limited request']).pipe(Effect.result)
-        if (Result.isSuccess(result)) expect.fail('Expected a rate limit')
-        expect(result.failure).toBeInstanceOf(MemoryRateLimited)
-        if (result.failure instanceof MemoryRateLimited) {
-          expect(result.failure.service).toBe('memory')
-          expect(result.failure.retryAfter).toBe('7')
-          const publicFailure = yield* memoryFailure(result.failure).pipe(Effect.flip)
-          expect(publicFailure).toBeInstanceOf(ServiceUnavailable)
-          expect(Object.hasOwn(publicFailure, 'retryAfter')).toBe(false)
-        }
-      }).pipe(
-        Effect.provide(embeddingsLayer),
-        Effect.provide(
-          ConfigProvider.layerAdd(
-            ConfigProvider.fromUnknown({ EXPLABS_API_KEY: 'local-protocol-test' }),
-            { asPrimary: true },
-          ),
-        ),
-        Effect.provide(
-          localProvider(HttpServerResponse.empty({ status: 429, headers: { 'retry-after': '7' } })),
+  testLayer(
+    embeddingsLayer.pipe(
+      Layer.provide(
+        ConfigProvider.layerAdd(
+          ConfigProvider.fromUnknown({ EXPLABS_API_KEY: 'local-protocol-test' }),
+          { asPrimary: true },
         ),
       ),
-    { timeout: 10000 },
-  )
+      Layer.provide(
+        localProvider(HttpServerResponse.empty({ status: 429, headers: { 'retry-after': '7' } })),
+      ),
+    ),
+  )((it) => {
+    it.effect(
+      'retains Retry-After on a memory unavailable response',
+      () =>
+        Effect.gen(function* () {
+          const embeddings = yield* Embeddings
+          const result = yield* embeddings.embed(['a rate-limited request']).pipe(Effect.result)
+          if (Result.isSuccess(result)) expect.fail('Expected a rate limit')
+          expect(result.failure).toBeInstanceOf(MemoryRateLimited)
+          if (result.failure instanceof MemoryRateLimited) {
+            expect(result.failure.service).toBe('memory')
+            expect(result.failure.retryAfter).toBe('7')
+            const publicFailure = yield* memoryFailure(result.failure).pipe(Effect.flip)
+            expect(publicFailure).toBeInstanceOf(ServiceUnavailable)
+            expect(Object.hasOwn(publicFailure, 'retryAfter')).toBe(false)
+          }
+        }),
+      { timeout: 10000 },
+    )
+  })
 
-  it.effect(
-    'reports actual and configured vector dimensions',
-    () =>
-      Effect.gen(function* () {
-        const embeddings = yield* Embeddings
-        const result = yield* embeddings
-          .embed(['a dimension-mismatched request'])
-          .pipe(Effect.result)
-        if (Result.isSuccess(result)) expect.fail('Expected a dimension mismatch')
-        expect(result.failure).toBeInstanceOf(EmbeddingDimensionMismatch)
-        if (result.failure instanceof EmbeddingDimensionMismatch) {
-          expect(result.failure.expected).toBe(2)
-          expect(result.failure.actual).toBe(3)
-        }
-      }).pipe(
-        Effect.provide(embeddingsLayer),
-        Effect.provide(
-          ConfigProvider.layerAdd(
-            ConfigProvider.fromUnknown({ EXPLABS_API_KEY: 'local-protocol-test' }),
-            { asPrimary: true },
-          ),
-        ),
-        Effect.provide(
-          localProvider(
-            HttpServerResponse.jsonUnsafe({ data: [{ index: 0, embedding: [0.1, 0.2, 0.3] }] }),
-          ),
-        ),
-        Effect.provide(
-          ConfigProvider.layerAdd(ConfigProvider.fromUnknown({ VIVID_EMBEDDING_DIMENSIONS: 2 }), {
-            asPrimary: true,
-          }),
+  testLayer(
+    embeddingsLayer.pipe(
+      Layer.provide(
+        ConfigProvider.layerAdd(
+          ConfigProvider.fromUnknown({ EXPLABS_API_KEY: 'local-protocol-test' }),
+          { asPrimary: true },
         ),
       ),
-    { timeout: 10000 },
-  )
+      Layer.provide(
+        localProvider(
+          HttpServerResponse.jsonUnsafe({ data: [{ index: 0, embedding: [0.1, 0.2, 0.3] }] }),
+        ),
+      ),
+      Layer.provide(
+        ConfigProvider.layerAdd(ConfigProvider.fromUnknown({ VIVID_EMBEDDING_DIMENSIONS: 2 }), {
+          asPrimary: true,
+        }),
+      ),
+    ),
+  )((it) => {
+    it.effect(
+      'reports actual and configured vector dimensions',
+      () =>
+        Effect.gen(function* () {
+          const embeddings = yield* Embeddings
+          const result = yield* embeddings
+            .embed(['a dimension-mismatched request'])
+            .pipe(Effect.result)
+          if (Result.isSuccess(result)) expect.fail('Expected a dimension mismatch')
+          expect(result.failure).toBeInstanceOf(EmbeddingDimensionMismatch)
+          if (result.failure instanceof EmbeddingDimensionMismatch) {
+            expect(result.failure.expected).toBe(2)
+            expect(result.failure.actual).toBe(3)
+          }
+        }),
+      { timeout: 10000 },
+    )
+  })
 })

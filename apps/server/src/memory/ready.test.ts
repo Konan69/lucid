@@ -1,5 +1,5 @@
 import { NodeHttpServer } from '@effect/platform-node'
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { ServiceUnavailable } from '@vivid/contracts'
 import { ConfigProvider, Context, Effect, Layer, Ref } from 'effect'
 import { HttpClient, HttpClientRequest, HttpServer, HttpServerResponse } from 'effect/unstable/http'
@@ -64,59 +64,68 @@ const memory = helixMemoryLayer.pipe(
 )
 
 describe('Memory readiness', () => {
-  it.effect('refuses to compose without the Helix address and names it', () =>
-    Effect.gen(function* () {
-      const failure = yield* Layer.build(helixMemoryLayer).pipe(Effect.scoped, Effect.flip)
-      expect(failure).toBeInstanceOf(ConfigurationError)
-      expect(failure).toHaveProperty('variable', 'VIVID_HELIX_URL')
-    }).pipe(
-      Effect.provide(helixClient),
-      Effect.provide(standInLayer),
-      Effect.provide(settings({})),
-    ),
-  )
+  // Configuration refusals acquire fresh composed services so no stand-in state crosses cases.
+  for (const address of [
+    undefined,
+    'helix',
+    'vivid-helix.railway.internal:8080',
+    'ftp://helix.invalid',
+    ' ',
+  ]) {
+    layer(helixClient.pipe(Layer.provideMerge(standInLayer)))((it) => {
+      const values = address === undefined ? {} : { VIVID_HELIX_URL: address }
+      const name =
+        address === undefined
+          ? 'refuses to compose without the Helix address and names it'
+          : `refuses to compose with an address no request can be sent to (${address})`
+      it.effect(name, () =>
+        Effect.gen(function* () {
+          const failure = yield* Layer.build(helixMemoryLayer).pipe(
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.fromUnknown(values),
+            ),
+            Effect.scoped,
+            Effect.flip,
+          )
+          expect(failure).toBeInstanceOf(ConfigurationError)
+          expect(failure).toHaveProperty('variable', 'VIVID_HELIX_URL')
+        }),
+      )
+    })
+  }
 
-  it.effect.each(['helix', 'vivid-helix.railway.internal:8080', 'ftp://helix.invalid', ' '])(
-    'refuses to compose with an address no request can be sent to (%s)',
-    (address) =>
-      Effect.gen(function* () {
-        const failure = yield* Layer.build(helixMemoryLayer).pipe(Effect.scoped, Effect.flip)
-        expect(failure).toBeInstanceOf(ConfigurationError)
-        expect(failure).toHaveProperty('variable', 'VIVID_HELIX_URL')
-      }).pipe(
-        Effect.provide(helixClient),
-        Effect.provide(standInLayer),
-        Effect.provide(settings({ VIVID_HELIX_URL: address })),
-      ),
-  )
+  layer(memory)((it) => {
+    it.effect(
+      'fails the call while Helix is down and works on the next call once it answers, with nothing rebuilt',
+      () =>
+        Effect.gen(function* () {
+          const { answering, requests } = yield* StandIn
+          // Acquired while Helix was down: the server composes all the same.
+          const helix = yield* HelixMemory
+          const partition = MemoryPartition.make('p-readiness')
 
-  it.effect(
-    'fails the call while Helix is down and works on the next call once it answers, with nothing rebuilt',
-    () =>
-      Effect.gen(function* () {
-        const { answering, requests } = yield* StandIn
-        // Acquired while Helix was down: the server composes all the same.
-        const helix = yield* HelixMemory
-        const partition = MemoryPartition.make('p-readiness')
+          const down = yield* helix.scopes(partition).pipe(Effect.flip)
+          expect(down).toBeInstanceOf(ServiceUnavailable)
+          expect(down).toMatchObject({ service: 'memory' })
 
-        const down = yield* helix.scopes(partition).pipe(Effect.flip)
-        expect(down).toBeInstanceOf(ServiceUnavailable)
-        expect(down).toMatchObject({ service: 'memory' })
+          // Helix answers. The very next call bootstraps and reads; nobody restarted anything.
+          yield* Ref.set(answering, true)
+          expect(yield* helix.scopes(partition)).toEqual([])
 
-        // Helix answers. The very next call bootstraps and reads; nobody restarted anything.
-        yield* Ref.set(answering, true)
-        expect(yield* helix.scopes(partition)).toEqual([])
+          // Readiness succeeded once and is remembered: a call is now exactly one request.
+          const settled = yield* Ref.get(requests)
+          expect(yield* helix.scopes(partition)).toEqual([])
+          expect(yield* Ref.get(requests)).toBe(settled + 1)
 
-        // Readiness succeeded once and is remembered: a call is now exactly one request.
-        const settled = yield* Ref.get(requests)
-        expect(yield* helix.scopes(partition)).toEqual([])
-        expect(yield* Ref.get(requests)).toBe(settled + 1)
-
-        // A later outage is told on its own call and is over when Helix answers again.
-        yield* Ref.set(answering, false)
-        expect(yield* helix.scopes(partition).pipe(Effect.flip)).toBeInstanceOf(ServiceUnavailable)
-        yield* Ref.set(answering, true)
-        expect(yield* helix.scopes(partition)).toEqual([])
-      }).pipe(Effect.provide(memory)),
-  )
+          // A later outage is told on its own call and is over when Helix answers again.
+          yield* Ref.set(answering, false)
+          expect(yield* helix.scopes(partition).pipe(Effect.flip)).toBeInstanceOf(
+            ServiceUnavailable,
+          )
+          yield* Ref.set(answering, true)
+          expect(yield* helix.scopes(partition)).toEqual([])
+        }),
+    )
+  })
 })

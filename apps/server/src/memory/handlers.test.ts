@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { it } from '@effect/vitest'
+import { layer } from '@effect/vitest'
 import {
   AuditEvent,
   Company,
@@ -452,39 +452,41 @@ const sharedKnowledge = Effect.fn('MemoryTest.shared')(function* (
 
 /** One real fixture pass keeps model requests few while proving the full privacy and ownership matrix. */
 describe.skipIf(!enabled)('Memory calls with real Helix and disposable PostgreSQL', () => {
-  it.effect(
-    'follows personal notes, confines room recall, and enforces Company ownership',
-    () =>
-      Effect.gen(function* () {
-        const events = yield* Ref.make<ReadonlyArray<AuditEvent>>([])
-        const audit = Audit.of({
-          record: (_actor, event) => Ref.update(events, (previous) => [...previous, event]),
-        })
-        yield* Effect.gen(function* () {
-          // One real provider batch keeps this privacy matrix below the free endpoint's request limit.
-          yield* (yield* Embeddings).embed([
-            'Dami uses the private meeting password iridiumwillow943.',
-            'iridiumwillow943',
-            'The Company launch code is citrinecedar672.',
-            'The shared room is preparing the Company launch code citrinecedar672.',
-            'citrinecedar672',
-            'The shared room chose violetbamboo581 as its launch slogan.',
-            'violetbamboo581',
-            'The shared room chose amberpapyrus412 as its launch slogan.',
-          ])
-          const fixture = yield* fixtures()
-          const privateMemory = yield* privacy(fixture)
-          yield* companyOwnership(fixture)
-          yield* sharedKnowledge(fixture, privateMemory)
-          const recorded = yield* Ref.get(events)
-          expect(
-            recorded.filter(AuditEvent.guards.MemorySaved).map((event) => event.scope),
-          ).toEqual(['Person', 'Company', 'Thread', 'Thread'])
-          expect(
-            recorded.filter(AuditEvent.guards.MemoryForgotten).map((event) => event.scope),
-          ).toEqual(['Company', 'Thread'])
-        }).pipe(Effect.provideService(Audit, audit))
-      }).pipe(Effect.scoped, Effect.provide(access), Effect.provide(silentChangesLayer)),
-    { timeout: 120000 },
-  )
+  layer(access.pipe(Layer.provideMerge(silentChangesLayer)))((it) => {
+    it.effect(
+      'follows personal notes, confines room recall, and enforces Company ownership',
+      () =>
+        Effect.gen(function* () {
+          const events = yield* Ref.make<ReadonlyArray<AuditEvent>>([])
+          const audit = Audit.of({
+            record: (_actor, event) => Ref.update(events, (previous) => [...previous, event]),
+          })
+          yield* Effect.gen(function* () {
+            // One real provider batch keeps this privacy matrix below the free endpoint's request limit.
+            yield* (yield* Embeddings).embed([
+              'Dami uses the private meeting password iridiumwillow943.',
+              'iridiumwillow943',
+              'The Company launch code is citrinecedar672.',
+              'The shared room is preparing the Company launch code citrinecedar672.',
+              'citrinecedar672',
+              'The shared room chose violetbamboo581 as its launch slogan.',
+              'violetbamboo581',
+              'The shared room chose amberpapyrus412 as its launch slogan.',
+            ])
+            const fixture = yield* fixtures()
+            const privateMemory = yield* privacy(fixture)
+            yield* companyOwnership(fixture)
+            yield* sharedKnowledge(fixture, privateMemory)
+            const recorded = yield* Ref.get(events)
+            expect(
+              recorded.filter(AuditEvent.guards.MemorySaved).map((event) => event.scope),
+            ).toEqual(['Person', 'Company', 'Thread', 'Thread'])
+            expect(
+              recorded.filter(AuditEvent.guards.MemoryForgotten).map((event) => event.scope),
+            ).toEqual(['Company', 'Thread'])
+          }).pipe(Effect.provideService(Audit, audit))
+        }).pipe(Effect.scoped),
+      { timeout: 120000 },
+    )
+  })
 })

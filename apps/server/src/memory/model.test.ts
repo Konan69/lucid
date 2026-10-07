@@ -1,4 +1,4 @@
-import { expect, it } from '@effect/vitest'
+import { expect, layer as testLayer } from '@effect/vitest'
 import { ConfigProvider, Effect, Layer, Predicate, Result, Schema } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 import { Completion, MemoryGenerationIncomplete, MemoryModel, memoryModelLayer } from './model.ts'
@@ -54,31 +54,37 @@ const input = {
   schema: { type: 'object' },
 }
 
-it.effect('shares the configured small-model protocol for structured completion', () =>
-  Effect.gen(function* () {
-    const result = yield* (yield* MemoryModel).complete(input)
-    expect(result).toEqual(
-      Completion.cases.Finished.make({ text: '{"title":"Plan an Italian holiday"}' }),
-    )
-  }).pipe(Effect.provide(modelLayer('{"title":"Plan an Italian holiday"}', 'stop'))),
-)
+testLayer(modelLayer('{"title":"Plan an Italian holiday"}', 'stop'))((it) => {
+  it.effect('shares the configured small-model protocol for structured completion', () =>
+    Effect.gen(function* () {
+      const result = yield* (yield* MemoryModel).complete(input)
+      expect(result).toEqual(
+        Completion.cases.Finished.make({ text: '{"title":"Plan an Italian holiday"}' }),
+      )
+    }),
+  )
+})
 
-it.effect('preserves budget-limited output for the owning decoder', () =>
-  Effect.gen(function* () {
-    const result = yield* (yield* MemoryModel).complete(input)
-    expect(result).toEqual(Completion.cases.BudgetReached.make({ text: '{"title":"Holiday"}' }))
-  }).pipe(Effect.provide(modelLayer('{"title":"Holiday"}', 'length'))),
-)
+testLayer(modelLayer('{"title":"Holiday"}', 'length'))((it) => {
+  it.effect('preserves budget-limited output for the owning decoder', () =>
+    Effect.gen(function* () {
+      const result = yield* (yield* MemoryModel).complete(input)
+      expect(result).toEqual(Completion.cases.BudgetReached.make({ text: '{"title":"Holiday"}' }))
+    }),
+  )
+})
 
-it.effect('rejects unfinished or blank provider output without inventing a title', () =>
-  Effect.gen(function* () {
-    const result = yield* (yield* MemoryModel).complete(input).pipe(Effect.result)
-    expect(Result.isFailure(result) && result.failure).toEqual(
-      MemoryGenerationIncomplete.make({
-        operation: 'thread_title',
-        reason: 'stop',
-        outputCharacters: 0,
-      }),
-    )
-  }).pipe(Effect.provide(modelLayer('', 'stop'))),
-)
+testLayer(modelLayer('', 'stop'))((it) => {
+  it.effect('rejects unfinished or blank provider output without inventing a title', () =>
+    Effect.gen(function* () {
+      const result = yield* (yield* MemoryModel).complete(input).pipe(Effect.result)
+      expect(Result.isFailure(result) && result.failure).toEqual(
+        MemoryGenerationIncomplete.make({
+          operation: 'thread_title',
+          reason: 'stop',
+          outputCharacters: 0,
+        }),
+      )
+    }),
+  )
+})

@@ -143,14 +143,15 @@ function verified<A, E>(
 }
 
 /** A fresh Layer acquisition per competitor prevents shared Layer memoization from disguising cross-client races. */
-const independentInsert = Effect.fn('ReceiptTest.independentInsert')(
-  function* (input: Parameters<HelixMemory['Service']['insertOnce']>[0]) {
-    const helix = yield* HelixMemory
-    return yield* helix.insertOnce(input).pipe(Effect.result)
-  },
-  (effect) =>
-    effect.pipe(Effect.provide(helixMemoryLayer, { local: true }), Effect.provide(configuration)),
-)
+const independentInsert = Effect.fn('ReceiptTest.independentInsert')(function* (
+  input: Parameters<HelixMemory['Service']['insertOnce']>[0],
+) {
+  const context = yield* Layer.build(
+    Layer.fresh(helixMemoryLayer.pipe(Layer.provide(configuration))),
+  )
+  const helix = yield* HelixMemory.pipe(Effect.provide(context))
+  return yield* helix.insertOnce(input).pipe(Effect.result)
+})
 
 /** Both empty-neighbour and bidirectional-neighbour batches preserve guarded edge ordering on first application and replay. */
 const supersession = Effect.fn('ReceiptTest.supersession')(function* (neighbours: boolean) {

@@ -35,7 +35,7 @@ describe.skipIf(url === undefined)('Helix bootstrap', () => {
         Effect.gen(function* () {
           yield* emptyReads()
           // The setup proved first acquisition; a separate acquisition must preserve empty indexed reads.
-          yield* emptyReads().pipe(Effect.provide(adapters, { local: true }))
+          yield* emptyReads().pipe(Effect.provide(yield* Layer.build(Layer.fresh(adapters))))
         }),
       )
     },

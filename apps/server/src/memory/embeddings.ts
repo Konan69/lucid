@@ -158,7 +158,7 @@ export const embeddingsLayer = Layer.effect(
     const model = yield* embeddingModel
     const dimensions = yield* embeddingDimensions
     /** Cache successes for warm recall and identical remembers; failed/rate-limited requests are never cached. */
-    const embedBatch = Effect.fn('Embeddings.embed')(function* (texts) {
+    const embedBatch = Effect.fn('Embeddings.embed')(function* (texts: ReadonlyArray<string>) {
       if (texts.length === 0) return []
       const response = yield* providerResponse(client, {
         key,
