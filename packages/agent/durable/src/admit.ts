@@ -73,6 +73,58 @@ function withdrawn(receipt: InputReceipt) {
   return receipt.status === 'unanswered' && receipt.entry === undefined
 }
 
+/** A queued steer can complete between placement and the fresh snapshot. live.js endRun settles
+ * every input with the same final assistant entry. Compare that immutable answer with the original
+ * watch's first input receipt: equal answers prove the shared run, while a follow-up has a different
+ * answer. An unanswered run has no such evidence and keeps its own receipt; no association is guessed. */
+export const settledOrigin: (
+  harness: Harness,
+  watched: Watching,
+  receipt: InputReceipt,
+  context: Context,
+) => Effect.Effect<InputReceipt, PiFailed> = Effect.fn('Durable.settledInputOrigin')(
+  function* (harness, watched, receipt, context) {
+    if (receipt.status !== 'done' || watched.snapshot.run === undefined) return receipt
+    const first = watched.snapshot.run.inputs[0]
+    if (first === undefined)
+      return yield* new PiFailed({
+        operation: 'watch',
+        cause: new Error('Observed run has no first input'),
+      })
+    if (first === receipt.id) return receipt
+    const handle = yield* Pi.submission(harness, first, context)
+    if (Option.isNone(handle))
+      return yield* new PiFailed({
+        operation: 'status',
+        cause: new Error('Observed first input has no submission receipt'),
+      })
+    const candidate = yield* Pi.inputStatus(handle.value, context)
+    return candidate.status === 'done' && candidate.answer === receipt.answer ? candidate : receipt
+  },
+)
+
+/** Receipt reacquisition owns the queued-to-terminal race, separately from stream selection.
+ * Only a newly queued observer has an earlier run snapshot that can prove a completed steer's
+ * common final answer. Missing admitted receipts are a Pi status-contract failure, not unknown ids. */
+export const reacquireInput: (
+  harness: Harness,
+  observed: { readonly watched: Watching; readonly record: InputReceipt },
+  context: Context,
+) => Effect.Effect<InputReceipt, PiFailed> = Effect.fn('Durable.reacquireInput')(
+  function* (harness, observed, context) {
+    const handle = yield* Pi.submission(harness, observed.record.id, context)
+    if (Option.isNone(handle))
+      return yield* new PiFailed({
+        operation: 'status',
+        cause: new Error('Admitted input has no receipt'),
+      })
+    const receipt = yield* Pi.inputStatus(handle.value, context)
+    return observed.record.status === 'queued'
+      ? yield* settledOrigin(harness, observed.watched, receipt, context)
+      : receipt
+  },
+)
+
 /**
  * The first watch precedes admission. Queued inputs wait on their own durable receipt before a
  * response is exposed. After placement reopen an atomic snapshot/watch: it includes progress while
@@ -110,10 +162,12 @@ export const admit: (
     if (!queued && !busy && input.draft.whenBusy !== 'steer')
       return { conversation, receipt, watched }
     const fresh = yield* Pi.watch(harness, input.conversationId, context).pipe(Scope.provide(scope))
-    yield* Scope.close(initialScope, Exit.void)
     // The run may have finished between receipt delivery and the fresh snapshot; read its final status once.
     receipt = yield* Pi.inputStatus(submission, context)
     if (withdrawn(receipt)) return yield* new TurnWithdrawn({ messageId: input.draft.requestId })
+    if (queued && (receipt.status === 'done' || receipt.status === 'unanswered'))
+      receipt = yield* settledOrigin(harness, watched, receipt, context)
+    yield* Scope.close(initialScope, Exit.void)
     return { conversation, receipt, watched: fresh }
   },
 )

@@ -5,7 +5,6 @@ import { DefaultChatTransport, tool, type UIMessage } from 'ai'
 import { Effect } from 'effect'
 import { onTestFinished } from 'vitest'
 import { z } from 'zod'
-import { waitForFrame } from '../fixtures/provider.ts'
 import { PlainChat } from '../fixtures/chat.ts'
 import { respond } from '../main.ts'
 import { call, context, host, modelText, signal, texts } from './fixtures/host.ts'
@@ -19,8 +18,6 @@ for (const whenBusy of ['steer', 'followUp', 'default'] as const)
       const entered = signal()
       const released = signal()
       const admitted = signal()
-      const responseReady = signal()
-      onTestFinished(() => responseReady.resolve())
       onTestFinished(() => released.resolve())
       const fixture = await host(
         {
@@ -34,17 +31,6 @@ for (const whenBusy of ['steer', 'followUp', 'default'] as const)
           }),
         },
         {},
-        {},
-        {
-          // Keep the steered run active until its observer has captured the common run prefix.
-          onFrame: (event, abortSignal) =>
-            whenBusy === 'steer' && event.type === 'text_start'
-              ? waitForFrame(
-                  Effect.promise(() => responseReady.promise),
-                  abortSignal,
-                )
-              : Effect.void,
-        },
       )
       const opened = await fixture.open()
       let afterTools = ''
@@ -85,7 +71,6 @@ for (const whenBusy of ['steer', 'followUp', 'default'] as const)
                   { request, options: { whenBusy } },
                   context,
                 ))
-            responseReady.resolve()
             return response
           },
         }),

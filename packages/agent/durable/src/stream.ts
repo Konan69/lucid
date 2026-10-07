@@ -21,7 +21,7 @@ import {
   translate,
 } from './chunks.ts'
 import { RunMissing, type PiFailed, type WatchClosed, type WatchOverflowed } from './errors.ts'
-import { admit, placed } from './admit.ts'
+import { admit, placed, reacquireInput } from './admit.ts'
 import { readDesk, noDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
 import { messageMetadata } from './metadata.ts'
@@ -459,10 +459,12 @@ export const followRun: (
       return yield* new RunMissing({ conversationId })
     if (record.value.status === 'queued') yield* placed(original, record.value.id)
     const watched = yield* Pi.watch(harness, conversationId, context).pipe(Scope.provide(scope))
+    const receipt = yield* reacquireInput(
+      harness,
+      { watched: original, record: record.value },
+      context,
+    )
     yield* Scope.close(initialScope, Exit.void)
-    const handle = yield* Pi.submission(harness, record.value.id, context)
-    if (Option.isNone(handle)) return yield* new RunMissing({ conversationId })
-    const receipt = yield* Pi.inputStatus(handle.value, context)
     const reader = { harness, conversation, context }
     const terminal = receipt.status === 'done' || receipt.status === 'unanswered'
     const found = terminal
