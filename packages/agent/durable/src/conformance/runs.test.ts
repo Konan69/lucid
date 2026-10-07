@@ -8,7 +8,9 @@ import { consume, context, host, signal, texts } from './fixtures/host.ts'
 
 /** Raw entry identity, attribution and content cannot distinguish these native run boundaries.
  * generation.js:408–421 appends either an onYield continuation or queued inputs under the current
- * generation task. Its submission settlement, rather than the entry shape, names the run's end. */
+ * generation task. Its submission settlement, rather than the entry shape, names the run's end.
+ * Harness.inspect exposes only queued/placed receipts (harness.js:151–157); Tx cannot scan them
+ * (types.d.ts:663–721). scanSubmissions belongs to Storage, not the public Harness/Session reader. */
 function visible(entries: readonly EntryRecord[]) {
   return entries.flatMap((entry) => {
     if (entry.kind !== 'pi.user' && entry.kind !== 'pi.assistant') return []
@@ -60,6 +62,10 @@ it.live(
           },
           fauxAssistantMessage('Final.'),
         ])
+        const initial = await opened.root.submit(
+          { type: 'input', content: 'Initial', requestId: 'initial' },
+          context,
+        )
         const stream = await streamRun(
           opened.harness,
           { conversationId: opened.root.id, content: 'Initial', requestId: 'initial' },
@@ -78,10 +84,22 @@ it.live(
         histories.push(visible(entries))
         const users = entries.filter((entry) => entry.kind === 'pi.user')
         const assistant = entries.find((entry) => entry.kind === 'pi.assistant')
+        const lastAssistant = entries.findLast((entry) => entry.kind === 'pi.assistant')
         const user = users[1]
-        if (user === undefined || assistant === undefined)
+        if (user === undefined || assistant === undefined || lastAssistant === undefined)
           throw new Error('Expected native boundary entries')
         expect(user.byTaskId).toBe(assistant.byTaskId)
+        // Both native paths store the same bare user payload, without a submission/run marker.
+        expect(user.data).toBeUndefined()
+        expect(user.head).toBeUndefined()
+        expect(user.edits).toBeUndefined()
+        expect(user.model).toEqual([
+          { role: 'user', content: 'Follow', timestamp: expect.any(Number) },
+        ])
+        const receipt = await initial.status(context)
+        expect(receipt.status).toBe('done')
+        expect(receipt.answer).toBe(mode === 'continuation' ? lastAssistant.id : assistant.id)
+        expect((await opened.harness.inspect(context)).submissions).toEqual([])
         expect(texts(result.message)).toEqual(
           mode === 'continuation' ? ['First.', 'Final.'] : ['First.'],
         )
