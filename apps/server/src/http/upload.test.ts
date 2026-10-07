@@ -29,6 +29,12 @@ class UploadFixtureFailure extends Schema.TaggedError<UploadFixtureFailure>()(
   { message: Schema.String, cause: Schema.Unknown },
 ) {}
 
+/** A free receipt for another socket violates reuse without an underlying Node failure. */
+class UploadSocketMismatch extends Schema.TaggedError<UploadSocketMismatch>()(
+  'UploadSocketMismatch',
+  { message: Schema.String },
+) {}
+
 const refusal = Schema.Struct({ error: Schema.String })
 const decodeRefusal = Schema.decodeUnknownEffect(refusal)
 const decodeRefusalText = Schema.decodeUnknownEffect(Schema.fromJsonString(refusal))
@@ -169,7 +175,7 @@ const uploadResponse = Effect.fn('LibraryUploadTest.uploadResponse')(
  */
 const freedUpload = Effect.fn('LibraryUploadTest.freedUpload')(
   (agent: NodeHttp.Agent, outgoing: NodeHttp.ClientRequest) =>
-    Effect.callback<NodeNet.Socket, UploadFixtureFailure>((resume) => {
+    Effect.callback<NodeNet.Socket, UploadFixtureFailure | UploadSocketMismatch>((resume) => {
       const cleanup = () => {
         agent.off('free', onFree)
         outgoing.off('error', onError)
@@ -184,9 +190,8 @@ const freedUpload = Effect.fn('LibraryUploadTest.freedUpload')(
         if (socket !== outgoing.socket) {
           resume(
             Effect.fail(
-              new UploadFixtureFailure({
+              new UploadSocketMismatch({
                 message: 'Upload agent freed a different socket',
-                cause: undefined,
               }),
             ),
           )
