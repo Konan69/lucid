@@ -17,6 +17,10 @@ const Tokens = Schema.Struct({
   cacheWrite1h: Schema.optionalKey(Schema.Finite),
   reasoning: Schema.optionalKey(Schema.Finite),
 })
+/** Provider counts are untrusted even though Pi types them as numbers. Reject the whole response's
+ * accounting when one count is invalid: retaining a subset would mix incompatible totals. Costs
+ * are monetary records; the token decoder projects only the count vocabulary. */
+const decodeTokens = Schema.decodeUnknownOption(Tokens)
 
 /**
  * Pi generation.js:523–528 persists each provider message and its usage together. Models name the
@@ -35,7 +39,7 @@ export type Metadata = typeof Metadata.Type
 /** Per-reader entry deduplication mirrors Pi's usage ledger without introducing another store. */
 export type MetadataState = {
   readonly models: Metadata['models']
-  readonly responses: ReadonlyMap<EntryId, typeof Tokens.Type>
+  readonly responses: ReadonlyMap<EntryId, Option.Option<typeof Tokens.Type>>
 }
 export const emptyMetadata: MetadataState = { models: [], responses: new Map() }
 
@@ -59,27 +63,19 @@ export function startMetadata(state: MetadataState, message: AssistantMessage): 
   }
 }
 
-/** Watch/snapshot overlap must not count the same durable response twice. */
+/** Watch/snapshot overlap must not count the same durable response twice. An invalid usage report
+ * contributes no counts, but the response's model still belongs to the message. */
 export function recordMetadata(state: MetadataState, entry: EntryRecord): MetadataState {
   if (state.responses.has(entry.id)) return state
   if (entry.model === undefined) return state
   const message = entry.model.find((item) => item.role === 'assistant')
   if (message === undefined) return state
   const next = startMetadata(state, message)
+  const usage = decodeTokens(message.usage)
   return {
     ...next,
-    responses: new Map(next.responses).set(entry.id, tokenCounts(message.usage)),
+    responses: new Map(next.responses).set(entry.id, usage),
   }
-}
-
-/** Costs are monetary records, not token counts; retain only the recorded token vocabulary. */
-function tokenCounts(source: typeof Tokens.Type): typeof Tokens.Type {
-  const { input, output, cacheRead, cacheWrite, totalTokens } = source
-  let usage = Tokens.make({ input, output, cacheRead, cacheWrite, totalTokens })
-  if (source.cacheWrite1h !== undefined)
-    usage = Tokens.make({ ...usage, cacheWrite1h: source.cacheWrite1h })
-  if (source.reasoning !== undefined) usage = Tokens.make({ ...usage, reasoning: source.reasoning })
-  return usage
 }
 
 /** Optional token breakdowns are sums of reported subsets, never estimates for silent providers. */
@@ -104,7 +100,7 @@ function sumTokens(total: typeof Tokens.Type, response: typeof Tokens.Type): typ
 
 /** Absent completed usage stays absent; recorded zero counts are preserved as recorded zero counts. */
 export function messageMetadata(state: MetadataState, failure: Option.Option<string>): Metadata {
-  const responses = Array.from(state.responses.values())
+  const responses = Array.from(state.responses.values()).flatMap(Option.toArray)
   const first = responses[0]
   const metadata =
     first === undefined

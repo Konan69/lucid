@@ -1,9 +1,10 @@
-import { runForPi } from '../pi.ts'
+import { request, runForPi } from '../pi.ts'
 import { FixtureFailed } from '../fixtures/harness.ts'
 import { consumeReadable, ReadFailed } from '../fixtures/reading.ts'
 import { Chat } from '@ai-sdk/react'
 import { expect, it } from '@effect/vitest'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
+import { defineExtension, GenerationTask, hook } from '@earendil-works/pi-durable'
 import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
@@ -32,6 +33,62 @@ import { call, context, host, shop } from './fixtures/host.ts'
 
 import type { Opened } from './fixtures/host.ts'
 const decodeMetadata = Schema.decodeUnknownSync(Core.Metadata)
+
+/** The real provider path cannot deliver malformed counts to recordMetadata: generation.js:523
+ * records usage before appending the assistant, and chord/json.js:14–18 rejects non-finite JSON.
+ * Faux itself overwrites scripted usage with finite estimates, so the public afterResponse hook
+ * supplies the invalid terminal report. Pin this upstream limitation rather than claim that the
+ * metadata guard alone can make Pi accept it. The committed, valid partial remains reloadable. */
+it.live.each([NaN, Infinity])(
+  'Pi rejects non-finite provider usage (%s) before metadata',
+  (count) =>
+    Effect.gen(function* () {
+      const fixture = yield* host({}, {}, {}, { commitFrames: true })
+      const opened = yield* fixture.open([
+        defineExtension({
+          name: 'invalid-provider-usage',
+          hooks: [
+            hook(GenerationTask, {
+              afterResponse: (message) => {
+                message.usage.input = count
+              },
+            }),
+          ],
+        }),
+      ])
+      opened.faux.setResponses([fauxAssistantMessage('The partial text survives.')])
+      const chat = client(opened)
+      yield* Effect.promise(() => chat.sendMessage({ text: 'Go' }))
+      yield* Effect.promise(() => opened.root.waitForIdle(context))
+      expect(chat.status).toBe('ready')
+      const input = chat.messages.find((message) => message.role === 'user')
+      if (input === undefined) throw new Error('Expected admitted user input')
+      const receipt = yield* request(opened.root, input.id, context)
+      if (Option.isNone(receipt)) throw new Error('Expected provider input receipt')
+      expect(receipt.value).toMatchObject({
+        status: 'unanswered',
+        reason: 'faulted',
+        detail: 'Value contains a non-finite number and is not strict JSON',
+      })
+      const saved = yield* Effect.promise(() =>
+        history(opened.harness, opened.root.id, { limit: 50 }, context),
+      )
+      const assistant = saved.messages.find((message) => message.role === 'assistant')
+      if (assistant === undefined) throw new Error('Expected the valid committed partial')
+      const streamed = chat.lastMessage
+      if (streamed === undefined) throw new Error('Expected streamed partial')
+      expect(streamed.parts).toContainEqual({
+        type: 'text',
+        text: 'The partial text survives.',
+        state: 'done',
+      })
+      expect(assistant.parts).toEqual(streamed.parts)
+      expect(assistant.metadata).toEqual(streamed.metadata)
+      expect(decodeMetadata(assistant.metadata).models).toEqual([
+        { provider: 'faux', modelId: 'faux-1' },
+      ])
+    }),
+)
 
 /** A host reads the exported metadata type without casting an SDK message or depending on internals. */
 function modelIds(message: UIMessage<Metadata>) {
