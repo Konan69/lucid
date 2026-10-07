@@ -54,7 +54,6 @@ layer(testDatabaseLayer)((it) => {
   describe.skipIf(!testDatabaseConfigured)('The acting Person’s request', () => {
     it.effect('is the turn in progress; the message before it is kept apart as earlier', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -104,7 +103,6 @@ layer(testDatabaseLayer)((it) => {
       'never takes a Routine, a Thread Vivid opened, or an Approval decision as a request',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
@@ -145,7 +143,6 @@ layer(testDatabaseLayer)((it) => {
       'counts an answer only when the Input request records this Person as its author',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
@@ -186,7 +183,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('is none when the turn cannot be shown whole or nothing can be read', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()

@@ -28,7 +28,6 @@ layer(testDatabaseLayer)((it) => {
       'I1 making a Company Thread private hides its addressed question even from an owner',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
@@ -74,7 +73,6 @@ layer(testDatabaseLayer)((it) => {
       'I2 re-sharing restores the same waiting question with its options and timestamps',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
@@ -109,7 +107,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('I3 Membership removal hides a question from the same stale Company Actor', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -149,7 +146,6 @@ layer(testDatabaseLayer)((it) => {
   describe.skipIf(!testDatabaseConfigured)('Input request answers', () => {
     it.effect('concurrent answers settle once and deliver one attributed signal', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -187,7 +183,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('a Company owner cannot answer another Member and inbox follows workspace', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -208,7 +203,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('a question without a free answer accepts only an offered label', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -226,7 +220,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('asking requires Vivid and the authenticated workspace must match the Thread', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()

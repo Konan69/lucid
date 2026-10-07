@@ -32,7 +32,6 @@ layer(testDatabaseLayer)((it) => {
   describe.skipIf(!testDatabaseConfigured)('The reviewer', () => {
     it.effect('gives up at three seconds and leaves the action unreviewed', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(storeServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -45,7 +44,6 @@ layer(testDatabaseLayer)((it) => {
             },
           ])
           const review = Effect.gen(function* () {
-            // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
             const context = yield* Layer.build(stalled(test.personalId))
             return yield* Effect.gen(function* () {
               return yield* (yield* Reviewer).review(test.vivid, connectionAction)

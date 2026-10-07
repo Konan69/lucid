@@ -34,7 +34,6 @@ layer(testDatabaseLayer)((it) => {
     it.effect('records the Gate refusal once with only action kinds', () => {
       const logs = refusalLogs()
       return Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices.pipe(Layer.provideMerge(logs.layer)))
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -72,7 +71,6 @@ layer(testDatabaseLayer)((it) => {
       'with no review a write on the Person’s own browser runs; destructive, shared and ruled ones still ask or refuse',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
@@ -120,7 +118,6 @@ layer(testDatabaseLayer)((it) => {
         `a reviewed write on the Person’s own browser that is ${name} ${asks ? 'asks' : 'runs'}`,
         () =>
           Effect.gen(function* () {
-            // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
             const context = yield* Layer.build(trustTestServices)
             return yield* Effect.gen(function* () {
               const test = yield* fixture()
@@ -138,7 +135,6 @@ layer(testDatabaseLayer)((it) => {
       'a personal completion failure cannot replace a known Company Never with an Approval',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
@@ -169,7 +165,6 @@ layer(testDatabaseLayer)((it) => {
       'hostile personal wording never enters the Company completion or erases its Never',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
@@ -197,7 +192,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('a personal Allow never overrides a Company Ask', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -225,7 +219,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('Never wins over Ask and Allow and records the blocking wording', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -261,7 +254,6 @@ layer(testDatabaseLayer)((it) => {
       'a failed judge asks only when a rule that could forbid the action went unjudged',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
@@ -290,7 +282,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('an unasked destructive action asks even with applicable Allow policy', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -308,7 +299,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('unmatched Computer work is allowed and is not audited', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -337,7 +327,6 @@ layer(testDatabaseLayer)((it) => {
       'an unasked Connection write that reaches others asks, while applicable Allow records the account label',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
@@ -375,7 +364,6 @@ layer(testDatabaseLayer)((it) => {
       'an action the Person asked for runs with no rule, even when it cannot be undone',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
@@ -403,7 +391,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('with no review a write runs and a destructive action asks; rules still bind', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -435,7 +422,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('a Never rule refuses an action the Person asked for, without a review', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -459,7 +445,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('undoable work on the Computer never reaches the reviewer', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -474,7 +459,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('ordinary reads bypass rules, while personal data exposed in shared work asks', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()

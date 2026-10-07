@@ -21,7 +21,6 @@ layer(testDatabaseLayer)((it) => {
       'members see their own Company events, admins see the Company, and writes announce committed topics',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()

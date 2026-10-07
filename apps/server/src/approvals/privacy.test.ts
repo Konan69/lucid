@@ -61,15 +61,13 @@ const records = Effect.fn('InboxPrivacy.records')(function* (threadId: ThreadId)
   }
 })
 
-/** L1 and C1 cross public combined loading, real SQL rows and the production share announcement. */
-/** Share only PostgreSQL; each case builds its own recording ports and captured stores. */
+/** L1 and C1 use real SQL and share announcements with per-case recording ports and stores. */
 layer(testDatabaseLayer)((it) => {
   describe.skipIf(!testDatabaseConfigured)('Combined inbox Thread privacy', () => {
     it.effect(
       'L1 live share, unshare and re-share conceal both cards and preserve pending records',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(testLayer)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
@@ -117,7 +115,6 @@ layer(testDatabaseLayer)((it) => {
       'C1 corrupt audiences hide both creator-addressed cards without failing the inbox',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(testLayer)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()

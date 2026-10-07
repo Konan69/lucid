@@ -28,7 +28,6 @@ layer(testDatabaseLayer)((it) => {
     for (const table of ['vivid_approvals', 'vivid_input_requests']) {
       it.effect(`${table} claims use an index containing only owed signals`, () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
             const database = yield* Database

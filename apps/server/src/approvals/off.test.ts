@@ -35,7 +35,6 @@ layer(testDatabaseLayer)((it) => {
   describe.skipIf(!testDatabaseConfigured)('The gate with decisions switched off', () => {
     it.effect('a write on the Person’s own browser runs and a destructive one asks', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(offLayer)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -66,7 +65,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('a write on the Person’s own Integration runs and a destructive action asks', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(offLayer)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -86,7 +84,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('an Allow rule changes nothing, and a Never or Ask rule asks about everything', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(offLayer)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()

@@ -18,7 +18,6 @@ layer(testDatabaseLayer)((it) => {
       'a non-admin Member cannot add Company policy or see another Person in Company audit',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
@@ -48,7 +47,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('personal policy follows its owner and cannot be deleted by a Company owner', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -71,7 +69,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('Vivid cannot create or delete policy through the RPC handlers', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
