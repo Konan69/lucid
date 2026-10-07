@@ -394,10 +394,7 @@ export const screenshotPng = (url: string): Effect.Effect<Option.Option<string>>
   if (url.startsWith(prefix)) return Effect.succeedSome(url.slice(prefix.length))
   if (!/^[A-Za-z]:[\\/]/.test(url) && !url.startsWith('\\\\')) return Effect.succeedNone
   // A file that cannot be read is not a picture: the failure is folded into the `None`.
-  return Effect.try({
-    try: () => Option.some(NodeFS.readFileSync(url).toString('base64')),
-    catch: (cause) => cause,
-  }).pipe(Effect.option, Effect.map(Option.flatten))
+  return Effect.sync(Option.liftThrowable(() => NodeFS.readFileSync(url).toString('base64')))
 }
 
 /**
