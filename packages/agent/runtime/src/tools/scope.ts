@@ -5,6 +5,7 @@ import { Context, Effect, Layer, Option } from 'effect'
 import { actingLayer, runtimeClientLayer, type Acting } from '../client.ts'
 import { recoverAuthority, resolveAuthority } from '../delivery.ts'
 import { settle, type ToolFailure, type ToolResult } from './result.ts'
+import type { ComputerSaid } from './sandbox.ts'
 
 export interface ScopeService {
   readonly acting: Acting
@@ -70,16 +71,20 @@ export type RunTool = ReturnType<typeof toolRunner>
  */
 export function scopedRunner(layer: Layer.Layer<Scope, ToolFailure>) {
   return function runScoped<A>(
-    program: Effect.Effect<A, ToolFailure | Error, Scope>,
+    program: Effect.Effect<A, ToolFailure | ComputerSaid, Scope>,
     signal: Option.Option<AbortSignal>,
   ): Promise<A> {
     const settled = program.pipe(
       // @effect-diagnostics-next-line strictEffectProvide:off -- The Flue sandbox execution boundary owns the tool Layer.
       Effect.provide(layer),
-      Effect.mapError((failure) =>
-        failure instanceof Error && !('_tag' in failure)
-          ? failure
-          : new Error('The Computer could not be reached. Try again.'),
+      Effect.mapError(
+        (failure) =>
+          // @effect-diagnostics-next-line globalErrorInEffectFailure:off -- Flue's sandbox verbs reject with an Error whose message the model reads; this is the one conversion to that contract.
+          new Error(
+            failure._tag === 'ComputerSaid'
+              ? failure.message
+              : 'The Computer could not be reached. Try again.',
+          ),
       ),
     )
     // oxlint-disable-next-line vivid/no-runpromise-in-library -- The Flue sandbox verb boundary, classified exactly by the Effect audit.

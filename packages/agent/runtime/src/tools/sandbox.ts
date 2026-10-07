@@ -16,8 +16,13 @@ import {
   ComputerFileWriteOutcome,
   ComputerShellOutcome,
 } from '@vivid/contracts'
-import { Effect, Option } from 'effect'
+import { Effect, Option, Schema } from 'effect'
 import { Scope, type RunScoped } from './scope.ts'
+
+/** Carries the Computer's words that the model must read verbatim at the Flue sandbox boundary. */
+export class ComputerSaid extends Schema.TaggedError<ComputerSaid>()('ComputerSaid', {
+  message: Schema.String,
+}) {}
 
 /** Where Vivid's commands start and relative paths resolve: the home of the Computer's user. Boat
  * names that user `user` on every machine (its SSH key call answers `sshUser: "user"`). */
@@ -77,36 +82,40 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
           directory: cwd === undefined ? home : cwd,
           timeoutSeconds: Math.min(Math.max(seconds, 1), LONGEST_SECONDS),
         })
-        return yield* ComputerShellOutcome.match<Effect.Effect<ShellResult, Error>>(outcome, {
-          Completed: (done) => {
-            // Flue's contract: a deadline is exit code 124 with the reason on stderr, and zero
-            // only for a command that clearly succeeded.
-            if (done.timedOut)
+        return yield* ComputerShellOutcome.match<Effect.Effect<ShellResult, ComputerSaid>>(
+          outcome,
+          {
+            Completed: (done) => {
+              // Flue's contract: a deadline is exit code 124 with the reason on stderr, and zero
+              // only for a command that clearly succeeded.
+              if (done.timedOut)
+                return Effect.succeed({
+                  stdout: done.stdout,
+                  stderr: `${done.stderr}\nThe command was ended after ${seconds} seconds.`,
+                  exitCode: 124,
+                })
+              if (done.exitCode === null)
+                return Effect.succeed({
+                  stdout: done.stdout,
+                  stderr: `${done.stderr}\nThe command was ended by a signal.`,
+                  exitCode: 137,
+                })
               return Effect.succeed({
                 stdout: done.stdout,
-                stderr: `${done.stderr}\nThe command was ended after ${seconds} seconds.`,
-                exitCode: 124,
+                stderr: done.stderr,
+                exitCode: done.exitCode,
               })
-            if (done.exitCode === null)
-              return Effect.succeed({
-                stdout: done.stdout,
-                stderr: `${done.stderr}\nThe command was ended by a signal.`,
-                exitCode: 137,
-              })
-            return Effect.succeed({
-              stdout: done.stdout,
-              stderr: done.stderr,
-              exitCode: done.exitCode,
-            })
-          },
-          Unavailable: ({ reason }) => Effect.fail(new Error(reason)),
-          OutcomeUnknown: () =>
-            Effect.fail(
-              new Error(
-                'The connection to the Computer was lost while the command ran. It may have run: check before running it again.',
+            },
+            Unavailable: ({ reason }) => Effect.fail(new ComputerSaid({ message: reason })),
+            OutcomeUnknown: () =>
+              Effect.fail(
+                new ComputerSaid({
+                  message:
+                    'The connection to the Computer was lost while the command ran. It may have run: check before running it again.',
+                }),
               ),
-            ),
-        })
+          },
+        )
       }),
       Option.fromUndefinedOr(signal),
     )
@@ -116,11 +125,15 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
       Effect.gen(function* () {
         const { client } = yield* Scope
         const outcome = yield* client.ComputerFileRead({ path })
-        return yield* ComputerFileReadOutcome.match<Effect.Effect<Uint8Array, Error>>(outcome, {
-          Read: ({ content }) => Effect.succeed(content),
-          Refused: ({ reason }) => Effect.fail(new Error(`${path}: ${reason}`)),
-          Unavailable: ({ reason }) => Effect.fail(new Error(reason)),
-        })
+        return yield* ComputerFileReadOutcome.match<Effect.Effect<Uint8Array, ComputerSaid>>(
+          outcome,
+          {
+            Read: ({ content }) => Effect.succeed(content),
+            Refused: ({ reason }) =>
+              Effect.fail(new ComputerSaid({ message: `${path}: ${reason}` })),
+            Unavailable: ({ reason }) => Effect.fail(new ComputerSaid({ message: reason })),
+          },
+        )
       }),
       Option.none(),
     )
@@ -136,10 +149,11 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
             path,
             content: content instanceof Uint8Array ? content : new TextEncoder().encode(content),
           })
-          return yield* ComputerFileWriteOutcome.match<Effect.Effect<void, Error>>(outcome, {
+          return yield* ComputerFileWriteOutcome.match<Effect.Effect<void, ComputerSaid>>(outcome, {
             Written: () => Effect.void,
-            Refused: ({ reason }) => Effect.fail(new Error(`${path}: ${reason}`)),
-            Unavailable: ({ reason }) => Effect.fail(new Error(reason)),
+            Refused: ({ reason }) =>
+              Effect.fail(new ComputerSaid({ message: `${path}: ${reason}` })),
+            Unavailable: ({ reason }) => Effect.fail(new ComputerSaid({ message: reason })),
           })
         }),
         Option.none(),

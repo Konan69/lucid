@@ -9,15 +9,124 @@ import {
   LibraryItemId,
   PersonId,
   ThreadId,
+  ComputerShellOutcome,
+  ComputerFileReadOutcome,
+  ComputerFileWriteOutcome,
 } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
 import { libraryTools } from './library.ts'
-import { Scope, toolRunner } from './scope.ts'
+import { Scope, scopeLayer, scopedRunner, toolRunner } from './scope.ts'
+import { computerSandbox } from './sandbox.ts'
 
 const reference = 'f3323d18-a15e-44ea-8555-3d23e1634ccd'
 
 /** Exercise the actual Flue callback, Scope Layer, generated RPC client and final model result together. */
 describe('scoped tool execution', () => {
+  it.effect('preserves every Computer refusal message at the Flue sandbox boundary', () =>
+    Effect.gen(function* () {
+      const requests =
+        yield* Queue.unbounded<RpcMessage.FromClient<RpcGroup.Rpcs<typeof VividRpc>>>()
+      const rpc = yield* RpcClient.makeNoSerialization(VividRpc, {
+        onFromClient: ({ message }) => Queue.offer(requests, message).pipe(Effect.asVoid),
+      })
+      const scope = Layer.succeed(
+        Scope,
+        Scope.of({
+          acting: {
+            personId: PersonId.make('sandbox-person'),
+            threadId: ThreadId.make('sandbox-thread'),
+          },
+          client: rpc.client,
+          folder: Option.none(),
+        }),
+      )
+      const sandbox = computerSandbox(scopedRunner(scope), '/home/user')
+      const reason = 'The Computer is held by its Person.\nWait.'
+      const path = '/home/user/report.txt'
+      // Exercise the public sandbox and real RPC client, with only server receipts controlled.
+      const cases = [
+        {
+          call: () => sandbox.exec('true'),
+          tag: 'ComputerShell',
+          outcome: ComputerShellOutcome.cases.Unavailable.make({ reason }),
+          message: reason,
+        },
+        {
+          call: () => sandbox.exec('true'),
+          tag: 'ComputerShell',
+          outcome: ComputerShellOutcome.cases.OutcomeUnknown.make({}),
+          message:
+            'The connection to the Computer was lost while the command ran. It may have run: check before running it again.',
+        },
+        {
+          call: () => sandbox.readFile(path),
+          tag: 'ComputerFileRead',
+          outcome: ComputerFileReadOutcome.cases.Refused.make({ reason }),
+          message: `${path}: ${reason}`,
+        },
+        {
+          call: () => sandbox.readFile(path),
+          tag: 'ComputerFileRead',
+          outcome: ComputerFileReadOutcome.cases.Unavailable.make({ reason }),
+          message: reason,
+        },
+        {
+          call: () => sandbox.writeFile(path, 'report'),
+          tag: 'ComputerFileWrite',
+          outcome: ComputerFileWriteOutcome.cases.Refused.make({ reason }),
+          message: `${path}: ${reason}`,
+        },
+        {
+          call: () => sandbox.writeFile(path, 'report'),
+          tag: 'ComputerFileWrite',
+          outcome: ComputerFileWriteOutcome.cases.Unavailable.make({ reason }),
+          message: reason,
+        },
+      ]
+      for (const scenario of cases) {
+        const call = Effect.promise(() =>
+          expect(scenario.call()).rejects.toEqual(new Error(scenario.message)),
+        )
+        const answer = Effect.gen(function* () {
+          // Flue's writeFileCreatingParents retries a failed write after a mkdir command.
+          const attempts = scenario.tag === 'ComputerFileWrite' ? 3 : 1
+          for (let attempt = 0; attempt < attempts; attempt++) {
+            const request = yield* Queue.take(requests)
+            if (!Predicate.isTagged(request, 'Request'))
+              return yield* new InvalidRequest({ message: 'Expected an RPC request.' })
+            expect(request.tag).toBe(attempt === 1 ? 'ComputerShell' : scenario.tag)
+            const outcome =
+              attempt === 1
+                ? ComputerShellOutcome.cases.Completed.make({
+                    stdout: '',
+                    stderr: '',
+                    exitCode: 0,
+                    timedOut: false,
+                    truncated: false,
+                  })
+                : scenario.outcome
+            // RpcMessage.ResponseExit has no constructor in rc.116; this is the SDK wire envelope.
+            yield* rpc.write({
+              // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- SDK protocol envelopes have no constructor in rc.116.
+              _tag: 'Exit',
+              clientId: 0,
+              requestId: request.id,
+              exit: Exit.succeed(outcome),
+            })
+          }
+        })
+        yield* Effect.all([call, answer], { concurrency: 2 })
+      }
+      // A tagged authority failure is still converted to the same generic Flue Error.
+      const absent = scopeLayer('absent-thread', { kind: 'user', body: 'Read.' }, Option.none())
+      yield* Effect.promise(() =>
+        expect(scopedRunner(absent)(Effect.void, Option.none())).rejects.toEqual(
+          new Error('The Computer could not be reached. Try again.'),
+        ),
+      )
+    }),
+  )
+
   it.effect('injects the Routine folder automatically without returning Library references', () =>
     Effect.scoped(
       Effect.gen(function* () {
