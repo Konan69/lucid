@@ -4,7 +4,7 @@ import * as NodePath from 'node:path'
 import { openRunDatabase } from './database.mjs'
 import * as Schema from 'effect/Schema'
 import { logged, readTestCounts, runIdentifier, stopChildrenOnSignal } from './process.mjs'
-import { checkRatchets } from './ratchets.mjs'
+import { checkEffectRatchets, checkRatchets, effectRule } from './ratchets.mjs'
 import { holdSlot, takeLock, treeLockName } from './slots.mjs'
 import { stageOfTask, stages } from './stages.mjs'
 
@@ -18,6 +18,7 @@ const TurboSummary = Schema.Struct({
       taskId: Schema.String,
       task: Schema.String,
       logFile: Schema.String,
+      directory: Schema.String,
       cache: Schema.Struct({ status: Schema.String }),
       execution: Schema.Struct({
         startTime: Schema.Number,
@@ -89,7 +90,25 @@ function stageResult(stage, tasks, run) {
     detail: `${cached}/${real.length} cached`,
     log,
     output,
+    findings: effectFindings(real, run.root),
   }
+}
+
+/**
+ * Effect findings, once each: a package's declaration and test projects both check its
+ * production files, so the same line can be printed by two of its tasks.
+ */
+function effectFindings(tasks, root) {
+  return new Set(
+    tasks.flatMap((task) => {
+      const file = NodePath.join(root, task.logFile)
+      if (!NodeFS.existsSync(file)) return []
+      return NodeFS.readFileSync(file, 'utf8')
+        .split('\n')
+        .filter((line) => effectRule(line) !== undefined)
+        .map((line) => `${task.directory}/${line.trim()}`)
+    }),
+  )
 }
 
 /**
@@ -161,6 +180,15 @@ function applyRatchets(results) {
   const broken = checkRatchets(lint.output).filter((ratchet) => !ratchet.held)
   for (const ratchet of broken)
     lint.failed.push(`${ratchet.label} ratchet: ${ratchet.count} exceed ${ratchet.ceiling}`)
+}
+
+/** A rule over its ceiling fails typecheck, the stage whose compiler printed the findings. */
+function applyEffectRatchets(results) {
+  const typecheck = results.find((result) => result.name === 'typecheck')
+  if (typecheck === undefined || typecheck.findings === undefined) return
+  typecheck.detail += `, ${typecheck.findings.size} Effect findings`
+  for (const rule of checkEffectRatchets(typecheck.findings).filter((entry) => !entry.held))
+    typecheck.failed.push(`effect(${rule.rule}): ${rule.count} exceed ${rule.ceiling}`)
 }
 
 /** Total and skipped tests across every package's Vitest result, cached or just run. */
@@ -280,6 +308,7 @@ async function runStages(root, selection, environment, { runId, directory }) {
     ])
     const results = groups.flat()
     applyRatchets(results)
+    applyEffectRatchets(results)
     const order = stages.map((stage) => stage.name)
     results.sort((left, right) => order.indexOf(left.name) - order.indexOf(right.name))
     return {

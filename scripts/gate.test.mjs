@@ -16,7 +16,14 @@ import {
   snapshotIgnore,
   treeName,
 } from './gate/cloud.mjs'
-import { checkRatchets, countFindings, ratchets } from './gate/ratchets.mjs'
+import {
+  checkEffectRatchets,
+  checkRatchets,
+  countFindings,
+  effectCeilings,
+  effectRule,
+  ratchets,
+} from './gate/ratchets.mjs'
 import { slotCount, takeLock } from './gate/slots.mjs'
 import { stageNames, stageOfTask, stages } from './gate/stages.mjs'
 
@@ -86,6 +93,29 @@ void test('a ratchet fails only above its ceiling, and every ratchet names a dis
   )
   const rules = ratchets.map((ratchet) => `${ratchet.plugin}/${ratchet.rule}`)
   assert.equal(new Set(rules).size, rules.length)
+})
+
+void test('an Effect finding is counted under its rule, and one more than its ceiling fails', () => {
+  const named =
+    'src/a.ts(5,3): error TS377001: This Effect value is neither yielded nor used. effect(floatingEffect)'
+  const continued = 'src/a.ts(9,3): error TS377030: This has unknown in the error channel.'
+  assert.equal(effectRule(named), 'floatingEffect')
+  assert.equal(effectRule(continued), 'TS377030')
+  assert.equal(effectRule('src/a.ts(1,1): error TS2322: Type string is not assignable.'), undefined)
+  const [rule] = Object.keys(effectCeilings)
+  const line = (index) => `src/a.ts(${index},1): error TS377000: message effect(${rule})`
+  const at = Array.from({ length: effectCeilings[rule] }, (_, index) => line(index))
+  assert.ok(checkEffectRatchets(at).every((entry) => entry.held))
+  const over = checkEffectRatchets([...at, line(effectCeilings[rule])])
+  assert.deepEqual(
+    over.filter((entry) => !entry.held).map((entry) => entry.rule),
+    [rule],
+  )
+  // A rule with no ceiling may not appear at all.
+  assert.equal(
+    checkEffectRatchets([named]).find((entry) => entry.rule === 'floatingEffect').held,
+    effectCeilings.floatingEffect !== undefined,
+  )
 })
 
 void test('every Turbo stage task exists as a script or a root task', () => {

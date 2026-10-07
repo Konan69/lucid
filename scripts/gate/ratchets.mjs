@@ -206,3 +206,76 @@ export function checkRatchets(lintOutput) {
     return { label: ratchet.label, ceiling: ratchet.ceiling, count, held: count <= ratchet.ceiling }
   })
 }
+
+/**
+ * Effect language service findings, ratcheted per rule like the lint warnings above. Until
+ * 7 Oct 2026 nothing enforced them: the repository patched the JavaScript `typescript` package
+ * (`effect-language-service patch`), but typecheck runs the native TypeScript 7 compiler, which
+ * that patch does not reach, so a floating Effect passed the gate. `@effect/tsgo` patches the
+ * native compiler; its first run reported what had gathered meanwhile. The compiler prints every
+ * finding and still exits 0 (the `ignoreEffect...InTscExitCode` options in tsconfig.base.json);
+ * these ceilings are what fail the gate. A rule that is not listed has a ceiling of 0.
+ * Lower a ceiling whenever findings go; never raise one.
+ */
+export const effectCeilings = {
+  strictEffectProvide: 741,
+  unnecessaryFailYieldableError: 406,
+  schemaNumber: 188,
+  asyncFunction: 84,
+  multipleEffectProvide: 52,
+  preferSucceedSomeOrNone: 28,
+  effectFnIife: 22,
+  lazyEffect: 21,
+  missingReturnYieldStar: 20,
+  globalErrorInEffectFailure: 15,
+  catchToOrElseSucceed: 13,
+  unnecessaryTypeofType: 13,
+  timeoutCatchTagToTimeoutOrElse: 9,
+  TS377030: 9,
+  multipleCatchTag: 8,
+  runEffectInsideEffect: 8,
+  mapSomeToAsSome: 7,
+  schemaStructWithTag: 5,
+  preferTypedSchemaDecoder: 4,
+  optionMatchToFromOption: 3,
+  returnEffectInGen: 3,
+  unknownInEffectCatch: 3,
+  globalErrorInEffectCatch: 2,
+  layerMergeAllWithDependencies: 2,
+  provideLayerSucceedToProvideService: 2,
+  abortControllerInEffect: 1,
+  allOfMapToForEach: 1,
+  catchConditionalRefailToCatchIf: 1,
+  catchToIgnore: 1,
+  effectFnImplicitAny: 1,
+  flatMapConditionalToFilterOrFail: 1,
+  floatingEffect: 1,
+  raceFirstWithSleepToTimeout: 1,
+  unnecessaryEffectGen: 1,
+}
+
+/**
+ * The rule of one compiler output line, when the line is an Effect finding. The patched compiler
+ * gives every Effect diagnostic a code in the 377000s and ends a one-line message with
+ * `effect(<rule>)`. A message that continues on later lines carries only its code on the first
+ * one, and is then counted under that code.
+ */
+export function effectRule(line) {
+  const code = /\): (?:error|warning|suggestion|message) (TS377\d+): /u.exec(line)
+  if (code === null) return undefined
+  const named = /effect\((\w+)\)\s*$/u.exec(line)
+  return named === null ? code[1] : named[1]
+}
+
+/** Each rule's count against its ceiling, for the rules found or listed. */
+export function checkEffectRatchets(findings) {
+  const counts = new Map(Object.keys(effectCeilings).map((rule) => [rule, 0]))
+  for (const line of findings) {
+    const rule = effectRule(line)
+    if (rule !== undefined) counts.set(rule, (counts.get(rule) ?? 0) + 1)
+  }
+  return [...counts].map(([rule, count]) => {
+    const ceiling = effectCeilings[rule] === undefined ? 0 : effectCeilings[rule]
+    return { rule, count, ceiling, held: count <= ceiling }
+  })
+}
