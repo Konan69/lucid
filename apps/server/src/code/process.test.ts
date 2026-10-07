@@ -44,26 +44,27 @@ class RunningLoops extends Context.Service<RunningLoops, RunningLoopsService>()(
  * take on a loaded machine and not the default five seconds. Nothing here waits on a clock.
  */
 describe('Supervised programs', { timeout: 30_000 }, () => {
-  layer(supervised)((it) => {
-    const run = Effect.fn('Test.program')(function* (code: string, dispatch: Dispatch) {
-      return yield* (yield* CodeProcess).run(
-        {
-          request: { code, summary: 'Test the program' },
-          boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
-        },
-        dispatch,
-      )
-    })
-    const reply: Dispatch = Effect.fn('Test.reply')((call) =>
-      Effect.succeed(
-        CallOutcome.cases.Returned.make({
-          value: call.input,
-          summary: call.kind,
-          end: 'completed',
-        }),
-      ),
+  const run = Effect.fn('Test.program')(function* (code: string, dispatch: Dispatch) {
+    return yield* (yield* CodeProcess).run(
+      {
+        request: { code, summary: 'Test the program' },
+        boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
+      },
+      dispatch,
     )
+  })
 
+  const reply: Dispatch = Effect.fn('Test.reply')((call) =>
+    Effect.succeed(
+      CallOutcome.cases.Returned.make({
+        value: call.input,
+        summary: call.kind,
+        end: 'completed',
+      }),
+    ),
+  )
+
+  layer(supervised)((it) => {
     it.effect('dispatches callable accounts once and awaits proxies without thenable calls', () =>
       Effect.gen(function* () {
         const frames = yield* Ref.make<Schema.Json[]>([])
@@ -92,7 +93,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         ])
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect(
       'round-trips production discovery expressions through the real guest',
       () =>
@@ -152,7 +155,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         }),
       { timeout: 20_000 },
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('names summary and rationale when account metadata is omitted', () =>
       Effect.gen(function* () {
         const outcome = yield* run('return await accounts.Mail.read({});', reply)
@@ -163,7 +168,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(outcome.calls).toHaveLength(0)
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('keeps the line numbers of the source the model wrote', () =>
       Effect.gen(function* () {
         const outcome = yield* run(
@@ -174,7 +181,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(outcome).toHaveProperty('result', expect.stringContaining('program.js:2'))
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('keeps ordered printed lines beside success and thrown failures', () =>
       Effect.gen(function* () {
         const completed = yield* run(
@@ -191,7 +200,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(failed).toHaveProperty('failure.message', 'failed')
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('keeps logs when the 300-second parent deadline cancels a waiting guest', () =>
       Effect.gen(function* () {
         const entered = yield* Deferred.make<void>()
@@ -212,7 +223,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         })
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect(
       'bounds printed UTF-8 without splitting characters and counts logs in the final aggregate',
       () =>
@@ -232,7 +245,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           expect(Buffer.byteLength(JSON.stringify(aggregate))).toBeLessThanOrEqual(budgets.result)
         }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect(
       'composes dependent and Promise.all reads, filters intermediate records and combines a Computer receipt',
       () =>
@@ -267,7 +282,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           ])
         }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('gives the program the Computer it runs on: its files and its Node modules', () =>
       Effect.gen(function* () {
         const outcome = yield* run(
@@ -280,7 +297,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(outcome.calls).toHaveLength(0)
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('a finished program leaves nothing of itself on the Computer', () =>
       Effect.gen(function* () {
         // The count includes the program that is counting, and any other test's program that is
@@ -300,7 +319,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(counted(after)).toEqual(counted(before))
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('ends a program that waits on something nothing can settle', () =>
       Effect.gen(function* () {
         const outcome = yield* run('console.log("waiting"); await new Promise(() => {});', reply)
@@ -308,7 +329,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(outcome).toHaveProperty('failure.message', expect.stringContaining('never settles'))
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect(
       'latches approval before catch/finally or queued Promise.allSettled calls can dispatch',
       () =>
@@ -333,7 +356,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           expect(yield* Ref.get(count)).toBe(1)
         }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('preserves earlier receipts on a later throw', () =>
       Effect.gen(function* () {
         check(
@@ -343,7 +368,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         )
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('preserves earlier receipts on an unknown consequential outcome without replay', () =>
       Effect.gen(function* () {
         const unknown: Dispatch = Effect.fn('Test.unknown')((call) =>
@@ -367,7 +394,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         )
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('enforces the UTF-8 source budget before startup', () =>
       Effect.gen(function* () {
         check(yield* run(`return "${'é'.repeat(8192)}";`, reply), 'Failed', {
@@ -376,7 +405,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         })
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('enforces the call budget', () =>
       Effect.gen(function* () {
         check(
@@ -386,7 +417,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         )
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('enforces the final-result budget', () =>
       Effect.gen(function* () {
         check(yield* run('return "x".repeat(32768);', reply), 'Failed', {
@@ -394,7 +427,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         })
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('accepts exactly 16 KiB source and 100 calls', () =>
       Effect.gen(function* () {
         const code = 'for(let i=0;i<100;i++) await tools.find_tools({}); return 1;'
@@ -412,7 +447,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(outcome.calls).toHaveLength(budgets.calls)
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('keeps a completed value beside 100 receipts and clips only logs', () =>
       Effect.gen(function* () {
         const unicode: Dispatch = Effect.fn('Test.unicodeLogReceipt')(() =>
@@ -435,7 +472,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(Buffer.byteLength(JSON.stringify(outcome))).toBeLessThanOrEqual(budgets.result)
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('accepts an exact 256 KiB argument and result without altering either', () =>
       Effect.gen(function* () {
         const size = budgets.frame - 2 // The JSON string's two quotes are part of its byte budget.
@@ -447,7 +486,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(outcome.calls).toHaveLength(1)
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect(
       'bounds the exact final aggregate including its receipts',
       () =>
@@ -468,7 +509,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         }),
       { timeout: 10_000 },
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('runs the calls of one Promise.all at the same time', () =>
       Effect.gen(function* () {
         const entered = yield* Ref.make(0)
@@ -495,7 +538,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         })
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('lets a call that was already running finish before an Approval is reported', () =>
       Effect.gen(function* () {
         const order = yield* Ref.make(0)
@@ -534,7 +579,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         })
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('reports an Approval when the last running call is interrupted', () =>
       Effect.gen(function* () {
         const order = yield* Ref.make(0)
@@ -567,7 +614,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         })
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('a deadline leaves every running call unknown and admits nothing after it', () =>
       Effect.gen(function* () {
         const entered = yield* Deferred.make<void>()
@@ -596,7 +645,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(outcome.calls.map((call) => call.end)).toEqual(['unknown', 'unknown'])
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('refuses a second active program in one Thread and a fifth globally', () =>
       Effect.gen(function* () {
         const release = yield* Deferred.make<void>()
@@ -643,34 +694,37 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           expect(CodeOutcome.guards.Completed(yield* Fiber.join(fiber))).toBe(true)
       }),
     )
+  })
 
-    const loopsLayer = Layer.effect(
-      RunningLoops,
-      Effect.gen(function* () {
-        const entered = yield* Deferred.make<void>()
-        const count = yield* Ref.make(0)
-        const dispatch: Dispatch = Effect.fn('Test.loopsStarted')(function* (call) {
-          if ((yield* Ref.updateAndGet(count, (value) => value + 1)) === 2)
-            yield* Deferred.succeed(entered, undefined)
-          return yield* reply(call)
-        })
-        // Startup is a fixture precondition, independent of how quickly a parent deadline must stop
-        // admitted guests. Keep both real processes alive in the suite scope until the test advances time.
-        const fibers = yield* Effect.forEach(
-          ['while(true) {}', 'while(true) await Promise.resolve();'],
-          (loop) => Effect.forkScoped(run(`await tools.find_tools({}); ${loop}`, dispatch)),
-        )
-        yield* Effect.raceFirst(
-          Deferred.await(entered),
-          Effect.forEach(
-            fibers,
-            (fiber) => Fiber.join(fiber).pipe(Effect.flatMap((outcome) => Effect.die(outcome))),
-            { concurrency: 'unbounded' },
-          ),
-        )
-        return RunningLoops.of({ fibers })
-      }),
-    )
+  const loopsLayer = Layer.effect(
+    RunningLoops,
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const count = yield* Ref.make(0)
+      const dispatch: Dispatch = Effect.fn('Test.loopsStarted')(function* (call) {
+        if ((yield* Ref.updateAndGet(count, (value) => value + 1)) === 2)
+          yield* Deferred.succeed(entered, undefined)
+        return yield* reply(call)
+      })
+      // Startup is a fixture precondition, independent of how quickly a parent deadline must stop
+      // admitted guests. Keep both real processes alive in the suite scope until the test advances time.
+      const fibers = yield* Effect.forEach(
+        ['while(true) {}', 'while(true) await Promise.resolve();'],
+        (loop) => Effect.forkScoped(run(`await tools.find_tools({}); ${loop}`, dispatch)),
+      )
+      yield* Effect.raceFirst(
+        Deferred.await(entered),
+        Effect.forEach(
+          fibers,
+          (fiber) => Fiber.join(fiber).pipe(Effect.flatMap((outcome) => Effect.die(outcome))),
+          { concurrency: 'unbounded' },
+        ),
+      )
+      return RunningLoops.of({ fibers })
+    }),
+  )
+
+  layer(supervised)((it) => {
     it.layer(loopsLayer)('Parent deadline', (deadline) => {
       deadline.effect(
         'stops synchronous and microtask loops and releases both interpreter slots',
@@ -697,7 +751,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           }),
       )
     })
+  })
 
+  layer(supervised)((it) => {
     it.effect(
       'marks a timed-out consequential dispatch unknown and retains a previous completed receipt',
       () =>
@@ -718,7 +774,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           expect(outcome.calls.map((call) => call.end)).toEqual(['completed', 'unknown'])
         }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('charges failed calls against the quota', () =>
       Effect.gen(function* () {
         const refused: Dispatch = Effect.fn('Test.refuse')(() =>
@@ -735,7 +793,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(exhausted.calls).toHaveLength(100)
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('rejects oversized bridge input despite a guest catch', () =>
       Effect.gen(function* () {
         const oversized = yield* run(
@@ -746,7 +806,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(oversized.calls).toHaveLength(0)
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('bounds cumulative provider data independently of the per-call limit', () =>
       Effect.gen(function* () {
         const large: Dispatch = Effect.fn('Test.largeData')(() =>
@@ -766,7 +828,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(aggregate.calls).toHaveLength(17)
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect(
       'a program that fills its heap is ended with a memory failure and keeps what it printed',
       () =>
@@ -783,7 +847,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         }),
       { timeout: 20_000 },
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect(
       'cuts flooded printed output to its allowance and still finishes the program',
       () =>
@@ -798,7 +864,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         }),
       { timeout: 15_000 },
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('a process that dies after dispatch leaves the call it was waiting for unknown', () =>
       Effect.gen(function* () {
         const dispatch: Dispatch = Effect.fn('Test.lostProcess')(function* (call) {
@@ -816,7 +884,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(outcome.calls.map((call) => call.end)).toEqual(['completed', 'unknown', 'completed'])
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('cuts a flood of empty printed lines like any other output', () =>
       Effect.gen(function* () {
         const outcome = yield* run(
@@ -827,7 +897,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(Buffer.byteLength(JSON.stringify(outcome))).toBeLessThanOrEqual(budgets.result)
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('finishes a program that waits for its own write to standard output', () =>
       Effect.gen(function* () {
         const outcome = yield* run(
@@ -837,7 +909,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         check(outcome, 'Completed', { result: 1, logs: ['straight out'] })
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('ends the processes a program started when the program ends', () =>
       Effect.gen(function* () {
         // The first program leaves a child behind and says which. The second reads that process's
@@ -861,7 +935,9 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         check(after, 'Completed', { result: 'ended' })
       }),
     )
+  })
 
+  layer(supervised)((it) => {
     it.effect('stops a program that starts calls without waiting, at the call limit', () =>
       Effect.gen(function* () {
         const outcome = yield* run(
@@ -888,7 +964,6 @@ standalone.effect(
       }),
     )
     return Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(codeProcessLayer.pipe(Layer.provide(held)))
       return yield* Effect.gen(function* () {
         const process = yield* CodeProcess
@@ -911,7 +986,6 @@ standalone.effect(
   'ends a program whose answer cannot reach the Computer, and keeps the receipt of the call',
   () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(
         codeProcessLayer.pipe(
           Layer.provide(
