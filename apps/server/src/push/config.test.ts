@@ -79,9 +79,13 @@ describe('push settings', () => {
 
   it.effect('advertises the public key of a matching pair', () =>
     Effect.gen(function* () {
-      const config = yield* PushConfig
-      expect(config.publicKey).toBe(own.publicKey)
-      expect(Redacted.value(config.privateKey)).toBe(own.privateKey)
-    }).pipe(Effect.provide(configured(settings))),
+      // Each case owns fresh mutable services and their resource scope.
+      const caseContext = yield* Layer.build(configured(settings))
+      return yield* Effect.gen(function* () {
+        const config = yield* PushConfig
+        expect(config.publicKey).toBe(own.publicKey)
+        expect(Redacted.value(config.privateKey)).toBe(own.privateKey)
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped),
   )
 })

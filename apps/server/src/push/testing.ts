@@ -100,7 +100,7 @@ export const silentPushLayer = Layer.succeed(
     deliver: Effect.fn('PushTest.silentDeliver')(() =>
       Effect.succeed(PushOutcome.cases.NoTargets.make({})),
     ),
-    reconcile: Effect.fn('PushTest.silentReconcile')(() => Effect.void),
+    reconcile: Effect.void.pipe(Effect.withSpan('PushTest.silentReconcile')),
   }),
 )
 

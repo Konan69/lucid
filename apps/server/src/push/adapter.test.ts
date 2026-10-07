@@ -75,12 +75,14 @@ it.effect(
           ),
         )
         const result = yield* Effect.gen(function* () {
-          return yield* (yield* PushAdapter).send(destination, payload).pipe(Effect.result)
-        }).pipe(
-          Effect.provide(pushAdapterLayer),
-          Effect.provide(transport),
-          Effect.provideService(PushConfig, testPushConfig),
-        )
+          // Each case owns fresh mutable services and their resource scope.
+          const caseContext = yield* Layer.build(
+            pushAdapterLayer.pipe(Layer.provideMerge(transport)),
+          )
+          return yield* Effect.gen(function* () {
+            return yield* (yield* PushAdapter).send(destination, payload).pipe(Effect.result)
+          }).pipe(Effect.provide(caseContext))
+        }).pipe(Effect.scoped, Effect.provideService(PushConfig, testPushConfig))
         if (status === 201)
           expect(result).toEqual(Result.succeed(PushAcceptance.cases.Browser.make({})))
         else
@@ -140,22 +142,24 @@ it.effect(
         ),
       )
       const acceptance = yield* Effect.gen(function* () {
-        return yield* (yield* PushAdapter).send(phone, payload)
-      }).pipe(
-        Effect.provide(pushAdapterLayer),
-        Effect.provide(transport),
-        Effect.provideService(PushConfig, testPushConfig),
-      )
+        // Each case owns fresh mutable services and their resource scope.
+        const caseContext = yield* Layer.build(pushAdapterLayer.pipe(Layer.provideMerge(transport)))
+        return yield* Effect.gen(function* () {
+          return yield* (yield* PushAdapter).send(phone, payload)
+        }).pipe(Effect.provide(caseContext))
+      }).pipe(Effect.scoped, Effect.provideService(PushConfig, testPushConfig))
       expect(acceptance).toEqual(
         PushAcceptance.cases.Phone.make({ ticket: 'ticket', confirmed: false }),
       )
       const receipt = yield* Effect.gen(function* () {
-        return yield* (yield* PushAdapter).receipt('ticket')
-      }).pipe(
-        Effect.provide(pushAdapterLayer),
-        Effect.provide(receiptTransport),
-        Effect.provideService(PushConfig, testPushConfig),
-      )
+        // Each case owns fresh mutable services and their resource scope.
+        const caseContext = yield* Layer.build(
+          pushAdapterLayer.pipe(Layer.provideMerge(receiptTransport)),
+        )
+        return yield* Effect.gen(function* () {
+          return yield* (yield* PushAdapter).receipt('ticket')
+        }).pipe(Effect.provide(caseContext))
+      }).pipe(Effect.scoped, Effect.provideService(PushConfig, testPushConfig))
       expect(receipt).toEqual(Option.some('Gone'))
     }),
 )
@@ -171,16 +175,16 @@ it.effect('times out a pending provider using TestClock and reports the send as 
       ),
     )
     const result = yield* Effect.gen(function* () {
-      const adapter = yield* PushAdapter
-      const pending = yield* adapter.send(phone, payload).pipe(Effect.result, Effect.forkChild)
-      yield* Deferred.await(requested)
-      yield* TestClock.adjust('10 seconds')
-      return yield* Fiber.join(pending)
-    }).pipe(
-      Effect.provide(pushAdapterLayer),
-      Effect.provide(transport),
-      Effect.provideService(PushConfig, testPushConfig),
-    )
+      // Each case owns fresh mutable services and their resource scope.
+      const caseContext = yield* Layer.build(pushAdapterLayer.pipe(Layer.provideMerge(transport)))
+      return yield* Effect.gen(function* () {
+        const adapter = yield* PushAdapter
+        const pending = yield* adapter.send(phone, payload).pipe(Effect.result, Effect.forkChild)
+        yield* Deferred.await(requested)
+        yield* TestClock.adjust('10 seconds')
+        return yield* Fiber.join(pending)
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped, Effect.provideService(PushConfig, testPushConfig))
     expect(Result.isFailure(result) && result.failure._tag).toBe('PushUncertain')
   }),
 )
@@ -220,7 +224,7 @@ const unreadTransport = Effect.fn('PushTest.unreadTransport')(function* () {
       (agent) => Effect.promise(() => agent.destroy()),
     ),
   )
-  const exchange = Effect.fn('PushTest.exchange')(function* () {
+  const exchange = Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
     const port = NodeHttpServerRequest.toIncomingMessage(request).socket.remotePort
     if (port === undefined) return expect.fail('Request socket has no remote port')
@@ -238,7 +242,7 @@ const unreadTransport = Effect.fn('PushTest.unreadTransport')(function* () {
       ),
       { status },
     )
-  })()
+  }).pipe(Effect.withSpan('PushTest.exchange'))
   // Acquired first, so released last: NodeHttpServer's serve finalizer awaits `server.close`
   // (PN/NodeHttpServer.ts make, preemptiveShutdown), which only settles once the Agent below
   // has destroyed every client socket. The reverse order parks a failed assertion behind it.
@@ -284,54 +288,57 @@ it.effect('releases unread Push responses before returning their status outcome'
       { path: '/--/api/v2/push/getReceipts', tag: 'PushRejected', kind: 'Receipt' },
     ]
     yield* Effect.gen(function* () {
-      const adapter = yield* PushAdapter
-      for (const test of cases) {
-        const tag = yield* test.kind === 'Receipt'
-          ? adapter.receipt('ticket').pipe(
-              Effect.result,
-              Effect.map((result) =>
-                Result.match(result, {
-                  onFailure: (failure) => failure._tag,
-                  onSuccess: () => expect.fail('The receipt provider must refuse this exchange'),
-                }),
-              ),
-            )
-          : adapter
-              .send(
-                test.kind === 'Phone'
-                  ? phone
-                  : PushDestination.cases.Browser.make({
-                      endpoint: `https://push.example.test${test.path}`,
-                      keys,
-                    }),
-                payload,
-              )
-              .pipe(
+      // Each case owns fresh mutable services and their resource scope.
+      const caseContext = yield* Layer.build(
+        pushAdapterLayer.pipe(Layer.provideMerge(remote.transport)),
+      )
+      return yield* Effect.gen(function* () {
+        const adapter = yield* PushAdapter
+        for (const test of cases) {
+          const tag = yield* test.kind === 'Receipt'
+            ? adapter.receipt('ticket').pipe(
                 Effect.result,
                 Effect.map((result) =>
                   Result.match(result, {
                     onFailure: (failure) => failure._tag,
-                    onSuccess: (acceptance) => acceptance._tag,
+                    onSuccess: () => expect.fail('The receipt provider must refuse this exchange'),
                   }),
                 ),
               )
-        expect(tag).toBe(test.tag)
-        const received = yield* Queue.take(remote.receipts)
-        expect(Exchange.guards.Received(received)).toBe(true)
-        expect(received.path).toBe(test.path)
-        const socket = remote.sockets.get(received.port)
-        if (socket === undefined) return expect.fail('Received port has no recorded client socket')
-        // RED must fail here immediately, before waiting for a receipt from an open connection.
-        expect(socket.destroyed).toBe(true)
-        expect(yield* Queue.take(remote.receipts)).toEqual(
-          Exchange.cases.Released.make({ path: received.path, port: received.port }),
-        )
-      }
-      return undefined
-    }).pipe(
-      Effect.provide(pushAdapterLayer),
-      Effect.provide(remote.transport),
-      Effect.provideService(PushConfig, testPushConfig),
-    )
+            : adapter
+                .send(
+                  test.kind === 'Phone'
+                    ? phone
+                    : PushDestination.cases.Browser.make({
+                        endpoint: `https://push.example.test${test.path}`,
+                        keys,
+                      }),
+                  payload,
+                )
+                .pipe(
+                  Effect.result,
+                  Effect.map((result) =>
+                    Result.match(result, {
+                      onFailure: (failure) => failure._tag,
+                      onSuccess: (acceptance) => acceptance._tag,
+                    }),
+                  ),
+                )
+          expect(tag).toBe(test.tag)
+          const received = yield* Queue.take(remote.receipts)
+          expect(Exchange.guards.Received(received)).toBe(true)
+          expect(received.path).toBe(test.path)
+          const socket = remote.sockets.get(received.port)
+          if (socket === undefined)
+            return expect.fail('Received port has no recorded client socket')
+          // RED must fail here immediately, before waiting for a receipt from an open connection.
+          expect(socket.destroyed).toBe(true)
+          expect(yield* Queue.take(remote.receipts)).toEqual(
+            Exchange.cases.Released.make({ path: received.path, port: received.port }),
+          )
+        }
+        return undefined
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped, Effect.provideService(PushConfig, testPushConfig))
   }),
 )
