@@ -1,10 +1,36 @@
 import type * as Option from 'effect/Option'
+import type { StorageWrite } from '@earendil-works/pi-durable'
 
 /**
  * Port of Pi Durable `src/storage/sqlite/database.ts:SqliteValue`.
  * PostgreSQL bindings retain the reference's scalar and byte-array vocabulary.
  */
 export type PostgresValue = null | number | bigint | string | Uint8Array
+
+/** Owned SQL plus bindings, never caller-supplied SQL interpolation. Ordered
+ * batches retain Pi SqliteStorage's individual statements, including duplicate
+ * mutable-id upserts; multi-row INSERT would change their order and errors. */
+export type PostgresStatement = {
+  readonly recordKind: PostgresRecordKind
+  readonly sql: string
+  readonly params: readonly PostgresValue[]
+}
+
+/** Pi src/types.ts:StorageWrite supplies the record vocabulary. Document actions
+ * share one record kind; metadata allocation has no user record. Retain this
+ * context in SQL plans so a rejected raw NUL identifies its originating record. */
+export type PostgresRecordKind =
+  | Exclude<StorageWrite['type'], `document.${string}`>
+  | 'document'
+  | 'metadata'
+
+/** Pi SqliteStorage.commit's result and final ordered write segment. The driver
+ * executes this segment followed by COMMIT before returning the value. A prepared
+ * plan is not a write acknowledgment; a failed statement still rolls back. */
+export type PostgresCommit<T> = {
+  readonly value: T
+  readonly statements: readonly PostgresStatement[]
+}
 
 /**
  * Port of Pi Durable `src/storage/sqlite/database.ts:SqliteExecutor`.
@@ -17,19 +43,6 @@ export type PostgresValue = null | number | bigint | string | Uint8Array
  * Unlike Pi's `T | undefined`, `get` returns Option to satisfy the repository's
  * explicit-absence rule. Storage converts with Option.getOrUndefined at Pi's boundary.
  */
-/** Owned SQL plus bindings, never caller-supplied SQL interpolation. Ordered
- * batches retain Pi SqliteStorage's individual statements, including duplicate
- * mutable-id upserts; multi-row INSERT would change their order and errors. */
-export type PostgresStatement = { readonly sql: string; readonly params: readonly PostgresValue[] }
-
-/** Pi SqliteStorage.commit's result and final ordered write segment. The driver
- * executes this segment followed by COMMIT before returning the value. A prepared
- * plan is not a write acknowledgment; a failed statement still rolls back. */
-export type PostgresCommit<T> = {
-  readonly value: T
-  readonly statements: readonly PostgresStatement[]
-}
-
 export interface PostgresExecutor {
   /** One ordered simple-protocol batch; the first failing statement stops the batch. */
   runBatch(statements: readonly PostgresStatement[]): Promise<void>

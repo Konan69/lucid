@@ -13,6 +13,7 @@ import {
 } from './database.ts'
 export { validateSchema } from './database.ts'
 import { PostgresStorage } from './storage.ts'
+import { ConnectionSettingInvalid, RawNul } from './errors.ts'
 
 /** pg/lib/query.js:_checkForMultirow returns one result per simple-protocol
  * statement. Decode scalar metadata/ownership rows once at the SDK ingress.
@@ -43,6 +44,16 @@ function batchRows(result: import('pg').QueryResult) {
 const isBytes = Schema.is(Schema.Uint8Array)
 const int8Text = (value: string) => value
 
+/** pg emits settings as text. Decode once at the driver ingress; both string
+ * modes are safe with pg.escapeLiteral's explicit E literals on UTF8. */
+const decodeConnectionSettings = Schema.decodeUnknownSync(
+  Schema.Struct({
+    search_path: Schema.String,
+    client_encoding: Schema.String,
+    standard_conforming_strings: Schema.String,
+  }),
+)
+
 /** Bind owned statements safely for PostgreSQL simple-protocol batches. */
 function statementText(statement: PostgresStatement): string {
   let index = 0
@@ -52,7 +63,9 @@ function statementText(statement: PostgresStatement): string {
     if (value === null) return 'NULL'
     if (isBytes(value))
       return `decode(${escapeLiteral(NodeBuffer.Buffer.from(value).toString('hex'))}, 'hex')`
-    return escapeLiteral(String(value))
+    const text = String(value)
+    if (text.includes('\u0000')) throw new RawNul({ recordKind: statement.recordKind })
+    return escapeLiteral(text)
   })
 }
 
@@ -339,10 +352,21 @@ export async function openPgDatabase(pool: Pool, schema: string): Promise<PgData
   const initializingError = (_cause: Error) => {}
   client.on('error', initializingError)
   return client
-    .query<{ search_path: string }>('SHOW search_path')
+    .query(`SELECT current_setting('search_path') AS search_path,
+      current_setting('client_encoding') AS client_encoding,
+      current_setting('standard_conforming_strings') AS standard_conforming_strings`)
     .then((result) => {
-      const row = result.rows[0]
-      if (row === undefined) throw new Error('PostgreSQL search_path is missing')
+      const row = decodeConnectionSettings(result.rows[0])
+      if (row.client_encoding !== 'UTF8')
+        throw new ConnectionSettingInvalid({
+          setting: 'client_encoding',
+          value: row.client_encoding,
+        })
+      if (row.standard_conforming_strings !== 'on' && row.standard_conforming_strings !== 'off')
+        throw new ConnectionSettingInvalid({
+          setting: 'standard_conforming_strings',
+          value: row.standard_conforming_strings,
+        })
       return client.query(`SET search_path TO "${schema}"`).then(() => {
         const database = new PgDatabase(client, row.search_path)
         client.removeListener('error', initializingError)

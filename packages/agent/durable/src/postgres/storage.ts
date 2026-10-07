@@ -33,7 +33,13 @@ import type {
   TaskQuery,
   TaskRecord,
 } from '@earendil-works/pi-durable'
-import type { PostgresDatabase, PostgresExecutor, PostgresValue } from './database.ts'
+import type {
+  PostgresDatabase,
+  PostgresExecutor,
+  PostgresValue,
+  PostgresRecordKind,
+  PostgresStatement,
+} from './database.ts'
 import { safeNumber } from './database.ts'
 import { Statements } from './statements.ts'
 import { applyPostgresMigrations } from './migrations.ts'
@@ -81,7 +87,7 @@ function exhaustive(value: never): never {
 /** Pi src/storage/sqlite/storage.ts row/action types; BIGINT driver fields become
  * strings until their checked numeric conversion at the Storage boundary. */
 type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>
-type TableName = 'conversation' | 'entry' | 'task' | 'submission' | 'document'
+type TableName = Exclude<PostgresRecordKind, 'metadata'>
 type JsonRow = { readonly record: string }
 type EntryJsonRow = { readonly record: string; readonly commit_seq: string }
 type DocumentReadRow = {
@@ -465,9 +471,14 @@ export class PostgresStorage implements Storage {
     const documentActions = this.prepareDocumentActions(writes)
     const candidateNextId = this.candidateNextId(writes)
     const claims = globalClaims(writes)
-    const reads = [
-      { sql: 'SELECT next_id, next_seq FROM durable_metadata WHERE singleton = 1', params: [] },
+    const reads: PostgresStatement[] = [
+      {
+        recordKind: 'metadata',
+        sql: 'SELECT next_id, next_seq FROM durable_metadata WHERE singleton = 1',
+        params: [],
+      },
       ...claims.map((claim) => ({
+        recordKind: claim.table,
         sql: 'SELECT record_type FROM record_ids WHERE id = ?',
         params: [claim.id],
       })),
@@ -488,6 +499,7 @@ export class PostgresStorage implements Storage {
         await this.applyDocumentActions(transaction, documentActions, committedSeq)
       }
       statements.run(
+        'metadata',
         'UPDATE durable_metadata SET next_id = ?, next_seq = ? WHERE singleton = 1',
         String(maxId(BigInt(metadata.next_id), candidateNextId)),
         BigInt(committedSeq) + 1n,
@@ -1112,6 +1124,7 @@ export class PostgresStorage implements Storage {
       case 'task':
         this.claimId(executor, write.value.id, 'task')
         executor.run(
+          'task',
           `INSERT INTO tasks (id, conversation_id, kind, status, abort_requested, background, record)
 						VALUES (?, ?, ?, ?, ?, ?, ?)
 						ON CONFLICT(id) DO UPDATE SET conversation_id = excluded.conversation_id, kind = excluded.kind,
@@ -1129,6 +1142,7 @@ export class PostgresStorage implements Storage {
       case 'submission':
         this.claimId(executor, write.value.id, 'submission')
         executor.run(
+          'submission',
           `INSERT INTO submissions (id, conversation_id, request_id, status, record) VALUES (?, ?, ?, ?, ?)
 						ON CONFLICT(id) DO UPDATE SET conversation_id = excluded.conversation_id,
 						request_id = excluded.request_id, status = excluded.status, record = excluded.record`,
@@ -1151,6 +1165,7 @@ export class PostgresStorage implements Storage {
   private writeConversation(executor: Statements, record: ConversationRecord) {
     this.claimId(executor, record.id, 'conversation')
     executor.run(
+      'conversation',
       'INSERT INTO conversations (id, owner_conversation_id, owner_task_id, record) VALUES (?, ?, ?, ?)',
       record.id,
       record.owner === undefined ? null : record.owner.conversationId,
@@ -1162,6 +1177,7 @@ export class PostgresStorage implements Storage {
   private writeEntry(executor: Statements, record: EntryRecord, seq: Seq) {
     this.claimId(executor, record.id, 'entry')
     executor.run(
+      'entry',
       'INSERT INTO entries (id, conversation_id, head, commit_seq, record) VALUES (?, ?, ?, ?, ?)',
       record.id,
       record.conversationId,
@@ -1175,6 +1191,7 @@ export class PostgresStorage implements Storage {
    * PostgreSQL ON CONFLICT DO NOTHING replaces SQLite INSERT OR IGNORE for the shared ownership table. */
   private claimId(executor: Statements, id: Id<string>, table: TableName) {
     executor.run(
+      table,
       'INSERT INTO record_ids (id, record_type) VALUES (?, ?) ON CONFLICT DO NOTHING',
       id,
       table,
@@ -1200,6 +1217,7 @@ export class PostgresStorage implements Storage {
         const parts = addressParts(record)
         this.claimId(statements, id, 'document')
         statements.run(
+          'document',
           `INSERT INTO documents
 						(id, kind, family, key_value, scope_kind, owner_id, created_at, retired_at, record)
 						VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1222,10 +1240,11 @@ export class PostgresStorage implements Storage {
 
       if (content !== undefined) {
         if (content.kind === 'base' && isCurrentOnly(record)) {
-          statements.run('DELETE FROM document_revisions WHERE document_id = ?', id)
+          statements.run('document', 'DELETE FROM document_revisions WHERE document_id = ?', id)
         }
         const encodedContent = contentJson(content)
         statements.run(
+          'document',
           'INSERT INTO document_revisions (document_id, seq, kind, version, content) VALUES (?, ?, ?, ?, ?)',
           id,
           seq,
@@ -1239,6 +1258,7 @@ export class PostgresStorage implements Storage {
         if (action.create === undefined) {
           record = { ...record, retiredAt: seq }
           statements.run(
+            'document',
             'UPDATE documents SET retired_at = ?, record = ? WHERE id = ?',
             seq,
             encodeJson(record),
@@ -1246,7 +1266,7 @@ export class PostgresStorage implements Storage {
           )
         }
         if (isCurrentOnly(record)) {
-          statements.run('DELETE FROM document_revisions WHERE document_id = ?', id)
+          statements.run('document', 'DELETE FROM document_revisions WHERE document_id = ?', id)
         }
       }
       await executor.runBatch(statements.values)

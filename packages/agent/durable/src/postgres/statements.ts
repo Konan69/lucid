@@ -1,4 +1,4 @@
-import type { PostgresStatement, PostgresValue } from './database.ts'
+import type { PostgresStatement, PostgresValue, PostgresRecordKind } from './database.ts'
 
 /** Pi src/storage/sqlite/storage.ts:applyTableWrite/applyDocumentActions issue
  * only ordered writes within each write segment. Prepare those statements before
@@ -8,7 +8,7 @@ import type { PostgresStatement, PostgresValue } from './database.ts'
 export class Statements {
   readonly values: PostgresStatement[] = []
   /** Retain every statement and binding in order, including repeated mutable ids. */
-  run(sql: string, ...params: PostgresValue[]): void {
-    this.values.push({ sql, params })
+  run(recordKind: PostgresRecordKind, sql: string, ...params: PostgresValue[]): void {
+    this.values.push({ recordKind, sql, params })
   }
 }

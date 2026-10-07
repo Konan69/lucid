@@ -7,6 +7,7 @@ export type {
   PostgresValue,
   PostgresStatement,
   PostgresCommit,
+  PostgresRecordKind,
 } from './database.ts'
 export {
   applyPostgresMigrations,
@@ -14,3 +15,4 @@ export {
   CURRENT_POSTGRES_SCHEMA_VERSION,
 } from './migrations.ts'
 export type { PostgresMigration } from './migrations.ts'
+export { ConnectionSettingInvalid, RawNul } from './errors.ts'
