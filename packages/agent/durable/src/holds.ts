@@ -532,7 +532,10 @@ export function decide(
   conversationId: ConversationId,
   decision: Decision,
   context: Context,
-) {
+): Effect.Effect<
+  Settlement,
+  CallNotWaiting | DurableErrors.PiFailed | DurableErrors.ConversationMissing
+> {
   return settle(
     harness,
     conversationId,
@@ -598,7 +601,10 @@ export function decideObserved(
   conversationId: ConversationId,
   observed: { readonly decision: Decision; readonly held: readonly Waiting[] },
   context: Context,
-) {
+): Effect.Effect<
+  Settlement,
+  CallNotWaiting | DurableErrors.PiFailed | DurableErrors.ConversationMissing
+> {
   const { decision } = observed
   return settle(
     harness,
@@ -618,7 +624,10 @@ export function answerObserved(
   conversationId: ConversationId,
   observed: { readonly given: Answer; readonly held: readonly Waiting[] },
   context: Context,
-) {
+): Effect.Effect<
+  Settlement,
+  CallNotWaiting | DurableErrors.PiFailed | DurableErrors.ConversationMissing
+> {
   return settle(
     harness,
     conversationId,

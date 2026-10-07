@@ -17,7 +17,8 @@ export type RequestInput = Request | { readonly request: Request; readonly optio
 const decodeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(TurnBody))
 
 /** Compile the object ingress once; reject the original tagged class at the Promise boundary. */
-export const decodeTurn = Function.flow(Core.decodeTurn, (effect) => Effect.runPromise(effect))
+export const decodeTurn: (input: Parameters<typeof Core.decodeTurn>[0]) => Promise<Core.ChatTurn> =
+  Function.flow(Core.decodeTurn, (effect) => Effect.runPromise(effect))
 
 /** Preserve the SDK ingress type; contextSchema supplies the tool's concrete runtime contract. */
 export type ToolContext = ToolExecutionOptions<unknown>['context']
@@ -46,19 +47,21 @@ export const toolsExtension = <ContextValue = ToolContext>(
 }
 
 /** Preserve the original tagged error classes at the Promise rejection boundary. */
-export const decide = (...args: Parameters<typeof Core.decide>) =>
+export const decide = (...args: Parameters<typeof Core.decide>): Promise<Core.Settlement> =>
   Effect.runPromise(Core.decide(...args))
 
 /** Person-supplied results use the same durable ordering and idempotency as the Effect API. */
-export const answer = (...args: Parameters<typeof Core.answer>) =>
+export const answer = (...args: Parameters<typeof Core.answer>): Promise<Core.Settlement> =>
   Effect.runPromise(Core.answer(...args))
 
 /** No waiting state is mirrored into the facade; it is derived by the core on every call. */
-export const waiting = (...args: Parameters<typeof Core.waiting>) =>
+export const waiting = (...args: Parameters<typeof Core.waiting>): Promise<Core.Waiting[]> =>
   Effect.runPromise(Core.waiting(...args))
 
 /** Stream consumption owns observation; the platform stream cancels only its consumer scope. */
-export const streamRun = (...args: Parameters<typeof Core.streamRun>) =>
+export const streamRun = (
+  ...args: Parameters<typeof Core.streamRun>
+): Promise<ReadableStream<UIMessageChunk>> =>
   Effect.runPromise(
     prepareRun(...args).pipe(Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream))),
   )
@@ -100,7 +103,9 @@ export const rejoinRun = (...args: Parameters<typeof Core.rejoinRun>): Promise<A
   )
 
 /** RunMissing rejects before a platform stream is returned. */
-export const continueRun = (...args: Parameters<typeof Core.continueRun>) =>
+export const continueRun = (
+  ...args: Parameters<typeof Core.continueRun>
+): Promise<ReadableStream<UIMessageChunk>> =>
   Effect.runPromise(
     Core.continueRun(...args).pipe(
       Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream)),
@@ -214,7 +219,7 @@ export type { ChatTurn, TurnInput } from './respond.ts'
 export type { InputPart, InputOptions } from './input.ts'
 
 /** Explicit run cancellation is distinct from a fetch abort or a detached stream reader. */
-export const abort = (...args: Parameters<typeof Core.abort>) =>
+export const abort = (...args: Parameters<typeof Core.abort>): Promise<void> =>
   Effect.runPromise(Core.abort(...args))
 
 export type { HoldId } from './errors.ts'
