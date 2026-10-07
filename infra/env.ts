@@ -131,71 +131,69 @@ const optionalSecret = (name: string) =>
   Config.option(Config.Redacted(name)).pipe(Effect.mapError(() => environmentError(name)))
 
 /** Read application credentials once so resource declarations only receive typed values. */
-export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnvironment')(
-  function* () {
-    const authSecret = yield* requiredSecret('AUTH_SECRET')
-    const runtimeToken = yield* requiredSecret('VIVID_RUNTIME_TOKEN')
-    const modelGatewayKey = yield* requiredSecret('EXPLABS_API_KEY')
-    const model = yield* Config.String('VIVID_MODEL').pipe(
-      Config.withDefault('explabs/glm-5.3-flash'),
-      Effect.mapError(() => environmentError('VIVID_MODEL')),
-    )
-    const google: GoogleAccess = {
-      clientId: yield* requiredString('GOOGLE_CLIENT_ID'),
-      clientSecret: yield* requiredSecret('GOOGLE_CLIENT_SECRET'),
-      redirectUri: yield* requiredString('GOOGLE_REDIRECT_URI'),
-    }
-    const executor: ExecutorAccess = {
-      key: yield* requiredSecret('VIVID_EXECUTOR_KEY'),
-      organization: yield* requiredString('VIVID_EXECUTOR_ORGANIZATION'),
-    }
-    const texting: TextingAccess = {
-      projectId: yield* requiredString('VIVID_PHOTON_PROJECT_ID'),
-      projectSecret: yield* requiredSecret('VIVID_PHOTON_PROJECT_SECRET'),
-    }
-    const push: PushAccess = {
-      publicKey: yield* requiredString('VIVID_PUSH_VAPID_PUBLIC'),
-      privateKey: yield* requiredSecret('VIVID_PUSH_VAPID_PRIVATE'),
-      subject: yield* requiredString('VIVID_PUSH_SUBJECT'),
-    }
+export const loadInfrastructureEnvironment = Effect.gen(function* () {
+  const authSecret = yield* requiredSecret('AUTH_SECRET')
+  const runtimeToken = yield* requiredSecret('VIVID_RUNTIME_TOKEN')
+  const modelGatewayKey = yield* requiredSecret('EXPLABS_API_KEY')
+  const model = yield* Config.String('VIVID_MODEL').pipe(
+    Config.withDefault('explabs/glm-5.3-flash'),
+    Effect.mapError(() => environmentError('VIVID_MODEL')),
+  )
+  const google: GoogleAccess = {
+    clientId: yield* requiredString('GOOGLE_CLIENT_ID'),
+    clientSecret: yield* requiredSecret('GOOGLE_CLIENT_SECRET'),
+    redirectUri: yield* requiredString('GOOGLE_REDIRECT_URI'),
+  }
+  const executor: ExecutorAccess = {
+    key: yield* requiredSecret('VIVID_EXECUTOR_KEY'),
+    organization: yield* requiredString('VIVID_EXECUTOR_ORGANIZATION'),
+  }
+  const texting: TextingAccess = {
+    projectId: yield* requiredString('VIVID_PHOTON_PROJECT_ID'),
+    projectSecret: yield* requiredSecret('VIVID_PHOTON_PROJECT_SECRET'),
+  }
+  const push: PushAccess = {
+    publicKey: yield* requiredString('VIVID_PUSH_VAPID_PUBLIC'),
+    privateKey: yield* requiredSecret('VIVID_PUSH_VAPID_PRIVATE'),
+    subject: yield* requiredString('VIVID_PUSH_SUBJECT'),
+  }
 
-    const decisions = yield* optionalString('VIVID_DECISIONS')
+  const decisions = yield* optionalString('VIVID_DECISIONS')
 
-    const otlpUrl = yield* optionalString('VIVID_OTLP_URL')
-    const otlpHeaders = yield* optionalSecret('VIVID_OTLP_HEADERS')
-    if (Option.isSome(otlpUrl) !== Option.isSome(otlpHeaders)) {
-      return yield* new InfrastructureEnvironmentError({
-        variable: 'VIVID_OTLP_URL, VIVID_OTLP_HEADERS',
-        message: 'Telemetry export must provide both variables or neither',
-      })
-    }
-    const observability = Option.zipWith(
-      otlpUrl,
-      otlpHeaders,
-      (url, headers): ObservabilityAccess => ({ url, headers }),
-    )
+  const otlpUrl = yield* optionalString('VIVID_OTLP_URL')
+  const otlpHeaders = yield* optionalSecret('VIVID_OTLP_HEADERS')
+  if (Option.isSome(otlpUrl) !== Option.isSome(otlpHeaders)) {
+    return yield* new InfrastructureEnvironmentError({
+      variable: 'VIVID_OTLP_URL, VIVID_OTLP_HEADERS',
+      message: 'Telemetry export must provide both variables or neither',
+    })
+  }
+  const observability = Option.zipWith(
+    otlpUrl,
+    otlpHeaders,
+    (url, headers): ObservabilityAccess => ({ url, headers }),
+  )
 
-    const computer: ComputerAccess = {
-      key: yield* requiredSecret('VIVID_BOAT_API_KEY'),
-      template: yield* requiredString('VIVID_BOAT_TEMPLATE'),
-      organization: yield* optionalString('VIVID_BOAT_ORG'),
-      size: yield* optionalString('VIVID_BOAT_SIZE'),
-      lifetimeSeconds: yield* optionalString('VIVID_BOAT_LIFETIME_SECONDS'),
-      machine: yield* optionalString('VIVID_BOAT_MACHINE'),
-    }
+  const computer: ComputerAccess = {
+    key: yield* requiredSecret('VIVID_BOAT_API_KEY'),
+    template: yield* requiredString('VIVID_BOAT_TEMPLATE'),
+    organization: yield* optionalString('VIVID_BOAT_ORG'),
+    size: yield* optionalString('VIVID_BOAT_SIZE'),
+    lifetimeSeconds: yield* optionalString('VIVID_BOAT_LIFETIME_SECONDS'),
+    machine: yield* optionalString('VIVID_BOAT_MACHINE'),
+  }
 
-    return {
-      authSecret,
-      runtimeToken,
-      modelGatewayKey,
-      model,
-      google,
-      executor,
-      texting,
-      push,
-      decisions,
-      observability,
-      computer,
-    } satisfies InfrastructureEnvironment
-  },
-)()
+  return {
+    authSecret,
+    runtimeToken,
+    modelGatewayKey,
+    model,
+    google,
+    executor,
+    texting,
+    push,
+    decisions,
+    observability,
+    computer,
+  } satisfies InfrastructureEnvironment
+}).pipe(Effect.withSpan('loadInfrastructureEnvironment'))

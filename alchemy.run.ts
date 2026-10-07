@@ -29,7 +29,11 @@ const localStack = () =>
        * Command owns the local processes and Docker the PostgreSQL resources; no cloud provider is loaded, so
        * `alchemy dev` never starts an emulator. See `alchemy/lib/Docker/Providers.d.ts`.
        */
-      providers: Layer.mergeAll(Command.providers(), Docker.providers(), GitHub.providers()),
+      // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- Alchemy Docker.providers publishes any requirements in lib/Docker/Providers.d.ts.
+      providers: Docker.providers().pipe(
+        Layer.provideMerge(Command.providers()),
+        Layer.provideMerge(GitHub.providers()),
+      ),
       state: Alchemy.localState(),
     },
     Effect.gen(function* () {
