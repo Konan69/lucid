@@ -24,7 +24,7 @@ import { cn } from '../../ui/cn'
 
 // The live picture of the Computer brings the screen client with it, which is a third of the
 // app's code; it is fetched the first time Vivid uses its computer in a Thread and not before.
-const Peek = lazy(async () => ({ default: (await import('../computer/Peek')).Peek }))
+const Peek = lazy(() => import('../computer/Peek').then((module) => ({ default: module.Peek })))
 
 /**
  * What Vivid is doing and what it did, from the tool calls the Thread's stream already carries.

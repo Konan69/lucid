@@ -31,7 +31,7 @@ const standingNow = (
   }
 }
 
-const About = lazy(async () => ({ default: (await import('./About')).About }))
+const About = lazy(() => import('./About').then((module) => ({ default: module.About })))
 
 /**
  * The Thread's frame: the bar, the conversation and composer, and the card around Vivid with the
