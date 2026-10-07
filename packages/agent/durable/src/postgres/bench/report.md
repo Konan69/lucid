@@ -1,6 +1,6 @@
 PostgreSQL port and round-trip report — 7 October 2026
 
-Branch: `feat/pi-durable-pg`. Benchmark and final executable checks use implementation commit `a665c482`; the delivery message gives the final report commit and head SHA. No push, merge, deployment or pull request.
+Branch: `feat/pi-durable-pg`. The final benchmark and executable checks use implementation commit `5ac2c192`; the delivery message gives the final report commit and head SHA. No push, merge, deployment or pull request.
 
 Commits, in order:
 
@@ -8,6 +8,10 @@ Commits, in order:
 - `5b0c7ab3`: orchestrator's restart checkpoint, preserved without amendment, squash or revert.
 - `733c6a5a`: ordered write batches and single-statement snapshot reads; removes the temporary baseline copy from the checkpoint.
 - `a665c482`: final write segment and COMMIT share one driver call.
+- `d4502d9e`: previous measurements and port report.
+- `dd23b8f2`: UTF8 connection guard, typed raw-NUL refusal and adversarial round trips.
+- `195930e5`: scoped entry ancestry stays TEXT, following Pi's JavaScript walk.
+- `5ac2c192`: nonblocking schema ownership before migrations and ownership tests.
 
 Only the lane's owned PostgreSQL paths, optional-driver package/lock entries and exact Effect allowlist entries changed. README, frontend, other durable modules, application database schema and reference checkout remain untouched.
 
@@ -15,40 +19,41 @@ Only the lane's owned PostgreSQL paths, optional-driver package/lock entries and
 
 Real PostgreSQL 18 Alpine in disposable container `durable-pg-lane`, loopback port 55449. SQLite is Pi's unchanged `openNodeSqliteStorage(':memory:')`. Smallest upstream scale: 1,000 entries, 200 tasks and 200 documents. Each benchmark operation runs once per backend per measurement; expected benchmark results are checked. No timing threshold.
 
-The fresh baseline uses the original committed adapter. The temporary baseline source was removed after measurement. A benchmark-only wrapper around the real facade counts actual query-call boundaries: every SQL method is one driver call, ordinary successful transactions add BEGIN/COMMIT, and batched transactions add the initial BEGIN/read call and final writes/COMMIT call. Fixture initialization and cleanup are excluded. No fake driver or product-path counter.
+The pre-batching baseline was measured with the original committed adapter. The temporary baseline source was removed after measurement. A benchmark-only wrapper around the real facade counts actual query-call boundaries: every SQL method is one driver call, ordinary successful transactions add BEGIN/COMMIT, and batched transactions add the initial BEGIN/read call and final writes/COMMIT call. Fixture initialization and cleanup are excluded. No fake driver or product-path counter.
 
 Load averages from `uptime`, compared with `nproc = 16`:
 
 - Baseline start: **1.79 / 1.54 / 1.64**.
-- Final benchmark start: **28.91 / 17.23 / 11.41**; 2 GB available memory, 7 GB swap used.
-- Final benchmark completion: **17.59 / 16.31 / 11.66**.
+- Previous benchmark start/completion: **28.91 / 17.23 / 11.41**, then **17.59 / 16.31 / 11.66** (historical measurements in `d4502d9e`).
+- Final review-fix benchmark start, 15:58:17: **5.42 / 6.27 / 12.58**; 9 GB available memory, 4 GB swap used; one external Node process.
+- Final review-fix benchmark completion, 15:58:41: **5.04 / 6.14 / 12.37**; 9 GB available memory, 4 GB swap used.
 
-The machine became contended again. These are measured milliseconds, not a controlled latency comparison or a production throughput claim. Query counts are deterministic. SQLite has no network driver calls; its timings remain useful as the requested in-memory baseline.
+The current measurement ran below the core count. Machine load and memory conditions still differ between measurements; these are measured milliseconds, not a controlled latency comparison or a production throughput claim. Query counts are deterministic. SQLite has no network driver calls; its timings remain useful as the requested in-memory baseline.
 
 | Write workload                            | PG calls before | PG ms before | PG calls after | PG ms after | SQLite ms before | SQLite ms after |
 | ----------------------------------------- | --------------: | -----------: | -------------: | ----------: | ---------------: | --------------: |
-| One entry                                 |               7 |        7.223 |              2 |       2.478 |            0.081 |           0.051 |
-| 100 entries                               |             304 |      278.530 |              2 |      17.790 |            1.330 |           0.662 |
-| Mixed entry/task/submission/document      |              20 |       19.318 |              6 |      10.632 |            0.446 |           0.299 |
-| Streaming entry append                    |               7 |        6.807 |              2 |       2.594 |            0.045 |           0.025 |
-| Streaming task update + document revision |              12 |       11.102 |              8 |       9.582 |            0.197 |           0.092 |
-| Streaming submission + entry              |              10 |        8.085 |              2 |       2.368 |            0.066 |           0.038 |
+| One entry                                 |               7 |        7.223 |              2 |       2.630 |            0.081 |           0.053 |
+| 100 entries                               |             304 |      278.530 |              2 |      14.629 |            1.330 |           1.161 |
+| Mixed entry/task/submission/document      |              20 |       19.318 |              6 |       9.106 |            0.446 |           0.418 |
+| Streaming entry append                    |               7 |        6.807 |              2 |       2.303 |            0.045 |           0.081 |
+| Streaming task update + document revision |              12 |       11.102 |              8 |       6.746 |            0.197 |           0.145 |
+| Streaming submission + entry              |              10 |        8.085 |              2 |       2.590 |            0.066 |           0.047 |
 
 | Read workload               | PG calls before | PG ms before | PG calls after | PG ms after | SQLite ms before | SQLite ms after |
 | --------------------------- | --------------: | -----------: | -------------: | ----------: | ---------------: | --------------: |
-| Seed 1k (includes writes)   |           18205 |    11173.897 |          10367 |   10306.991 |           78.485 |          70.137 |
-| Exact entry                 |               1 |        2.160 |              1 |       1.513 |            0.321 |           0.257 |
-| Entry page (100)            |               2 |        4.256 |              2 |       4.225 |            0.544 |           0.493 |
-| Filtered tasks (50)         |               1 |        1.723 |              1 |       2.145 |            0.192 |           0.162 |
-| Exact document address      |               1 |        1.330 |              1 |       1.136 |            0.100 |           0.079 |
-| Document replay tail 0      |               5 |        5.810 |              1 |       5.564 |            0.295 |           0.202 |
-| Document replay tail 16     |               5 |        6.923 |              1 |       2.642 |            0.189 |           0.153 |
-| Document replay tail 128    |               5 |        7.620 |              1 |       5.391 |            0.810 |           0.605 |
-| Document replay tail 1024   |               5 |       22.759 |              1 |      12.574 |            4.080 |           2.825 |
-| Ancient historical document |               5 |        5.423 |              1 |       4.236 |            0.522 |           0.366 |
-| Recent historical document  |               5 |        6.191 |              1 |       3.276 |            0.489 |           0.291 |
-| Fork-depth history (100)    |               8 |        8.251 |              8 |       6.183 |            2.219 |           0.304 |
-| Fork-depth head             |              18 |       15.681 |             18 |      13.936 |            1.748 |           0.238 |
+| Seed 1k (includes writes)   |           18205 |    11173.897 |          10367 |    8693.141 |           78.485 |          78.478 |
+| Exact entry                 |               1 |        2.160 |              1 |       1.338 |            0.321 |           0.260 |
+| Entry page (100)            |               2 |        4.256 |              2 |       2.805 |            0.544 |           0.424 |
+| Filtered tasks (50)         |               1 |        1.723 |              1 |       2.000 |            0.192 |           0.153 |
+| Exact document address      |               1 |        1.330 |              1 |       1.008 |            0.100 |           0.084 |
+| Document replay tail 0      |               5 |        5.810 |              1 |       2.317 |            0.295 |           0.458 |
+| Document replay tail 16     |               5 |        6.923 |              1 |       2.435 |            0.189 |           0.173 |
+| Document replay tail 128    |               5 |        7.620 |              1 |       3.197 |            0.810 |           0.657 |
+| Document replay tail 1024   |               5 |       22.759 |              1 |      12.184 |            4.080 |           3.040 |
+| Ancient historical document |               5 |        5.423 |              1 |       2.814 |            0.522 |           0.387 |
+| Recent historical document  |               5 |        6.191 |              1 |       2.763 |            0.489 |           0.319 |
+| Fork-depth history (100)    |               8 |        8.251 |              8 |       6.631 |            2.219 |           0.314 |
+| Fork-depth head             |              18 |       15.681 |             18 |      14.047 |            1.748 |           0.223 |
 
 **Port differences and reasons**
 
@@ -56,8 +61,8 @@ Reference paths below are relative to Pi's durable package. Every ported impleme
 
 - `database.ts`, guided by `src/storage/sqlite/database.ts:SqliteExecutor/SqliteDatabase`: `get` returns plain `Option<T>` rather than `T | undefined`, as ruled by the orchestrator. The Storage implementation infers Pi's types and converts at its boundary. No Effect runtime enters the adapter.
 - The owned facade adds `PostgresStatement`, `PostgresCommit`, `runBatch` and `transactionWithReads`. PostgreSQL cannot bind multiple statements through its extended protocol. The driver uses public `pg.escapeLiteral` for ordered simple-protocol batches, including lossless bigint text and byte-array hex. Prepared final segments are acknowledged only after COMMIT succeeds.
-- `pg.ts`, guided by `src/storage/sqlite/node.ts:NodeSqliteExecutor/NodeSqliteDatabase/openNodeSqliteStorage`: `?` bindings become `$n` for ordinary queries. Batched bindings become safely quoted literals. SQLite's prepared-statement cache is not transplanted onto a leased pooled connection; queries remain unnamed.
-- A supplied Pool owns connections and configuration. The opener leases one connection, validates the required ASCII schema identifier before any SQL, restricts search_path, restores its previous value on close and releases the lease. It never constructs or ends the host Pool. File creation, WAL/checkpoint and busy-timeout settings have no PostgreSQL equivalent here.
+- `pg.ts`, guided by `src/storage/sqlite/node.ts:NodeSqliteExecutor/NodeSqliteDatabase/openNodeSqliteStorage`: `?` bindings become `$n` for ordinary queries. Batched bindings become safely quoted literals on a verified UTF8 connection. The opener reads client_encoding and standard_conforming_strings once on its lease; a non-UTF8 setting is refused with ConnectionSettingInvalid naming the setting/value. Both on/off string modes remain supported without changing host settings. RawNul rejects raw NUL before a complete batch reaches SQL text, naming the originating record kind; JSON-escaped NUL, lone surrogates and BYTEA zero bytes remain lossless. The facade retains recordKind alongside each owned statement for that diagnostic. SQLite's prepared-statement cache is not transplanted onto a leased pooled connection; queries remain unnamed.
+- A supplied Pool owns connections and configuration. The opener leases one connection, validates the required ASCII schema identifier before any SQL, restricts search_path, restores its previous value on close and releases the lease. It never constructs or ends the host Pool. Unlike Pi's unenforced one-owner rule, it takes a nonblocking session advisory lock before migrations and refuses competing leases with StorageOwned naming the schema. The database-scoped signed 64-bit key is the first eight SHA256 bytes of UTF8 "@vivid/durable/postgres:" plus the exact schema, interpreted as big-endian signed bigint text. It is stable across upgrades; a hash collision conservatively refuses an owner. close explicitly unlocks before returning the connection; PostgreSQL releases the lock on backend/process death. Initialization failure destroys the lease and any acquired lock. File creation, WAL/checkpoint and busy-timeout settings have no PostgreSQL equivalent here.
 - `migrations.ts`, guided by `src/storage/sqlite/migrations.ts`: schema creation and the schema-local migration ledger are transactional. Versions remain contiguous from 1, second open is a no-op, and newer databases are refused. PostgreSQL BIGINT replaces SQLite's 64-bit INTEGER for ids, sequences and document versions; flags remain INTEGER. Metadata next_id is BIGINT rather than SQLite TEXT.
 - SQLite STRICT and `json_valid` become PostgreSQL column types and SQL/JSON `IS JSON` checks. JSON record/content columns remain TEXT. Indexed identity strings retain Pi's existing JSON-string encoding and use C collation for SQLite's bytewise comparison semantics. No JSONB conversion is introduced.
 - SQLite INSERT OR IGNORE becomes ON CONFLICT DO NOTHING; task/submission replacement uses PostgreSQL ON CONFLICT DO UPDATE. Tables, extracted columns and indexes retain the reference structure and filtering/paging rules.
@@ -72,10 +77,10 @@ Reference paths below are relative to Pi's durable package. Every ported impleme
 
 **Exact lookup behavior**
 
-All seven exercised forms take one call and no explicit read transaction:
+Six global exact lookup forms take one call. Scoped entry follows the reference ancestry walk and takes two calls plus one per visited parent. None needs an explicit read transaction:
 
 - Global entry: one indexed immutable row.
-- Scoped entry: recursive immutable ancestry carries the minimum inclusive parent cutoff; unknown requested conversations retain their error. Session guarantees valid acyclic ancestry.
+- Scoped entry: read the requested conversation TEXT, then the entry TEXT, then each required parent TEXT in Pi's order, carrying the minimum inclusive fork cutoff. Unknown requested conversations retain their error. Session guarantees valid acyclic ancestry. PostgreSQL json extraction de-escapes the entire conversation record and rejects escaped NUL/lone surrogates; replacing the recursive SQL query with Pi's walk avoids that conversion without a schema migration. The regression includes both characters in root and child extensions, checks exact conversation round trips, and verifies the child lookup takes three calls. The global entry overload stays one call.
 - Task: one current replacement row.
 - Submission: one current receipt row.
 - Submission by request: one conversation/request indexed lookup.
@@ -88,23 +93,25 @@ All seven exercised forms take one call and no explicit read transaction:
 
 | Command                                                                                                                                                | Final result                                                                                                                                                    |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VIVID_TEST_DATABASE_URL=<disposable-url> pnpm exec vitest run src/postgres --maxWorkers=2 --no-file-parallelism`                                      | 4 files, 39 tests passed; **23/23 upstream conformance**, unmodified, none skipped. Migration, rollback, driver and both end-to-end reopen/approval cases pass. |
-| `VIVID_TEST_DATABASE_URL=<disposable-url> DURABLE_LIVE=0 pnpm exec vitest run --maxWorkers=2 --no-file-parallelism`                                    | 33 files passed, 1 skipped; **275 passed, 1 existing expected failure, 2 live tests skipped**.                                                                  |
-| `env -u VIVID_TEST_DATABASE_URL DURABLE_LIVE=0 pnpm exec vitest run --maxWorkers=2 --no-file-parallelism`                                              | 29 files passed, 5 skipped; **236 passed, 1 existing expected failure, 41 skipped** including all 39 PostgreSQL tests.                                          |
+| `VIVID_TEST_DATABASE_URL=<disposable-url> pnpm exec vitest run src/postgres --maxWorkers=2 --no-file-parallelism`                                      | 6 files, 48 tests passed; **23/23 upstream conformance**, unmodified, none skipped. Migration, rollback, driver and both end-to-end reopen/approval cases pass. |
+| `VIVID_TEST_DATABASE_URL=<disposable-url> DURABLE_LIVE=0 pnpm exec vitest run --maxWorkers=2 --no-file-parallelism`                                    | 35 files passed, 1 skipped; **284 passed, 1 existing expected failure, 2 live tests skipped**.                                                                  |
+| `env -u VIVID_TEST_DATABASE_URL DURABLE_LIVE=0 pnpm exec vitest run --maxWorkers=2 --no-file-parallelism`                                              | 29 files passed, 7 skipped; **236 passed, 1 existing expected failure, 50 skipped** including all 48 PostgreSQL tests.                                          |
 | `pnpm typecheck`                                                                                                                                       | Passed.                                                                                                                                                         |
 | `pnpm exec oxlint --type-aware packages/agent/durable/src/postgres`                                                                                    | 0 errors, 0 warnings.                                                                                                                                           |
-| `pnpm audit:effect-boundaries`                                                                                                                         | 407 files, 333 findings; 0 unallowlisted, no stale or duplicate entries.                                                                                        |
+| `pnpm audit:effect-boundaries`                                                                                                                         | 408 files, 336 findings; 0 unallowlisted, no stale or duplicate entries.                                                                                        |
 | `pnpm check:versions`                                                                                                                                  | Passed.                                                                                                                                                         |
 | `pnpm exec oxfmt --check packages/agent/durable scripts/effect-boundary-allowlist.json`                                                                | Passed.                                                                                                                                                         |
 | `git diff --check`                                                                                                                                     | Passed.                                                                                                                                                         |
 | `VIVID_TEST_DATABASE_URL=<disposable-url> VIVID_DURABLE_POSTGRES_BENCHMARK=1 pnpm exec node --experimental-transform-types src/postgres/bench/main.ts` | Passed; smallest-scale tables above, PostgreSQL and SQLite expected results verified.                                                                           |
 | `pnpm exec node --experimental-transform-types packages/agent/durable/src/postgres/bench/main.ts`                                                      | Benchmark skipped by default, exit 0.                                                                                                                           |
 
-Initial lint findings were fixed by hoisting compiled Schema predicates and extracting nested callbacks; no rule was disabled. One new test's TaskId generic was corrected after typecheck. A stale counter allowlist entry was removed. Final checks pass. The inherited expected failure and live skips were not changed. No timeout was raised and no sleep or polling was added.
+Focused review checks: literal safety 5/5; storage plus round-trip tests 28/28; ownership plus migration tests 13/13. Initial SJIS setup used Pool options, which pg's getStartupConf overrides to UTF8; the final test sets SJIS on a real lease before opening. A refused lease is destroyed, so the subsequent Pool query proves usability rather than expecting that dead lease's encoding. The review's indexed-text probe records were made valid for Pi 1.0.4 (pending checkpoint and fork=asOf); all adversarial strings are unchanged. Typecheck caught those fixture-shape errors and they were corrected. No rule or conformance case was disabled or weakened. Final checks pass.
+
+The withdrawn lock_timeout finding was not implemented. Ownership is acquired before schema SQL instead: a concurrent fresh-schema test proves exactly one successful open and one typed StorageOwned, with no raw 23505. No host lock or durability setting is changed. The inherited expected failure and live skips were not changed. No timeout was raised and no sleep or polling was added.
 
 **README lines to add — README was not edited**
 
-> PostgreSQL storage is available from `@vivid/durable/postgres`. Pass a host-owned `pg` Pool and a required schema identifier to `openPgStorage(pool, schema)`, then supply that storage to your Pi Harness. PostgreSQL 16 or newer is required; this adapter was tested against PostgreSQL 18. Records and tool output remain JSON text. Closing storage releases its connection and does not end the host's pool. One process owns a storage at a time; there is no cross-process locking.
+> PostgreSQL storage is available from `@vivid/durable/postgres`. Pass a host-owned `pg` Pool and a required schema identifier to `openPgStorage(pool, schema)`, then supply that storage to your Pi Harness. PostgreSQL 16 or newer is required; this adapter was tested against PostgreSQL 18. Records and tool output remain JSON text. The leased connection must use UTF8; both standard_conforming_strings modes are supported and host settings are not silently changed. Closing storage releases its connection and does not end the host's pool. One connection owns a schema at a time, enforced with a nonblocking session advisory lock acquired before migrations. A competing opener receives StorageOwned naming the schema. Ownership is released on close or backend/process death; open again after the previous owner has closed.
 
 ```ts
 import { openPgStorage } from '@vivid/durable/postgres'
@@ -114,6 +121,18 @@ const storage = await openPgStorage(pool, 'durable')
 
 **Limits and cleanup**
 
-No production/app database, remote host, live provider, cross-process ownership, alternate driver, PostgreSQL 16/17, remote-network latency or sustained streaming throughput was tested. No repository-wide gate or typecheck was run for this revision. Only the host-supplied pg adapter and its real local PostgreSQL conformance were proved. No frontend work was performed.
+No production/app database, remote host, live provider, separate Node-process ownership race, alternate driver, PostgreSQL 16/17, remote-network latency or sustained streaming throughput was tested. No repository-wide gate or typecheck was run for this revision. The host-supplied pg adapter, real local PostgreSQL conformance, separate-backend ownership/termination, and faux-provider Harness reopen/approval were proved. A separate operating-system process death was not exercised; PostgreSQL backend termination was. No frontend work was performed.
 
-All schema fixtures register cleanup before migration writes. Final cleanup verifies no lane test schemas remain, then removes only the container started by this lane with `docker rm -f durable-pg-lane`.
+All schema fixtures register cleanup before migration writes. PostgreSQL catalog checks found **0 remaining lane schemas and 0 advisory locks**. Only the container started by this lane was removed with `docker rm -f durable-pg-lane`.
+
+Additional focused commands and cleanup:
+
+| Command                                                                                                                                                             | Result                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `VIVID_TEST_DATABASE_URL=<disposable-url> pnpm exec vitest run src/postgres/quoting.test.ts --maxWorkers=2 --no-file-parallelism`                                   | 5 passed.                                                                                                         |
+| `VIVID_TEST_DATABASE_URL=<disposable-url> pnpm exec vitest run src/postgres/trips.test.ts src/postgres/storage.test.ts --maxWorkers=2 --no-file-parallelism`        | 28 passed, including all 23 upstream cases.                                                                       |
+| `VIVID_TEST_DATABASE_URL=<disposable-url> pnpm exec vitest run src/postgres/ownership.test.ts src/postgres/migrations.test.ts --maxWorkers=2 --no-file-parallelism` | 13 passed.                                                                                                        |
+| `docker exec durable-pg-lane pg_isready -U vivid -d vivid_test`                                                                                                     | Accepting connections.                                                                                            |
+| `docker exec durable-pg-lane psql -U vivid -d vivid_test` (catalog queries)                                                                                         | No lane schemas or advisory locks remain.                                                                         |
+| `docker rm -f durable-pg-lane`                                                                                                                                      | Removed only this lane's disposable container.                                                                    |
+| `git status --short` and explicit-path commits                                                                                                                      | Clean checkout; all revision changes are in the owned PostgreSQL paths and the exact owned async allowlist entry. |
