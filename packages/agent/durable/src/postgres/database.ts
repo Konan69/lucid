@@ -1,5 +1,5 @@
 import type * as Option from 'effect/Option'
-import type { StorageWrite } from '@earendil-works/pi-durable'
+import type { RecordKind } from './errors.ts'
 
 /**
  * Port of Pi Durable `src/storage/sqlite/database.ts:SqliteValue`.
@@ -19,10 +19,7 @@ export type PostgresStatement = {
 /** Pi src/types.ts:StorageWrite supplies the record vocabulary. Document actions
  * share one record kind; metadata allocation has no user record. Retain this
  * context in SQL plans so a rejected raw NUL identifies its originating record. */
-export type PostgresRecordKind =
-  | Exclude<StorageWrite['type'], `document.${string}`>
-  | 'document'
-  | 'metadata'
+export type PostgresRecordKind = typeof RecordKind.Type
 
 /** Pi SqliteStorage.commit's result and final ordered write segment. The driver
  * executes this segment followed by COMMIT before returning the value. A prepared

@@ -1,5 +1,16 @@
 import * as Schema from 'effect/Schema'
 
+/** Pi src/types.ts:StorageWrite record kinds, with metadata for allocation SQL.
+ * This closed schema owns both the failure vocabulary and the facade's type. */
+export const RecordKind = Schema.Literals([
+  'conversation',
+  'entry',
+  'task',
+  'submission',
+  'document',
+  'metadata',
+])
+
 /** Pi src/storage/sqlite/node.ts:openNodeSqliteDatabase has no connection
  * encoding. PostgreSQL literal batches require UTF8 so a multibyte encoding
  * cannot consume an escaping backslash. Refuse the host setting, never change it. */
@@ -21,7 +32,7 @@ export class ConnectionSettingInvalid extends Schema.TaggedError<ConnectionSetti
  * statement. Escaped JSON NUL and zero bytes in BYTEA remain valid. */
 export class RawNul extends Schema.TaggedError<RawNul>()(
   'RawNul',
-  { recordKind: Schema.String },
+  { recordKind: RecordKind },
   { title: 'RawNul' },
 ) {
   override get message() {

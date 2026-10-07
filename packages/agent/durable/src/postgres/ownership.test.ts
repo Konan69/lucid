@@ -9,8 +9,10 @@ import type { JsonValue } from '@earendil-works/chord'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import * as Option from 'effect/Option'
 import { describe, expect, it } from 'vitest'
+import { Pool } from 'pg'
+import { onTestFinished } from 'vitest'
 import { StorageOwned, StorageDisconnected } from './main.ts'
-import { openPgDatabase } from './pg.ts'
+import { openPgDatabase, openPgStorage } from './pg.ts'
 import { PostgresStorage } from './storage.ts'
 import { postgresFixture } from './testing.ts'
 
@@ -18,6 +20,25 @@ const testUrl = Option.fromNullishOr(process.env['VIVID_TEST_DATABASE_URL'])
 const context = BACKGROUND_CONTEXT
 
 describe.skipIf(Option.isNone(testUrl))('PostgreSQL single ownership', () => {
+  /** Review11c C: a max=1 Pool is exhausted by a storage's lifetime lease.
+   * The host's connectionTimeoutMillis bounds that wait; the adapter neither
+   * changes the pool's capacity nor borrows another backend behind its owner. */
+  it('honors the host connection timeout on an exhausted pool', async () => {
+    const pool = new Pool({
+      connectionString: Option.getOrThrow(testUrl),
+      max: 1,
+      connectionTimeoutMillis: 1000,
+    })
+    onTestFinished(() => pool.end())
+    const fixture = postgresFixture(Option.getOrThrow(testUrl))
+    const storage = await openPgStorage(pool, fixture.schema)
+    fixture.track(storage)
+    await expect(openPgStorage(pool, fixture.schema)).rejects.toThrow(
+      'timeout exceeded when trying to connect',
+    )
+    await storage.close(context)
+    expect((await pool.query('SELECT 1 AS usable')).rows).toEqual([{ usable: 1 }])
+  })
   /** Review11c A: the backend owns both the session lock and all commits. Losing
    * it must fence even mintId, retain the original cause, and require reopen. */
   it('fences every storage operation with one typed disconnection', async () => {
