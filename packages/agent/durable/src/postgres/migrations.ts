@@ -1,6 +1,6 @@
 import { safeNumber, validateSchema } from './database.ts'
 import * as Option from 'effect/Option'
-import type { PostgresDatabase } from './database.ts'
+import type { PostgresDatabase, PostgresExecutor } from './database.ts'
 
 /** Pi src/storage/sqlite/migrations.ts:SqliteMigration, ordered SQL version. */
 export type PostgresMigration = {
@@ -110,48 +110,67 @@ type SchemaRow = { readonly version: string }
 /** Pi src/storage/sqlite/migrations.ts:applySqliteMigrations, contiguous history in one transaction.
  * ON CONFLICT DO NOTHING replaces INSERT OR IGNORE. Namespace creation joins
  * the reference migration transaction; the durable_schema version row is retained. */
-export async function applyPostgresMigrations(
+export function applyPostgresMigrations(
   database: PostgresDatabase,
   schema: string,
   migrations: readonly PostgresMigration[] = POSTGRES_MIGRATIONS,
 ): Promise<void> {
-  validateSchema(schema)
-  for (let index = 0; index < migrations.length; index++) {
-    if (Option.getOrThrow(Option.fromNullishOr(migrations[index])).version !== index + 1) {
-      throw new Error('Durable PostgreSQL migrations must have contiguous versions starting at 1')
+  // The Promise facade reports validation failures as rejections, like Pi's async runner.
+  return Promise.resolve().then(() => {
+    validateSchema(schema)
+    for (let index = 0; index < migrations.length; index++) {
+      if (Option.getOrThrow(Option.fromNullishOr(migrations[index])).version !== index + 1)
+        throw new Error('Durable PostgreSQL migrations must have contiguous versions starting at 1')
     }
-  }
+    return database.transaction((transaction) =>
+      transaction
+        .exec(`CREATE SCHEMA IF NOT EXISTS "${schema}"`)
+        .then(() =>
+          transaction.exec(`CREATE TABLE IF NOT EXISTS durable_schema (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          version BIGINT NOT NULL CHECK (version >= 0)
+        )`),
+        )
+        .then(() =>
+          transaction.run(
+            'INSERT INTO durable_schema (singleton, version) VALUES (1, 0) ON CONFLICT DO NOTHING',
+          ),
+        )
+        .then(() =>
+          transaction.get<SchemaRow>('SELECT version FROM durable_schema WHERE singleton = 1'),
+        )
+        .then((row) => applyHistory(transaction, migrations, row)),
+    )
+  })
+}
 
-  await database.transaction(async (transaction) => {
-    await transaction.exec(`CREATE SCHEMA IF NOT EXISTS "${schema}"`)
-    await transaction.exec(`CREATE TABLE IF NOT EXISTS durable_schema (
-			singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-			version BIGINT NOT NULL CHECK (version >= 0)
-		)`)
-    await transaction.run(
-      'INSERT INTO durable_schema (singleton, version) VALUES (1, 0) ON CONFLICT DO NOTHING',
+/** Pi applySqliteMigrations: compare the durable version before DDL, then execute
+ * each statement and version update in order. Promise chaining preserves the
+ * driver's callback contract without a second async orchestration shape. */
+function applyHistory(
+  transaction: PostgresExecutor,
+  migrations: readonly PostgresMigration[],
+  row: Option.Option<SchemaRow>,
+): Promise<void> {
+  if (Option.isNone(row)) throw new Error('Durable PostgreSQL schema metadata is missing')
+  const storedVersion = safeNumber(row.value.version)
+  const currentVersion =
+    migrations.length === 0 ? 0 : Option.getOrThrow(Option.fromNullishOr(migrations.at(-1))).version
+  if (storedVersion > currentVersion)
+    throw new Error(
+      `Durable PostgreSQL schema version ${storedVersion} is newer than supported version ${currentVersion}`,
     )
-    const row = Option.getOrUndefined(
-      await transaction.get<SchemaRow>('SELECT version FROM durable_schema WHERE singleton = 1'),
-    )
-    if (row === undefined) throw new Error('Durable PostgreSQL schema metadata is missing')
-    const storedVersion = safeNumber(row.version)
-    const currentVersion =
-      migrations.length === 0
-        ? 0
-        : Option.getOrThrow(Option.fromNullishOr(migrations.at(-1))).version
-    if (storedVersion > currentVersion) {
-      throw new Error(
-        `Durable PostgreSQL schema version ${storedVersion} is newer than supported version ${currentVersion}`,
-      )
-    }
-    for (const migration of migrations) {
-      if (migration.version <= storedVersion) continue
-      for (const statement of migration.statements) await transaction.exec(statement)
-      await transaction.run(
+  let pending = Promise.resolve()
+  for (const migration of migrations) {
+    if (migration.version <= storedVersion) continue
+    for (const statement of migration.statements)
+      pending = pending.then(() => transaction.exec(statement))
+    pending = pending.then(() =>
+      transaction.run(
         'UPDATE durable_schema SET version = ? WHERE singleton = 1',
         migration.version,
-      )
-    }
-  })
+      ),
+    )
+  }
+  return pending
 }

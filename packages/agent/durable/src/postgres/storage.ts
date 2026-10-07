@@ -146,19 +146,22 @@ type ScopeColumns = {
  * unchanged JSON text. Only the corresponding reader is used for each table.
  */
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.MutableJson))
+/** Pi Storage's extracted ids, versions and Chord offsets are finite domain
+ * numbers. JSON cannot persist NaN or infinities as numbers; payload JSON remains
+ * the reference's text, while these envelopes reject impossible numeric rows. */
 const EntryEnvelope = Schema.Struct({
-  id: Schema.Number,
-  conversationId: Schema.Number,
+  id: Schema.Finite,
+  conversationId: Schema.Finite,
   kind: Schema.String,
 })
-const HeadEnvelope = Schema.Struct({ ...EntryEnvelope.fields, head: Schema.Number })
+const HeadEnvelope = Schema.Struct({ ...EntryEnvelope.fields, head: Schema.Finite })
 const TaskEnvelope = Schema.Struct({
   ...EntryEnvelope.fields,
-  version: Schema.Number,
+  version: Schema.Finite,
   background: Schema.Boolean,
   abortRequested: Schema.Boolean,
 })
-const SubmissionEnvelope = Schema.Struct({ id: Schema.Number, conversationId: Schema.Number })
+const SubmissionEnvelope = Schema.Struct({ id: Schema.Finite, conversationId: Schema.Finite })
 const decodeEntry = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.declare<typeof EntryEnvelope.Type>(Schema.is(EntryEnvelope))),
 )
@@ -173,7 +176,7 @@ const decodeSubmission = Schema.decodeUnknownSync(
     Schema.declare<typeof SubmissionEnvelope.Type>(Schema.is(SubmissionEnvelope)),
   ),
 )
-const Segment = Schema.Union([Schema.String, Schema.Number])
+const Segment = Schema.Union([Schema.String, Schema.Finite])
 const Path = Schema.Array(Segment)
 const NonEmptyPath = Schema.NonEmptyArray(Segment)
 const Operations = Schema.Array(
@@ -182,15 +185,15 @@ const Operations = Schema.Array(
     Schema.Tuple([Schema.Literal('s'), NonEmptyPath, Schema.MutableJson]),
     Schema.Tuple([Schema.Literal('d'), NonEmptyPath]),
     Schema.Tuple([Schema.Literal('a'), NonEmptyPath, Schema.String]),
-    Schema.Tuple([Schema.Literal('t'), NonEmptyPath, Schema.Number]),
+    Schema.Tuple([Schema.Literal('t'), NonEmptyPath, Schema.Finite]),
     Schema.Tuple([
       Schema.Literal('p'),
       Path,
-      Schema.Number,
-      Schema.Number,
+      Schema.Finite,
+      Schema.Finite,
       Schema.mutable(Schema.Array(Schema.MutableJson)),
     ]),
-    Schema.Tuple([Schema.Literal('m'), Path, Schema.mutable(Schema.Array(Schema.Number))]),
+    Schema.Tuple([Schema.Literal('m'), Path, Schema.mutable(Schema.Array(Schema.Finite))]),
   ]),
 )
 /** Pi parseJson<ConversationRecord>: decode the immutable owning Session record. */
@@ -466,6 +469,7 @@ export class PostgresStorage implements Storage {
    * Conditional document reads/copy errors keep their original write barriers.
    * The final segment is prepared for the driver to send with COMMIT, so a plain
    * append needs only the allocation/preflight response and the durable commit response. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.commit.
   async commit(writes: readonly StorageWrite[], _context: Context) {
     this.assertOpen()
     const documentActions = this.prepareDocumentActions(writes)
@@ -484,6 +488,7 @@ export class PostgresStorage implements Storage {
       })),
     ]
     const seq = await this.db
+      // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.commit transaction callback.
       .transactionWithReads(reads, async (transaction, rows) => {
         const metadataRows = Option.getOrThrow(Option.fromNullishOr(rows[0]))
         const metadataRow = Option.fromNullishOr(metadataRows[0])
@@ -519,6 +524,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.mintId.
    * Candidate minting is volatile until a write commits its watermark; preserve the exhausted-space rejection. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.mintId.
   async mintId<I extends Id<string>>(): Promise<I> {
     this.assertOpen()
     if (this.nextId > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('ID space is exhausted')
@@ -528,6 +534,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.conversation.
    * Return a detached exact record without following ancestry. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.conversation.
   async conversation(id: ConversationId, _context: Context) {
     this.assertOpen()
     const row = Option.getOrUndefined(
@@ -538,6 +545,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.scanConversations.
    * Use the original ascending id cursor and fetch limit plus one for continuation. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.scanConversations.
   async scanConversations(
     query: ConversationQuery,
     limit: number,
@@ -601,6 +609,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.readEntry.
    * An ancestry lookup hides entries beyond the parent fork cutoff and returns the stored commit sequence. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.readEntry.
   private async readEntry(
     idOrConversationId: EntryId | ConversationId,
     idOrContext: EntryId | Context,
@@ -630,6 +639,7 @@ export class PostgresStorage implements Storage {
    * preserves those values; this costs one indexed read per ancestor instead of
    * the previous recursive SQL query. No explicit transaction is needed because
    * ancestry and entries are immutable (Pi src/types.ts:Storage). */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.readEntry ancestry branch.
   private async readScopedEntry(conversationId: ConversationId, id: EntryId) {
     let conversation = await this.readConversation(conversationId)
     if (conversation === undefined) throw new Error(`Unknown conversation: ${conversationId}`)
@@ -654,6 +664,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.readLatestHeadMarker.
    * Find the newest visible marker before descending into parent ancestry. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.readLatestHeadMarker.
   private async readLatestHeadMarker(
     conversationId: ConversationId,
     atOrBeforeEntryId: Parameters<Storage['findLatestHeadMarker']>[1],
@@ -688,6 +699,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.readEntries.
    * Fill one page across ancestor segments without exposing entries beyond their inclusive fork cutoffs. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.readEntries.
   private async readEntries(
     query: EntryQuery,
     limit: number,
@@ -728,6 +740,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.task.
    * Return the detached latest task replacement record. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.task.
   async task(id: TaskId, _context: Context) {
     this.assertOpen()
     const row = Option.getOrUndefined(
@@ -738,6 +751,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.scanTasks.
    * Keep every supplied filter conjunctive and fetch one extra row for ascending continuation. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.scanTasks.
   async scanTasks(
     query: TaskQuery,
     limit: number,
@@ -780,6 +794,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.submission.
    * Read the latest detached submission receipt. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.submission.
   async submission(id: SubmissionId, _context: Context) {
     this.assertOpen()
     const row = Option.getOrUndefined(
@@ -790,6 +805,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.scanSubmissions.
    * Apply status and conversation filters before the ascending id limit. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.scanSubmissions.
   async scanSubmissions(
     query: SubmissionQuery,
     limit: number,
@@ -820,6 +836,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.submissionByRequest.
    * Preserve conversation-scoped request identities through JSON string encoding. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.submissionByRequest.
   async submissionByRequest(conversationId: ConversationId, requestId: string, _context: Context) {
     this.assertOpen()
     const row = Option.getOrUndefined(
@@ -834,6 +851,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.findDocument.
    * Resolve exact addresses and half-open incarnation lifetimes without materializing revisions. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.findDocument.
   async findDocument(address: DocumentAddress, at: DocumentPoint, _context: Context) {
     this.assertOpen()
     const parts = addressParts(address)
@@ -862,6 +880,7 @@ export class PostgresStorage implements Storage {
    * PostgreSQL evaluates the record, preceding base and ordered delta tail in
    * one statement snapshot. Pi's SQLite transaction protected three reads; a
    * single PostgreSQL query gives the same snapshot without BEGIN/COMMIT trips. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.document.
   async document(id: DocumentId, at: DocumentPoint, _context: Context) {
     this.assertOpen()
     return this.materializeDocument(this.db, id, at)
@@ -869,6 +888,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.scanDocuments.
    * Filter exact scope and half-open lifetime before ascending incarnation paging. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.scanDocuments.
   async scanDocuments(
     query: DocumentQuery,
     limit: number,
@@ -912,6 +932,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.closeDatabase.
    * Wait for admitted multi-query readers before handing close to the queued database. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.closeDatabase.
   private async closeDatabase() {
     if (this.admittedReads > 0) {
       await this.drained.promise
@@ -923,6 +944,7 @@ export class PostgresStorage implements Storage {
    * Run a read that issues several queries. Close waits for admitted reads, so their later queries never reach a
    * closed database. Single-query reads and transactions are already ordered before close by the database.
    */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.admitRead.
   private async admitRead<T>(read: () => Promise<T>) {
     this.assertOpen()
     this.admittedReads++
@@ -935,6 +957,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.readConversation.
    * Ancestry traversal reads the original record rather than mirroring parent metadata. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.readConversation.
   private async readConversation(id: ConversationId) {
     const row = Option.getOrUndefined(
       await this.db.get<JsonRow>('SELECT record FROM conversations WHERE id = ?', id),
@@ -950,6 +973,7 @@ export class PostgresStorage implements Storage {
    * fields are explicitly text, so JSON decoding cannot lose integer precision.
    * Empty revision tails are real empty arrays; missing bases remain null and
    * retain Pi's rejection after the lifetime/current-only checks. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.materializeDocument.
   private async materializeDocument(executor: PostgresExecutor, id: DocumentId, at: DocumentPoint) {
     const upper = at === 'current' ? Number.MAX_SAFE_INTEGER : at
     const row = Option.getOrUndefined(
@@ -1050,6 +1074,7 @@ export class PostgresStorage implements Storage {
   /** Pi src/storage/sqlite/storage.ts:checkDocumentActions. Validate each command
    * before updating live counts; preserve source reads before destination writes.
    * Separate per-record and delta checks only to satisfy complexity lint. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.checkDocumentActions.
   private async checkDocumentActions(
     executor: PostgresExecutor,
     actions: ReadonlyMap<DocumentId, DocumentAction>,
@@ -1079,6 +1104,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi SqliteStorage.checkDocumentActions delta branch, unchanged revision lookup
    * and failures; no document materialization or extra SQL is introduced. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.checkDocumentActions delta branch.
   private async checkDelta(executor: PostgresExecutor, id: DocumentId, action: DocumentAction) {
     if (action.content === undefined || action.content.kind !== 'delta') return
     const previous = Option.getOrUndefined(
@@ -1094,6 +1120,7 @@ export class PostgresStorage implements Storage {
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.currentDocumentId.
    * Detect the single current address incarnation using the reference extracted columns. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.currentDocumentId.
   private async currentDocumentId(
     executor: PostgresExecutor,
     address: DocumentAddress | DocumentCreate | DocumentRecord,
@@ -1205,6 +1232,7 @@ export class PostgresStorage implements Storage {
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.applyDocumentActions.
    * Create/claim before revisions, replace current-only bases before insertion,
    * then retire and remove current-only revisions in the reference statement order. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.applyDocumentActions.
   private async applyDocumentActions(
     executor: PostgresExecutor,
     actions: ReadonlyMap<DocumentId, DocumentAction>,

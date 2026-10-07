@@ -8,7 +8,7 @@ import { turnFailure } from '../respond.ts'
 
 const encodeCursor = Schema.encodeSync(Schema.fromJsonString(Durable.HistoryCursor))
 const decodeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(Durable.TurnBody))
-const decodeLimit = Schema.decodeUnknownEffect(Schema.NumberFromString)
+const decodeLimit = Schema.decodeUnknownEffect(Schema.FiniteFromString)
 const decodeCursor = Schema.decodeUnknownEffect(Schema.fromJsonString(Durable.HistoryCursor), {
   onExcessProperty: 'error',
 })
@@ -76,7 +76,8 @@ const get = Effect.fn('Example.get')(function* (
   })
 })
 
-/** The host runs this Effect at its framework entry; authorization precedes durable access. */
+/** The host runs this Effect at its framework entry; authorization precedes durable access.
+ * TurnStranded belongs to followRun, which this example does not expose. */
 export function chat(
   harness: Harness,
   conversationId: ConversationId,
@@ -91,33 +92,23 @@ export function chat(
     ),
   )
   return response.pipe(
-    Effect.catchTag('TurnRegenerate', (error) =>
-      Effect.succeed(new Response(error.message, { status: 400 })),
-    ),
-    Effect.catchTag('TurnInvalid', (error) =>
-      Effect.succeed(new Response(error.message, { status: 400 })),
-    ),
-    Effect.catchTag('PartUnsupported', () =>
-      Effect.succeed(new Response('Unsupported file; use an inline base64 image', { status: 400 })),
-    ),
-    Effect.catchTag('PartTooLarge', () =>
-      Effect.succeed(new Response('File part too large', { status: 413 })),
-    ),
-    Effect.catchTag('TurnWithdrawn', (error) =>
-      Effect.succeed(new Response(error.message, { status: 409 })),
-    ),
-    Effect.catchTag('TurnConflict', (error) =>
-      Effect.succeed(new Response(error.message, { status: 409 })),
-    ),
-    Effect.catchTag('TurnBusy', (error) =>
-      Effect.succeed(new Response(error.message, { status: 409 })),
-    ),
-    Effect.catchTag('RunMissing', () =>
-      Effect.succeed(new Response('No run made these tool calls', { status: 409 })),
-    ),
-    Effect.catchTag('ConversationMissing', () =>
-      Effect.succeed(new Response('Conversation not found', { status: 404 })),
-    ),
+    Effect.catchTags({
+      TurnRegenerate: (error) => Effect.succeed(new Response(error.message, { status: 400 })),
+      TurnInvalid: (error) => Effect.succeed(new Response(error.message, { status: 400 })),
+      PartUnsupported: () =>
+        Effect.succeed(
+          new Response('Unsupported file; use an inline base64 image', { status: 400 }),
+        ),
+      PartTooLarge: () => Effect.succeed(new Response('File part too large', { status: 413 })),
+      TurnWithdrawn: (error) => Effect.succeed(new Response(error.message, { status: 409 })),
+      TurnConflict: (error) => Effect.succeed(new Response(error.message, { status: 409 })),
+      TurnWaiting: (error) => Effect.succeed(new Response(error.message, { status: 409 })),
+      TurnBusy: (error) => Effect.succeed(new Response(error.message, { status: 409 })),
+      RunMissing: () =>
+        Effect.succeed(new Response('No run made these tool calls', { status: 409 })),
+      ConversationMissing: () =>
+        Effect.succeed(new Response('Conversation not found', { status: 404 })),
+    }),
   )
 }
 

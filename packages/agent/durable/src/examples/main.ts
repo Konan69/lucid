@@ -17,6 +17,7 @@ import {
   HoldIdInvalid,
   RunMissing,
   TurnWithdrawn,
+  TurnWaiting,
   TurnBusy,
   TurnConflict,
   TurnInvalid,
@@ -25,13 +26,16 @@ import {
   PartTooLarge,
 } from '@vivid/durable'
 
-const decodeLimit = Schema.decodeUnknownPromise(Schema.NumberFromString)
+const decodeLimit = Schema.decodeUnknownPromise(Schema.FiniteFromString)
 
 /** The transport statuses group domain failures by what the caller can do next. */
 const refusals = [
   { status: 413, errors: [PartTooLarge] },
   { status: 404, errors: [ConversationMissing] },
-  { status: 409, errors: [CallNotWaiting, RunMissing, TurnWithdrawn, TurnBusy, TurnConflict] },
+  {
+    status: 409,
+    errors: [CallNotWaiting, RunMissing, TurnWithdrawn, TurnWaiting, TurnBusy, TurnConflict],
+  },
   {
     status: 400,
     errors: [
@@ -87,7 +91,7 @@ export function route(
 }
 
 /** The framework's Promise-only ingress owns body/query reads and delegates durable work. */
-async function dispatch(
+function dispatch(
   harness: Harness,
   conversationId: ConversationId,
   request: Request,
@@ -108,31 +112,35 @@ async function dispatch(
     )
   if (path === '/history' && request.method === 'GET') {
     const text = url.searchParams.get('limit')
-    const limit = text === null ? 50 : await decodeLimit(text)
-    const before = url.searchParams.get('before')
-    const page = before === null ? { limit } : { limit, before }
-    return Response.json(await history(harness, conversationId, page, context))
+    return (text === null ? Promise.resolve(50) : decodeLimit(text)).then((limit) => {
+      const before = url.searchParams.get('before')
+      const page = before === null ? { limit } : { limit, before }
+      return history(harness, conversationId, page, context).then((result) => Response.json(result))
+    })
   }
   if (path === '/waiting' && request.method === 'GET')
-    return Response.json(await waiting(harness, conversationId, context))
+    return waiting(harness, conversationId, context).then((result) => Response.json(result))
   if (request.method !== 'POST')
-    return new Response(null, { status: 405, headers: { Allow: 'POST' } })
-  if (path === '/abort') {
-    await abort(harness, conversationId, context)
-    return new Response(null, { status: 204 })
-  }
-  if (path === '/decide') {
-    const body = await decodeDecision(await request.text())
-    const decision = { ...body, holdId: holdId(body.holdId) }
-    return Response.json(await decide(harness, conversationId, decision, context))
-  }
-  if (path === '/answer') {
-    const body = await decodeAnswer(await request.text())
-    const output = { ...body, holdId: holdId(body.holdId) }
-    const delivered = await answer(harness, conversationId, output, context)
-    return Response.json(delivered)
-  }
-  return new Response(null, { status: 404 })
+    return Promise.resolve(new Response(null, { status: 405, headers: { Allow: 'POST' } }))
+  if (path === '/abort')
+    return abort(harness, conversationId, context).then(() => new Response(null, { status: 204 }))
+  if (path === '/decide')
+    return request
+      .text()
+      .then(decodeDecision)
+      .then((body) =>
+        decide(harness, conversationId, { ...body, holdId: holdId(body.holdId) }, context),
+      )
+      .then((result) => Response.json(result))
+  if (path === '/answer')
+    return request
+      .text()
+      .then(decodeAnswer)
+      .then((body) =>
+        answer(harness, conversationId, { ...body, holdId: holdId(body.holdId) }, context),
+      )
+      .then((result) => Response.json(result))
+  return Promise.resolve(new Response(null, { status: 404 }))
 }
 
 /** Node HTTP/CLI callbacks are Promise-only framework entry points. This runtime entry executes

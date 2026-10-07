@@ -7,14 +7,15 @@ const Model = Schema.Struct({
   modelId: Schema.String,
   responseModel: Schema.optionalKey(Schema.String),
 })
+/** Provider token counts are finite; JSON cannot retain NaN or infinities. */
 const Tokens = Schema.Struct({
-  input: Schema.Number,
-  output: Schema.Number,
-  cacheRead: Schema.Number,
-  cacheWrite: Schema.Number,
-  totalTokens: Schema.Number,
-  cacheWrite1h: Schema.optionalKey(Schema.Number),
-  reasoning: Schema.optionalKey(Schema.Number),
+  input: Schema.Finite,
+  output: Schema.Finite,
+  cacheRead: Schema.Finite,
+  cacheWrite: Schema.Finite,
+  totalTokens: Schema.Finite,
+  cacheWrite1h: Schema.optionalKey(Schema.Finite),
+  reasoning: Schema.optionalKey(Schema.Finite),
 })
 
 /**
