@@ -1,10 +1,10 @@
 import type * as DurableErrors from './errors.ts'
 import { copyJson, type Context, type JsonValue } from '@earendil-works/chord'
 import type { Conversation, Harness } from '@earendil-works/pi-durable'
-import { Effect, Option, Predicate } from 'effect'
+import { Effect, Option, Predicate, Schema } from 'effect'
 import { Delivery, copyQuestion, type Question } from './delivery.ts'
-import { type HoldId, CallNotWaiting } from './errors.ts'
-import { holdIdOf, Holds, type Answer, type Settlement } from './holds.ts'
+import { type HoldId, CallNotWaiting, ToolOutputFailed } from './errors.ts'
+import { holdIdOf, Holds, planOf, type Answer, type Settlement } from './holds.ts'
 import * as Pi from './pi.ts'
 
 /** A recorded submission must exist in the same durable authority that admitted it. */
@@ -136,8 +136,55 @@ const finish = Effect.fn('Durable.finishAnswer')(function* (
 const answerText = (name: string, output: JsonValue) =>
   `[answer to ${name}] ${Predicate.isString(output) ? output : JSON.stringify(output)}`
 
+const decodeLateInput = Schema.decodeUnknownEffect(Schema.Struct({ input: Schema.MutableJson }))
+
+/** The question retains Pi-validated arguments for SDK transformations, independently of compaction.
+ * Old questions without projection metadata fail explicitly rather than inventing input for a converter. */
+const lateInput = Effect.fn('Durable.lateAnswerInput')(function* (
+  harness: Harness,
+  conversation: Conversation,
+  question: Question,
+  context: Context,
+) {
+  const holds = yield* Pi.snapshot(harness, Holds, conversation.id, context)
+  const recorded = Option.flatMapNullishOr(
+    holds,
+    (document) => document.asked[holdIdOf(question.taskId)],
+  )
+  const decoded = yield* decodeLateInput(Option.getOrUndefined(recorded)).pipe(
+    Effect.mapError((cause) => new ToolOutputFailed({ toolName: question.toolName, cause })),
+  )
+  return decoded.input
+})
+
+/** Preserve plain late-answer messages; use the composed registration's projection when one exists. */
+const answerContent = Effect.fn('Durable.lateAnswerContent')(function* (
+  harness: Harness,
+  conversation: Conversation,
+  input: { question: Question; output: JsonValue },
+  context: Context,
+) {
+  const agent = yield* Pi.agent(conversation, context)
+  const registered = Option.fromNullishOr(
+    agent.tools.find((tool) => tool.name === input.question.toolName),
+  )
+  const project = registered.pipe(
+    Option.flatMap(planOf),
+    Option.flatMap((plan) => plan.lateOutput),
+  )
+  if (Option.isNone(project)) return answerText(input.question.toolName, input.output)
+  const parsed = yield* lateInput(harness, conversation, input.question, context)
+  const content = yield* project.value({
+    input: parsed,
+    output: input.output,
+    toolCallId: input.question.callId,
+  })
+  return [{ type: 'text' as const, text: `[answer to ${input.question.toolName}] ` }, ...content]
+})
+
 /** Persist the actual admission receipt without deleting an unplaced question. */
 const admit = Effect.fn('Durable.admitAnswer')(function* (
+  harness: Harness,
   conversation: Conversation,
   input: {
     readonly given: Answer
@@ -146,11 +193,17 @@ const admit = Effect.fn('Durable.admitAnswer')(function* (
   },
   context: Context,
 ) {
+  const content = yield* answerContent(
+    harness,
+    conversation,
+    { question: input.question, output: input.delivery.output },
+    context,
+  )
   const submitted = yield* Pi.submit(
     conversation,
     {
       type: 'input',
-      content: answerText(input.question.toolName, input.delivery.output),
+      content,
       requestId: `answer:${input.given.holdId}:${input.delivery.attempt}`,
       whenBusy: 'followUp',
     },
@@ -187,51 +240,50 @@ export const deliver: (
   conversation: Conversation,
   given: Answer,
   context: Context,
-) => Effect.Effect<Settlement, CallNotWaiting | DurableErrors.PiFailed> = Effect.fn(
-  'Durable.deliverAnswer',
-)(function* (
-  harness: Harness,
-  conversation: Conversation,
-  given: Answer,
-  context: Context,
-): Effect.fn.Return<Settlement, DurableErrors.PiFailed | CallNotWaiting> {
-  const holds = yield* Pi.snapshot(harness, Holds, conversation.id, context)
-  const question = Option.flatMapNullishOr(holds, (document) => document.asked[given.holdId])
-  if (Option.isNone(question)) {
-    const recorded = Option.flatMapNullishOr(holds, (document) => document.settled[given.holdId])
-    if (Option.isSome(recorded) && recorded.value.settlement.kind === 'answered')
-      return { kind: 'answered', output: copyJson(recorded.value.settlement.output) }
-    return yield* new CallNotWaiting({ conversationId: conversation.id, holdId: given.holdId })
-  }
-  let withdrawn = Option.none<number>()
-  if (Delivery.guards.Submitted(question.value.delivery)) {
-    const delivered = question.value.delivery
-    const status = yield* receipt(harness, delivered, context)
-    if (status.entry !== undefined) {
-      yield* finish(conversation, { holdId: given.holdId, delivery: delivered }, context)
-      return { kind: 'answered', output: copyJson(delivered.output) }
+) => Effect.Effect<Settlement, CallNotWaiting | DurableErrors.PiFailed | ToolOutputFailed> =
+  Effect.fn('Durable.deliverAnswer')(function* (
+    harness: Harness,
+    conversation: Conversation,
+    given: Answer,
+    context: Context,
+  ): Effect.fn.Return<Settlement, DurableErrors.PiFailed | CallNotWaiting | ToolOutputFailed> {
+    const holds = yield* Pi.snapshot(harness, Holds, conversation.id, context)
+    const question = Option.flatMapNullishOr(holds, (document) => document.asked[given.holdId])
+    if (Option.isNone(question)) {
+      const recorded = Option.flatMapNullishOr(holds, (document) => document.settled[given.holdId])
+      if (Option.isSome(recorded) && recorded.value.settlement.kind === 'answered')
+        return { kind: 'answered', output: copyJson(recorded.value.settlement.output) }
+      return yield* new CallNotWaiting({ conversationId: conversation.id, holdId: given.holdId })
     }
-    if (status.status !== 'unanswered')
-      return { kind: 'answered', output: copyJson(delivered.output) }
-    withdrawn = Option.some(delivered.attempt)
-  }
-  const reserved = yield* reserve(conversation, { given, withdrawn }, context)
-  if (Option.isNone(reserved)) return yield* deliver(harness, conversation, given, context)
-  return yield* Delivery.match(reserved.value.delivery, {
-    Open: () =>
-      Effect.sync((): Settlement => {
-        throw new Error('Answer reservation did not reserve output')
-      }),
-    Submitted: () => deliver(harness, conversation, given, context),
-    Reserved: (delivery) =>
-      deliverReserved(
-        harness,
-        conversation,
-        { given, question: reserved.value, delivery },
-        context,
-      ),
+    let withdrawn = Option.none<number>()
+    if (Delivery.guards.Submitted(question.value.delivery)) {
+      const delivered = question.value.delivery
+      const status = yield* receipt(harness, delivered, context)
+      if (status.entry !== undefined) {
+        yield* finish(conversation, { holdId: given.holdId, delivery: delivered }, context)
+        return { kind: 'answered', output: copyJson(delivered.output) }
+      }
+      if (status.status !== 'unanswered')
+        return { kind: 'answered', output: copyJson(delivered.output) }
+      withdrawn = Option.some(delivered.attempt)
+    }
+    const reserved = yield* reserve(conversation, { given, withdrawn }, context)
+    if (Option.isNone(reserved)) return yield* deliver(harness, conversation, given, context)
+    return yield* Delivery.match(reserved.value.delivery, {
+      Open: () =>
+        Effect.sync((): Settlement => {
+          throw new Error('Answer reservation did not reserve output')
+        }),
+      Submitted: () => deliver(harness, conversation, given, context),
+      Reserved: (delivery) =>
+        deliverReserved(
+          harness,
+          conversation,
+          { given, question: reserved.value, delivery },
+          context,
+        ),
+    })
   })
-})
 
 /** Admission can race an abort: an already-withdrawn receipt retries from the newly persisted attempt. */
 const deliverReserved = Effect.fn('Durable.deliverReserved')(function* (
@@ -243,8 +295,8 @@ const deliverReserved = Effect.fn('Durable.deliverReserved')(function* (
     readonly delivery: typeof Delivery.cases.Reserved.Type
   },
   context: Context,
-): Effect.fn.Return<Settlement, DurableErrors.PiFailed | CallNotWaiting> {
-  const submitted = yield* admit(conversation, input, context)
+): Effect.fn.Return<Settlement, DurableErrors.PiFailed | CallNotWaiting | ToolOutputFailed> {
+  const submitted = yield* admit(harness, conversation, input, context)
   const status = yield* receipt(harness, submitted, context)
   if (status.entry !== undefined)
     yield* finish(conversation, { holdId: input.given.holdId, delivery: submitted }, context)

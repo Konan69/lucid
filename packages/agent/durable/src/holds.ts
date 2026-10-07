@@ -12,7 +12,7 @@ import {
   type ToolSlot,
   type ToolRegistration,
 } from '@earendil-works/pi-durable'
-import type { Message } from '@earendil-works/pi-ai'
+import type { Message, TextContent, ImageContent } from '@earendil-works/pi-ai'
 import { Deferred, Effect, Match, Option, Predicate, Schema } from 'effect'
 
 import * as Pi from './pi.ts'
@@ -47,7 +47,8 @@ export type Settled = { taskId: TaskId; callId: string; settlement: Settlement }
  */
 export const Holds = defineDoc<{
   settled: Record<string, Settled>
-  asked: Record<string, Question>
+  // Older questions predate late projection; only those legitimately lack the retained SDK input.
+  asked: Record<string, Question & { readonly input?: JsonValue }>
 }>({
   kind: 'durable.holds',
   version: 5,
@@ -321,6 +322,14 @@ export type Plan = {
   /** SDK identity and display metadata follow the registration through Pi's wrappers. */
   readonly dynamic: boolean
   readonly title: Option.Option<string>
+  /** A late answer is user input, but its content still comes from the SDK's model projection. */
+  readonly lateOutput: Option.Option<
+    (args: {
+      readonly input: JsonValue
+      readonly output: JsonValue
+      readonly toolCallId: string
+    }) => Effect.Effect<(TextContent | ImageContent)[], DurableErrors.ToolOutputFailed>
+  >
   readonly source: Source
 }
 
@@ -551,7 +560,10 @@ export const answer: (
   context: Context,
 ) => Effect.Effect<
   Settlement,
-  CallNotWaiting | DurableErrors.ConversationMissing | DurableErrors.PiFailed
+  | CallNotWaiting
+  | DurableErrors.ConversationMissing
+  | DurableErrors.PiFailed
+  | DurableErrors.ToolOutputFailed
 > = Effect.fn('Durable.answer')(function* (
   harness: Harness,
   conversationId: ConversationId,

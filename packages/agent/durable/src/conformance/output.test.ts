@@ -461,9 +461,94 @@ it.live('keeps later acknowledgements out of toModelOutput and admits the later 
     await received.promise
     expect(model.at(-1)).toMatchObject({
       role: 'user',
-      content: '[answer to ask] {"answer":"yes"}',
+      content: [
+        { type: 'text', text: '[answer to ask] ' },
+        { type: 'text', text: 'YES' },
+      ],
     })
-    expect(converted).toEqual([])
+    expect(converted).toEqual([{ answer: 'yes' }])
     expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
+  }),
+)
+
+/** Late projections reconstruct parsed input after reopen, retain original JSON receipts and admit pictures. */
+it.live('projects a real later answer after reopening the host', () =>
+  Effect.promise(async () => {
+    const converted: {
+      toolCallId: string
+      input: { question: string }
+      output: { answer: string }
+    }[] = []
+    const fixture = await host(
+      {
+        ask: tool({
+          inputSchema: z.object({ question: z.string().transform((value) => value.toUpperCase()) }),
+          outputSchema: z.object({ answer: z.string() }),
+          toModelOutput: (args) => {
+            converted.push(args)
+            return {
+              type: 'content',
+              value: [
+                { type: 'text', text: args.output.answer },
+                { type: 'image-data', data, mediaType: 'image/png' },
+              ],
+            }
+          },
+        }),
+      },
+      { answers: { ask: 'later' } },
+    )
+    const opened = await fixture.open()
+    opened.faux.setResponses([
+      call('ask', { question: 'which?' }, 'later'),
+      fauxAssistantMessage('Continue.'),
+    ])
+    const chat = new PlainChat({ transport: opened.transport })
+    await chat.sendMessage({ text: 'Ask' })
+    await opened.root.waitForIdle(context)
+    expect(converted).toEqual([])
+    const rows = await waiting(opened.harness, opened.root.id, context)
+    const row = rows[0]
+    if (row === undefined) throw new Error('Expected later question')
+    await fixture.close(opened.harness)
+    const reopened = await fixture.open()
+    const received = signal()
+    let model: readonly Message[] = []
+    reopened.faux.setResponses([
+      (request) => {
+        model = request.messages
+        received.resolve()
+        return fauxAssistantMessage('Picture received.')
+      },
+    ])
+    const given = { holdId: row.holdId, output: { answer: 'Savings' } }
+    expect(await answer(reopened.harness, reopened.root.id, given, context)).toEqual({
+      kind: 'answered',
+      output: given.output,
+    })
+    await received.promise
+    expect(converted).toEqual([
+      { toolCallId: 'later', input: { question: 'WHICH?' }, output: { answer: 'Savings' } },
+    ])
+    expect(model.at(-1)).toMatchObject({
+      role: 'user',
+      content: [
+        { type: 'text', text: '[answer to ask] ' },
+        { type: 'text', text: 'Savings' },
+        image,
+      ],
+    })
+    await reopened.root.waitForIdle(context)
+    expect(await answer(reopened.harness, reopened.root.id, given, context)).toEqual({
+      kind: 'answered',
+      output: given.output,
+    })
+    expect(converted).toHaveLength(1)
+    const saved = await history(reopened.harness, reopened.root.id, { limit: 10 }, context)
+    expect(saved.messages.flatMap((message) => message.parts)).toContainEqual({
+      type: 'file',
+      mediaType: 'image/png',
+      url: `data:image/png;base64,${data}`,
+    })
   }),
 )

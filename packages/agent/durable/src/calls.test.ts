@@ -25,6 +25,7 @@ const desk: Desk = {
       execution: 'parallel',
       dynamic: false,
       title: Option.none(),
+      lateOutput: Option.none(),
     }),
   call: ready,
   origin: () => Option.none(),

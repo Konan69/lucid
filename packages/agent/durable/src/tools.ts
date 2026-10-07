@@ -95,6 +95,7 @@ type Program = (
   ToolContextFailed | ToolFailed | ToolOutputFailed | PiFailed
 >
 
+const decodeInputJson = Schema.decodeUnknownEffect(Schema.MutableJson)
 const decodeJsonText = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.MutableJson))
 
 /** SDK execute is an untyped ingress; recognize its async-iterator protocol before JSON encoding. */
@@ -361,7 +362,12 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
       })
     },
     Wait: () => answered(server.name, api, context),
-    Later: () => asked(server.name, api, context),
+    // Retain JSON before SDK transforms, which can produce non-JSON values such as Dates.
+    Later: () =>
+      decodeInputJson(input).pipe(
+        Effect.mapError((cause) => new ToolOutputFailed({ toolName: server.name, cause })),
+        Effect.flatMap((json) => asked({ name: server.name, input: json }, api, context)),
+      ),
   })
   // Execute, iterator pulls and model conversion share the classified SDK ingress. Each pending
   // pull owns cancellation cleanup, with no awaited operation between pulls or after exhaustion.
@@ -385,29 +391,39 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
   const output = yield* isAsyncOutput(executed) ? iterate(executed) : Effect.succeed(executed)
   const encoded = yield* serializedOutput(output, server.name)
   // Later acknowledges an open question; answers.ts admits its real answer as separate user input.
-  if (Execution.$is('Later')(server.execution) || Option.isNone(server.toModelOutput))
-    return result(encoded)
-  // ai/src/prompt/create-tool-model-output.ts:32–33 passes the validated input and original output.
-  const convert = server.toModelOutput.value
+  if (Execution.$is('Later')(server.execution)) return result(encoded)
+  if (Option.isNone(server.toModelOutput)) return result(encoded)
+  const content = yield* executeForSdk(server.name, server.toModelOutput.value, {
+    toolCallId: api.callId,
+    input: checked.value,
+    output,
+  })
+  return { content, details: { output: encoded.output } }
+})
+
+/** Share the existing SDK projection ingress between ordinary results and late person answers.
+ * ai/src/prompt/create-tool-model-output.ts:32–33 passes the call id, parsed input and original output. */
+const executeForSdk = Effect.fn('Durable.projectToolOutput')(function* (
+  name: string,
+  convert: NonNullable<Tool<unknown, unknown, unknown>['toModelOutput']>,
+  args: Parameters<NonNullable<Tool<unknown, unknown, unknown>['toModelOutput']>>[0],
+) {
   const model = yield* Effect.tryPromise({
-    try: async function executeForSdk() {
-      return convert({ toolCallId: api.callId, input: checked.value, output })
-    },
-    catch: (cause) => new ToolOutputFailed({ toolName: server.name, cause }),
+    try: async () => convert(args),
+    catch: (cause) => new ToolOutputFailed({ toolName: name, cause }),
   })
   const projected = yield* decodeModelOutput(model).pipe(
     Effect.mapError(
       () =>
         new ToolOutputFailed({
-          toolName: server.name,
+          toolName: name,
           cause: new Error(
-            `Tool ${server.name} model output is unsupported; use text, JSON or inline PNG, JPEG, GIF or WebP data`,
+            'Model output is unsupported; use text, JSON or inline PNG, JPEG, GIF or WebP data',
           ),
         }),
     ),
   )
-  const content = yield* modelContent(projected, server.name)
-  return { content, details: { output: encoded.output } }
+  return yield* modelContent(projected, name)
 })
 
 /** A wait hook has already received the durable answer before this tool begins. */
@@ -437,7 +453,7 @@ const answered = Effect.fn('Durable.answeredTool')(function* (
 
 /** Persist the open question before returning; the later answer is submitted separately and deduplicated. */
 const asked = Effect.fn('Durable.askedTool')(function* (
-  name: string,
+  question: { readonly name: string; readonly input: JsonValue },
   api: ToolExecutionApi,
   context: Context,
 ) {
@@ -453,7 +469,8 @@ const asked = Effect.fn('Durable.askedTool')(function* (
         document.asked[holdId] = {
           taskId: api.taskId,
           callId: api.callId,
-          toolName: name,
+          toolName: question.name,
+          input: copyJson(question.input),
           delivery: Delivery.cases.Open.make({}),
         }
       },
@@ -530,6 +547,28 @@ function approvalForTool(
   }
 }
 
+/** A completed later call retains its Pi-validated JSON; revalidate it to reconstruct SDK transforms. */
+function lateProjection(server: Server): Plan['lateOutput'] {
+  return Option.map(server.toModelOutput, (convert) =>
+    Effect.fn('Durable.projectLateAnswer')(function* (args: {
+      input: JsonValue
+      output: JsonValue
+      toolCallId: string
+    }) {
+      const checked = yield* validate(server.schema, args.input, server.name).pipe(
+        Effect.mapError((cause) => new ToolOutputFailed({ toolName: server.name, cause })),
+      )
+      if (!checked.success)
+        return yield* new ToolOutputFailed({ toolName: server.name, cause: checked.error })
+      return yield* executeForSdk(server.name, convert, {
+        toolCallId: args.toolCallId,
+        input: checked.value,
+        output: args.output,
+      })
+    }),
+  )
+}
+
 /** Keep the execute/answer distinction explicit rather than assembling partially executable tools. */
 function executionForTool(tool: Tool, source: Source): Execution {
   if (tool.execute !== undefined) return Execution.Server({ execute: tool.execute.bind(tool) })
@@ -563,6 +602,7 @@ function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
       execution: lookups.execution,
       dynamic: tool.type === 'dynamic',
       title: Option.fromNullishOr(tool.title),
+      lateOutput: lateProjection(server),
     },
     executionMode,
     replay:
