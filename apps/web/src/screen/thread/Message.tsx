@@ -28,8 +28,8 @@ import { Display } from './Shown'
 import { Doing, doingIn, Trail, type ToolPart } from './Trail'
 
 const Metadata = Schema.Struct({
-  finishedAt: Schema.optionalKey(Schema.Number),
-  startedAt: Schema.optionalKey(Schema.Number),
+  finishedAt: Schema.optionalKey(Schema.Finite),
+  startedAt: Schema.optionalKey(Schema.Finite),
 })
 const decodeMetadata = Schema.decodeUnknownOption(Metadata)
 

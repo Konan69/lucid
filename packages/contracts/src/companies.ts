@@ -132,7 +132,7 @@ export const Member = Schema.Struct({
   person: PersonSummary,
   email: Schema.String,
   role: Role,
-  joinedAt: Schema.Number,
+  joinedAt: Schema.Finite,
 }).annotate({ identifier: 'Member', title: 'Member' })
 export interface Member extends Schema.Schema.Type<typeof Member> {}
 
@@ -143,7 +143,7 @@ export const Invitation = Schema.Struct({
   role: Role,
   status: InvitationStatus,
   invitedBy: PersonSummary,
-  expiresAt: Schema.Number,
+  expiresAt: Schema.Finite,
 }).annotate({ identifier: 'Invitation', title: 'Invitation' })
 export interface Invitation extends Schema.Schema.Type<typeof Invitation> {}
 

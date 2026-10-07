@@ -107,7 +107,7 @@ function versionOf(row: typeof VersionRow.Type): ArtifactVersion {
 const find = Effect.fn('Artifacts.find')(function* (id: ArtifactId) {
   const database = yield* Database
   const [row] = yield* database.run(database.select().from(artifacts).where(eq(artifacts.id, id)))
-  if (row === undefined) return yield* Effect.fail(new NotFound({ message: 'Artifact not found' }))
+  if (row === undefined) return yield* new NotFound({ message: 'Artifact not found' })
   return yield* decodeArtifact(row)
 })
 
@@ -122,7 +122,7 @@ const lock = Effect.fn('Artifacts.lock')(function* (
     .from(threads)
     .where(eq(threads.id, threadId))
     .for('update')
-  if (row === undefined) return yield* Effect.fail(new NotFound({ message: 'Thread not found' }))
+  if (row === undefined) return yield* new NotFound({ message: 'Thread not found' })
   return yield* requireThread(threadId, personId)
 })
 
@@ -203,10 +203,10 @@ const workingRun = Effect.fn('Artifacts.workingRun')(function* (
     .limit(2)
     .for('update')
   if (working.length > 1)
-    return yield* Effect.fail(new Conflict({ message: 'The Thread has more than one working Run' }))
+    return yield* new Conflict({ message: 'The Thread has more than one working Run' })
   const [run] = working
   if (run === undefined || run.personId !== personId)
-    return yield* Effect.fail(new NotFound({ message: 'Working Run not found' }))
+    return yield* new NotFound({ message: 'Working Run not found' })
   return (yield* decodeRun(run)).id
 })
 
@@ -244,9 +244,7 @@ const write = Effect.fn('Artifacts.write')(function* (
           ),
         )
       if (latest === undefined)
-        return yield* Effect.fail(
-          new DatabaseFailure({ message: 'Newest Artifact version is missing' }),
-        )
+        return yield* new DatabaseFailure({ message: 'Newest Artifact version is missing' })
       const version = yield* decodeVersion(latest)
       if (version.body === request.body) return { artifact, created: false, changed: false }
       const revised = yield* append(tx, artifact, {
@@ -278,7 +276,7 @@ const revise = Effect.fn('Artifacts.revise')(function* (
       yield* lock(tx, initial.threadId, person.id)
       const current = yield* find(request.id)
       if (current.version !== request.from)
-        return yield* Effect.fail(new ArtifactChanged({ id: current.id, version: current.version }))
+        return yield* new ArtifactChanged({ id: current.id, version: current.version })
       return yield* append(tx, current, {
         body: request.body,
         note: Option.fromUndefinedOr(request.note),
@@ -299,9 +297,7 @@ const remove = Effect.fn('Artifacts.remove')(function* (personId: PersonId, id: 
       const thread = yield* lock(tx, initial.threadId, personId)
       if (thread.personId !== personId) {
         if (thread.companyId === null)
-          return yield* Effect.fail(
-            new Forbidden({ message: 'Only the Thread owner can remove an Artifact' }),
-          )
+          return yield* new Forbidden({ message: 'Only the Thread owner can remove an Artifact' })
         const [membership] = yield* tx
           .select({ role: membershipTable.role })
           .from(membershipTable)
@@ -312,18 +308,15 @@ const remove = Effect.fn('Artifacts.remove')(function* (personId: PersonId, id: 
             ),
           )
         if (membership === undefined || !isAdmin(yield* decodeRole(membership.role)))
-          return yield* Effect.fail(
-            new Forbidden({
-              message: 'Only the Thread owner or a Company admin can remove an Artifact',
-            }),
-          )
+          return yield* new Forbidden({
+            message: 'Only the Thread owner or a Company admin can remove an Artifact',
+          })
       }
       const deleted = yield* tx
         .delete(artifacts)
         .where(eq(artifacts.id, id))
         .returning({ id: artifacts.id })
-      if (deleted.length === 0)
-        return yield* Effect.fail(new NotFound({ message: 'Artifact not found' }))
+      if (deleted.length === 0) return yield* new NotFound({ message: 'Artifact not found' })
       return undefined
     }),
   )
@@ -343,8 +336,7 @@ const loadDetail = Effect.fn('Artifacts.detail')(function* (
     .orderBy(desc(artifactVersions.number))
   const versions = yield* Effect.forEach(rows, decodeVersion)
   const shown = versions.find((version) => version.number === number)
-  if (shown === undefined)
-    return yield* Effect.fail(new NotFound({ message: 'Artifact version not found' }))
+  if (shown === undefined) return yield* new NotFound({ message: 'Artifact version not found' })
   return ArtifactDetail.make({
     artifact,
     shown: versionOf(shown),

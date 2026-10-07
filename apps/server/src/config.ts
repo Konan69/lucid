@@ -134,12 +134,10 @@ const loadDatabaseUrl = Effect.fn('ServerConfig.loadDatabaseUrl')(function* () {
     catch: () => configError('DATABASE_URL', 'a PostgreSQL connection URL'),
   })
   if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') {
-    return yield* Effect.fail(configError('DATABASE_URL', 'a PostgreSQL connection URL'))
+    return yield* configError('DATABASE_URL', 'a PostgreSQL connection URL')
   }
   if (parsed.hostname.length === 0) {
-    return yield* Effect.fail(
-      configError('DATABASE_URL', 'a PostgreSQL connection URL with a host'),
-    )
+    return yield* configError('DATABASE_URL', 'a PostgreSQL connection URL with a host')
   }
   return value
 })
@@ -186,20 +184,14 @@ const loadObservability = Effect.fn('ServerConfig.loadObservability')(function* 
   const headers = yield* optionalSetting('VIVID_OTLP_HEADERS', secret, 'name=value pairs')
   if (Option.isNone(url) && Option.isNone(headers)) return ObservabilityConfiguration.Disabled()
   if (Option.isNone(url)) {
-    return yield* Effect.fail(
-      configError('VIVID_OTLP_URL', 'an absolute URL when VIVID_OTLP_HEADERS is set'),
-    )
+    return yield* configError('VIVID_OTLP_URL', 'an absolute URL when VIVID_OTLP_HEADERS is set')
   }
   if (Option.isNone(headers)) {
-    return yield* Effect.fail(
-      configError('VIVID_OTLP_HEADERS', 'present when VIVID_OTLP_URL is set'),
-    )
+    return yield* configError('VIVID_OTLP_HEADERS', 'present when VIVID_OTLP_URL is set')
   }
   const parsed = parseHeaders(Redacted.value(headers.value))
   if (Option.isNone(parsed)) {
-    return yield* Effect.fail(
-      configError('VIVID_OTLP_HEADERS', 'name=value pairs separated by commas'),
-    )
+    return yield* configError('VIVID_OTLP_HEADERS', 'name=value pairs separated by commas')
   }
   // `infra/railway.ts` fills both from Railway's own variables. Railway names a commit only for a
   // deployment built from one, and a reference to a variable it did not set arrives as an empty

@@ -76,7 +76,7 @@ export const LoopbackPort = Schema.Int.check(
 export type LoopbackPort = typeof LoopbackPort.Type
 
 /** The same port as an address carries it: text that reads as that number. */
-const LoopbackPortFromText = Schema.NumberFromString.pipe(Schema.decodeTo(LoopbackPort))
+const LoopbackPortFromText = Schema.FiniteFromString.pipe(Schema.decodeTo(LoopbackPort))
 
 /** Where each step is served, under the server's own origin. */
 export const SIGN_IN_PLACES = {

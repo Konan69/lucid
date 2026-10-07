@@ -77,7 +77,7 @@ export interface CodeCall extends Schema.Schema.Type<typeof CodeCall> {}
 export const CodeFailure = Schema.TaggedUnion({
   /** The program is not valid JavaScript, or threw. `message` is the error's own, bounded. */
   Threw: { message: Schema.String },
-  TimedOut: { seconds: Schema.Number },
+  TimedOut: { seconds: Schema.Finite },
   /** It used more memory, made more calls or returned more than a program may. */
   OverLimit: { limit: Schema.Literals(['memory', 'calls', 'data', 'result'] as const) },
   /** The Person's Computer could not run the program, or stopped carrying it: it did not start,

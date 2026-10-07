@@ -71,8 +71,8 @@ const columns = {
   id: ComputerId,
   personId: PersonId,
   machine: MachineKey,
-  since: Schema.Number,
-  lastActivityAt: Schema.Number,
+  since: Schema.Finite,
+  lastActivityAt: Schema.Finite,
   held: Schema.Boolean,
 }
 const Stored = Schema.Union([
@@ -689,8 +689,7 @@ const prepare = Effect.fn('ComputerStore.prepare')(
     const ended = yield* Fiber.await(worker)
     // The start this action waited for found no machine free. The record only says "stopped",
     // so the action is refused with the provider's own reason, and the next one asks again.
-    if (Exit.isSuccess(ended) && Option.isSome(ended.value))
-      return yield* Effect.fail(ended.value.value)
+    if (Exit.isSuccess(ended) && Option.isSome(ended.value)) return yield* ended.value.value
   },
   (effect, _state, person) =>
     effect.pipe(
@@ -705,20 +704,19 @@ const requireReady = Effect.fn('ComputerStore.requireReady')(function* (
   person: PersonId,
 ) {
   const { computer, outage } = yield* state.observe(person)
-  if (computer.heldByPerson) return yield* Effect.fail(new ComputerHeld({ person }))
+  if (computer.heldByPerson) return yield* new ComputerHeld({ person })
   // The provider could not be asked: the action is refused with the provider's own failure,
   // before anything is dispatched, and the next action asks again.
-  if (Option.isSome(outage)) return yield* Effect.fail(outage.value)
+  if (Option.isSome(outage)) return yield* outage.value
   if (MachineState.guards.Failed(computer.state))
-    return yield* Effect.fail(new ComputerStartFailed({ person, reason: computer.state.reason }))
+    return yield* new ComputerStartFailed({ person, reason: computer.state.reason })
   const ready = accessTo(computer, computerMachineKey(person))
   if (ComputerAccess.guards.Unavailable(ready))
-    return yield* Effect.fail(new ComputerNotReady({ reason: ready.reason }))
+    return yield* new ComputerNotReady({ reason: ready.reason })
   const row = yield* state.rows.load(person)
-  if (Option.isNone(row))
-    return yield* Effect.fail(new ComputerNotReady({ reason: 'The Computer is absent.' }))
+  if (Option.isNone(row)) return yield* new ComputerNotReady({ reason: 'The Computer is absent.' })
   // Provider observation can await I/O while takeover commits; use the latest durable hold before dispatch.
-  if (row.value.held) return yield* Effect.fail(new ComputerHeld({ person }))
+  if (row.value.held) return yield* new ComputerHeld({ person })
   return row.value.machine
 })
 

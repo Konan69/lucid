@@ -142,14 +142,14 @@ export function scrollDelta(direction: keyof typeof SCROLL_UNITS, notches: numbe
 const ContentQuads = Schema.Struct({
   quads: Schema.NonEmptyArray(
     Schema.Tuple([
-      Schema.Number,
-      Schema.Number,
-      Schema.Number,
-      Schema.Number,
-      Schema.Number,
-      Schema.Number,
-      Schema.Number,
-      Schema.Number,
+      Schema.Finite,
+      Schema.Finite,
+      Schema.Finite,
+      Schema.Finite,
+      Schema.Finite,
+      Schema.Finite,
+      Schema.Finite,
+      Schema.Finite,
     ]),
   ),
 })
@@ -164,7 +164,7 @@ const decodeTree = Schema.decodeUnknownEffect(AccessibilityTree)
 const decodeQuads = Schema.decodeUnknownEffect(ContentQuads)
 const decodeNode = Schema.decodeUnknownEffect(ResolvedNode)
 const decodeViewport = Schema.decodeUnknownEffect(
-  evaluated(Schema.Struct({ width: Schema.Number, height: Schema.Number })),
+  evaluated(Schema.Struct({ width: Schema.Finite, height: Schema.Finite })),
 )
 const decodeTyped = Schema.decodeUnknownEffect(
   evaluated(Schema.Literals(['ok', 'notEditable', 'different'] as const)),

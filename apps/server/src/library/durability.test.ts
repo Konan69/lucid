@@ -172,7 +172,7 @@ describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () 
                 new TextEncoder().encode('abandoned quartz'),
                 'text/plain',
               )
-              return yield* Effect.fail(new IngestionAbandoned({ itemId: item.document.id }))
+              return yield* new IngestionAbandoned({ itemId: item.document.id })
             }),
           )
           .pipe(Effect.flip)

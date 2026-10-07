@@ -158,7 +158,7 @@ const AppEntry = Schema.Struct({
 })
 const WindowEntry = Schema.Struct({
   app: Schema.String,
-  id: Schema.Number,
+  id: Schema.Finite,
   title: Schema.optionalKey(Schema.String),
 })
 const State = Schema.Struct({
@@ -166,8 +166,8 @@ const State = Schema.Struct({
     Schema.Struct({
       id: Schema.String,
       url: Schema.String,
-      width: Schema.Number,
-      height: Schema.Number,
+      width: Schema.Finite,
+      height: Schema.Finite,
     }),
   ),
   accessibility: Schema.Struct({ tree: Schema.String }),

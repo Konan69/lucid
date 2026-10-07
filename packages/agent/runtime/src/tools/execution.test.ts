@@ -57,7 +57,7 @@ describe('scoped tool execution', () => {
           const answer = Effect.fn('Test.Library.reply')(function* () {
             const request = yield* Queue.take(requests)
             if (!Predicate.isTagged(request, 'Request'))
-              return yield* Effect.fail(new InvalidRequest({ message: 'Expected an RPC request.' }))
+              return yield* new InvalidRequest({ message: 'Expected an RPC request.' })
             expect(request.tag).toBe('SearchLibrary')
             const expected = Option.match(folder, {
               onNone: () => ({ query: 'Agreement', limit: 6 }),

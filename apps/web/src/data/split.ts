@@ -20,7 +20,7 @@ const READING = 352
 const USUAL = 600
 
 const key = 'vivid.computer.split'
-const Position = Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }))
+const Position = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))
 const readPosition = Schema.decodeUnknownOption(Position)
 
 let position = Option.flatMap(kept.read(key), (value) => readPosition(Number(value)))

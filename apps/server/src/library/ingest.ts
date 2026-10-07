@@ -116,14 +116,14 @@ const read = (extract: typeof extractPdf) =>
         .filter((text) => text.length > 0)
         .join('\n\n')
       if (extractedText.length === 0)
-        return yield* Effect.fail(
-          new LibraryIngestFailure({ message: 'No readable text was found in this document' }),
-        )
+        return yield* new LibraryIngestFailure({
+          message: 'No readable text was found in this document',
+        })
       const chunks = pages.flatMap((page) => chunkText(page.text, page.page))
       if (chunks.length === 0)
-        return yield* Effect.fail(
-          new LibraryIngestFailure({ message: 'No searchable text was found in this document' }),
-        )
+        return yield* new LibraryIngestFailure({
+          message: 'No searchable text was found in this document',
+        })
       return IngestionOutcome.cases.Indexed.make({ extractedText, chunks })
     },
     Effect.catchTag('LibraryIngestFailure', (failure) =>

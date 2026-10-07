@@ -52,9 +52,7 @@ describe.skipIf(!testDatabaseConfigured)('Library hierarchy transaction', () => 
                 shelf: 'Mine',
                 parentId: null,
               })
-              return yield* Effect.fail(
-                new InvalidRequest({ message: 'Deliberately abort guarded write' }),
-              )
+              return yield* new InvalidRequest({ message: 'Deliberately abort guarded write' })
             }),
           ).pipe(Effect.flip)
           expect(failure).toBeInstanceOf(InvalidRequest)

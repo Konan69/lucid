@@ -40,19 +40,17 @@ export function skillTools(runTool: RunTool) {
           Effect.gen(function* () {
             const builtin = builtinNamed(data.name)
             if (Option.isSome(builtin))
-              return yield* Effect.fail(
-                new BuiltinSkillActivationRequired({
-                  runtimeName: builtin.value.runtimeName,
-                  tool: 'activate_skill',
-                }),
-              )
+              return yield* new BuiltinSkillActivationRequired({
+                runtimeName: builtin.value.runtimeName,
+                tool: 'activate_skill',
+              })
             const { client } = yield* Scope
             const { skills } = yield* client.ListSkillSummaries()
             const entries = savedInventory(skills, (item) => views.modelText(item.name))
             const found = yield* Effect.fromResult(named(entries, data.name))
             const response = yield* client.ReadSkill({ id: found.id })
             const entry = entries.find(({ item }) => item.id === found.id)
-            if (entry === undefined) return yield* Effect.fail(new NameMissing({ name: data.name }))
+            if (entry === undefined) return yield* new NameMissing({ name: data.name })
             return { output: views.skill(response.skill, entry.name) }
           }).pipe(
             Effect.catchTag('BuiltinSkillActivationRequired', (error) =>
@@ -96,12 +94,10 @@ export function skillTools(runTool: RunTool) {
           Effect.gen(function* () {
             const builtin = builtinNamed(data.name)
             if (Option.isSome(builtin))
-              return yield* Effect.fail(
-                new BuiltinSkillNameReserved({
-                  runtimeName: builtin.value.runtimeName,
-                  message: reservedMessage,
-                }),
-              )
+              return yield* new BuiltinSkillNameReserved({
+                runtimeName: builtin.value.runtimeName,
+                message: reservedMessage,
+              })
             const { client } = yield* Scope
             const response = yield* client.SaveSkill({
               name: data.name,
@@ -114,7 +110,7 @@ export function skillTools(runTool: RunTool) {
             const entry = savedInventory(skills, (item) => views.modelText(item.name)).find(
               ({ item }) => item.id === response.skill.id,
             )
-            if (entry === undefined) return yield* Effect.fail(new NameMissing({ name: data.name }))
+            if (entry === undefined) return yield* new NameMissing({ name: data.name })
             return { output: views.skillSummary(response.skill, entry.name) }
           }).pipe(
             Effect.catchTag('BuiltinSkillNameReserved', (error) =>

@@ -22,13 +22,13 @@ export const observations = Effect.fn('Machine.boat.observations')(function* (
   const bound = Effect.fn('Machine.boat.bound')(function* (key: MachineKey) {
     const row = yield* saved.load(key)
     if (Option.isNone(row) || row.value.providerId === null)
-      return yield* Effect.fail(new MachineNotRunning({ key }))
+      return yield* new MachineNotRunning({ key })
     return { binding: row.value, id: row.value.providerId }
   })
   const running = Effect.fn('Machine.boat.running')(function* (key: MachineKey) {
     const identity = yield* bound(key)
     const record = (yield* api.get(identity.id)).sandbox
-    if (!active(record.state)) return yield* Effect.fail(new MachineNotRunning({ key }))
+    if (!active(record.state)) return yield* new MachineNotRunning({ key })
     return identity
   })
   /** Boat documents a ten-minute permission lifetime. Cache authority only in this Layer, renew a minute early,
@@ -48,7 +48,7 @@ export const observations = Effect.fn('Machine.boat.observations')(function* (
         !valid.hash.startsWith('#token=') ||
         valid.hash.length <= 7
       )
-        return yield* Effect.fail(new MachineResponseInvalid({ operation: 'viewer' }))
+        return yield* new MachineResponseInvalid({ operation: 'viewer' })
       const cachedAt = yield* Clock.currentTimeMillis
       return {
         issuedAt,
@@ -85,10 +85,10 @@ export const observations = Effect.fn('Machine.boat.observations')(function* (
       const record = (yield* api.get(identity.id)).sandbox
       if (wanted === 'archived' ? record.state === 'archived' : active(record.state)) return record
       if (record.state === 'error' || record.state === 'cancelled')
-        return yield* Effect.fail(new MachineOperationFailed({ operation: 'lifecycle' }))
+        return yield* new MachineOperationFailed({ operation: 'lifecycle' })
       yield* Effect.sleep('2 seconds')
     }
-    return yield* Effect.fail(new MachineOperationFailed({ operation: 'lifecycle-timeout' }))
+    return yield* new MachineOperationFailed({ operation: 'lifecycle-timeout' })
   })
   return { bound, running, permission, wait, invalidateViewer }
 })

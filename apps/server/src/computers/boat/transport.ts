@@ -97,14 +97,13 @@ const refused = Effect.fn('Machine.boat.refused')(function* (
   // HTML, nothing, half a document. The status alone says it is an outage, so it is
   // classified before the body is read; decoding first turned such an answer into an
   // invalid response, which is recorded as the machine's state where an outage is not.
-  if (response.status >= 500)
-    return yield* Effect.fail(new MachineRequestRejected({ status: response.status }))
+  if (response.status >= 500) return yield* new MachineRequestRejected({ status: response.status })
   yield* decodeError(response).pipe(
     Effect.mapError(() => new MachineResponseInvalid({ operation: 'error' })),
   )
   if (response.status === 401 || response.status === 403)
-    return yield* Effect.fail(new MachineAuthenticationFailed())
-  return yield* Effect.fail(new MachineRequestRejected({ status: response.status }))
+    return yield* new MachineAuthenticationFailed()
+  return yield* new MachineRequestRejected({ status: response.status })
 })
 
 /** Authenticated requests have one response boundary and bounded dispatch/body deadlines. */
@@ -322,7 +321,7 @@ export const transport = Effect.fn('Machine.boat.transport')(function* () {
         Protocol.Info,
       )
       if (reply.sandbox.id !== id)
-        return yield* Effect.fail(new MachineResponseInvalid({ operation: 'machine-identity' }))
+        return yield* new MachineResponseInvalid({ operation: 'machine-identity' })
       return reply
     }),
     createMachine: Effect.fn('Machine.boat.create')(

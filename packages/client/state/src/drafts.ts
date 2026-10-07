@@ -47,8 +47,8 @@ import { Array as Arr, Option, Schema } from 'effect'
 const Kept = Schema.Struct({
   where: Schema.String,
   text: Schema.String,
-  at: Schema.Number,
-  revision: Schema.Number,
+  at: Schema.Finite,
+  revision: Schema.Finite,
   unsaved: Schema.Boolean,
 })
 interface Kept extends Schema.Schema.Type<typeof Kept> {}
@@ -62,8 +62,8 @@ interface Kept extends Schema.Schema.Type<typeof Kept> {}
  */
 const Mark = Schema.Struct({
   where: Schema.String,
-  acknowledged: Schema.Number,
-  applied: Schema.Number,
+  acknowledged: Schema.Finite,
+  applied: Schema.Finite,
 })
 interface Mark extends Schema.Schema.Type<typeof Mark> {}
 
@@ -76,7 +76,7 @@ const Pending = Schema.Struct({
   person: Schema.String,
   thread: ThreadId,
   text: Schema.String,
-  at: Schema.Number,
+  at: Schema.Finite,
 })
 interface Pending extends Schema.Schema.Type<typeof Pending> {}
 
@@ -516,7 +516,7 @@ export const resolved = (
 const DraftsV1 = Schema.Struct({
   version: Schema.Literal(1),
   entries: Schema.Array(
-    Schema.Struct({ where: Schema.String, text: Schema.String, at: Schema.Number }),
+    Schema.Struct({ where: Schema.String, text: Schema.String, at: Schema.Finite }),
   ),
 })
 
@@ -530,7 +530,7 @@ const DraftsV2 = Schema.Struct({
     Schema.Struct({
       where: Schema.String,
       text: Schema.String,
-      at: Schema.Number,
+      at: Schema.Finite,
       unsaved: Schema.Boolean,
     }),
   ),

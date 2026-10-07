@@ -396,9 +396,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           ...executor,
           catalog: Effect.fn('Executor.Test.unavailable')(function* () {
             yield* Ref.update(probe.catalogs, (count) => count + 1)
-            return yield* Effect.fail(
-              new ServiceUnavailable({ service: 'connections', message: 'Unavailable' }),
-            )
+            return yield* new ServiceUnavailable({ service: 'connections', message: 'Unavailable' })
           }),
         })
         yield* Effect.gen(function* () {
@@ -492,9 +490,10 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
             yield* Ref.update(calls, (count) => count + 1)
             const domain = yield* Ref.get(site)
             if (Option.isNone(domain))
-              return yield* Effect.fail(
-                ServiceUnavailable.make({ service: 'connections', message: 'Unavailable' }),
-              )
+              return yield* ServiceUnavailable.make({
+                service: 'connections',
+                message: 'Unavailable',
+              })
             return (yield* executor.catalog()).map((entry) =>
               ExecutorServiceEntry.make({ ...entry, domain: domain.value }),
             )
@@ -791,12 +790,10 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           ...executor,
           begin: Effect.fn('Executor.Test.signInRequired')(function* (input) {
             const step = yield* executor.begin(input)
-            return yield* Effect.fail(
-              ExecutorSignInRequired.make({
-                references: step.references,
-                message: 'Sign-in could not start.',
-              }),
-            )
+            return yield* ExecutorSignInRequired.make({
+              references: step.references,
+              message: 'Sign-in could not start.',
+            })
           }),
         })
         const before = yield* Ref.get(probe.removals)
@@ -830,12 +827,10 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           ...executor,
           begin: Effect.fn('Executor.Test.signInRequiredAgain')(function* (input) {
             const step = yield* executor.begin(input)
-            return yield* Effect.fail(
-              ExecutorSignInRequired.make({
-                references: step.references,
-                message: 'Sign-in could not start.',
-              }),
-            )
+            return yield* ExecutorSignInRequired.make({
+              references: step.references,
+              message: 'Sign-in could not start.',
+            })
           }),
           remove: Effect.fn('Executor.Test.cleanupUnavailable')(() =>
             Effect.fail(

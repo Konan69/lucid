@@ -152,12 +152,10 @@ export const requireRunnableTarget = Effect.fn('requireRunnableTarget')(function
   target: DeploymentTarget,
 ) {
   if (!target.runnable) {
-    return yield* Effect.fail(
-      new RemoteDeploymentDisabled({
-        target: target.key,
-        message: `Remote deployment target '${target.key}' is not enabled yet`,
-      }),
-    )
+    return yield* new RemoteDeploymentDisabled({
+      target: target.key,
+      message: `Remote deployment target '${target.key}' is not enabled yet`,
+    })
   }
   return target
 })

@@ -125,13 +125,13 @@ const SuspicionId = Schema.Symbol.pipe(Schema.brand('DecisionSuspicionId'))
 
 const Availability = Schema.TaggedUnion({
   Ready: {},
-  Suspect: { id: SuspicionId, markedAt: Schema.Number, expiresAt: Schema.Number },
-  Cooling: { retryAt: Schema.Number },
-  CredentialCooling: { retryAt: Schema.Number },
+  Suspect: { id: SuspicionId, markedAt: Schema.Finite, expiresAt: Schema.Finite },
+  Cooling: { retryAt: Schema.Finite },
+  CredentialCooling: { retryAt: Schema.Finite },
   Probing: {},
 })
 const Admission = Schema.TaggedUnion({
-  Normal: { startedAt: Schema.Number, suspicion: Schema.Option(SuspicionId) },
+  Normal: { startedAt: Schema.Finite, suspicion: Schema.Option(SuspicionId) },
   Probe: {},
   Backoff: {},
 })
@@ -164,7 +164,7 @@ class AttemptUnavailable extends Schema.TaggedError<AttemptUnavailable>()(
 /** A timeout carries no HTTP classification: silence is weaker evidence than an outage. */
 class AttemptTimedOut extends Schema.TaggedError<AttemptTimedOut>()(
   'DecisionAttemptTimedOut',
-  { budgetMillis: Schema.Number },
+  { budgetMillis: Schema.Finite },
   { title: 'Decision attempt timed out' },
 ) {}
 

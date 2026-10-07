@@ -75,13 +75,11 @@ export const resolvePage = Effect.fn('Code.resolvePage')(function* (url: URL) {
     family === 4 || family === 6
       ? [{ address: hostname, family }]
       : yield* resolver.resolve(hostname)
-  if (addresses.length === 0)
-    return yield* Effect.fail(new PageFailure({ reason: 'could not be reached' }))
+  if (addresses.length === 0) return yield* new PageFailure({ reason: 'could not be reached' })
   if (!addresses.every((item) => publicAddress(item.address)))
-    return yield* Effect.fail(new PageFailure({ reason: 'not a public web address' }))
+    return yield* new PageFailure({ reason: 'not a public web address' })
   const selected = addresses[0]
-  if (selected === undefined)
-    return yield* Effect.fail(new PageFailure({ reason: 'could not be reached' }))
+  if (selected === undefined) return yield* new PageFailure({ reason: 'could not be reached' })
   return selected
 })
 

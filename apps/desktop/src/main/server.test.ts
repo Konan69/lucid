@@ -50,7 +50,7 @@ const fixture = (
       }),
   )
 
-const decodeListener = Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Number }))
+const decodeListener = Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Finite }))
 
 /** Convert the real bound port into a valid local origin, refusing an unexpected listener shape. */
 const originOf = Effect.fn('DesktopFixture.origin')(function* (server: NodeHttp.Server) {

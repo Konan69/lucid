@@ -13,7 +13,7 @@ export class InvalidRoutineSchedule extends Schema.TaggedError<InvalidRoutineSch
 
 export class RoutineTimePassed extends Schema.TaggedError<RoutineTimePassed>()(
   'RoutineTimePassed',
-  { at: Schema.Number },
+  { at: Schema.Finite },
   { title: 'One-off Routine must be in the future' },
 ) {}
 
@@ -23,7 +23,7 @@ export const requireFuture = Effect.fn('RoutineSchedule.requireFuture')(function
   now: number,
 ) {
   if (RoutineTrigger.guards.Once(trigger) && trigger.at <= now)
-    yield* Effect.fail(new RoutineTimePassed({ at: trigger.at }))
+    yield* new RoutineTimePassed({ at: trigger.at })
 })
 
 /** Reject nonexistent or ambiguous local times rather than silently moving a reminder at DST. */
@@ -37,9 +37,9 @@ export const resolveLocal = Effect.fn('RoutineSchedule.resolveLocal')(function* 
     disambiguation: 'reject',
   })
   if (Option.isNone(zoned) || DateTime.formatIsoOffset(zoned.value).slice(0, 16) !== localAt)
-    return yield* Effect.fail(
-      new InvalidRoutineSchedule({ message: 'Choose a valid, unambiguous local date and time' }),
-    )
+    return yield* new InvalidRoutineSchedule({
+      message: 'Choose a valid, unambiguous local date and time',
+    })
   return RoutineTrigger.cases.Once.make({ at: DateTime.toEpochMillis(zoned.value), timezone })
 })
 

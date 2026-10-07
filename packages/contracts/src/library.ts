@@ -17,14 +17,14 @@ export const LibraryItem = Schema.Struct({
   id: LibraryItemId,
   name: Schema.String,
   mimeType: Schema.String,
-  size: Schema.Number,
+  size: Schema.Finite,
   sha256: Schema.String,
   status: LibraryItemStatus,
   error: Schema.NullOr(Schema.String),
   preview: Schema.String,
-  chunkCount: Schema.Number,
-  createdAt: Schema.Number,
-  updatedAt: Schema.Number,
+  chunkCount: Schema.Finite,
+  createdAt: Schema.Finite,
+  updatedAt: Schema.Finite,
   folderId: Schema.NullOr(LibraryFolderId),
   shelf: LibraryShelf,
 }).annotate({ identifier: 'LibraryItem', title: 'Library item' })
@@ -36,9 +36,9 @@ export const LibraryFolder = Schema.Struct({
   id: LibraryFolderId,
   name: Schema.String,
   parentId: Schema.NullOr(LibraryFolderId),
-  createdAt: Schema.Number,
-  updatedAt: Schema.Number,
-  itemCount: Schema.Number,
+  createdAt: Schema.Finite,
+  updatedAt: Schema.Finite,
+  itemCount: Schema.Finite,
   shelf: LibraryShelf,
 }).annotate({ identifier: 'LibraryFolder', title: 'Library folder' })
 /** Decoded Library folder. */
@@ -49,9 +49,9 @@ export const LibrarySearchResult = Schema.Struct({
   chunkId: Schema.String,
   documentId: LibraryItemId,
   filename: Schema.String,
-  page: Schema.NullOr(Schema.Number),
+  page: Schema.NullOr(Schema.Finite),
   text: Schema.String,
-  score: Schema.Number,
+  score: Schema.Finite,
 })
 /** Optional folder filter for Library list routes. */
 export const LibraryListQuery = Schema.Struct({
@@ -79,7 +79,7 @@ export const LibraryFolderListResponse = Schema.Struct({ folders: Schema.Array(L
 export const LibraryUploadMetadata = Schema.Struct({
   name: Schema.String,
   mimeType: Schema.Literals(['application/pdf', 'text/markdown', 'text/plain'] as const),
-  size: Schema.Number,
+  size: Schema.Finite,
   folderId: Schema.NullOr(LibraryFolderId),
   shelf: LibraryShelf,
 })
@@ -92,7 +92,7 @@ export const LibraryUploadResponse = Schema.Struct({
 export const LibrarySearchRequest = Schema.Struct({
   query: Schema.String,
   folderId: Schema.optionalKey(Schema.NullOr(LibraryFolderId)),
-  limit: Schema.optionalKey(Schema.Number),
+  limit: Schema.optionalKey(Schema.Finite),
 })
 /** Library search response. */
 export const LibrarySearchResponse = Schema.Struct({ results: Schema.Array(LibrarySearchResult) })

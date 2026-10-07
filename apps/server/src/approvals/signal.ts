@@ -12,10 +12,10 @@ export const Signal = Schema.TaggedUnion({
     deciderId: Schema.NullOr(PersonId),
     message: DeliveryMessage.cases.Signal,
   },
-  Delivered: { idempotencyKey: Schema.String, deliveredAt: Schema.Number },
+  Delivered: { idempotencyKey: Schema.String, deliveredAt: Schema.Finite },
   Stopped: {
     idempotencyKey: Schema.String,
-    stoppedAt: Schema.Number,
+    stoppedAt: Schema.Finite,
     reason: Schema.Literal('AccessLost'),
   },
 })

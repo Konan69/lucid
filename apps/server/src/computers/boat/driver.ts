@@ -13,7 +13,7 @@ import { decodeTool } from './refusal.ts'
 const Capture = Schema.Struct({
   display: Schema.String,
   platform: Schema.String,
-  scale_factor: Schema.Number,
+  scale_factor: Schema.Finite,
   screenshot_mime_type: Schema.Literal('image/png'),
   screenshot_width: Schema.Int,
   screenshot_height: Schema.Int,
@@ -44,7 +44,7 @@ export const driver = (
       const path = `${directory}/input.json`
       const prepared = yield* api.command(id, key, `umask 077; mkdir -- '${directory}'`, 30)
       if (prepared.exitCode !== 0)
-        return yield* Effect.fail(new MachineOperationFailed({ operation: 'driver-input' }))
+        return yield* new MachineOperationFailed({ operation: 'driver-input' })
       return yield* Effect.gen(function* () {
         yield* api.write(
           id,
@@ -79,9 +79,9 @@ export const driver = (
   const invoke = Effect.fn('Machine.boat.driver.invoke')(function* (command: string) {
     const result = yield* api.command(id, key, command, 60)
     if (result.exitCode !== 0 || result.timedOut)
-      return yield* Effect.fail(new MachineOperationFailed({ operation: 'computer-tool' }))
+      return yield* new MachineOperationFailed({ operation: 'computer-tool' })
     if (result.stdoutTruncated === true || result.stderrTruncated === true)
-      return yield* Effect.fail(new MachineResponseInvalid({ operation: 'computer-tool' }))
+      return yield* new MachineResponseInvalid({ operation: 'computer-tool' })
     return result.stdout
   })
   /** Decode every guest tool's JSON at ingress; public responses never contain native handles. */

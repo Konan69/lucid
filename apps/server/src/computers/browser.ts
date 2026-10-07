@@ -17,7 +17,7 @@ export const validateAddress = Effect.fn('Machine.browser.address')(function* (a
     /^(127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) ||
     host.startsWith('[')
   ) {
-    yield* Effect.fail(new BrowserAddressRefused())
+    yield* new BrowserAddressRefused()
   }
 })
 
@@ -28,6 +28,6 @@ export const validateKey = Effect.fn('Machine.browser.key')(function* (key: stri
       key,
     )
   ) {
-    yield* Effect.fail(new MachineInputInvalid())
+    yield* new MachineInputInvalid()
   }
 })

@@ -149,7 +149,7 @@ const harness = Effect.fn('FirstThread.test.harness')(function* () {
     ...runStore,
     start: Effect.fn('FirstThread.test.reserve')(function* (input) {
       const failure = yield* Ref.getAndSet(reservationFailure, Option.none())
-      if (Option.isSome(failure)) return yield* Effect.fail(failure.value)
+      if (Option.isSome(failure)) return yield* failure.value
       return yield* runStore.start(input)
     }),
   })

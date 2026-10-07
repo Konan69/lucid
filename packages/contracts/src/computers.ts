@@ -10,7 +10,7 @@ import { DeviceAbility, WindowAction, WindowRefusal, WindowResult } from './wind
  */
 export const ComputerScreen = Schema.TaggedUnion({
   Relay: { address: Schema.String },
-  Viewer: { address: Schema.String, expiresAt: Schema.Number },
+  Viewer: { address: Schema.String, expiresAt: Schema.Finite },
 })
 export type ComputerScreen = typeof ComputerScreen.Type
 
@@ -31,13 +31,13 @@ export type ComputerSession = typeof ComputerSession.Type
 export const ComputerState = Schema.TaggedUnion({
   /** This Person has never needed one. */
   Absent: {},
-  Starting: { since: Schema.Number },
+  Starting: { since: Schema.Finite },
   Running: {
-    since: Schema.Number,
+    since: Schema.Finite,
     screen: ComputerScreen,
   },
-  Stopped: { since: Schema.Number },
-  Failed: { since: Schema.Number, reason: Schema.String },
+  Stopped: { since: Schema.Finite },
+  Failed: { since: Schema.Finite, reason: Schema.String },
 })
 export type ComputerState = typeof ComputerState.Type
 
@@ -116,7 +116,7 @@ export type ComputerFileWriteOutcome = typeof ComputerFileWriteOutcome.Type
 
 /** What the command produced. Long output is cut with a marker, never silently. */
 export const CommandResult = Schema.Struct({
-  exitCode: Schema.Number,
+  exitCode: Schema.Finite,
   output: Schema.String,
   truncated: Schema.Boolean,
 }).annotate({ identifier: 'CommandResult', title: 'Command result' })
@@ -235,9 +235,9 @@ export type DeviceName = typeof DeviceName.Type
  * `Allowed` at a time. `since` is epoch milliseconds for the moment that state began.
  */
 export const DeviceAccess = Schema.TaggedUnion({
-  Pending: { since: Schema.Number },
-  Allowed: { since: Schema.Number },
-  Revoked: { since: Schema.Number },
+  Pending: { since: Schema.Finite },
+  Allowed: { since: Schema.Finite },
+  Revoked: { since: Schema.Finite },
 })
 export type DeviceAccess = typeof DeviceAccess.Type
 

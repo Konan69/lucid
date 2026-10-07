@@ -54,7 +54,7 @@ const available = Effect.fn('Machine.boat.adoptionAvailable')(function* (
   id: ProviderId,
 ) {
   const held = yield* saved.holder(id)
-  if (Option.isSome(held) && held.value.key !== key) return yield* Effect.fail(new MachineHeld())
+  if (Option.isSome(held) && held.value.key !== key) return yield* new MachineHeld()
   return undefined
 })
 
@@ -73,7 +73,7 @@ const adopt = Effect.fn('Machine.boat.adopt')(function* (
     Effect.catchTag('MachineHeld', (error) =>
       Effect.gen(function* () {
         if (input.intent.inserted) yield* saved.discard(input.key, input.intent.binding.intent)
-        return yield* Effect.fail(error)
+        return yield* error
       }),
     ),
   )
@@ -94,7 +94,7 @@ const bind = Effect.fn('Machine.boat.reconcileBinding')(function* (
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
         if (now - input.intent.binding.requestedAt > 23 * 60 * 60_000)
-          return yield* Effect.fail(new MachineCreationUnresolved({ key: input.key }))
+          return yield* new MachineCreationUnresolved({ key: input.key })
         const receipt = yield* api.createMachine(
           input.intent.binding.request,
           input.intent.binding.intent,
@@ -122,7 +122,7 @@ const start = Effect.fn('Machine.boat.start')(function* (api: Transport, id: Pro
       })
     return undefined
   }
-  return yield* Effect.fail(new MachineNoCapacity())
+  return yield* new MachineNoCapacity()
 })
 
 /**
@@ -216,7 +216,7 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
       yield* invalidate(key)
       yield* invalidateViewer(key)
       if (!record.snapshotAvailable)
-        return yield* Effect.fail(new MachineOperationFailed({ operation: 'snapshot-missing' }))
+        return yield* new MachineOperationFailed({ operation: 'snapshot-missing' })
       yield* start(api, identity.id)
     }
     const ready = yield* wait(key, 'running')
@@ -267,8 +267,7 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
       const row = yield* saved.load(key)
       if (Option.isNone(row)) return undefined
       // Stop cannot create a paid machine. Preserve unresolved authority for an explicit Start to reconcile.
-      if (row.value.providerId === null)
-        return yield* Effect.fail(new MachineCreationUnresolved({ key }))
+      if (row.value.providerId === null) return yield* new MachineCreationUnresolved({ key })
       const identity = yield* bound(key)
       const record = (yield* api.get(identity.id)).sandbox
       if (record.state === 'archived') return undefined
@@ -280,7 +279,7 @@ export const lifecycle = Effect.fn('Machine.boat.lifecycle')(function* (
       yield* api.stop(identity.id)
       const archived = yield* wait(key, 'archived')
       if (archived.state !== 'archived' || !archived.snapshotAvailable)
-        return yield* Effect.fail(new MachineOperationFailed({ operation: 'snapshot-missing' }))
+        return yield* new MachineOperationFailed({ operation: 'snapshot-missing' })
       yield* saved.observe(key, identity.binding, archived.state)
       return undefined
     },

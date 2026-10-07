@@ -81,7 +81,7 @@ export const readConversationHistory = Effect.fn('Conversation.history')(functio
     accept: 'application/json',
   })
   if (response.status < 200 || response.status >= 300)
-    return yield* Effect.fail(ConversationHistoryUnavailable.make({ threadId }))
+    return yield* ConversationHistoryUnavailable.make({ threadId })
   return yield* decodeHistory(response)
 })
 
@@ -162,7 +162,7 @@ export const conversationContext = Effect.fn('Learning.context')(
       Effect.mapError(unavailable),
     )
     const context = contextOf(history, input)
-    if (Option.isNone(context)) return yield* Effect.fail(unavailable())
+    if (Option.isNone(context)) return yield* unavailable()
     return context.value
   },
   (effect) =>

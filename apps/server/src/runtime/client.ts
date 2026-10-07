@@ -285,7 +285,7 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
         return yield* Effect.flatMap(admissionConflict(attempt, response), Effect.fail)
       }
       if (response.status !== 202) {
-        return yield* Effect.fail(admissionStatus(attempt, response.status))
+        return yield* admissionStatus(attempt, response.status)
       }
       const receipt = yield* decodeReceipt(response).pipe(
         Effect.mapError(() => AdmissionUncertain.make({ ...attempt, reason: 'Receipt' })),
@@ -299,7 +299,7 @@ const makeRuntime = Effect.fn('Runtime.make')(function* () {
         yield* Effect.logError('Flue keyed-submission wire format changed', {
           threadId: input.threadId,
         })
-        return yield* Effect.fail(AdmissionUncertain.make({ ...attempt, reason: 'Receipt' }))
+        return yield* AdmissionUncertain.make({ ...attempt, reason: 'Receipt' })
       }
       return Admission.make({
         runId: attempt.runId,

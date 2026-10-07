@@ -43,7 +43,7 @@ const failingDatabase = (
     run: Effect.fn('Database.Test.connectionFailure')(function* <A, E, R>(
       query: Effect.Effect<A, E, R>,
     ) {
-      if (yield* Ref.get(unavailable)) return yield* Effect.fail(failure)
+      if (yield* Ref.get(unavailable)) return yield* failure
       return yield* database.run(query)
     }),
   })
@@ -118,9 +118,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
             ...executor,
             call: Effect.fn('Executor.Test.dispatchedUnavailable')(function* () {
               yield* Ref.update(probe.calls, (count) => count + 1)
-              return yield* Effect.fail(
-                ExecutorTransportFailure.make({ service: 'connections', tool: 'read' }),
-              )
+              return yield* ExecutorTransportFailure.make({ service: 'connections', tool: 'read' })
             }),
           })
           const input = {

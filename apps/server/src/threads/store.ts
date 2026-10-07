@@ -196,9 +196,7 @@ const makeEnsure = (database: DatabaseService) =>
         const theirs = stored.personId === input.personId && stored.companyId === input.companyId
         return theirs
           ? stored
-          : yield* Effect.fail(
-              new DatabaseConstraintViolation({ message: 'Database constraint was violated' }),
-            )
+          : yield* new DatabaseConstraintViolation({ message: 'Database constraint was violated' })
       }),
     )
   })
@@ -220,10 +218,10 @@ const lockThread = (database: DatabaseService) =>
   ) {
     const rows = yield* tx.select().from(threads).where(eq(threads.id, id)).limit(1).for(mode)
     const row = rows[0]
-    if (row === undefined) return yield* Effect.fail(new NotFound({ message: 'Thread not found' }))
+    if (row === undefined) return yield* new NotFound({ message: 'Thread not found' })
     const thread = yield* decodeThread(row)
     if (!(yield* canSee(thread.id, personId).pipe(Effect.provideService(Database, database))))
-      return yield* Effect.fail(new NotFound({ message: 'Thread not found' }))
+      return yield* new NotFound({ message: 'Thread not found' })
     return thread
   })
 
@@ -248,9 +246,7 @@ const requireProject = Effect.fn('ThreadStore.requireProject')(function* (
       .where(and(eq(projectTable.id, projectId), scope))
       .limit(1),
   )
-  return rows.length === 0
-    ? yield* Effect.fail(new NotFound({ message: 'Project not found' }))
-    : projectId
+  return rows.length === 0 ? yield* new NotFound({ message: 'Project not found' }) : projectId
 })
 
 /** Key share protects authorization against deletion; receipt and Person notice commit together. */
@@ -289,7 +285,7 @@ const makeCreate = (database: DatabaseService) =>
     const companyId = companyColumnOf(actor.workspace)
     const personId = actor.person.id
     if (RESERVED.test(request.id)) {
-      return yield* Effect.fail(new InvalidRequest({ message: 'That Thread id is reserved' }))
+      return yield* new InvalidRequest({ message: 'That Thread id is reserved' })
     }
     return yield* database.transaction((tx) =>
       Effect.gen(function* () {
@@ -331,9 +327,7 @@ const makeCreate = (database: DatabaseService) =>
         }
         const stored = yield* decodeThread(row)
         if (!(yield* canSee(stored.id, personId).pipe(Effect.provideService(Database, database))))
-          return yield* Effect.fail(
-            new Forbidden({ message: 'You are not a Member of this Company' }),
-          )
+          return yield* new Forbidden({ message: 'You are not a Member of this Company' })
         yield* tx.insert(threadReads).values({ threadId: stored.id, personId, readAt: now })
         yield* announce(tx, Array.dedupe([...audienceTopics(stored, []), ...filedTopics(stored)]))
         return yield* makeView(database)(stored, personId)
@@ -437,9 +431,9 @@ const requireMembers = Effect.fn('ThreadStore.requireMembers')(function* (
   const members = new Set(rows.map((row) => row.personId))
   return people.every((person) => members.has(person))
     ? people
-    : yield* Effect.fail(
-        new InvalidRequest({ message: 'A Thread can only be shared with Members of its Company' }),
-      )
+    : yield* new InvalidRequest({
+        message: 'A Thread can only be shared with Members of its Company',
+      })
 })
 
 /** The audience as its row stores it, and the People it names beside the creator. */
@@ -483,22 +477,18 @@ const makeShare = (database: DatabaseService) =>
       Effect.gen(function* () {
         const thread = yield* lockThread(database)(tx, personId, id, 'update')
         if (thread.personId !== personId) {
-          return yield* Effect.fail(
-            new Forbidden({ message: 'Only its creator can share a Thread' }),
-          )
+          return yield* new Forbidden({ message: 'Only its creator can share a Thread' })
         }
         if (thread.companyId === null) {
-          return yield* Effect.fail(
-            new InvalidRequest({
-              message: 'A Thread in your own space has nobody to be shared with',
-            }),
-          )
+          return yield* new InvalidRequest({
+            message: 'A Thread in your own space has nobody to be shared with',
+          })
         }
         // Routine reporting belongs to one Person even when its Thread id is predictable.
         if (RESERVED.test(thread.id)) {
-          return yield* Effect.fail(
-            new InvalidRequest({ message: 'This thread belongs to a Routine and stays private' }),
-          )
+          return yield* new InvalidRequest({
+            message: 'This thread belongs to a Routine and stays private',
+          })
         }
         const sharing = sharingOf(audience, personId)
         const people = yield* requireMembers(database, thread.companyId, sharing.people)
@@ -551,9 +541,7 @@ const makeRemove = (database: DatabaseService) =>
       Effect.gen(function* () {
         const thread = yield* lockThread(database)(tx, personId, id, 'update')
         if (thread.personId !== personId) {
-          return yield* Effect.fail(
-            new Forbidden({ message: 'Only its creator can delete a Thread' }),
-          )
+          return yield* new Forbidden({ message: 'Only its creator can delete a Thread' })
         }
         const people = yield* makeParticipants(database)(id)
         yield* tx.delete(threads).where(eq(threads.id, id))

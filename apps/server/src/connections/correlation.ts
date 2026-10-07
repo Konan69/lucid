@@ -15,9 +15,7 @@ export const callbackHash = Effect.fn('Connections.callbackHash')(function* (
 ) {
   const value = Redacted.value(address)
   if (!URL.canParse(value))
-    return yield* Effect.fail(
-      new InvalidRequest({ message: 'Integration sign-in return is invalid.' }),
-    )
+    return yield* new InvalidRequest({ message: 'Integration sign-in return is invalid.' })
   const states = new URL(value).searchParams.getAll('state')
   const state = yield* decodeState(states.length === 1 ? states[0] : null).pipe(
     Effect.mapError(

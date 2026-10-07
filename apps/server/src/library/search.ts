@@ -22,9 +22,9 @@ const RawSearchRows = Schema.Struct({
       chunkId: Schema.String,
       documentId: Schema.String,
       filename: Schema.String,
-      page: Schema.NullOr(Schema.Number),
+      page: Schema.NullOr(Schema.Finite),
       text: Schema.String,
-      score: Schema.Union([Schema.Number, Schema.String]),
+      score: Schema.Union([Schema.Finite, Schema.String]),
     }),
   ),
 })

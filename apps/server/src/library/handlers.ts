@@ -43,8 +43,7 @@ export const libraryHandlers = {
     const document = yield* (yield* LibraryStore)
       .getItem(yield* requireActor(), id)
       .pipe(Effect.mapError(libraryFailure))
-    if (Option.isNone(document))
-      return yield* Effect.fail(new NotFound({ message: 'Library item not found' }))
+    if (Option.isNone(document)) return yield* new NotFound({ message: 'Library item not found' })
     return LibraryItemResponse.make({ document: document.value })
   }),
   /** Only successful mutations publish; the store owns shelf and contributor policy. */
@@ -59,8 +58,7 @@ export const libraryHandlers = {
     const document = yield* (yield* LibraryStore)
       .patchItem(actor, id, patch)
       .pipe(Effect.mapError(libraryFailure))
-    if (Option.isNone(document))
-      return yield* Effect.fail(new NotFound({ message: 'Library item not found' }))
+    if (Option.isNone(document)) return yield* new NotFound({ message: 'Library item not found' })
     return LibraryItemResponse.make({ document: document.value })
   }),
   /** Deleting metadata also deletes its indexed chunks through the database relation. */
@@ -71,7 +69,7 @@ export const libraryHandlers = {
   }) {
     const actor = yield* requireActor()
     if (!(yield* (yield* LibraryStore).removeItem(actor, id).pipe(Effect.mapError(libraryFailure))))
-      return yield* Effect.fail(new NotFound({ message: 'Library item not found' }))
+      return yield* new NotFound({ message: 'Library item not found' })
     return undefined
   }),
   /** Search visibility is decided in SQL before ranking, including shared-Thread privacy. */
@@ -87,7 +85,7 @@ export const libraryHandlers = {
         yield* store.getFolder(actor, request.folderId).pipe(Effect.mapError(libraryFailure)),
       )
     )
-      return yield* Effect.fail(new NotFound({ message: 'Library folder not found' }))
+      return yield* new NotFound({ message: 'Library folder not found' })
     return LibrarySearchResponse.make({
       results: yield* store
         .search(actor, {
@@ -132,8 +130,7 @@ export const libraryHandlers = {
     const folder = yield* (yield* LibraryStore)
       .patchFolder(actor, id, patch)
       .pipe(Effect.mapError(libraryFailure))
-    if (Option.isNone(folder))
-      return yield* Effect.fail(new NotFound({ message: 'Library folder not found' }))
+    if (Option.isNone(folder)) return yield* new NotFound({ message: 'Library folder not found' })
     return LibraryFolderResponse.make({ folder: folder.value })
   }),
   /** Nonempty folders fail visibly instead of deleting another contributor's contents. */

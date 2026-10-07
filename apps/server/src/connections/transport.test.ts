@@ -1524,8 +1524,8 @@ describe('Executor hosted transport', () => {
 })
 
 const Exchange = Schema.TaggedUnion({
-  Received: { path: Schema.String, port: Schema.Number },
-  Released: { path: Schema.String, port: Schema.Number },
+  Received: { path: Schema.String, port: Schema.Finite },
+  Released: { path: Schema.String, port: Schema.Finite },
 })
 
 /**

@@ -114,14 +114,14 @@ const recordedConversationLayer = Layer.effectContext(
     const conversation = Conversation.of({
       /** Routine tests never use the gateway's receipt path; a call there must fail visibly. */
       admit: Effect.fn('Test.RoutineConversation.admit')(function* () {
-        return yield* Effect.fail(
-          new RuntimeUnavailable({ message: 'Gateway admission is outside Routine tests' }),
-        )
+        return yield* new RuntimeUnavailable({
+          message: 'Gateway admission is outside Routine tests',
+        })
       }),
       /** A Run exists durably before delivery returns, just as the production authority promises. */
       deliver: Effect.fn('Test.RoutineConversation.deliver')(function* (delivery) {
         const failed = yield* Ref.getAndSet(failure, Option.none())
-        if (Option.isSome(failed)) return yield* Effect.fail(failed.value)
+        if (Option.isSome(failed)) return yield* failed.value
         // Persist through the production allocator: parallel deliveries and replays keep real turns.
         const id = submissionId(delivery.threadId, delivery.idempotencyKey)
         const reservation = yield* store.start({
@@ -132,7 +132,7 @@ const recordedConversationLayer = Layer.effectContext(
           libraryFolder: delivery.libraryFolder === undefined ? null : delivery.libraryFolder,
         })
         if (TurnReservation.guards.Busy(reservation))
-          return yield* Effect.fail(new Conflict({ message: 'Test Thread is busy' }))
+          return yield* new Conflict({ message: 'Test Thread is busy' })
         if (TurnReservation.guards.Reserved(reservation))
           yield* store.admitted({
             runId: id,
@@ -227,18 +227,14 @@ const fakeWatchLayer = Layer.effectContext(
       ),
       newItems: Effect.fn('Test.IntegrationWatch.newItems')(function* () {
         yield* Ref.update(reads, (count) => count + 1)
-        if (yield* Ref.get(revoked))
-          return yield* Effect.fail(new IntegrationRevoked({ connectionId }))
-        if (yield* Ref.get(transient))
-          return yield* Effect.fail(new IntegrationReadFailed({ connectionId }))
+        if (yield* Ref.get(revoked)) return yield* new IntegrationRevoked({ connectionId })
+        if (yield* Ref.get(transient)) return yield* new IntegrationReadFailed({ connectionId })
         if (yield* Ref.getAndSet(gap, false))
-          return yield* Effect.fail(
-            new IntegrationCursorLost({
-              connectionId,
-              cursor: WatchCursor.cases.Item.make({ id: ProviderEventId.make('baseline-now') }),
-              reason: 'Window',
-            }),
-          )
+          return yield* new IntegrationCursorLost({
+            connectionId,
+            cursor: WatchCursor.cases.Item.make({ id: ProviderEventId.make('baseline-now') }),
+            reason: 'Window',
+          })
         const items = yield* Ref.get(events)
         const last = items[items.length - 1]
         return WatchBatch.make({
@@ -345,7 +341,7 @@ const fixture = Effect.fn('Test.Routines.fixture')(function* () {
   const colleague = actors[1]
   const other = actors[2]
   if (owner === undefined || colleague === undefined || other === undefined)
-    return yield* Effect.fail(new DatabaseFailure({ message: 'Test People are missing' }))
+    return yield* new DatabaseFailure({ message: 'Test People are missing' })
   yield* Ref.set(yield* Published, [])
   yield* Ref.set(yield* Deliveries, [])
   yield* Ref.set(yield* DeliveryFailure, Option.none())
@@ -893,10 +889,10 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         })
         const latest = stored[0]
         if (latest === undefined)
-          return yield* Effect.fail(new DatabaseFailure({ message: 'Scheduled Routine missing' }))
+          return yield* new DatabaseFailure({ message: 'Scheduled Routine missing' })
         const occurrence = latest.runs[0]
         if (occurrence === undefined || occurrence.submissionId === null)
-          return yield* Effect.fail(new DatabaseFailure({ message: 'Scheduled Run missing' }))
+          return yield* new DatabaseFailure({ message: 'Scheduled Run missing' })
         yield* TestClock.setTime(61_000)
         yield* database.run(
           database
@@ -1238,7 +1234,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         })
         const occurrence = yield* scheduler.run(owner, routine.id)
         if (occurrence.submissionId === null)
-          return yield* Effect.fail(new DatabaseFailure({ message: 'Test Run missing' }))
+          return yield* new DatabaseFailure({ message: 'Test Run missing' })
         const id = RunId.make(occurrence.submissionId)
         for (const state of ['failed', 'stopped', 'unknown']) {
           yield* database.run(

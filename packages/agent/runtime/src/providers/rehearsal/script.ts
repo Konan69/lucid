@@ -18,11 +18,11 @@ const Receipt = Schema.fromJsonString(
     title: Schema.optionalKey(Schema.String),
     created: Schema.optionalKey(Schema.Boolean),
     changed: Schema.optionalKey(Schema.Boolean),
-    version: Schema.optionalKey(Schema.Number),
+    version: Schema.optionalKey(Schema.Finite),
     body: Schema.optionalKey(Schema.String),
     shown: Schema.optionalKey(Schema.String),
     result: Schema.optionalKey(
-      Schema.Union([Schema.Number, Schema.Struct({ title: Schema.String })]),
+      Schema.Union([Schema.Finite, Schema.Struct({ title: Schema.String })]),
     ),
     catalog: Schema.optionalKey(Schema.String),
     nextRunAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -30,7 +30,7 @@ const Receipt = Schema.fromJsonString(
     added: Schema.optionalKey(Schema.Boolean),
     account: Schema.optionalKey(Schema.String),
     integrations: Schema.optionalKey(Schema.Array(Schema.Struct({ name: Schema.String }))),
-    view: Schema.optionalKey(Schema.Struct({ width: Schema.Number, height: Schema.Number })),
+    view: Schema.optionalKey(Schema.Struct({ width: Schema.Finite, height: Schema.Finite })),
     failure: Schema.optionalKey(CodeFailure),
   }),
 )

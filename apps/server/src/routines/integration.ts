@@ -135,9 +135,7 @@ const rebaselineIntegration = (database: Database['Service']) =>
     reason: string,
   ) {
     if (record.integration === null)
-      return yield* Effect.fail(
-        new DatabaseFailure({ message: 'Integration Routine has no Watch' }),
-      )
+      return yield* new DatabaseFailure({ message: 'Integration Routine has no Watch' })
     const now = yield* Clock.currentTimeMillis
     const changed = yield* database.run(
       database
@@ -176,9 +174,7 @@ const retryMinutes = (failures: number) => {
 const backoffIntegration = (database: Database['Service']) =>
   Effect.fn('RoutineIntegration.backoff')(function* (record: RoutineRecord) {
     if (record.integration === null)
-      return yield* Effect.fail(
-        new DatabaseFailure({ message: 'Integration Routine has no Watch' }),
-      )
+      return yield* new DatabaseFailure({ message: 'Integration Routine has no Watch' })
     const failures = Option.match(record.integration.failures, {
       onNone: () => 1,
       onSome: (count) => count + 1,
@@ -317,9 +313,7 @@ const recordEvents = (database: Database['Service'], memberPresent: Membership) 
   Effect.fn('RoutineIntegration.record')(function* (record: RoutineRecord, batch: WatchBatch) {
     const now = yield* Clock.currentTimeMillis
     if (record.integration === null)
-      return yield* Effect.fail(
-        new DatabaseFailure({ message: 'Integration Routine has no Watch' }),
-      )
+      return yield* new DatabaseFailure({ message: 'Integration Routine has no Watch' })
     const binding = record.integration
     return yield* database.transaction((tx) =>
       Effect.gen(function* () {
@@ -375,9 +369,7 @@ const recordEvents = (database: Database['Service'], memberPresent: Membership) 
 const readIntegration = (watch: IntegrationWatch['Service']) =>
   Effect.fn('RoutineIntegration.read')(function* (record: RoutineRecord) {
     if (record.integration === null)
-      return yield* Effect.fail(
-        new DatabaseFailure({ message: 'Integration Routine has no Watch' }),
-      )
+      return yield* new DatabaseFailure({ message: 'Integration Routine has no Watch' })
     return yield* watch.newItems({
       routineId: record.routine.id,
       personId: record.personId,

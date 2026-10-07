@@ -8,8 +8,8 @@ const decodeRequest = Schema.decodeUnknownEffect(
     Schema.Struct({
       model: Schema.String,
       reasoning_effort: Schema.String,
-      temperature: Schema.Number,
-      max_tokens: Schema.Number,
+      temperature: Schema.Finite,
+      max_tokens: Schema.Finite,
     }),
   ),
 )

@@ -149,7 +149,7 @@ const providerLayer = Layer.effect(
   Effect.gen(function* () {
     const evidence = yield* ProviderEvidence
     const answering = Effect.fn('Computer.test.answering')(function* () {
-      if (yield* Ref.get(evidence.outage)) return yield* Effect.fail(new MachineUnreachable())
+      if (yield* Ref.get(evidence.outage)) return yield* new MachineUnreachable()
       return undefined
     })
     const inspect = Effect.fn('Computer.test.inspect')(function* (key: MachineKey) {
@@ -169,7 +169,7 @@ const providerLayer = Layer.effect(
       const wait = yield* Ref.get(evidence.boot)
       if (Option.isSome(wait)) yield* Deferred.await(wait.value)
       if (yield* Ref.get(evidence.bootFailed))
-        return yield* Effect.fail(new MachineOperationFailed({ operation: 'startup' }))
+        return yield* new MachineOperationFailed({ operation: 'startup' })
       const state = ComputerState.cases.Running.make({
         since: 100,
         screen: ComputerState.cases.Running.fields.screen.cases.Relay.make({
@@ -194,8 +194,7 @@ const providerLayer = Layer.effect(
       yield* Queue.offer(evidence.executing, key)
       const wait = yield* Ref.get(evidence.executionGate)
       if (Option.isSome(wait)) yield* Deferred.await(wait.value)
-      if (yield* Ref.get(evidence.lost))
-        return yield* Effect.fail(new MachineExecutionUnknown({ key }))
+      if (yield* Ref.get(evidence.lost)) return yield* new MachineExecutionUnknown({ key })
       return yield* Ref.get(evidence.commandResult)
     })
     /** The shell reaches the machine through the same recorded call, wait and lost receipt as `exec`. */
@@ -209,8 +208,7 @@ const providerLayer = Layer.effect(
       key,
     }: Parameters<typeof Machine.Service.browse>[0]) {
       yield* Ref.update(evidence.calls, (calls) => [...calls, key])
-      if (yield* Ref.get(evidence.lost))
-        return yield* Effect.fail(new MachineExecutionUnknown({ key }))
+      if (yield* Ref.get(evidence.lost)) return yield* new MachineExecutionUnknown({ key })
       return {
         address: 'https://example.com',
         title: 'Example',
@@ -221,8 +219,7 @@ const providerLayer = Layer.effect(
     })
     const screen = Effect.fn('Computer.test.screen')(function* (key: MachineKey) {
       const state = yield* inspect(key)
-      if (!ComputerState.guards.Running(state))
-        return yield* Effect.fail(new MachineNotRunning({ key }))
+      if (!ComputerState.guards.Running(state)) return yield* new MachineNotRunning({ key })
       return {
         address: 'ws://127.0.0.1:62001/websockify',
         authorization: Redacted.make('test-only-screen-authority'),
@@ -232,8 +229,7 @@ const providerLayer = Layer.effect(
       key,
     }: Parameters<typeof Machine.Service.desktop>[0]) {
       yield* Ref.update(evidence.calls, (calls) => [...calls, key])
-      if (yield* Ref.get(evidence.lost))
-        return yield* Effect.fail(new MachineExecutionUnknown({ key }))
+      if (yield* Ref.get(evidence.lost)) return yield* new MachineExecutionUnknown({ key })
       return {
         picture:
           'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j9f8AAAAASUVORK5CYII=',

@@ -77,10 +77,9 @@ const atPath = Effect.fn('IntegrationWatch.atPath')(function* (
   for (const key of path) {
     const object = decodeObject(current)
     if (Option.isNone(object) || !Object.hasOwn(object.value, key))
-      return yield* Effect.fail(new IntegrationReadFailed({ connectionId }))
+      return yield* new IntegrationReadFailed({ connectionId })
     const selected = object.value[key]
-    if (selected === undefined)
-      return yield* Effect.fail(new IntegrationReadFailed({ connectionId }))
+    if (selected === undefined) return yield* new IntegrationReadFailed({ connectionId })
     current = selected
   }
   return current
@@ -106,7 +105,7 @@ const snapshot = Effect.fn('IntegrationWatch.snapshot')(function* (
   )
   const ordered = filter.newestFirst ? events : Arr.reverse(events)
   if (new Set(ordered.map((event) => event.id)).size !== ordered.length)
-    return yield* Effect.fail(new IntegrationReadFailed({ connectionId }))
+    return yield* new IntegrationReadFailed({ connectionId })
   return ordered
 })
 
@@ -132,9 +131,11 @@ const newBatch = Effect.fn('IntegrationWatch.newBatch')(function* (
     Window: ({ ids }) => items.findIndex((item) => item.id === ids[0]),
   })
   if (boundary < 0)
-    return yield* Effect.fail(
-      new IntegrationCursorLost({ connectionId: watch.connectionId, cursor, reason: 'Window' }),
-    )
+    return yield* new IntegrationCursorLost({
+      connectionId: watch.connectionId,
+      cursor,
+      reason: 'Window',
+    })
   const seen = WatchCursor.match(watch.cursor, {
     Empty: () => new Set<ProviderEventId>(),
     Item: ({ id }) => new Set([id]),
@@ -144,9 +145,11 @@ const newBatch = Effect.fn('IntegrationWatch.newBatch')(function* (
     WatchCursor.guards.Window(watch.cursor) &&
     items.slice(boundary + 1).some((item) => !seen.has(item.id))
   )
-    return yield* Effect.fail(
-      new IntegrationCursorLost({ connectionId: watch.connectionId, cursor, reason: 'Ordering' }),
-    )
+    return yield* new IntegrationCursorLost({
+      connectionId: watch.connectionId,
+      cursor,
+      reason: 'Ordering',
+    })
   return WatchBatch.make({
     items: Arr.reverse(items.slice(0, boundary).filter((item) => !seen.has(item.id))),
     cursor: items.length === 0 ? watch.cursor : cursor,
@@ -166,9 +169,8 @@ const read = (executor: Executor['Service']) =>
     trigger: typeof RoutineTrigger.cases.Integration.Type,
   ) {
     const connectionId = Watch.fields.connectionId.make(row.id)
-    if (row.status === 'failed')
-      return yield* Effect.fail(new IntegrationReadFailed({ connectionId }))
-    if (row.status !== 'ready') return yield* Effect.fail(new IntegrationRevoked({ connectionId }))
+    if (row.status === 'failed') return yield* new IntegrationReadFailed({ connectionId })
+    if (row.status !== 'ready') return yield* new IntegrationRevoked({ connectionId })
     const status = yield* executor
       .status(row.references)
       .pipe(Effect.mapError(observationFailure(connectionId)))
@@ -184,16 +186,16 @@ const read = (executor: Executor['Service']) =>
       .tools(row.references)
       .pipe(Effect.mapError(observationFailure(connectionId)))
     const tool = tools.find((item) => item.name === trigger.event && item.effect === 'read')
-    if (tool === undefined) return yield* Effect.fail(new IntegrationReadFailed({ connectionId }))
+    if (tool === undefined) return yield* new IntegrationReadFailed({ connectionId })
     const input = providerInput(tool, row.references)
-    if (Option.isNone(input)) return yield* Effect.fail(new IntegrationReadFailed({ connectionId }))
+    if (Option.isNone(input)) return yield* new IntegrationReadFailed({ connectionId })
     const filter = yield* decodeFilter(trigger.filter).pipe(
       Effect.mapError(() => new IntegrationReadFailed({ connectionId })),
     )
     let provider = filter.input
     if (input.value.wrap) {
       if (!ExecutorReferences.guards.Authorized(row.references))
-        return yield* Effect.fail(new IntegrationRevoked({ connectionId }))
+        return yield* new IntegrationRevoked({ connectionId })
       provider = { accountId: row.references.account, input: filter.input }
     }
     const outcome = yield* executor
@@ -219,7 +221,7 @@ const accountOf = Effect.fn('IntegrationWatch.accountOf')(function* (
     (item) => item.account.toLowerCase() === account.trim().toLowerCase(),
   )
   if (found === undefined)
-    return yield* Effect.fail(new InvalidRequest({ message: 'Integration account not found.' }))
+    return yield* new InvalidRequest({ message: 'Integration account not found.' })
   return found
 })
 
@@ -292,9 +294,9 @@ export const integrationPollingServiceLayer = Layer.effect(
           (item.name === trigger.event || eventDescription(item) === trigger.event),
       )
       if (tool === undefined)
-        return yield* Effect.fail(
-          new InvalidRequest({ message: 'Select a read-only event returned by find_events.' }),
-        )
+        return yield* new InvalidRequest({
+          message: 'Select a read-only event returned by find_events.',
+        })
       const selected = RoutineTrigger.cases.Integration.make({
         account,
         event: tool.name,
@@ -316,9 +318,9 @@ export const integrationPollingServiceLayer = Layer.effect(
           Effect.provideService(Database, database),
         )
         if (row.status !== 'ready')
-          return yield* Effect.fail(
-            new InvalidRequest({ message: 'Reconnect this Integration before watching it.' }),
-          )
+          return yield* new InvalidRequest({
+            message: 'Reconnect this Integration before watching it.',
+          })
         const tools = yield* executor.tools(row.references).pipe(Effect.mapError(executorFailure))
         const events = Arr.filterMap(tools, (tool) => eventDefinition(tool, row.references))
         return FindEventsResponse.make({ events })
@@ -336,9 +338,7 @@ export const integrationPollingServiceLayer = Layer.effect(
           yield* listRecords(actor).pipe(Effect.provideService(Database, database)),
         ).find((item) => item.row.id === watch.connectionId)
         if (found === undefined)
-          return yield* Effect.fail(
-            new InvalidRequest({ message: 'Integration account not found.' }),
-          )
+          return yield* new InvalidRequest({ message: 'Integration account not found.' })
         return yield* bind(found, watch.trigger)
       }),
       /** Binding authorization follows the stored Connection, never a later reused/renamed label. */
@@ -360,7 +360,7 @@ export const integrationPollingServiceLayer = Layer.effect(
         )
         const raw = rows[0]
         if (raw === undefined)
-          return yield* Effect.fail(new IntegrationRevoked({ connectionId: watch.connectionId }))
+          return yield* new IntegrationRevoked({ connectionId: watch.connectionId })
         const items = yield* observe(yield* decodeRow(raw), watch.trigger)
         return yield* newBatch(watch, items)
       }),

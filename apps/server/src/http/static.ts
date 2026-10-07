@@ -17,7 +17,7 @@ const pathname = Effect.fn('Static.pathname')(function* (url: string) {
     catch: () => new StaticPathRejected({}),
   })
   if (decoded.includes('\\') || decoded.includes('\0') || decoded.split('/').includes('..'))
-    return yield* Effect.fail(new StaticPathRejected({}))
+    return yield* new StaticPathRejected({})
   return decoded
 })
 
@@ -26,7 +26,7 @@ const contained = Effect.fn('Static.contained')(function* (root: string, candida
   const path = yield* Path.Path
   const relative = path.relative(root, candidate)
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
-    return yield* Effect.fail(new StaticPathRejected({}))
+    return yield* new StaticPathRejected({})
   return candidate
 })
 

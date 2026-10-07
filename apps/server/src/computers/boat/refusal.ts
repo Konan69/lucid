@@ -36,15 +36,11 @@ export const decodeTool = <A>(tool: string, schema: Schema.ConstraintDecoder<A>)
       Effect.mapError(() => new MachineResponseInvalid({ operation: 'computer-tool' })),
     )
     if (isArgumentsRefused(response))
-      return yield* Effect.fail(new ComputerToolRefused({ operation: tool, code: response.code }))
+      return yield* new ComputerToolRefused({ operation: tool, code: response.code })
     if (isBrowserRefused(response))
-      return yield* Effect.fail(
-        new ComputerToolRefused({ operation: tool, code: response.refusal.code }),
-      )
+      return yield* new ComputerToolRefused({ operation: tool, code: response.refusal.code })
     if (isActionRefused(response))
-      return yield* Effect.fail(
-        new ComputerActionRefused({ operation: tool, route: response.route }),
-      )
+      return yield* new ComputerActionRefused({ operation: tool, route: response.route })
     return yield* Schema.decodeUnknownEffect(schema)(response).pipe(
       Effect.mapError(() => new MachineResponseInvalid({ operation: 'computer-tool' })),
     )

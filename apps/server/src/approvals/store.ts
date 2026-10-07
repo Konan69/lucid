@@ -66,9 +66,9 @@ const fields = createSelectSchema(approvals, {
   signal: Signal,
 }).fields
 const undecided = { decidedBy: Schema.Null, decidedAt: Schema.Null }
-const decided = { decidedBy: PersonId, decidedAt: Schema.Number }
+const decided = { decidedBy: PersonId, decidedAt: Schema.Finite }
 const unfinished = { finishedAt: Schema.Null, outcome: Schema.Null }
-const finished = { finishedAt: Schema.Number, outcome: Schema.String }
+const finished = { finishedAt: Schema.Finite, outcome: Schema.String }
 
 /** Each stored status declares its exact columns; inconsistent historical rows fail at ingress. */
 const Row = Schema.Union([
@@ -80,7 +80,7 @@ const Row = Schema.Union([
     ...fields,
     status: Schema.Literal('unknown'),
     ...decided,
-    finishedAt: Schema.Number,
+    finishedAt: Schema.Finite,
     outcome: Schema.Null,
   }),
   Schema.Struct({ ...fields, status: Schema.Literal('denied'), ...decided, ...unfinished }),
@@ -88,7 +88,7 @@ const Row = Schema.Union([
     ...fields,
     status: Schema.Literal('expired'),
     ...undecided,
-    finishedAt: Schema.Number,
+    finishedAt: Schema.Finite,
     outcome: Schema.Null,
   }),
   Schema.Struct({ ...fields, status: Schema.Literal('withdrawn'), ...undecided, ...finished }),
@@ -265,15 +265,14 @@ const claim = Effect.fn('Approvals.claim')(function* (
   const scope = eq(approvals.id, request.id)
   const values = yield* database.run(database.select().from(approvals).where(scope).limit(1))
   const value = values[0]
-  if (value === undefined)
-    return yield* Effect.fail(new NotFound({ message: 'Approval not found' }))
+  if (value === undefined) return yield* new NotFound({ message: 'Approval not found' })
   const row = yield* decodeRow(value)
   const thread = yield* requireThread(row.threadId, actor.person.id)
   if (row.digest !== request.digest)
-    return yield* Effect.fail(new Conflict({ message: 'Approval digest differs' }))
+    return yield* new Conflict({ message: 'Approval digest differs' })
   const now = yield* Clock.currentTimeMillis
   if (Row.guards.expired(row) || (Row.guards.pending(row) && row.expiresAt <= now))
-    return yield* Effect.fail(new Conflict({ message: 'This request ran out' }))
+    return yield* new Conflict({ message: 'This request ran out' })
   yield* requireDecisionAuthority(actor, row, request, thread.audience)
   const rows = yield* database.run(
     database
@@ -296,8 +295,7 @@ const claim = Effect.fn('Approvals.claim')(function* (
       .returning(),
   )
   const claimed = rows[0]
-  if (claimed === undefined)
-    return yield* Effect.fail(new Conflict({ message: 'Approval already decided' }))
+  if (claimed === undefined) return yield* new Conflict({ message: 'Approval already decided' })
   const result = yield* decodeRow(claimed)
   if (Row.guards.denied(result)) {
     // Only the winning SQL claim decides Denied; reads, delivery and repeat decisions do not.
@@ -455,13 +453,13 @@ const decide = Effect.fn('Approvals.decide')(function* (
 /** A digest-scoped transaction lock deduplicates simultaneous proposals across server processes. */
 const raise = Effect.fn('Approvals.raise')(function* (actor: Actor, action: ProposedAction) {
   if (actor.by !== 'vivid' || Option.isNone(actor.threadId))
-    return yield* Effect.fail(new NotFound({ message: 'Approval needs a Vivid Thread' }))
+    return yield* new NotFound({ message: 'Approval needs a Vivid Thread' })
   const origin = yield* actionOrigin(actor)
   const threadId = actor.threadId.value
   const runId = ActionOrigin.guards.Run(origin) ? origin.runId : null
   const thread = yield* requireThread(threadId, actor.person.id)
   if (thread.companyId !== companyColumnOf(actor.workspace))
-    return yield* Effect.fail(new NotFound({ message: 'Thread not found in workspace' }))
+    return yield* new NotFound({ message: 'Thread not found in workspace' })
   const database = yield* Database
   const now = yield* Clock.currentTimeMillis
   const encoded = yield* encodeAction(action).pipe(
@@ -597,7 +595,7 @@ const settleRecovered = Effect.fn('Approvals.settleRecovered')(
         ),
       )
       yield* deliver(approval.id)
-      if (Result.isFailure(audit)) yield* Effect.fail(audit.failure)
+      if (Result.isFailure(audit)) yield* audit.failure
     } else {
       yield* deliver(approval.id)
     }
@@ -661,8 +659,7 @@ export const approvalStoreLayer = Layer.effect(
         const scope = and(eq(approvals.id, id), ownedHere(approvals, actor))
         const found = yield* database.run(database.select().from(approvals).where(scope).limit(1))
         const value = found[0]
-        if (value === undefined)
-          return yield* Effect.fail(new NotFound({ message: 'Approval not found' }))
+        if (value === undefined) return yield* new NotFound({ message: 'Approval not found' })
         const row = yield* decodeRow(value)
         yield* requireThread(row.threadId, actor.person.id).pipe(
           Effect.provideService(Database, database),
@@ -678,8 +675,7 @@ export const approvalStoreLayer = Layer.effect(
             .where(and(scope, eq(approvals.status, 'pending')))
             .returning(),
         )
-        if (rows.length === 0)
-          return yield* Effect.fail(new Conflict({ message: 'Approval already decided' }))
+        if (rows.length === 0) return yield* new Conflict({ message: 'Approval already decided' })
         return row.threadId
       }),
       expire: () => run(expire()),

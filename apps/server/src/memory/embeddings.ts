@@ -55,7 +55,7 @@ export class ProviderRejected extends Schema.TaggedError<ProviderRejected>()(
   'MemoryProviderRejected',
   {
     operation: Schema.String,
-    status: Schema.Number,
+    status: Schema.Finite,
   },
   { title: 'MemoryProviderRejected' },
 ) {}
@@ -69,16 +69,16 @@ export class ProviderMalformed extends Schema.TaggedError<ProviderMalformed>()(
 export class EmbeddingDimensionMismatch extends Schema.TaggedError<EmbeddingDimensionMismatch>()(
   'EmbeddingDimensionMismatch',
   {
-    expected: Schema.Number,
-    actual: Schema.Number,
+    expected: Schema.Finite,
+    actual: Schema.Finite,
   },
   { title: 'EmbeddingDimensionMismatch' },
 ) {}
 export class EmbeddingBatchMismatch extends Schema.TaggedError<EmbeddingBatchMismatch>()(
   'EmbeddingBatchMismatch',
   {
-    expected: Schema.Number,
-    actual: Schema.Number,
+    expected: Schema.Finite,
+    actual: Schema.Finite,
   },
   { title: 'EmbeddingBatchMismatch' },
 ) {}
@@ -110,23 +110,20 @@ export const providerResponse = Effect.fn('Memory.providerResponse')(function* (
     ),
   )
   if (response.status === 429) {
-    return yield* Effect.fail(
-      MemoryRateLimited.make({
-        service: 'memory',
-        message: 'The model gateway rate limited memory',
-        retryAfter: Option.getOrNull(Headers.get(response.headers, 'retry-after')),
-      }),
-    )
+    return yield* MemoryRateLimited.make({
+      service: 'memory',
+      message: 'The model gateway rate limited memory',
+      retryAfter: Option.getOrNull(Headers.get(response.headers, 'retry-after')),
+    })
   }
   if (response.status >= 500) {
-    return yield* Effect.fail(
-      ServiceUnavailable.make({ service: 'memory', message: 'The model gateway is unavailable' }),
-    )
+    return yield* ServiceUnavailable.make({
+      service: 'memory',
+      message: 'The model gateway is unavailable',
+    })
   }
   if (response.status < 200 || response.status >= 300) {
-    return yield* Effect.fail(
-      ProviderRejected.make({ operation: input.path, status: response.status }),
-    )
+    return yield* ProviderRejected.make({ operation: input.path, status: response.status })
   }
   return response
 })
@@ -173,18 +170,17 @@ export const embeddingsLayer = Layer.effect(
       )
       const ordered = Arr.sortWith(decoded.data, (item) => item.index, Order.Number)
       if (ordered.length !== texts.length || ordered.some((item, index) => item.index !== index)) {
-        return yield* Effect.fail(
-          EmbeddingBatchMismatch.make({ expected: texts.length, actual: ordered.length }),
-        )
+        return yield* EmbeddingBatchMismatch.make({
+          expected: texts.length,
+          actual: ordered.length,
+        })
       }
       for (const item of ordered) {
         if (item.embedding.length !== dimensions) {
-          return yield* Effect.fail(
-            EmbeddingDimensionMismatch.make({
-              expected: dimensions,
-              actual: item.embedding.length,
-            }),
-          )
+          return yield* EmbeddingDimensionMismatch.make({
+            expected: dimensions,
+            actual: item.embedding.length,
+          })
         }
       }
       return ordered.map((item) => item.embedding)

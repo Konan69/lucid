@@ -67,13 +67,13 @@ const readBinary = Effect.fn('Updates.readBinary')(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest
   const query = new URL(request.url, 'http://vivid.local').searchParams
   const platform = decodePlatform(request.headers['expo-platform'] ?? query.get('platform'))
-  if (Option.isNone(platform)) return yield* Effect.fail(new PlatformUnsupported({}))
+  if (Option.isNone(platform)) return yield* new PlatformUnsupported({})
   const runtimeVersion = decodeRuntimeVersion(
     request.headers['expo-runtime-version'] ??
       query.get('runtime-version') ??
       query.get('runtimeVersion'),
   )
-  if (Option.isNone(runtimeVersion)) return yield* Effect.fail(new RuntimeVersionRequired({}))
+  if (Option.isNone(runtimeVersion)) return yield* new RuntimeVersionRequired({})
   return { platform: platform.value, runtimeVersion: runtimeVersion.value, query }
 })
 
@@ -107,18 +107,18 @@ const multipart = (parts: ReadonlyArray<UpdatePart>, protocolVersion: number) =>
 const manifest = Effect.fn('Updates.manifest')(function* (catalog: Catalog, publicUrl: URL) {
   const request = yield* HttpServerRequest.HttpServerRequest
   const version = decodeProtocolVersion(request.headers['expo-protocol-version'] ?? '0')
-  if (Option.isNone(version)) return yield* Effect.fail(new ProtocolVersionUnsupported({}))
+  if (Option.isNone(version)) return yield* new ProtocolVersionUnsupported({})
   const protocolVersion = Number(version.value)
   const binary = yield* readBinary()
   if (request.headers['expo-expect-signature'] !== undefined)
-    return yield* Effect.fail(new SignatureUnavailable({}))
+    return yield* new SignatureUnavailable({})
   const parts = answerUpdate(catalog, publicUrl, {
     protocolVersion,
     platform: binary.platform,
     runtimeVersion: binary.runtimeVersion,
     currentUpdateId: Option.fromUndefinedOr(request.headers['expo-current-update-id']),
   })
-  if (Option.isNone(parts)) return yield* Effect.fail(new UpdateNotPublished(binary))
+  if (Option.isNone(parts)) return yield* new UpdateNotPublished(binary)
   return multipart(parts.value, protocolVersion)
 })
 
@@ -129,9 +129,9 @@ const manifest = Effect.fn('Updates.manifest')(function* (catalog: Catalog, publ
 const asset = Effect.fn('Updates.asset')(function* (catalog: Catalog) {
   const binary = yield* readBinary()
   const key = binary.query.get('asset')
-  if (key === null) return yield* Effect.fail(new AssetNotFound({}))
+  if (key === null) return yield* new AssetNotFound({})
   const file = findAsset(catalog, { ...binary, key })
-  if (Option.isNone(file)) return yield* Effect.fail(new AssetNotFound({}))
+  if (Option.isNone(file)) return yield* new AssetNotFound({})
   return yield* HttpServerResponse.file(file.value.path, {
     contentType: file.value.contentType,
     headers: { 'cache-control': 'public, max-age=31536000, immutable' },

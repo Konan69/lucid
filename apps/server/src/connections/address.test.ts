@@ -129,7 +129,7 @@ const fixture = Effect.fn('AddressTest.fixture')(function* () {
                 .pipe(Effect.mapError(() => new PageFailure({ reason: 'could not be reached' })))
               const contentType = response.headers['content-type']
               if (contentType === undefined)
-                return yield* Effect.fail(new PageFailure({ reason: 'not a readable page' }))
+                return yield* new PageFailure({ reason: 'not a readable page' })
               return {
                 status: response.status,
                 location: Option.fromUndefinedOr(response.headers.location),

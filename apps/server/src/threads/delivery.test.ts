@@ -182,7 +182,7 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
   const runtime = Runtime.of({
     admit: Effect.fn('Delivery.test.admit')(function* (input) {
       const rejected = yield* Ref.getAndSet(failure, Option.none())
-      if (Option.isSome(rejected)) return yield* Effect.fail(rejected.value)
+      if (Option.isSome(rejected)) return yield* rejected.value
       const id = submissionId(input.threadId, input.idempotencyKey)
       yield* Ref.update(requests, (all) => [...all, input])
       const repeated = settlements.has(id)

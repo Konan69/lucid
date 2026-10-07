@@ -8,7 +8,7 @@ import { LibraryFolderId, OccurrenceId, RoutineId, ThreadId } from './identity.j
  */
 export const RoutineTrigger = Schema.TaggedUnion({
   /** One delivery at epoch milliseconds; timezone preserves how the instant is said back. */
-  Once: { at: Schema.Number, timezone: Schema.String },
+  Once: { at: Schema.Finite, timezone: Schema.String },
   Schedule: { cron: Schema.String, timezone: Schema.String },
   Webhook: {},
   Integration: { account: Schema.String, event: Schema.String, filter: Schema.Json },
@@ -25,8 +25,8 @@ export const Occurrence = Schema.Struct({
   threadId: ThreadId,
   submissionId: Schema.NullOr(Schema.String),
   status: OccurrenceStatus,
-  startedAt: Schema.Number,
-  finishedAt: Schema.NullOr(Schema.Number),
+  startedAt: Schema.Finite,
+  finishedAt: Schema.NullOr(Schema.Finite),
   output: Schema.NullOr(Schema.String),
   error: Schema.NullOr(Schema.String),
 }).annotate({ identifier: 'Occurrence', title: 'Routine occurrence' })
@@ -41,11 +41,11 @@ export const Routine = Schema.Struct({
   trigger: RoutineTrigger,
   libraryFolderId: Schema.NullOr(LibraryFolderId),
   enabled: Schema.Boolean,
-  nextExpectedAt: Schema.NullOr(Schema.Number),
-  lastMissedAt: Schema.NullOr(Schema.Number),
-  createdAt: Schema.Number,
-  updatedAt: Schema.Number,
-  nextRunAt: Schema.NullOr(Schema.Number),
+  nextExpectedAt: Schema.NullOr(Schema.Finite),
+  lastMissedAt: Schema.NullOr(Schema.Finite),
+  createdAt: Schema.Finite,
+  updatedAt: Schema.Finite,
+  nextRunAt: Schema.NullOr(Schema.Finite),
   runs: Schema.Array(Occurrence),
 }).annotate({ identifier: 'Routine', title: 'Routine' })
 /** Decoded Routine. */

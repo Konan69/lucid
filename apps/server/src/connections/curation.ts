@@ -85,7 +85,7 @@ export const loadCuration = Effect.fn('Connections.loadCuration')(
       !coversCatalog(document, document.catalog) ||
       document.entries.length !== document.catalog.length
     ) {
-      return yield* Effect.fail(missingCuration())
+      return yield* missingCuration()
     }
     return curatedSearch(document)
   },

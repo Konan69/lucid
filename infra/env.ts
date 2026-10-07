@@ -164,12 +164,10 @@ export const loadInfrastructureEnvironment = Effect.fn('loadInfrastructureEnviro
     const otlpUrl = yield* optionalString('VIVID_OTLP_URL')
     const otlpHeaders = yield* optionalSecret('VIVID_OTLP_HEADERS')
     if (Option.isSome(otlpUrl) !== Option.isSome(otlpHeaders)) {
-      return yield* Effect.fail(
-        new InfrastructureEnvironmentError({
-          variable: 'VIVID_OTLP_URL, VIVID_OTLP_HEADERS',
-          message: 'Telemetry export must provide both variables or neither',
-        }),
-      )
+      return yield* new InfrastructureEnvironmentError({
+        variable: 'VIVID_OTLP_URL, VIVID_OTLP_HEADERS',
+        message: 'Telemetry export must provide both variables or neither',
+      })
     }
     const observability = Option.zipWith(
       otlpUrl,

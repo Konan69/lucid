@@ -208,7 +208,7 @@ const makeGet = (database: DatabaseService) =>
         .where(and(eq(routines.id, id), ownedRoutine(actor))),
     )
     const row = rows[0]
-    if (row === undefined) return yield* Effect.fail(new RoutineMissing({ id }))
+    if (row === undefined) return yield* new RoutineMissing({ id })
     return yield* decodeRoutine(row)
   })
 
@@ -434,14 +434,12 @@ const makePatch = (
           .where(and(eq(routines.id, id), ownedRoutine(actor)))
           .for('update')
         const row = rows[0]
-        if (row === undefined) return yield* Effect.fail(new RoutineMissing({ id }))
+        if (row === undefined) return yield* new RoutineMissing({ id })
         const current = yield* decodeRoutine(row)
         if (staleBaseline({ prepared, input, current, authorized }))
-          return yield* Effect.fail(
-            new Conflict({
-              message: 'This Routine changed while it was being switched on. Try again.',
-            }),
-          )
+          return yield* new Conflict({
+            message: 'This Routine changed while it was being switched on. Try again.',
+          })
         const prompt = input.prompt === undefined ? current.routine.prompt : input.prompt
         yield* requireStandingPerson(actor, current.routine.prompt)
         yield* requireStandingPerson(actor, prompt)
@@ -484,7 +482,7 @@ const makeRemove = (database: DatabaseService) =>
         .where(and(eq(routines.id, id), ownedRoutine(actor)))
         .returning({ id: routines.id }),
     )
-    if (rows.length === 0) return yield* Effect.fail(new RoutineMissing({ id }))
+    if (rows.length === 0) return yield* new RoutineMissing({ id })
     return yield* Effect.void
   })
 
@@ -497,7 +495,7 @@ const makeIssueWebhook = (
   Effect.fn('RoutineStore.issueWebhook')(function* (actor: Actor, id: RoutineId) {
     const record = yield* get(actor, id)
     if (!RoutineTrigger.guards.Webhook(record.routine.trigger)) {
-      return yield* Effect.fail(new RoutineWebhookRequired({ id }))
+      return yield* new RoutineWebhookRequired({ id })
     }
     const key = yield* Effect.sync(issueKey)
     const now = yield* Clock.currentTimeMillis
@@ -508,7 +506,7 @@ const makeIssueWebhook = (
         .where(and(eq(routines.id, id), ownedRoutine(actor), eq(routines.trigger, 'webhook')))
         .returning({ id: routines.id }),
     )
-    if (rows.length === 0) return yield* Effect.fail(new RoutineWebhookRequired({ id }))
+    if (rows.length === 0) return yield* new RoutineWebhookRequired({ id })
     return RoutineWebhook.make({
       address: new URL(`/api/hooks/routines/${encodeURIComponent(id)}`, publicUrl).href,
       key,
@@ -543,7 +541,7 @@ const requireMember = Effect.fn('RoutineStore.requireMember')(function* (
   record: RoutineRecord,
 ) {
   if (!(yield* memberPresent(database, record)))
-    return yield* Effect.fail(new RoutineMissing({ id: record.routine.id }))
+    return yield* new RoutineMissing({ id: record.routine.id })
   return yield* Effect.void
 })
 
@@ -563,7 +561,7 @@ const makeAuthorizeWebhook = (database: DatabaseService) =>
       row.trigger !== 'webhook' ||
       row.webhookKeyHash === null
     ) {
-      return yield* Effect.fail(new RoutineMissing({ id }))
+      return yield* new RoutineMissing({ id })
     }
     const record = yield* decodeRoutine(row)
     yield* database.run(requireMember(database, record))
@@ -801,9 +799,9 @@ const makeClaimOccurrence = (
       })
     const existing = yield* find(record, attempt.id)
     if (Option.isNone(existing))
-      return yield* Effect.fail(
-        new DatabaseFailure({ message: 'Routine receipt conflict has no matching Occurrence' }),
-      )
+      return yield* new DatabaseFailure({
+        message: 'Routine receipt conflict has no matching Occurrence',
+      })
     return OccurrenceClaim.cases.Existing.make({ occurrence: existing.value })
   })
 
@@ -867,11 +865,9 @@ const makeAttachSubmission = (database: DatabaseService) =>
         .returning({ id: occurrences.id }),
     )
     if (rows.length === 0)
-      return yield* Effect.fail(
-        new DatabaseFailure({
-          message: 'Routine occurrence disappeared before delivery was attached',
-        }),
-      )
+      return yield* new DatabaseFailure({
+        message: 'Routine occurrence disappeared before delivery was attached',
+      })
     return yield* Effect.void
   })
 

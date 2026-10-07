@@ -88,7 +88,7 @@ const fixture = Effect.fn('ReceiptTest.fixture')(function* () {
 
 const decodeInspection = HttpClientResponse.schemaBodyJson(
   Schema.Struct({
-    memories: Schema.Array(Schema.Struct({ memoryId: MemoryId, accessCount: Schema.Number })),
+    memories: Schema.Array(Schema.Struct({ memoryId: MemoryId, accessCount: Schema.Finite })),
     receipts: Schema.Array(Schema.Struct({ memoryId: MemoryId })),
     edges: Schema.Array(Schema.Struct({ kind: Schema.String })),
   }),

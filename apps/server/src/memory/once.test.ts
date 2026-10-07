@@ -284,7 +284,7 @@ function saved(result: LearnResult, tag: 'Saved' | 'AlreadySaved'): Memory {
 
 const decodeInspection = HttpClientResponse.schemaBodyJson(
   Schema.Struct({
-    memories: Schema.Array(Schema.Struct({ memoryId: MemoryId, accessCount: Schema.Number })),
+    memories: Schema.Array(Schema.Struct({ memoryId: MemoryId, accessCount: Schema.Finite })),
     edges: Schema.Array(Schema.Struct({ kind: Schema.String, from: MemoryId, to: MemoryId })),
   }),
 )

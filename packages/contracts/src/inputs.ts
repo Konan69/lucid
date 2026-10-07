@@ -11,9 +11,9 @@ export interface InputOption extends Schema.Schema.Type<typeof InputOption> {}
 /** Where an Input request stands. An answered one keeps who answered and what they said. */
 export const InputRequestState = Schema.TaggedUnion({
   Waiting: {},
-  Answered: { answeredBy: PersonSummary, answer: Schema.String, answeredAt: Schema.Number },
+  Answered: { answeredBy: PersonSummary, answer: Schema.String, answeredAt: Schema.Finite },
   /** The Run that asked was stopped, or the Person moved the Thread on, before an answer. */
-  Withdrawn: { withdrawnAt: Schema.Number },
+  Withdrawn: { withdrawnAt: Schema.Finite },
 })
 export type InputRequestState = typeof InputRequestState.Type
 
@@ -28,7 +28,7 @@ export const InputRequest = Schema.Struct({
   allowsOwnAnswer: Schema.Boolean,
   askedOf: PersonSummary,
   state: InputRequestState,
-  createdAt: Schema.Number,
+  createdAt: Schema.Finite,
 }).annotate({ identifier: 'InputRequest', title: 'Input request' })
 export interface InputRequest extends Schema.Schema.Type<typeof InputRequest> {}
 

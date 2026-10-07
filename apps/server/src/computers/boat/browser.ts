@@ -99,7 +99,7 @@ const chrome = Effect.fn('Machine.boat.browser.chrome')(function* (
   }
   const window = matches[0]
   if (matches.length !== 1 || window === undefined || window.pid === null)
-    return yield* Effect.fail(new BrowserStepFailed())
+    return yield* new BrowserStepFailed()
   return { pid: window.pid, window_id: window.window_id }
 })
 const Launched = Schema.Struct({
@@ -124,8 +124,7 @@ const prepare = Effect.fn('Machine.boat.browser.prepare')(function* (
     },
     Prepared,
   )
-  if (!receipt.prepared)
-    return yield* Effect.fail(new MachineCapabilityUnavailable({ capability: 'browser' }))
+  if (!receipt.prepared) return yield* new MachineCapabilityUnavailable({ capability: 'browser' })
   return undefined
 })
 
@@ -141,8 +140,7 @@ const currentTab = Effect.fn('Machine.boat.browser.active')(function* (bound: Br
   if (bound.tabs.length === 1 && sole !== undefined && sole.active !== false) return sole
   const showing = bound.tabs.filter((tab) => tab.active === true)
   const current = showing[0]
-  if (showing.length !== 1 || current === undefined)
-    return yield* Effect.fail(new BrowserStepFailed())
+  if (showing.length !== 1 || current === undefined) return yield* new BrowserStepFailed()
   return current
 })
 const snapshot = Effect.fn('Machine.boat.browser.snapshot')(function* (
@@ -176,8 +174,7 @@ const targetRef = Effect.fn('Machine.boat.browser.target')(function* (
       ref.actions.includes(action),
   )
   const match = matches[0]
-  if (matches.length !== 1 || match === undefined)
-    return yield* Effect.fail(new BrowserStepFailed())
+  if (matches.length !== 1 || match === undefined) return yield* new BrowserStepFailed()
   const current = yield* currentTab(bound)
   return { target_id: bound.target_id, tab_id: current.tab_id, ref: match.ref }
 })
@@ -191,7 +188,7 @@ const selectTab = Effect.fn('Machine.boat.browser.select')(function* (
   index: number,
 ) {
   const chosen = bound.tabs[index - 1]
-  if (chosen === undefined) return yield* Effect.fail(new MachineInputInvalid())
+  if (chosen === undefined) return yield* new MachineInputInvalid()
   const controls = yield* native.call(
     'get_window_state',
     { ...window, include_screenshot: false },
@@ -205,7 +202,7 @@ const selectTab = Effect.fn('Machine.boat.browser.select')(function* (
   )
   const item = candidates[0]
   if (candidates.length !== 1 || item === undefined || item.element_token === undefined)
-    return yield* Effect.fail(new BrowserStepFailed())
+    return yield* new BrowserStepFailed()
   yield* native.call(
     'click',
     { ...window, element_token: item.element_token, delivery_mode: 'foreground' },
@@ -223,7 +220,7 @@ const step = Effect.fn('Machine.boat.browser.step')(function* (
 ) {
   const keys = Effect.fn('Machine.boat.browser.keys')(function* (pressed: ReadonlyArray<string>) {
     const key = pressed[pressed.length - 1]
-    if (key === undefined) return yield* Effect.fail(new MachineInputInvalid())
+    if (key === undefined) return yield* new MachineInputInvalid()
     yield* native.call(
       'press_key',
       { ...window, key, modifiers: pressed.slice(0, -1), delivery_mode: 'foreground' },
@@ -292,13 +289,13 @@ const resolveTab = Effect.fn('Machine.boat.browser.resolveTab')(function* (
   previous: Option.Option<BrowseResult['tabs']>,
 ) {
   if (!BrowserAction.isAnyOf(['ShowTab', 'CloseTab'])(action)) return action
-  if (Option.isNone(previous)) return yield* Effect.fail(new MachineInputInvalid())
+  if (Option.isNone(previous)) return yield* new MachineInputInvalid()
   const selected = previous.value[action.tab - 1]
-  if (selected === undefined) return yield* Effect.fail(new MachineInputInvalid())
+  if (selected === undefined) return yield* new MachineInputInvalid()
   const matches = bound.tabs.filter(
     (tab) => tab.url === selected.address && tab.title === selected.title,
   )
-  if (matches.length !== 1) return yield* Effect.fail(new BrowserStepFailed())
+  if (matches.length !== 1) return yield* new BrowserStepFailed()
   const tab =
     bound.tabs.findIndex((item) => item.url === selected.address && item.title === selected.title) +
     1
@@ -338,7 +335,7 @@ export const browse = Effect.fn('Machine.boat.browser')(function* (
       field === undefined ||
       (field.value !== action.text && !(action.text === '' && field.value === null))
     )
-      return yield* Effect.fail(new BrowserStepFailed())
+      return yield* new BrowserStepFailed()
   }
   // semantic.rs render_outline contains roles, words and states; refs remain separate and private.
   const outline = page.outline.slice(0, 32768)

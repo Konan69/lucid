@@ -40,9 +40,9 @@ export const ChannelStanding = Schema.TaggedUnion({
     address: ChannelAddress,
     textTo: ChannelAddress,
     code: Schema.String,
-    expiresAt: Schema.Number,
+    expiresAt: Schema.Finite,
   },
-  Connected: { address: ChannelAddress, textTo: ChannelAddress, since: Schema.Number },
+  Connected: { address: ChannelAddress, textTo: ChannelAddress, since: Schema.Finite },
 })
 export type ChannelStanding = typeof ChannelStanding.Type
 

@@ -246,11 +246,12 @@ export const libraryStoreLayer = Layer.effect(
         if (query.folderId !== undefined) {
           const folder = yield* folders.getFolder(actor, query.folderId)
           if (Option.isNone(folder))
-            return yield* Effect.fail(new NotFound({ message: 'Library folder not found' }))
+            return yield* new NotFound({ message: 'Library folder not found' })
           if (folder.value.shelf !== query.shelf)
-            return yield* Effect.fail(
-              new LibraryFolderMismatch({ folderId: query.folderId, shelf: query.shelf }),
-            )
+            return yield* new LibraryFolderMismatch({
+              folderId: query.folderId,
+              shelf: query.shelf,
+            })
         }
         return LibraryListResponse.make({
           documents: yield* items.listItems(actor, query),

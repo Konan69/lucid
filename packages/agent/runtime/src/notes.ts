@@ -132,7 +132,7 @@ async function openStore(path: string) {
 
 /** Open, or reuse, the Person's filesystem. A failed open is forgotten so the next call tries again. */
 const opened = Effect.fn('Notes.open')(function* (directory: string, person: PersonId) {
-  if (!SAFE_PERSON.test(person)) return yield* Effect.fail(NotesUnavailable.make({}))
+  if (!SAFE_PERSON.test(person)) return yield* NotesUnavailable.make({})
   const path = NodePath.join(directory, `${person}.db`)
   const existing = open.get(path)
   const pending = existing === undefined ? openStore(path) : existing
@@ -192,7 +192,7 @@ export const noteIndex = Effect.fn('Notes.index')(function* (notes: NotesOf) {
 export const readNote = Effect.fn('Notes.read')(function* (notes: NotesOf, file: NoteFile) {
   const fs = (yield* opened(notes.directory, notes.person)).fs
   const note = parsed(yield* attempt(file, () => fs.readFile(`/${file}`, 'utf8')))
-  if (Option.isNone(note)) return yield* Effect.fail(NoteMissing.make({ file }))
+  if (Option.isNone(note)) return yield* NoteMissing.make({ file })
   return Note.make({ file, ...note.value })
 })
 

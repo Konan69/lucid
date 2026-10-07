@@ -47,7 +47,7 @@ const scheduleTrigger = Effect.fn('RoutineStore.scheduleTrigger')(function* (
     row.webhookKeyHash !== null ||
     row.integration !== null
   )
-    return yield* Effect.fail(new DatabaseFailure({ message: 'Routine trigger columns disagree' }))
+    return yield* new DatabaseFailure({ message: 'Routine trigger columns disagree' })
   return RoutineTrigger.cases.Schedule.make({ cron: row.cron, timezone: row.timezone })
 })
 /** Integration authority has a fully typed private Watch and no webhook credential. */
@@ -61,7 +61,7 @@ const integrationTrigger = Effect.fn('RoutineStore.integrationTrigger')(function
     row.timezone !== null ||
     row.webhookKeyHash !== null
   )
-    return yield* Effect.fail(new DatabaseFailure({ message: 'Routine trigger columns disagree' }))
+    return yield* new DatabaseFailure({ message: 'Routine trigger columns disagree' })
   return row.integration.trigger
 })
 
@@ -74,7 +74,7 @@ const onceTrigger = Effect.fn('RoutineStore.onceTrigger')(function* (row: typeof
     row.webhookKeyHash !== null ||
     row.integration !== null
   )
-    return yield* Effect.fail(new DatabaseFailure({ message: 'Routine trigger columns disagree' }))
+    return yield* new DatabaseFailure({ message: 'Routine trigger columns disagree' })
   return RoutineTrigger.cases.Once.make({ at: row.onceAt, timezone: row.timezone })
 })
 
@@ -93,7 +93,7 @@ const triggerOf = Effect.fn('RoutineStore.triggerOf')(function* (row: typeof Rou
   ) {
     return RoutineTrigger.cases.Webhook.make({})
   }
-  return yield* Effect.fail(new DatabaseFailure({ message: 'Routine trigger columns disagree' }))
+  return yield* new DatabaseFailure({ message: 'Routine trigger columns disagree' })
 })
 
 /** Decodes the database ingress once and constructs the public view without exposing authority. */

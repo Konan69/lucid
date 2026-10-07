@@ -75,9 +75,7 @@ const classify = Effect.fn('LibraryExtraction.classify')(function* (
   yield* Effect.logWarning('Library extraction process ended').pipe(
     Effect.annotateLogs({ ...reported(end), evidence: heap ? 'heap' : 'none' }),
   )
-  return yield* Effect.fail(
-    heap ? new ExtractionLimitExceeded({ limit: 'heap' }) : new ExtractionUnavailable(),
-  )
+  return yield* heap ? new ExtractionLimitExceeded({ limit: 'heap' }) : new ExtractionUnavailable()
 })
 
 /**

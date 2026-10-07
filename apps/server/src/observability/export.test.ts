@@ -55,7 +55,7 @@ const Pair = Schema.Struct({
   key: Schema.String,
   value: Schema.Struct({
     stringValue: Schema.optional(Schema.String),
-    intValue: Schema.optional(Schema.Number),
+    intValue: Schema.optional(Schema.Finite),
   }),
 })
 const Resource = Schema.Struct({ attributes: Schema.Array(Pair) })
@@ -78,7 +78,7 @@ const Traces = Schema.Struct({
                 Schema.Struct({ name: Schema.String, attributes: Schema.Array(Pair) }),
               ),
               status: Schema.Struct({
-                code: Schema.Number,
+                code: Schema.Finite,
                 message: Schema.optional(Schema.String),
               }),
             }),
@@ -328,7 +328,7 @@ const capturing = () => {
 it.effect('exports a typed failure with its tag, as expected, at its boundary', () =>
   Effect.gen(function* () {
     const refuse = Effect.fn('Probe.refuse')(function* () {
-      return yield* Effect.fail(new ProbeRefused({ message: 'not today' }))
+      return yield* new ProbeRefused({ message: 'not today' })
     }, observeFailures('rpc'))
     const { lines, received, resources, scopes, spans } = yield* exported(refuse())
 
@@ -420,7 +420,7 @@ it.effect('exports the type of a failure whose message is private prose, and no 
     const prose = 'Ada asked where her mother lives now and the answer was 12 Marsh Lane'
     const echo = Effect.fn('Probe.echo')(function* () {
       yield* Effect.logInfo(`Asking the provider: ${prose}`)
-      return yield* Effect.fail(new ProbeRefused({ message: prose }))
+      return yield* new ProbeRefused({ message: prose })
     }, observeFailures('runtime'))
     const { lines, spans, text } = yield* exported(echo())
 
@@ -465,7 +465,7 @@ it.effect("exports none of a Drizzle query error's statement or parameters", () 
       cause: driver,
     })
     const store = Effect.fn('Probe.store')(function* () {
-      return yield* Effect.fail(failure)
+      return yield* failure
     }, observeFailures('rpc'))
     const { spans, text } = yield* exported(store())
 
@@ -494,9 +494,7 @@ it.effect('exports a table name only when Vivid declares that table, and no cons
       table: `${PRIVATE}_table`,
     })
     const store = Effect.fn('Probe.store')(function* () {
-      return yield* Effect.fail(
-        new EffectDrizzleQueryError({ query: 'select 1', params: [], cause: foreign }),
-      )
+      return yield* new EffectDrizzleQueryError({ query: 'select 1', params: [], cause: foreign })
     }, observeFailures('rpc'))
     const { lines, spans, text } = yield* exported(store())
 
@@ -559,7 +557,7 @@ it.effect('exports no failure type that is a property of what was thrown', () =>
       return yield* Effect.die(Object.assign(new TypeError('boom'), { name: PRIVATE }))
     }, observeFailures('rpc'))
     const rooted = Effect.fn('Probe.rooted')(function* () {
-      return yield* Effect.fail(new ProbeWrapped({ cause: { name: PRIVATE, _tag: PRIVATE } }))
+      return yield* new ProbeWrapped({ cause: { name: PRIVATE, _tag: PRIVATE } })
     }, observeFailures('rpc'))
     const { spans, text } = yield* exported(
       Effect.all([Effect.exit(tagged()), Effect.exit(named()), Effect.exit(rooted())]),
@@ -971,7 +969,7 @@ it.effect('bounds what a backend that never answers can hold, and reports each p
   return Effect.gen(function* () {
     const { arrivals, flush, run } = yield* observed({ ...plain, answer: Effect.never })
     const refuse = Effect.fn('Probe.refuse')(function* () {
-      return yield* Effect.fail(new ProbeRefused({ message: 'not today' }))
+      return yield* new ProbeRefused({ message: 'not today' })
     }, observeFailures('rpc'))
     /** One unit of the server's work, then an export of what it recorded: a span and a line. */
     const round = Effect.fn('Test.round')(function* () {
@@ -1052,7 +1050,7 @@ it.effect('gives a refused export one attempt, keeps nothing of it, and reports 
       ),
     })
     const refuse = Effect.fn('Probe.refuse')(function* () {
-      return yield* Effect.fail(new ProbeRefused({ message: 'not today' }))
+      return yield* new ProbeRefused({ message: 'not today' })
     }, observeFailures('rpc'))
     const reports = () => stdout.lines.filter((line) => line.includes(Message.dropped))
 
@@ -1099,7 +1097,7 @@ it.effect('holds a place until the answer ends, and gives the connection back wi
       ),
     })
     const refuse = Effect.fn('Probe.refuse')(function* () {
-      return yield* Effect.fail(new ProbeRefused({ message: 'not today' }))
+      return yield* new ProbeRefused({ message: 'not today' })
     }, observeFailures('rpc'))
     const round = Effect.fn('Test.round')(function* () {
       yield* run(refuse())
@@ -1156,7 +1154,7 @@ it.effect('pauses a signal for a minute after one failed export, then sends agai
     })
     const named = (name: string) =>
       Effect.fn(name)(function* () {
-        return yield* Effect.fail(new ProbeRefused({ message: 'not today' }))
+        return yield* new ProbeRefused({ message: 'not today' })
       }, observeFailures('rpc'))()
     const reports = () => stdout.lines.filter((line) => line.includes(Message.dropped))
 
@@ -1812,7 +1810,7 @@ it.effect('posts nothing when export is disabled', () =>
     const { posts, routes } = yield* receiving(answered)
     yield* Layer.build(HttpRouter.serve(routes, { disableLogger: true }))
     const refuse = Effect.fn('Probe.refuse')(function* () {
-      return yield* Effect.fail(new ProbeRefused({ message: 'not today' }))
+      return yield* new ProbeRefused({ message: 'not today' })
     }, observeFailures('rpc'))
     yield* Effect.scoped(
       Effect.exit(refuse()).pipe(

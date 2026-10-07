@@ -60,7 +60,7 @@ const post = Effect.fn('Account.post')(function* (path: string, body: AccountReq
     const said = Option.flatMap(decodeRefusalText(text), (refusal) =>
       Option.fromUndefinedOr(refusal.message),
     )
-    yield* Effect.fail(new AccountRefused({ message: reasonFor(response.status, said) }))
+    yield* new AccountRefused({ message: reasonFor(response.status, said) })
   }
 })
 
@@ -133,11 +133,9 @@ export const continueWithGoogle = Effect.fn('Account.continueWithGoogle')(functi
   const code = Option.flatMap(decodeGoogleRefusal(answer.error), (refusal) =>
     Option.fromUndefinedOr(refusal.code),
   )
-  yield* Effect.fail(
-    new GoogleRefused({
-      outcome: Option.match(code, { onNone: () => 'Failed', onSome: outcomeOf }),
-    }),
-  )
+  yield* new GoogleRefused({
+    outcome: Option.match(code, { onNone: () => 'Failed', onSome: outcomeOf }),
+  })
 })
 
 /**
@@ -231,7 +229,7 @@ const read = <Value, Encoded>(path: string, schema: Schema.Codec<Value, Encoded>
       try: () => fetch(`/api/auth/${path}`, { credentials: 'same-origin' }),
       catch: () => new AccountRefused({ message: UNREACHABLE }),
     })
-    if (!response.ok) return yield* Effect.fail(new AccountRefused({ message: UNREACHABLE }))
+    if (!response.ok) return yield* new AccountRefused({ message: UNREACHABLE })
     const body = yield* Effect.tryPromise({
       try: () => response.text(),
       catch: () => new AccountRefused({ message: UNREACHABLE }),

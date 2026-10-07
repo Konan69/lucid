@@ -515,7 +515,7 @@ const WireCatalogEntry = Schema.Struct({
   connectUrl: Schema.optionalKey(Schema.String),
   domain: Schema.optionalKey(Schema.NullOr(Schema.String)),
   auth: Schema.optionalKey(Schema.Struct({ kind: Schema.String })),
-  popularity: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  popularity: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
 })
 const WireCatalog = Schema.Array(Schema.Unknown)
 const decodeCatalogEntry = Schema.decodeUnknownEffect(WireCatalogEntry)
@@ -736,7 +736,7 @@ function responseReader(client: HttpClient.HttpClient) {
           .execute(prepared)
           .pipe(Effect.mapError(() => ExecutorTransportFailure.make(context)))
         if (response.status === 401) {
-          return yield* Effect.fail(ExecutorAccessDenied.make(context))
+          return yield* ExecutorAccessDenied.make(context)
         }
         // Hosted discovery failures use 502/504 with precise tags. Decode those before the
         // generic 5xx classification; an unrecognized server failure remains outcome-uncertain.
@@ -753,35 +753,28 @@ function responseReader(client: HttpClient.HttpClient) {
         const failure = yield* decodeFailure(body).pipe(Effect.mapError(invalid))
         if (isOAuthSetupFailure(failure)) {
           const detail = yield* decodeOAuthSetupFailure(body).pipe(Effect.mapError(invalid))
-          return yield* Effect.fail(
-            ExecutorOAuthSetupFailed.make({ ...context, reason: detail.reason }),
-          )
+          return yield* ExecutorOAuthSetupFailed.make({ ...context, reason: detail.reason })
         }
         if (isInputInvalid(failure) && tool !== null) {
           const detail = yield* decodeInputInvalid(body).pipe(
             Effect.mapError(() => translateFailure('InputInvalid', tool)),
           )
-          return yield* Effect.fail(
-            ExecutorInputInvalid.make({
-              ...context,
-              problems: detail.problems,
-            }),
-          )
+          return yield* ExecutorInputInvalid.make({
+            ...context,
+            problems: detail.problems,
+          })
         }
         if (!isKnownFailureTag(failure._tag)) {
-          if (response.status >= 500)
-            return yield* Effect.fail(ExecutorExecutionUncertain.make(context))
-          return yield* Effect.fail(
-            ExecutorRejected.make({
-              ...context,
-              message:
-                tool === null
-                  ? 'The Integration management request was refused.'
-                  : 'The Integration refused this request before running the tool.',
-            }),
-          )
+          if (response.status >= 500) return yield* ExecutorExecutionUncertain.make(context)
+          return yield* ExecutorRejected.make({
+            ...context,
+            message:
+              tool === null
+                ? 'The Integration management request was refused.'
+                : 'The Integration refused this request before running the tool.',
+          })
         }
-        return yield* Effect.fail(translateFailure(failure._tag, tool))
+        return yield* translateFailure(failure._tag, tool)
       },
       (effect, _request, tool) =>
         effect.pipe(
@@ -946,7 +939,7 @@ function makeDiscovery(http: ExecutorHttp) {
           (snapshot.value.deployment !== page.deployment ||
             snapshot.value.revision !== page.profileRevision))
       ) {
-        return yield* Effect.fail(ExecutorConflict.make({ service: 'connections', tool: null }))
+        return yield* ExecutorConflict.make({ service: 'connections', tool: null })
       }
       snapshot = Option.some({ deployment: page.deployment, revision: page.profileRevision })
       for (const tool of page.items)
@@ -961,17 +954,13 @@ function makeDiscovery(http: ExecutorHttp) {
         )
       if (page.next !== undefined) {
         if (seen.has(page.next))
-          return yield* Effect.fail(
-            ExecutorResponseInvalid.make({ service: 'connections', tool: null }),
-          )
+          return yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
         seen.add(page.next)
       }
       cursor = Option.fromUndefinedOr(page.next)
     } while (Option.isSome(cursor))
     if (Option.isNone(snapshot))
-      return yield* Effect.fail(
-        ExecutorResponseInvalid.make({ service: 'connections', tool: null }),
-      )
+      return yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
     return { items, deployment: snapshot.value.deployment, revision: snapshot.value.revision }
   })
 }
@@ -1042,9 +1031,7 @@ function makeSignIn(
           // overrides. Refuse mismatches before handing the Person an unusable provider URL.
           if (redirectUri.href !== input.returnAddress) {
             yield* recordSetupRequired(input.service)
-            return yield* Effect.fail(
-              ExecutorSetupRequired.make({ service: 'connections', tool: null }),
-            )
+            return yield* ExecutorSetupRequired.make({ service: 'connections', tool: null })
           }
           if (Option.isNone(installed))
             return ExecutorStep.cases.OpenSignIn.make({
@@ -1087,11 +1074,11 @@ const validateConnectionTarget = Effect.fn('Executor.validateConnectionTarget')(
   const selection = connection.target
   if (selection === null) {
     if (connection.reconnectAccount === null)
-      yield* Effect.fail(ExecutorResponseInvalid.make({ service: 'connections', tool: null }))
+      yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
     return
   }
   if (selection.profile !== references.profile || selection.app !== references.app)
-    yield* Effect.fail(ExecutorResponseInvalid.make({ service: 'connections', tool: null }))
+    yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
 })
 
 /** Native targeted requests atomically select the saved account into the exact profile. */
@@ -1109,14 +1096,12 @@ function makeAuthorize(
     const requirements = Object.entries(app.requirements.accounts)
     const first = requirements[0]
     if (requirements.length !== 1 || first === undefined)
-      return yield* Effect.fail(
-        ExecutorRejected.make({
-          service: 'connections',
-          tool: null,
-          message:
-            'This integration requires a configuration the integration adapter does not support.',
-        }),
-      )
+      return yield* ExecutorRejected.make({
+        service: 'connections',
+        tool: null,
+        message:
+          'This integration requires a configuration the integration adapter does not support.',
+      })
     const [requirement, definition] = first
     const methods = Object.entries(definition.definition.auth)
     const matching = ServiceAuthorization.match(authorization, {
@@ -1134,13 +1119,11 @@ function makeAuthorize(
     })
     const chosen = matching[0]
     if (matching.length !== 1 || chosen === undefined)
-      return yield* Effect.fail(
-        ExecutorRejected.make({
-          service: 'connections',
-          tool: null,
-          message: 'The integration does not declare one compatible authorization method.',
-        }),
-      )
+      return yield* ExecutorRejected.make({
+        service: 'connections',
+        tool: null,
+        message: 'The integration does not declare one compatible authorization method.',
+      })
     const [methodName, method] = chosen
     // HostedAccounts reconnects the exact saved account. New Connections target the exact
     // app/profile slot; neither lists or chooses another account. See HostedAccounts in
@@ -1255,9 +1238,7 @@ function makeStatus(http: ExecutorHttp) {
         null,
       )
       if (page.profile !== resolved.profile)
-        return yield* Effect.fail(
-          ExecutorResponseInvalid.make({ service: 'connections', tool: null }),
-        )
+        return yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
       return ExecutorStatus.cases.Ready.make({ references: resolved })
     },
     (effect, references) =>
@@ -1377,13 +1358,11 @@ function makeInspectSetup(http: ExecutorHttp) {
     if (key !== undefined && AuthorizationMethod.guards.secrets(key[1]))
       return ServiceAuthorization.cases.Key.make({ fields: keyFields(key[1].fields) })
     if (signIn === undefined)
-      return yield* Effect.fail(
-        ExecutorRejected.make({
-          service: 'connections',
-          tool: null,
-          message: 'This integration does not declare a supported sign-in or key method.',
-        }),
-      )
+      return yield* ExecutorRejected.make({
+        service: 'connections',
+        tool: null,
+        message: 'This integration does not declare a supported sign-in or key method.',
+      })
     return ServiceAuthorization.cases.SetupRequired.make({})
   })
 }
@@ -1521,13 +1500,11 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
     Effect.fn('Executor.inspectAuthorization')(function* (service: ServiceId) {
       const entry = (yield* catalog()).find((candidate) => candidate.id === service)
       if (entry === undefined)
-        return yield* Effect.fail(
-          ExecutorRejected.make({
-            service: 'connections',
-            tool: null,
-            message: 'Choose an integration from the current catalog.',
-          }),
-        )
+        return yield* ExecutorRejected.make({
+          service: 'connections',
+          tool: null,
+          message: 'Choose an integration from the current catalog.',
+        })
       if (keyedService(service) !== undefined) return personalKeyAuthorization()
       if (ServiceAuthorization.guards.None(entry.authorization)) return entry.authorization
       // Google signs in with the client Vivid sends on each start. Executor holds none until the
@@ -1548,7 +1525,7 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
                 return unavailable
               }
               yield* record(service, entry.authorization, Option.some(error._tag))
-              return yield* Effect.fail(error)
+              return yield* error
             }),
           ),
         ),
@@ -1683,10 +1660,10 @@ function makeProvision(http: ExecutorHttp) {
     if (Option.isSome(existing)) return existing.value
     const result = yield* Effect.result(install(name))
     if (Result.isSuccess(result)) return result.success
-    if (!isAppNameTaken(result.failure)) return yield* Effect.fail(result.failure)
+    if (!isAppNameTaken(result.failure)) return yield* result.failure
     const winner = yield* find(name)
     if (Option.isSome(winner)) return winner.value
-    return yield* Effect.fail(result.failure)
+    return yield* result.failure
   })
 }
 
@@ -1726,13 +1703,11 @@ function makeBegin(
       (candidate) => candidate.id === input.service,
     )
     if (entry === undefined)
-      return yield* Effect.fail(
-        ExecutorRejected.make({
-          service: 'connections',
-          tool: null,
-          message: 'Choose a supported Integration from the current catalog.',
-        }),
-      )
+      return yield* ExecutorRejected.make({
+        service: 'connections',
+        tool: null,
+        message: 'Choose a supported Integration from the current catalog.',
+      })
     // Hosted CatalogEntry omits auth. Explicit Begin installs first, then its real requirements
     // establish authorization; absent catalog hints never grant unauthenticated access.
     // A Google service is no catalogue install: Executor's catalogue only names its definition
@@ -1754,7 +1729,7 @@ function makeBegin(
         ? ServiceAuthorization.cases.None.make({})
         : yield* availability.inspectApp(input, app)
     if (ServiceAuthorization.guards.SetupRequired(authorization))
-      return yield* Effect.fail(ExecutorSetupRequired.make({ service: 'connections', tool: null }))
+      return yield* ExecutorSetupRequired.make({ service: 'connections', tool: null })
     return yield* configure(
       input,
       app,
@@ -1824,7 +1799,7 @@ function makeConfigure(
     if (Object.keys(app.requirements.accounts).length === 0) {
       const state = yield* reconcile(references)
       if (state.status !== 'ready')
-        return yield* Effect.fail(ExecutorNotReady.make({ service: 'connections', tool: null }))
+        return yield* ExecutorNotReady.make({ service: 'connections', tool: null })
       return ExecutorStep.cases.Done.make({ references })
     }
     return yield* authorize(input, app, references, entry.authorization)
@@ -1857,13 +1832,11 @@ function makeKeyed(http: ExecutorHttp, configure: ReturnType<typeof makeConfigur
   ) {
     // The key travels in a request header on every call; plain HTTP would expose it in transit.
     if (transport.address.protocol !== 'https:')
-      return yield* Effect.fail(
-        ExecutorRejected.make({
-          service: 'connections',
-          tool: null,
-          message: 'An Integration that needs a key must use an https address.',
-        }),
-      )
+      return yield* ExecutorRejected.make({
+        service: 'connections',
+        tool: null,
+        message: 'An Integration that needs a key must use an https address.',
+      })
     const files = keyedFiles({
       name: input.label,
       address: transport.address,
@@ -1891,9 +1864,7 @@ function makeKeyed(http: ExecutorHttp, configure: ReturnType<typeof makeConfigur
       'Dedicated',
     )
     if (!ExecutorStep.guards.EnterKey(step))
-      return yield* Effect.fail(
-        ExecutorResponseInvalid.make({ service: 'connections', tool: null }),
-      )
+      return yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
     return ExecutorStep.cases.EnterKey.make({
       references: step.references,
       fields: personalKeyAuthorization().fields,
@@ -1929,17 +1900,15 @@ function makeAdd(
     input: typeof BeginInput.Type & { readonly source: ConnectionSource },
   ) {
     if (ConnectionSource.guards.OpenApi(input.source))
-      return yield* Effect.fail(new ExecutorSourceUnsupported({ source: 'OpenApi' }))
+      return yield* new ExecutorSourceUnsupported({ source: 'OpenApi' })
     const address = URL.parse(input.source.address)
     if (address === null)
-      return yield* Effect.fail(
-        ExecutorRejected.make({
-          service: 'connections',
-          tool: null,
-          message: 'Enter a valid MCP server address.',
-        }),
-      )
-    if (address.search.length > 0) return yield* Effect.fail(new ExecutorImportQueryUnsupported({}))
+      return yield* ExecutorRejected.make({
+        service: 'connections',
+        tool: null,
+        message: 'Enter a valid MCP server address.',
+      })
+    if (address.search.length > 0) return yield* new ExecutorImportQueryUnsupported({})
     const policy = keyedAddress(address)
     const transport =
       policy === undefined
@@ -2039,9 +2008,11 @@ function makeReauthorize(
       )
         return ExecutorStep.cases.Done.make({ references: current.references })
       if (ExecutorStatus.guards.Failed(current))
-        return yield* Effect.fail(
-          ExecutorRejected.make({ service: 'connections', tool: null, message: current.reason }),
-        )
+        return yield* ExecutorRejected.make({
+          service: 'connections',
+          tool: null,
+          message: current.reason,
+        })
     }
     const app = yield* http.readApp(
       Effect.succeed(HttpClientRequest.get(`/apps/${query(references.app)}`)),
@@ -2049,7 +2020,7 @@ function makeReauthorize(
     )
     const selected = yield* availability.inspectApp(input, app)
     if (ServiceAuthorization.guards.SetupRequired(selected))
-      return yield* Effect.fail(ExecutorSetupRequired.make({ service: 'connections', tool: null }))
+      return yield* ExecutorSetupRequired.make({ service: 'connections', tool: null })
     return yield* authorize(input, app, references, selected)
   })
 }
@@ -2062,13 +2033,11 @@ function makeComplete(http: ExecutorHttp) {
     fields,
   }: typeof CompleteInput.Type) {
     if (!ExecutorReferences.guards.EnteringKey(references))
-      return yield* Effect.fail(
-        ExecutorRejected.make({
-          service: 'connections',
-          tool: null,
-          message: 'This integration is not waiting for key fields.',
-        }),
-      )
+      return yield* ExecutorRejected.make({
+        service: 'connections',
+        tool: null,
+        message: 'This integration is not waiting for key fields.',
+      })
     const body = yield* encodeKey({
       method: references.method,
       label: references.label,
@@ -2097,13 +2066,11 @@ function makeCompleteSignIn(http: ExecutorHttp) {
     callbackAddress,
   }: typeof SignInInput.Type) {
     if (!isSigningIn(references))
-      return yield* Effect.fail(
-        ExecutorRejected.make({
-          service: 'connections',
-          tool: null,
-          message: 'This integration is not waiting for sign-in.',
-        }),
-      )
+      return yield* ExecutorRejected.make({
+        service: 'connections',
+        tool: null,
+        message: 'This integration is not waiting for sign-in.',
+      })
     const body = yield* encodeSignIn({
       callbackUrl: callbackAddress,
     }).pipe(

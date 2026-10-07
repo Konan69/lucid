@@ -17,10 +17,9 @@ export const requireFolderShelf = (getFolder: LibraryStoreService['getFolder']) 
   ) {
     if (id === null) return undefined
     const folder = yield* getFolder(actor, id)
-    if (Option.isNone(folder))
-      return yield* Effect.fail(new NotFound({ message: 'Library folder not found' }))
+    if (Option.isNone(folder)) return yield* new NotFound({ message: 'Library folder not found' })
     if (folder.value.shelf !== shelf)
-      return yield* Effect.fail(new LibraryFolderMismatch({ folderId: id, shelf }))
+      return yield* new LibraryFolderMismatch({ folderId: id, shelf })
     return undefined
   })
 
@@ -42,12 +41,11 @@ export const requireAcyclic = (database: LibraryDatabase) =>
     const visited = new Set<string>([id])
     let candidate: string | null = parentId
     while (candidate !== null) {
-      if (visited.has(candidate))
-        return yield* Effect.fail(new LibraryFolderCycle({ folderId: id }))
+      if (visited.has(candidate)) return yield* new LibraryFolderCycle({ folderId: id })
       visited.add(candidate)
       const next = parents.get(candidate)
       if (next === undefined)
-        return yield* Effect.fail(new NotFound({ message: 'Library parent folder not found' }))
+        return yield* new NotFound({ message: 'Library parent folder not found' })
       candidate = next
     }
     return undefined

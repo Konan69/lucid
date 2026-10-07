@@ -37,8 +37,8 @@ const content = {
   /** The steps, decisions, expected result and what needs approval, as Markdown. */
   instructions: Schema.String,
 
-  createdAt: Schema.Number,
-  updatedAt: Schema.Number,
+  createdAt: Schema.Finite,
+  updatedAt: Schema.Finite,
 }
 /** Origin and scope agree by construction; a shipped procedure cannot acquire a fabricated creator. */
 export const Skill = Schema.Union([

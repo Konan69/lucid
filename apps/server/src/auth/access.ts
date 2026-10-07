@@ -53,7 +53,7 @@ export const requireActor = Effect.fn('Access.requireActor')(function* () {
 export const requirePerson = Effect.fn('Access.requirePerson')(function* () {
   const auth = yield* AuthContext
   if (!AuthState.$is('Person')(auth)) {
-    return yield* Effect.fail(new Forbidden({ message: 'Only a signed-in Person can do this' }))
+    return yield* new Forbidden({ message: 'Only a signed-in Person can do this' })
   }
   return auth
 })
@@ -62,7 +62,7 @@ export const requirePerson = Effect.fn('Access.requirePerson')(function* () {
 export const requireVivid = Effect.fn('Access.requireVivid')(function* () {
   const auth = yield* AuthContext
   if (!AuthState.$is('Vivid')(auth)) {
-    return yield* Effect.fail(new Forbidden({ message: 'Only Vivid in a Run can do this' }))
+    return yield* new Forbidden({ message: 'Only Vivid in a Run can do this' })
   }
   return auth
 })
@@ -70,7 +70,7 @@ export const requireVivid = Effect.fn('Access.requireVivid')(function* () {
 /** The Company a workspace is, with the caller's role there, or a refusal in a personal space. */
 export const requireCompany = Effect.fn('Access.requireCompany')(function* (workspace: Workspace) {
   if (!Workspace.guards.Company(workspace)) {
-    return yield* Effect.fail(new Forbidden({ message: 'This needs a Company workspace' }))
+    return yield* new Forbidden({ message: 'This needs a Company workspace' })
   }
   return { company: workspace.company, role: workspace.role }
 })
@@ -82,7 +82,7 @@ export const isAdmin = (role: Role) => role === 'owner' || role === 'admin'
 export const requireAdmin = Effect.fn('Access.requireAdmin')(function* (workspace: Workspace) {
   const { company, role } = yield* requireCompany(workspace)
   if (!isAdmin(role)) {
-    return yield* Effect.fail(new Forbidden({ message: 'Only a Company admin can do this' }))
+    return yield* new Forbidden({ message: 'Only a Company admin can do this' })
   }
   return { company, role }
 })

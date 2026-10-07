@@ -38,7 +38,7 @@ export class CommandFailed extends Schema.TaggedError<CommandFailed>()(
   'CommandFailed',
   {
     computerId: ComputerId,
-    exitCode: Schema.Number,
+    exitCode: Schema.Finite,
     stderr: Schema.String,
   },
   { title: 'Command failed' },

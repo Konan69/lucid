@@ -130,7 +130,7 @@ export const machineLinks = (api: Transport) => {
           input.timeoutSeconds < 1 ||
           input.command.length < 1
         )
-          return yield* Effect.fail(new MachineInputInvalid())
+          return yield* new MachineInputInvalid()
         return yield* overLink(input.key, (link) =>
           link.run({
             command: input.command,

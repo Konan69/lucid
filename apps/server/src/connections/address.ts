@@ -100,7 +100,7 @@ const mcpSource = Effect.fn('Connections.mcpSource')(function* (
   address: URL,
   authorization: 'auto' | 'apiKey',
 ) {
-  if (address.search.length > 0) return yield* Effect.fail(new ExecutorImportQueryUnsupported({}))
+  if (address.search.length > 0) return yield* new ExecutorImportQueryUnsupported({})
   return ConnectionSource.cases.Mcp.make({ address: address.href, authorization })
 })
 
@@ -114,17 +114,15 @@ const mcpAuthorization = Effect.fn('Connections.mcpAuthorization')(function* (
   const challenge = response.headers['www-authenticate']
   if (challenge === undefined) {
     if (response.status !== 401)
-      return yield* Effect.fail(
-        ConnectionAddressInvalid.make({ reason: 'not an MCP server or OpenAPI specification' }),
-      )
+      return yield* ConnectionAddressInvalid.make({
+        reason: 'not an MCP server or OpenAPI specification',
+      })
     return yield* mcpSource(address, 'apiKey')
   }
   if (!/^Bearer(?:\s|$)/iu.test(challenge))
-    return yield* Effect.fail(
-      ConnectionAddressInvalid.make({
-        reason: 'unsupported integration authorization or specification',
-      }),
-    )
+    return yield* ConnectionAddressInvalid.make({
+      reason: 'unsupported integration authorization or specification',
+    })
   return yield* mcpSource(address, challenge.includes('resource_metadata') ? 'auto' : 'apiKey')
 })
 
@@ -157,12 +155,11 @@ const readMcp = Effect.fn('Connections.readMcp')(function* (
     const location = response.headers.location
     const redirected = location === undefined ? null : URL.parse(location, address.href)
     const next = redirected === null ? undefined : publicAddress(redirected.href)
-    if (next === undefined) return yield* Effect.fail(invalid())
-    if (![307, 308].includes(response.status))
-      return yield* Effect.fail(ConnectionAddressUnreachable.make({}))
+    if (next === undefined) return yield* invalid()
+    if (![307, 308].includes(response.status)) return yield* ConnectionAddressUnreachable.make({})
     address = next
   }
-  return yield* Effect.fail(ConnectionAddressUnreachable.make({}))
+  return yield* ConnectionAddressUnreachable.make({})
 })
 
 /** Probe initializes a protocol session but never invokes a provider tool or supplies a secret. */
@@ -174,16 +171,16 @@ const probeMcp = Effect.fn('Connections.probeMcp')(function* (
   if (response.status === 401 || response.status === 403)
     return yield* mcpAuthorization(address, response)
   if (response.status < 200 || response.status >= 300)
-    return yield* Effect.fail(
-      ConnectionAddressInvalid.make({ reason: 'not an MCP server or OpenAPI specification' }),
-    )
+    return yield* ConnectionAddressInvalid.make({
+      reason: 'not an MCP server or OpenAPI specification',
+    })
   const body = yield* response.text.pipe(
     Effect.mapError(() => ConnectionAddressUnreachable.make({})),
   )
   if (!Option.isSome(decodeInitialized(body)) && !/^data:\s*\{.*"protocolVersion"/mu.test(body))
-    return yield* Effect.fail(
-      ConnectionAddressInvalid.make({ reason: 'not an MCP server or OpenAPI specification' }),
-    )
+    return yield* ConnectionAddressInvalid.make({
+      reason: 'not an MCP server or OpenAPI specification',
+    })
   return yield* mcpSource(address, 'auto')
 })
 
@@ -194,20 +191,20 @@ const readAddress = Effect.fn('Connections.readAddress')(function* (
 ) {
   let address = publicAddress(value)
   for (let hop = 0; hop <= 5; hop++) {
-    if (address === undefined) return yield* Effect.fail(invalid())
+    if (address === undefined) return yield* invalid()
     const response = yield* client
       .get(address.href)
       .pipe(Effect.mapError(() => ConnectionAddressUnreachable.make({})))
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.location
-      if (location === undefined) return yield* Effect.fail(ConnectionAddressUnreachable.make({}))
+      if (location === undefined) return yield* ConnectionAddressUnreachable.make({})
       const redirected = URL.parse(location, address.href)
       address = redirected === null ? undefined : publicAddress(redirected.href)
       continue
     }
     return { address, response }
   }
-  return yield* Effect.fail(ConnectionAddressUnreachable.make({}))
+  return yield* ConnectionAddressUnreachable.make({})
 })
 
 /** Follow only specification links actually published on a page, never guessed conventional paths. */
@@ -216,8 +213,7 @@ const specificationFromPage = Effect.fn('Connections.specificationFromPage')(fun
   client: HttpClient.HttpClient,
 ) {
   const page = yield* (yield* PageReader).read({ address: address.href })
-  if (ReadPageOutcome.guards.Refused(page))
-    return yield* Effect.fail(ConnectionAddressUnreachable.make({}))
+  if (ReadPageOutcome.guards.Refused(page)) return yield* ConnectionAddressUnreachable.make({})
   const links = [...new Set(page.text.match(/https?:\/\/[^\s<>"\])]+/gu) ?? [])]
     .filter((link) => /(?:openapi|swagger|\/spec(?:[/.]|$)|\.(?:json|ya?ml)$)/iu.test(link))
     .slice(0, 8)
@@ -236,13 +232,11 @@ const specificationFromPage = Effect.fn('Connections.specificationFromPage')(fun
       Effect.mapError(() => ConnectionAddressUnreachable.make({})),
     )
     if (Option.isSome(decodeSpec(body)) || /^openapi:\s*['"]?3\./mu.test(body))
-      return yield* Effect.fail(new ExecutorSourceUnsupported({ source: 'OpenApi' }))
+      return yield* new ExecutorSourceUnsupported({ source: 'OpenApi' })
   }
-  return yield* Effect.fail(
-    ConnectionAddressInvalid.make({
-      reason: 'documentation page has no OpenAPI specification link',
-    }),
-  )
+  return yield* ConnectionAddressInvalid.make({
+    reason: 'documentation page has no OpenAPI specification link',
+  })
 })
 
 /** Hosted import is MCP-only. Recognized specs fail during the probe, before app installation. */
@@ -254,7 +248,7 @@ const classifyResponse = Effect.fn('Connections.classifyAddress')(function* (
   // Streamable MCP can reject GET's Accept negotiation (406) while accepting initialize POST.
   if ([401, 403, 405, 406].includes(response.status)) return yield* probeMcp(address, client)
   if (response.status < 200 || response.status >= 300)
-    return yield* Effect.fail(ConnectionAddressUnreachable.make({}))
+    return yield* ConnectionAddressUnreachable.make({})
   const type = response.headers['content-type']
   if (type !== undefined && type.includes('text/event-stream'))
     return yield* probeMcp(address, client)
@@ -264,7 +258,7 @@ const classifyResponse = Effect.fn('Connections.classifyAddress')(function* (
     Effect.mapError(() => ConnectionAddressUnreachable.make({})),
   )
   if (Option.isSome(decodeSpec(body)) || /^openapi:\s*['"]?3\./mu.test(body))
-    return yield* Effect.fail(new ExecutorSourceUnsupported({ source: 'OpenApi' }))
+    return yield* new ExecutorSourceUnsupported({ source: 'OpenApi' })
   return yield* probeMcp(address, client)
 })
 

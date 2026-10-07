@@ -104,12 +104,10 @@ interface SubmissionServices {
 /** A recorded opening failure stays a failure on retry; an admitted receipt retains its Run. */
 const replay = Effect.fn('RoutineScheduler.replay')(function* (occurrence: Occurrence) {
   if (occurrence.submissionId === null && occurrence.error === THREAD_OPENING_FAILURE) {
-    return yield* Effect.fail(
-      new RoutineThreadUnavailable({
-        routineId: occurrence.routineId,
-        threadId: occurrence.threadId,
-      }),
-    )
+    return yield* new RoutineThreadUnavailable({
+      routineId: occurrence.routineId,
+      threadId: occurrence.threadId,
+    })
   }
   return occurrence.submissionId === null ? Option.none<Occurrence>() : Option.some(occurrence)
 })
@@ -141,12 +139,10 @@ const openingFailed = Effect.fn('RoutineScheduler.openingFailed')(function* (
       threadId: null,
     })
   }
-  return yield* Effect.fail(
-    new RoutineThreadUnavailable({
-      routineId: record.routine.id,
-      threadId: claim.occurrence.threadId,
-    }),
-  )
+  return yield* new RoutineThreadUnavailable({
+    routineId: record.routine.id,
+    threadId: claim.occurrence.threadId,
+  })
 })
 
 /** Ensuring a Thread is a product operation: database failures become a recorded opening failure. */

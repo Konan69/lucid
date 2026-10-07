@@ -76,7 +76,7 @@ const StoredInvitation = Schema.Struct({
   email: Schema.String,
   role: Role,
   status: InvitationStatus,
-  expiresAt: Schema.Number,
+  expiresAt: Schema.Finite,
   inviterId: PersonId,
 })
 interface StoredInvitation extends Schema.Schema.Type<typeof StoredInvitation> {}
@@ -257,7 +257,7 @@ const makeEnter = (database: DatabaseService) =>
           Option.isSome(companyId) &&
           Option.isNone(yield* membershipOf(tx, companyId.value, personId))
         ) {
-          return yield* Effect.fail(new NotFound({ message: 'Company not found' }))
+          return yield* new NotFound({ message: 'Company not found' })
         }
         const rows = yield* tx
           .update(sessionTable)
@@ -387,7 +387,7 @@ const makeInvite = (database: DatabaseService) =>
         if (person !== undefined) {
           const personId = yield* decodePersonId(person.id)
           if (Option.isSome(yield* membershipOf(tx, companyId, personId))) {
-            return yield* Effect.fail(new Conflict({ message: 'That Person is already a Member' }))
+            return yield* new Conflict({ message: 'That Person is already a Member' })
           }
         }
         const summaries = yield* tx
@@ -466,8 +466,7 @@ const makeRevoke = (database: DatabaseService) =>
           )
           .returning()
         const row = rows[0]
-        if (row === undefined)
-          return yield* Effect.fail(new NotFound({ message: 'Invitation not found' }))
+        if (row === undefined) return yield* new NotFound({ message: 'Invitation not found' })
         const invitation = yield* storedInvitation(row)
         return yield* announce(tx, [Topic.company(invitation.companyId)])
       }),
@@ -489,7 +488,7 @@ const invitationById = Effect.fn('CompanyStore.invitationById')(function* (
   )
   const row = rows[0]
   if (row === undefined) {
-    return yield* Effect.fail(new NotFound({ message: 'Invitation not found' }))
+    return yield* new NotFound({ message: 'Invitation not found' })
   }
   return { invitation: yield* storedInvitation(row.invitation), company: row.company }
 })
@@ -528,7 +527,7 @@ const memberById = Effect.fn('CompanyStore.memberById')(function* (
     .limit(1)
     .for('update', { of: membershipTable })
   const row = rows[0]
-  if (row === undefined) return yield* Effect.fail(new NotFound({ message: 'Member not found' }))
+  if (row === undefined) return yield* new NotFound({ message: 'Member not found' })
   return yield* decodeOwnedMember({
     companyId: row.membership.companyId,
     member: memberFields(row.membership, row.person),
@@ -551,7 +550,7 @@ const mailboxOf = Effect.fn('CompanyStore.mailboxOf')(function* (
     .limit(1)
     .for('share')
   const row = rows[0]
-  if (row === undefined) return yield* Effect.fail(new NotFound({ message: 'Person not found' }))
+  if (row === undefined) return yield* new NotFound({ message: 'Person not found' })
   return yield* decodeMailbox(row)
 })
 
@@ -572,18 +571,14 @@ const requireMailbox = Effect.fn('CompanyStore.requireMailbox')(function* (
     status === 'expired' ||
     status === 'revoked'
   ) {
-    return yield* Effect.fail(
-      new Forbidden({ message: 'This invitation is not open for your account' }),
-    )
+    return yield* new Forbidden({ message: 'This invitation is not open for your account' })
   }
   if (!mailbox.verified)
-    return yield* Effect.fail(
-      new MailboxUnconfirmed({
-        personId,
-        invitationId: invitation.id,
-        message: 'This email address has not been confirmed as yours',
-      }),
-    )
+    return yield* new MailboxUnconfirmed({
+      personId,
+      invitationId: invitation.id,
+      message: 'This email address has not been confirmed as yours',
+    })
   return undefined
 })
 
@@ -607,8 +602,7 @@ const makeAccept = (database: DatabaseService) =>
           .limit(1)
           .for('update')
         const row = rows[0]
-        if (row === undefined)
-          return yield* Effect.fail(new NotFound({ message: 'Invitation not found' }))
+        if (row === undefined) return yield* new NotFound({ message: 'Invitation not found' })
         const invitation = yield* storedInvitation(row)
         const mailbox = yield* mailboxOf(tx, person.id)
         const now = yield* Clock.currentTimeMillis
@@ -619,7 +613,7 @@ const makeAccept = (database: DatabaseService) =>
           .where(and(eq(invitationTable.id, invitation.id), eq(invitationTable.status, 'pending')))
           .returning({ id: invitationTable.id })
         if (claimed.length === 0)
-          return yield* Effect.fail(new Conflict({ message: 'This invitation was already used' }))
+          return yield* new Conflict({ message: 'This invitation was already used' })
         const inserted = yield* tx
           .insert(membershipTable)
           .values({
@@ -632,7 +626,7 @@ const makeAccept = (database: DatabaseService) =>
           .returning()
         const membership = inserted[0]
         if (membership === undefined)
-          return yield* Effect.fail(new Conflict({ message: 'You are already a Member' }))
+          return yield* new Conflict({ message: 'You are already a Member' })
         const stored = yield* decodeStoredMembership({
           id: membership.id,
           companyId: membership.companyId,

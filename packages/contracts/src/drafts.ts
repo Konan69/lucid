@@ -64,9 +64,9 @@ const DraftText = Schema.String.check(Schema.isMaxLength(50_000))
 export const Draft = Schema.Struct({
   place: DraftPlace,
   text: DraftText,
-  revision: Schema.Number,
+  revision: Schema.Finite,
   /** Epoch milliseconds of the save, by the server's clock. Never used to order drafts. */
-  savedAt: Schema.Number,
+  savedAt: Schema.Finite,
   device: Schema.String,
 }).annotate({ identifier: 'Draft', title: 'Draft' })
 export interface Draft extends Schema.Schema.Type<typeof Draft> {}
@@ -83,7 +83,7 @@ export interface Draft extends Schema.Schema.Type<typeof Draft> {}
  */
 export const DraftListResponse = Schema.Struct({
   workspace: DraftWorkspace,
-  generation: Schema.Number,
+  generation: Schema.Finite,
   drafts: Schema.Array(Draft),
 })
 export interface DraftListResponse extends Schema.Schema.Type<typeof DraftListResponse> {}
@@ -104,7 +104,7 @@ export interface SaveDraftRequest extends Schema.Schema.Type<typeof SaveDraftReq
  * way it says the Person's `generation` after it, which for `Kept` is the draft's own `revision`.
  */
 export const DraftSaved = Schema.TaggedUnion({
-  Kept: { draft: Draft, generation: Schema.Number },
-  Cleared: { place: DraftPlace, generation: Schema.Number },
+  Kept: { draft: Draft, generation: Schema.Finite },
+  Cleared: { place: DraftPlace, generation: Schema.Finite },
 })
 export type DraftSaved = typeof DraftSaved.Type

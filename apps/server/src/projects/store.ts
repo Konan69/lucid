@@ -123,9 +123,7 @@ const makeProjectStore = Effect.fn('ProjectStore.make')(function* () {
       .from(projectTable)
       .where(and(eq(projectTable.id, id), inWorkspace(actor)))
       .limit(1)
-    return rows.length === 0
-      ? yield* Effect.fail(new NotFound({ message: 'Parent Project not found' }))
-      : id
+    return rows.length === 0 ? yield* new NotFound({ message: 'Parent Project not found' }) : id
   })
 
   /**

@@ -263,7 +263,7 @@ export const addIntegration = Effect.fn('Connections.addIntegration')(function* 
     namedAccounts(yield* store.records(actor)).find((entry) => entry.row.id === step.connection.id),
   )
   if (Option.isNone(selected))
-    return yield* Effect.fail(new NotFound({ message: 'Integration not found after registration' }))
+    return yield* new NotFound({ message: 'Integration not found after registration' })
   return ConnectionStep.match<AddIntegrationOutcome>(step, {
     Done: () => AddIntegrationOutcome.cases.Added.make({ account: selected.value.account }),
     OpenSignIn: (value) => AddIntegrationOutcome.cases.NeedsSignIn.make({ step: value }),
@@ -280,8 +280,7 @@ export const testIntegration = Effect.fn('Connections.testIntegration')(
     const selected = namedAccounts(yield* store.records(actor)).find(
       (entry) => entry.account.trim().toLowerCase() === request.account.trim().toLowerCase(),
     )
-    if (selected === undefined)
-      return yield* Effect.fail(new NotFound({ message: 'Integration not found' }))
+    if (selected === undefined) return yield* new NotFound({ message: 'Integration not found' })
     const { row, account } = selected
     const state = yield* stateOf(row)
     const refusal = ConnectionState.match<Option.Option<TestIntegrationOutcome>>(state, {

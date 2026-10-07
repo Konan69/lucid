@@ -32,8 +32,8 @@ export class ManifestConflict extends Schema.TaggedError<ManifestConflict>()(
   'ManifestConflict',
   {
     computerId: ComputerId,
-    held: Schema.Number,
-    offered: Schema.Number,
+    held: Schema.Finite,
+    offered: Schema.Finite,
   },
   { title: 'Computer manifest conflict' },
 ) {}

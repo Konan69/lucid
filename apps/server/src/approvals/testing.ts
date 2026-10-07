@@ -120,13 +120,13 @@ const ports = Layer.effectContext(
           Judgment.guards.PersonalFailure(judgment) &&
           rules.some((rule) => RuleScope.guards.Personal(rule.scope))
         )
-          return yield* Effect.fail(new RulesNotJudged({}))
+          return yield* new RulesNotJudged({})
         if (
           Judgment.guards.Hostile(judgment) &&
           rules.some((rule) => RuleScope.guards.Personal(rule.scope))
         )
           return rules.filter((rule) => RuleScope.guards.Personal(rule.scope))
-        if (Judgment.guards.Failed(judgment)) return yield* Effect.fail(new RulesNotJudged({}))
+        if (Judgment.guards.Failed(judgment)) return yield* new RulesNotJudged({})
         return Judgment.guards.None(judgment) ? [] : rules
       }),
     })
@@ -155,7 +155,7 @@ const ports = Layer.effectContext(
         if (Option.isSome(gate)) yield* Deferred.await(gate.value)
         yield* Ref.update(state.deliveries, (deliveries) => deliveries.concat([delivery]))
         const failure = yield* Ref.get(state.deliveryFailure)
-        if (Option.isSome(failure)) return yield* Effect.fail(failure.value)
+        if (Option.isSome(failure)) return yield* failure.value
         return {
           runId: RunId.make(`test-${delivery.idempotencyKey}`),
           offset: '0',
@@ -166,7 +166,7 @@ const ports = Layer.effectContext(
       deliver: Effect.fn('TrustTest.deliver')(function* (delivery) {
         yield* Ref.update(state.deliveries, (deliveries) => deliveries.concat([delivery]))
         const failure = yield* Ref.get(state.deliveryFailure)
-        if (Option.isSome(failure)) return yield* Effect.fail(failure.value)
+        if (Option.isSome(failure)) return yield* failure.value
         return Run.make({
           id: RunId.make(NodeCrypto.randomUUID()),
           threadId: delivery.threadId,

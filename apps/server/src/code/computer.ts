@@ -139,7 +139,7 @@ const readGuest = Effect.fn('Code.readGuest')(function* (link: Link) {
   const { attachment, runner, command, messages, ended, known } = link
 
   const accept = Effect.fn('Code.guestLine')(function* (text: string) {
-    if (!boundedNesting(text)) return yield* Effect.fail(new PipeFailure({ reason: 'size' }))
+    if (!boundedNesting(text)) return yield* new PipeFailure({ reason: 'size' })
     const message = yield* decodeWorker(text, { onExcessProperty: 'error' }).pipe(
       Effect.mapError(() => new PipeFailure({ reason: 'invalid' })),
     )
@@ -160,7 +160,7 @@ const readGuest = Effect.fn('Code.readGuest')(function* (link: Link) {
     MachineOutput.match(output, {
       Printed: Effect.fn('Code.guestPrinted')(function* ({ text }) {
         const step = printed(reading.rest, text, budgets.wire)
-        if (Option.isNone(step)) return yield* Effect.fail(new PipeFailure({ reason: 'size' }))
+        if (Option.isNone(step)) return yield* new PipeFailure({ reason: 'size' })
         reading.rest = step.value.rest
         return yield* Effect.forEach(step.value.lines, accept, { discard: true })
       }),
@@ -257,7 +257,7 @@ export const openGuest = Effect.fn('Code.openGuest')(function* (
     })
     const text = encodeParent(message)
     if (bytes(text) > budgets.wire || !boundedNesting(text))
-      return yield* Effect.fail(new PipeFailure({ reason: 'size' }))
+      return yield* new PipeFailure({ reason: 'size' })
     // The newline is how the runner knows the file is whole and not still being written.
     yield* attachment
       .write({ path: `${directory}/in/${name}.json`, content: `${text}\n` })

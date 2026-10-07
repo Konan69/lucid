@@ -186,8 +186,8 @@ it.effect('times out a pending provider using TestClock and reports the send as 
 )
 
 const Exchange = Schema.TaggedUnion({
-  Received: { path: Schema.String, port: Schema.Number },
-  Released: { path: Schema.String, port: Schema.Number },
+  Received: { path: Schema.String, port: Schema.Finite },
+  Released: { path: Schema.String, port: Schema.Finite },
 })
 
 /**

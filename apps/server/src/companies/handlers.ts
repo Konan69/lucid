@@ -170,7 +170,7 @@ export const companyHandlers = {
     const members = yield* store.members(company.id)
     const mine = members.find((member) => member.person.id === auth.person.id)
     if (mine === undefined) {
-      return yield* Effect.fail(new Conflict({ message: 'You are not a Member of this Company' }))
+      return yield* new Conflict({ message: 'You are not a Member of this Company' })
     }
     yield* store.remove(auth.person.id, company.id, mine.membershipId)
     return yield* meAfter(auth)

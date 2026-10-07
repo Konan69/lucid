@@ -66,11 +66,10 @@ export const authenticate = Effect.fn('Auth.authenticate')(function* (headers: H
     Effect.provide(localAuthRuntimeLayer),
     Effect.mapError(() => new Unauthenticated({ message: 'Invalid session' })),
   )
-  if (session === null)
-    return yield* Effect.fail(new Unauthenticated({ message: 'Authentication required' }))
+  if (session === null) return yield* new Unauthenticated({ message: 'Authentication required' })
   const person = yield* findPerson(session.user.id)
   if (Option.isNone(person))
-    return yield* Effect.fail(new Unauthenticated({ message: 'Person no longer exists' }))
+    return yield* new Unauthenticated({ message: 'Person no longer exists' })
   const sessionId = SessionId.make(session.session.id)
   return AuthState.Person({
     person: person.value,
@@ -98,7 +97,7 @@ const liveSession = Effect.fn('Auth.liveSession')(function* (
   const row = sessions[0]
   const now = yield* Clock.currentTimeMillis
   if (row === undefined || row.expiresAt.getTime() <= now) {
-    return yield* Effect.fail(new Unauthenticated({ message: 'Authentication required' }))
+    return yield* new Unauthenticated({ message: 'Authentication required' })
   }
   return row
 })
@@ -144,13 +143,12 @@ export const authenticateVivid = Effect.fn('Auth.authenticateVivid')(function* (
   const threadId = yield* decodeThreadId(input.thread)
   const personId = yield* decodePersonId(input.actor)
   const thread = yield* findThread(threadId)
-  if (Option.isNone(thread))
-    return yield* Effect.fail(new NotFound({ message: 'Thread not found' }))
+  if (Option.isNone(thread)) return yield* new NotFound({ message: 'Thread not found' })
   const person = yield* findPerson(personId)
   if (Option.isNone(person))
-    return yield* Effect.fail(new Forbidden({ message: 'Vivid has nobody to act for here' }))
+    return yield* new Forbidden({ message: 'Vivid has nobody to act for here' })
   if (!(yield* canSee(thread.value.id, person.value.id))) {
-    return yield* Effect.fail(new Forbidden({ message: 'Vivid has nobody to act for here' }))
+    return yield* new Forbidden({ message: 'Vivid has nobody to act for here' })
   }
   const workspace = yield* workspaceIn(person.value.id, Option.fromNullOr(thread.value.companyId))
   return AuthState.Vivid({ person: person.value, workspace, threadId })

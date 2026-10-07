@@ -37,7 +37,7 @@ export class ObjectCorrupt extends Schema.TaggedError<ObjectCorrupt>()(
 /** After restoring, the home directory still differs from the manifest. It is not marked restored. */
 export class RestoreIncomplete extends Schema.TaggedError<RestoreIncomplete>()(
   'RestoreIncomplete',
-  { computerId: ComputerId, differing: Schema.Number },
+  { computerId: ComputerId, differing: Schema.Finite },
   { title: 'Restore incomplete' },
 ) {}
 
@@ -46,7 +46,7 @@ export class RestoreIncomplete extends Schema.TaggedError<RestoreIncomplete>()(
  * may act as the Computer; a machine without it, or with an older revision, must restore first.
  * It lives under `.vivid/`, which capture ignores, so it never travels to another machine.
  */
-const RestoreMarker = Schema.Struct({ computerId: ComputerId, revision: Schema.Number })
+const RestoreMarker = Schema.Struct({ computerId: ComputerId, revision: Schema.Finite })
 const RestoreMarkerJson = Schema.fromJsonString(RestoreMarker)
 const encodeMarker = Schema.encodeEffect(RestoreMarkerJson)
 const decodeMarker = Schema.decodeUnknownEffect(RestoreMarkerJson)
