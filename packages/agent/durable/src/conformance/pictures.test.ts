@@ -20,7 +20,6 @@ import {
   TurnInvalid,
 } from '../main.ts'
 import { context, host } from './fixtures/host.ts'
-import {} from './fixtures/host.ts'
 
 // A valid one-pixel PNG, not a URL that a test or server could fetch.
 const data =

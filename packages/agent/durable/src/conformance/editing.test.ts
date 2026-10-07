@@ -2,13 +2,14 @@ import type { AssistantMessageEvent } from '@earendil-works/pi-ai'
 import { fauxAssistantMessage, fauxText, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from '@effect/vitest'
 import { isToolUIPart, readUIMessageStream, tool } from 'ai'
-import { Effect, Option, Predicate, Schema } from 'effect'
-import { onTestFinished } from 'vitest'
+import { Effect, Option, Predicate, Schema, Deferred, Fiber, Stream } from 'effect'
+import { consumeReadable, ReadFailed } from '../fixtures/reading.ts'
+
 import { z } from 'zod'
 import { rawArguments } from '../arguments.ts'
 import { waitForFrame } from '../fixtures/provider.ts'
 import { streamRun } from '../main.ts'
-import { consume, context, host, signal } from './fixtures/host.ts'
+import { context, host } from './fixtures/host.ts'
 
 type Edit = 'changed' | 'shortened' | 'removed'
 const decodePartial = Schema.decodeUnknownOption(Schema.Struct({ input: Schema.String }))
@@ -46,21 +47,19 @@ function editFrame(event: AssistantMessageEvent, edit: Edit): AssistantMessageEv
 it.live.each(['changed', 'shortened', 'removed'] as const)(
   'handles a %s raw tool replacement honestly',
   (edit) =>
-    Effect.promise(async () => {
-      const release = signal()
-      const releaseEdit = signal()
+    Effect.gen(function* () {
+      const release = Deferred.makeUnsafe<void>()
+      const releaseEdit = Deferred.makeUnsafe<void>()
       let gated = false
       let replacing = false
       let edited = false
-      onTestFinished(() => {
-        release.resolve()
-        releaseEdit.resolve()
-      })
-      const fixture = await host(
+      const fixture = yield* host(
         {
           work: tool({
             inputSchema: z.object({ input: z.string() }),
-            execute: async (args) => args,
+            execute: (args) => {
+              return Promise.resolve(args)
+            },
           }),
         },
         {},
@@ -75,24 +74,25 @@ it.live.each(['changed', 'shortened', 'removed'] as const)(
             if (gated) {
               if (edit === 'changed' || edited) return Effect.void
               edited = true
-              return waitForFrame(
-                Effect.promise(() => releaseEdit.promise),
-                abortSignal,
-              )
+              return waitForFrame(Deferred.await(releaseEdit), abortSignal)
             }
             const block = event.partial.content[event.contentIndex]
             if (block === undefined || block.type !== 'toolCall') throw new Error('Expected tool')
             if (!Predicate.isString(block.arguments.input) || block.arguments.input.length < 5)
               return Effect.void
             gated = true
-            return waitForFrame(
-              Effect.promise(() => release.promise),
-              abortSignal,
-            )
+            return waitForFrame(Deferred.await(release), abortSignal)
           },
         },
       )
-      const opened = await fixture.open()
+      const opened = yield* fixture.open()
+      // Failure must release both frames before the harness finalizer joins its provider.
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          Deferred.doneUnsafe(release, Effect.void)
+          Deferred.doneUnsafe(releaseEdit, Effect.void)
+        }),
+      )
       const input = { input: 'abcdefghijklmnopqrstuvwxyz'.repeat(10) }
       opened.faux.setResponses([
         fauxAssistantMessage([fauxText('Context.'), fauxToolCall('work', input, { id: 'wire' })], {
@@ -100,38 +100,50 @@ it.live.each(['changed', 'shortened', 'removed'] as const)(
         }),
         fauxAssistantMessage('Done.'),
       ])
-      const stream = await streamRun(
-        opened.harness,
-        { conversationId: opened.root.id, content: 'Work', requestId: 'edit' },
-        context,
+      const stream = yield* Effect.promise(() =>
+        Promise.resolve(
+          streamRun(
+            opened.harness,
+            { conversationId: opened.root.id, content: 'Work', requestId: 'edit' },
+            context,
+          ),
+        ),
       )
       let offered = ''
       const observed = stream.pipeThrough(
         new TransformStream({
           transform(chunk, controller) {
             if (chunk.type === 'tool-input-delta') offered += chunk.inputTextDelta
-            if (chunk.type === 'reset-step') releaseEdit.resolve()
+            if (chunk.type === 'reset-step') Deferred.doneUnsafe(releaseEdit, Effect.void)
             controller.enqueue(chunk)
           },
         }),
       )
       const [raw, folded] = observed.tee()
-      const collected = consume(raw)
-      const visible = signal()
-      const reading = (async () => {
-        for await (const message of readUIMessageStream({ stream: folded })) {
-          const part = message.parts.find(isToolUIPart)
-          if (part === undefined || part.state !== 'input-streaming') continue
-          const current = decodePartial(part.input)
-          if (Option.isSome(current) && current.value.input.length >= 5) visible.resolve()
-        }
-      })()
-      await visible.promise
+      const collected = yield* Effect.forkScoped(consumeReadable(raw, Option.none()))
+      const visible = Deferred.makeUnsafe<void>()
+      const reading = yield* Effect.forkScoped(
+        Stream.runForEach(
+          Stream.fromAsyncIterable(
+            readUIMessageStream({ stream: folded }),
+            (cause) => new ReadFailed({ cause }),
+          ),
+          (message) =>
+            Effect.sync(() => {
+              const part = message.parts.find(isToolUIPart)
+              if (part === undefined || part.state !== 'input-streaming') return
+              const current = decodePartial(part.input)
+              if (Option.isSome(current) && current.value.input.length >= 5)
+                Deferred.doneUnsafe(visible, Effect.void)
+            }),
+        ),
+      )
+      yield* Deferred.await(visible)
       const prefix = offered
       replacing = true
-      release.resolve()
-      await reading
-      const result = await collected
+      Deferred.doneUnsafe(release, Effect.void)
+      yield* Fiber.join(reading)
+      const result = yield* Fiber.join(collected)
       expect(result.message.parts.filter(isToolUIPart)).toHaveLength(1)
       expect(result.message.parts.find(isToolUIPart)).toMatchObject({
         state: 'output-available',

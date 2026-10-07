@@ -1,3 +1,5 @@
+import { FixtureFailed } from '../fixtures/harness.ts'
+import { consumeReadable } from '../fixtures/reading.ts'
 import { fauxAssistantMessage, fauxText, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from '@effect/vitest'
 import {
@@ -6,15 +8,15 @@ import {
   tool,
   type UIMessage,
 } from 'ai'
-import { Effect } from 'effect'
+import { Effect, Option, Deferred } from 'effect'
 import { LiveDoc, watchEvents, type AgentEvent } from '@earendil-works/pi-durable'
-import { onTestFinished } from 'vitest'
+
 import { runForPi } from '../pi.ts'
 import { z } from 'zod'
 
 import { PlainChat } from '../fixtures/chat.ts'
 import { attachRun, history, streamRun } from '../main.ts'
-import { consume, context, host, signal } from './fixtures/host.ts'
+import { context, host } from './fixtures/host.ts'
 
 /** Compare provider blocks rather than step markers or transport-specific message identities. */
 function order(message: UIMessage) {
@@ -45,22 +47,22 @@ function approval(chat: PlainChat) {
  */
 for (const path of ['live', 'attach'] as const)
   it.live(`records the sequential ${path} versus settled-history ordering limit`, () =>
-    Effect.promise(async () => {
+    Effect.gen(function* () {
       const paid: number[] = []
-      const fixture = await host(
+      const fixture = yield* host(
         {
           pay: tool({
             inputSchema: z.object({ amount: z.number() }),
-            execute: async ({ amount }) => {
+            execute: ({ amount }) => {
               paid.push(amount)
-              return amount
+              return Promise.resolve(amount)
             },
           }),
         },
         { execution: 'sequential', approval: { pay: true } },
         { toolExecution: 'sequential' },
       )
-      const opened = await fixture.open()
+      const opened = yield* fixture.open()
       opened.faux.setResponses([
         fauxAssistantMessage(
           [
@@ -73,30 +75,39 @@ for (const path of ['live', 'attach'] as const)
         ),
         fauxAssistantMessage('Done.'),
       ])
-      let completion = signal()
+      let completion = Deferred.makeUnsafe<void, FixtureFailed>()
       const chat = new PlainChat({
         transport: opened.transport,
         sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-        onFinish: () => completion.resolve(),
-        onError: (error) => completion.reject(error),
+        onFinish: () => Deferred.doneUnsafe(completion, Effect.void),
+        onError: (error) =>
+          Deferred.doneUnsafe(completion, Effect.fail(new FixtureFailed({ cause: error }))),
       })
-      if (path === 'live') await chat.sendMessage({ text: 'Pay' })
+      if (path === 'live')
+        yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ text: 'Pay' })))
       else {
-        await consume(
-          await streamRun(
-            opened.harness,
-            { conversationId: opened.root.id, content: 'Pay', requestId: 'order' },
-            context,
+        yield* consumeReadable(
+          yield* Effect.promise(() =>
+            Promise.resolve(
+              streamRun(
+                opened.harness,
+                { conversationId: opened.root.id, content: 'Pay', requestId: 'order' },
+                context,
+              ),
+            ),
           ),
+          Option.none(),
         )
-        await chat.resumeStream()
+        yield* Effect.promise(() => Promise.resolve(chat.resumeStream()))
       }
       if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
       expect(order(chat.lastMessage)).toEqual(['text:Before.', 'call:c1', 'text:After.'])
       for (const amount of [1, 2]) {
-        completion = signal()
-        await chat.addToolApprovalResponse({ id: approval(chat), approved: true })
-        await completion.promise
+        completion = Deferred.makeUnsafe<void, FixtureFailed>()
+        yield* Effect.promise(() =>
+          Promise.resolve(chat.addToolApprovalResponse({ id: approval(chat), approved: true })),
+        )
+        yield* Deferred.await(completion)
         expect(paid).toEqual(amount === 1 ? [1] : [1, 2])
       }
       expect(chat.status).toBe('ready')
@@ -108,7 +119,9 @@ for (const path of ['live', 'attach'] as const)
         'call:c2',
         'text:Done.',
       ])
-      const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+      const page = yield* Effect.promise(() =>
+        Promise.resolve(history(opened.harness, opened.root.id, { limit: 10 }, context)),
+      )
       const assistant = page.messages.find((message) => message.role === 'assistant')
       if (assistant === undefined) throw new Error('Expected historical assistant')
       expect(order(assistant)).toEqual([
@@ -123,22 +136,22 @@ for (const path of ['live', 'attach'] as const)
 
 /** An unused sequential registration conservatively withholds c2 even though Pi executes this round in parallel. */
 it.live('records the ordering limit for a parallel round of a sequential-capable agent', () =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     const paid: number[] = []
     const payment = tool({
       inputSchema: z.object({ amount: z.number() }),
-      execute: async ({ amount }) => {
+      execute: ({ amount }) => {
         paid.push(amount)
-        return amount
+        return Promise.resolve(amount)
       },
     })
-    const fixture = await host(
+    const fixture = yield* host(
       { pay: payment, slow: payment },
       { execution: 'parallel', sequential: ['slow'], approval: { pay: true } },
       { toolExecution: 'parallel', progress: { partialIntervalMs: 0 } },
       { commitFrames: true, tokenSize: { min: 1, max: 1 } },
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     const before = 'Before '.repeat(20)
     const after = 'After '.repeat(20)
     opened.faux.setResponses([
@@ -153,14 +166,15 @@ it.live('records the ordering limit for a parallel round of a sequential-capable
       ),
       fauxAssistantMessage('Done.'),
     ])
-    let completion = signal()
+    let completion = Deferred.makeUnsafe<void, FixtureFailed>()
     const chat = new PlainChat({
       transport: opened.transport,
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-      onFinish: () => completion.resolve(),
-      onError: (error) => completion.reject(error),
+      onFinish: () => Deferred.doneUnsafe(completion, Effect.void),
+      onError: (error) =>
+        Deferred.doneUnsafe(completion, Effect.fail(new FixtureFailed({ cause: error }))),
     })
-    await chat.sendMessage({ text: 'Pay' })
+    yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ text: 'Pay' })))
     if (chat.lastMessage === undefined) throw new Error('Expected assistant')
     expect(order(chat.lastMessage)).toEqual([
       `text:${before}`,
@@ -168,14 +182,20 @@ it.live('records the ordering limit for a parallel round of a sequential-capable
       `text:${after}`,
       'call:c2',
     ])
-    const live = await opened.harness.snapshot(LiveDoc, opened.root.id, context)
+    const live = yield* Effect.promise(() =>
+      Promise.resolve(opened.harness.snapshot(LiveDoc, opened.root.id, context)),
+    )
     if (live === undefined || live.tools === undefined) throw new Error('Expected tool round')
     expect(live.tools).toHaveLength(2)
     expect(live.tools.every((slot) => slot.taskId !== undefined)).toBe(true)
-    completion = signal()
-    await chat.addToolApprovalResponse({ id: approval(chat), approved: true })
-    await chat.addToolApprovalResponse({ id: approval(chat), approved: true })
-    await completion.promise
+    completion = Deferred.makeUnsafe<void, FixtureFailed>()
+    yield* Effect.promise(() =>
+      Promise.resolve(chat.addToolApprovalResponse({ id: approval(chat), approved: true })),
+    )
+    yield* Effect.promise(() =>
+      Promise.resolve(chat.addToolApprovalResponse({ id: approval(chat), approved: true })),
+    )
+    yield* Deferred.await(completion)
     expect(paid.toSorted((left, right) => left - right)).toEqual([1, 2])
     expect(order(chat.lastMessage)).toEqual([
       `text:${before}`,
@@ -184,7 +204,9 @@ it.live('records the ordering limit for a parallel round of a sequential-capable
       'call:c2',
       'text:Done.',
     ])
-    const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+    const page = yield* Effect.promise(() =>
+      Promise.resolve(history(opened.harness, opened.root.id, { limit: 10 }, context)),
+    )
     const assistant = page.messages.find((message) => message.role === 'assistant')
     if (assistant === undefined) throw new Error('Expected historical assistant')
     expect(order(assistant)).toEqual([
@@ -200,8 +222,8 @@ it.live('records the ordering limit for a parallel round of a sequential-capable
 /** Observe committed identities, including a throttled first partial already holding several blocks. */
 function observeIdentities(
   event: AgentEvent,
-  observed: ReturnType<typeof signal>,
-  revealed: ReturnType<typeof signal>,
+  observed: Deferred.Deferred<void>,
+  revealed: Deferred.Deferred<void>,
 ) {
   const blocks =
     event.type === 'message_start' && event.message.role === 'assistant'
@@ -210,8 +232,8 @@ function observeIdentities(
         ? event.changes.flatMap((change) => ('block' in change ? [change.block] : []))
         : []
   for (const block of blocks) {
-    if (block.type === 'toolCall' && block.id === 'c2') observed.resolve()
-    if (block.type === 'toolCall' && block.id === 'c1') revealed.resolve()
+    if (block.type === 'toolCall' && block.id === 'c2') Deferred.doneUnsafe(observed, Effect.void)
+    if (block.type === 'toolCall' && block.id === 'c1') Deferred.doneUnsafe(revealed, Effect.void)
   }
 }
 
@@ -220,18 +242,20 @@ for (const prefix of [false, true])
   it.live(
     `holds later content behind anonymous identity across watch batches (prefix=${prefix})`,
     () =>
-      Effect.promise(async () => {
+      Effect.gen(function* () {
         const firstTool = prefix ? 1 : 0
-        const observed = signal()
-        const revealed = signal()
-        const release = signal()
-        const releaseReveal = signal()
+        const observed = Deferred.makeUnsafe<void>()
+        const revealed = Deferred.makeUnsafe<void>()
+        const release = Deferred.makeUnsafe<void>()
+        const releaseReveal = Deferred.makeUnsafe<void>()
         let revealHeld = false
-        const fixture = await host(
+        const fixture = yield* host(
           {
             pay: tool({
               inputSchema: z.object({ amount: z.number() }),
-              execute: async ({ amount }) => amount,
+              execute: ({ amount }) => {
+                return Promise.resolve(amount)
+              },
             }),
           },
           { approval: { pay: true } },
@@ -241,7 +265,7 @@ for (const prefix of [false, true])
             tokenSize: { min: 1, max: 1 },
             onFrame: (event) => {
               if (event.type === 'toolcall_end' && event.contentIndex === firstTool + 1)
-                return Effect.promise(() => release.promise)
+                return Deferred.await(release)
               if (!('partial' in event) || revealHeld) return Effect.void
               const first = event.partial.content[firstTool]
               if (
@@ -251,21 +275,24 @@ for (const prefix of [false, true])
                 first.id === 'c1'
               ) {
                 revealHeld = true
-                return Effect.promise(() => releaseReveal.promise)
+                return Deferred.await(releaseReveal)
               }
               return Effect.void
             },
           },
         )
-        const opened = await fixture.open()
-        const watch = await watchEvents(opened.harness, opened.root.id, context)
-        onTestFinished(async () => {
-          await watch.stop()
-        })
-        onTestFinished(() => {
-          release.resolve()
-          releaseReveal.resolve()
-        })
+        const opened = yield* fixture.open()
+        const watch = yield* Effect.promise(() =>
+          Promise.resolve(watchEvents(opened.harness, opened.root.id, context)),
+        )
+        // LIFO cleanup releases provider gates before stopping the watch and closing Pi.
+        yield* Effect.addFinalizer(() => Effect.promise(() => watch.stop()))
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            Deferred.doneUnsafe(release, Effect.void)
+            Deferred.doneUnsafe(releaseReveal, Effect.void)
+          }),
+        )
         watch.start((batch) =>
           runForPi(
             Effect.sync(() => {
@@ -287,16 +314,19 @@ for (const prefix of [false, true])
           ),
           fauxAssistantMessage('Done.'),
         ])
-        let done = signal()
+        let done = Deferred.makeUnsafe<void, FixtureFailed>()
         const chat = new PlainChat({
           transport: opened.transport,
           sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-          onFinish: () => done.resolve(),
-          onError: (error) => done.reject(error),
+          onFinish: () => Deferred.doneUnsafe(done, Effect.void),
+          onError: (error) =>
+            Deferred.doneUnsafe(done, Effect.fail(new FixtureFailed({ cause: error }))),
         })
         const sending = chat.sendMessage({ text: 'Pay' })
-        await observed.promise
-        const live = await opened.harness.snapshot(LiveDoc, opened.root.id, context)
+        yield* Deferred.await(observed)
+        const live = yield* Effect.promise(() =>
+          Promise.resolve(opened.harness.snapshot(LiveDoc, opened.root.id, context)),
+        )
         if (
           live === undefined ||
           live.generation === undefined ||
@@ -309,11 +339,13 @@ for (const prefix of [false, true])
           name: 'pay',
         })
         if (prefix) {
-          const attached = await attachRun(opened.harness, opened.root.id, context)
+          const attached = yield* Effect.promise(() =>
+            Promise.resolve(attachRun(opened.harness, opened.root.id, context)),
+          )
           if (attached.status !== 'running') throw new Error('Expected prefix attachment')
           const reader = attached.stream.getReader()
           for (;;) {
-            const next = await reader.read()
+            const next = yield* Effect.promise(() => Promise.resolve(reader.read()))
             if (next.done) throw new Error('Expected text before the identity barrier')
             expect(next.value.type).not.toBe('tool-input-start')
             if (next.value.type === 'text-delta') {
@@ -321,12 +353,12 @@ for (const prefix of [false, true])
               break
             }
           }
-          await reader.cancel()
+          yield* Effect.promise(() => Promise.resolve(reader.cancel()))
         }
-        release.resolve()
-        await revealed.promise // A later durable batch, not a same-batch sort.
-        releaseReveal.resolve()
-        await sending
+        Deferred.doneUnsafe(release, Effect.void)
+        yield* Deferred.await(revealed) // A later durable batch, not a same-batch sort.
+        Deferred.doneUnsafe(releaseReveal, Effect.void)
+        yield* Effect.promise(() => Promise.resolve(sending))
         if (chat.lastMessage === undefined) throw new Error('Expected assistant')
         expect(order(chat.lastMessage)).toEqual([
           ...(prefix ? ['text:Before'] : []),
@@ -334,11 +366,17 @@ for (const prefix of [false, true])
           'call:c2',
           `text:${after}`,
         ])
-        done = signal()
-        await chat.addToolApprovalResponse({ id: approval(chat), approved: true })
-        await chat.addToolApprovalResponse({ id: approval(chat), approved: true })
-        await done.promise
-        const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+        done = Deferred.makeUnsafe<void, FixtureFailed>()
+        yield* Effect.promise(() =>
+          Promise.resolve(chat.addToolApprovalResponse({ id: approval(chat), approved: true })),
+        )
+        yield* Effect.promise(() =>
+          Promise.resolve(chat.addToolApprovalResponse({ id: approval(chat), approved: true })),
+        )
+        yield* Deferred.await(done)
+        const page = yield* Effect.promise(() =>
+          Promise.resolve(history(opened.harness, opened.root.id, { limit: 10 }, context)),
+        )
         const assistant = page.messages.find((message) => message.role === 'assistant')
         if (assistant === undefined) throw new Error('Expected history')
         expect(assistant.parts).toEqual(chat.lastMessage.parts)
