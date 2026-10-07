@@ -1,4 +1,4 @@
-import { expect, it } from '@effect/vitest'
+import { expect, it, layer } from '@effect/vitest'
 import { NodeHttpClient, NodeHttpServer } from '@effect/platform-node'
 import { cutFault, ServiceId } from '@vivid/contracts'
 import { getTableName } from 'drizzle-orm'
@@ -329,7 +329,6 @@ const capturing = () => {
 
 it.effect('exports a typed failure with its tag, as expected, at its boundary', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const refuse = Effect.fn('Probe.refuse')(function* () {
@@ -369,7 +368,6 @@ it.effect('exports a typed failure with its tag, as expected, at its boundary', 
 
 it.effect('marks a defect as a defect and logs it as an error', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const crash = Effect.fn('Probe.crash')(function* () {
@@ -391,7 +389,6 @@ it.effect('marks a defect as a defect and logs it as an error', () =>
 
 it.effect('records nothing for an interruption', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const leave = Effect.fn('Probe.leave')(function* () {
@@ -409,7 +406,6 @@ it.effect('records nothing for an interruption', () =>
 
 it.effect('records a refusal as a span event and a log line', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const decide = Effect.fn('Probe.decide')(function* () {
@@ -436,7 +432,6 @@ it.effect('records a refusal as a span event and a log line', () =>
 
 it.effect('exports the type of a failure whose message is private prose, and no prose', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       // What a model provider's error looks like: the Person's own words, quoted back. No pattern
@@ -477,7 +472,6 @@ it.effect('exports the type of a failure whose message is private prose, and no 
 
 it.effect("exports none of a Drizzle query error's statement or parameters", () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const table = getTableName(threads)
@@ -516,7 +510,6 @@ it.effect("exports none of a Drizzle query error's statement or parameters", () 
 it.effect('exports a table name only when Vivid declares that table, and no constraint', () => {
   const stdout = capturing()
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(
       stdout.layer.pipe(Layer.provideMerge(NodeHttpServer.layerTest)),
     )
@@ -556,7 +549,6 @@ it.effect('exports a table name only when Vivid declares that table, and no cons
 
 it.effect('records every reason of a combined cause and classifies the span by the defect', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const both = Effect.fn('Probe.both')(function* () {
@@ -588,7 +580,6 @@ it.effect('records every reason of a combined cause and classifies the span by t
 
 it.effect('exports no failure type that is a property of what was thrown', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       // Each of these has the shape of an identifier, which is why shape decides nothing: the type
@@ -634,7 +625,6 @@ it.effect('exports no failure type that is a property of what was thrown', () =>
 it.effect('exports a refusal field only when its value is one of a closed set', () => {
   const stdout = capturing()
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(
       stdout.layer.pipe(Layer.provideMerge(NodeHttpServer.layerTest)),
     )
@@ -676,7 +666,6 @@ it.effect('exports a refusal field only when its value is one of a closed set', 
 
 it.effect('keeps ambient OTEL_RESOURCE_ATTRIBUTES out of the resource', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const { collect, flush, run } = yield* observed({
@@ -703,7 +692,6 @@ it.effect('keeps ambient OTEL_RESOURCE_ATTRIBUTES out of the resource', () =>
 
 it.effect('names the commit on the resource only when it is a commit', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       // What `VIVID_COMMIT` would hold if a credential were pasted into it.
@@ -726,7 +714,6 @@ it.effect('names the commit on the resource only when it is a commit', () =>
 
 it.effect("exports no part of a client's fault report", () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const fault = cutFault({
@@ -760,7 +747,6 @@ it.effect("exports no part of a client's fault report", () =>
 
 it.effect("exports no query, path or header of a provider's sign-in return", () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       // The real route (`connections/return.ts`) needs a database. What is under test is the span
@@ -817,7 +803,6 @@ it.effect(
   'exports no span under a malformed or all-zero inbound trace id, and no such parent',
   () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
       return yield* Effect.gen(function* () {
         const inbound = Effect.fn('Probe.inbound')(function* () {
@@ -894,7 +879,6 @@ it.effect(
 
 it.effect('files a 64-bit B3 trace under its 128-bit form, on spans, links and lines alike', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const short = '463ac35c9f6413ad'
@@ -959,7 +943,6 @@ const probeRoutes = RpcServer.layerHttp({ group: probes, path: '/rpc', protocol:
 
 it.effect('builds no span name from what a request carries, over HTTP or RPC', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       // A dotted identifier: the one shape of data the span-name rule cannot tell from a name
@@ -1048,7 +1031,6 @@ const paused = (signal: 'traces' | 'logs', dropped: number) =>
 it.effect('bounds what a backend that never answers can hold, and reports each pause once', () => {
   const stdout = capturing()
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(
       stdout.layer.pipe(Layer.provideMerge(NodeHttpServer.layerTest)),
     )
@@ -1122,7 +1104,6 @@ const stalling = (closed: Queue.Queue<void>) =>
 it.effect('gives a refused export one attempt, keeps nothing of it, and reports the drop', () => {
   const stdout = capturing()
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(
       stdout.layer.pipe(Layer.provideMerge(NodeHttpServer.layerTest)),
     )
@@ -1180,7 +1161,6 @@ it.effect('gives a refused export one attempt, keeps nothing of it, and reports 
 it.effect('holds a place until the answer ends, and gives the connection back with it', () => {
   const stdout = capturing()
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(
       stdout.layer.pipe(Layer.provideMerge(NodeHttpServer.layerTest)),
     )
@@ -1245,7 +1225,6 @@ it.effect('holds a place until the answer ends, and gives the connection back wi
 it.effect('pauses a signal for a minute after one failed export, then sends again', () => {
   const stdout = capturing()
   return Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(
       stdout.layer.pipe(Layer.provideMerge(NodeHttpServer.layerTest)),
     )
@@ -1394,7 +1373,6 @@ const unchanged = ({ kind, label }: HostileCase) => ({ label, kind, reasons: 1, 
 
 it.effect('ends a span whose failure cannot be read, and hands the caller that failure only', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const { collect, flush, run } = yield* observed(plain)
@@ -1440,7 +1418,6 @@ it.effect('ends a span whose failure cannot be read, and hands the caller that f
 
 it.effect('still exports an ordinary failed span with its type, on the span and its event', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const crash = Effect.fn('Probe.crash')(function* () {
@@ -1466,7 +1443,6 @@ it.effect(
   'leaves off an attribute or an annotation that is not a plain value, and exports the rest',
   () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
       return yield* Effect.gen(function* () {
         const { collect, flush, run } = yield* observed(plain)
@@ -1513,7 +1489,6 @@ const doubling = () =>
 
 it.effect('gives the exporter no object to walk, wherever one is attached', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const { collect, flush, run } = yield* observed(plain)
@@ -1594,7 +1569,6 @@ it.effect('gives the exporter no object to walk, wherever one is attached', () =
 
 it.effect('drops a value too long to be an attribute without reading it', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const { collect, flush, run } = yield* observed(plain)
@@ -1633,7 +1607,6 @@ const throwing = (): never => {
 
 it.effect('makes a span from options or a parent that cannot be read, and changes no outcome', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const { collect, flush, run } = yield* observed(plain)
@@ -1701,7 +1674,6 @@ it.effect('makes a span from options or a parent that cannot be read, and change
 
 it.effect('forwards at most 128 links, whatever the collection that holds them answers', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const { collect, flush, run } = yield* observed(plain)
@@ -1775,7 +1747,6 @@ it.effect(
   'files a line under its trace whether or not its span is sampled, and under no id that is not one',
   () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
       return yield* Effect.gen(function* () {
         const { collect, flush, run } = yield* observed(plain)
@@ -1822,7 +1793,6 @@ it.effect(
 
 it.effect('exports a line logged with a cause that cannot be read, and the log call succeeds', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const { collect, flush, run } = yield* observed(plain)
@@ -1866,7 +1836,6 @@ const failureLines = (
 
 it.effect('names at most 256 failure types in one process, spans and lines together', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const { collect, flush, run } = yield* observed(plain)
@@ -1934,7 +1903,6 @@ it.effect('names at most 256 failure types in one process, spans and lines toget
 
 it.effect('exports at most 64 database codes in one process, and none after that', () =>
   Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
     const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* Effect.gen(function* () {
       const refused = (code: string) =>
@@ -1960,26 +1928,23 @@ it.effect('exports at most 64 database codes in one process, and none after that
   }).pipe(Effect.scoped),
 )
 
-it.effect('posts nothing when export is disabled', () =>
-  Effect.gen(function* () {
-    // Each case owns fresh mutable services and their resource scope.
-    const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
-    return yield* Effect.gen(function* () {
-      const { posts, routes } = yield* receiving(answered)
-      yield* Layer.build(HttpRouter.serve(routes, { disableLogger: true }))
-      const refuse = Effect.fn('Probe.refuse')(function* () {
-        return yield* new ProbeRefused({ message: 'not today' })
-      }, observeFailures('rpc'))
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          // Each case owns fresh mutable services and their resource scope.
-          const caseContext = yield* Layer.build(
-            observabilityLayer(ObservabilityConfiguration.Disabled()),
-          )
-          return yield* Effect.exit(refuse()).pipe(Effect.provide(caseContext))
-        }).pipe(Effect.scoped),
-      )
-      expect(yield* Ref.get(posts)).toEqual([])
-    }).pipe(Effect.provide(caseContext))
-  }).pipe(Effect.scoped),
-)
+layer(
+  observabilityLayer(ObservabilityConfiguration.Disabled()).pipe(
+    Layer.provide(NodeHttpClient.layerUndici),
+  ),
+)((it) => {
+  it.effect('posts nothing when export is disabled', () =>
+    Effect.gen(function* () {
+      const caseContext = yield* Layer.build(NodeHttpServer.layerTest)
+      return yield* Effect.gen(function* () {
+        const { posts, routes } = yield* receiving(answered)
+        yield* Layer.build(HttpRouter.serve(routes, { disableLogger: true }))
+        const refuse = Effect.fn('Probe.refuse')(function* () {
+          return yield* new ProbeRefused({ message: 'not today' })
+        }, observeFailures('rpc'))
+        yield* Effect.scoped(Effect.exit(refuse()).pipe(Effect.scoped))
+        expect(yield* Ref.get(posts)).toEqual([])
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped),
+  )
+})

@@ -6,6 +6,7 @@ export const refusalLogs = () => {
   const lines: string[] = []
   const capture = Logger.make((entry) => lines.push(Logger.formatSimple.log(entry)))
   return {
+    capture,
     layer: Logger.layer([capture], { mergeWithExisting: true }),
     /** Ignore unrelated diagnostics; every refusal must still be exactly one real info line. */
     recorded: () => lines.filter((line) => line.includes(Message.refusal)),
