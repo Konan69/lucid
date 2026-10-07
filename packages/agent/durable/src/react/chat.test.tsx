@@ -1,5 +1,6 @@
-import { Effect } from 'effect'
 // @vitest-environment jsdom
+import * as NodeEvents from 'node:events'
+import { Effect, type Scope } from 'effect'
 import { Chat as ChatState, useChat } from '@ai-sdk/react'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
@@ -11,8 +12,7 @@ import {
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it } from '@effect/vitest'
-import { onTestFinished } from 'vitest'
-import { context, shop, signal, texts } from '../conformance/fixtures/host.ts'
+import { context, shop, texts } from '../conformance/fixtures/host.ts'
 import { history, respond } from '../main.ts'
 // React only flushes effects inside `act` when the environment says it is a test.
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -34,9 +34,9 @@ type Mounted = {
   /** The chat the hook is subscribed to. */
   readonly chat: () => Chat
   /** Do `action` and wait until the response stream it causes has finished: the hook's `onFinish`. */
-  readonly until: (action: (chat: Chat) => void | PromiseLike<void>) => Promise<void>
+  readonly until: (action: (chat: Chat) => void | PromiseLike<void>) => Effect.Effect<void>
   /** Wait for the stream the mount itself opened (`resume`). */
-  readonly resumed: () => Promise<void>
+  readonly resumed: () => Effect.Effect<void>
   /** What the component rendered. */
   readonly text: () => string
 }
@@ -44,6 +44,12 @@ type Mounted = {
  * Mount a component that uses the stock `useChat` hook and renders its text parts.
  *
  * The test waits on `onFinish`, the hook's own signal that a stream ended, never on a clock.
+ * React's `act` takes a callback that returns a thenable and flushes updates until it settles, so
+ * the wait must be a native Promise made inside that callback: `events.once` on an emitter that
+ * `onFinish` fires gives one for the next finish, with no hand-built Promise and no second runtime.
+ *
+ * The unmount is a finalizer of the case's scope. The fixture's harness is acquired earlier in the
+ * same scope and scopes release in reverse order, so the hook is gone before its harness closes.
  */
 function mount(options: {
   readonly transport: DefaultChatTransport<UIMessage>
@@ -51,9 +57,11 @@ function mount(options: {
   readonly messages: UIMessage[]
   /** Reconnect on mount to the run in progress, as a reloaded page does. */
   readonly resume: boolean
-}): Effect.Effect<Mounted> {
+}): Effect.Effect<Mounted, never, Scope.Scope> {
   return Effect.gen(function* () {
-    let waiter = signal()
+    const finished = new NodeEvents.EventEmitter()
+    /** Settles at the next `onFinish` after this call; register it before causing the stream. */
+    const nextFinish = () => NodeEvents.EventEmitter.once(finished, 'finish').then(() => {})
     // The chat state lives outside the component, as in an app that shares one chat between
     // components; the hook subscribes to it and owns the reconnect on mount.
     const state = new ChatState<UIMessage>({
@@ -61,9 +69,7 @@ function mount(options: {
       transport: options.transport,
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
       onFinish: () => {
-        const settled = waiter
-        waiter = signal()
-        settled.resolve()
+        finished.emit('finish')
       },
       messages: options.messages,
     })
@@ -79,17 +85,22 @@ function mount(options: {
         </ol>
       )
     }
-    const container = document.createElement('div')
-    document.body.append(container)
-    const root = createRoot(container)
-    onTestFinished(() =>
-      Promise.resolve(
-        act(() => {
-          root.unmount()
-        }),
-      ).then(() => container.remove()),
+    const { container, root } = yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        const element = document.createElement('div')
+        document.body.append(element)
+        return { container: element, root: createRoot(element) }
+      }),
+      (mounted) =>
+        Effect.promise(() =>
+          Promise.resolve(
+            act(() => {
+              mounted.root.unmount()
+            }),
+          ),
+        ).pipe(Effect.andThen(Effect.sync(() => mounted.container.remove()))),
     )
-    const opening = waiter.promise
+    const opening = nextFinish()
     yield* Effect.promise(() =>
       Promise.resolve(
         act(() => {
@@ -101,13 +112,15 @@ function mount(options: {
       chat: () => state,
       // One `act` per step: React does not support overlapping ones.
       until: (action) =>
-        Promise.resolve(
-          act(() => {
-            const pending = waiter.promise
-            return Promise.resolve(action(state)).then(() => pending)
-          }),
+        Effect.promise(() =>
+          Promise.resolve(
+            act(() => {
+              const pending = nextFinish()
+              return Promise.resolve(action(state)).then(() => pending)
+            }),
+          ),
         ),
-      resumed: () => Promise.resolve(act(() => opening)),
+      resumed: () => Effect.promise(() => Promise.resolve(act(() => opening))),
       text: () =>
         [...container.querySelectorAll('li')]
           .map((item) => `${item.dataset['role']}: ${item.textContent}`)
@@ -126,23 +139,23 @@ function heldPay(chat: Chat) {
 }
 it.live('useChat streams a durable run into one rendered assistant message', () =>
   Effect.gen(function* () {
-    const fixture = yield* Effect.promise(() => shop())
-    const opened = yield* Effect.promise(() => fixture.open())
+    const fixture = yield* shop()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([fauxAssistantMessage('Hello from Pi.')])
     const mounted = yield* mount({
       transport: transport(opened.harness, opened.root.id),
       messages: [],
       resume: false,
     })
-    yield* Effect.promise(() => mounted.until((chat) => chat.sendMessage({ text: 'Hi' })))
+    yield* mounted.until((chat) => chat.sendMessage({ text: 'Hi' }))
     expect(mounted.chat().status).toBe('ready')
     expect(mounted.text()).toBe('user: Hi\nassistant: Hello from Pi.')
   }),
 )
 it.live('useChat approves a held tool from the message part and the run continues by itself', () =>
   Effect.gen(function* () {
-    const fixture = yield* Effect.promise(() => shop())
-    const opened = yield* Effect.promise(() => fixture.open())
+    const fixture = yield* shop()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([
       fauxAssistantMessage(
         [{ type: 'text', text: 'Checking.' }, fauxToolCall('pay', { amount: 500 }, { id: 'pay' })],
@@ -155,17 +168,13 @@ it.live('useChat approves a held tool from the message part and the run continue
       messages: [],
       resume: false,
     })
-    yield* Effect.promise(() =>
-      mounted.until((chat) => chat.sendMessage({ text: 'Pay the invoice' })),
-    )
+    yield* mounted.until((chat) => chat.sendMessage({ text: 'Pay the invoice' }))
     // The stream finished because the run waits for a person; the tool has not run.
     expect(fixture.paid).toEqual([])
     const held = heldPay(mounted.chat())
     // An app does exactly this: the id comes from the part, and the hook resubmits on its own.
-    yield* Effect.promise(() =>
-      mounted.until((chat) =>
-        chat.addToolApprovalResponse({ id: held.approval.id, approved: true }),
-      ),
+    yield* mounted.until((chat) =>
+      chat.addToolApprovalResponse({ id: held.approval.id, approved: true }),
     )
     expect(fixture.paid).toEqual([500])
     expect(mounted.chat().status).toBe('ready')
@@ -174,8 +183,8 @@ it.live('useChat approves a held tool from the message part and the run continue
 )
 it.live('a reloaded page shows history and resumes the run that waits for approval', () =>
   Effect.gen(function* () {
-    const fixture = yield* Effect.promise(() => shop())
-    const opened = yield* Effect.promise(() => fixture.open())
+    const fixture = yield* shop()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([
       fauxAssistantMessage(
         [{ type: 'text', text: 'Checking.' }, fauxToolCall('pay', { amount: 70 }, { id: 'pay' })],
@@ -188,7 +197,7 @@ it.live('a reloaded page shows history and resumes the run that waits for approv
       messages: [],
       resume: false,
     })
-    yield* Effect.promise(() => first.until((chat) => chat.sendMessage({ text: 'Pay 70' })))
+    yield* first.until((chat) => chat.sendMessage({ text: 'Pay 70' }))
     // The reload: a new page loads the settled transcript, then `resume` reconnects to the run.
     const page = yield* Effect.promise(() =>
       history(opened.harness, opened.root.id, { limit: 50 }, context),
@@ -198,13 +207,11 @@ it.live('a reloaded page shows history and resumes the run that waits for approv
       messages: [...page.messages],
       resume: true,
     })
-    yield* Effect.promise(() => reloaded.resumed())
+    yield* reloaded.resumed()
     expect(reloaded.text()).toBe('user: Pay 70\nassistant: Checking.')
     const held = heldPay(reloaded.chat())
-    yield* Effect.promise(() =>
-      reloaded.until((chat) =>
-        chat.addToolApprovalResponse({ id: held.approval.id, approved: true }),
-      ),
+    yield* reloaded.until((chat) =>
+      chat.addToolApprovalResponse({ id: held.approval.id, approved: true }),
     )
     expect(fixture.paid).toEqual([70])
     expect(reloaded.text()).toBe('user: Pay 70\nassistant: Checking. | Paid.')
