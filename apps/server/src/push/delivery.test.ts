@@ -58,7 +58,6 @@ const notice = (owner: Effect.Success<ReturnType<typeof fixture>>) => {
 describe.skipIf(!testDatabaseConfigured)('push delivery and registration handlers', () => {
   it.effect('registers idempotently, lists only the owner, removes, and cascades session end', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(pushTestLayer)
       return yield* Effect.scoped(
         Effect.gen(function* () {
@@ -120,7 +119,6 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
     'a session transfer survives old-session deletion and an old Expo gone receipt; expiry prunes it',
     () =>
       Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
         const caseContext = yield* Layer.build(pushTestLayer)
         return yield* Effect.scoped(
           Effect.gen(function* () {
@@ -169,7 +167,6 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
 
   it.effect('sends once per target across concurrent retry and rebuilding the delivery Layer', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(pushTestLayer)
       return yield* Effect.scoped(
         Effect.gen(function* () {
@@ -198,8 +195,7 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
           >()
           yield* Effect.scoped(
             Effect.gen(function* () {
-              // Each case owns fresh mutable services and their resource scope.
-              const caseContext = yield* Layer.build(pushLayer)
+              const caseContext = yield* Layer.build(Layer.fresh(pushLayer))
               return yield* Effect.gen(function* () {
                 const rebuilt = yield* Push
                 expect(yield* rebuilt.deliver(owner.person.id, input.id)).toEqual(
@@ -236,7 +232,6 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
     'suppresses push while present in any Thread, then uses the controlled presence expiry',
     () =>
       Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
         const caseContext = yield* Layer.build(pushTestLayer)
         return yield* Effect.scoped(
           Effect.gen(function* () {
@@ -268,7 +263,6 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
     'removes gone destinations and never retries uncertain or committed queued claims',
     () =>
       Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
         const caseContext = yield* Layer.build(pushTestLayer)
         return yield* Effect.scoped(
           Effect.gen(function* () {
@@ -311,7 +305,6 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
 
   it.effect('removes Expo tokens reported gone by a delayed device receipt without resending', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(pushTestLayer)
       return yield* Effect.scoped(
         Effect.gen(function* () {
@@ -347,7 +340,6 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
 
   it.effect('checks access again before quoting private Thread content', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(pushTestLayer)
       return yield* Effect.scoped(
         Effect.gen(function* () {
@@ -377,7 +369,6 @@ describe.skipIf(!testDatabaseConfigured)('push delivery and registration handler
     'notify_person returns provider evidence, deduplicates in its acting Run, and a standing Run stays quiet',
     () =>
       Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
         const caseContext = yield* Layer.build(pushTestLayer)
         return yield* Effect.scoped(
           Effect.gen(function* () {

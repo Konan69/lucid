@@ -24,7 +24,7 @@ import * as HttpServer from 'effect/unstable/http/HttpServer'
 import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
 import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
 import { NotificationId, PushDestination, PushPayload, ThreadId } from '@vivid/contracts'
-import { PushAdapter, pushAdapterLayer } from './adapter.ts'
+import { PushAdapter, pushAdapterLayer, makePushAdapter } from './adapter.ts'
 import { PushConfig } from './config.ts'
 import { PushAcceptance } from './receipts.ts'
 import { testPushConfig } from './testing.ts'
@@ -60,29 +60,27 @@ it.effect(
         },
       })
       for (const status of [201, 410, 302]) {
-        const transport = Layer.succeed(
-          HttpClient.HttpClient,
-          HttpClient.make((request) =>
-            Effect.sync(() => {
-              expect(request.url).toBe(destination.endpoint)
-              expect(request.headers['content-encoding']).toBe('aes128gcm')
-              expect(request.headers.authorization).toContain('vapid ')
-              if (!Predicate.isTagged(request.body, 'Uint8Array'))
-                return expect.fail('Expected encrypted Web Push body')
-              expect(Buffer.from(request.body.body).toString()).not.toContain(payload.body)
-              return HttpClientResponse.fromWeb(request, new Response(null, { status }))
-            }),
-          ),
+        const transport = HttpClient.make((request) =>
+          Effect.sync(() => {
+            expect(request.url).toBe(destination.endpoint)
+            expect(request.headers['content-encoding']).toBe('aes128gcm')
+            expect(request.headers.authorization).toContain('vapid ')
+            if (!Predicate.isTagged(request.body, 'Uint8Array'))
+              return expect.fail('Expected encrypted Web Push body')
+            expect(Buffer.from(request.body.body).toString()).not.toContain(payload.body)
+            return HttpClientResponse.fromWeb(request, new Response(null, { status }))
+          }),
         )
         const result = yield* Effect.gen(function* () {
-          // Each case owns fresh mutable services and their resource scope.
-          const caseContext = yield* Layer.build(
-            pushAdapterLayer.pipe(Layer.provideMerge(transport)),
-          )
-          return yield* Effect.gen(function* () {
-            return yield* (yield* PushAdapter).send(destination, payload).pipe(Effect.result)
-          }).pipe(Effect.provide(caseContext))
-        }).pipe(Effect.scoped, Effect.provideService(PushConfig, testPushConfig))
+          return yield* (yield* PushAdapter).send(destination, payload).pipe(Effect.result)
+        }).pipe(
+          Effect.provideServiceEffect(
+            PushAdapter,
+            makePushAdapter.pipe(Effect.provideService(HttpClient.HttpClient, transport)),
+          ),
+          Effect.scoped,
+          Effect.provideService(PushConfig, testPushConfig),
+        )
         if (status === 201)
           expect(result).toEqual(Result.succeed(PushAcceptance.cases.Browser.make({})))
         else
@@ -98,68 +96,66 @@ it.effect(
   'sends the Expo v2 payload without Person identifiers and decodes tickets and gone receipts',
   () =>
     Effect.gen(function* () {
-      const transport = Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make((request) =>
-          Effect.gen(function* () {
-            if (!Predicate.isTagged(request.body, 'Uint8Array'))
-              return expect.fail('Expected Expo JSON body')
-            const data = yield* decodeExpo(new TextDecoder().decode(request.body.body)).pipe(
-              Effect.catchTag('SchemaError', () =>
-                Effect.sync(() => expect.fail('Invalid Expo request')),
-              ),
-            )
-            expect(data).toEqual({
-              to: phone.token,
-              title: payload.title,
-              body: payload.body,
-              sound: 'default',
-              data: payload,
-            })
-            return HttpClientResponse.fromWeb(
-              request,
-              new Response(JSON.stringify({ data: { status: 'ok', id: 'ticket' } })),
-            )
-          }),
-        ),
+      const transport = HttpClient.make((request) =>
+        Effect.gen(function* () {
+          if (!Predicate.isTagged(request.body, 'Uint8Array'))
+            return expect.fail('Expected Expo JSON body')
+          const data = yield* decodeExpo(new TextDecoder().decode(request.body.body)).pipe(
+            Effect.catchTag('SchemaError', () =>
+              Effect.sync(() => expect.fail('Invalid Expo request')),
+            ),
+          )
+          expect(data).toEqual({
+            to: phone.token,
+            title: payload.title,
+            body: payload.body,
+            sound: 'default',
+            data: payload,
+          })
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify({ data: { status: 'ok', id: 'ticket' } })),
+          )
+        }),
       )
-      const receiptTransport = Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make((request) =>
-          Effect.sync(() => {
-            expect(request.url).toBe('https://exp.host/--/api/v2/push/getReceipts')
-            return HttpClientResponse.fromWeb(
-              request,
-              new Response(
-                JSON.stringify({
-                  data: {
-                    ticket: { status: 'error', details: { error: 'DeviceNotRegistered' } },
-                  },
-                }),
-              ),
-            )
-          }),
-        ),
+      const receiptTransport = HttpClient.make((request) =>
+        Effect.sync(() => {
+          expect(request.url).toBe('https://exp.host/--/api/v2/push/getReceipts')
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              JSON.stringify({
+                data: {
+                  ticket: { status: 'error', details: { error: 'DeviceNotRegistered' } },
+                },
+              }),
+            ),
+          )
+        }),
       )
       const acceptance = yield* Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
-        const caseContext = yield* Layer.build(pushAdapterLayer.pipe(Layer.provideMerge(transport)))
-        return yield* Effect.gen(function* () {
-          return yield* (yield* PushAdapter).send(phone, payload)
-        }).pipe(Effect.provide(caseContext))
-      }).pipe(Effect.scoped, Effect.provideService(PushConfig, testPushConfig))
+        return yield* (yield* PushAdapter).send(phone, payload)
+      }).pipe(
+        Effect.provideServiceEffect(
+          PushAdapter,
+          makePushAdapter.pipe(Effect.provideService(HttpClient.HttpClient, transport)),
+        ),
+        Effect.scoped,
+        Effect.provideService(PushConfig, testPushConfig),
+      )
       expect(acceptance).toEqual(
         PushAcceptance.cases.Phone.make({ ticket: 'ticket', confirmed: false }),
       )
       const receipt = yield* Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
-        const caseContext = yield* Layer.build(
-          pushAdapterLayer.pipe(Layer.provideMerge(receiptTransport)),
-        )
-        return yield* Effect.gen(function* () {
-          return yield* (yield* PushAdapter).receipt('ticket')
-        }).pipe(Effect.provide(caseContext))
-      }).pipe(Effect.scoped, Effect.provideService(PushConfig, testPushConfig))
+        return yield* (yield* PushAdapter).receipt('ticket')
+      }).pipe(
+        Effect.provideServiceEffect(
+          PushAdapter,
+          makePushAdapter.pipe(Effect.provideService(HttpClient.HttpClient, receiptTransport)),
+        ),
+        Effect.scoped,
+        Effect.provideService(PushConfig, testPushConfig),
+      )
       expect(receipt).toEqual(Option.some('Gone'))
     }),
 )
@@ -175,7 +171,6 @@ it.effect('times out a pending provider using TestClock and reports the send as 
       ),
     )
     const result = yield* Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(pushAdapterLayer.pipe(Layer.provideMerge(transport)))
       return yield* Effect.gen(function* () {
         const adapter = yield* PushAdapter
@@ -288,7 +283,6 @@ it.effect('releases unread Push responses before returning their status outcome'
       { path: '/--/api/v2/push/getReceipts', tag: 'PushRejected', kind: 'Receipt' },
     ]
     yield* Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(
         pushAdapterLayer.pipe(Layer.provideMerge(remote.transport)),
       )

@@ -1,8 +1,8 @@
 import * as NodeCrypto from 'node:crypto'
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, it, layer } from '@effect/vitest'
 import { ConfigProvider, Effect, Layer, Redacted } from 'effect'
 import { ConfigurationError } from '../config.ts'
-import { PushConfig, pushConfigLayer } from './config.ts'
+import { PushConfig, pushConfigLayer, loadPushConfiguration } from './config.ts'
 
 /** Two throwaway pairs made here; no operator credential is read. */
 const pair = () => {
@@ -68,7 +68,11 @@ describe('push settings', () => {
   ] as const) {
     it.effect(`does not build when ${name}`, () =>
       Effect.gen(function* () {
-        const failure = yield* Layer.build(configured(values)).pipe(Effect.scoped, Effect.flip)
+        const failure = yield* loadPushConfiguration().pipe(
+          Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(values)),
+          Effect.scoped,
+          Effect.flip,
+        )
         expect(failure).toBeInstanceOf(ConfigurationError)
         expect(failure).toMatchObject({ variable })
         expect(JSON.stringify(failure)).not.toContain(other.privateKey)
@@ -77,15 +81,13 @@ describe('push settings', () => {
     )
   }
 
-  it.effect('advertises the public key of a matching pair', () =>
-    Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
-      const caseContext = yield* Layer.build(configured(settings))
-      return yield* Effect.gen(function* () {
+  layer(configured(settings))((it) => {
+    it.effect('advertises the public key of a matching pair', () =>
+      Effect.gen(function* () {
         const config = yield* PushConfig
         expect(config.publicKey).toBe(own.publicKey)
         expect(Redacted.value(config.privateKey)).toBe(own.privateKey)
-      }).pipe(Effect.provide(caseContext))
-    }).pipe(Effect.scoped),
-  )
+      }).pipe(Effect.scoped),
+    )
+  })
 })
