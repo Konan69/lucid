@@ -1,3 +1,4 @@
+import { consumeReadable } from '../fixtures/reading.ts'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from '@effect/vitest'
 import { Effect, Option, Schema } from 'effect'
@@ -5,7 +6,7 @@ import * as Core from '../core.ts'
 import { route as promiseRoute } from '../examples/main.ts'
 import { route as effectRoute } from '../examples/effect.ts'
 import { streamRun } from '../main.ts'
-import { consume, context, shop } from './fixtures/host.ts'
+import { context, shop } from './fixtures/host.ts'
 
 const decodePage = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -24,8 +25,8 @@ it.live(
   'both server examples page query parameters and map invalid, stale and missing requests',
   () =>
     Effect.gen(function* () {
-      const fixture = yield* Effect.promise(() => shop())
-      const opened = yield* Effect.promise(() => fixture.open())
+      const fixture = yield* shop()
+      const opened = yield* fixture.open()
       opened.faux.setResponses([fauxAssistantMessage('Done.')])
       const stream = yield* Effect.promise(() =>
         streamRun(
@@ -34,7 +35,7 @@ it.live(
           context,
         ),
       )
-      yield* Effect.promise(() => consume(stream))
+      yield* consumeReadable(stream, Option.none())
       const firstRequest = new Request('http://durable.test/history?limit=1')
       const first = yield* Effect.all([
         Effect.promise(() =>

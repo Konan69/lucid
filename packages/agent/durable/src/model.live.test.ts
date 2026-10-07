@@ -174,9 +174,9 @@ it.live.skipIf(process.env['DURABLE_LIVE'] !== '1')(
                 amount: z.number(),
                 memo: z.string().describe('A free-text payment memo of about 150 words'),
               }),
-              execute: async (arguments_) => {
+              execute: (arguments_) => {
                 paid.push(arguments_)
-                return arguments_
+                return Promise.resolve(arguments_)
               },
             }),
           },

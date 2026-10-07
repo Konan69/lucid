@@ -52,9 +52,9 @@ const server = Effect.fn('Test.promiseServer')(function* (paid: { amount: number
           pay: tool({
             description: 'Pay an invoice',
             inputSchema: z.object({ amount: z.number() }),
-            execute: async (input) => {
+            execute: (input) => {
               paid.push(input)
-              return { receipt: `paid ${input.amount}` }
+              return Promise.resolve({ receipt: `paid ${input.amount}` })
             },
           }),
           ask_person: tool({
@@ -75,7 +75,7 @@ const server = Effect.fn('Test.promiseServer')(function* (paid: { amount: number
   // The unmodified transport `useChat` uses by default, with fetch routed to the handler.
   const transport = new DefaultChatTransport<UIMessage>({
     api: 'http://durable.test/chat',
-    fetch: async (url, init) => respond(harness, root.id, new Request(url, init), context),
+    fetch: (url, init) => respond(harness, root.id, new Request(url, init), context),
   })
   return { faux, harness, transport, root }
 })
@@ -130,7 +130,9 @@ it.live('lets an AI SDK chat client approve a call and continues the same messag
     // What an Approve button does. The client resubmits by itself and reads the continuation.
     const continued = finished()
     const holdId = yield* hold(harness, root.id, 'call-pay', context)
-    yield* Effect.promise(async () => chat.addToolApprovalResponse({ id: holdId, approved: true }))
+    yield* Effect.promise(() =>
+      Promise.resolve(chat.addToolApprovalResponse({ id: holdId, approved: true })),
+    )
     yield* Effect.promise(() => continued)
 
     expect(paid).toEqual([{ amount: 500 }])
@@ -171,8 +173,10 @@ it.live('lets an AI SDK chat client answer a tool that has no server execute', (
     })
 
     const continued = finished()
-    yield* Effect.promise(async () =>
-      chat.addToolOutput({ tool: 'ask_person', toolCallId: 'call-ask', output: 'savings' }),
+    yield* Effect.promise(() =>
+      Promise.resolve(
+        chat.addToolOutput({ tool: 'ask_person', toolCallId: 'call-ask', output: 'savings' }),
+      ),
     )
     yield* Effect.promise(() => continued)
 
