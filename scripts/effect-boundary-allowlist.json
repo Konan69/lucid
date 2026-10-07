@@ -302,5 +302,10 @@
     "file": "packages/agent/durable/src/admit.ts",
     "classification": "third-party-adapter",
     "symbols": ["withdrawSubmission"]
+  },
+  {
+    "file": "packages/agent/durable/src/conformance/fixtures/generation.ts",
+    "classification": "test-process-entrypoint",
+    "symbols": ["main", "<module>"]
   }
 ]
