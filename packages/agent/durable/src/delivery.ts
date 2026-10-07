@@ -10,8 +10,8 @@ const Output = Schema.declare<JsonValue>(isJsonValue)
 /** Reserve first output before admission; a crash retries the same attempt and authoritative content. */
 export const Delivery = Schema.TaggedUnion({
   Open: {},
-  Reserved: { attempt: Schema.Number, output: Output },
-  Submitted: { attempt: Schema.Number, output: Output, submissionId: SubmissionIdentity },
+  Reserved: { attempt: Schema.Natural, output: Output },
+  Submitted: { attempt: Schema.Natural, output: Output, submissionId: SubmissionIdentity },
 })
 export type Delivery = typeof Delivery.Type
 export type Question = { taskId: TaskId; callId: string; toolName: string; delivery: Delivery }
