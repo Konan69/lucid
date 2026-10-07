@@ -89,9 +89,7 @@ export const threadHandlers = {
   GetDeliveryScope: Effect.fn('Rpc.GetDeliveryScope')(function* (request: DeliveryScopeRequest) {
     const auth = yield* AuthContext
     if (!AuthState.$is('Runtime')(auth))
-      return yield* Effect.fail(
-        new Forbidden({ message: 'Only the runtime may read delivery scope' }),
-      )
+      return yield* new Forbidden({ message: 'Only the runtime may read delivery scope' })
     return yield* (yield* RunStore).scope(request)
   }),
   ListThreads: Effect.fn('Rpc.ListThreads')(function* () {

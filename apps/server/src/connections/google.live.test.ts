@@ -1,5 +1,5 @@
 import * as NodeProcess from 'node:process'
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { ConnectionId, ServiceAuthorization } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer } from 'effect'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
@@ -87,38 +87,40 @@ const begun = Effect.fn('GoogleProof.begin')(function* <A>(
 describe.skipIf(NodeProcess.env['VIVID_LIVE_GOOGLE'] !== '1')(
   'Google Integrations on Executor',
   () => {
-    it.live(
-      'offers the six services, installs each once, and returns Google consent addresses',
-      () =>
-        Effect.gen(function* () {
-          const catalog = yield* (yield* Executor).catalog()
-          for (const google of googleServices) {
-            expect(
-              catalog.some(
-                (entry) =>
-                  entry.id === google.service &&
-                  ServiceAuthorization.guards.SignIn(entry.authorization),
-              ),
-            ).toBe(true)
-            const first = yield* begun(google, (step, references) => {
-              const address = new URL(step.address)
-              const sent = (name: string) => address.searchParams.get(name)
-              expect(address.origin === 'https://accounts.google.com').toBe(true)
-              expect(address.pathname === '/o/oauth2/v2/auth').toBe(true)
-              expect(sent('client_id') === clientId).toBe(true)
-              expect(sent('redirect_uri') === returnAddress).toBe(true)
-              expect(sent('state') === references.googleState).toBe(true)
-              expect(sent('scope') === google.scopes.join(' ')).toBe(true)
-              // Google issues a refresh token only for offline access, and takes no resource.
-              expect(sent('access_type') === 'offline').toBe(true)
-              expect(address.searchParams.has('resource')).toBe(false)
-              return references.app
-            })
-            const second = yield* begun(google, (_step, references) => references.app)
-            expect(second === first).toBe(true)
-          }
-        }).pipe(Effect.provide(liveLayer)),
-      { timeout: 240_000 },
-    )
+    layer(liveLayer, { excludeTestServices: true, timeout: 240_000 })((it) => {
+      it.effect(
+        'offers the six services, installs each once, and returns Google consent addresses',
+        () =>
+          Effect.gen(function* () {
+            const catalog = yield* (yield* Executor).catalog
+            for (const google of googleServices) {
+              expect(
+                catalog.some(
+                  (entry) =>
+                    entry.id === google.service &&
+                    ServiceAuthorization.guards.SignIn(entry.authorization),
+                ),
+              ).toBe(true)
+              const first = yield* begun(google, (step, references) => {
+                const address = new URL(step.address)
+                const sent = (name: string) => address.searchParams.get(name)
+                expect(address.origin === 'https://accounts.google.com').toBe(true)
+                expect(address.pathname === '/o/oauth2/v2/auth').toBe(true)
+                expect(sent('client_id') === clientId).toBe(true)
+                expect(sent('redirect_uri') === returnAddress).toBe(true)
+                expect(sent('state') === references.googleState).toBe(true)
+                expect(sent('scope') === google.scopes.join(' ')).toBe(true)
+                // Google issues a refresh token only for offline access, and takes no resource.
+                expect(sent('access_type') === 'offline').toBe(true)
+                expect(address.searchParams.has('resource')).toBe(false)
+                return references.app
+              })
+              const second = yield* begun(google, (_step, references) => references.app)
+              expect(second === first).toBe(true)
+            }
+          }),
+        { timeout: 240_000 },
+      )
+    })
   },
 )

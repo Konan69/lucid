@@ -5,6 +5,7 @@ import { NodeHttpClient, NodeHttpServer, NodeHttpServerRequest } from '@effect/p
 import * as Undici from '@effect/platform-node/Undici'
 import { expect, it } from '@effect/vitest'
 import {
+  Context,
   Deferred,
   Effect,
   Fiber,
@@ -60,25 +61,28 @@ it.effect(
         },
       })
       for (const status of [201, 410, 302]) {
-        const transport = Layer.succeed(
-          HttpClient.HttpClient,
-          HttpClient.make((request) =>
-            Effect.sync(() => {
-              expect(request.url).toBe(destination.endpoint)
-              expect(request.headers['content-encoding']).toBe('aes128gcm')
-              expect(request.headers.authorization).toContain('vapid ')
-              if (!Predicate.isTagged(request.body, 'Uint8Array'))
-                return expect.fail('Expected encrypted Web Push body')
-              expect(Buffer.from(request.body.body).toString()).not.toContain(payload.body)
-              return HttpClientResponse.fromWeb(request, new Response(null, { status }))
-            }),
-          ),
+        const transport = HttpClient.make((request) =>
+          Effect.sync(() => {
+            expect(request.url).toBe(destination.endpoint)
+            expect(request.headers['content-encoding']).toBe('aes128gcm')
+            expect(request.headers.authorization).toContain('vapid ')
+            if (!Predicate.isTagged(request.body, 'Uint8Array'))
+              return expect.fail('Expected encrypted Web Push body')
+            expect(Buffer.from(request.body.body).toString()).not.toContain(payload.body)
+            return HttpClientResponse.fromWeb(request, new Response(null, { status }))
+          }),
         )
         const result = yield* Effect.gen(function* () {
           return yield* (yield* PushAdapter).send(destination, payload).pipe(Effect.result)
         }).pipe(
-          Effect.provide(pushAdapterLayer),
-          Effect.provide(transport),
+          Effect.provideServiceEffect(
+            PushAdapter,
+            Layer.build(Layer.fresh(pushAdapterLayer)).pipe(
+              Effect.map((context) => Context.get(context, PushAdapter)),
+              Effect.provideService(HttpClient.HttpClient, transport),
+            ),
+          ),
+          Effect.scoped,
           Effect.provideService(PushConfig, testPushConfig),
         )
         if (status === 201)
@@ -96,54 +100,54 @@ it.effect(
   'sends the Expo v2 payload without Person identifiers and decodes tickets and gone receipts',
   () =>
     Effect.gen(function* () {
-      const transport = Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make((request) =>
-          Effect.gen(function* () {
-            if (!Predicate.isTagged(request.body, 'Uint8Array'))
-              return expect.fail('Expected Expo JSON body')
-            const data = yield* decodeExpo(new TextDecoder().decode(request.body.body)).pipe(
-              Effect.catchTag('SchemaError', () =>
-                Effect.sync(() => expect.fail('Invalid Expo request')),
-              ),
-            )
-            expect(data).toEqual({
-              to: phone.token,
-              title: payload.title,
-              body: payload.body,
-              sound: 'default',
-              data: payload,
-            })
-            return HttpClientResponse.fromWeb(
-              request,
-              new Response(JSON.stringify({ data: { status: 'ok', id: 'ticket' } })),
-            )
-          }),
-        ),
+      const transport = HttpClient.make((request) =>
+        Effect.gen(function* () {
+          if (!Predicate.isTagged(request.body, 'Uint8Array'))
+            return expect.fail('Expected Expo JSON body')
+          const data = yield* decodeExpo(new TextDecoder().decode(request.body.body)).pipe(
+            Effect.catchTag('SchemaError', () =>
+              Effect.sync(() => expect.fail('Invalid Expo request')),
+            ),
+          )
+          expect(data).toEqual({
+            to: phone.token,
+            title: payload.title,
+            body: payload.body,
+            sound: 'default',
+            data: payload,
+          })
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify({ data: { status: 'ok', id: 'ticket' } })),
+          )
+        }),
       )
-      const receiptTransport = Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make((request) =>
-          Effect.sync(() => {
-            expect(request.url).toBe('https://exp.host/--/api/v2/push/getReceipts')
-            return HttpClientResponse.fromWeb(
-              request,
-              new Response(
-                JSON.stringify({
-                  data: {
-                    ticket: { status: 'error', details: { error: 'DeviceNotRegistered' } },
-                  },
-                }),
-              ),
-            )
-          }),
-        ),
+      const receiptTransport = HttpClient.make((request) =>
+        Effect.sync(() => {
+          expect(request.url).toBe('https://exp.host/--/api/v2/push/getReceipts')
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              JSON.stringify({
+                data: {
+                  ticket: { status: 'error', details: { error: 'DeviceNotRegistered' } },
+                },
+              }),
+            ),
+          )
+        }),
       )
       const acceptance = yield* Effect.gen(function* () {
         return yield* (yield* PushAdapter).send(phone, payload)
       }).pipe(
-        Effect.provide(pushAdapterLayer),
-        Effect.provide(transport),
+        Effect.provideServiceEffect(
+          PushAdapter,
+          Layer.build(Layer.fresh(pushAdapterLayer)).pipe(
+            Effect.map((context) => Context.get(context, PushAdapter)),
+            Effect.provideService(HttpClient.HttpClient, transport),
+          ),
+        ),
+        Effect.scoped,
         Effect.provideService(PushConfig, testPushConfig),
       )
       expect(acceptance).toEqual(
@@ -152,8 +156,14 @@ it.effect(
       const receipt = yield* Effect.gen(function* () {
         return yield* (yield* PushAdapter).receipt('ticket')
       }).pipe(
-        Effect.provide(pushAdapterLayer),
-        Effect.provide(receiptTransport),
+        Effect.provideServiceEffect(
+          PushAdapter,
+          Layer.build(Layer.fresh(pushAdapterLayer)).pipe(
+            Effect.map((context) => Context.get(context, PushAdapter)),
+            Effect.provideService(HttpClient.HttpClient, receiptTransport),
+          ),
+        ),
+        Effect.scoped,
         Effect.provideService(PushConfig, testPushConfig),
       )
       expect(receipt).toEqual(Option.some('Gone'))
@@ -171,23 +181,22 @@ it.effect('times out a pending provider using TestClock and reports the send as 
       ),
     )
     const result = yield* Effect.gen(function* () {
-      const adapter = yield* PushAdapter
-      const pending = yield* adapter.send(phone, payload).pipe(Effect.result, Effect.forkChild)
-      yield* Deferred.await(requested)
-      yield* TestClock.adjust('10 seconds')
-      return yield* Fiber.join(pending)
-    }).pipe(
-      Effect.provide(pushAdapterLayer),
-      Effect.provide(transport),
-      Effect.provideService(PushConfig, testPushConfig),
-    )
+      const caseContext = yield* Layer.build(pushAdapterLayer.pipe(Layer.provideMerge(transport)))
+      return yield* Effect.gen(function* () {
+        const adapter = yield* PushAdapter
+        const pending = yield* adapter.send(phone, payload).pipe(Effect.result, Effect.forkChild)
+        yield* Deferred.await(requested)
+        yield* TestClock.adjust('10 seconds')
+        return yield* Fiber.join(pending)
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped, Effect.provideService(PushConfig, testPushConfig))
     expect(Result.isFailure(result) && result.failure._tag).toBe('PushUncertain')
   }),
 )
 
 const Exchange = Schema.TaggedUnion({
-  Received: { path: Schema.String, port: Schema.Number },
-  Released: { path: Schema.String, port: Schema.Number },
+  Received: { path: Schema.String, port: Schema.Finite },
+  Released: { path: Schema.String, port: Schema.Finite },
 })
 
 /**
@@ -220,7 +229,7 @@ const unreadTransport = Effect.fn('PushTest.unreadTransport')(function* () {
       (agent) => Effect.promise(() => agent.destroy()),
     ),
   )
-  const exchange = Effect.fn('PushTest.exchange')(function* () {
+  const exchange = Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
     const port = NodeHttpServerRequest.toIncomingMessage(request).socket.remotePort
     if (port === undefined) return expect.fail('Request socket has no remote port')
@@ -238,7 +247,7 @@ const unreadTransport = Effect.fn('PushTest.unreadTransport')(function* () {
       ),
       { status },
     )
-  })()
+  }).pipe(Effect.withSpan('PushTest.exchange'))
   // Acquired first, so released last: NodeHttpServer's serve finalizer awaits `server.close`
   // (PN/NodeHttpServer.ts make, preemptiveShutdown), which only settles once the Agent below
   // has destroyed every client socket. The reverse order parks a failed assertion behind it.
@@ -284,54 +293,56 @@ it.effect('releases unread Push responses before returning their status outcome'
       { path: '/--/api/v2/push/getReceipts', tag: 'PushRejected', kind: 'Receipt' },
     ]
     yield* Effect.gen(function* () {
-      const adapter = yield* PushAdapter
-      for (const test of cases) {
-        const tag = yield* test.kind === 'Receipt'
-          ? adapter.receipt('ticket').pipe(
-              Effect.result,
-              Effect.map((result) =>
-                Result.match(result, {
-                  onFailure: (failure) => failure._tag,
-                  onSuccess: () => expect.fail('The receipt provider must refuse this exchange'),
-                }),
-              ),
-            )
-          : adapter
-              .send(
-                test.kind === 'Phone'
-                  ? phone
-                  : PushDestination.cases.Browser.make({
-                      endpoint: `https://push.example.test${test.path}`,
-                      keys,
-                    }),
-                payload,
-              )
-              .pipe(
+      const caseContext = yield* Layer.build(
+        pushAdapterLayer.pipe(Layer.provideMerge(remote.transport)),
+      )
+      return yield* Effect.gen(function* () {
+        const adapter = yield* PushAdapter
+        for (const test of cases) {
+          const tag = yield* test.kind === 'Receipt'
+            ? adapter.receipt('ticket').pipe(
                 Effect.result,
                 Effect.map((result) =>
                   Result.match(result, {
                     onFailure: (failure) => failure._tag,
-                    onSuccess: (acceptance) => acceptance._tag,
+                    onSuccess: () => expect.fail('The receipt provider must refuse this exchange'),
                   }),
                 ),
               )
-        expect(tag).toBe(test.tag)
-        const received = yield* Queue.take(remote.receipts)
-        expect(Exchange.guards.Received(received)).toBe(true)
-        expect(received.path).toBe(test.path)
-        const socket = remote.sockets.get(received.port)
-        if (socket === undefined) return expect.fail('Received port has no recorded client socket')
-        // RED must fail here immediately, before waiting for a receipt from an open connection.
-        expect(socket.destroyed).toBe(true)
-        expect(yield* Queue.take(remote.receipts)).toEqual(
-          Exchange.cases.Released.make({ path: received.path, port: received.port }),
-        )
-      }
-      return undefined
-    }).pipe(
-      Effect.provide(pushAdapterLayer),
-      Effect.provide(remote.transport),
-      Effect.provideService(PushConfig, testPushConfig),
-    )
+            : adapter
+                .send(
+                  test.kind === 'Phone'
+                    ? phone
+                    : PushDestination.cases.Browser.make({
+                        endpoint: `https://push.example.test${test.path}`,
+                        keys,
+                      }),
+                  payload,
+                )
+                .pipe(
+                  Effect.result,
+                  Effect.map((result) =>
+                    Result.match(result, {
+                      onFailure: (failure) => failure._tag,
+                      onSuccess: (acceptance) => acceptance._tag,
+                    }),
+                  ),
+                )
+          expect(tag).toBe(test.tag)
+          const received = yield* Queue.take(remote.receipts)
+          expect(Exchange.guards.Received(received)).toBe(true)
+          expect(received.path).toBe(test.path)
+          const socket = remote.sockets.get(received.port)
+          if (socket === undefined)
+            return expect.fail('Received port has no recorded client socket')
+          // RED must fail here immediately, before waiting for a receipt from an open connection.
+          expect(socket.destroyed).toBe(true)
+          expect(yield* Queue.take(remote.receipts)).toEqual(
+            Exchange.cases.Released.make({ path: received.path, port: received.port }),
+          )
+        }
+        return undefined
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped, Effect.provideService(PushConfig, testPushConfig))
   }),
 )

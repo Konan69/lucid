@@ -49,10 +49,10 @@ const readDocument = Effect.fn('Code.readDocument')(function* (url: URL, respons
     response.contentType === null ||
     bytes(response.body) > budgets.pageBytes
   )
-    return yield* Effect.fail(new PageFailure({ reason: 'not a readable page' }))
+    return yield* new PageFailure({ reason: 'not a readable page' })
   const html = /^text\/html\b/i.test(response.contentType)
   if (!html && !/^text\/plain\b/i.test(response.contentType))
-    return yield* Effect.fail(new PageFailure({ reason: 'not a readable page' }))
+    return yield* new PageFailure({ reason: 'not a readable page' })
   const converted = yield* Effect.try({
     try: () => ({
       title: html ? titleText(response.body).slice(0, 500) : '',
@@ -74,7 +74,7 @@ const read = Effect.fn('Code.readPublicPage')(function* (request: ReadPageReques
     if (![301, 302, 303, 307, 308].includes(response.status))
       return yield* readDocument(url, response)
     if (Option.isNone(response.location) || redirects === budgets.redirects)
-      return yield* Effect.fail(new PageFailure({ reason: 'could not be reached' }))
+      return yield* new PageFailure({ reason: 'could not be reached' })
     const location = response.location.value
     const address = yield* Effect.try({
       try: () => new URL(location, url).href,
@@ -82,35 +82,35 @@ const read = Effect.fn('Code.readPublicPage')(function* (request: ReadPageReques
     })
     url = yield* pageUrl(address)
   }
-  return yield* Effect.fail(new PageFailure({ reason: 'could not be reached' }))
+  return yield* new PageFailure({ reason: 'could not be reached' })
 })
 
 /** One ten-second deadline includes all DNS, redirects and body bytes. */
-export const pageReaderLayer = Layer.effect(
-  PageReader,
-  Effect.gen(function* () {
-    const context = yield* Effect.context<PageNetwork | import('./address.ts').PageResolver>()
-    return PageReader.of({
-      read: Effect.fn('Code.ReadPage')((request) =>
-        read(request).pipe(
-          Effect.provide(context),
-          Effect.timeoutOrElse({
-            duration: `${budgets.pageSeconds} seconds`,
-            orElse: () => Effect.fail(new PageFailure({ reason: 'could not be reached' })),
+const makePageReader = Effect.fn('Code.makePageReader')(function* () {
+  const context = yield* Effect.context<PageNetwork | import('./address.ts').PageResolver>()
+  return PageReader.of({
+    read: Effect.fn('Code.ReadPage')((request) =>
+      read(request).pipe(
+        Effect.provide(context),
+        Effect.timeoutOrElse({
+          duration: `${budgets.pageSeconds} seconds`,
+          orElse: () => Effect.fail(new PageFailure({ reason: 'could not be reached' })),
+        }),
+        Effect.catchTag(
+          'PageFailure',
+          Effect.fnUntraced(function* ({ reason }) {
+            // This conversion decides the page refusal; DNS/HTTP failures alone are not outcomes.
+            yield* recordRefusal(Refusal.cases.PageRefused.make({ reason }))
+            return ReadPageOutcome.cases.Refused.make({ reason })
           }),
-          Effect.catchTag(
-            'PageFailure',
-            Effect.fnUntraced(function* ({ reason }) {
-              // This conversion decides the page refusal; DNS/HTTP failures alone are not outcomes.
-              yield* recordRefusal(Refusal.cases.PageRefused.make({ reason }))
-              return ReadPageOutcome.cases.Refused.make({ reason })
-            }),
-          ),
         ),
       ),
-    })
-  }),
-)
+    ),
+  })
+})
+
+/** The reader Layer keeps the same DNS and network capture for production composition. */
+export const pageReaderLayer = Layer.effect(PageReader, makePageReader())
 
 export const publicPageLayer = pageReaderLayer.pipe(
   Layer.provide(Layer.merge(pageResolverLayer, pageNetworkLayer)),

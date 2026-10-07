@@ -73,8 +73,8 @@ const columns = {
   id: ComputerId,
   personId: PersonId,
   machine: MachineKey,
-  since: Schema.Number,
-  lastActivityAt: Schema.Number,
+  since: Schema.Finite,
+  lastActivityAt: Schema.Finite,
   held: Schema.Boolean,
 }
 const Stored = Schema.Union([
@@ -403,8 +403,10 @@ const startMachine = Effect.fn('ComputerStore.boot')(function* (
     return { refusal: Option.none<MachineNoCapacity>(), standing: false }
   const began = yield* Clock.currentTimeMillis
   const started = yield* machine.ensure(before.machine).pipe(
-    Effect.timeout(START_DEADLINE),
-    Effect.catchTag('TimeoutError', () => Effect.fail(new ComputerWakeTimedOut({ person }))),
+    Effect.timeoutOrElse({
+      duration: START_DEADLINE,
+      orElse: () => Effect.fail(new ComputerWakeTimedOut({ person })),
+    }),
     Effect.result,
   )
   // Said in the log either way, by the failure's name only. A start that failed is a successful
@@ -826,14 +828,15 @@ const prepare = Effect.fn('ComputerStore.prepare')(
     const ended = yield* Fiber.await(worker)
     // The start this action waited for found no machine free. The record only says "stopped",
     // so the action is refused with the provider's own reason, and the next one asks again.
-    if (Exit.isSuccess(ended) && Option.isSome(ended.value))
-      return yield* Effect.fail(ended.value.value)
+    if (Exit.isSuccess(ended) && Option.isSome(ended.value)) return yield* ended.value.value
   },
   // A little longer than the start it waits for, so the start's own end is what the action hears.
   (effect, _state, person) =>
     effect.pipe(
-      Effect.timeout(Duration.sum(START_DEADLINE, Duration.seconds(15))),
-      Effect.catchTag('TimeoutError', () => Effect.fail(new ComputerWakeTimedOut({ person }))),
+      Effect.timeoutOrElse({
+        duration: Duration.sum(START_DEADLINE, Duration.seconds(15)),
+        orElse: () => Effect.fail(new ComputerWakeTimedOut({ person })),
+      }),
     ),
 )
 
@@ -843,20 +846,19 @@ const requireReady = Effect.fn('ComputerStore.requireReady')(function* (
   person: PersonId,
 ) {
   const { computer, outage } = yield* state.observe(person)
-  if (computer.heldByPerson) return yield* Effect.fail(new ComputerHeld({ person }))
+  if (computer.heldByPerson) return yield* new ComputerHeld({ person })
   // The provider could not be asked: the action is refused with the provider's own failure,
   // before anything is dispatched, and the next action asks again.
-  if (Option.isSome(outage)) return yield* Effect.fail(outage.value)
+  if (Option.isSome(outage)) return yield* outage.value
   if (MachineState.guards.Failed(computer.state))
-    return yield* Effect.fail(new ComputerStartFailed({ person, reason: computer.state.reason }))
+    return yield* new ComputerStartFailed({ person, reason: computer.state.reason })
   const ready = accessTo(computer, computerMachineKey(person))
   if (ComputerAccess.guards.Unavailable(ready))
-    return yield* Effect.fail(new ComputerNotReady({ reason: ready.reason }))
+    return yield* new ComputerNotReady({ reason: ready.reason })
   const row = yield* state.rows.load(person)
-  if (Option.isNone(row))
-    return yield* Effect.fail(new ComputerNotReady({ reason: 'The Computer is absent.' }))
+  if (Option.isNone(row)) return yield* new ComputerNotReady({ reason: 'The Computer is absent.' })
   // Provider observation can await I/O while takeover commits; use the latest durable hold before dispatch.
-  if (row.value.held) return yield* Effect.fail(new ComputerHeld({ person }))
+  if (row.value.held) return yield* new ComputerHeld({ person })
   return row.value.machine
 })
 
@@ -1367,7 +1369,7 @@ const personAvailability = Effect.fn('Computer.personAvailability')(function* (p
   return yield* (yield* DeviceRegistry).requireConnected(personId).pipe(
     Effect.as(Option.none<BrowseOutcome>()),
     Effect.catchTag('NoDeviceConnected', () =>
-      Effect.succeed(Option.some(BrowseOutcome.cases.NotConnected.make({}))),
+      Effect.succeedSome(BrowseOutcome.cases.NotConnected.make({})),
     ),
   )
 })
@@ -1391,13 +1393,11 @@ const personBrowse = Effect.fn('Computer.personBrowse')(function* (input: {
       authority: input.authority,
     })
     .pipe(
-      Effect.catchTag('NoDeviceConnected', () =>
-        Effect.succeed(BrowseOutcome.cases.NotConnected.make({})),
-      ),
-      Effect.catchTag('DeviceBusy', () => Effect.succeed(BrowseOutcome.cases.Busy.make({}))),
-      Effect.catchTag('NoActingRun', () =>
-        Effect.succeed(BrowseOutcome.cases.RunRequired.make({})),
-      ),
+      Effect.catchTags({
+        NoDeviceConnected: () => Effect.succeed(BrowseOutcome.cases.NotConnected.make({})),
+        DeviceBusy: () => Effect.succeed(BrowseOutcome.cases.Busy.make({})),
+        NoActingRun: () => Effect.succeed(BrowseOutcome.cases.RunRequired.make({})),
+      }),
     )
 })
 

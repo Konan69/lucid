@@ -291,8 +291,8 @@ const files = (sftp: SFTPWrapper, calls: Waiting) => {
   const read = Effect.fn('Link.read')(function* (path: string) {
     // Asked first: a read answers the whole file, and one that is too large must not be fetched.
     const found = yield* stat(path)
-    if (found.directory) return yield* Effect.fail(new LinkFileRefused({ reason: 'directory' }))
-    if (found.size > FILE_BYTES) return yield* Effect.fail(new LinkFileRefused({ reason: 'large' }))
+    if (found.directory) return yield* new LinkFileRefused({ reason: 'directory' })
+    if (found.size > FILE_BYTES) return yield* new LinkFileRefused({ reason: 'large' })
     return yield* calls.call<Uint8Array, Refused>(gone, (settle) => {
       sftp.readFile(path, (error, data) => {
         if (error !== undefined && error !== null) return settle(Effect.fail(fileFailure(error)))
@@ -315,10 +315,10 @@ const files = (sftp: SFTPWrapper, calls: Waiting) => {
       }),
     )
     if (Result.isSuccess(made)) return undefined
-    if (made.failure instanceof LinkUnreachable) return yield* Effect.fail(made.failure)
+    if (made.failure instanceof LinkUnreachable) return yield* made.failure
     const there = yield* Effect.result(stat(path))
     if (Result.isSuccess(there) && there.success.directory) return undefined
-    return yield* Effect.fail(made.failure)
+    return yield* made.failure
   })
   const write = (path: string, content: Uint8Array) =>
     calls.call<void, Refused>(gone, (settle) => {
@@ -328,13 +328,12 @@ const files = (sftp: SFTPWrapper, calls: Waiting) => {
       })
     })
   const put = Effect.fn('Link.put')(function* (path: string, content: Uint8Array) {
-    if (content.length > FILE_BYTES)
-      return yield* Effect.fail(new LinkFileRefused({ reason: 'large' }))
+    if (content.length > FILE_BYTES) return yield* new LinkFileRefused({ reason: 'large' })
     // Straight first: the directory nearly always exists, and that is one round trip.
     const direct = yield* Effect.result(write(path, content))
     if (Result.isSuccess(direct)) return undefined
     if (!(direct.failure instanceof LinkFileRefused) || direct.failure.reason !== 'missing')
-      return yield* Effect.fail(direct.failure)
+      return yield* direct.failure
     yield* Effect.forEach(ancestors(directoryOf(path)), make, { discard: true })
     return yield* write(path, content)
   })

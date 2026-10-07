@@ -80,16 +80,12 @@ export const readScope = Effect.fn('Library.readScope')(function* (actor: Actor)
   })
   if (actor.by === 'person') return ordinary
   if (Option.isNone(actor.threadId))
-    return yield* Effect.fail(
-      new InvalidRequest({ message: 'Vivid Library access requires a Thread' }),
-    )
+    return yield* new InvalidRequest({ message: 'Vivid Library access requires a Thread' })
   const thread = yield* requireThread(actor.threadId.value, actor.person.id)
   if (thread.audience === 'private') return ordinary
   const company = companyOf(actor.workspace)
   if (Option.isNone(company) || thread.companyId !== company.value.id)
-    return yield* Effect.fail(
-      new InvalidRequest({ message: 'Shared Thread must be in the active Company' }),
-    )
+    return yield* new InvalidRequest({ message: 'Shared Thread must be in the active Company' })
   return ['Company'] as const
 })
 
@@ -157,12 +153,10 @@ export const requireEditor = Effect.fn('Library.requireEditor')(function* (
   )
     return undefined
   if (owner.companyId !== null) {
-    return yield* Effect.fail(
-      new LibraryMutationDenied({
-        personId: actor.person.id,
-        companyId: owner.companyId,
-      }),
-    )
+    return yield* new LibraryMutationDenied({
+      personId: actor.person.id,
+      companyId: owner.companyId,
+    })
   }
-  return yield* Effect.fail(new NotFound({ message: 'Library record not found' }))
+  return yield* new NotFound({ message: 'Library record not found' })
 })

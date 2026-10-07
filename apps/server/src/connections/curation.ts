@@ -45,7 +45,7 @@ export const CurationDocument = Schema.Struct({
 /** GitHub accepts fine-grained and classic personal tokens; instruction and transport policy
  * live in curation data. See https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens.
  * Decode once at module ingress so Begin and catalogue presentation use the same policy. */
-const keyedCatalog = Schema.decodeUnknownSync(Schema.Record(ServiceId, KeyedService))(data.keyed)
+const keyedCatalog = Schema.decodeSync(Schema.Record(ServiceId, KeyedService))(data.keyed)
 export function keyedService(service: ServiceId) {
   return keyedCatalog[service]
 }
@@ -85,7 +85,7 @@ export const loadCuration = Effect.fn('Connections.loadCuration')(
       !coversCatalog(document, document.catalog) ||
       document.entries.length !== document.catalog.length
     ) {
-      return yield* Effect.fail(missingCuration())
+      return yield* missingCuration()
     }
     return curatedSearch(document)
   },

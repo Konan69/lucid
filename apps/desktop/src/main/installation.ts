@@ -24,18 +24,22 @@ export class InstallationUnavailable extends Schema.TaggedError<InstallationUnav
   { title: 'This app’s identity could not be read or saved' },
 ) {}
 
+/** Only a missing file permits creating an identity; other read failures prevent enrolment. */
+class InstallationAbsent extends Schema.TaggedError<InstallationAbsent>()(
+  'InstallationAbsent',
+  {},
+  { title: 'This app has no saved identity' },
+) {}
+
 /** Reads the kept identity. A missing file and a damaged one both mean there is none to use. */
 const readStored = Effect.fn('DesktopInstallation.read')(function* (path: string) {
   const text = yield* Effect.try({
     try: () => Option.some(NodeFS.readFileSync(path, 'utf8')),
-    catch: (cause) => cause,
-  }).pipe(
-    Effect.catch((cause) =>
+    catch: (cause) =>
       Option.isSome(missingFile(cause))
-        ? Effect.succeed(Option.none<string>())
-        : Effect.fail(new InstallationUnavailable({})),
-    ),
-  )
+        ? new InstallationAbsent({})
+        : new InstallationUnavailable({}),
+  }).pipe(Effect.catchTag('InstallationAbsent', () => Effect.succeedNone))
   if (Option.isNone(text)) return Option.none<InstallationId>()
   return yield* decodeStored(text.value).pipe(
     Effect.map((stored) => Option.some(stored.installation)),

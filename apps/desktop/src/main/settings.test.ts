@@ -3,6 +3,7 @@ import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 import { describe, expect, it } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { DesktopSettings, readServerSettings, settingsLayer } from './settings.ts'
@@ -29,7 +30,7 @@ describe('desktop server settings', () => {
         const settings = yield* DesktopSettings
         // "Use a Different Vivid" forgets the server; that choice is stored and is kept.
         yield* settings.forget
-      }).pipe(Effect.provide(settingsLayer(path, home)))
+      }).pipe(Effect.provide(yield* Layer.build(settingsLayer(path, home))))
       expect(yield* readServerSettings(path, home)).toEqual(ServerSettings.cases.NoServer.make({}))
       // A file that cannot be decoded was a choice once: it is not replaced by the shipped address.
       NodeFS.writeFileSync(path, '{ not settings')
@@ -51,7 +52,7 @@ describe('desktop server settings', () => {
         expect(yield* readServerSettings(path, Option.none())).toEqual(
           ServerSettings.cases.NoServer.make({}),
         )
-      }).pipe(Effect.provide(settingsLayer(path, Option.none())))
+      }).pipe(Effect.provide(yield* Layer.build(settingsLayer(path, Option.none()))))
     }),
   )
 
@@ -111,7 +112,7 @@ describe('desktop server settings', () => {
         expect(yield* Effect.flip(settings.forget)).toBeInstanceOf(SettingsSaveFailed)
         expect(yield* settings.get).toEqual(before)
         expect(NodeFS.readdirSync(root)).toEqual(['settings.json'])
-      }).pipe(Effect.provide(settingsLayer(path, Option.none())))
+      }).pipe(Effect.provide(yield* Layer.build(settingsLayer(path, Option.none()))))
     }),
   )
 

@@ -148,7 +148,7 @@ export class MemoryNotFound extends Schema.TaggedError<MemoryNotFound>()(
 ) {}
 export class InvalidMemoryLimit extends Schema.TaggedError<InvalidMemoryLimit>()(
   'InvalidMemoryLimit',
-  { limit: Schema.Number },
+  { limit: Schema.Finite },
   { title: 'InvalidMemoryLimit' },
 ) {}
 export type MemoryFailure = EmbeddingFailure | HelixFailure | MemoryNotFound | InvalidMemoryLimit
@@ -288,7 +288,7 @@ const requireRecord = Effect.fn('MemoryStore.requireRecord')(function* (
   input: RecordIdentity,
 ) {
   const record = yield* helix.get(input)
-  if (Option.isNone(record)) return yield* Effect.fail(MemoryNotFound.make(input))
+  if (Option.isNone(record)) return yield* MemoryNotFound.make(input)
   return record.value
 })
 
@@ -300,7 +300,7 @@ const embedOne = Effect.fn('MemoryStore.embedOne')(function* (
   const vectors = yield* embeddings.embed([text])
   const vector = Arr.head(vectors)
   if (Option.isNone(vector))
-    return yield* Effect.fail(EmbeddingBatchMismatch.make({ expected: 1, actual: vectors.length }))
+    return yield* EmbeddingBatchMismatch.make({ expected: 1, actual: vectors.length })
   return vector.value
 })
 
@@ -527,7 +527,7 @@ const recalling = Effect.fn('MemoryStore.recall')(function* (
   input: RecallInput,
 ) {
   if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100)
-    return yield* Effect.fail(InvalidMemoryLimit.make({ limit: input.limit }))
+    return yield* InvalidMemoryLimit.make({ limit: input.limit })
   if (input.scopes.length === 0) return []
   const embedding = yield* embedOne(dependencies.embeddings, input.query)
   const search = yield* dependencies.helix.search({
@@ -724,11 +724,10 @@ function inMemoryWorkspace(actor: Actor, thread: StoredThread) {
 /** A Vivid call must still be in a visible Thread in the workspace its Actor names. */
 const actingThread = Effect.fn('MemoryAccess.actingThread')(function* (actor: Actor) {
   if (actor.by === 'person') return Option.none<StoredThread>()
-  if (Option.isNone(actor.threadId))
-    return yield* Effect.fail(NotFound.make({ message: 'Thread not found' }))
+  if (Option.isNone(actor.threadId)) return yield* NotFound.make({ message: 'Thread not found' })
   const thread = yield* requireThread(actor.threadId.value, actor.person.id)
   if (!inMemoryWorkspace(actor, thread))
-    return yield* Effect.fail(NotFound.make({ message: 'Thread not found' }))
+    return yield* NotFound.make({ message: 'Thread not found' })
   return Option.some(thread)
 })
 
@@ -792,9 +791,7 @@ const writeLocation = Effect.fn('MemoryAccess.writeLocation')(function* (
   const learnedIn = Option.match(thread, { onNone: () => null, onSome: (value) => value.id })
   if (forCompany) {
     if (!Workspace.guards.Company(actor.workspace))
-      return yield* Effect.fail(
-        InvalidRequest.make({ message: 'Company memory needs a Company workspace' }),
-      )
+      return yield* InvalidRequest.make({ message: 'Company memory needs a Company workspace' })
     return {
       partition: workspacePartition(actor),
       scope: MemoryLocation.cases.Company.make({}),
@@ -846,7 +843,7 @@ const readableRecord = Effect.fn('MemoryAccess.readableRecord')(function* (
     })
     if (read.scopes.includes(key)) return { partition: read.partition, memory: memory.value }
   }
-  return yield* Effect.fail(NotFound.make({ message: 'Memory not found' }))
+  return yield* NotFound.make({ message: 'Memory not found' })
 })
 
 /** Ownership is independent of recall scope; a creator may edit formerly shared Thread knowledge after making its audience private. */
@@ -899,7 +896,7 @@ const writable = Effect.fn('MemoryAccess.writable')(function* (
     const permitted = yield* mayWriteRecord(actor, { partition, memory: memory.value, room })
     if (permitted) return { partition, memory: memory.value }
   }
-  return yield* Effect.fail(NotFound.make({ message: 'Memory not found' }))
+  return yield* NotFound.make({ message: 'Memory not found' })
 })
 
 interface AccessDependencies {
@@ -1088,9 +1085,7 @@ const learnCandidate = Effect.fn('MemoryAccess.learn')(function* (
       Effect.gen(function* () {
         const target = yield* writable(dependencies, actor, id)
         if (!sameDestination(destination, target))
-          return yield* Effect.fail(
-            InvalidRequest.make({ message: 'Memory relation crosses its write scope' }),
-          )
+          return yield* InvalidRequest.make({ message: 'Memory relation crosses its write scope' })
         return Option.some(
           yield* store.correct({
             partition: target.partition,
@@ -1218,9 +1213,9 @@ const applyOnce = Effect.fn('MemoryAccess.applyOnce')(function* (
         Effect.gen(function* () {
           const target = yield* writable(dependencies, actor, id)
           if (!sameDestination(destination, target))
-            return yield* Effect.fail(
-              InvalidRequest.make({ message: 'Memory relation crosses its write scope' }),
-            )
+            return yield* InvalidRequest.make({
+              message: 'Memory relation crosses its write scope',
+            })
           return yield* store.correctOnce({
             ...receipt,
             correction: {
@@ -1284,8 +1279,7 @@ const orderedOnce = Effect.fn('MemoryAccess.orderedOnce')(function* (
   input: LearnOnceInput,
 ) {
   const current = yield* writeLocation(actor, input.candidate.forCompany)
-  if (!sameLocation(current, input.destination))
-    return yield* Effect.fail(DestinationChanged.make({}))
+  if (!sameLocation(current, input.destination)) return yield* DestinationChanged.make({})
   const receipt = receiptOf(input.destination, input.key)
   const earlier = yield* dependencies.store.receipt(receipt)
   if (Option.isSome(earlier)) return yield* settled(dependencies, actor, earlier.value)

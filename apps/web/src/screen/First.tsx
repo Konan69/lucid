@@ -13,7 +13,9 @@ import { Composer } from './thread/Composer'
 import { HeroButton } from './thread/Header'
 
 // The card around Vivid is the Thread's own and is fetched when it is first opened, as there.
-const AboutHome = lazy(async () => ({ default: (await import('./thread/About')).AboutHome }))
+const AboutHome = lazy(() =>
+  import('./thread/About').then((module) => ({ default: module.AboutHome })),
+)
 
 /**
  * Home: a Thread that does not exist yet. Whatever the Person types becomes one.

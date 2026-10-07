@@ -10,8 +10,8 @@ export class Project extends Schema.Class<Project>('Project')(
     parentProjectId: Schema.NullOr(ProjectId),
     createdBy: PersonId,
     /** How many Threads the asking Person can see filed here. */
-    threadCount: Schema.Number,
-    updatedAt: Schema.Number,
+    threadCount: Schema.Finite,
+    updatedAt: Schema.Finite,
   },
   { title: 'Project' },
 ) {}

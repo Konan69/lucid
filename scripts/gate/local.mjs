@@ -183,14 +183,14 @@ function applyRatchets(results) {
 }
 
 /**
- * Say how many Effect findings typecheck printed. They do not fail the gate: the count is what
- * had gathered while nothing enforced them, and it is being worked off on its own branch. When
- * it reaches zero the compiler options go back to failing typecheck (scripts/versions.mjs).
+ * Say how many Effect findings typecheck printed. Each one fails typecheck by itself
+ * (`ignoreEffect...InTscExitCode` are `false`, held there by scripts/versions.mjs); the count on
+ * the stage line says how many there are to fix without reading the log.
  */
 function reportEffectFindings(results) {
   const typecheck = results.find((result) => result.name === 'typecheck')
   if (typecheck === undefined || typecheck.findings === undefined) return
-  typecheck.detail += `, ${typecheck.findings.size} Effect findings (not failing)`
+  typecheck.detail += `, ${typecheck.findings.size} Effect findings`
 }
 
 /** Total and skipped tests across every package's Vitest result, cached or just run. */

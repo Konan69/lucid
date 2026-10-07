@@ -195,7 +195,7 @@ export interface PushService {
     PushOutcome,
     import('../database/client.ts').DatabaseInfrastructureError | NotFound
   >
-  readonly reconcile: () => Effect.Effect<
+  readonly reconcile: Effect.Effect<
     void,
     import('../database/client.ts').DatabaseInfrastructureError
   >
@@ -204,28 +204,27 @@ export class Push extends Context.Service<Push, PushService>()('vivid/Push') {}
 export const pushLayer = Layer.effect(Push, makePush())
 
 /** Expo recommends reading tickets after 15 minutes; this pass never repeats a send. */
-const makeReconcile = (services: DeliveryServices) =>
-  Effect.fn('Push.reconcile')(function* () {
-    const database = services.database
-    const now = yield* Clock.currentTimeMillis
-    const rows = yield* database.run(
-      database
-        .select({ delivery: pushDeliveries, personId: notifications.personId })
-        .from(pushDeliveries)
-        .innerJoin(notifications, eq(notifications.id, pushDeliveries.notificationId))
-        .where(
-          and(
-            lte(pushDeliveries.updatedAt, now - 15 * 60_000),
-            sql`${pushDeliveries.receipt}->>'_tag' = 'Sent'`,
-            sql`${pushDeliveries.receipt}->'acceptance'->>'_tag' = 'Phone'`,
-            sql`${pushDeliveries.receipt}->'acceptance'->>'confirmed' = 'false'`,
-          ),
-        )
-        .orderBy(asc(pushDeliveries.updatedAt))
-        .limit(100),
-    )
-    yield* Effect.forEach(rows, (row) => settleReceipt(services, row), { discard: true })
-  })
+const makeReconcile = Effect.fn('Push.reconcile')(function* (services: DeliveryServices) {
+  const database = services.database
+  const now = yield* Clock.currentTimeMillis
+  const rows = yield* database.run(
+    database
+      .select({ delivery: pushDeliveries, personId: notifications.personId })
+      .from(pushDeliveries)
+      .innerJoin(notifications, eq(notifications.id, pushDeliveries.notificationId))
+      .where(
+        and(
+          lte(pushDeliveries.updatedAt, now - 15 * 60_000),
+          sql`${pushDeliveries.receipt}->>'_tag' = 'Sent'`,
+          sql`${pushDeliveries.receipt}->'acceptance'->>'_tag' = 'Phone'`,
+          sql`${pushDeliveries.receipt}->'acceptance'->>'confirmed' = 'false'`,
+        ),
+      )
+      .orderBy(asc(pushDeliveries.updatedAt))
+      .limit(100),
+  )
+  yield* Effect.forEach(rows, (row) => settleReceipt(services, row), { discard: true })
+})
 
 /** A missing receipt remains pending; a gone token loses its authority and its ticket is terminal. */
 const settleReceipt = Effect.fn('Push.settleReceipt')(function* (
@@ -292,7 +291,7 @@ const saveReceipt = Effect.fn('Push.saveReceipt')(function* (
 export const pushReceiptsLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const push = yield* Push
-    yield* push.reconcile().pipe(
+    yield* push.reconcile.pipe(
       // Recorded before `ignore` discards the failure; the next minute's check is unchanged.
       observeFailures('schedule'),
       Effect.tapError((error) =>

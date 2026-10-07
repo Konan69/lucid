@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import {
@@ -181,157 +181,163 @@ const resultId = SearchResult.match({
   LibraryItem: ({ item: value }): string => value.id,
 })
 
+/** Distinct visible records configure stateless stores; each block keeps its own TestClock. */
 describe('Search', () => {
-  it.effect(
-    'searches authorized store results across domains, all terms, title hits before bodies, then newest',
-    () =>
-      Effect.gen(function* () {
-        const data: VisibleData = {
-          workspace: Workspace.cases.Company.make({ company, role: 'member' }),
-          threads: [
-            thread('body', 'Notes', 'annual report', now + 1),
-            thread('title', 'Annual report', '', now - 3),
-            thread('partial', 'Annual', 'No matching body', now),
-          ],
-          routines: [routine('routine', 'Review', 'Annual report', [])],
-          items: [
-            item('mine', 'Annual report', now - 1, 'Mine'),
-            item('shared', 'Annual report', now - 2, 'Company'),
-          ],
-        }
-        const { results } = yield* searchHandlers
-          .Search({ query: '  ANNUAL\tReport  ' })
-          .pipe(Effect.provide(visibleLayer(data)))
-        expect(results.map(resultId)).toEqual(['mine', 'shared', 'title', 'body', 'routine'])
-        const privateText = yield* searchHandlers
-          .Search({ query: 'unsearchable' })
-          .pipe(Effect.provide(visibleLayer(data)))
-        expect(privateText.results).toEqual([])
-      }),
-  )
+  const crossDomain: VisibleData = {
+    workspace: Workspace.cases.Company.make({ company, role: 'member' }),
+    threads: [
+      thread('body', 'Notes', 'annual report', now + 1),
+      thread('title', 'Annual report', '', now - 3),
+      thread('partial', 'Annual', 'No matching body', now),
+    ],
+    routines: [routine('routine', 'Review', 'Annual report', [])],
+    items: [
+      item('mine', 'Annual report', now - 1, 'Mine'),
+      item('shared', 'Annual report', now - 2, 'Company'),
+    ],
+  }
 
-  it.effect('matches terms split across title and body and caps nonempty results at twenty', () =>
-    Effect.gen(function* () {
-      const threads = Array.from({ length: 25 }, (_, index) =>
-        thread(`thread-${index}`, 'Annual', 'report', index),
-      )
-      const { results } = yield* searchHandlers
-        .Search({ query: 'annual report' })
-        .pipe(Effect.provide(visibleLayer({ ...empty, threads })))
-      expect(results).toHaveLength(20)
-      expect(results.map(resultId)).toEqual(
-        Array.from({ length: 20 }, (_, index) => `thread-${24 - index}`),
-      )
-    }),
-  )
-
-  it.effect('shows eight recent Threads for an empty query without loading other stores', () =>
-    Effect.gen(function* () {
-      const threads = Array.from({ length: 12 }, (_, index) =>
-        thread(`thread-${index}`, 'Recent', '', index),
-      )
-      const onlyThreads = Layer.mergeAll(
-        Layer.succeed(
-          AuthContext,
-          AuthState.Person({
-            person,
-            workspace: empty.workspace,
-            sessionId: SessionId.make('search-session'),
-          }),
-        ),
-        Layer.mock(ConnectionStore, {
-          list: Effect.fn('SearchTest.connections')(() => Effect.succeed({ connections: [] })),
+  layer(visibleLayer(crossDomain))((it) => {
+    it.effect(
+      'searches authorized store results across domains, all terms, title hits before bodies, then newest',
+      () =>
+        Effect.gen(function* () {
+          const { results } = yield* searchHandlers.Search({ query: '  ANNUAL\tReport  ' })
+          expect(results.map(resultId)).toEqual(['mine', 'shared', 'title', 'body', 'routine'])
+          const privateText = yield* searchHandlers.Search({ query: 'unsearchable' })
+          expect(privateText.results).toEqual([])
         }),
-        Layer.mock(ThreadStore, { list: () => Effect.succeed(threads) }),
-        Layer.mock(RoutineStore, {}),
-        Layer.mock(LibraryStore, {}),
-      )
-      const { results } = yield* searchHandlers
-        .Search({ query: ' \n ' })
-        .pipe(Effect.provide(onlyThreads))
-      expect(results.map(resultId)).toEqual(
-        Array.from({ length: 8 }, (_, index) => `thread-${11 - index}`),
-      )
-    }),
+    )
+  })
+  const matchingThreads = Array.from({ length: 25 }, (_, index) =>
+    thread(`thread-${index}`, 'Annual', 'report', index),
   )
 
-  it.effect('does not read Company documents in a personal workspace', () =>
-    Effect.gen(function* () {
-      const items = [item('mine', 'Report', now, 'Mine'), item('shared', 'Report', now, 'Company')]
-      const { results } = yield* searchHandlers
-        .Search({ query: 'report' })
-        .pipe(Effect.provide(visibleLayer({ ...empty, items })))
-      expect(results.map(resultId)).toEqual(['mine'])
-    }),
+  layer(visibleLayer({ ...empty, threads: matchingThreads }))((it) => {
+    it.effect('matches terms split across title and body and caps nonempty results at twenty', () =>
+      Effect.gen(function* () {
+        const { results } = yield* searchHandlers.Search({ query: 'annual report' })
+        expect(results).toHaveLength(20)
+        expect(results.map(resultId)).toEqual(
+          Array.from({ length: 20 }, (_, index) => `thread-${24 - index}`),
+        )
+      }),
+    )
+  })
+  const recentThreads = Array.from({ length: 12 }, (_, index) =>
+    thread(`thread-${index}`, 'Recent', '', index),
   )
+  const onlyThreads = Layer.mergeAll(
+    Layer.succeed(
+      AuthContext,
+      AuthState.Person({
+        person,
+        workspace: empty.workspace,
+        sessionId: SessionId.make('search-session'),
+      }),
+    ),
+    Layer.mock(ConnectionStore, {
+      list: Effect.fn('SearchTest.connections')(() => Effect.succeed({ connections: [] })),
+    }),
+    Layer.mock(ThreadStore, { list: () => Effect.succeed(recentThreads) }),
+    Layer.mock(RoutineStore, {}),
+    Layer.mock(LibraryStore, {}),
+  )
+
+  layer(onlyThreads)((it) => {
+    it.effect('shows eight recent Threads for an empty query without loading other stores', () =>
+      Effect.gen(function* () {
+        const { results } = yield* searchHandlers.Search({ query: ' \n ' })
+        expect(results.map(resultId)).toEqual(
+          Array.from({ length: 8 }, (_, index) => `thread-${11 - index}`),
+        )
+      }),
+    )
+  })
+  const personalItems = [
+    item('mine', 'Report', now, 'Mine'),
+    item('shared', 'Report', now, 'Company'),
+  ]
+
+  layer(visibleLayer({ ...empty, items: personalItems }))((it) => {
+    it.effect('does not read Company documents in a personal workspace', () =>
+      Effect.gen(function* () {
+        const { results } = yield* searchHandlers.Search({ query: 'report' })
+        expect(results.map(resultId)).toEqual(['mine'])
+      }),
+    )
+  })
 })
 
 describe('Suggestions', () => {
-  it.effect('offers new personal documents before failed Routines', () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(now)
-      const data: VisibleData = {
-        ...empty,
-        items: [
-          item('new', 'Your notes', now, 'Mine'),
-          item('old', 'Old notes', now - 2 * day, 'Mine'),
-        ],
-        routines: [
-          routine('review', 'Morning brief', '', [
-            occurrence('latest', 'failed', now),
-            occurrence('older', 'succeeded', now - day),
-          ]),
-        ],
-      }
-      const { suggestions } = yield* searchHandlers
-        .ListSuggestions()
-        .pipe(Effect.provide(visibleLayer(data)))
-      expect(suggestions).toEqual([
-        { text: 'Summarise Your notes', reason: 'Added in the last day' },
-        { text: 'Look at why Morning brief failed', reason: 'Your last run failed' },
-      ])
-    }),
+  const recentPersonal: VisibleData = {
+    ...empty,
+    items: [
+      item('new', 'Your notes', now, 'Mine'),
+      item('old', 'Old notes', now - 2 * day, 'Mine'),
+    ],
+    routines: [
+      routine('review', 'Morning brief', '', [
+        occurrence('latest', 'failed', now),
+        occurrence('older', 'succeeded', now - day),
+      ]),
+    ],
+  }
+
+  layer(visibleLayer(recentPersonal))((it) => {
+    it.effect('offers new personal documents before failed Routines', () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(now)
+        const { suggestions } = yield* searchHandlers.ListSuggestions()
+        expect(suggestions).toEqual([
+          { text: 'Summarise Your notes', reason: 'Added in the last day' },
+          { text: 'Look at why Morning brief failed', reason: 'Your last run failed' },
+        ])
+      }),
+    )
+  })
+  const recoveredCompany: VisibleData = {
+    ...empty,
+    workspace: Workspace.cases.Company.make({ company, role: 'member' }),
+    items: [item('shared', 'Company notes', now, 'Company')],
+    routines: [
+      routine('review', 'Recovered', '', [
+        occurrence('old', 'failed', now - day),
+        occurrence('new', 'succeeded', now),
+      ]),
+    ],
+  }
+
+  layer(visibleLayer(recoveredCompany))((it) => {
+    it.effect('excludes shared documents and recovered Routines and offers starters', () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(now)
+        const { suggestions } = yield* searchHandlers.ListSuggestions()
+        expect(suggestions.map((suggestion) => suggestion.text)).toEqual([
+          'Connect a service',
+          'Watch a useful signal',
+          'Remember and correct preferences',
+          'Learn how we do this',
+        ])
+      }),
+    )
+  })
+  const recentItems = Array.from({ length: 6 }, (_, index) =>
+    item(`notes-${index}`, `Notes ${index}`, now - index, 'Mine'),
   )
-  it.effect('excludes shared documents and recovered Routines and offers starters', () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(now)
-      const data: VisibleData = {
-        ...empty,
-        workspace: Workspace.cases.Company.make({ company, role: 'member' }),
-        items: [item('shared', 'Company notes', now, 'Company')],
-        routines: [
-          routine('review', 'Recovered', '', [
-            occurrence('old', 'failed', now - day),
-            occurrence('new', 'succeeded', now),
-          ]),
-        ],
-      }
-      const { suggestions } = yield* searchHandlers
-        .ListSuggestions()
-        .pipe(Effect.provide(visibleLayer(data)))
-      expect(suggestions.map((suggestion) => suggestion.text)).toEqual([
-        'Connect a service',
-        'Watch a useful signal',
-        'Remember and correct preferences',
-        'Learn how we do this',
-      ])
-    }),
-  )
-  it.effect('limits recent personal document suggestions to four, newest first', () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(now)
-      const items = Array.from({ length: 6 }, (_, index) =>
-        item(`notes-${index}`, `Notes ${index}`, now - index, 'Mine'),
-      )
-      const { suggestions } = yield* searchHandlers
-        .ListSuggestions()
-        .pipe(Effect.provide(visibleLayer({ ...empty, items })))
-      expect(suggestions.map((suggestion) => suggestion.text)).toEqual([
-        'Summarise Notes 0',
-        'Summarise Notes 1',
-        'Summarise Notes 2',
-        'Summarise Notes 3',
-      ])
-    }),
-  )
+
+  layer(visibleLayer({ ...empty, items: recentItems }))((it) => {
+    it.effect('limits recent personal document suggestions to four, newest first', () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(now)
+        const { suggestions } = yield* searchHandlers.ListSuggestions()
+        expect(suggestions.map((suggestion) => suggestion.text)).toEqual([
+          'Summarise Notes 0',
+          'Summarise Notes 1',
+          'Summarise Notes 2',
+          'Summarise Notes 3',
+        ])
+      }),
+    )
+  })
 })

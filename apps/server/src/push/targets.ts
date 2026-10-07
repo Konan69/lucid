@@ -50,7 +50,7 @@ const validateDestination = Effect.fn('PushTargets.validate')(function* (
     url.hash !== '' ||
     !providerHost(url.hostname)
   )
-    yield* new InvalidRequest({ message: 'Unsupported push provider endpoint.' })
+    return yield* new InvalidRequest({ message: 'Unsupported push provider endpoint.' })
 })
 
 /** Provider credentials are never copied into identifiers, ownership fields or model results. */

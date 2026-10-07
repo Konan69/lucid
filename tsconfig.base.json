@@ -18,9 +18,9 @@
         "diagnostics": true,
         "diagnosticsName": true,
         "includeSuggestionsInTsc": true,
-        "ignoreEffectErrorsInTscExitCode": true,
-        "ignoreEffectWarningsInTscExitCode": true,
-        "ignoreEffectSuggestionsInTscExitCode": true,
+        "ignoreEffectErrorsInTscExitCode": false,
+        "ignoreEffectWarningsInTscExitCode": false,
+        "ignoreEffectSuggestionsInTscExitCode": false,
         "missingDiagnosticNextLine": "error",
         "diagnosticSeverity": {
           "anyUnknownInErrorContext": "error",

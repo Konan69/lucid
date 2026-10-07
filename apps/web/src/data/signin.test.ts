@@ -64,7 +64,7 @@ const run = Effect.fn('Test.handOff')(function* (world: World) {
   }
   yield* handOff(way).pipe(Effect.forkScoped)
   yield* TestClock.adjust(0)
-  return Ref.get(did)
+  return did
 })
 
 const opened = ['show Opening', 'begin', 'show Waiting opened']
@@ -78,7 +78,7 @@ describe('signing the desktop window in with Google', () => {
         ended: Effect.never,
         trade: Effect.succeed({ arrival: 'returning' }),
       })
-      expect(yield* did).toEqual(opened)
+      expect(yield* Ref.get(did)).toEqual(opened)
     }),
   )
 
@@ -89,7 +89,7 @@ describe('signing the desktop window in with Google', () => {
         ended: Effect.succeed(granted),
         trade: Effect.succeed({ arrival: 'returning' }),
       })
-      expect(yield* did).toEqual([
+      expect(yield* Ref.get(did)).toEqual([
         'show Opening',
         'begin',
         'show Waiting unopened',
@@ -107,7 +107,7 @@ describe('signing the desktop window in with Google', () => {
         ended: Effect.succeed(granted),
         trade: Effect.succeed({ arrival: 'returning' }),
       })
-      expect(yield* did).toEqual([...traded, 'arrive returning'])
+      expect(yield* Ref.get(did)).toEqual([...traded, 'arrive returning'])
     }),
   )
 
@@ -118,7 +118,7 @@ describe('signing the desktop window in with Google', () => {
         ended: Effect.succeed(granted),
         trade: Effect.succeed({ arrival: 'first' }),
       })
-      expect(yield* did).toEqual([...traded, 'arrive first'])
+      expect(yield* Ref.get(did)).toEqual([...traded, 'arrive first'])
     }),
   )
 
@@ -129,7 +129,7 @@ describe('signing the desktop window in with Google', () => {
         ended: Effect.succeed(SignInEnding.cases.Failed.make({})),
         trade: Effect.succeed({ arrival: 'returning' }),
       })
-      expect(yield* did).toEqual([...opened, 'show Ended failed'])
+      expect(yield* Ref.get(did)).toEqual([...opened, 'show Ended failed'])
     }),
   )
 
@@ -140,7 +140,7 @@ describe('signing the desktop window in with Google', () => {
         ended: Effect.succeed(SignInEnding.cases.Expired.make({})),
         trade: Effect.succeed({ arrival: 'returning' }),
       })
-      expect(yield* did).toEqual([...opened, 'show Ended expired'])
+      expect(yield* Ref.get(did)).toEqual([...opened, 'show Ended expired'])
     }),
   )
 
@@ -151,7 +151,7 @@ describe('signing the desktop window in with Google', () => {
         ended: Effect.succeed(granted),
         trade: Effect.fail(new TradeRefused({})),
       })
-      expect(yield* did).toEqual([...traded, 'show Ended refused'])
+      expect(yield* Ref.get(did)).toEqual([...traded, 'show Ended refused'])
     }),
   )
 
@@ -162,7 +162,7 @@ describe('signing the desktop window in with Google', () => {
         ended: Effect.succeed(granted),
         trade: Effect.fail(new TradeUnanswered({})),
       })
-      expect(yield* did).toEqual([...traded, 'show Ended unreachable'])
+      expect(yield* Ref.get(did)).toEqual([...traded, 'show Ended unreachable'])
     }),
   )
 
@@ -174,9 +174,9 @@ describe('signing the desktop window in with Google', () => {
         trade: Effect.never,
       })
       yield* TestClock.adjust('14 seconds')
-      expect(yield* did).toEqual(traded)
+      expect(yield* Ref.get(did)).toEqual(traded)
       yield* TestClock.adjust('1 second')
-      expect(yield* did).toEqual([...traded, 'show Ended unreachable'])
+      expect(yield* Ref.get(did)).toEqual([...traded, 'show Ended unreachable'])
     }),
   )
 
@@ -187,7 +187,7 @@ describe('signing the desktop window in with Google', () => {
         ended: Effect.succeed(SignInEnding.cases.Cancelled.make({})),
         trade: Effect.succeed({ arrival: 'returning' }),
       })
-      expect(yield* did).toEqual([...opened, 'leave'])
+      expect(yield* Ref.get(did)).toEqual([...opened, 'leave'])
     }),
   )
 })
@@ -208,7 +208,7 @@ describe('what the shell hands over is not trusted', () => {
             trade: Effect.succeed({ arrival: 'returning' }),
           })
           // Never "Signing you in…": the card goes from waiting straight to the refusal.
-          expect(yield* did).toEqual([...opened, 'show Ended refused'])
+          expect(yield* Ref.get(did)).toEqual([...opened, 'show Ended refused'])
         }
       }),
   )
@@ -222,7 +222,7 @@ describe('what the shell hands over is not trusted', () => {
           ended: Effect.succeed(granted),
           trade: Effect.succeed({ arrival: 'returning' }),
         })
-        expect(yield* did).toEqual(['show Opening', 'begin', 'show Ended refused'])
+        expect(yield* Ref.get(did)).toEqual(['show Opening', 'begin', 'show Ended refused'])
       }),
   )
 
@@ -233,7 +233,7 @@ describe('what the shell hands over is not trusted', () => {
         ended: Effect.fail(new ShellUnreadable({})),
         trade: Effect.succeed({ arrival: 'returning' }),
       })
-      expect(yield* did).toEqual([...opened, 'show Ended refused'])
+      expect(yield* Ref.get(did)).toEqual([...opened, 'show Ended refused'])
     }),
   )
 

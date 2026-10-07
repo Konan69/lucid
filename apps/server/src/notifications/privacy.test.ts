@@ -211,7 +211,8 @@ describe.skipIf(!testDatabaseConfigured)('Notification Thread privacy', () => {
           })
         }).pipe(Effect.scoped),
     )
-
+  })
+  layer(testLayer)('isolated clock 2', (it) => {
     it.effect(
       'P2 hidden selected reads are silent and mark-all announces only its visible change',
       () =>
@@ -240,7 +241,8 @@ describe.skipIf(!testDatabaseConfigured)('Notification Thread privacy', () => {
           yield* shown(actor, [Notification.make({ ...unrelated, readAt: at })], 0)
         }).pipe(Effect.scoped),
     )
-
+  })
+  layer(testLayer)('isolated clock 3', (it) => {
     it.effect(
       'P3 re-sharing returns hidden notices unread after selective and mark-all reads',
       () =>
@@ -272,7 +274,8 @@ describe.skipIf(!testDatabaseConfigured)('Notification Thread privacy', () => {
           expect(yield* nextValue(observation)).toEqual({ notifications: expected, unreadCount: 2 })
         }).pipe(Effect.scoped),
     )
-
+  })
+  layer(testLayer)((it) => {
     it.effect('P4 deleting a Thread conceals its notices from recipient and creator', () =>
       Effect.gen(function* () {
         const test = yield* fixture()

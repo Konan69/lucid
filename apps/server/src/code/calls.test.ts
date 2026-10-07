@@ -1,5 +1,5 @@
 import { deviceLayer } from '../computers/device.ts'
-import { describe, expect, it as standalone, layer } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import {
   ApprovalDecision,
@@ -13,14 +13,15 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { Deferred, Effect, Fiber, Layer, Ref, Result, Schema } from 'effect'
+import { Deferred, Effect, Fiber, Layer, Logger, Ref, Result, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { refusalLogs } from '../observability/testlogger.ts'
 import type { Actor } from '../auth/access.ts'
 import { membershipTable } from '../companies/tables.ts'
 import { threads } from '../threads/tables.ts'
 import { Database } from '../database/client.ts'
-import { testDatabaseConfigured } from '../database/testdb.ts'
+import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
+import { silentChangesLayer } from '../live/changes.ts'
 import { absentMachineLayer } from '../computers/testing.ts'
 import {
   ComputerAccess,
@@ -54,6 +55,17 @@ const dependencies = Layer.mergeAll(codeAuthorityLayer, publicPageLayer).pipe(
   Layer.provideMerge(computers),
 )
 const testLayer = codeCallsLayer.pipe(Layer.provideMerge(dependencies))
+
+/** Acquire Connection probes, approval observations and call bindings per case; their mutable recordings must stay isolated while the enclosing block shares the database and process supervisor. */
+const withCalls = <A, E, R, Services, Failure, Requirements>(
+  program: Effect.Effect<A, E, R>,
+  callLayer: Layer.Layer<Services, Failure, Requirements>,
+) =>
+  Effect.gen(function* () {
+    const context = yield* Layer.build(callLayer)
+    return yield* program.pipe(Effect.provide(context))
+  }).pipe(Effect.scoped)
+
 const use = (tool: string) =>
   `tools.use_tool({account:"Records",tool:${JSON.stringify(tool)},input:{draft:"original"},summary:"Read or update records",rationale:"Answer the request"})`
 
@@ -77,11 +89,17 @@ describe.skipIf(!testDatabaseConfigured)(
     // The program runs on a Computer that is this machine (`testing.ts`); each test still owns
     // fresh tenancy, Gate and provider fixtures, and each program its own process. The ceiling is
     // for those real processes on a loaded machine; nothing here waits on a clock.
-    layer(codeProcessLayer.pipe(Layer.provide(localCodeComputerLayer)))((it) => {
+    layer(
+      Layer.mergeAll(
+        testDatabaseLayer,
+        silentChangesLayer,
+        codeProcessLayer.pipe(Layer.provide(localCodeComputerLayer)),
+      ),
+    )((it) => {
       it.effect(
         'composes real named Connection calls and a gated Computer command with only selected results returned',
         () =>
-          Effect.scoped(
+          withCalls(
             Effect.gen(function* () {
               const test = yield* fixture()
               yield* (yield* ConnectionStore).begin(test.personal, {
@@ -112,15 +130,17 @@ describe.skipIf(!testDatabaseConfigured)(
                   ),
                 ),
               })
-              const outcome = yield* run(
-                test.personal,
-                test.personalId,
-                `const found=await tools.find_tools({query:"read"}); const tool=found.tools[0];
+              const outcome = yield* withCalls(
+                run(
+                  test.personal,
+                  test.personalId,
+                  `const found=await tools.find_tools({query:"read"}); const tool=found.tools[0];
       const first=await tools.use_tool({account:tool.account,tool:tool.tool,input:{},summary:"Read first page",rationale:"Find records"});
       const [left,right]=await Promise.all([1,2].map(page=>tools.use_tool({account:tool.account,tool:tool.tool,input:{cursor:first.output.cursor,page},summary:"Read next page",rationale:"Find records"})));
       return {chosen:left.output.rows.filter(row=>row.value>497).map(row=>row.value),count:right.output.rows.length};`,
+                ),
+                Layer.fresh(codeCallsLayer),
               ).pipe(
-                Effect.provide(codeCallsLayer, { local: true }),
                 Effect.provideService(Executor, provider),
                 Effect.provideService(ComputerStore, computer),
               )
@@ -141,13 +161,14 @@ describe.skipIf(!testDatabaseConfigured)(
                 { cursor: 'next-page', page: 2 },
               ])
             }),
-          ).pipe(Effect.provide(testLayer)),
+            testLayer,
+          ),
       )
 
       it.effect(
         'returns validation problems to a program and accepts its corrected next call',
         () =>
-          Effect.scoped(
+          withCalls(
             Effect.gen(function* () {
               const test = yield* fixture()
               yield* (yield* ConnectionStore).begin(test.personal, {
@@ -169,27 +190,32 @@ describe.skipIf(!testDatabaseConfigured)(
                   ),
                 ),
               })
-              const outcome = yield* run(
-                test.personal,
-                test.personalId,
-                `const first=await ${use('read')}; const next=await tools.use_tool({account:"Records",tool:"read",input:{repoName:"facebook/react"},summary:"Read",rationale:"Answer"}); return {first,next};`,
-              ).pipe(
-                Effect.provide(codeCallsLayer, { local: true }),
-                Effect.provideService(Executor, provider),
-              )
+              const outcome = yield* withCalls(
+                run(
+                  test.personal,
+                  test.personalId,
+                  `const first=await ${use('read')}; const next=await tools.use_tool({account:"Records",tool:"read",input:{repoName:"facebook/react"},summary:"Read",rationale:"Answer"}); return {first,next};`,
+                ),
+                Layer.fresh(codeCallsLayer),
+              ).pipe(Effect.provideService(Executor, provider))
               expect(outcome).toHaveProperty('result', {
-                first: { ok: false, reason: 'Correct the input', problems: ['repoName: required'] },
+                first: {
+                  ok: false,
+                  reason: 'Correct the input',
+                  problems: ['repoName: required'],
+                },
                 next: { ok: true, output: { corrected: true } },
               })
               expect(outcome.calls.map((call) => call.end)).toEqual(['refused', 'completed'])
             }),
-          ).pipe(Effect.provide(testLayer)),
+            testLayer,
+          ),
       )
 
       it.effect(
         'keeps colliding personal account names scoped and rejects forged ownership fields',
         () =>
-          Effect.scoped(
+          withCalls(
             Effect.gen(function* () {
               const test = yield* fixture()
               const store = yield* ConnectionStore
@@ -227,14 +253,15 @@ describe.skipIf(!testDatabaseConfigured)(
               ])
               expect(yield* Ref.get(probe.calls)).toBe(1)
             }),
-          ).pipe(Effect.provide(testLayer)),
+            testLayer,
+          ),
       )
 
       for (const revocation of ['Membership', 'Thread visibility'] as const)
         it.effect(
           `refreshes ${revocation} after the dispatch barrier and refuses the next queued call`,
           () =>
-            Effect.scoped(
+            withCalls(
               Effect.gen(function* () {
                 const test = yield* fixture()
                 yield* (yield* ConnectionStore).begin(test.owner, {
@@ -253,14 +280,14 @@ describe.skipIf(!testDatabaseConfigured)(
                     return ExecutorCallOutcome.cases.Completed.make({ value: { read: true } })
                   }),
                 })
-                const program = run(
-                  test.member,
-                  test.companyId,
-                  `await ${use('read')}; return await ${use('read')};`,
-                ).pipe(
-                  Effect.provide(codeCallsLayer, { local: true }),
-                  Effect.provideService(Executor, controlled),
-                )
+                const program = withCalls(
+                  run(
+                    test.member,
+                    test.companyId,
+                    `await ${use('read')}; return await ${use('read')};`,
+                  ),
+                  Layer.fresh(codeCallsLayer),
+                ).pipe(Effect.provideService(Executor, controlled))
                 const running = yield* Effect.forkChild(program)
                 yield* Deferred.await(started)
                 const database = yield* Database
@@ -282,11 +309,12 @@ describe.skipIf(!testDatabaseConfigured)(
                 expect(CodeOutcome.guards.Blocked(outcome)).toBe(true)
                 expect(outcome.calls.map((call) => call.end)).toEqual(['completed', 'refused'])
               }),
-            ).pipe(Effect.provide(testLayer)),
+              testLayer,
+            ),
         )
 
       it.effect('refuses shared Connection writes', () =>
-        Effect.scoped(
+        withCalls(
           Effect.gen(function* () {
             const test = yield* fixture()
             const store = yield* ConnectionStore
@@ -294,11 +322,12 @@ describe.skipIf(!testDatabaseConfigured)(
             const shared = yield* run(test.member, test.companyId, `return await ${use('write')};`)
             expect(shared.calls.map((call) => call.end)).toEqual(['refused'])
           }),
-        ).pipe(Effect.provide(testLayer)),
+          testLayer,
+        ),
       )
 
       it.effect('asks before personal reads enter a shared Thread', () =>
-        Effect.scoped(
+        withCalls(
           Effect.gen(function* () {
             const test = yield* fixture()
             const store = yield* ConnectionStore
@@ -321,13 +350,14 @@ describe.skipIf(!testDatabaseConfigured)(
             expect(CodeOutcome.guards.ApprovalRequired(personal)).toBe(true)
             expect(personal.calls.map((call) => call.end)).toEqual(['needs approval'])
           }),
-        ).pipe(Effect.provide(testLayer)),
+          testLayer,
+        ),
       )
 
       it.effect(
         'stores the exact first action, closes queued effects, and two Approval answers execute once',
         () =>
-          Effect.scoped(
+          withCalls(
             Effect.gen(function* () {
               const test = yield* fixture()
               yield* (yield* ConnectionStore).begin(test.personal, {
@@ -367,13 +397,14 @@ describe.skipIf(!testDatabaseConfigured)(
               expect(approval.action.target).toMatchObject({ input: { draft: 'original' } })
               return yield* Effect.void
             }),
-          ).pipe(Effect.provide(testLayer)),
+            testLayer,
+          ),
       )
 
       it.effect(
         'retains an earlier Connection receipt when the next action asks for Approval',
         () =>
-          Effect.scoped(
+          withCalls(
             Effect.gen(function* () {
               const test = yield* fixture()
               yield* (yield* ConnectionStore).begin(test.personal, {
@@ -392,52 +423,61 @@ describe.skipIf(!testDatabaseConfigured)(
               expect(outcome.calls.map((call) => call.end)).toEqual(['completed', 'needs approval'])
               expect(yield* Ref.get(probe.calls)).toBe(1)
             }),
-          ).pipe(Effect.provide(testLayer)),
+            testLayer,
+          ),
       )
 
       // Each decision needs one real interpreter startup; independent questions own independent fixtures.
       for (const decision of ['denied', 'expired'] as const)
-        it.effect(`${decision} program Approvals execute nothing`, () =>
-          Effect.scoped(
-            Effect.gen(function* () {
-              const test = yield* fixture()
-              yield* (yield* ConnectionStore).begin(test.personal, {
-                service: serviceId,
-                name: null,
-                shared: false,
-              })
-              const store = yield* ApprovalStore
-              yield* run(test.personal, test.personalId, `await ${use('write')};`)
-              const approval = (yield* store.inThread(test.personalId))[0]
-              if (approval === undefined) return yield* Effect.die('No approval')
-              if (decision === 'denied')
-                yield* store.decide(test.personal, {
-                  id: approval.id,
-                  digest: approval.digest,
-                  decision: ApprovalDecision.cases.Deny.make({}),
+        layer(
+          Layer.merge(
+            testDatabaseLayer,
+            codeProcessLayer.pipe(Layer.provide(localCodeComputerLayer)),
+          ),
+        )(`Clock for ${decision} program Approval`, (it) => {
+          it.effect(`${decision} program Approvals execute nothing`, () =>
+            withCalls(
+              Effect.gen(function* () {
+                const test = yield* fixture()
+                yield* (yield* ConnectionStore).begin(test.personal, {
+                  service: serviceId,
+                  name: null,
+                  shared: false,
                 })
-              else {
-                yield* TestClock.adjust('25 hours')
-                expect(
-                  Result.isFailure(
-                    yield* Effect.result(
-                      store.decide(test.personal, {
-                        id: approval.id,
-                        digest: approval.digest,
-                        decision: ApprovalDecision.cases.AllowOnce.make({}),
-                      }),
+                const store = yield* ApprovalStore
+                yield* run(test.personal, test.personalId, `await ${use('write')};`)
+                const approval = (yield* store.inThread(test.personalId))[0]
+                if (approval === undefined) return yield* Effect.die('No approval')
+                if (decision === 'denied')
+                  yield* store.decide(test.personal, {
+                    id: approval.id,
+                    digest: approval.digest,
+                    decision: ApprovalDecision.cases.Deny.make({}),
+                  })
+                else {
+                  yield* TestClock.adjust('25 hours')
+                  expect(
+                    Result.isFailure(
+                      yield* Effect.result(
+                        store.decide(test.personal, {
+                          id: approval.id,
+                          digest: approval.digest,
+                          decision: ApprovalDecision.cases.AllowOnce.make({}),
+                        }),
+                      ),
                     ),
-                  ),
-                ).toBe(true)
-              }
-              expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
-              return yield* Effect.void
-            }),
-          ).pipe(Effect.provide(testLayer)),
-        )
+                  ).toBe(true)
+                }
+                expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+                return yield* Effect.void
+              }),
+              testLayer,
+            ),
+          )
+        })
 
       it.effect('a Never rule is terminal despite a guest catch and queued writes', () =>
-        Effect.scoped(
+        withCalls(
           Effect.gen(function* () {
             const test = yield* fixture()
             yield* (yield* ConnectionStore).begin(test.personal, {
@@ -462,7 +502,8 @@ describe.skipIf(!testDatabaseConfigured)(
             expect(yield* Ref.get(probe.calls)).toBe(0)
             expect(yield* (yield* ApprovalStore).inThread(test.personalId)).toEqual([])
           }),
-        ).pipe(Effect.provide(testLayer)),
+          testLayer,
+        ),
       )
     })
   },
@@ -471,153 +512,183 @@ describe.skipIf(!testDatabaseConfigured)(
 /** Infrastructure faults exercise bound dispatch directly, independently of host interpreter support. */
 describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => {
   /** Availability replies are new code refusals; they are recorded once without private reasons. */
-  standalone.effect.each(['personal browser', 'cloud browser'] as const)(
-    'records one CallRefused for unavailable %s',
-    (surface) =>
-      Effect.scoped(
+  layer(Layer.merge(testDatabaseLayer, silentChangesLayer))((it) => {
+    it.effect.each(['personal browser', 'cloud browser'] as const)(
+      'records one CallRefused for unavailable %s',
+      (surface) =>
+        withCalls(
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const logs = refusalLogs()
+            const store = yield* ComputerStore
+            const unavailable = ComputerStore.of({
+              ...store,
+              browse: () => Effect.fail(new ComputerNotReady({ reason: 'Private browser outage' })),
+            })
+            const input = {
+              target:
+                surface === 'personal browser'
+                  ? BrowseTarget.cases.Person.make({})
+                  : BrowseTarget.cases.Vivid.make({}),
+              action: BrowserAction.cases.Open.make({ address: 'https://example.test' }),
+              summary: 'Check availability',
+            }
+            const kind = 'browse'
+            const outcome = yield* withCalls(
+              Effect.gen(function* () {
+                return yield* (yield* CodeCalls).bind({
+                  person: test.personal.person.id,
+                  thread: test.personalId,
+                })(WorkerMessage.cases.Call.make({ id: 1, kind, input }))
+              }),
+              Layer.fresh(codeCallsLayer),
+            ).pipe(
+              Effect.provideService(ComputerStore, unavailable),
+              Effect.updateService(
+                Logger.CurrentLoggers,
+                (loggers) => new Set([...loggers, logs.capture]),
+              ),
+            )
+            expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
+            expect(logs.recorded()).toHaveLength(1)
+            expect(logs.recorded()[0]).toContain('vivid.refusal.kind=CallRefused')
+            expect(logs.recorded()[0]).toContain(`vivid.refusal.call=${kind}`)
+            expect(logs.recorded()[0]).not.toContain('Private')
+          }),
+          testLayer,
+        ),
+    )
+
+    /** Provider rejection travels through the real code-call seam without a second refusal. */
+    it.effect('records exactly one ToolRejected for a rejected use_tool code call', () =>
+      withCalls(
         Effect.gen(function* () {
           const test = yield* fixture()
-          const logs = refusalLogs()
-          const store = yield* ComputerStore
-          const unavailable = ComputerStore.of({
-            ...store,
-            browse: () => Effect.fail(new ComputerNotReady({ reason: 'Private browser outage' })),
+          yield* (yield* ConnectionStore).begin(test.personal, {
+            service: serviceId,
+            name: null,
+            shared: false,
           })
-          const input = {
-            target:
-              surface === 'personal browser'
-                ? BrowseTarget.cases.Person.make({})
-                : BrowseTarget.cases.Vivid.make({}),
-            action: BrowserAction.cases.Open.make({ address: 'https://example.test' }),
-            summary: 'Check availability',
-          }
-          const kind = 'browse'
-          const outcome = yield* Effect.gen(function* () {
-            return yield* (yield* CodeCalls).bind({
-              person: test.personal.person.id,
-              thread: test.personalId,
-            })(WorkerMessage.cases.Call.make({ id: 1, kind, input }))
-          }).pipe(
-            Effect.provide(codeCallsLayer, { local: true }),
-            Effect.provideService(ComputerStore, unavailable),
-            Effect.provide(logs.layer),
+          const executor = yield* Executor
+          const logs = refusalLogs()
+          const outcome = yield* withCalls(
+            Effect.gen(function* () {
+              return yield* (yield* CodeCalls).bind({
+                person: test.personal.person.id,
+                thread: test.personalId,
+              })(
+                WorkerMessage.cases.Call.make({
+                  id: 1,
+                  kind: 'use_tool',
+                  input: {
+                    account: 'Records',
+                    tool: 'read',
+                    input: {},
+                    summary: 'Read',
+                    rationale: '',
+                  },
+                }),
+              )
+            }),
+            Layer.fresh(codeCallsLayer),
+          ).pipe(
+            Effect.provideService(
+              Executor,
+              Executor.of({
+                ...executor,
+                call: () =>
+                  Effect.succeed(
+                    ExecutorCallOutcome.cases.Rejected.make({ message: 'Private rejection' }),
+                  ),
+              }),
+            ),
+            Effect.updateService(
+              Logger.CurrentLoggers,
+              (loggers) => new Set([...loggers, logs.capture]),
+            ),
           )
           expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
           expect(logs.recorded()).toHaveLength(1)
-          expect(logs.recorded()[0]).toContain('vivid.refusal.kind=CallRefused')
-          expect(logs.recorded()[0]).toContain(`vivid.refusal.call=${kind}`)
-          expect(logs.recorded()[0]).not.toContain('Private')
+          expect(logs.recorded()[0]).toContain('vivid.refusal.kind=ToolRejected')
         }),
-      ).pipe(Effect.provide(testLayer)),
-  )
+        testLayer,
+      ),
+    )
 
-  /** Provider rejection travels through the real code-call seam without a second refusal. */
-  standalone.effect('records exactly one ToolRejected for a rejected use_tool code call', () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        yield* (yield* ConnectionStore).begin(test.personal, {
-          service: serviceId,
-          name: null,
-          shared: false,
-        })
-        const executor = yield* Executor
-        const logs = refusalLogs()
-        const outcome = yield* Effect.gen(function* () {
-          return yield* (yield* CodeCalls).bind({
-            person: test.personal.person.id,
-            thread: test.personalId,
-          })(
-            WorkerMessage.cases.Call.make({
-              id: 1,
-              kind: 'use_tool',
-              input: {
-                account: 'Records',
-                tool: 'read',
-                input: {},
-                summary: 'Read',
-                rationale: '',
-              },
+    /** Address policy is decided by the real PageReader before its refused reply reaches code. */
+    it.effect('records exactly one PageRefused for a refused read_page code call', () =>
+      withCalls(
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const logs = refusalLogs()
+          const outcome = yield* (yield* CodeCalls)
+            .bind({
+              person: test.personal.person.id,
+              thread: test.personalId,
+            })(
+              WorkerMessage.cases.Call.make({
+                id: 1,
+                kind: 'read_page',
+                input: { address: 'file:///private' },
+              }),
+            )
+            .pipe(
+              Effect.updateService(
+                Logger.CurrentLoggers,
+                (loggers) => new Set([...loggers, logs.capture]),
+              ),
+              Effect.scoped,
+            )
+          expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
+          expect(logs.recorded()).toHaveLength(1)
+          expect(logs.recorded()[0]).toContain('vivid.refusal.kind=PageRefused')
+        }),
+        testLayer,
+      ),
+    )
+
+    /** This vocabulary has no authority-revocation case; a Blocked receipt must not invent a Gate refusal. */
+    it.effect('authority revocation blocks without inventing a recorded Gate decision', () =>
+      withCalls(
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const logs = refusalLogs()
+          const outcome = yield* withCalls(
+            Effect.gen(function* () {
+              return yield* (yield* CodeCalls).bind({
+                person: test.personal.person.id,
+                thread: test.personalId,
+              })(
+                WorkerMessage.cases.Call.make({
+                  id: 1,
+                  kind: 'find_tools',
+                  input: { query: 'read' },
+                }),
+              )
             }),
+            Layer.fresh(codeCallsLayer),
+          ).pipe(
+            Effect.provideService(
+              CodeAuthority,
+              CodeAuthority.of({
+                refresh: () => Effect.fail(new CodeAuthorityRevoked({})),
+              }),
+            ),
+            Effect.updateService(
+              Logger.CurrentLoggers,
+              (loggers) => new Set([...loggers, logs.capture]),
+            ),
           )
-        }).pipe(
-          Effect.provide(codeCallsLayer, { local: true }),
-          Effect.provideService(
-            Executor,
-            Executor.of({
-              ...executor,
-              call: () =>
-                Effect.succeed(
-                  ExecutorCallOutcome.cases.Rejected.make({ message: 'Private rejection' }),
-                ),
-            }),
-          ),
-          Effect.provide(logs.layer),
-        )
-        expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
-        expect(logs.recorded()).toHaveLength(1)
-        expect(logs.recorded()[0]).toContain('vivid.refusal.kind=ToolRejected')
-      }),
-    ).pipe(Effect.provide(testLayer)),
-  )
+          expect(CallOutcome.guards.Blocked(outcome)).toBe(true)
+          expect(logs.recorded()).toEqual([])
+        }),
+        testLayer,
+      ),
+    )
 
-  /** Address policy is decided by the real PageReader before its refused reply reaches code. */
-  standalone.effect('records exactly one PageRefused for a refused read_page code call', () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        const logs = refusalLogs()
-        const outcome = yield* (yield* CodeCalls)
-          .bind({
-            person: test.personal.person.id,
-            thread: test.personalId,
-          })(
-            WorkerMessage.cases.Call.make({
-              id: 1,
-              kind: 'read_page',
-              input: { address: 'file:///private' },
-            }),
-          )
-          .pipe(Effect.provide(logs.layer))
-        expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
-        expect(logs.recorded()).toHaveLength(1)
-        expect(logs.recorded()[0]).toContain('vivid.refusal.kind=PageRefused')
-      }),
-    ).pipe(Effect.provide(testLayer)),
-  )
-
-  /** This vocabulary has no authority-revocation case; a Blocked receipt must not invent a Gate refusal. */
-  standalone.effect('authority revocation blocks without inventing a recorded Gate decision', () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        const logs = refusalLogs()
-        const outcome = yield* Effect.gen(function* () {
-          return yield* (yield* CodeCalls).bind({
-            person: test.personal.person.id,
-            thread: test.personalId,
-          })(WorkerMessage.cases.Call.make({ id: 1, kind: 'find_tools', input: { query: 'read' } }))
-        }).pipe(
-          Effect.provide(codeCallsLayer, { local: true }),
-          Effect.provideService(
-            CodeAuthority,
-            CodeAuthority.of({
-              refresh: () => Effect.fail(new CodeAuthorityRevoked({})),
-            }),
-          ),
-          Effect.provide(logs.layer),
-        )
-        expect(CallOutcome.guards.Blocked(outcome)).toBe(true)
-        expect(logs.recorded()).toEqual([])
-      }),
-    ).pipe(Effect.provide(testLayer)),
-  )
-
-  for (const kind of CodeCallKind.literals) {
-    standalone.effect(
-      `returns a refused ${kind} receipt when authority storage is unavailable`,
-      () =>
-        Effect.scoped(
+    for (const kind of CodeCallKind.literals) {
+      it.effect(`returns a refused ${kind} receipt when authority storage is unavailable`, () =>
+        withCalls(
           Effect.gen(function* () {
             const test = yield* fixture()
             const database = yield* Database
@@ -627,17 +698,21 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
               run: () => Effect.fail(new DatabaseUnavailable({ message: 'isolated fault' })),
             })
             const logs = refusalLogs()
-            const outcome = yield* Effect.gen(function* () {
-              const calls = yield* CodeCalls
-              return yield* calls.bind({
-                person: test.personal.person.id,
-                thread: test.personalId,
-              })(WorkerMessage.cases.Call.make({ id: 1, kind, input: {} }))
-            }).pipe(
-              Effect.provide(codeCallsLayer, { local: true }),
-              Effect.provide(codeAuthorityLayer, { local: true }),
+            const outcome = yield* withCalls(
+              Effect.gen(function* () {
+                const calls = yield* CodeCalls
+                return yield* calls.bind({
+                  person: test.personal.person.id,
+                  thread: test.personalId,
+                })(WorkerMessage.cases.Call.make({ id: 1, kind, input: {} }))
+              }),
+              Layer.fresh(codeCallsLayer.pipe(Layer.provideMerge(codeAuthorityLayer))),
+            ).pipe(
               Effect.provideService(Database, unavailable),
-              Effect.provide(logs.layer),
+              Effect.updateService(
+                Logger.CurrentLoggers,
+                (loggers) => new Set([...loggers, logs.capture]),
+              ),
             )
             expect(CallOutcome.guards.Returned(outcome)).toBe(true)
             expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
@@ -646,66 +721,72 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
             expect(recorded[0]).toContain('vivid.refusal.kind=CallRefused')
             expect(recorded[0]).toContain(`vivid.refusal.call=${kind}`)
           }),
-        ).pipe(Effect.provide(testLayer)),
+          testLayer,
+        ),
+      )
+    }
+    it.effect(
+      'returns discovery infrastructure failure to the program without claiming an action happened',
+      () =>
+        withCalls(
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const store = yield* ConnectionStore
+            yield* store.begin(test.personal, { service: serviceId, name: null, shared: false })
+            const unavailable = ConnectionStore.of({
+              ...store,
+              tools: () =>
+                Effect.fail(
+                  new ServiceUnavailable({ service: 'connections', message: 'isolated fault' }),
+                ),
+            })
+            const outcome = yield* withCalls(
+              Effect.gen(function* () {
+                return yield* (yield* CodeCalls).bind({
+                  person: test.personal.person.id,
+                  thread: test.personalId,
+                })(
+                  WorkerMessage.cases.Call.make({
+                    id: 1,
+                    kind: 'find_tools',
+                    input: { query: 'read' },
+                  }),
+                )
+              }),
+              Layer.fresh(codeCallsLayer),
+            ).pipe(Effect.provideService(ConnectionStore, unavailable))
+            expect(CallOutcome.guards.Returned(outcome)).toBe(true)
+            expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
+          }),
+          testLayer,
+        ),
     )
-  }
-  standalone.effect(
-    'returns discovery infrastructure failure to the program without claiming an action happened',
-    () =>
-      Effect.scoped(
+    it.effect('preserves the infrastructure tag when refreshing authority', () =>
+      withCalls(
         Effect.gen(function* () {
           const test = yield* fixture()
-          const store = yield* ConnectionStore
-          yield* store.begin(test.personal, { service: serviceId, name: null, shared: false })
-          const unavailable = ConnectionStore.of({
-            ...store,
-            tools: () =>
-              Effect.fail(
-                new ServiceUnavailable({ service: 'connections', message: 'isolated fault' }),
-              ),
-          })
-          const outcome = yield* Effect.gen(function* () {
-            return yield* (yield* CodeCalls).bind({
-              person: test.personal.person.id,
-              thread: test.personalId,
-            })(
-              WorkerMessage.cases.Call.make({
-                id: 1,
-                kind: 'find_tools',
-                input: { query: 'read' },
-              }),
-            )
-          }).pipe(
-            Effect.provide(codeCallsLayer, { local: true }),
-            Effect.provideService(ConnectionStore, unavailable),
-          )
-          expect(CallOutcome.guards.Returned(outcome)).toBe(true)
-          expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
-        }),
-      ).pipe(Effect.provide(testLayer)),
-  )
-  standalone.effect('preserves the infrastructure tag when refreshing authority', () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        const database = yield* Database
-        const outcome = yield* Effect.gen(function* () {
-          return yield* (yield* CodeAuthority)
-            .refresh({ person: test.personal.person.id, thread: test.personalId })
-            .pipe(Effect.flip)
-        }).pipe(
-          Effect.provide(codeAuthorityLayer, { local: true }),
-          Effect.provideService(
-            Database,
-            Database.of({
-              ...database,
-              select: () => database.select(),
-              run: () => Effect.fail(new DatabaseUnavailable({ message: 'isolated fault' })),
+          const database = yield* Database
+          const outcome = yield* withCalls(
+            Effect.gen(function* () {
+              return yield* (yield* CodeAuthority)
+                .refresh({ person: test.personal.person.id, thread: test.personalId })
+                .pipe(Effect.flip)
             }),
-          ),
-        )
-        expect(outcome._tag).toBe('DatabaseUnavailable')
-      }),
-    ).pipe(Effect.provide(testLayer)),
-  )
+            Layer.fresh(codeAuthorityLayer),
+          ).pipe(
+            Effect.provideService(
+              Database,
+              Database.of({
+                ...database,
+                select: () => database.select(),
+                run: () => Effect.fail(new DatabaseUnavailable({ message: 'isolated fault' })),
+              }),
+            ),
+          )
+          expect(outcome._tag).toBe('DatabaseUnavailable')
+        }),
+        testLayer,
+      ),
+    )
+  })
 })

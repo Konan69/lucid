@@ -121,18 +121,20 @@ const open = new Map<string, Promise<AgentFS>>()
  * per platform; an installation that keeps no notes, or an image the binary does not support,
  * must still start, so the package is never loaded when the module is.
  */
-async function openStore(path: string) {
-  const { AgentFS: store } = await import('agentfs-sdk')
-  // AgentFS makes directories only for its own default location, not for a path it is given. The
-  // notes directory is required but need not exist yet (a fresh checkout, a new volume), and
-  // without this every note call would fail until someone made it by hand.
-  await NodeFS.promises.mkdir(NodePath.dirname(path), { recursive: true })
-  return store.open({ path })
+function openStore(path: string) {
+  return import('agentfs-sdk').then(({ AgentFS: store }) => {
+    // AgentFS makes directories only for its own default location, not for a path it is given. The
+    // notes directory is required but need not exist yet (a fresh checkout, a new volume), and
+    // without this every note call would fail until someone made it by hand.
+    return NodeFS.promises
+      .mkdir(NodePath.dirname(path), { recursive: true })
+      .then(() => store.open({ path }))
+  })
 }
 
 /** Open, or reuse, the Person's filesystem. A failed open is forgotten so the next call tries again. */
 const opened = Effect.fn('Notes.open')(function* (directory: string, person: PersonId) {
-  if (!SAFE_PERSON.test(person)) return yield* Effect.fail(NotesUnavailable.make({}))
+  if (!SAFE_PERSON.test(person)) return yield* NotesUnavailable.make({})
   const path = NodePath.join(directory, `${person}.db`)
   const existing = open.get(path)
   const pending = existing === undefined ? openStore(path) : existing
@@ -192,7 +194,7 @@ export const noteIndex = Effect.fn('Notes.index')(function* (notes: NotesOf) {
 export const readNote = Effect.fn('Notes.read')(function* (notes: NotesOf, file: NoteFile) {
   const fs = (yield* opened(notes.directory, notes.person)).fs
   const note = parsed(yield* attempt(file, () => fs.readFile(`/${file}`, 'utf8')))
-  if (Option.isNone(note)) return yield* Effect.fail(NoteMissing.make({ file }))
+  if (Option.isNone(note)) return yield* NoteMissing.make({ file })
   return Note.make({ file, ...note.value })
 })
 

@@ -79,17 +79,16 @@ const extractPages = (extract: typeof extractPdf) =>
       return [{ page: null, text: normalizeText(decodedText) }]
     }
     const pages = yield* extract(document.bytes).pipe(
-      Effect.catchTag('PdfUnreadable', () =>
-        Effect.fail(new LibraryIngestFailure({ message: PDF_FAILURE_MESSAGE })),
-      ),
-      Effect.catchTag('PdfLocked', () =>
-        Effect.fail(new LibraryIngestFailure({ message: 'This PDF is locked with a password' })),
-      ),
-      Effect.catchTag('ExtractionLimitExceeded', (failure) =>
-        Effect.fail(
-          new LibraryIngestFailure({ message: EXTRACTION_LIMIT_MESSAGES[failure.limit] }),
-        ),
-      ),
+      Effect.catchTags({
+        PdfUnreadable: () =>
+          Effect.fail(new LibraryIngestFailure({ message: PDF_FAILURE_MESSAGE })),
+        PdfLocked: () =>
+          Effect.fail(new LibraryIngestFailure({ message: 'This PDF is locked with a password' })),
+        ExtractionLimitExceeded: (failure) =>
+          Effect.fail(
+            new LibraryIngestFailure({ message: EXTRACTION_LIMIT_MESSAGES[failure.limit] }),
+          ),
+      }),
     )
     return pages.map((text, index) => ({ page: index + 1, text: normalizeText(text) }))
   })
@@ -116,14 +115,14 @@ const read = (extract: typeof extractPdf) =>
         .filter((text) => text.length > 0)
         .join('\n\n')
       if (extractedText.length === 0)
-        return yield* Effect.fail(
-          new LibraryIngestFailure({ message: 'No readable text was found in this document' }),
-        )
+        return yield* new LibraryIngestFailure({
+          message: 'No readable text was found in this document',
+        })
       const chunks = pages.flatMap((page) => chunkText(page.text, page.page))
       if (chunks.length === 0)
-        return yield* Effect.fail(
-          new LibraryIngestFailure({ message: 'No searchable text was found in this document' }),
-        )
+        return yield* new LibraryIngestFailure({
+          message: 'No searchable text was found in this document',
+        })
       return IngestionOutcome.cases.Indexed.make({ extractedText, chunks })
     },
     Effect.catchTag('LibraryIngestFailure', (failure) =>

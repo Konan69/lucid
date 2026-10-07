@@ -193,7 +193,7 @@ const refuse = (): never => {
  * Values that throw when they are read. A failure is whatever was thrown or failed with, so each
  * of these can reach a boundary, and reading one runs its own code.
  */
-const hostile = (): ReadonlyArray<unknown> => {
+const hostile = () => {
   const revocable = Proxy.revocable({}, {})
   revocable.revoke()
   return [
@@ -218,6 +218,7 @@ const reasonsOf = <A, E>(exit: Exit.Exit<A, E>): ReadonlyArray<readonly [string,
           : (['Interrupt', undefined] as const)
       })
 
+/** Captured lines stay per case so earlier failures cannot satisfy these assertions. */
 it.effect('hands back the exit it was given when a failure throws on being read', () => {
   const lines: Array<string> = []
   const capture = Logger.make((entry) => {
@@ -240,7 +241,7 @@ it.effect('hands back the exit it was given when a failure throws on being read'
     )
     expect(recorded).toHaveLength(cases.length)
     for (const line of recorded) expect(line).toContain('error.type=_OTHER')
-  }).pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: true })))
+  }).pipe(Effect.updateService(Logger.CurrentLoggers, (loggers) => new Set([...loggers, capture])))
 })
 
 it('summarizes a failure it cannot read as `_OTHER`, without throwing', () => {

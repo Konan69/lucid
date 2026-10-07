@@ -1,9 +1,8 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Layer, References } from 'effect'
+import { Effect, Layer, References, Logger } from 'effect'
 import { ServiceId } from '@vivid/contracts'
 import {
   effectScoreCount,
-  effectScoreLogLayer,
   LIVE_METADATA_BUDGET,
   LIVE_METADATA_COHORT_BUDGET_MILLIS,
   liveDecisionEnabled,
@@ -53,35 +52,46 @@ describe.skipIf(!liveDecisionEnabled)('Gateway effectsholdout', () => {
     (mode) => {
       const lines: string[] = []
       return Effect.gen(function* () {
-        const effects = yield* ToolEffects
-        const request = {
-          serviceId: ServiceId.make('effectsholdout'),
-          service: 'Records',
-          tools: cohort.map((tool) =>
-            ExecutorTool.make({
-              name: tool.name,
-              description: tool.description,
-              effect: 'write',
-              input: {},
-            }),
-          ),
-        }
-        const result =
-          mode === 'batch'
-            ? (yield* effects.classifyBatch(request)).map((tool) => tool.effect)
-            : yield* Effect.forEach(request.tools, (tool) => effects.classify({ ...request, tool }))
-        for (const [index, tool] of cohort.entries()) {
-          expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
-          if (tool.expected === 'read') expect(result[index], tool.name).toBe('read')
-          else expect(result[index], tool.name).not.toBe('read')
-        }
-      }).pipe(
-        Effect.provide(
-          toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
-        ),
-        Effect.provideService(References.MinimumLogLevel, 'Debug'),
-        Effect.provide(effectScoreLogLayer(lines)),
-      )
+        const loggers = new Set([
+          Logger.consoleLogFmt,
+          Logger.make(({ message }) => lines.push(JSON.stringify(message))),
+        ])
+        return yield* Effect.gen(function* () {
+          const context = yield* Layer.build(
+            toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
+          )
+          return yield* Effect.gen(function* () {
+            const effects = yield* ToolEffects
+            const request = {
+              serviceId: ServiceId.make('effectsholdout'),
+              service: 'Records',
+              tools: cohort.map((tool) =>
+                ExecutorTool.make({
+                  name: tool.name,
+                  description: tool.description,
+                  effect: 'write',
+                  input: {},
+                }),
+              ),
+            }
+            const result =
+              mode === 'batch'
+                ? (yield* effects.classifyBatch(request)).map((tool) => tool.effect)
+                : yield* Effect.forEach(request.tools, (tool) =>
+                    effects.classify({ ...request, tool }),
+                  )
+            for (const [index, tool] of cohort.entries()) {
+              expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
+              if (tool.expected === 'read') expect(result[index], tool.name).toBe('read')
+              else expect(result[index], tool.name).not.toBe('read')
+            }
+          }).pipe(Effect.provide(context))
+        }).pipe(
+          Effect.scoped,
+          Effect.provideService(References.MinimumLogLevel, 'Debug'),
+          Effect.provideService(Logger.CurrentLoggers, loggers),
+        )
+      }).pipe(Effect.scoped)
     },
     LIVE_METADATA_COHORT_BUDGET_MILLIS,
   )

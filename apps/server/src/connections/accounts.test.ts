@@ -1,5 +1,5 @@
 import { describe, expect, it, layer } from '@effect/vitest'
-import { Effect, Option, Redacted, Ref, Schema } from 'effect'
+import { Layer, Effect, Option, Redacted, Ref, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import {
   AccountName,
@@ -77,231 +77,262 @@ const identityOf = Schema.decodeUnknownSync(AccountIdentity)
 const accountName = Schema.decodeUnknownSync(AccountName)
 
 describe.skipIf(!testDatabaseConfigured)('several accounts on one Integration', () => {
-  layer(connectionTestLayer)((test) => {
-    test.effect(
-      'names each account by who the service says signed in, and Vivid acts through the one it names',
-      () =>
+  layer(connectionTestLayer)(
+    'clock: names each account by who the service says signed in, and Vivid acts through the one it names',
+    (test) => {
+      test.effect(
+        'names each account by who the service says signed in, and Vivid acts through the one it names',
+        () =>
+          Effect.gen(function* () {
+            const { ownerActor, threadId } = yield* fixture()
+            const probe = yield* ConnectionProbe
+            const work = yield* connect(ownerActor, Option.some(identityOf('ada@work.example')))
+            const home = yield* connect(ownerActor, Option.some(identityOf('ada@home.example')))
+            expect(ConnectionState.guards.Ready(work.state)).toBe(true)
+            expect([work.identity, work.account]).toEqual([
+              'ada@work.example',
+              'Records (ada@work.example)',
+            ])
+            expect([home.identity, home.account]).toEqual([
+              'ada@home.example',
+              'Records (ada@home.example)',
+            ])
+
+            const listed = yield* connectionHandlers
+              .ListConnections()
+              .pipe(Effect.provideService(AuthContext, person(ownerActor)))
+            // Newest first, each under the name it was given when it was connected.
+            expect(listed.connections.map((item) => item.account)).toEqual([
+              'Records (ada@home.example)',
+              'Records (ada@work.example)',
+            ])
+
+            const vivid = AuthState.Vivid({
+              person: ownerActor.person,
+              workspace: ownerActor.workspace,
+              threadId,
+            })
+            const integrations = yield* connectionHandlers
+              .FindIntegrations({ query: 'records' })
+              .pipe(Effect.provideService(AuthContext, vivid))
+            expect(
+              integrations.integrations.filter(ConnectionMatch.guards.Account).map((entry) => ({
+                account: entry.account,
+                identity: entry.identity,
+              })),
+            ).toEqual([
+              { account: 'Records (ada@home.example)', identity: 'ada@home.example' },
+              { account: 'Records (ada@work.example)', identity: 'ada@work.example' },
+            ])
+
+            const tools = yield* connectionHandlers
+              .FindTools({ query: 'read records', limit: 25 })
+              .pipe(Effect.provideService(AuthContext, vivid))
+            expect(new Set(tools.tools.map((tool) => tool.account))).toEqual(
+              new Set(['Records (ada@work.example)', 'Records (ada@home.example)']),
+            )
+
+            // The account's name alone decides which Connection a call goes to.
+            const resolved = yield* connectionHandlers
+              .ResolveTool({ account: 'records (ADA@work.example)', tool: 'read' })
+              .pipe(Effect.provideService(AuthContext, vivid))
+            expect(resolved.connectionId).toBe(work.id)
+            const other = yield* connectionHandlers
+              .ResolveTool({ account: 'Records (ada@home.example)', tool: 'read' })
+              .pipe(Effect.provideService(AuthContext, vivid))
+            expect(other.connectionId).toBe(home.id)
+
+            yield* connectionHandlers
+              .UseTool(toolRequest(resolved.connectionId, 'read'))
+              .pipe(Effect.provideService(AuthContext, vivid))
+            // The Gate, and so an Approval, is asked about the account by its own name.
+            const asked = (yield* Ref.get(probe.checked))
+              .map((check) => check.action.target)
+              .filter(ActionTarget.guards.Connection)
+            expect(asked).toMatchObject([
+              { connectionId: work.id, account: 'Records (ada@work.example)' },
+            ])
+          }),
+      )
+    },
+  )
+
+  layer(connectionTestLayer)(
+    'clock: lets a Person name an account, change the name and take it away again',
+    (test) => {
+      test.effect('lets a Person name an account, change the name and take it away again', () =>
         Effect.gen(function* () {
-          const { ownerActor, threadId } = yield* fixture()
-          const probe = yield* ConnectionProbe
-          const work = yield* connect(ownerActor, Option.some(identityOf('ada@work.example')))
-          const home = yield* connect(ownerActor, Option.some(identityOf('ada@home.example')))
-          expect(ConnectionState.guards.Ready(work.state)).toBe(true)
-          expect([work.identity, work.account]).toEqual([
-            'ada@work.example',
-            'Records (ada@work.example)',
-          ])
-          expect([home.identity, home.account]).toEqual([
-            'ada@home.example',
-            'Records (ada@home.example)',
-          ])
+          const { ownerActor, memberActor, threadId } = yield* fixture()
+          const connected = yield* connect(ownerActor, Option.some(identityOf('ada@work.example')))
+          const rename = (id: ConnectionId, name: string | null, auth: AuthState) =>
+            connectionHandlers
+              .RenameConnection({ id, name })
+              .pipe(Effect.provideService(AuthContext, auth))
 
-          const listed = yield* connectionHandlers
-            .ListConnections()
-            .pipe(Effect.provideService(AuthContext, person(ownerActor)))
-          // Newest first, each under the name it was given when it was connected.
-          expect(listed.connections.map((item) => item.account)).toEqual([
-            'Records (ada@home.example)',
-            'Records (ada@work.example)',
-          ])
-
+          const named = yield* rename(connected.id, 'Work', person(ownerActor))
+          // The Person's word leads; who the service says it is stays a separate fact.
+          expect(named.connection).toMatchObject({
+            name: 'Work',
+            identity: 'ada@work.example',
+            account: 'Records (Work)',
+          })
           const vivid = AuthState.Vivid({
             person: ownerActor.person,
             workspace: ownerActor.workspace,
             threadId,
           })
-          const integrations = yield* connectionHandlers
-            .FindIntegrations({ query: 'records' })
-            .pipe(Effect.provideService(AuthContext, vivid))
-          expect(
-            integrations.integrations.filter(ConnectionMatch.guards.Account).map((entry) => ({
-              account: entry.account,
-              identity: entry.identity,
-            })),
-          ).toEqual([
-            { account: 'Records (ada@home.example)', identity: 'ada@home.example' },
-            { account: 'Records (ada@work.example)', identity: 'ada@work.example' },
-          ])
-
-          const tools = yield* connectionHandlers
-            .FindTools({ query: 'read records', limit: 25 })
-            .pipe(Effect.provideService(AuthContext, vivid))
-          expect(new Set(tools.tools.map((tool) => tool.account))).toEqual(
-            new Set(['Records (ada@work.example)', 'Records (ada@home.example)']),
-          )
-
-          // The account's name alone decides which Connection a call goes to.
           const resolved = yield* connectionHandlers
-            .ResolveTool({ account: 'records (ADA@work.example)', tool: 'read' })
+            .ResolveTool({ account: 'Records (Work)', tool: 'read' })
             .pipe(Effect.provideService(AuthContext, vivid))
-          expect(resolved.connectionId).toBe(work.id)
-          const other = yield* connectionHandlers
-            .ResolveTool({ account: 'Records (ada@home.example)', tool: 'read' })
+          expect(resolved.connectionId).toBe(connected.id)
+          // "the work one" and the address behind it both find the account.
+          const byAddress = yield* connectionHandlers
+            .FindIntegrations({ query: 'ada@work.example' })
             .pipe(Effect.provideService(AuthContext, vivid))
-          expect(other.connectionId).toBe(home.id)
+          expect(byAddress.integrations.find(ConnectionMatch.guards.Account)).toMatchObject({
+            account: 'Records (Work)',
+            identity: 'ada@work.example',
+          })
 
-          yield* connectionHandlers
-            .UseTool(toolRequest(resolved.connectionId, 'read'))
-            .pipe(Effect.provideService(AuthContext, vivid))
-          // The Gate, and so an Approval, is asked about the account by its own name.
-          const asked = (yield* Ref.get(probe.checked))
-            .map((check) => check.action.target)
-            .filter(ActionTarget.guards.Connection)
-          expect(asked).toMatchObject([
-            { connectionId: work.id, account: 'Records (ada@work.example)' },
-          ])
+          const cleared = yield* rename(connected.id, null, person(ownerActor))
+          expect(cleared.connection.account).toBe('Records (ada@work.example)')
+
+          // A name is the Person's to give: not Vivid's, and not another Person's.
+          expect(yield* rename(connected.id, 'Mine', vivid).pipe(Effect.flip)).toBeInstanceOf(
+            Forbidden,
+          )
+          expect(
+            (yield* rename(connected.id, 'Mine', person(memberActor)).pipe(Effect.flip))._tag,
+          ).toBe('NotFound')
         }),
-    )
+      )
+    },
+  )
 
-    test.effect('lets a Person name an account, change the name and take it away again', () =>
-      Effect.gen(function* () {
-        const { ownerActor, memberActor, threadId } = yield* fixture()
-        const connected = yield* connect(ownerActor, Option.some(identityOf('ada@work.example')))
-        const rename = (id: ConnectionId, name: string | null, auth: AuthState) =>
-          connectionHandlers
-            .RenameConnection({ id, name })
-            .pipe(Effect.provideService(AuthContext, auth))
-
-        const named = yield* rename(connected.id, 'Work', person(ownerActor))
-        // The Person's word leads; who the service says it is stays a separate fact.
-        expect(named.connection).toMatchObject({
-          name: 'Work',
-          identity: 'ada@work.example',
-          account: 'Records (Work)',
-        })
-        const vivid = AuthState.Vivid({
-          person: ownerActor.person,
-          workspace: ownerActor.workspace,
-          threadId,
-        })
-        const resolved = yield* connectionHandlers
-          .ResolveTool({ account: 'Records (Work)', tool: 'read' })
-          .pipe(Effect.provideService(AuthContext, vivid))
-        expect(resolved.connectionId).toBe(connected.id)
-        // "the work one" and the address behind it both find the account.
-        const byAddress = yield* connectionHandlers
-          .FindIntegrations({ query: 'ada@work.example' })
-          .pipe(Effect.provideService(AuthContext, vivid))
-        expect(byAddress.integrations.find(ConnectionMatch.guards.Account)).toMatchObject({
-          account: 'Records (Work)',
-          identity: 'ada@work.example',
-        })
-
-        const cleared = yield* rename(connected.id, null, person(ownerActor))
-        expect(cleared.connection.account).toBe('Records (ada@work.example)')
-
-        // A name is the Person's to give: not Vivid's, and not another Person's.
-        expect(yield* rename(connected.id, 'Mine', vivid).pipe(Effect.flip)).toBeInstanceOf(
-          Forbidden,
-        )
-        expect(
-          (yield* rename(connected.id, 'Mine', person(memberActor)).pipe(Effect.flip))._tag,
-        ).toBe('NotFound')
-      }),
-    )
-
-    test.effect('keeps an account usable when the service cannot be asked who it is', () =>
-      Effect.gen(function* () {
-        const { ownerActor } = yield* fixture()
-        const executor = yield* Executor
-        const silent = Executor.of({
-          ...executor,
-          identity: Effect.fn('Executor.Test.unreachable')(() =>
-            Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
-          ),
-        })
-        const connected = yield* connect(ownerActor, Option.none()).pipe(
-          Effect.provide(connectionStoreLayer, { local: true }),
-          Effect.provideService(Executor, silent),
-        )
-        expect(ConnectionState.guards.Ready(connected.state)).toBe(true)
-        expect([connected.identity, connected.account]).toEqual([null, 'Records'])
-      }),
-    )
-
-    test.effect(
-      'numbers an account by its place on the service, so a name is never handed on',
-      () =>
+  layer(connectionTestLayer)(
+    'clock: keeps an account usable when the service cannot be asked who it is',
+    (test) => {
+      test.effect('keeps an account usable when the service cannot be asked who it is', () =>
         Effect.gen(function* () {
-          const { ownerActor, threadId } = yield* fixture()
+          const { ownerActor } = yield* fixture()
+          const executor = yield* Executor
+          const silent = Executor.of({
+            ...executor,
+            identity: Effect.fn('Executor.Test.unreachable')(() =>
+              Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
+            ),
+          })
+          const connected = yield* Effect.gen(function* () {
+            // Capture the identity-failing Executor rather than the harness's default account reader.
+            const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+            return yield* connect(ownerActor, Option.none()).pipe(Effect.provide(context))
+          }).pipe(Effect.scoped, Effect.provideService(Executor, silent))
+          expect(ConnectionState.guards.Ready(connected.state)).toBe(true)
+          expect([connected.identity, connected.account]).toEqual([null, 'Records'])
+        }),
+      )
+    },
+  )
+
+  layer(connectionTestLayer)(
+    'clock: numbers an account by its place on the service, so a name is never handed on',
+    (test) => {
+      test.effect(
+        'numbers an account by its place on the service, so a name is never handed on',
+        () =>
+          Effect.gen(function* () {
+            const { ownerActor, threadId } = yield* fixture()
+            const first = yield* connect(ownerActor, Option.none())
+            const second = yield* connect(ownerActor, Option.none())
+            expect([first.account, second.account]).toEqual(['Records', 'Records (2)'])
+            const vivid = AuthState.Vivid({
+              person: ownerActor.person,
+              workspace: ownerActor.workspace,
+              threadId,
+            })
+            // Vivid was shown the first account as "Records". The Person then names that account.
+            const renamed = yield* connectionHandlers
+              .RenameConnection({ id: first.id, name: 'Work' })
+              .pipe(Effect.provideService(AuthContext, person(ownerActor)))
+            expect(renamed.connection.account).toBe('Records (Work)')
+            const listed = yield* connectionHandlers
+              .ListConnections()
+              .pipe(Effect.provideService(AuthContext, person(ownerActor)))
+            // The second account keeps its own name. It does not become "Records".
+            expect(listed.connections.map((item) => item.account).toSorted()).toEqual([
+              'Records (2)',
+              'Records (Work)',
+            ])
+            // So the name Vivid still holds for the first account reaches no account at all, and
+            // never the second one.
+            expect(
+              (yield* connectionHandlers
+                .ResolveTool({ account: 'Records', tool: 'read' })
+                .pipe(Effect.provideService(AuthContext, vivid), Effect.flip))._tag,
+            ).toBe('NotFound')
+            const stillSecond = yield* connectionHandlers
+              .ResolveTool({ account: 'Records (2)', tool: 'read' })
+              .pipe(Effect.provideService(AuthContext, vivid))
+            expect(stillSecond.connectionId).toBe(second.id)
+          }),
+      )
+    },
+  )
+
+  layer(connectionTestLayer)(
+    'clock: refuses a name another account on the same service already has',
+    (test) => {
+      test.effect('refuses a name another account on the same service already has', () =>
+        Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
           const first = yield* connect(ownerActor, Option.none())
           const second = yield* connect(ownerActor, Option.none())
-          expect([first.account, second.account]).toEqual(['Records', 'Records (2)'])
-          const vivid = AuthState.Vivid({
-            person: ownerActor.person,
-            workspace: ownerActor.workspace,
-            threadId,
-          })
-          // Vivid was shown the first account as "Records". The Person then names that account.
-          const renamed = yield* connectionHandlers
-            .RenameConnection({ id: first.id, name: 'Work' })
-            .pipe(Effect.provideService(AuthContext, person(ownerActor)))
-          expect(renamed.connection.account).toBe('Records (Work)')
-          const listed = yield* connectionHandlers
-            .ListConnections()
-            .pipe(Effect.provideService(AuthContext, person(ownerActor)))
-          // The second account keeps its own name. It does not become "Records".
-          expect(listed.connections.map((item) => item.account).toSorted()).toEqual([
-            'Records (2)',
-            'Records (Work)',
-          ])
-          // So the name Vivid still holds for the first account reaches no account at all, and
-          // never the second one.
+          const rename = (id: ConnectionId, name: string | null) =>
+            connectionHandlers
+              .RenameConnection({ id, name })
+              .pipe(Effect.provideService(AuthContext, person(ownerActor)))
+          yield* rename(first.id, 'Work')
+          // Case and spaces do not make it a different name.
+          expect((yield* rename(second.id, 'work').pipe(Effect.flip))._tag).toBe('Conflict')
+          // Saving the name an account already has is not a clash with itself.
+          expect((yield* rename(first.id, 'Work')).connection.name).toBe('Work')
+          // A third account cannot be added under it either, and nothing is begun for it.
+          const probe = yield* ConnectionProbe
+          const begins = yield* Ref.get(probe.begins)
           expect(
             (yield* connectionHandlers
-              .ResolveTool({ account: 'Records', tool: 'read' })
-              .pipe(Effect.provideService(AuthContext, vivid), Effect.flip))._tag,
-          ).toBe('NotFound')
-          const stillSecond = yield* connectionHandlers
-            .ResolveTool({ account: 'Records (2)', tool: 'read' })
-            .pipe(Effect.provideService(AuthContext, vivid))
-          expect(stillSecond.connectionId).toBe(second.id)
+              .BeginConnection({ service: serviceId, name: 'Work', shared: false })
+              .pipe(Effect.provideService(AuthContext, person(ownerActor)), Effect.flip))._tag,
+          ).toBe('Conflict')
+          expect(yield* Ref.get(probe.begins)).toBe(begins)
         }),
-    )
+      )
+    },
+  )
 
-    test.effect('refuses a name another account on the same service already has', () =>
-      Effect.gen(function* () {
-        const { ownerActor } = yield* fixture()
-        const first = yield* connect(ownerActor, Option.none())
-        const second = yield* connect(ownerActor, Option.none())
-        const rename = (id: ConnectionId, name: string | null) =>
-          connectionHandlers
-            .RenameConnection({ id, name })
+  layer(connectionTestLayer)(
+    'clock: does not move an account’s authorization revision when it is named',
+    (test) => {
+      test.effect('does not move an account’s authorization revision when it is named', () =>
+        Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          const connected = yield* connect(ownerActor, Option.some(identityOf('ada@work.example')))
+          const store = yield* ConnectionStore
+          const before = yield* store.get(ownerActor, connected.id)
+          yield* TestClock.adjust('1 minute')
+          yield* connectionHandlers
+            .RenameConnection({ id: connected.id, name: 'Work' })
             .pipe(Effect.provideService(AuthContext, person(ownerActor)))
-        yield* rename(first.id, 'Work')
-        // Case and spaces do not make it a different name.
-        expect((yield* rename(second.id, 'work').pipe(Effect.flip))._tag).toBe('Conflict')
-        // Saving the name an account already has is not a clash with itself.
-        expect((yield* rename(first.id, 'Work')).connection.name).toBe('Work')
-        // A third account cannot be added under it either, and nothing is begun for it.
-        const probe = yield* ConnectionProbe
-        const begins = yield* Ref.get(probe.begins)
-        expect(
-          (yield* connectionHandlers
-            .BeginConnection({ service: serviceId, name: 'Work', shared: false })
-            .pipe(Effect.provideService(AuthContext, person(ownerActor)), Effect.flip))._tag,
-        ).toBe('Conflict')
-        expect(yield* Ref.get(probe.begins)).toBe(begins)
-      }),
-    )
+          const after = yield* store.get(ownerActor, connected.id)
+          // `saveState` compares this revision: a sign-in completing while the Person names the
+          // account must still find the revision it read.
+          expect([after.name, after.updatedAt]).toEqual(['Work', before.updatedAt])
+        }),
+      )
+    },
+  )
 
-    test.effect('does not move an account’s authorization revision when it is named', () =>
-      Effect.gen(function* () {
-        const { ownerActor } = yield* fixture()
-        const connected = yield* connect(ownerActor, Option.some(identityOf('ada@work.example')))
-        const store = yield* ConnectionStore
-        const before = yield* store.get(ownerActor, connected.id)
-        yield* TestClock.adjust('1 minute')
-        yield* connectionHandlers
-          .RenameConnection({ id: connected.id, name: 'Work' })
-          .pipe(Effect.provideService(AuthContext, person(ownerActor)))
-        const after = yield* store.get(ownerActor, connected.id)
-        // `saveState` compares this revision: a sign-in completing while the Person names the
-        // account must still find the revision it read.
-        expect([after.name, after.updatedAt]).toEqual(['Work', before.updatedAt])
-      }),
-    )
-
+  layer(connectionTestLayer)((test) => {
     test.effect('keeps the name a Person gave when they added the account', () =>
       Effect.gen(function* () {
         const { ownerActor } = yield* fixture()
@@ -318,54 +349,59 @@ describe.skipIf(!testDatabaseConfigured)('several accounts on one Integration', 
         })
       }),
     )
-
-    test.effect('lets Vivid ask for one more account only where there is one already', () =>
-      Effect.gen(function* () {
-        const { ownerActor, memberActor, threadId } = yield* fixture()
-        const vivid = (actor: Actor) =>
-          AuthState.Vivid({ person: actor.person, workspace: actor.workspace, threadId })
-        const offer = (wanted: 'Service' | 'Another', actor: Actor) =>
-          connectionHandlers
-            .OfferConnection({ service: serviceId, reason: 'To use your work account', wanted })
-            .pipe(Effect.provideService(AuthContext, vivid(actor)))
-        const isAnother = Schema.is(AnotherAccountMessage)
-
-        // Nothing connected: asking for "another" is asking for the service.
-        const first = yield* offer('Another', ownerActor)
-        expect(isAnother(first)).toBe(false)
-        expect(first.ready).toBe(false)
-
-        const connected = yield* connect(ownerActor, Option.some(identityOf('ada@home.example')))
-        const found = yield* connectionHandlers
-          .FindTools({ query: 'records', limit: 25 })
-          .pipe(Effect.provideService(AuthContext, vivid(ownerActor)))
-        // A connected service is no longer on offer, and is the one another account is asked on.
-        expect(found.unconnected).toEqual([])
-        expect(found.connected.map((service) => service.id)).toEqual([serviceId])
-
-        // The service is there, so the ordinary card is settled.
-        expect((yield* offer('Service', ownerActor)).ready).toBe(true)
-        const another = yield* offer('Another', ownerActor)
-        expect(another.ready).toBe(false)
-        // The card carries when Vivid asked. The account that is there was begun before that
-        // moment, so it does not answer the request.
-        const askedAt = Option.map(
-          Option.liftPredicate(another, isAnother),
-          (message) => message.another.askedAt,
-        )
-        expect(Option.map(askedAt, (moment) => moment >= connected.createdAt)).toEqual(
-          Option.some(true),
-        )
-
-        // Another Person has no account on it: for them the service is still simply on offer.
-        const theirs = yield* connectionHandlers
-          .FindTools({ query: 'records', limit: 25 })
-          .pipe(Effect.provideService(AuthContext, vivid(memberActor)))
-        expect(theirs.connected).toEqual([])
-        expect(isAnother(yield* offer('Another', memberActor))).toBe(false)
-      }),
-    )
   })
+
+  layer(connectionTestLayer)(
+    'clock: lets Vivid ask for one more account only where there is one already',
+    (test) => {
+      test.effect('lets Vivid ask for one more account only where there is one already', () =>
+        Effect.gen(function* () {
+          const { ownerActor, memberActor, threadId } = yield* fixture()
+          const vivid = (actor: Actor) =>
+            AuthState.Vivid({ person: actor.person, workspace: actor.workspace, threadId })
+          const offer = (wanted: 'Service' | 'Another', actor: Actor) =>
+            connectionHandlers
+              .OfferConnection({ service: serviceId, reason: 'To use your work account', wanted })
+              .pipe(Effect.provideService(AuthContext, vivid(actor)))
+          const isAnother = Schema.is(AnotherAccountMessage)
+
+          // Nothing connected: asking for "another" is asking for the service.
+          const first = yield* offer('Another', ownerActor)
+          expect(isAnother(first)).toBe(false)
+          expect(first.ready).toBe(false)
+
+          const connected = yield* connect(ownerActor, Option.some(identityOf('ada@home.example')))
+          const found = yield* connectionHandlers
+            .FindTools({ query: 'records', limit: 25 })
+            .pipe(Effect.provideService(AuthContext, vivid(ownerActor)))
+          // A connected service is no longer on offer, and is the one another account is asked on.
+          expect(found.unconnected).toEqual([])
+          expect(found.connected.map((service) => service.id)).toEqual([serviceId])
+
+          // The service is there, so the ordinary card is settled.
+          expect((yield* offer('Service', ownerActor)).ready).toBe(true)
+          const another = yield* offer('Another', ownerActor)
+          expect(another.ready).toBe(false)
+          // The card carries when Vivid asked. The account that is there was begun before that
+          // moment, so it does not answer the request.
+          const askedAt = Option.map(
+            Option.liftPredicate(another, isAnother),
+            (message) => message.another.askedAt,
+          )
+          expect(Option.map(askedAt, (moment) => moment >= connected.createdAt)).toEqual(
+            Option.some(true),
+          )
+
+          // Another Person has no account on it: for them the service is still simply on offer.
+          const theirs = yield* connectionHandlers
+            .FindTools({ query: 'records', limit: 25 })
+            .pipe(Effect.provideService(AuthContext, vivid(memberActor)))
+          expect(theirs.connected).toEqual([])
+          expect(isAnother(yield* offer('Another', memberActor))).toBe(false)
+        }),
+      )
+    },
+  )
 })
 
 describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', () => {
@@ -405,7 +441,11 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
           email: 'ada@work.example',
           avatarUrl: 'https://images.example/ada.png',
         })
-        const executor = yield* Executor.pipe(Effect.provide(remote.configured))
+        const executor = yield* Effect.gen(function* () {
+          // This HTTP recorder observes the app check for this signed-in account.
+          const context = yield* Layer.build(remote.configured)
+          return yield* Executor.pipe(Effect.provide(context))
+        }).pipe(Effect.scoped)
         expect(yield* executor.identity(references(Option.some('account')))).toEqual(
           Option.some('ada@work.example'),
         )
@@ -417,7 +457,11 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
       Effect.gen(function* () {
         const remote = yield* hostedExecutorFixture()
         yield* Ref.set(remote.identity, { email: `${'a'.repeat(200)}@x.example`, username: 'ada' })
-        const executor = yield* Executor.pipe(Effect.provide(remote.configured))
+        const executor = yield* Effect.gen(function* () {
+          // The candidate identity payloads and their requests belong to this validation case.
+          const context = yield* Layer.build(remote.configured)
+          return yield* Executor.pipe(Effect.provide(context))
+        }).pipe(Effect.scoped)
         expect(yield* executor.identity(references(Option.some('account')))).toEqual(
           Option.some('ada'),
         )
@@ -429,7 +473,11 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
       () =>
         Effect.gen(function* () {
           const remote = yield* hostedExecutorFixture()
-          const executor = yield* Executor.pipe(Effect.provide(remote.configured))
+          const executor = yield* Effect.gen(function* () {
+            // Keep the no-check and public-account request receipts local to this assertion.
+            const context = yield* Layer.build(remote.configured)
+            return yield* Executor.pipe(Effect.provide(context))
+          }).pipe(Effect.scoped)
           expect(yield* executor.identity(references(Option.some('account')))).toEqual(
             Option.none(),
           )

@@ -647,7 +647,7 @@ const makeSend = (
     }
     const remaining = Math.max(0, request.expiresAt - (yield* Clock.currentTimeMillis))
     const answered = yield* Deferred.await(ticket.answer).pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.raceFirst(
         Deferred.await(subscription.closed).pipe(Effect.as(Option.none<DeviceAnswer>())),
       ),
@@ -655,7 +655,7 @@ const makeSend = (
     )
     return yield* Option.match(Option.flatten(answered), {
       onNone: () => ledger.settle(request.id, ticket),
-      onSome: (answer) => Effect.succeed(Option.some(answer)),
+      onSome: (answer) => Effect.succeedSome(answer),
     })
   })
 
@@ -681,7 +681,7 @@ const makeSend = (
     return yield* awaitAnswer(request, ticket).pipe(
       // Dispatch has a durable row and may already have reached the page. A failed settlement
       // write cannot turn uncertainty into a retryable refusal; reconcile will close the row.
-      Effect.catch(() => Effect.succeed(Option.none<DeviceAnswer>())),
+      Effect.orElseSucceed(() => Option.none<DeviceAnswer>()),
       // A Run that is stopped mid-request has nobody left to tell. The row is still closed here;
       // if that write fails it stays `Dispatched` until its deadline, and `reconcile` closes it.
       Effect.onInterrupt(() =>
@@ -858,17 +858,13 @@ const makeWindows = ({
           onSome: windowOutcome,
         }),
       ),
-      Effect.catchTag('NoDeviceConnected', () =>
-        Effect.succeed(WindowOutcome.cases.NotConnected.make({})),
-      ),
-      Effect.catchTag('NoActingRun', () =>
-        Effect.succeed(WindowOutcome.cases.RunRequired.make({})),
-      ),
-      Effect.catchTag('RunNotWorking', () =>
-        Effect.succeed(WindowOutcome.cases.RunRequired.make({})),
-      ),
-      Effect.catchTag('DeviceBusy', () => Effect.succeed(WindowOutcome.cases.Busy.make({}))),
-      Effect.catchTag('WindowUnavailable', () => Effect.succeed(windowsUnavailable())),
+      Effect.catchTags({
+        NoDeviceConnected: () => Effect.succeed(WindowOutcome.cases.NotConnected.make({})),
+        NoActingRun: () => Effect.succeed(WindowOutcome.cases.RunRequired.make({})),
+        RunNotWorking: () => Effect.succeed(WindowOutcome.cases.RunRequired.make({})),
+        DeviceBusy: () => Effect.succeed(WindowOutcome.cases.Busy.make({})),
+        WindowUnavailable: () => Effect.succeed(windowsUnavailable()),
+      }),
     )
   })
   return { window, ended }
@@ -1007,7 +1003,7 @@ export const deviceLayer = Layer.effect(
             authority: input.authority,
           }).pipe(
             Effect.catchTag('WindowUnavailable', () =>
-              Effect.succeed(Option.some(DeviceAnswer.cases.Failed.make({}))),
+              Effect.succeedSome(DeviceAnswer.cases.Failed.make({})),
             ),
           )
           return Option.match(answer, {

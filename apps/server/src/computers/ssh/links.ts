@@ -111,7 +111,7 @@ export const links = <Key>(authorizedKeys: string) => {
   const attempt = (key: Key, token: symbol, target: LinkTarget) =>
     Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
-        if (pending.get(key) !== token) return yield* Effect.fail(new LinkUnreachable())
+        if (pending.get(key) !== token) return yield* new LinkUnreachable()
         const scope = yield* Scope.make()
         const link = yield* restore(openLink(target).pipe(Scope.provide(scope))).pipe(
           Effect.onExit((exit) =>
@@ -127,7 +127,7 @@ export const links = <Key>(authorizedKeys: string) => {
         // Asked after the cleaning as well: the machine may have stopped during it.
         if (pending.get(key) !== token) {
           yield* Scope.close(scope, Exit.void)
-          return yield* Effect.fail(new LinkUnreachable())
+          return yield* new LinkUnreachable()
         }
         pending.delete(key)
         open.set(key, { link, scope })
@@ -186,7 +186,7 @@ export const links = <Key>(authorizedKeys: string) => {
       Effect.gen(function* () {
         // The owner is closing or has closed: a connection still in the map is on its way out and
         // is not handed to a new caller.
-        if (closed) return yield* Effect.fail(new LinkUnreachable())
+        if (closed) return yield* new LinkUnreachable()
         const found = open.get(key)
         if (found === undefined) return yield* dial(key, locate)
         if (found.link.alive()) return found.link

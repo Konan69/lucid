@@ -86,9 +86,9 @@ export const guestDriver = Effect.fn('Machine.boat.guest.driver')(function* (
 ) {
   const receipt = yield* api.command(id, key, guestCommand, 180)
   if (receipt.exitCode !== 0 || receipt.timedOut)
-    return yield* Effect.fail(new MachineOperationFailed({ operation: 'desktop-session' }))
+    return yield* new MachineOperationFailed({ operation: 'desktop-session' })
   if (receipt.stdoutTruncated === true)
-    return yield* Effect.fail(new MachineResponseInvalid({ operation: 'desktop-session' }))
+    return yield* new MachineResponseInvalid({ operation: 'desktop-session' })
   const endpoint = yield* decodeEndpoint(receipt.stdout).pipe(
     Effect.mapError(() => new MachineResponseInvalid({ operation: 'desktop-session' })),
   )

@@ -370,7 +370,7 @@ const toolEffectsLayerWithin = (budget: Duration.Input) =>
         // the bounded provider result can fill the cache. Scope shutdown still
         // interrupts it; failed cache exits never become successful answers.
         const pending = yield* Cache.get(cache, key).pipe(
-          Effect.catch(() => Effect.succeed<typeof ExecutorTool.Type.effect>('write')),
+          Effect.orElseSucceed((): typeof ExecutorTool.Type.effect => 'write'),
           Effect.forkIn(scope),
         )
         return yield* Fiber.join(pending)

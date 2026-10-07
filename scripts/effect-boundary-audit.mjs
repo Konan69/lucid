@@ -28,6 +28,9 @@ const promiseOperationKinds = new Map([
 const effectOperationKinds = new Map([
   ['runPromise', 'effect-run-promise'],
   ['runPromiseExit', 'effect-run-promise'],
+  // The `With` forms take a Context first and start the Effect the same way.
+  ['runPromiseWith', 'effect-run-promise'],
+  ['runPromiseExitWith', 'effect-run-promise'],
   ['tryPromise', 'effect-try-promise'],
   ['promise', 'effect-promise-adapter'],
   ['async', 'effect-async-adapter'],

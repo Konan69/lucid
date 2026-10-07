@@ -133,7 +133,7 @@ export const boatMachineLayer = Layer.effect(
             input.command.length < 1 ||
             input.command.length > 8000
           )
-            return yield* Effect.fail(new MachineInputInvalid())
+            return yield* new MachineInputInvalid()
           const identity = yield* accepted(input.key)
           const receipt = yield* api.command(
             identity.id,
@@ -142,7 +142,7 @@ export const boatMachineLayer = Layer.effect(
             input.timeoutSeconds,
           )
           if (receipt.exitCode === null)
-            return yield* Effect.fail(new MachineResponseInvalid({ operation: 'command-exit' }))
+            return yield* new MachineResponseInvalid({ operation: 'command-exit' })
           const output = receipt.stdout + receipt.stderr
           return {
             exitCode: receipt.exitCode,

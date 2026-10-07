@@ -1,6 +1,7 @@
 import type { Envelope, ErrorEvent, Transport } from '@sentry/core'
+import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from '@effect/vitest'
 import { guarded, outbound, place, scrub, scrubBreadcrumb } from './scrub'
 
 /** What a Person wrote. None of it may be anywhere in a report that leaves. */
@@ -343,26 +344,34 @@ describe('what reaches the transport', () => {
     for (const envelope of others) expect(Option.isNone(outbound(envelope))).toBe(true)
   })
 
-  it('hands the inner transport only what is allowed, and answers the rest as sent', async () => {
-    const seen: Array<Envelope> = []
-    const inner: Transport = {
-      send: (envelope) => {
-        seen.push(envelope)
-        return Promise.resolve({ statusCode: 200 })
-      },
-      flush: () => Promise.resolve(true),
-    }
-    const transport = guarded(inner)
-    expect(
-      await transport.send([
-        { sent_at: sentAt },
-        [[{ type: 'client_report' }, { timestamp: 1, discarded_events: [] }]],
-      ]),
-    ).toEqual({})
-    expect(seen).toEqual([])
-    expect(await transport.send(withAttachment)).toEqual({ statusCode: 200 })
-    expect(seen).toHaveLength(1)
-    expect(JSON.stringify(seen)).not.toContain(SECRET)
-    expect(JSON.stringify(seen)).not.toContain('screenshot.png')
-  })
+  it.effect('hands the inner transport only what is allowed, and answers the rest as sent', () =>
+    Effect.gen(function* () {
+      const seen: Array<Envelope> = []
+      const inner: Transport = {
+        send: (envelope) => {
+          seen.push(envelope)
+          return Promise.resolve({ statusCode: 200 })
+        },
+        flush: () => Promise.resolve(true),
+      }
+      const transport = guarded(inner)
+      expect(
+        yield* Effect.promise(() =>
+          Promise.resolve(
+            transport.send([
+              { sent_at: sentAt },
+              [[{ type: 'client_report' }, { timestamp: 1, discarded_events: [] }]],
+            ]),
+          ),
+        ),
+      ).toEqual({})
+      expect(seen).toEqual([])
+      expect(yield* Effect.promise(() => Promise.resolve(transport.send(withAttachment)))).toEqual({
+        statusCode: 200,
+      })
+      expect(seen).toHaveLength(1)
+      expect(JSON.stringify(seen)).not.toContain(SECRET)
+      expect(JSON.stringify(seen)).not.toContain('screenshot.png')
+    }),
+  )
 })

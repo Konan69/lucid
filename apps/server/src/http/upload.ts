@@ -159,7 +159,7 @@ export const multipartRequest = Effect.fn('Http.Library.multipartRequest')(funct
   )
   const size = envelope['content-length']
   if (size !== undefined && size > MAX_BODY_BYTES)
-    return yield* Effect.fail(new UploadTooLarge({ exceeded: 'Body' }))
+    return yield* new UploadTooLarge({ exceeded: 'Body' })
   let failure = Option.none<MultipartParser.MultipartError>()
   MultipartParser.make({
     headers,

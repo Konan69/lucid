@@ -24,7 +24,7 @@ export type PushDestination = typeof PushDestination.Type
 export const PushTarget = Schema.Struct({
   id: PushTargetId,
   destination: PushDestination,
-  createdAt: Schema.Number,
+  createdAt: Schema.Finite,
 })
 export interface PushTarget extends Schema.Schema.Type<typeof PushTarget> {}
 export const RegisterPushTargetRequest = Schema.Struct({ destination: PushDestination })
@@ -36,7 +36,7 @@ export const PushKeyResponse = Schema.Struct({ publicKey })
 export const PushOutcome = Schema.TaggedUnion({
   Present: {},
   NoTargets: {},
-  Attempted: { accepted: Schema.Number, failed: Schema.Number, uncertain: Schema.Number },
+  Attempted: { accepted: Schema.Finite, failed: Schema.Finite, uncertain: Schema.Finite },
 })
 export type PushOutcome = typeof PushOutcome.Type
 

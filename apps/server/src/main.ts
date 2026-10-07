@@ -90,7 +90,7 @@ const memoryLayer = learningLayer.pipe(
 )
 
 /** The process entry point only selects implementations and owns their scoped lifetime. */
-const serverProgram = Effect.fn('Server.launch')(function* () {
+const serverProgram = Effect.gen(function* () {
   // Refuse before configuration and Layer acquisition: server misconfiguration must never spend
   // a document's durable ingestion budget or accept uploads whose extraction cannot be bounded.
   yield* extractionAdmission
@@ -186,6 +186,6 @@ const serverProgram = Effect.fn('Server.launch')(function* () {
     ),
   ).pipe(Layer.provide(schedules), Layer.provide(server))
   return yield* Layer.launch(application)
-})()
+}).pipe(Effect.withSpan('Server.launch'))
 
 NodeRuntime.runMain(serverProgram)

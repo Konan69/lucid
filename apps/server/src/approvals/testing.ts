@@ -120,13 +120,13 @@ const ports = Layer.effectContext(
           Judgment.guards.PersonalFailure(judgment) &&
           rules.some((rule) => RuleScope.guards.Personal(rule.scope))
         )
-          return yield* Effect.fail(new RulesNotJudged({}))
+          return yield* new RulesNotJudged({})
         if (
           Judgment.guards.Hostile(judgment) &&
           rules.some((rule) => RuleScope.guards.Personal(rule.scope))
         )
           return rules.filter((rule) => RuleScope.guards.Personal(rule.scope))
-        if (Judgment.guards.Failed(judgment)) return yield* Effect.fail(new RulesNotJudged({}))
+        if (Judgment.guards.Failed(judgment)) return yield* new RulesNotJudged({})
         return Judgment.guards.None(judgment) ? [] : rules
       }),
     })
@@ -155,7 +155,7 @@ const ports = Layer.effectContext(
         if (Option.isSome(gate)) yield* Deferred.await(gate.value)
         yield* Ref.update(state.deliveries, (deliveries) => deliveries.concat([delivery]))
         const failure = yield* Ref.get(state.deliveryFailure)
-        if (Option.isSome(failure)) return yield* Effect.fail(failure.value)
+        if (Option.isSome(failure)) return yield* failure.value
         return {
           runId: RunId.make(`test-${delivery.idempotencyKey}`),
           offset: '0',
@@ -166,7 +166,7 @@ const ports = Layer.effectContext(
       deliver: Effect.fn('TrustTest.deliver')(function* (delivery) {
         yield* Ref.update(state.deliveries, (deliveries) => deliveries.concat([delivery]))
         const failure = yield* Ref.get(state.deliveryFailure)
-        if (Option.isSome(failure)) return yield* Effect.fail(failure.value)
+        if (Option.isSome(failure)) return yield* failure.value
         return Run.make({
           id: RunId.make(NodeCrypto.randomUUID()),
           threadId: delivery.threadId,
@@ -188,7 +188,8 @@ const ports = Layer.effectContext(
     })
     const changes = Changes.of({
       publish: Effect.fn('TrustTest.publish')(function* (topics) {
-        if (yield* Ref.get(state.changesDefect)) yield* Effect.die('Injected crash after recording')
+        if (yield* Ref.get(state.changesDefect))
+          return yield* Effect.die('Injected crash after recording')
         yield* Ref.update(state.topics, (previous) => previous.concat(topics))
       }),
       subscribe: () => Effect.succeed(Stream.never),
@@ -204,13 +205,17 @@ const ports = Layer.effectContext(
   }),
 )
 
-const foundation = auditLayer.pipe(Layer.provideMerge(testDatabaseLayer), Layer.provideMerge(ports))
+const foundation = auditLayer.pipe(Layer.provideMerge(ports))
 const policy = ruleStoreLayer.pipe(Layer.provideMerge(foundation))
 /** Production stores over the test ports, for a test that composes the gate with other production Layers. */
-export const stores = Layer.merge(approvalStoreLayer, inputStoreLayer).pipe(
+export const storeServices = Layer.merge(approvalStoreLayer, inputStoreLayer).pipe(
   Layer.provideMerge(policy),
 )
-export const trustTestLayer = gateLayer.pipe(Layer.provideMerge(stores))
+/** Stateful observations and stores are acquired per case over the suite's shared database. */
+export const trustTestServices = gateLayer.pipe(Layer.provideMerge(storeServices))
+/** Complete fixtures remain available to suites that compose their own dependency graph. */
+export const stores = storeServices.pipe(Layer.provideMerge(testDatabaseLayer))
+export const trustTestLayer = trustTestServices.pipe(Layer.provideMerge(testDatabaseLayer))
 
 /** Teardown uses the same live adapter while its Layer is still scoped, and cleanup faults fail tests. */
 const cleanup = Effect.fn('TrustTest.cleanup')(function* (

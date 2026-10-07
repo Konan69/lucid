@@ -1,6 +1,6 @@
 import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem'
 import * as NodePath from '@effect/platform-node/NodePath'
-import { describe, expect, it } from '@effect/vitest'
+import { expect, layer } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
 import * as FileSystem from 'effect/FileSystem'
 import * as Layer from 'effect/Layer'
@@ -22,7 +22,8 @@ const makeWorld = Effect.fn('ComputerStateTest.world')(function* () {
   const first = path.join(root, 'first')
   const second = path.join(root, 'second')
   yield* fs.makeDirectory(first)
-  const archive = directoryArchive(path.join(root, 'archive')).pipe(Layer.provide(platform))
+  // Each case owns its archive and directory until its test scope closes.
+  const archive = yield* Layer.build(directoryArchive(path.join(root, 'archive')))
   const write = (home: string, relative: string, text: string) =>
     Effect.gen(function* () {
       yield* fs.makeDirectory(path.dirname(path.join(home, relative)), { recursive: true })
@@ -32,7 +33,7 @@ const makeWorld = Effect.fn('ComputerStateTest.world')(function* () {
   return { fs, path, first, second, archive, write, read }
 })
 
-describe('Computer state', () => {
+layer(platform)('Computer state', (it) => {
   it.effect('a second machine becomes the Computer from the archive alone', () =>
     Effect.gen(function* () {
       const { fs, path, first, second, archive, write, read } = yield* makeWorld()
@@ -51,7 +52,7 @@ describe('Computer state', () => {
       expect((yield* fs.stat(path.join(second, 'bin/run.sh'))).mode & 0o777).toBe(0o755)
       expect(yield* fs.readLink(path.join(second, 'current'))).toBe('notes/plan.md')
       expect(yield* restoredRevision({ computerId, home: second })).toEqual(Option.some(1))
-    }).pipe(Effect.provide(platform)),
+    }),
   )
 
   it.effect('regenerable state and the restore marker never reach the archive', () =>
@@ -69,7 +70,7 @@ describe('Computer state', () => {
       expect(yield* fs.exists(path.join(second, 'app/node_modules'))).toBe(false)
       expect(yield* fs.exists(path.join(second, '.cache'))).toBe(false)
       expect(yield* restoredRevision({ computerId, home: second })).toEqual(Option.some(1))
-    }).pipe(Effect.provide(platform)),
+    }),
   )
 
   it.effect('a later capture sends only what changed and restore removes what was deleted', () =>
@@ -96,7 +97,7 @@ describe('Computer state', () => {
       expect(yield* read(second, 'edit.txt')).toBe('after')
       expect(yield* read(second, 'keep.txt')).toBe('same')
       expect(yield* fs.exists(path.join(second, 'gone.txt'))).toBe(false)
-    }).pipe(Effect.provide(platform)),
+    }),
   )
 
   it.effect('a corrupt object fails the restore and the machine is not marked restored', () =>
@@ -116,7 +117,7 @@ describe('Computer state', () => {
       expect(failure._tag).toBe('ObjectCorrupt')
       expect(yield* fs.exists(path.join(second, 'secret.txt'))).toBe(false)
       expect(yield* restoredRevision({ computerId, home: second })).toEqual(Option.none())
-    }).pipe(Effect.provide(platform)),
+    }),
   )
 
   it.effect('a machine with a stale view cannot overwrite a newer capture', () =>
@@ -141,7 +142,7 @@ describe('Computer state', () => {
       }).pipe(Effect.provide(archive), Effect.flip)
 
       expect(stale).toEqual(new ManifestConflict({ computerId, held: 2, offered: 2 }))
-    }).pipe(Effect.provide(platform)),
+    }),
   )
 
   it.effect('a Computer that was never captured has nothing to restore', () =>
@@ -152,6 +153,6 @@ describe('Computer state', () => {
         Effect.flip,
       )
       expect(failure._tag).toBe('NothingToRestore')
-    }).pipe(Effect.provide(platform)),
+    }),
   )
 })

@@ -39,8 +39,8 @@ export type RunEnding = typeof RunEnding.Type
 
 /** A busy Thread keeps its first Person's authority; only a reserved turn may reach Flue. */
 export const TurnReservation = Schema.TaggedUnion({
-  Reserved: { turn: Schema.Number },
-  Replayed: { turn: Schema.Number, receipt: Admitted },
+  Reserved: { turn: Schema.Finite },
+  Replayed: { turn: Schema.Finite, receipt: Admitted },
   Busy: { person: PersonSummary },
 })
 export type TurnReservation = typeof TurnReservation.Type
@@ -183,7 +183,7 @@ export interface RunStoreService {
     ending: RunEnding,
   ) => Effect.Effect<boolean, DatabaseInfrastructureError>
   /** Every Run still marked as working, for picking their observation back up after a restart. */
-  readonly working: () => Effect.Effect<ReadonlyArray<WorkingRun>, DatabaseInfrastructureError>
+  readonly working: Effect.Effect<ReadonlyArray<WorkingRun>, DatabaseInfrastructureError>
   /** A Thread's most recent Runs, oldest first, each naming the Person Vivid acted for. */
   readonly list: (
     threadId: ThreadId,
@@ -252,7 +252,7 @@ const stateOf = Effect.fn('RunStore.stateOf')(function* (row: typeof runs.$infer
   const state = yield* decodeState(row.state)
   if (state === 'working') return RunState.cases.Working.make({})
   if (finishedAt === null) {
-    return yield* Effect.fail(new DatabaseFailure({ message: 'A finished Run has no finish time' }))
+    return yield* new DatabaseFailure({ message: 'A finished Run has no finish time' })
   }
   const ending = state
   if (ending === 'failed') {
@@ -285,18 +285,16 @@ const sameAuthority = Effect.fn('RunStore.sameAuthority')(function* (
   input: Parameters<RunStoreService['start']>[0],
 ) {
   if (recorded.threadId !== input.threadId || recorded.personId !== input.personId)
-    return yield* Effect.fail(
-      new DatabaseFailure({ message: 'Run authority conflicts with its original delivery' }),
-    )
+    return yield* new DatabaseFailure({
+      message: 'Run authority conflicts with its original delivery',
+    })
   const origin = yield* decodeOrigin(recorded.origin)
   if (StoredRunOrigin.guards.Message(input.origin) && input.origin.fingerprint !== undefined) {
     if (!StoredRunOrigin.guards.Message(origin) || origin.fingerprint !== input.origin.fingerprint)
-      return yield* Effect.fail(
-        new Conflict({
-          message:
-            'This message key was already used for different text or pictures. Send it with a new key.',
-        }),
-      )
+      return yield* new Conflict({
+        message:
+          'This message key was already used for different text or pictures. Send it with a new key.',
+      })
   }
   return yield* Effect.void
 })
@@ -359,7 +357,7 @@ const makeStart = (database: DatabaseService): RunStoreService['start'] =>
           .onConflictDoNothing({ target: runs.id })
         const [recorded] = yield* tx.select().from(runs).where(eq(runs.id, input.id))
         if (recorded === undefined)
-          return yield* Effect.fail(new DatabaseFailure({ message: 'Reserved Run not found' }))
+          return yield* new DatabaseFailure({ message: 'Reserved Run not found' })
         yield* sameAuthority(recorded, input)
         return TurnReservation.cases.Reserved.make({ turn: recorded.turn })
       }),
@@ -375,8 +373,7 @@ const makeScope = (database: DatabaseService): RunStoreService['scope'] =>
         .from(runs)
         .where(and(eq(runs.threadId, threadId), eq(runs.turn, turn))),
     )
-    if (row === undefined)
-      return yield* Effect.fail(new NotFound({ message: 'Delivery not found' }))
+    if (row === undefined) return yield* new NotFound({ message: 'Delivery not found' })
     return DeliveryScope.make({ acting: row.personId, libraryFolder: row.libraryFolder })
   })
 
@@ -424,15 +421,16 @@ const makeEnd = (database: DatabaseService) =>
     return rows.length > 0
   })
 
+/** The query remains lazy and repeatable while the service exposes an Effect value. */
 const makeWorking = (database: DatabaseService) =>
-  Effect.fn('RunStore.working')(function* () {
-    return yield* database.run(
+  database
+    .run(
       database
         .select({ id: runs.id, threadId: runs.threadId, personId: runs.personId })
         .from(runs)
         .where(eq(runs.state, 'working')),
     )
-  })
+    .pipe(Effect.withSpan('RunStore.working'))
 
 const makeList = (database: DatabaseService) =>
   Effect.fn('RunStore.list')(function* (threadId: ThreadId) {

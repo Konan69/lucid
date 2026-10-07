@@ -32,11 +32,11 @@ const screens = {
   Routines: () => import('./screen/Routines'),
   Settings: () => import('./screen/Settings'),
 }
-const Computer = lazy(async () => ({ default: (await screens.Computer()).Computer }))
-const Library = lazy(async () => ({ default: (await screens.Library()).Library }))
-const Projects = lazy(async () => ({ default: (await screens.Projects()).Projects }))
-const Routines = lazy(async () => ({ default: (await screens.Routines()).Routines }))
-const Settings = lazy(async () => ({ default: (await screens.Settings()).Settings }))
+const Computer = lazy(() => screens.Computer().then((module) => ({ default: module.Computer })))
+const Library = lazy(() => screens.Library().then((module) => ({ default: module.Library })))
+const Projects = lazy(() => screens.Projects().then((module) => ({ default: module.Projects })))
+const Routines = lazy(() => screens.Routines().then((module) => ({ default: module.Routines })))
+const Settings = lazy(() => screens.Settings().then((module) => ({ default: module.Settings })))
 
 const warm = () => {
   for (const load of Object.values(screens)) void load()

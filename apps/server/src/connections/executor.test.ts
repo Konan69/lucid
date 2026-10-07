@@ -67,6 +67,7 @@ describe('Executor settings', () => {
   ] as const) {
     it.effect(`does not build when ${name}`, () =>
       Effect.gen(function* () {
+        // Building the failing production layer is the assertion: acquisition must report the missing setting.
         const failure = yield* Layer.build(
           executorLayer.pipe(
             Layer.provide(FetchHttpClient.layer),
@@ -113,18 +114,17 @@ it.effect('cannot distinguish declared writes from host-defaulted writes', () =>
       owner: ExecutorOwnerId.make('owner'),
       appOwnership: 'Shared',
     })
-    const tools = yield* Effect.flatMap(Executor, (executor) => executor.tools(references)).pipe(
-      Effect.provide(hosted.configured),
-    )
+    const tools = yield* Effect.gen(function* () {
+      // This recorder controls the two indistinguishable upstream write declarations.
+      const context = yield* Layer.build(hosted.configured)
+      return yield* Effect.flatMap(Executor, (executor) => executor.tools(references)).pipe(
+        Effect.provide(context),
+      )
+    }).pipe(Effect.scoped)
     expect(tools.map((tool) => tool.effect)).toEqual(['write', 'write'])
     const judged = yield* Effect.gen(function* () {
-      return yield* (yield* ToolEffects).classifyBatch({
-        serviceId: hostedService,
-        service: 'Records',
-        tools,
-      })
-    }).pipe(
-      Effect.provide(
+      // An empty classification cache judges this case's host-defaulted tool hints.
+      const context = yield* Layer.build(
         toolEffectsLayer.pipe(
           Layer.provide(
             Layer.effect(
@@ -147,8 +147,15 @@ it.effect('cannot distinguish declared writes from host-defaulted writes', () =>
             ),
           ),
         ),
-      ),
-    )
+      )
+      return yield* Effect.gen(function* () {
+        return yield* (yield* ToolEffects).classifyBatch({
+          serviceId: hostedService,
+          service: 'Records',
+          tools,
+        })
+      }).pipe(Effect.provide(context))
+    }).pipe(Effect.scoped)
     expect(judged.map((tool) => tool.effect)).toEqual(['read', 'read'])
   }),
 )
@@ -179,11 +186,15 @@ it.effect('does not echo a token when credential submission fails', () =>
       label: 'Private',
     })
     const error = yield* Effect.gen(function* () {
-      return yield* (yield* Executor).complete({
-        references,
-        fields: { token: Redacted.make(token) },
-      })
-    }).pipe(Effect.provide(hosted.configured), Effect.flip)
+      // The credential recorder owns the rejected token submission and its redacted failure.
+      const context = yield* Layer.build(hosted.configured)
+      return yield* Effect.gen(function* () {
+        return yield* (yield* Executor).complete({
+          references,
+          fields: { token: Redacted.make(token) },
+        })
+      }).pipe(Effect.provide(context))
+    }).pipe(Effect.scoped, Effect.flip)
     expect(error._tag).toBe('ExecutorRejected')
     expect(error.message).not.toContain(token)
     expect(JSON.stringify(error)).not.toContain(token)

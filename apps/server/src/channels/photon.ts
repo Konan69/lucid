@@ -112,17 +112,18 @@ const disconnected = () => new ChannelDisconnected({ channel: 'iMessage' })
 const invalidMessage = () => new InvalidChannelMessage({ channel: 'iMessage' })
 
 /** Spectrum lacks cancellation input; dispose late acquisition when the reply deadline interrupts it. */
-const openPhoton = async (config: PhotonCredentials, signal: AbortSignal) => {
-  const application = await Spectrum({
+const openPhoton = (config: PhotonCredentials, signal: AbortSignal) =>
+  Spectrum({
     providers: [imessage.config({})],
     projectId: config.projectId,
     projectSecret: Redacted.value(config.projectSecret),
     telemetry: false,
     options: { logLevel: 'silent', flattenGroups: false },
+  }).then((application) => {
+    // The Promise adapter must also dispose an SDK instance acquired after interruption.
+    if (signal.aborted) return application.stop().then(() => application)
+    return application
   })
-  if (signal.aborted) await application.stop()
-  return application
-}
 
 /** Acquire only while consuming inbound or sending; listing addresses performs no SDK I/O. */
 const connectPhoton = Effect.fn('Channels.connectPhoton')((config: PhotonCredentials) =>
@@ -247,19 +248,19 @@ const credential = Schema.NonEmptyString.check(
  * for an enrolment, `ChannelRecipientMissing` or `ChannelSendUnknown` for a send, and
  * `ChannelDisconnected` for the inbound stream, which its reader opens again.
  */
-export const photonLayer = Layer.effect(
-  ChannelProvider,
-  Effect.fn('Channels.configurePhoton')(function* () {
-    const projectId = yield* requiredSetting(
-      'VIVID_PHOTON_PROJECT_ID',
-      credential,
-      'the Photon project id',
-    )
-    const projectSecret = yield* requiredSetting(
-      'VIVID_PHOTON_PROJECT_SECRET',
-      Schema.RedactedFromValue(credential),
-      'the Photon project secret',
-    )
-    return yield* makePhoton({ projectId, projectSecret })
-  })(),
-)
+const configurePhoton = Effect.gen(function* () {
+  const projectId = yield* requiredSetting(
+    'VIVID_PHOTON_PROJECT_ID',
+    credential,
+    'the Photon project id',
+  )
+  const projectSecret = yield* requiredSetting(
+    'VIVID_PHOTON_PROJECT_SECRET',
+    Schema.RedactedFromValue(credential),
+    'the Photon project secret',
+  )
+  return yield* makePhoton({ projectId, projectSecret })
+}).pipe(Effect.withSpan('Channels.configurePhoton'))
+
+/** Startup uses the same credential validation and provider construction tested at acquisition. */
+export const photonLayer = Layer.effect(ChannelProvider, configurePhoton)

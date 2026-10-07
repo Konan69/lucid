@@ -275,8 +275,8 @@ export const liveTools = [
 /** Scripted provider wire variants share one vocabulary across behavior tests. The
  * DecisionModel constructor still validates distributions and missing answers. */
 export const ScriptedAnswer = Schema.TaggedUnion({
-  Probability: { probability: Schema.Number },
-  Classify: { label: Schema.String, probabilities: Schema.Record(Schema.String, Schema.Number) },
+  Probability: { probability: Schema.Finite },
+  Classify: { label: Schema.String, probabilities: Schema.Record(Schema.String, Schema.Finite) },
 })
 
 /** Keep the gateway's actual per-tool score receipts, alongside visible calibration logs.
@@ -304,7 +304,7 @@ const decodeEffectScore = Schema.decodeUnknownResult(
   Schema.fromJsonString(
     Schema.Tuple([
       Schema.Literal('Tool effect score'),
-      Schema.Struct({ tool: Schema.String, read: Schema.Number }),
+      Schema.Struct({ tool: Schema.String, read: Schema.Finite }),
     ]),
   ),
 )

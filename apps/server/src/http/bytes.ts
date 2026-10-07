@@ -67,12 +67,11 @@ const upload = Effect.fn('Http.Library.upload')(function* () {
   )
   const files = parts.file
   const file = Array.isArray(files) ? files.find(Multipart.isPersistedFile) : undefined
-  if (file === undefined)
-    return yield* Effect.fail(new InvalidRequest({ message: 'File is required' }))
+  if (file === undefined) return yield* new InvalidRequest({ message: 'File is required' })
   const fileSystem = yield* FileSystem.FileSystem
   const bytes = yield* fileSystem.readFile(file.path)
   if (bytes.byteLength > MAX_LIBRARY_FILE_BYTES)
-    return yield* Effect.fail(new UploadTooLarge({ exceeded: 'File' }))
+    return yield* new UploadTooLarge({ exceeded: 'File' })
   const metadata = yield* decodeUpload({
     name: file.name,
     mimeType: inferMimeType(file.name, file.contentType),
@@ -122,8 +121,7 @@ const source = Effect.fn('Http.Library.source')(function* () {
   const actor = yield* authenticatedActor()
   const request = yield* HttpServerRequest.HttpServerRequest
   const name = new URL(request.url, 'http://vivid.local').searchParams.get('name')
-  if (name === null)
-    return yield* Effect.fail(new InvalidRequest({ message: 'Source name is required' }))
+  if (name === null) return yield* new InvalidRequest({ message: 'Source name is required' })
   const document = yield* (yield* LibraryStore)
     .getStoredItemByName(actor, name)
     .pipe(Effect.mapError(libraryFailure))

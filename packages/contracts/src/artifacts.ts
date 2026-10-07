@@ -40,7 +40,7 @@ export type ArtifactKind = typeof ArtifactKind.Type
 export const ArtifactVersion = Schema.Struct({
   number: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   madeBy: ArtifactAuthor,
-  at: Schema.Number,
+  at: Schema.Finite,
   /** Absent on a first version, which changed nothing. */
   note: Schema.optionalKey(ArtifactNote),
 })
@@ -54,8 +54,8 @@ export const Artifact = Schema.Struct({
   title: ArtifactTitle,
   /** The number of the newest version. */
   version: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
-  createdAt: Schema.Number,
-  updatedAt: Schema.Number,
+  createdAt: Schema.Finite,
+  updatedAt: Schema.Finite,
 }).annotate({ identifier: 'Artifact', title: 'Artifact' })
 export interface Artifact extends Schema.Schema.Type<typeof Artifact> {}
 
@@ -94,7 +94,7 @@ export const ReviseArtifactRequest = Schema.Struct({
 /** The document moved on while it was being revised. `version` is the newest there is now. */
 export class ArtifactChanged extends Schema.TaggedError<ArtifactChanged>()(
   'ArtifactChanged',
-  { id: ArtifactId, version: Schema.Number },
+  { id: ArtifactId, version: Schema.Finite },
   { title: 'The document changed while it was being edited' },
 ) {}
 
@@ -114,7 +114,7 @@ export interface WriteDocumentRequest extends Schema.Schema.Type<typeof WriteDoc
 /** The saved document and current version, including whether this call added a version. */
 export const WriteDocumentOutcome = Schema.Struct({
   title: ArtifactTitle,
-  version: Schema.Number,
+  version: Schema.Finite,
   /** Whether this call made the document, as opposed to revising one that was there. */
   created: Schema.Boolean,
   /** True when this call added a version; an identical newest body leaves this false. */
@@ -125,7 +125,7 @@ export const WriteDocumentOutcome = Schema.Struct({
 export const ReadDocumentRequest = Schema.Struct({ title: ArtifactTitle })
 
 export const ReadDocumentOutcome = Schema.TaggedUnion({
-  Found: { title: ArtifactTitle, version: Schema.Number, body: ArtifactBody },
+  Found: { title: ArtifactTitle, version: Schema.Finite, body: ArtifactBody },
   /** No document of this Thread has that title. `titles` is what it does have, to choose from. */
   Missing: { titles: Schema.Array(ArtifactTitle) },
 })

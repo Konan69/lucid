@@ -1,12 +1,20 @@
 import * as NodeEvents from 'node:events'
 
+// Each runner has a `With` form that takes a Context first (`Effect.runPromiseWith(context)(program)`).
+// It starts an Effect exactly as the plain form does, so every rule about runners covers both.
 const effectTerminalOperations = new Set([
   'runCallback',
+  'runCallbackWith',
   'runFork',
+  'runForkWith',
   'runPromise',
   'runPromiseExit',
+  'runPromiseExitWith',
+  'runPromiseWith',
   'runSync',
   'runSyncExit',
+  'runSyncExitWith',
+  'runSyncWith',
 ])
 const schemaClassFactories = new Set(['Class', 'TaggedClass', 'TaggedError'])
 // These Schema APIs compile reusable functions; rebuilding them on each call adds avoidable work.
@@ -38,7 +46,14 @@ const schemaCompilerMethods = new Set([
   'encodeUnknownResult',
   'encodeUnknownSync',
 ])
-const manualEffectRuntimeMethods = new Set(['runFork', 'runPromise', 'runSync'])
+const manualEffectRuntimeMethods = new Set([
+  'runFork',
+  'runForkWith',
+  'runPromise',
+  'runPromiseWith',
+  'runSync',
+  'runSyncWith',
+])
 const nodeModuleAliases = new Map([
   ['assert/strict', 'Assert'],
   ['fs/promises', 'FSP'],

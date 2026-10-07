@@ -14,7 +14,7 @@ import {
   type InputRequest,
   type PersonId,
 } from '@vivid/contracts'
-import { Option, Predicate, Result, Schema } from 'effect'
+import { Effect, Option, Predicate, Result, Schema } from 'effect'
 import {
   answered,
   answering,
@@ -31,7 +31,8 @@ import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { Check, Globe, Link2, MousePointer2, ShieldQuestion, X } from 'lucide-react'
 import { BorderBeam } from 'border-beam'
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
-import { change, live, useLiveValue } from '../../data/live'
+import { act } from '../../data/app'
+import { changing, live, useLiveValue } from '../../data/live'
 import { router } from '../../data/route'
 import { engine } from '../../data/runtime'
 import { orSay } from '../../data/said'
@@ -263,12 +264,15 @@ export function ApprovalCard({ approval, me }: { approval: Approval; me: PersonI
   const mine = approval.askedOf.id === me
   const shown = useSyncExternalStore(theme.subscribe, theme.shown)
 
-  async function decide(decision: ApprovalDecision) {
-    setRefusal(null)
-    const result = await change((client) =>
-      client.DecideApproval({ id: approval.id, digest: approval.digest, decision }),
-    )
-    if (Result.isFailure(result)) setRefusal('This was already decided, or it changed. Look again.')
+  function decide(decision: ApprovalDecision) {
+    return Effect.gen(function* () {
+      setRefusal(null)
+      const result = yield* changing((client) =>
+        client.DecideApproval({ id: approval.id, digest: approval.digest, decision }),
+      )
+      if (Result.isFailure(result))
+        setRefusal('This was already decided, or it changed. Look again.')
+    })
   }
 
   return (
@@ -314,18 +318,18 @@ export function ApprovalCard({ approval, me }: { approval: Approval; me: PersonI
             )}
             {pending && mine && (
               <>
-                <Button onClick={() => void decide(ApprovalDecision.cases.AllowOnce.make({}))}>
+                <Button onClick={() => void act(decide(ApprovalDecision.cases.AllowOnce.make({})))}>
                   Allow once
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => void decide(ApprovalDecision.cases.AlwaysAllow.make({}))}
+                  onClick={() => void act(decide(ApprovalDecision.cases.AlwaysAllow.make({})))}
                 >
                   Always allow
                 </Button>
                 <Button
                   variant="ghost"
-                  onClick={() => void decide(ApprovalDecision.cases.Deny.make({}))}
+                  onClick={() => void act(decide(ApprovalDecision.cases.Deny.make({})))}
                 >
                   Don’t
                 </Button>
@@ -350,9 +354,11 @@ export function ApprovalCard({ approval, me }: { approval: Approval; me: PersonI
  */
 export function InputCard({ request, me }: { request: InputRequest; me: PersonId }) {
   function answer(text: string) {
-    void orSay(
-      change((client) => client.AnswerInput({ id: request.id, answer: text })),
-      'Your answer did not reach Vivid. Try again.',
+    void act(
+      orSay(
+        changing((client) => client.AnswerInput({ id: request.id, answer: text })),
+        'Your answer did not reach Vivid. Try again.',
+      ),
     )
   }
   // Each standing is said to be an `Asked`, so the three branches agree on the union and not
@@ -433,6 +439,18 @@ const AFTER_PRESS = {
 } satisfies Record<Pressed, Option.Option<string>>
 
 /**
+ * Picks up an Integration that was begun and left unfinished, on the tab the press opened for
+ * it. A refusal closes that tab: nothing is coming to show in it.
+ */
+const pickUp = (id: Connection['id'], tab: Window | null) =>
+  Effect.gen(function* () {
+    const step = yield* changing((client) => client.ResumeConnection({ id }))
+    if (Result.isSuccess(step)) return follow(step.success, tab)
+    if (tab !== null) tab.close()
+    return Began.Refused()
+  })
+
+/**
  * Vivid needs a service to go on. One card says which service, why in Vivid's own words, and has
  * one thing to press. The press starts the same flow Settings uses, right here: a sign-in opens
  * in its own tab, a key is typed into a dialog that sends it straight to the Integration (never
@@ -481,37 +499,34 @@ export function ConnectionCard({
   const named = Awaited.$is('Another')(awaited) && asksName(held)
 
   /** One press: resume what was begun, or begin it, then listen for it to be connected. */
-  async function connect(name: Option.Option<AccountName>) {
-    // An Integration that was begun and left unfinished is picked up, not begun a second time.
-    const begun = begunFor(list, request, awaited)
-    // A sign-in tab is opened by the click itself when a sign-in is known to be coming.
-    const tab = Option.exists(authorization, ConnectionAuthorization.guards.OpenSignIn)
-      ? window.open('about:blank', '_blank')
-      : null
-    // Beginning can take the server many seconds; the button says so from the press.
-    setPressed('starting')
-    const began = await Option.match(begun, {
-      onNone: () => begin({ id: request.service }, tab, { shared: false, name }),
-      onSome: async (connectionId) => {
-        const step = await change((client) => client.ResumeConnection({ id: connectionId }))
-        if (Result.isSuccess(step)) return follow(step.success, tab)
-        if (tab !== null) tab.close()
-        return Began.Refused()
-      },
+  function connect(name: Option.Option<AccountName>) {
+    return Effect.gen(function* () {
+      // An Integration that was begun and left unfinished is picked up, not begun a second time.
+      const begun = begunFor(list, request, awaited)
+      // A sign-in tab is opened by the click itself when a sign-in is known to be coming.
+      const tab = Option.exists(authorization, ConnectionAuthorization.guards.OpenSignIn)
+        ? window.open('about:blank', '_blank')
+        : null
+      // Beginning can take the server many seconds; the button says so from the press.
+      setPressed('starting')
+      const began = yield* Option.match(begun, {
+        onNone: () => begin({ id: request.service }, tab, { shared: false, name }),
+        onSome: (connectionId) => pickUp(connectionId, tab),
+      })
+      setPressed(
+        Began.$match(began, {
+          SigningIn: (): Pressed => 'waiting',
+          NeedsKey: (): Pressed => 'not-yet',
+          Connected: (): Pressed => 'not-yet',
+          Blocked: (): Pressed => 'blocked',
+          Refused: (): Pressed => 'refused',
+        }),
+      )
+      if (Began.$is('NeedsKey')(began)) setKeying(Option.some(began.keying))
+      if (!Began.$is('Blocked')(began) && !Began.$is('Refused')(began)) {
+        carryOnOnceReady(id, readyIn, carryOn)
+      }
     })
-    setPressed(
-      Began.$match(began, {
-        SigningIn: (): Pressed => 'waiting',
-        NeedsKey: (): Pressed => 'not-yet',
-        Connected: (): Pressed => 'not-yet',
-        Blocked: (): Pressed => 'blocked',
-        Refused: (): Pressed => 'refused',
-      }),
-    )
-    if (Began.$is('NeedsKey')(began)) setKeying(Option.some(began.keying))
-    if (!Began.$is('Blocked')(began) && !Began.$is('Refused')(began)) {
-      carryOnOnceReady(id, readyIn, carryOn)
-    }
   }
 
   const after = AFTER_PRESS[pressed]
@@ -548,7 +563,7 @@ export function ConnectionCard({
             ready={ready}
             current={current}
             pressed={pressed}
-            onConnect={(name) => void connect(name)}
+            onConnect={(name) => void act(connect(name))}
             onCarryOn={() => carryOn(list)}
           />
           {Option.isSome(keying) && (

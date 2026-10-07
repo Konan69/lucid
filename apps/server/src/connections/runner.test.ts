@@ -1,5 +1,5 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { Effect, Ref } from 'effect'
+import { Layer, Effect, Ref } from 'effect'
 import {
   ActionTarget,
   DatabaseConstraintViolation,
@@ -43,7 +43,7 @@ const failingDatabase = (
     run: Effect.fn('Database.Test.connectionFailure')(function* <A, E, R>(
       query: Effect.Effect<A, E, R>,
     ) {
-      if (yield* Ref.get(unavailable)) return yield* Effect.fail(failure)
+      if (yield* Ref.get(unavailable)) return yield* failure
       return yield* database.run(query)
     }),
   })
@@ -79,17 +79,21 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
                 return ExecutorCallOutcome.cases.NotReady.make({})
               }),
             })
-            const outcome = yield* connectionRunner({
-              person: ownerActor.person,
-              workspace: ownerActor.workspace,
-              target: ActionTarget.cases.Connection.make({
-                connectionId: step.connection.id,
-                account: 'Approved account',
-                tool: 'read',
-                input: {},
-              }),
+            const outcome = yield* Effect.gen(function* () {
+              // The store captures this phase-specific database failure before approved execution.
+              const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+              return yield* connectionRunner({
+                person: ownerActor.person,
+                workspace: ownerActor.workspace,
+                target: ActionTarget.cases.Connection.make({
+                  connectionId: step.connection.id,
+                  account: 'Approved account',
+                  tool: 'read',
+                  input: {},
+                }),
+              }).pipe(Effect.provide(context))
             }).pipe(
-              Effect.provide(connectionStoreLayer, { local: true }),
+              Effect.scoped,
               Effect.provideService(Database, failingDatabase(database, unavailable, failure)),
               Effect.provideService(Executor, dispatch),
             )
@@ -118,9 +122,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
             ...executor,
             call: Effect.fn('Executor.Test.dispatchedUnavailable')(function* () {
               yield* Ref.update(probe.calls, (count) => count + 1)
-              return yield* Effect.fail(
-                ExecutorTransportFailure.make({ service: 'connections', tool: 'read' }),
-              )
+              return yield* ExecutorTransportFailure.make({ service: 'connections', tool: 'read' })
             }),
           })
           const input = {

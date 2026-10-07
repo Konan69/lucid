@@ -47,18 +47,20 @@ class NothingListening extends Schema.TaggedError<NothingListening>()(
 ) {}
 
 /** One request as a browser sends it, without following a redirect. */
-const request = (address: string, method: 'GET' | 'POST') =>
-  Effect.tryPromise({
-    try: async () => {
-      const response = await fetch(address, { method, redirect: 'manual' })
-      return {
-        status: response.status,
-        headers: response.headers,
-        body: await response.text(),
-      }
-    },
+const request = Effect.fn('SignInTest.request')(function* (
+  address: string,
+  method: 'GET' | 'POST',
+) {
+  const response = yield* Effect.tryPromise({
+    try: () => fetch(address, { method, redirect: 'manual' }),
     catch: () => new NothingListening({}),
   })
+  const body = yield* Effect.tryPromise({
+    try: () => response.text(),
+    catch: () => new NothingListening({}),
+  })
+  return { status: response.status, headers: response.headers, body }
+})
 const get = (address: string) => request(address, 'GET')
 
 /**

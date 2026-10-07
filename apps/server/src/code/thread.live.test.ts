@@ -1,7 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { describe, expect, it } from '@effect/vitest'
 import { CodeCall } from '@vivid/contracts'
-import { Config, Effect, Option, Schema } from 'effect'
+import { Config, Effect, Option, Schema, Layer } from 'effect'
 import { eq } from 'drizzle-orm'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 import { bindings } from '../computers/boat/bindings.ts'
@@ -92,32 +92,35 @@ describe.skipIf(process.env['VIVID_LIVE_THREAD_PROGRAM'] !== '1')(
       'a program Vivid writes runs on the Computer, has its calls answered and writes there what it read',
       () =>
         Effect.gen(function* () {
-          const fixture = yield* chainFixture('Program chain proof')
-          yield* holdComputer(fixture.personId)
-          const name = `vivid-program-proof-${NodeCrypto.randomUUID()}.txt`
-          const runId = yield* fixture.send(
-            `Do this with one run_code program and nothing else. In the program: read https://example.com/ and https://www.iana.org/help/example-domains with tools.read_page, both at the same time. Then use node:fs/promises to write a file named ${name} in the current directory, holding the two page titles, one per line. Return the two titles. Afterwards tell me the titles.`,
-          )
-          const state = yield* completeRun(fixture, runId)
-          const programs = toolParts(state).filter((part) => part.toolName === 'run_code')
-          const finished = programs.filter((part) => part.state === 'output-available')
-          expect(finished.length, 'The model must have run a program').toBeGreaterThan(0)
-          const outputs = yield* Effect.forEach(finished, (part) =>
-            part.state === 'output-available'
-              ? decodeRan(part.output).pipe(Effect.option)
-              : Effect.succeed(Option.none()),
-          )
-          const ran = outputs.flatMap(Option.toArray)
-          expect(ran.length, 'A program must have run to its end').toBeGreaterThan(0)
-          const pages = ran.flatMap((program) =>
-            program.calls.filter((call) => call.kind === 'read_page' && call.end === 'completed'),
-          )
-          expect(pages.length, 'The program’s two page reads must both be answered').toBe(2)
-          const written = yield* takeFromComputer(fixture.personId, name)
-          // The title of the first page, as the server's own reader returned it to the program.
-          expect(written).toContain('Example Domain')
-          expect(written.trim().split('\n').length).toBe(2)
-        }).pipe(Effect.scoped, Effect.provide(chainLayer)),
+          const caseContext = yield* Layer.build(chainLayer)
+          return yield* Effect.gen(function* () {
+            const fixture = yield* chainFixture('Program chain proof')
+            yield* holdComputer(fixture.personId)
+            const name = `vivid-program-proof-${NodeCrypto.randomUUID()}.txt`
+            const runId = yield* fixture.send(
+              `Do this with one run_code program and nothing else. In the program: read https://example.com/ and https://www.iana.org/help/example-domains with tools.read_page, both at the same time. Then use node:fs/promises to write a file named ${name} in the current directory, holding the two page titles, one per line. Return the two titles. Afterwards tell me the titles.`,
+            )
+            const state = yield* completeRun(fixture, runId)
+            const programs = toolParts(state).filter((part) => part.toolName === 'run_code')
+            const finished = programs.filter((part) => part.state === 'output-available')
+            expect(finished.length, 'The model must have run a program').toBeGreaterThan(0)
+            const outputs = yield* Effect.forEach(finished, (part) =>
+              part.state === 'output-available'
+                ? decodeRan(part.output).pipe(Effect.option)
+                : Effect.succeedNone,
+            )
+            const ran = outputs.flatMap(Option.toArray)
+            expect(ran.length, 'A program must have run to its end').toBeGreaterThan(0)
+            const pages = ran.flatMap((program) =>
+              program.calls.filter((call) => call.kind === 'read_page' && call.end === 'completed'),
+            )
+            expect(pages.length, 'The program’s two page reads must both be answered').toBe(2)
+            const written = yield* takeFromComputer(fixture.personId, name)
+            // The title of the first page, as the server's own reader returned it to the program.
+            expect(written).toContain('Example Domain')
+            expect(written.trim().split('\n').length).toBe(2)
+          }).pipe(Effect.scoped, Effect.provide(caseContext))
+        }).pipe(Effect.scoped),
       { timeout: 300_000 },
     )
   },

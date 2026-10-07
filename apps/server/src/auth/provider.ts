@@ -95,6 +95,7 @@ export const localAuthRuntimeLayer = RuntimeContext.phantom
 export const authEffect = Effect.gen(function* () {
   const config = yield* ServerConfig
   return yield* BetterAuth(makeOptions(config)).pipe(
+    // @effect-diagnostics-next-line strictEffectProvide:off -- This Layer only builds the deferred `Database` description Better Auth captures; the pool it describes is opened later on the caller's own scope (Alchemy `ExecutionMemo`), so providing it here ends no lifetime early.
     Effect.provide(authDatabaseLayer(config.DATABASE_URL)),
   )
 }).pipe(

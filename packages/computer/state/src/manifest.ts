@@ -58,7 +58,7 @@ export const Manifest = Schema.Struct({
   computerId: ComputerId,
   revision: Schema.Number.pipe(Schema.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
   /** Epoch milliseconds at the end of the capture walk. */
-  capturedAt: Schema.Number,
+  capturedAt: Schema.Finite,
   entries: Schema.Record(HomePath, Entry),
 })
 export type Manifest = typeof Manifest.Type

@@ -44,26 +44,27 @@ class RunningLoops extends Context.Service<RunningLoops, RunningLoopsService>()(
  * take on a loaded machine and not the default five seconds. Nothing here waits on a clock.
  */
 describe('Supervised programs', { timeout: 30_000 }, () => {
-  layer(supervised)((it) => {
-    const run = Effect.fn('Test.program')(function* (code: string, dispatch: Dispatch) {
-      return yield* (yield* CodeProcess).run(
-        {
-          request: { code, summary: 'Test the program' },
-          boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
-        },
-        dispatch,
-      )
-    })
-    const reply: Dispatch = Effect.fn('Test.reply')((call) =>
-      Effect.succeed(
-        CallOutcome.cases.Returned.make({
-          value: call.input,
-          summary: call.kind,
-          end: 'completed',
-        }),
-      ),
+  const run = Effect.fn('Test.program')(function* (code: string, dispatch: Dispatch) {
+    return yield* (yield* CodeProcess).run(
+      {
+        request: { code, summary: 'Test the program' },
+        boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
+      },
+      dispatch,
     )
+  })
 
+  const reply: Dispatch = Effect.fn('Test.reply')((call) =>
+    Effect.succeed(
+      CallOutcome.cases.Returned.make({
+        value: call.input,
+        summary: call.kind,
+        end: 'completed',
+      }),
+    ),
+  )
+
+  layer(supervised)((it) => {
     it.effect('dispatches callable accounts once and awaits proxies without thenable calls', () =>
       Effect.gen(function* () {
         const frames = yield* Ref.make<Schema.Json[]>([])
@@ -189,27 +190,6 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         const failed = yield* run('console.log("before throw"); throw new Error("failed");', reply)
         check(failed, 'Failed', { logs: ['before throw'], logsTruncated: false })
         expect(failed).toHaveProperty('failure.message', 'failed')
-      }),
-    )
-
-    it.effect('keeps logs when the 300-second parent deadline cancels a waiting guest', () =>
-      Effect.gen(function* () {
-        const entered = yield* Deferred.make<void>()
-        const dispatch: Dispatch = Effect.fn('Test.waitingRead')(function* () {
-          yield* Deferred.succeed(entered, undefined)
-          return yield* Effect.never
-        })
-        const running = yield* Effect.forkChild(
-          run('console.log("before timeout"); await tools.find_tools({});', dispatch),
-        )
-        yield* Deferred.await(entered)
-        yield* TestClock.adjust('300 seconds')
-        const outcome = yield* Fiber.join(running)
-        check(outcome, 'Failed', {
-          failure: CodeFailure.cases.TimedOut.make({ seconds: 300 }),
-          logs: ['before timeout'],
-          logsTruncated: false,
-        })
       }),
     )
 
@@ -496,107 +476,6 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
       }),
     )
 
-    it.effect('lets a call that was already running finish before an Approval is reported', () =>
-      Effect.gen(function* () {
-        const order = yield* Ref.make(0)
-        const secondRunning = yield* Deferred.make<void>()
-        const asked = yield* Deferred.make<void>()
-        const dispatch: Dispatch = Effect.fn('Test.askBesideWork')(function* () {
-          const position = yield* Ref.updateAndGet(order, (value) => value + 1)
-          if (position === 1) {
-            yield* Deferred.await(secondRunning)
-            yield* Deferred.succeed(asked, undefined)
-            return CallOutcome.cases.ApprovalRequired.make({
-              approvalId: ApprovalId.make('approval-test'),
-              summary: 'Send the message',
-            })
-          }
-          yield* Deferred.succeed(secondRunning, undefined)
-          // Held by the test clock, which moves only after the first call has asked.
-          yield* Effect.sleep('1 second')
-          return CallOutcome.cases.Returned.make({
-            value: true,
-            summary: 'Filed the note',
-            end: 'completed',
-          })
-        })
-        const running = yield* Effect.forkChild(
-          run('return await Promise.all([tools.use_tool({}),tools.use_tool({})]);', dispatch),
-        )
-        yield* Deferred.await(asked)
-        yield* TestClock.adjust('1 second')
-        const outcome = yield* Fiber.join(running)
-        // The sibling's receipt is its real result, not the provisional unknown it had when the
-        // first call asked.
-        check(outcome, 'ApprovalRequired', {
-          approvalId: 'approval-test',
-          calls: [{ end: 'needs approval' }, { end: 'completed' }],
-        })
-      }),
-    )
-
-    it.effect('reports an Approval when the last running call is interrupted', () =>
-      Effect.gen(function* () {
-        const order = yield* Ref.make(0)
-        const secondRunning = yield* Deferred.make<void>()
-        const asked = yield* Deferred.make<void>()
-        const dispatch: Dispatch = Effect.fn('Test.askBesideLoss')(function* () {
-          const position = yield* Ref.updateAndGet(order, (value) => value + 1)
-          if (position === 1) {
-            yield* Deferred.await(secondRunning)
-            yield* Deferred.succeed(asked, undefined)
-            return CallOutcome.cases.ApprovalRequired.make({
-              approvalId: ApprovalId.make('approval-test'),
-              summary: 'Send the message',
-            })
-          }
-          yield* Deferred.succeed(secondRunning, undefined)
-          yield* Effect.sleep('1 second')
-          return yield* Effect.interrupt
-        })
-        const running = yield* Effect.forkChild(
-          run('return await Promise.all([tools.use_tool({}),tools.use_tool({})]);', dispatch),
-        )
-        yield* Deferred.await(asked)
-        yield* TestClock.adjust('1 second')
-        // The lost call keeps its honest unknown receipt, and the decision still arrives at once
-        // instead of waiting for the deadline.
-        check(yield* Fiber.join(running), 'ApprovalRequired', {
-          approvalId: 'approval-test',
-          calls: [{ end: 'needs approval' }, { end: 'unknown' }],
-        })
-      }),
-    )
-
-    it.effect('a deadline leaves every running call unknown and admits nothing after it', () =>
-      Effect.gen(function* () {
-        const entered = yield* Deferred.make<void>()
-        const release = yield* Deferred.make<void>()
-        const count = yield* Ref.make(0)
-        const late: Dispatch = Effect.fn('Test.lateReceipt')(function* () {
-          const position = yield* Ref.updateAndGet(count, (value) => value + 1)
-          if (position === 2) yield* Deferred.succeed(entered, undefined)
-          yield* Deferred.await(release).pipe(Effect.uninterruptible)
-          return CallOutcome.cases.Returned.make({
-            value: true,
-            summary: 'Completed action',
-            end: 'completed',
-          })
-        })
-        const running = yield* Effect.forkChild(
-          run('return await Promise.all([tools.use_tool({}),tools.use_tool({})]);', late),
-        )
-        yield* Deferred.await(entered)
-        yield* TestClock.adjust('301 seconds')
-        yield* Deferred.succeed(release, undefined)
-        const outcome = yield* Fiber.join(running)
-        expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
-        // Both calls of the Promise.all were already running when the deadline passed.
-        expect(yield* Ref.get(count)).toBe(2)
-        expect(outcome.calls.map((call) => call.end)).toEqual(['unknown', 'unknown'])
-      }),
-    )
-
     it.effect('refuses a second active program in one Thread and a fifth globally', () =>
       Effect.gen(function* () {
         const release = yield* Deferred.make<void>()
@@ -642,81 +521,6 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         for (const fiber of fibers)
           expect(CodeOutcome.guards.Completed(yield* Fiber.join(fiber))).toBe(true)
       }),
-    )
-
-    const loopsLayer = Layer.effect(
-      RunningLoops,
-      Effect.gen(function* () {
-        const entered = yield* Deferred.make<void>()
-        const count = yield* Ref.make(0)
-        const dispatch: Dispatch = Effect.fn('Test.loopsStarted')(function* (call) {
-          if ((yield* Ref.updateAndGet(count, (value) => value + 1)) === 2)
-            yield* Deferred.succeed(entered, undefined)
-          return yield* reply(call)
-        })
-        // Startup is a fixture precondition, independent of how quickly a parent deadline must stop
-        // admitted guests. Keep both real processes alive in the suite scope until the test advances time.
-        const fibers = yield* Effect.forEach(
-          ['while(true) {}', 'while(true) await Promise.resolve();'],
-          (loop) => Effect.forkScoped(run(`await tools.find_tools({}); ${loop}`, dispatch)),
-        )
-        yield* Effect.raceFirst(
-          Deferred.await(entered),
-          Effect.forEach(
-            fibers,
-            (fiber) => Fiber.join(fiber).pipe(Effect.flatMap((outcome) => Effect.die(outcome))),
-            { concurrency: 'unbounded' },
-          ),
-        )
-        return RunningLoops.of({ fibers })
-      }),
-    )
-    it.layer(loopsLayer)('Parent deadline', (deadline) => {
-      deadline.effect(
-        'stops synchronous and microtask loops and releases both interpreter slots',
-        () =>
-          Effect.gen(function* () {
-            const running = yield* RunningLoops
-            yield* TestClock.adjust('301 seconds')
-            for (const fiber of running.fibers) {
-              const outcome = yield* Fiber.join(fiber)
-              expect(CodeOutcome.guards.Failed(outcome)).toBe(true)
-              expect(outcome).toHaveProperty('failure._tag', 'TimedOut')
-              expect(outcome.calls.map((call) => call.end)).toEqual(['completed'])
-            }
-            const recovered = yield* Effect.forEach(
-              [42, 43],
-              (value) => run(`return ${value};`, reply),
-              { concurrency: 'unbounded' },
-            )
-            expect(
-              recovered.map((outcome) =>
-                CodeOutcome.guards.Completed(outcome) ? outcome.result : outcome,
-              ),
-            ).toEqual([42, 43])
-          }),
-      )
-    })
-
-    it.effect(
-      'marks a timed-out consequential dispatch unknown and retains a previous completed receipt',
-      () =>
-        Effect.gen(function* () {
-          const entered = yield* Deferred.make<void>()
-          const dispatch: Dispatch = Effect.fn('Test.pendingEffect')(function* (call) {
-            if (call.id === 1) return yield* reply(call)
-            yield* Deferred.succeed(entered, undefined)
-            return yield* Effect.never
-          })
-          const running = yield* Effect.forkChild(
-            run('await tools.use_tool({}); await tools.use_tool({});', dispatch),
-          )
-          yield* Deferred.await(entered)
-          yield* TestClock.adjust('301 seconds')
-          const outcome = yield* Fiber.join(running)
-          expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
-          expect(outcome.calls.map((call) => call.end)).toEqual(['completed', 'unknown'])
-        }),
     )
 
     it.effect('charges failed calls against the quota', () =>
@@ -873,6 +677,234 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
       }),
     )
   })
+
+  layer(supervised)(
+    'Clock for keeps logs when the 300-second parent deadline cancels a waiting guest',
+    (it) => {
+      it.effect('keeps logs when the 300-second parent deadline cancels a waiting guest', () =>
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>()
+          const dispatch: Dispatch = Effect.fn('Test.waitingRead')(function* () {
+            yield* Deferred.succeed(entered, undefined)
+            return yield* Effect.never
+          })
+          const running = yield* Effect.forkChild(
+            run('console.log("before timeout"); await tools.find_tools({});', dispatch),
+          )
+          yield* Deferred.await(entered)
+          yield* TestClock.adjust('300 seconds')
+          const outcome = yield* Fiber.join(running)
+          check(outcome, 'Failed', {
+            failure: CodeFailure.cases.TimedOut.make({ seconds: 300 }),
+            logs: ['before timeout'],
+            logsTruncated: false,
+          })
+        }),
+      )
+    },
+  )
+
+  layer(supervised)(
+    'Clock for lets a call that was already running finish before an Approval is reported',
+    (it) => {
+      it.effect('lets a call that was already running finish before an Approval is reported', () =>
+        Effect.gen(function* () {
+          const order = yield* Ref.make(0)
+          const secondRunning = yield* Deferred.make<void>()
+          const asked = yield* Deferred.make<void>()
+          const dispatch: Dispatch = Effect.fn('Test.askBesideWork')(function* () {
+            const position = yield* Ref.updateAndGet(order, (value) => value + 1)
+            if (position === 1) {
+              yield* Deferred.await(secondRunning)
+              yield* Deferred.succeed(asked, undefined)
+              return CallOutcome.cases.ApprovalRequired.make({
+                approvalId: ApprovalId.make('approval-test'),
+                summary: 'Send the message',
+              })
+            }
+            yield* Deferred.succeed(secondRunning, undefined)
+            // Held by the test clock, which moves only after the first call has asked.
+            yield* Effect.sleep('1 second')
+            return CallOutcome.cases.Returned.make({
+              value: true,
+              summary: 'Filed the note',
+              end: 'completed',
+            })
+          })
+          const running = yield* Effect.forkChild(
+            run('return await Promise.all([tools.use_tool({}),tools.use_tool({})]);', dispatch),
+          )
+          yield* Deferred.await(asked)
+          yield* TestClock.adjust('1 second')
+          const outcome = yield* Fiber.join(running)
+          // The sibling's receipt is its real result, not the provisional unknown it had when the
+          // first call asked.
+          check(outcome, 'ApprovalRequired', {
+            approvalId: 'approval-test',
+            calls: [{ end: 'needs approval' }, { end: 'completed' }],
+          })
+        }),
+      )
+    },
+  )
+
+  layer(supervised)(
+    'Clock for reports an Approval when the last running call is interrupted',
+    (it) => {
+      it.effect('reports an Approval when the last running call is interrupted', () =>
+        Effect.gen(function* () {
+          const order = yield* Ref.make(0)
+          const secondRunning = yield* Deferred.make<void>()
+          const asked = yield* Deferred.make<void>()
+          const dispatch: Dispatch = Effect.fn('Test.askBesideLoss')(function* () {
+            const position = yield* Ref.updateAndGet(order, (value) => value + 1)
+            if (position === 1) {
+              yield* Deferred.await(secondRunning)
+              yield* Deferred.succeed(asked, undefined)
+              return CallOutcome.cases.ApprovalRequired.make({
+                approvalId: ApprovalId.make('approval-test'),
+                summary: 'Send the message',
+              })
+            }
+            yield* Deferred.succeed(secondRunning, undefined)
+            yield* Effect.sleep('1 second')
+            return yield* Effect.interrupt
+          })
+          const running = yield* Effect.forkChild(
+            run('return await Promise.all([tools.use_tool({}),tools.use_tool({})]);', dispatch),
+          )
+          yield* Deferred.await(asked)
+          yield* TestClock.adjust('1 second')
+          // The lost call keeps its honest unknown receipt, and the decision still arrives at once
+          // instead of waiting for the deadline.
+          check(yield* Fiber.join(running), 'ApprovalRequired', {
+            approvalId: 'approval-test',
+            calls: [{ end: 'needs approval' }, { end: 'unknown' }],
+          })
+        }),
+      )
+    },
+  )
+
+  layer(supervised)(
+    'Clock for a deadline leaves every running call unknown and admits nothing after it',
+    (it) => {
+      it.effect('a deadline leaves every running call unknown and admits nothing after it', () =>
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
+          const count = yield* Ref.make(0)
+          const late: Dispatch = Effect.fn('Test.lateReceipt')(function* () {
+            const position = yield* Ref.updateAndGet(count, (value) => value + 1)
+            if (position === 2) yield* Deferred.succeed(entered, undefined)
+            yield* Deferred.await(release).pipe(Effect.uninterruptible)
+            return CallOutcome.cases.Returned.make({
+              value: true,
+              summary: 'Completed action',
+              end: 'completed',
+            })
+          })
+          const running = yield* Effect.forkChild(
+            run('return await Promise.all([tools.use_tool({}),tools.use_tool({})]);', late),
+          )
+          yield* Deferred.await(entered)
+          yield* TestClock.adjust('301 seconds')
+          yield* Deferred.succeed(release, undefined)
+          const outcome = yield* Fiber.join(running)
+          expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
+          // Both calls of the Promise.all were already running when the deadline passed.
+          expect(yield* Ref.get(count)).toBe(2)
+          expect(outcome.calls.map((call) => call.end)).toEqual(['unknown', 'unknown'])
+        }),
+      )
+    },
+  )
+
+  const loopsLayer = Layer.effect(
+    RunningLoops,
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const count = yield* Ref.make(0)
+      const dispatch: Dispatch = Effect.fn('Test.loopsStarted')(function* (call) {
+        if ((yield* Ref.updateAndGet(count, (value) => value + 1)) === 2)
+          yield* Deferred.succeed(entered, undefined)
+        return yield* reply(call)
+      })
+      // Startup is a fixture precondition, independent of how quickly a parent deadline must stop
+      // admitted guests. Keep both real processes alive in the suite scope until the test advances time.
+      const fibers = yield* Effect.forEach(
+        ['while(true) {}', 'while(true) await Promise.resolve();'],
+        (loop) => Effect.forkScoped(run(`await tools.find_tools({}); ${loop}`, dispatch)),
+      )
+      yield* Effect.raceFirst(
+        Deferred.await(entered),
+        Effect.forEach(
+          fibers,
+          (fiber) => Fiber.join(fiber).pipe(Effect.flatMap((outcome) => Effect.die(outcome))),
+          { concurrency: 'unbounded' },
+        ),
+      )
+      return RunningLoops.of({ fibers })
+    }),
+  )
+
+  layer(supervised)(
+    'Clock for stops synchronous and microtask loops and releases both interpreter slots',
+    (it) => {
+      it.layer(loopsLayer)('Parent deadline', (deadline) => {
+        deadline.effect(
+          'stops synchronous and microtask loops and releases both interpreter slots',
+          () =>
+            Effect.gen(function* () {
+              const running = yield* RunningLoops
+              yield* TestClock.adjust('301 seconds')
+              for (const fiber of running.fibers) {
+                const outcome = yield* Fiber.join(fiber)
+                expect(CodeOutcome.guards.Failed(outcome)).toBe(true)
+                expect(outcome).toHaveProperty('failure._tag', 'TimedOut')
+                expect(outcome.calls.map((call) => call.end)).toEqual(['completed'])
+              }
+              const recovered = yield* Effect.forEach(
+                [42, 43],
+                (value) => run(`return ${value};`, reply),
+                { concurrency: 'unbounded' },
+              )
+              expect(
+                recovered.map((outcome) =>
+                  CodeOutcome.guards.Completed(outcome) ? outcome.result : outcome,
+                ),
+              ).toEqual([42, 43])
+            }),
+        )
+      })
+    },
+  )
+
+  layer(supervised)(
+    'Clock for marks a timed-out consequential dispatch unknown and retains a previous completed receipt',
+    (it) => {
+      it.effect(
+        'marks a timed-out consequential dispatch unknown and retains a previous completed receipt',
+        () =>
+          Effect.gen(function* () {
+            const entered = yield* Deferred.make<void>()
+            const dispatch: Dispatch = Effect.fn('Test.pendingEffect')(function* (call) {
+              if (call.id === 1) return yield* reply(call)
+              yield* Deferred.succeed(entered, undefined)
+              return yield* Effect.never
+            })
+            const running = yield* Effect.forkChild(
+              run('await tools.use_tool({}); await tools.use_tool({});', dispatch),
+            )
+            yield* Deferred.await(entered)
+            yield* TestClock.adjust('301 seconds')
+            const outcome = yield* Fiber.join(running)
+            expect(CodeOutcome.guards.OutcomeUnknown(outcome)).toBe(true)
+            expect(outcome.calls.map((call) => call.end)).toEqual(['completed', 'unknown'])
+          }),
+      )
+    },
+  )
 })
 
 /** The Person has the Computer, or it did not start: the program ends before anything ran. */
@@ -888,20 +920,20 @@ standalone.effect(
       }),
     )
     return Effect.gen(function* () {
-      const process = yield* CodeProcess
-      const result = yield* process.run(
-        {
-          request: { code: 'return 1;', summary: 'Read' },
-          boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
-        },
-        () => Effect.die('A program that never started must not dispatch'),
-      )
-      check(result, 'Failed', { failure: CodeFailure.cases.Unavailable.make({}), calls: [] })
-      expect(messages.some((message) => message.includes('ComputerHeld'))).toBe(true)
-    }).pipe(
-      Effect.provide(codeProcessLayer.pipe(Layer.provide(held))),
-      Effect.provide(Logger.layer([logger])),
-    )
+      const caseContext = yield* Layer.build(codeProcessLayer.pipe(Layer.provide(held)))
+      return yield* Effect.gen(function* () {
+        const process = yield* CodeProcess
+        const result = yield* process.run(
+          {
+            request: { code: 'return 1;', summary: 'Read' },
+            boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
+          },
+          () => Effect.die('A program that never started must not dispatch'),
+        )
+        check(result, 'Failed', { failure: CodeFailure.cases.Unavailable.make({}), calls: [] })
+        expect(messages.some((message) => message.includes('ComputerHeld'))).toBe(true)
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped, Effect.provideService(Logger.CurrentLoggers, new Set([logger])))
   },
 )
 
@@ -910,25 +942,7 @@ standalone.effect(
   'ends a program whose answer cannot reach the Computer, and keeps the receipt of the call',
   () =>
     Effect.gen(function* () {
-      const process = yield* CodeProcess
-      const outcome = yield* process.run(
-        {
-          request: { code: 'await tools.find_tools({}); return "answered";', summary: 'Read' },
-          boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
-        },
-        (call) =>
-          Effect.succeed(
-            CallOutcome.cases.Returned.make({ value: null, summary: call.kind, end: 'completed' }),
-          ),
-      )
-      // The call was made and answered on the server; only the program never heard. It is told
-      // to stop and reported, and is not left waiting until the deadline.
-      check(outcome, 'Failed', {
-        failure: CodeFailure.cases.Unavailable.make({}),
-        calls: [{ kind: 'find_tools', end: 'completed' }],
-      })
-    }).pipe(
-      Effect.provide(
+      const caseContext = yield* Layer.build(
         codeProcessLayer.pipe(
           Layer.provide(
             localCodeComputer((attachment) => ({
@@ -940,8 +954,31 @@ standalone.effect(
             })),
           ),
         ),
-      ),
-    ),
+      )
+      return yield* Effect.gen(function* () {
+        const process = yield* CodeProcess
+        const outcome = yield* process.run(
+          {
+            request: { code: 'await tools.find_tools({}); return "answered";', summary: 'Read' },
+            boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
+          },
+          (call) =>
+            Effect.succeed(
+              CallOutcome.cases.Returned.make({
+                value: null,
+                summary: call.kind,
+                end: 'completed',
+              }),
+            ),
+        )
+        // The call was made and answered on the server; only the program never heard. It is told
+        // to stop and reported, and is not left waiting until the deadline.
+        check(outcome, 'Failed', {
+          failure: CodeFailure.cases.Unavailable.make({}),
+          calls: [{ kind: 'find_tools', end: 'completed' }],
+        })
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped),
   { timeout: 20_000 },
 )
 
@@ -1012,7 +1049,7 @@ standalone.effect('supervision contains hostile causes and logs only bounded typ
       expect(message).not.toContain(secret)
       expect(message.length).toBeLessThan(400)
     }
-  }).pipe(Effect.provide(Logger.layer([logger])))
+  }).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger])))
 })
 
 /** Safe diagnostics identify typed failures without rendering their payload or defect tags. */
@@ -1051,5 +1088,5 @@ standalone.effect('supervision logs typed Fail tags with bounded count and lengt
       expect(message).not.toContain('Private')
       expect(message.length).toBeLessThan(2200)
     }
-  }).pipe(Effect.provide(Logger.layer([logger])))
+  }).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger])))
 })

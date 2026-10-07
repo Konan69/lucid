@@ -143,7 +143,7 @@ export interface RoutineStoreService extends ReturnType<typeof integrationOperat
     id: RoutineId,
     key: Redacted.Redacted,
   ) => Effect.Effect<RoutineRecord, StoreError>
-  readonly claimDue: () => Effect.Effect<
+  readonly claimDue: Effect.Effect<
     ReadonlyArray<ScheduledReceipt>,
     DatabaseInfrastructureError | InvalidRoutineSchedule
   >
@@ -195,7 +195,7 @@ const requireStandingPerson = Effect.fn('RoutineStore.requireStandingPerson')(fu
   prompt: string,
 ) {
   if (prompt === standingRoutine.prompt && actor.by !== 'person')
-    yield* new Forbidden({ message: 'Only the Person may manage this standing Routine.' })
+    return yield* new Forbidden({ message: 'Only the Person may manage this standing Routine.' })
 })
 
 /** The owner-scoped Routine load is also the authorization check before running or issuing keys. */
@@ -208,7 +208,7 @@ const makeGet = (database: DatabaseService) =>
         .where(and(eq(routines.id, id), ownedRoutine(actor))),
     )
     const row = rows[0]
-    if (row === undefined) return yield* Effect.fail(new RoutineMissing({ id }))
+    if (row === undefined) return yield* new RoutineMissing({ id })
     return yield* decodeRoutine(row)
   })
 
@@ -434,14 +434,12 @@ const makePatch = (
           .where(and(eq(routines.id, id), ownedRoutine(actor)))
           .for('update')
         const row = rows[0]
-        if (row === undefined) return yield* Effect.fail(new RoutineMissing({ id }))
+        if (row === undefined) return yield* new RoutineMissing({ id })
         const current = yield* decodeRoutine(row)
         if (staleBaseline({ prepared, input, current, authorized }))
-          return yield* Effect.fail(
-            new Conflict({
-              message: 'This Routine changed while it was being switched on. Try again.',
-            }),
-          )
+          return yield* new Conflict({
+            message: 'This Routine changed while it was being switched on. Try again.',
+          })
         const prompt = input.prompt === undefined ? current.routine.prompt : input.prompt
         yield* requireStandingPerson(actor, current.routine.prompt)
         yield* requireStandingPerson(actor, prompt)
@@ -484,7 +482,7 @@ const makeRemove = (database: DatabaseService) =>
         .where(and(eq(routines.id, id), ownedRoutine(actor)))
         .returning({ id: routines.id }),
     )
-    if (rows.length === 0) return yield* Effect.fail(new RoutineMissing({ id }))
+    if (rows.length === 0) return yield* new RoutineMissing({ id })
     return yield* Effect.void
   })
 
@@ -497,7 +495,7 @@ const makeIssueWebhook = (
   Effect.fn('RoutineStore.issueWebhook')(function* (actor: Actor, id: RoutineId) {
     const record = yield* get(actor, id)
     if (!RoutineTrigger.guards.Webhook(record.routine.trigger)) {
-      return yield* Effect.fail(new RoutineWebhookRequired({ id }))
+      return yield* new RoutineWebhookRequired({ id })
     }
     const key = yield* Effect.sync(issueKey)
     const now = yield* Clock.currentTimeMillis
@@ -508,7 +506,7 @@ const makeIssueWebhook = (
         .where(and(eq(routines.id, id), ownedRoutine(actor), eq(routines.trigger, 'webhook')))
         .returning({ id: routines.id }),
     )
-    if (rows.length === 0) return yield* Effect.fail(new RoutineWebhookRequired({ id }))
+    if (rows.length === 0) return yield* new RoutineWebhookRequired({ id })
     return RoutineWebhook.make({
       address: new URL(`/api/hooks/routines/${encodeURIComponent(id)}`, publicUrl).href,
       key,
@@ -543,7 +541,7 @@ const requireMember = Effect.fn('RoutineStore.requireMember')(function* (
   record: RoutineRecord,
 ) {
   if (!(yield* memberPresent(database, record)))
-    return yield* Effect.fail(new RoutineMissing({ id: record.routine.id }))
+    return yield* new RoutineMissing({ id: record.routine.id })
   return yield* Effect.void
 })
 
@@ -563,7 +561,7 @@ const makeAuthorizeWebhook = (database: DatabaseService) =>
       row.trigger !== 'webhook' ||
       row.webhookKeyHash === null
     ) {
-      return yield* Effect.fail(new RoutineMissing({ id }))
+      return yield* new RoutineMissing({ id })
     }
     const record = yield* decodeRoutine(row)
     yield* database.run(requireMember(database, record))
@@ -669,72 +667,74 @@ const replayScheduled = Effect.fn('RoutineStore.replayScheduled')(function* (
 /** Claims each tick with its receipt atomically. Replay stops on withdrawal, lost authority or
  * the 15-minute admission limit; Conversation still owns keyed admission across process crashes.
  */
-const makeClaimDue = (database: DatabaseService, changes: Changes['Service']) =>
-  Effect.fn('RoutineStore.claimDue')(function* () {
-    const now = yield* Clock.currentTimeMillis
-    const claimed = yield* database.transaction((tx) =>
-      Effect.gen(function* () {
-        const { receipts, topics } = yield* replayScheduled(tx, now)
-        const rows = yield* tx
-          .select()
-          .from(routines)
-          .where(
-            and(
-              inArray(routines.trigger, ['schedule', 'once']),
-              eq(routines.enabled, true),
-              isNotNull(routines.nextExpectedAt),
-              lte(routines.nextExpectedAt, now),
-            ),
+const makeClaimDue = Effect.fn('RoutineStore.claimDue')(function* (
+  database: DatabaseService,
+  changes: Changes['Service'],
+) {
+  const now = yield* Clock.currentTimeMillis
+  const claimed = yield* database.transaction((tx) =>
+    Effect.gen(function* () {
+      const { receipts, topics } = yield* replayScheduled(tx, now)
+      const rows = yield* tx
+        .select()
+        .from(routines)
+        .where(
+          and(
+            inArray(routines.trigger, ['schedule', 'once']),
+            eq(routines.enabled, true),
+            isNotNull(routines.nextExpectedAt),
+            lte(routines.nextExpectedAt, now),
+          ),
+        )
+        .orderBy(asc(routines.nextExpectedAt))
+        .for('update', { skipLocked: true })
+      for (const row of rows) {
+        const record = yield* decodeRoutine(row)
+        if (row.nextExpectedAt === null)
+          return yield* new DatabaseFailure({ message: 'Due Routine has no tick timestamp' })
+        const attempt = scheduledAttempt(record.routine.id, row.nextExpectedAt)
+        const enabled = !RoutineTrigger.guards.Once(record.routine.trigger)
+        const next = yield* nextExpectedAt(record.routine.trigger, enabled, now)
+        const inserted = yield* tx
+          .insert(occurrences)
+          .values({
+            id: attempt.id,
+            routineId: record.routine.id,
+            conversationId: `routine-${record.routine.id}`,
+            submissionId: null,
+            status: 'not-admitted',
+            startedAt: now,
+            finishedAt: null,
+            output: null,
+            error: null,
+          })
+          .onConflictDoNothing({ target: occurrences.id })
+          .returning()
+        yield* tx
+          .update(routines)
+          .set({ enabled, nextExpectedAt: next, updatedAt: now })
+          .where(eq(routines.id, record.routine.id))
+        if (!(yield* memberPresent(tx, record))) {
+          const occurrence = yield* returned(inserted, 'Scheduled receipt')
+          topics.push(
+            ...(yield* retireScheduled(
+              tx,
+              occurrence,
+              ScheduledFailure.cases.Membership.make({}),
+              now,
+            )),
           )
-          .orderBy(asc(routines.nextExpectedAt))
-          .for('update', { skipLocked: true })
-        for (const row of rows) {
-          const record = yield* decodeRoutine(row)
-          if (row.nextExpectedAt === null)
-            return yield* new DatabaseFailure({ message: 'Due Routine has no tick timestamp' })
-          const attempt = scheduledAttempt(record.routine.id, row.nextExpectedAt)
-          const enabled = !RoutineTrigger.guards.Once(record.routine.trigger)
-          const next = yield* nextExpectedAt(record.routine.trigger, enabled, now)
-          const inserted = yield* tx
-            .insert(occurrences)
-            .values({
-              id: attempt.id,
-              routineId: record.routine.id,
-              conversationId: `routine-${record.routine.id}`,
-              submissionId: null,
-              status: 'not-admitted',
-              startedAt: now,
-              finishedAt: null,
-              output: null,
-              error: null,
-            })
-            .onConflictDoNothing({ target: occurrences.id })
-            .returning()
-          yield* tx
-            .update(routines)
-            .set({ enabled, nextExpectedAt: next, updatedAt: now })
-            .where(eq(routines.id, record.routine.id))
-          if (!(yield* memberPresent(tx, record))) {
-            const occurrence = yield* returned(inserted, 'Scheduled receipt')
-            topics.push(
-              ...(yield* retireScheduled(
-                tx,
-                occurrence,
-                ScheduledFailure.cases.Membership.make({}),
-                now,
-              )),
-            )
-            continue
-          }
-          receipts.push({ record, attempt })
+          continue
         }
-        return { receipts, topics }
-      }),
-    )
-    // Live readers wake only once the disabled state and its audit line have both committed.
-    if (claimed.topics.length > 0) yield* changes.publish([...new Set(claimed.topics)])
-    return claimed.receipts
-  })
+        receipts.push({ record, attempt })
+      }
+      return { receipts, topics }
+    }),
+  )
+  // Live readers wake only once the disabled state and its audit line have both committed.
+  if (claimed.topics.length > 0) yield* changes.publish([...new Set(claimed.topics)])
+  return claimed.receipts
+})
 
 /** An authorized Routine receipt remains readable even when its Thread and Run have been deleted. */
 const makeFindOccurrence = (database: DatabaseService) =>
@@ -801,9 +801,9 @@ const makeClaimOccurrence = (
       })
     const existing = yield* find(record, attempt.id)
     if (Option.isNone(existing))
-      return yield* Effect.fail(
-        new DatabaseFailure({ message: 'Routine receipt conflict has no matching Occurrence' }),
-      )
+      return yield* new DatabaseFailure({
+        message: 'Routine receipt conflict has no matching Occurrence',
+      })
     return OccurrenceClaim.cases.Existing.make({ occurrence: existing.value })
   })
 
@@ -867,11 +867,9 @@ const makeAttachSubmission = (database: DatabaseService) =>
         .returning({ id: occurrences.id }),
     )
     if (rows.length === 0)
-      return yield* Effect.fail(
-        new DatabaseFailure({
-          message: 'Routine occurrence disappeared before delivery was attached',
-        }),
-      )
+      return yield* new DatabaseFailure({
+        message: 'Routine occurrence disappeared before delivery was attached',
+      })
     return yield* Effect.void
   })
 

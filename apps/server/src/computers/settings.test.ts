@@ -11,7 +11,7 @@ const complete = {
 /** The whole environment is replaced, so a developer's own Boat settings cannot leak into a case. */
 const reading = (settings: Readonly<Record<string, string>>) =>
   boatConfiguration().pipe(
-    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(settings))),
+    Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(settings)),
   )
 
 /**

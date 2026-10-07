@@ -291,9 +291,9 @@ const read = (suffix: (params: { readonly attachmentId: string }) => string) =>
 const pictureHeaders = Effect.fn('Gateway.pictureHeaders')(function* (headers: Headers.Headers) {
   const mediaType = Option.flatMap(Headers.get(headers, 'content-type'), decodePictureType)
   if (Option.isNone(mediaType))
-    return yield* Effect.fail(
-      new UnsupportedAttachment({ message: 'This attachment is not a supported picture.' }),
-    )
+    return yield* new UnsupportedAttachment({
+      message: 'This attachment is not a supported picture.',
+    })
   return Headers.fromInput({
     'content-type': mediaType.value,
     'content-disposition': 'inline',

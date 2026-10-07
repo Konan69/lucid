@@ -49,15 +49,15 @@ export interface ProposedAction extends Schema.Schema.Type<typeof ProposedAction
  * retries on its own; the Person checks the service and decides.
  */
 export const ApprovalState = Schema.TaggedUnion({
-  Pending: { expiresAt: Schema.Number },
-  Executing: { decidedBy: PersonSummary, decidedAt: Schema.Number },
-  Succeeded: { decidedBy: PersonSummary, finishedAt: Schema.Number, result: Schema.String },
-  Failed: { decidedBy: PersonSummary, finishedAt: Schema.Number, reason: Schema.String },
-  OutcomeUnknown: { decidedBy: PersonSummary, finishedAt: Schema.Number },
-  Denied: { decidedBy: PersonSummary, decidedAt: Schema.Number },
-  Expired: { expiredAt: Schema.Number },
+  Pending: { expiresAt: Schema.Finite },
+  Executing: { decidedBy: PersonSummary, decidedAt: Schema.Finite },
+  Succeeded: { decidedBy: PersonSummary, finishedAt: Schema.Finite, result: Schema.String },
+  Failed: { decidedBy: PersonSummary, finishedAt: Schema.Finite, reason: Schema.String },
+  OutcomeUnknown: { decidedBy: PersonSummary, finishedAt: Schema.Finite },
+  Denied: { decidedBy: PersonSummary, decidedAt: Schema.Finite },
+  Expired: { expiredAt: Schema.Finite },
   /** The Run that asked was stopped, or the Connection it named changed, before a decision. */
-  Withdrawn: { withdrawnAt: Schema.Number, reason: Schema.String },
+  Withdrawn: { withdrawnAt: Schema.Finite, reason: Schema.String },
 })
 export type ApprovalState = typeof ApprovalState.Type
 
@@ -75,7 +75,7 @@ export const Approval = Schema.Struct({
   /** The Person who must decide: the owner of the Connection the action uses. */
   askedOf: PersonSummary,
   state: ApprovalState,
-  createdAt: Schema.Number,
+  createdAt: Schema.Finite,
 }).annotate({ identifier: 'Approval', title: 'Approval' })
 export interface Approval extends Schema.Schema.Type<typeof Approval> {}
 

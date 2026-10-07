@@ -99,7 +99,7 @@ export const Thread = Schema.Struct({
   id: ThreadId,
   title: Schema.String,
   preview: Schema.String,
-  updatedAt: Schema.Number,
+  updatedAt: Schema.Finite,
   archived: Schema.Boolean,
   createdBy: PersonSummary,
   audience: ThreadAudience,
@@ -195,10 +195,10 @@ export type RunFailure = typeof RunFailure.Type
  */
 export const RunState = Schema.TaggedUnion({
   Working: {},
-  Completed: { finishedAt: Schema.Number },
-  Failed: { finishedAt: Schema.Number, reason: RunFailure },
-  Stopped: { finishedAt: Schema.Number },
-  Unknown: { finishedAt: Schema.Number },
+  Completed: { finishedAt: Schema.Finite },
+  Failed: { finishedAt: Schema.Finite, reason: RunFailure },
+  Stopped: { finishedAt: Schema.Finite },
+  Unknown: { finishedAt: Schema.Finite },
 })
 export type RunState = typeof RunState.Type
 
@@ -211,10 +211,10 @@ export const Run = Schema.Struct({
    * is called inside the conversation, where no identifier is ever written: the conversation says
    * "turn 7, from Ada", and the Run with that number says who Ada is and what she may do.
    */
-  turn: Schema.Number,
+  turn: Schema.Finite,
   origin: RunOrigin,
   state: RunState,
-  startedAt: Schema.Number,
+  startedAt: Schema.Finite,
 }).annotate({ identifier: 'Run', title: 'Run' })
 export interface Run extends Schema.Schema.Type<typeof Run> {}
 
@@ -278,7 +278,7 @@ export interface DeliveryScope extends Schema.Schema.Type<typeof DeliveryScope> 
 /** Naming one delivery: its Thread and the turn it was given there. */
 export const DeliveryScopeRequest = Schema.Struct({
   threadId: ThreadId,
-  turn: Schema.Number,
+  turn: Schema.Finite,
 })
 export interface DeliveryScopeRequest extends Schema.Schema.Type<typeof DeliveryScopeRequest> {}
 
@@ -296,7 +296,7 @@ export const RuntimeRunRequest = Schema.Struct({
   body: Schema.String,
   attachments: Schema.optionalKey(Schema.Array(MessageAttachment)),
   attributes: Schema.Record(Schema.String, Schema.String),
-  turn: Schema.Number,
+  turn: Schema.Finite,
   scope: DeliveryScope,
 })
 export interface RuntimeRunRequest extends Schema.Schema.Type<typeof RuntimeRunRequest> {}

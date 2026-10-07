@@ -75,13 +75,14 @@ const adapterLayer = Layer.effect(
   }),
 ).pipe(Layer.provideMerge(fakeAdapterLayer))
 
-/** Only the remote send is substituted; targets, sessions, Notifications and the ledger are real. */
-const foundation = Layer.mergeAll(
+/** Database, silent changes and immutable push configuration may be shared across test cases. */
+export const pushTestFoundation = Layer.mergeAll(
   testDatabaseLayer,
   silentChangesLayer,
   Layer.succeed(PushConfig, testPushConfig),
-  adapterLayer,
 )
+/** Only remote delivery is substituted; persistence and notification semantics remain real. */
+const foundation = Layer.merge(pushTestFoundation, adapterLayer)
 const stores = Layer.mergeAll(
   pushTargetsLayer,
   presenceLayer,
@@ -100,7 +101,7 @@ export const silentPushLayer = Layer.succeed(
     deliver: Effect.fn('PushTest.silentDeliver')(() =>
       Effect.succeed(PushOutcome.cases.NoTargets.make({})),
     ),
-    reconcile: Effect.fn('PushTest.silentReconcile')(() => Effect.void),
+    reconcile: Effect.void.pipe(Effect.withSpan('PushTest.silentReconcile')),
   }),
 )
 

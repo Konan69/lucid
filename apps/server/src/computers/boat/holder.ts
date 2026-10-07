@@ -298,7 +298,7 @@ export const holding = (api: Transport, saved: Bindings, forget: (key: MachineKe
     step: HolderStep,
   ) {
     const intent = identity.binding.intent
-    if (!holdable(intent)) return yield* Effect.fail(new MachinePersistenceFailed())
+    if (!holdable(intent)) return yield* new MachinePersistenceFailed()
     // The machine is being asked again, so what it said before no longer stands: a call that
     // fails here must not leave this process still passing on an old answer.
     admitted.delete(key)
@@ -306,17 +306,17 @@ export const holding = (api: Transport, saved: Bindings, forget: (key: MachineKe
     if (receipt.exitCode === HELD) {
       yield* saved.release(key, intent)
       forget(key)
-      return yield* Effect.fail(new MachineHeld())
+      return yield* new MachineHeld()
     }
     // Damage, or no lock: nothing was learned about whose machine it is, so the binding stays.
     if (receipt.exitCode === UNSETTLED)
-      return yield* Effect.fail(new MachineOperationFailed({ operation: 'holder' }))
+      return yield* new MachineOperationFailed({ operation: 'holder' })
     // The holder is settled and only the desktop's launcher did not open: the machine is this
     // binding's and is used. It is said in the log; the next wake tries the launcher again.
     if (receipt.exitCode === UNOPENED && !receipt.timedOut)
       yield* Effect.logWarning('Computer desktop launcher did not open')
     else if (receipt.exitCode !== 0 || receipt.timedOut)
-      return yield* Effect.fail(new MachineOperationFailed({ operation: step.operation }))
+      return yield* new MachineOperationFailed({ operation: step.operation })
     admitted.set(key, intent)
     return identity
   })

@@ -10,15 +10,15 @@ import type { ActionEffect } from '@vivid/contracts'
 export const Review = Schema.TaggedUnion({
   Reviewed: {
     /** Probability, 0 to 1, that the Person asked for this or it is a necessary step of it. */
-    asked: Schema.Number,
+    asked: Schema.Finite,
     /** Probability, 0 to 1, that the action reaches someone or something the request did not name. */
-    beyond: Schema.Number,
+    beyond: Schema.Finite,
     /**
      * Probability, 0 to 1, that the action is contained: it creates or edits something only the
      * Person sees and can undo. The probability is kept, not the chosen label, because the
      * provider's label need not be its most probable one (Decision.ts `ClassifyAnswer`).
      */
-    contained: Schema.Number,
+    contained: Schema.Finite,
   },
   Unreviewed: {},
 })

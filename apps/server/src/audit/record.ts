@@ -41,9 +41,7 @@ export type AuditAttribution = typeof AuditAttribution.Type
 /** Preserve request attribution and reject Vivid without its responsible Thread before any write. */
 export const attributionOf = Effect.fn('Audit.attribution')(function* (actor: Actor) {
   if (actor.by === 'vivid' && Option.isNone(actor.threadId))
-    return yield* Effect.fail(
-      new DatabaseFailure({ message: 'Vivid audit attribution needs a Thread' }),
-    )
+    return yield* new DatabaseFailure({ message: 'Vivid audit attribution needs a Thread' })
   return AuditAttribution.make({
     personId: actor.person.id,
     companyId: companyColumnOf(actor.workspace),

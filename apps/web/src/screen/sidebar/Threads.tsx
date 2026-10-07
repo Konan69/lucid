@@ -14,8 +14,8 @@ import {
   Users,
 } from 'lucide-react'
 import { useRef, useState } from 'react'
-import { run } from '../../data/app'
-import { change, live } from '../../data/live'
+import { act, running } from '../../data/app'
+import { changing, live } from '../../data/live'
 import { Route, router } from '../../data/route'
 import { orSay } from '../../data/said'
 import {
@@ -66,19 +66,21 @@ function patchThread(
   id: ThreadId,
   patch: { readonly title?: string; readonly archived?: boolean },
 ) {
-  void orSay(
-    change(
-      (client) => client.PatchThread({ id, patch }),
-      () =>
-        live.threads.expect((current) => ({
-          threads: current.threads.map((thread) =>
-            thread.id === id ? { ...thread, ...patch } : thread,
-          ),
-        })),
+  void act(
+    orSay(
+      changing(
+        (client) => client.PatchThread({ id, patch }),
+        () =>
+          live.threads.expect((current) => ({
+            threads: current.threads.map((thread) =>
+              thread.id === id ? { ...thread, ...patch } : thread,
+            ),
+          })),
+      ),
+      patch.title === undefined
+        ? 'That thread could not be moved just now. Try again.'
+        : 'That thread could not be renamed just now. Try again.',
     ),
-    patch.title === undefined
-      ? 'That thread could not be moved just now. Try again.'
-      : 'That thread could not be renamed just now. Try again.',
   )
 }
 
@@ -97,9 +99,11 @@ function useRetitling() {
     if (waiting.has(id)) return
     setWaiting((now) => new Set(now).add(id))
     const settle = () => setWaiting((now) => new Set([...now].filter((other) => other !== id)))
-    void orSay(
-      run(regenerateThreadTitle(id)),
-      'Vivid could not think of a better title just now.',
+    void act(
+      orSay(
+        running(regenerateThreadTitle(id)),
+        'Vivid could not think of a better title just now.',
+      ),
     ).then(settle, settle)
   }
   return { waiting, retitle }
@@ -406,7 +410,7 @@ function DoneAction({ thread }: { thread: Thread }) {
               // away in the same frame, the row below would be under the pointer before the eye
               // had let go of this one. From the keyboard it is done at once.
               if (row === null || byKeyboard(event)) done()
-              else void leave(row, 'exit').then(done)
+              else void act(leave(row, 'exit')).then(done)
             }}
             className="pointer-events-none absolute top-1.5 right-1.5 z-10 inline-flex size-6 cursor-pointer items-center justify-center rounded-control text-ink-3 opacity-0 transition-opacity duration-(--dur-fast) group-focus-within/thread:pointer-events-auto group-focus-within/thread:opacity-100 group-hover/thread:pointer-events-auto group-hover/thread:opacity-100 hover:bg-wash-hover hover:text-ink active:scale-96"
           />
@@ -531,15 +535,17 @@ function DeleteThread({ thread, onClose }: { thread: Thread; onClose: () => void
               // not take the Person away from what they are reading.
               const here = router.route()
               if (Route.$is('Thread')(here) && here.id === thread.id) router.replace(Route.New())
-              void orSay(
-                change(
-                  (client) => client.DeleteThread({ id: thread.id }),
-                  () =>
-                    live.threads.expect((current) => ({
-                      threads: current.threads.filter((candidate) => candidate.id !== thread.id),
-                    })),
+              void act(
+                orSay(
+                  changing(
+                    (client) => client.DeleteThread({ id: thread.id }),
+                    () =>
+                      live.threads.expect((current) => ({
+                        threads: current.threads.filter((candidate) => candidate.id !== thread.id),
+                      })),
+                  ),
+                  `“${thread.title}” could not be deleted, so it is back in the list.`,
                 ),
-                `“${thread.title}” could not be deleted, so it is back in the list.`,
               )
             }}
           >

@@ -99,36 +99,32 @@ export const routineWebhookRoutes = HttpRouter.add(
   accept().pipe(
     // Recorded before the mapping below: once a failure is a status code it is no longer one.
     observeFailures('http'),
-    Effect.catchTag('RoutineThreadUnavailable', () =>
-      Effect.succeed(
-        HttpServerResponse.jsonUnsafe({ error: THREAD_OPENING_FAILURE }, { status: 409 }),
-      ),
-    ),
-    Effect.catchTag('RoutineDeliveryKeyInvalid', () =>
-      Effect.succeed(
-        HttpServerResponse.jsonUnsafe({ error: 'Invalid Idempotency-Key' }, { status: 400 }),
-      ),
-    ),
-    Effect.catchTag('Conflict', (error) =>
-      Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 409 })),
-    ),
-    Effect.catchTag('RoutineMissing', () => Effect.succeed(notFound())),
-    Effect.catchTag('NotFound', () => Effect.succeed(notFound())),
-    Effect.catchTag('RoutinePayloadTooLarge', () =>
-      Effect.succeed(
-        HttpServerResponse.jsonUnsafe({ error: 'Payload too large' }, { status: 413 }),
-      ),
-    ),
-    Effect.catchTag('HttpServerError', () =>
-      Effect.succeed(
-        HttpServerResponse.jsonUnsafe({ error: 'Invalid request body' }, { status: 400 }),
-      ),
-    ),
-    Effect.catchTag('RuntimeUnavailable', () =>
-      Effect.succeed(
-        HttpServerResponse.jsonUnsafe({ error: 'Vivid is unavailable' }, { status: 503 }),
-      ),
-    ),
+    Effect.catchTags({
+      RoutineThreadUnavailable: () =>
+        Effect.succeed(
+          HttpServerResponse.jsonUnsafe({ error: THREAD_OPENING_FAILURE }, { status: 409 }),
+        ),
+      RoutineDeliveryKeyInvalid: () =>
+        Effect.succeed(
+          HttpServerResponse.jsonUnsafe({ error: 'Invalid Idempotency-Key' }, { status: 400 }),
+        ),
+      Conflict: (error) =>
+        Effect.succeed(HttpServerResponse.jsonUnsafe({ error: error.message }, { status: 409 })),
+      RoutineMissing: () => Effect.succeed(notFound()),
+      NotFound: () => Effect.succeed(notFound()),
+      RoutinePayloadTooLarge: () =>
+        Effect.succeed(
+          HttpServerResponse.jsonUnsafe({ error: 'Payload too large' }, { status: 413 }),
+        ),
+      HttpServerError: () =>
+        Effect.succeed(
+          HttpServerResponse.jsonUnsafe({ error: 'Invalid request body' }, { status: 400 }),
+        ),
+      RuntimeUnavailable: () =>
+        Effect.succeed(
+          HttpServerResponse.jsonUnsafe({ error: 'Vivid is unavailable' }, { status: 503 }),
+        ),
+    }),
     Effect.catchTags({
       DatabaseFailure: () =>
         Effect.succeed(

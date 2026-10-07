@@ -138,7 +138,8 @@ describe.skipIf(!testDatabaseConfigured)('appearance transaction announcements',
           ).toEqual(DEFAULT_APPEARANCE)
         }).pipe(Effect.scoped),
     )
-
+  })
+  layer(testLayer)('isolated clock 3', (it) => {
     it.effect('A3 lazy Settings keep their defaults and the controlled write time', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
@@ -160,7 +161,8 @@ describe.skipIf(!testDatabaseConfigured)('appearance transaction announcements',
         yield* payload(notices, [Topic.person(personId)])
       }).pipe(Effect.scoped),
     )
-
+  })
+  layer(testLayer)((it) => {
     it.effect('A4 a Company handler announces only the stored Company owner', () =>
       Effect.gen(function* () {
         const test = yield* fixture()

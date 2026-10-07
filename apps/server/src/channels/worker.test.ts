@@ -27,57 +27,64 @@ describe('channel reconnect policy', () => {
   )
 })
 
+/** Each consumer gets its own inbound queue so message defects cannot consume another case's input. */
 describe.skipIf(!testDatabaseConfigured)('channel stream lifetime', () => {
   it.effect('one defective message cannot end the scoped consumer', () =>
     Effect.gen(function* () {
-      const test = yield* fixture()
-      const control = yield* ChannelControl
-      yield* (yield* ChannelStore).connect(test.actor, 'iMessage', test.address)
-      const receiver = yield* ChannelReceiver
-      const calls = yield* Ref.make(0)
-      const guarded = Layer.succeed(ChannelReceiver, {
-        receive: Effect.fn('Channels.test.defect')(function* (message) {
-          if ((yield* Ref.getAndUpdate(calls, (count) => count + 1)) === 0)
-            return yield* Effect.die('private provider payload')
-          return yield* receiver.receive(message)
-        }),
-      })
-      const context = yield* Effect.context<ChannelProvider>()
-      yield* Layer.build(
-        channelWorkerLayer.pipe(
-          Layer.provide(guarded),
-          Layer.provide(Layer.succeedContext(context)),
-        ),
-      )
-      yield* Queue.take(control.connections)
-      yield* Queue.offer(control.inbound, yield* test.message('first packet'))
-      yield* Queue.offer(control.inbound, yield* test.message('still alive'))
-      expect((yield* Queue.take(control.admitted)).message).toEqual({
-        kind: 'user',
-        body: 'still alive',
-        attachments: [],
-      })
-    }).pipe(Effect.scoped, Effect.provide(channelTestLayer)),
+      const caseContext = yield* Layer.build(channelTestLayer)
+      return yield* Effect.gen(function* () {
+        const test = yield* fixture()
+        const control = yield* ChannelControl
+        yield* (yield* ChannelStore).connect(test.actor, 'iMessage', test.address)
+        const receiver = yield* ChannelReceiver
+        const calls = yield* Ref.make(0)
+        const guarded = Layer.succeed(ChannelReceiver, {
+          receive: Effect.fn('Channels.test.defect')(function* (message) {
+            if ((yield* Ref.getAndUpdate(calls, (count) => count + 1)) === 0)
+              return yield* Effect.die('private provider payload')
+            return yield* receiver.receive(message)
+          }),
+        })
+        const context = yield* Effect.context<ChannelProvider>()
+        yield* Layer.build(
+          channelWorkerLayer.pipe(
+            Layer.provide(guarded),
+            Layer.provide(Layer.succeedContext(context)),
+          ),
+        )
+        yield* Queue.take(control.connections)
+        yield* Queue.offer(control.inbound, yield* test.message('first packet'))
+        yield* Queue.offer(control.inbound, yield* test.message('still alive'))
+        expect((yield* Queue.take(control.admitted)).message).toEqual({
+          kind: 'user',
+          body: 'still alive',
+          attachments: [],
+        })
+      }).pipe(Effect.scoped, Effect.provide(caseContext))
+    }).pipe(Effect.scoped),
   )
 
   it.effect('reconnects on the Schedule and consumes linked text through Conversation', () =>
     Effect.gen(function* () {
-      const test = yield* fixture()
-      const control = yield* ChannelControl
-      const store = yield* ChannelStore
-      yield* store.connect(test.actor, 'iMessage', test.address)
-      yield* Ref.set(control.disconnect, true)
-      const context = yield* Effect.context<ChannelProvider | ChannelReceiver>()
-      yield* Layer.build(channelWorkerLayer.pipe(Layer.provide(Layer.succeedContext(context))))
-      yield* Queue.take(control.connections)
-      yield* Queue.offer(control.inbound, yield* test.message('after reconnect'))
-      yield* TestClock.adjust('3 seconds')
-      yield* Queue.take(control.connections)
-      // Runtime admission itself is the typed readiness signal, rather than polling persisted state.
-      const send = yield* Queue.take(control.admitted)
-      expect(send.message).toEqual({ kind: 'user', body: 'after reconnect', attachments: [] })
-      const saved = yield* store.byPerson(test.actor.person.id, 'iMessage')
-      expect(Option.isSome(saved) && Option.isSome(saved.value.threadId)).toBe(true)
-    }).pipe(Effect.scoped, Effect.provide(channelTestLayer)),
+      const caseContext = yield* Layer.build(channelTestLayer)
+      return yield* Effect.gen(function* () {
+        const test = yield* fixture()
+        const control = yield* ChannelControl
+        const store = yield* ChannelStore
+        yield* store.connect(test.actor, 'iMessage', test.address)
+        yield* Ref.set(control.disconnect, true)
+        const context = yield* Effect.context<ChannelProvider | ChannelReceiver>()
+        yield* Layer.build(channelWorkerLayer.pipe(Layer.provide(Layer.succeedContext(context))))
+        yield* Queue.take(control.connections)
+        yield* Queue.offer(control.inbound, yield* test.message('after reconnect'))
+        yield* TestClock.adjust('3 seconds')
+        yield* Queue.take(control.connections)
+        // Runtime admission itself is the typed readiness signal, rather than polling persisted state.
+        const send = yield* Queue.take(control.admitted)
+        expect(send.message).toEqual({ kind: 'user', body: 'after reconnect', attachments: [] })
+        const saved = yield* store.byPerson(test.actor.person.id, 'iMessage')
+        expect(Option.isSome(saved) && Option.isSome(saved.value.threadId)).toBe(true)
+      }).pipe(Effect.scoped, Effect.provide(caseContext))
+    }).pipe(Effect.scoped),
   )
 })

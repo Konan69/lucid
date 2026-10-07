@@ -19,7 +19,7 @@ export function integrations(response: FindIntegrationsResponse) {
     catalog: response.catalog,
     omittedAccounts: response.omittedAccounts,
     integrations: response.integrations.map((entry) =>
-      ConnectionMatch.match<typeof Schema.Json.Type>(entry, {
+      ConnectionMatch.match<Schema.Json>(entry, {
         // `signedInAs` is who the service says the account is. It is said beside the account's
         // name because a Person may have named the account ("Gmail (Work)"), and may then ask for
         // it by either: the name, or the address behind it.
@@ -55,8 +55,8 @@ export function integrations(response: FindIntegrationsResponse) {
 }
 
 /** Authorization references are the existing card exception; ownership and foreign ids stay hidden. */
-export function added(outcome: AddIntegrationOutcome): typeof Schema.Json.Type {
-  return AddIntegrationOutcome.match<typeof Schema.Json.Type>(outcome, {
+export function added(outcome: AddIntegrationOutcome): Schema.Json {
+  return AddIntegrationOutcome.match<Schema.Json>(outcome, {
     Added: ({ account }) => ({ added: true, account: modelText(account) }),
     AlreadyConnected: ({ name }) => ({
       alreadyConnected: true,
@@ -112,7 +112,7 @@ export function added(outcome: AddIntegrationOutcome): typeof Schema.Json.Type {
 
 /** Test receipts omit external output and all references except an approval card's required handle. */
 export function tested(outcome: TestIntegrationOutcome) {
-  return TestIntegrationOutcome.match<typeof Schema.Json.Type>(outcome, {
+  return TestIntegrationOutcome.match<Schema.Json>(outcome, {
     Tested: ({ account, tools, tool }) => ({
       works: true,
       account: modelText(account),

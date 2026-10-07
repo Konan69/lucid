@@ -91,6 +91,7 @@ const heldReply = Effect.fn('RuntimeRoutes.hold')(function* (
   faux: FauxProviderHandle,
   text: string,
 ) {
+  const context = yield* Effect.context<never>()
   const entered = yield* Deferred.make<void>()
   const released = yield* Deferred.make<void>()
   const release = Deferred.succeed(released, undefined).pipe(Effect.asVoid)
@@ -98,7 +99,7 @@ const heldReply = Effect.fn('RuntimeRoutes.hold')(function* (
   faux.appendResponses([
     () =>
       // oxlint-disable-next-line vivid/no-manual-effect-runtime-in-tests, vivid/no-runpromise-in-library -- Public pi FauxResponseFactory Promise callback owns only test coordination.
-      Effect.runPromise(
+      Effect.runPromiseWith(context)(
         Effect.gen(function* () {
           yield* Deferred.succeed(entered, undefined)
           yield* Deferred.await(released)
@@ -120,14 +121,16 @@ const settled = Effect.fn('RuntimeRoutes.settled')(function* (
       cause instanceof AgentRunError ? cause : new SettlementReadFailed({ threadId, submissionId }),
   }).pipe(
     Effect.map((reply) => Settled.Completed({ text: reply.text })),
-    Effect.catch((error) => {
-      if (!(error instanceof AgentRunError)) return Effect.fail(error)
-      return Match.value(error.outcome).pipe(
-        Match.when('aborted', () => Effect.succeed(Settled.Aborted())),
-        Match.when('failed', () => Effect.succeed(Settled.Failed())),
-        Match.exhaustive,
-      )
-    }),
+    Effect.catchIf(
+      (error): error is AgentRunError => error instanceof AgentRunError,
+      (error) => {
+        return Match.value(error.outcome).pipe(
+          Match.when('aborted', () => Effect.succeed(Settled.Aborted())),
+          Match.when('failed', () => Effect.succeed(Settled.Failed())),
+          Match.exhaustive,
+        )
+      },
+    ),
   )
 })
 
@@ -139,7 +142,7 @@ const stopFailed = Effect.sync(() => expect.fail('Runtime route fixture stop fai
  * neither this module nor the application imports db.ts. Cases must await scope closure
  * before reacquiring: Flue has one runtime per module graph and stop owns its reset.
  */
-export const routes = Effect.fn('RuntimeTest.routes')(function* () {
+export const routes = Effect.gen(function* () {
   // The same read as src/app.ts requireRuntimeToken, from the same worker configuration.
   const token = yield* Config.Redacted('VIVID_RUNTIME_TOKEN')
   // client.ts actingLayer reads this before it builds a client: absent means no product RPC.
@@ -163,16 +166,18 @@ export const routes = Effect.fn('RuntimeTest.routes')(function* () {
       (path: string, input: { readonly method: 'GET' | 'POST'; readonly body?: string }) =>
         Effect.tryPromise({
           // Hono may return synchronously; the adapter must always return a Promise.
-          try: async () =>
-            await app.fetch(
-              new Request(`http://runtime.test${path}`, {
-                method: input.method,
-                body: input.body,
-                headers: {
-                  authorization: `Bearer ${Redacted.value(token)}`,
-                  'content-type': 'application/json',
-                },
-              }),
+          try: () =>
+            Promise.resolve(
+              app.fetch(
+                new Request(`http://runtime.test${path}`, {
+                  method: input.method,
+                  body: input.body,
+                  headers: {
+                    authorization: `Bearer ${Redacted.value(token)}`,
+                    'content-type': 'application/json',
+                  },
+                }),
+              ),
             ),
           catch: () => new RouteRequestFailed({ path }),
         }),
@@ -220,6 +225,6 @@ export const routes = Effect.fn('RuntimeTest.routes')(function* () {
     settled,
     modelCalls: Effect.sync(() => faux.state.callCount),
   }
-})()
+}).pipe(Effect.withSpan('RuntimeTest.routes'))
 
 export type Routes = Effect.Success<typeof routes>

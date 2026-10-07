@@ -84,6 +84,7 @@ function history(messages: FlueConversationMessage[], settlements: FlueConversat
 /** Controlled test Layers prove production orchestration independently of model availability.
  * The extraction substitute needs the meeting question to interpret the fragment; a complete
  * statement stands on its own. Captured candidates are the write-side observable receipt. */
+/** Recorded exchanges, saved candidates and warnings must start empty for each case. */
 const learn = Effect.fn('MemoryTest.learn')(function* (
   delivery: LearningInput,
   read: Effect.Effect<HttpClientResponse.HttpClientResponse, RuntimeUnavailable>,
@@ -134,17 +135,25 @@ const learn = Effect.fn('MemoryTest.learn')(function* (
     }),
   })
   yield* Effect.gen(function* () {
-    yield* (yield* Learning).afterRun(delivery)
+    const services = yield* Layer.build(
+      learningLayer.pipe(
+        Layer.provide([
+          access,
+          extraction,
+          runtime,
+          silentChangesLayer,
+          Layer.mock(Audit, { record: Effect.fn('MemoryTest.audit')(() => Effect.void) }),
+        ]),
+      ),
+    )
+    yield* Effect.gen(function* () {
+      yield* (yield* Learning).afterRun(delivery)
+    }).pipe(Effect.provide(services))
   }).pipe(
-    Effect.provide(learningLayer),
-    Effect.provide([
-      access,
-      extraction,
-      runtime,
-      silentChangesLayer,
-      Layer.mock(Audit, { record: Effect.fn('MemoryTest.audit')(() => Effect.void) }),
-      Logger.layer([Logger.make(({ message: logged }) => warnings.push(JSON.stringify(logged)))]),
-    ]),
+    Effect.provideService(
+      Logger.CurrentLoggers,
+      new Set([Logger.make(({ message: logged }) => warnings.push(JSON.stringify(logged)))]),
+    ),
   )
   return { exchanges: yield* Ref.get(exchanges), saved: yield* Ref.get(saved), warnings }
 })

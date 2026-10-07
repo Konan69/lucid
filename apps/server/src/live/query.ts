@@ -63,7 +63,7 @@ export const live = <A, E, R>(
     Effect.gen(function* () {
       const auth = yield* AuthContext
       if (!AuthState.$is('Person')(auth)) {
-        return yield* Effect.fail(new Forbidden({ message: 'Only a signed-in Person can watch' }))
+        return yield* new Forbidden({ message: 'Only a signed-in Person can watch' })
       }
       const actor = sessionWorkspace(auth.person.id, auth.sessionId).pipe(
         Effect.map((workspace): Actor => ({

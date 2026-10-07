@@ -1,10 +1,10 @@
 import { PatchSettingsRequest, Settings, type MeResponse, type Theme } from '@vivid/contracts'
-import { Result } from 'effect'
+import { Effect, Result } from 'effect'
 import { LogOut } from 'lucide-react'
 import { useState } from 'react'
 import { reload, signOut } from '../../data/account'
-import { change, live, LiveState, useLive } from '../../data/live'
-import { run, send } from '../../data/app'
+import { changing, live, LiveState, useLive } from '../../data/live'
+import { act, running } from '../../data/app'
 import { sessionEnded } from '../../data/ending'
 import { theme } from '../../data/theme'
 import { mayCustomise, useAppearance } from '../../data/vivid'
@@ -46,16 +46,18 @@ export function General({ me }: { me: MeResponse }) {
   const [stuck, setStuck] = useState(false)
 
   /** Signs out, and says so when it did not happen: a reload would land them still signed in. */
-  async function leave() {
-    const left = await run(signOut())
-    if (Result.isFailure(left)) {
-      setStuck(true)
-      return
-    }
-    // Nothing of this Person stays in the browser for whoever opens it next. It is erased
-    // before the page reloads, or the reload would start from it.
-    await send(sessionEnded)
-    reload('/')
+  function leave() {
+    return Effect.gen(function* () {
+      const left = yield* running(signOut)
+      if (Result.isFailure(left)) {
+        setStuck(true)
+        return
+      }
+      // Nothing of this Person stays in the browser for whoever opens it next. It is erased
+      // before the page reloads, or the reload would start from it.
+      yield* sessionEnded
+      reload('/')
+    })
   }
 
   return (
@@ -67,7 +69,7 @@ export function General({ me }: { me: MeResponse }) {
             <span className="block truncate text-title font-title text-ink">{me.person.name}</span>
             <span className="block truncate text-label text-ink-3">{me.person.email}</span>
           </span>
-          <Button variant="ghost" onClick={() => void leave()}>
+          <Button variant="ghost" onClick={() => void act(leave())}>
             <LogOut className="size-3.5" />
             Sign out
           </Button>
@@ -129,22 +131,24 @@ function Preferences({ settings }: { settings: Settings }) {
    * When the save does not land the control goes back to what the server has, and this says so.
    * It used to go back in silence, which read as a click that did nothing.
    */
-  async function save(edit: PatchSettingsRequest) {
-    setUnsaved(false)
-    const saved = await change(
-      (client) => client.PatchSettings(edit),
-      () =>
-        live.settings.expect(
-          (current) =>
-            new Settings({
-              personId: current.personId,
-              theme: edit.theme === undefined ? current.theme : edit.theme,
-              timezone: edit.timezone === undefined ? current.timezone : edit.timezone,
-              notify: edit.notify === undefined ? current.notify : edit.notify,
-            }),
-        ),
-    )
-    if (Result.isFailure(saved)) setUnsaved(true)
+  function save(edit: PatchSettingsRequest) {
+    return Effect.gen(function* () {
+      setUnsaved(false)
+      const saved = yield* changing(
+        (client) => client.PatchSettings(edit),
+        () =>
+          live.settings.expect(
+            (current) =>
+              new Settings({
+                personId: current.personId,
+                theme: edit.theme === undefined ? current.theme : edit.theme,
+                timezone: edit.timezone === undefined ? current.timezone : edit.timezone,
+                notify: edit.notify === undefined ? current.notify : edit.notify,
+              }),
+          ),
+      )
+      if (Result.isFailure(saved)) setUnsaved(true)
+    })
   }
   // The platform's list leaves out UTC, and a zone saved elsewhere may be one this browser does
   // not list; the Person's own zone is always an option, or the select would show a different one.
@@ -168,7 +172,7 @@ function Preferences({ settings }: { settings: Settings }) {
             options={THEMES}
             onChange={(next) => {
               theme.set(next)
-              void save(new PatchSettingsRequest({ theme: next }))
+              void act(save(new PatchSettingsRequest({ theme: next })))
             }}
           />
         </Row>
@@ -179,7 +183,7 @@ function Preferences({ settings }: { settings: Settings }) {
             // A select can be emptied in principle; this one always holds a zone, so only a
             // zone is ever saved.
             onValueChange={(zone) => {
-              if (zone !== null) void save(new PatchSettingsRequest({ timezone: zone }))
+              if (zone !== null) void act(save(new PatchSettingsRequest({ timezone: zone })))
             }}
           >
             <SelectTrigger size="sm" aria-label="Time zone" className="max-w-56">
@@ -201,7 +205,7 @@ function Preferences({ settings }: { settings: Settings }) {
             label="Notifications"
             value={settings.notify ? 'on' : 'off'}
             options={SWITCH}
-            onChange={(next) => void save(new PatchSettingsRequest({ notify: next === 'on' }))}
+            onChange={(next) => void act(save(new PatchSettingsRequest({ notify: next === 'on' })))}
           />
         </Row>
       </Section>

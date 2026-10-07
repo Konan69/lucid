@@ -26,7 +26,7 @@ export const Rule = Schema.Struct({
   decision: RuleDecision,
   scope: RuleScope,
   createdBy: PersonSummary,
-  createdAt: Schema.Number,
+  createdAt: Schema.Finite,
 }).annotate({ identifier: 'Rule', title: 'Rule' })
 export interface Rule extends Schema.Schema.Type<typeof Rule> {}
 

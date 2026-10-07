@@ -150,11 +150,10 @@ export const folderOperations = (database: LibraryDatabase, decodeFolder: Decode
     function* (actor, id) {
       const scope = yield* readableScope(database, libraryFolders, actor)
       const row = yield* reads.getRow(actor, id)
-      if (Option.isNone(row))
-        return yield* Effect.fail(new NotFound({ message: 'Library folder not found' }))
+      if (Option.isNone(row)) return yield* new NotFound({ message: 'Library folder not found' })
       yield* requireEditor(actor, row.value)
       if (yield* hasChildren(actor, id))
-        return yield* Effect.fail(new Conflict({ message: 'Library folder is not empty' }))
+        return yield* new Conflict({ message: 'Library folder is not empty' })
       const removed = yield* database.run(
         database
           .delete(libraryFolders)

@@ -113,14 +113,13 @@ const refused = Effect.fn('Machine.boat.refused')(function* (
   // HTML, nothing, half a document. The status alone says it is an outage, so it is
   // classified before the body is read; decoding first turned such an answer into an
   // invalid response, which is recorded as the machine's state where an outage is not.
-  if (response.status >= 500)
-    return yield* Effect.fail(new MachineRequestRejected({ status: response.status }))
+  if (response.status >= 500) return yield* new MachineRequestRejected({ status: response.status })
   yield* decodeError(response).pipe(
     Effect.mapError(() => new MachineResponseInvalid({ operation: 'error' })),
   )
   if (response.status === 401 || response.status === 403)
-    return yield* Effect.fail(new MachineAuthenticationFailed())
-  return yield* Effect.fail(new MachineRequestRejected({ status: response.status }))
+    return yield* new MachineAuthenticationFailed()
+  return yield* new MachineRequestRejected({ status: response.status })
 })
 
 /** Authenticated requests have one response boundary and bounded dispatch/body deadlines. */
@@ -213,8 +212,10 @@ const requests = (
       if (Option.isSome(answer)) return answer.value
       return yield* refused(response)
     }).pipe(
-      Effect.timeout('60 seconds'),
-      Effect.catchTag('TimeoutError', () => Effect.fail(new MachineUnreachable())),
+      Effect.timeoutOrElse({
+        duration: '60 seconds',
+        orElse: () => Effect.fail(new MachineUnreachable()),
+      }),
     )
   /** Each decoder is compiled at its ingress; only bounded status survives a refusal. */
   const whole = <A>(input: Request, schema: Schema.ConstraintDecoder<A>) =>
@@ -224,12 +225,13 @@ const requests = (
           Effect.mapError(() => new MachineResponseInvalid({ operation: 'response' })),
         ),
       ),
-      Effect.timeout(
-        Request.guards.Post(input) && input.path.endsWith('/commands')
-          ? '11 minutes'
-          : '60 seconds',
-      ),
-      Effect.catchTag('TimeoutError', () => Effect.fail(new MachineUnreachable())),
+      Effect.timeoutOrElse({
+        duration:
+          Request.guards.Post(input) && input.path.endsWith('/commands')
+            ? '11 minutes'
+            : '60 seconds',
+        orElse: () => Effect.fail(new MachineUnreachable()),
+      }),
     )
   /**
    * The answer as it arrives, one decoded frame per line. Only the dispatch has a deadline: the
@@ -240,8 +242,10 @@ const requests = (
   const followed = (input: Request) =>
     Stream.unwrap(
       dispatch(input).pipe(
-        Effect.timeout('90 seconds'),
-        Effect.catchTag('TimeoutError', () => Effect.fail(new MachineUnreachable())),
+        Effect.timeoutOrElse({
+          duration: '90 seconds',
+          orElse: () => Effect.fail(new MachineUnreachable()),
+        }),
         Effect.map((response) =>
           response.stream.pipe(
             // The connection went while the command ran: Boat could not be heard, which says
@@ -346,7 +350,7 @@ export const transport = Effect.fn('Machine.boat.transport')(function* () {
         Protocol.Info,
       )
       if (reply.sandbox.id !== id)
-        return yield* Effect.fail(new MachineResponseInvalid({ operation: 'machine-identity' }))
+        return yield* new MachineResponseInvalid({ operation: 'machine-identity' })
       return reply
     }),
     createMachine: Effect.fn('Machine.boat.create')(

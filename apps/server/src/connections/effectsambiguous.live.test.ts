@@ -1,9 +1,8 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Layer, References } from 'effect'
+import { Effect, Layer, References, Logger } from 'effect'
 import { ServiceId } from '@vivid/contracts'
 import {
   effectScores,
-  effectScoreLogLayer,
   LIVE_METADATA_BUDGET,
   LIVE_METADATA_COHORT_BUDGET_MILLIS,
   liveDecisionEnabled,
@@ -80,59 +79,70 @@ describe.skipIf(!liveDecisionEnabled)('Gateway effectsambiguous', () => {
     (mode) => {
       const lines: string[] = []
       return Effect.gen(function* () {
-        const effects = yield* ToolEffects
-        const excludedRequest = {
-          serviceId: ServiceId.make('effectsambiguous-excluded'),
-          service: 'Records',
-          tools: excluded.map((tool) =>
-            ExecutorTool.make({
-              name: tool.name,
-              description: tool.description,
-              effect: 'write',
-              input: {},
-            }),
-          ),
-        }
-        const unchanged =
-          mode === 'batch'
-            ? (yield* effects.classifyBatch(excludedRequest)).map((tool) => tool.effect)
-            : yield* Effect.forEach(excludedRequest.tools, (tool) =>
-                effects.classify({ ...excludedRequest, tool }),
-              )
-        expect(unchanged).toEqual(excluded.map(() => 'write'))
-        for (const tool of excluded) expect(effectScores(lines, tool.name)).toEqual([])
-        const request = {
-          serviceId: ServiceId.make('effectsambiguous'),
-          service: 'Records',
-          tools: cohort.map((tool) =>
-            ExecutorTool.make({
-              name: tool.name,
-              description: tool.description,
-              effect: 'write',
-              input: {},
-            }),
-          ),
-        }
-        const result =
-          mode === 'batch'
-            ? (yield* effects.classifyBatch(request)).map((tool) => tool.effect)
-            : yield* Effect.forEach(request.tools, (tool) => effects.classify({ ...request, tool }))
-        for (const [index, tool] of cohort.entries()) {
-          const scores = effectScores(lines, tool.name)
-          expect(scores, tool.name).toHaveLength(1)
-          yield* Effect.logInfo('Ambiguous effect receipt', { mode, tool: tool.name, scores })
-          if (tool.expected === 'write') {
-            expect(scores[0], tool.name).toBeLessThan(READ_PROBABILITY_THRESHOLD)
-            expect(result[index], tool.name).not.toBe('read')
-          }
-        }
-      }).pipe(
-        Effect.provide(
-          toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
-        ),
-        Effect.provideService(References.MinimumLogLevel, 'Debug'),
-        Effect.provide(effectScoreLogLayer(lines)),
-      )
+        const loggers = new Set([
+          Logger.consoleLogFmt,
+          Logger.make(({ message }) => lines.push(JSON.stringify(message))),
+        ])
+        return yield* Effect.gen(function* () {
+          const context = yield* Layer.build(
+            toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
+          )
+          return yield* Effect.gen(function* () {
+            const effects = yield* ToolEffects
+            const excludedRequest = {
+              serviceId: ServiceId.make('effectsambiguous-excluded'),
+              service: 'Records',
+              tools: excluded.map((tool) =>
+                ExecutorTool.make({
+                  name: tool.name,
+                  description: tool.description,
+                  effect: 'write',
+                  input: {},
+                }),
+              ),
+            }
+            const unchanged =
+              mode === 'batch'
+                ? (yield* effects.classifyBatch(excludedRequest)).map((tool) => tool.effect)
+                : yield* Effect.forEach(excludedRequest.tools, (tool) =>
+                    effects.classify({ ...excludedRequest, tool }),
+                  )
+            expect(unchanged).toEqual(excluded.map(() => 'write'))
+            for (const tool of excluded) expect(effectScores(lines, tool.name)).toEqual([])
+            const request = {
+              serviceId: ServiceId.make('effectsambiguous'),
+              service: 'Records',
+              tools: cohort.map((tool) =>
+                ExecutorTool.make({
+                  name: tool.name,
+                  description: tool.description,
+                  effect: 'write',
+                  input: {},
+                }),
+              ),
+            }
+            const result =
+              mode === 'batch'
+                ? (yield* effects.classifyBatch(request)).map((tool) => tool.effect)
+                : yield* Effect.forEach(request.tools, (tool) =>
+                    effects.classify({ ...request, tool }),
+                  )
+            for (const [index, tool] of cohort.entries()) {
+              const scores = effectScores(lines, tool.name)
+              expect(scores, tool.name).toHaveLength(1)
+              yield* Effect.logInfo('Ambiguous effect receipt', { mode, tool: tool.name, scores })
+              if (tool.expected === 'write') {
+                expect(scores[0], tool.name).toBeLessThan(READ_PROBABILITY_THRESHOLD)
+                expect(result[index], tool.name).not.toBe('read')
+              }
+            }
+          }).pipe(Effect.provide(context))
+        }).pipe(
+          Effect.scoped,
+          Effect.provideService(References.MinimumLogLevel, 'Debug'),
+          Effect.provideService(Logger.CurrentLoggers, loggers),
+        )
+      }).pipe(Effect.scoped)
     },
     LIVE_METADATA_COHORT_BUDGET_MILLIS,
   )

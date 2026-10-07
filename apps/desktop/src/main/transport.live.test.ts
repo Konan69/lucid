@@ -24,7 +24,7 @@ const Proof = Schema.Struct({
       redirect: Schema.String,
       streamed: Schema.String,
       socket: Schema.String,
-      assetStatus: Schema.Number,
+      assetStatus: Schema.Finite,
     }),
   }),
 })

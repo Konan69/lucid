@@ -31,7 +31,7 @@ const originFrame = Effect.fn('Machine.boat.browser.origin')(function* (
   const roots = state.elements.filter((item) => item.role === 'frame' && item.depth === 0)
   const root = roots[0]
   if (roots.length !== 1 || root === undefined || root.frame === undefined)
-    return yield* Effect.fail(new BrowserStepFailed())
+    return yield* new BrowserStepFailed()
   return root.frame
 })
 
@@ -49,7 +49,7 @@ const controlFrame = Effect.fn('Machine.boat.browser.control')(function* (
   )
   const element = matches[0]
   if (matches.length !== 1 || element === undefined || element.frame === undefined)
-    return yield* Effect.fail(new BrowserStepFailed())
+    return yield* new BrowserStepFailed()
   return element.frame
 })
 
@@ -66,13 +66,12 @@ export const click = Effect.fn('Machine.boat.browser.pointer')(function* (
 ) {
   const state = yield* native.window({ ...window, query: target }, WindowPage)
   if (state.pid !== window.pid || state.window_id !== window.window_id)
-    return yield* Effect.fail(new BrowserStepFailed())
+    return yield* new BrowserStepFailed()
   const origin = yield* originFrame(state)
   const frame = yield* controlFrame(state, target)
   const x = frame.x - origin.x + frame.w / 2
   const y = frame.y - origin.y + frame.h / 2
-  if (x < 0 || y < 0 || x >= origin.w || y >= origin.h)
-    return yield* Effect.fail(new BrowserStepFailed())
+  if (x < 0 || y < 0 || x >= origin.w || y >= origin.h) return yield* new BrowserStepFailed()
   yield* native.call(
     'click',
     {

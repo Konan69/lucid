@@ -45,13 +45,13 @@ const Rows = Schema.Struct({ records: Schema.Array(Row) })
 const ScopeRows = Schema.Struct({ scopes: Schema.Array(Schema.Struct({ scope: MemoryScopeKey })) })
 const decodeScopes = HttpClientResponse.schemaBodyJson(ScopeRows)
 const SearchRows = Schema.Struct({
-  vector: Schema.Array(Schema.Struct({ record: persistedRecord, distance: Schema.Number })),
+  vector: Schema.Array(Schema.Struct({ record: persistedRecord, distance: Schema.Finite })),
   keyword: Schema.Array(Row),
 })
 
 export class HelixRejected extends Schema.TaggedError<HelixRejected>()(
   'MemoryHelixRejected',
-  { status: Schema.Number },
+  { status: Schema.Finite },
   { title: 'MemoryHelixRejected' },
 ) {}
 export class HelixConflict extends Schema.TaggedError<HelixConflict>()(
@@ -90,8 +90,8 @@ export class MemoryIndexMismatch extends Schema.TaggedError<MemoryIndexMismatch>
   {
     expectedModel: Schema.String,
     actualModel: Schema.String,
-    expectedDimensions: Schema.Number,
-    actualDimensions: Schema.Number,
+    expectedDimensions: Schema.Finite,
+    actualDimensions: Schema.Finite,
   },
   { title: 'Memory embedding index configuration mismatch' },
 ) {}
@@ -293,26 +293,21 @@ const requestHelix = Effect.fn('HelixMemory.request')(function* (
         ServiceUnavailable.make({ service: 'memory', message: 'HelixDB is unreachable' }),
       ),
     )
-  if (response.status === 409) return yield* Effect.fail(HelixConflict.make({}))
+  if (response.status === 409) return yield* HelixConflict.make({})
   if (response.status === 429)
-    return yield* Effect.fail(
-      MemoryRateLimited.make({
-        service: 'memory',
-        message: 'HelixDB rate limited memory',
-        retryAfter: Option.getOrNull(Headers.get(response.headers, 'retry-after')),
-      }),
-    )
+    return yield* MemoryRateLimited.make({
+      service: 'memory',
+      message: 'HelixDB rate limited memory',
+      retryAfter: Option.getOrNull(Headers.get(response.headers, 'retry-after')),
+    })
   if (response.status === 500) {
     // probe/ready.mjs proves this stable code denotes rollback, rather than an unknown outage.
     const duplicate = yield* decodeUniqueViolation(response).pipe(Effect.option)
-    if (Option.isSome(duplicate)) return yield* Effect.fail(HelixDuplicate.make({}))
+    if (Option.isSome(duplicate)) return yield* HelixDuplicate.make({})
   }
   if (response.status >= 500)
-    return yield* Effect.fail(
-      ServiceUnavailable.make({ service: 'memory', message: 'HelixDB is unavailable' }),
-    )
-  if (response.status !== 200)
-    return yield* Effect.fail(HelixRejected.make({ status: response.status }))
+    return yield* ServiceUnavailable.make({ service: 'memory', message: 'HelixDB is unavailable' })
+  if (response.status !== 200) return yield* HelixRejected.make({ status: response.status })
   return response
 })
 
@@ -635,7 +630,7 @@ function receipted(session: HelixSession) {
         session,
         insertingOnce(input).toQueryRequest(insertionParams, values),
       )
-      if (ReceiptedWrite.guards.Missing(result)) return yield* Effect.fail(HelixMalformed.make({}))
+      if (ReceiptedWrite.guards.Missing(result)) return yield* HelixMalformed.make({})
       return result
     }),
     /** Reinforcement persists the first application's aliases and timestamp; a replay does not rewrite them. */
@@ -667,7 +662,7 @@ function briefNode(input: BriefIdentity) {
 }
 const BriefRow = Schema.Struct({
   briefs: Schema.Array(Schema.Struct({ brief: Schema.fromJsonString(MemoryBrief) })),
-  changes: Schema.NullOr(Schema.Array(Schema.Struct({ updatedAt: Schema.Number }))),
+  changes: Schema.NullOr(Schema.Array(Schema.Struct({ updatedAt: Schema.Finite }))),
 })
 const encodeBrief = Schema.encodeEffect(Schema.fromJsonString(MemoryBrief))
 const decodeRows = HttpClientResponse.schemaBodyJson(Rows)
@@ -1002,7 +997,7 @@ function superseding(session: HelixSession) {
     const created = yield* decodeCreation(response).pipe(
       Effect.mapError(() => HelixMalformed.make({})),
     )
-    if (created.receipt.length === 0) yield* Effect.fail(HelixConflict.make({}))
+    if (created.receipt.length === 0) return yield* HelixConflict.make({})
   })
 }
 
@@ -1054,14 +1049,12 @@ const checkIndex = Effect.fn('HelixMemory.checkIndex')(function* (
   const decoded = yield* decodeIndex(response).pipe(Effect.mapError(() => HelixMalformed.make({})))
   for (const actual of decoded.configurations) {
     if (actual.model !== expected.model || actual.dimensions !== expected.dimensions)
-      yield* Effect.fail(
-        MemoryIndexMismatch.make({
-          expectedModel: expected.model,
-          actualModel: actual.model,
-          expectedDimensions: expected.dimensions,
-          actualDimensions: actual.dimensions,
-        }),
-      )
+      return yield* MemoryIndexMismatch.make({
+        expectedModel: expected.model,
+        actualModel: actual.model,
+        expectedDimensions: expected.dimensions,
+        actualDimensions: actual.dimensions,
+      })
   }
 })
 

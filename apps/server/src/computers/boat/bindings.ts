@@ -82,10 +82,7 @@ export const bindings = Effect.fn('Machine.boat.bindings')(function* () {
           .returning({ key: machineBindings.key }),
       )
       const found = yield* load(key)
-      const binding = yield* Option.match(found, {
-        onNone: () => Effect.fail(new MachinePersistenceFailed()),
-        onSome: Effect.succeed,
-      })
+      const binding = yield* Effect.fromOption(found, () => new MachinePersistenceFailed())
       return { binding, inserted: inserted.length === 1 }
     },
     (effect) => effect.pipe(Effect.mapError(() => new MachinePersistenceFailed())),

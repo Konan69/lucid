@@ -5,7 +5,7 @@ import {
   type LibraryItem,
   type LibraryShelf,
 } from '@vivid/contracts'
-import { Data, Option, Result } from 'effect'
+import { Data, Effect, Option, Result } from 'effect'
 import {
   Check,
   ChevronRight,
@@ -31,8 +31,8 @@ import {
 } from 'lucide-react'
 import { useId, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from 'react'
 import * as libraryData from '../data/library'
-import { change, live, LiveState, useLive } from '../data/live'
-import { run } from '../data/app'
+import { changing, live, LiveState, useLive } from '../data/live'
+import { act, running } from '../data/app'
 import { engine } from '../data/runtime'
 import { Button, IconButton } from '../ui/button'
 import { cn } from '../ui/cn'
@@ -203,22 +203,27 @@ function uploadActions(browser: Browser) {
    * Sends one file. A file that got in simply leaves the upload list: the shelf is live, so the
    * item appears there by itself. Only what did not get in, or was already there, stays to be read.
    */
-  async function send(file: File, id: string) {
-    const result = await run(
-      libraryData.upload(file, { shelf, folderId }, (percent) =>
-        // Once every byte has left, the server is reading the file until it answers.
-        setStatus(id, percent >= 100 ? UploadStatus.Reading() : UploadStatus.Sending({ percent })),
-      ),
-    )
-    if (Result.isFailure(result)) {
-      setStatus(id, UploadStatus.Failed({ message: result.failure.message }))
-      return
-    }
-    if (result.success.duplicate) {
-      setStatus(id, UploadStatus.Duplicate())
-      return
-    }
-    setUploads((rows) => rows.filter((row) => row.id !== id))
+  function send(file: File, id: string) {
+    return Effect.gen(function* () {
+      const result = yield* running(
+        libraryData.upload(file, { shelf, folderId }, (percent) =>
+          // Once every byte has left, the server is reading the file until it answers.
+          setStatus(
+            id,
+            percent >= 100 ? UploadStatus.Reading() : UploadStatus.Sending({ percent }),
+          ),
+        ),
+      )
+      if (Result.isFailure(result)) {
+        setStatus(id, UploadStatus.Failed({ message: result.failure.message }))
+        return
+      }
+      if (result.success.duplicate) {
+        setStatus(id, UploadStatus.Duplicate())
+        return
+      }
+      setUploads((rows) => rows.filter((row) => row.id !== id))
+    })
   }
 
   function sendAll(files: ReadonlyArray<File>) {
@@ -231,7 +236,7 @@ function uploadActions(browser: Browser) {
       })),
       ...rows,
     ])
-    for (const { file, id } of sending) void send(file, id)
+    for (const { file, id } of sending) void act(send(file, id))
   }
 
   // A drag crosses many child elements, each firing enter and leave; the depth says when the
@@ -265,45 +270,56 @@ function uploadActions(browser: Browser) {
 function browseActions(browser: Browser) {
   const { folderId, query, setAsk, setPath, setRefused, setView, shelf, store, view } = browser
 
-  async function search(event: FormEvent) {
-    event.preventDefault()
-    const text = Option.getOrElse(query, () => '').trim()
-    if (text.length < 2) return
-    const result = await run(libraryData.search(text, folderId))
-    setRefused(refusal(result))
-    if (Result.isSuccess(result)) setView(View.Results({ results: result.success }))
+  function search(event: FormEvent) {
+    return Effect.gen(function* () {
+      event.preventDefault()
+      const text = Option.getOrElse(query, () => '').trim()
+      if (text.length < 2) return
+      const result = yield* running(libraryData.search(text, folderId))
+      setRefused(refusal(result))
+      if (Result.isSuccess(result)) setView(View.Results({ results: result.success }))
+    })
   }
 
-  async function openResult(found: SearchResult) {
-    const result = await run(libraryData.readItem(found.documentId))
-    setRefused(refusal(result))
-    if (Result.isSuccess(result)) setView(View.Item({ item: result.success }))
+  function openResult(found: SearchResult) {
+    return Effect.gen(function* () {
+      const result = yield* running(libraryData.readItem(found.documentId))
+      setRefused(refusal(result))
+      if (Result.isSuccess(result)) setView(View.Item({ item: result.success }))
+    })
   }
 
   /** The item leaves the shelf at once. If the server refuses, it is back, with the reason above it. */
-  async function removeItem(item: LibraryItem) {
-    if (!window.confirm(`Delete “${item.name}” from the Library?`)) return
-    setView(View.Browse())
-    const result = await change(
-      (client) => client.DeleteLibraryItem({ id: item.id }),
-      () => store.expect(libraryData.itemRemoved(item.id)),
-    )
-    setRefused(refusal(result))
+  function removeItem(item: LibraryItem) {
+    return Effect.gen(function* () {
+      if (!window.confirm(`Delete “${item.name}” from the Library?`)) return
+      setView(View.Browse())
+      const result = yield* changing(
+        (client) => client.DeleteLibraryItem({ id: item.id }),
+        () => store.expect(libraryData.itemRemoved(item.id)),
+      )
+      setRefused(refusal(result))
+    })
   }
 
   /** A folder is left only once the server has deleted it: one that is not empty stays open. */
-  async function removeFolder(folder: LibraryFolder) {
-    if (!window.confirm(`Delete the folder “${folder.name}”?`)) return
-    const result = await change((client) => client.DeleteLibraryFolder({ id: folder.id }))
-    setRefused(refusal(result))
-    if (Result.isSuccess(result)) setPath((trail) => trail.filter((each) => each.id !== folder.id))
+  function removeFolder(folder: LibraryFolder) {
+    return Effect.gen(function* () {
+      if (!window.confirm(`Delete the folder “${folder.name}”?`)) return
+      const result = yield* changing((client) => client.DeleteLibraryFolder({ id: folder.id }))
+      setRefused(refusal(result))
+      if (Result.isSuccess(result))
+        setPath((trail) => trail.filter((each) => each.id !== folder.id))
+    })
   }
 
   /** Reads where a thing can go, then asks. The folders of a shelf are read when they are needed. */
-  async function askMove(open: (destinations: ReadonlyArray<LibraryFolder>) => Ask) {
-    const result = await run(libraryData.shelfFolders(shelf))
-    setRefused(refusal(result))
-    if (Result.isSuccess(result)) setAsk(Option.some(open(result.success)))
+  function askMove(open: (destinations: ReadonlyArray<LibraryFolder>) => Ask) {
+    return Effect.gen(function* () {
+      const result = yield* running(libraryData.shelfFolders(shelf))
+      setRefused(refusal(result))
+      if (Result.isSuccess(result)) setAsk(Option.some(open(result.success)))
+    })
   }
 
   function back() {
@@ -316,70 +332,80 @@ function browseActions(browser: Browser) {
 }
 
 /**
- * What each dialog does when it is submitted. Every one waits for the server and answers with its
- * refusal, which the dialog shows beside the field; on success it closes the dialog. Renaming and
+ * What each dialog does when it is submitted, described: the dialog starts it. Every one waits for
+ * the server and answers with its refusal, which the dialog shows beside the field; on success it closes the dialog. Renaming and
  * moving an item also change the shelf at once, so the list behind the dialog is already right.
  */
 function dialogActions(browser: Browser) {
   const { folderId, setAsk, setPath, setView, shelf, store } = browser
   const close = () => setAsk(Option.none())
 
-  async function newFolder(name: string) {
-    const result = await change((client) =>
-      client.CreateLibraryFolder({ name, shelf, parentId: folderId }),
-    )
-    if (Result.isSuccess(result)) close()
-    return refusal(result)
+  function newFolder(name: string) {
+    return Effect.gen(function* () {
+      const result = yield* changing((client) =>
+        client.CreateLibraryFolder({ name, shelf, parentId: folderId }),
+      )
+      if (Result.isSuccess(result)) close()
+      return refusal(result)
+    })
   }
 
-  async function renameFolder(folder: LibraryFolder, name: string) {
-    const result = await change((client) =>
-      client.PatchLibraryFolder({ id: folder.id, patch: { name } }),
-    )
-    if (Result.isSuccess(result)) {
-      // The folder in view is not part of its own contents, so its new name is taken from the
-      // server's answer.
-      const renamed = result.success.folder
-      setPath((trail) => trail.map((each) => (each.id === renamed.id ? renamed : each)))
-      close()
-    }
-    return refusal(result)
+  function renameFolder(folder: LibraryFolder, name: string) {
+    return Effect.gen(function* () {
+      const result = yield* changing((client) =>
+        client.PatchLibraryFolder({ id: folder.id, patch: { name } }),
+      )
+      if (Result.isSuccess(result)) {
+        // The folder in view is not part of its own contents, so its new name is taken from the
+        // server's answer.
+        const renamed = result.success.folder
+        setPath((trail) => trail.map((each) => (each.id === renamed.id ? renamed : each)))
+        close()
+      }
+      return refusal(result)
+    })
   }
 
-  async function moveFolder(folder: LibraryFolder, parentId: LibraryFolderId | null) {
-    const result = await change((client) =>
-      client.PatchLibraryFolder({ id: folder.id, patch: { parentId } }),
-    )
-    if (Result.isSuccess(result)) {
-      // The trail that led here is no longer the way to this folder; start again from the top.
-      setPath([])
-      close()
-    }
-    return refusal(result)
+  function moveFolder(folder: LibraryFolder, parentId: LibraryFolderId | null) {
+    return Effect.gen(function* () {
+      const result = yield* changing((client) =>
+        client.PatchLibraryFolder({ id: folder.id, patch: { parentId } }),
+      )
+      if (Result.isSuccess(result)) {
+        // The trail that led here is no longer the way to this folder; start again from the top.
+        setPath([])
+        close()
+      }
+      return refusal(result)
+    })
   }
 
-  async function renameItem(item: LibraryItem, name: string) {
-    const result = await change(
-      (client) => client.PatchLibraryItem({ id: item.id, patch: { name } }),
-      () => store.expect(libraryData.itemRenamed(item.id, name)),
-    )
-    if (Result.isSuccess(result)) {
-      setView(View.Item({ item: result.success.document }))
-      close()
-    }
-    return refusal(result)
+  function renameItem(item: LibraryItem, name: string) {
+    return Effect.gen(function* () {
+      const result = yield* changing(
+        (client) => client.PatchLibraryItem({ id: item.id, patch: { name } }),
+        () => store.expect(libraryData.itemRenamed(item.id, name)),
+      )
+      if (Result.isSuccess(result)) {
+        setView(View.Item({ item: result.success.document }))
+        close()
+      }
+      return refusal(result)
+    })
   }
 
-  async function moveItem(item: LibraryItem, destination: LibraryFolderId | null) {
-    const result = await change(
-      (client) => client.PatchLibraryItem({ id: item.id, patch: { folderId: destination } }),
-      () => store.expect(libraryData.itemMoved(item.id, destination)),
-    )
-    if (Result.isSuccess(result)) {
-      setView(View.Item({ item: result.success.document }))
-      close()
-    }
-    return refusal(result)
+  function moveItem(item: LibraryItem, destination: LibraryFolderId | null) {
+    return Effect.gen(function* () {
+      const result = yield* changing(
+        (client) => client.PatchLibraryItem({ id: item.id, patch: { folderId: destination } }),
+        () => store.expect(libraryData.itemMoved(item.id, destination)),
+      )
+      if (Result.isSuccess(result)) {
+        setView(View.Item({ item: result.success.document }))
+        close()
+      }
+      return refusal(result)
+    })
   }
 
   return { close, moveFolder, moveItem, newFolder, renameFolder, renameItem }
@@ -527,11 +553,13 @@ function LevelActions({
         <FolderActions
           onRename={() => setAsk(Option.some(Ask.RenameFolder({ folder: folder.value })))}
           onMove={() =>
-            void browsing.askMove((destinations) =>
-              Ask.MoveFolder({ folder: folder.value, destinations }),
+            void act(
+              browsing.askMove((destinations) =>
+                Ask.MoveFolder({ folder: folder.value, destinations }),
+              ),
             )
           }
-          onDelete={() => void browsing.removeFolder(folder.value)}
+          onDelete={() => void act(browsing.removeFolder(folder.value))}
         />
       )}
       <IconButton label="New folder" onClick={() => setAsk(Option.some(Ask.NewFolder()))}>
@@ -603,11 +631,11 @@ function LibraryBody({
       <ShelfLevel
         browser={browser}
         onUpload={onUpload}
-        onSearch={(event) => void browsing.search(event)}
+        onSearch={(event) => void act(browsing.search(event))}
       />
     ),
     Results: ({ results }) => (
-      <SearchResults results={results} onOpen={(found) => void browsing.openResult(found)} />
+      <SearchResults results={results} onOpen={(found) => void act(browsing.openResult(found))} />
     ),
     Item: ({ item }) => {
       // The live shelf has the item's latest state (its name, whether Vivid has read it yet).
@@ -625,10 +653,12 @@ function LibraryBody({
         <ItemDetail
           item={current}
           onAsk={() => onAsk(current)}
-          onDelete={() => void browsing.removeItem(current)}
+          onDelete={() => void act(browsing.removeItem(current))}
           onRename={() => setAsk(Option.some(Ask.RenameItem({ item: current })))}
           onMove={() =>
-            void browsing.askMove((destinations) => Ask.MoveItem({ item: current, destinations }))
+            void act(
+              browsing.askMove((destinations) => Ask.MoveItem({ item: current, destinations })),
+            )
           }
         />
       )
@@ -1316,14 +1346,16 @@ function useSubmission() {
   const [pending, setPending] = useState(false)
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
 
-  async function submit(send: () => Promise<Option.Option<string>>) {
-    setPending(true)
-    setRefused(Option.none())
-    const message = await send()
-    // On success the dialog has been closed by its action and there is nothing left to update.
-    if (Option.isNone(message)) return
-    setRefused(message)
-    setPending(false)
+  function submit(send: Effect.Effect<Option.Option<string>>) {
+    return Effect.gen(function* () {
+      setPending(true)
+      setRefused(Option.none())
+      const message = yield* send
+      // On success the dialog has been closed by its action and there is nothing left to update.
+      if (Option.isNone(message)) return
+      setRefused(message)
+      setPending(false)
+    })
   }
 
   return { pending, refused, submit }
@@ -1344,7 +1376,7 @@ function NameDialog({
   initial: string
   limit: number
   action: string
-  onSubmit: (name: string) => Promise<Option.Option<string>>
+  onSubmit: (name: string) => Effect.Effect<Option.Option<string>>
   onClose: () => void
 }) {
   const [name, setName] = useState(initial)
@@ -1365,7 +1397,7 @@ function NameDialog({
           className="contents"
           onSubmit={(event) => {
             event.preventDefault()
-            void submit(() => onSubmit(name.trim()))
+            void act(submit(onSubmit(name.trim())))
           }}
         >
           <div className="flex flex-col gap-3">
@@ -1418,7 +1450,7 @@ function MoveDialog({
   description: string
   destinations: ReadonlyArray<LibraryFolder>
   initial: LibraryFolderId | null
-  onSubmit: (folderId: LibraryFolderId | null) => Promise<Option.Option<string>>
+  onSubmit: (folderId: LibraryFolderId | null) => Effect.Effect<Option.Option<string>>
   onClose: () => void
 }) {
   const [destination, setDestination] = useState(initial)
@@ -1450,7 +1482,7 @@ function MoveDialog({
           className="contents"
           onSubmit={(event) => {
             event.preventDefault()
-            void submit(() => onSubmit(destination))
+            void act(submit(onSubmit(destination)))
           }}
         >
           <div className="flex flex-col gap-3">

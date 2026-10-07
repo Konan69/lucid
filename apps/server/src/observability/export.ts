@@ -645,7 +645,7 @@ const exchange = <E, R>(send: Effect.Effect<HttpClientResponse, E, R>) =>
       yield* drain(response)
       return Option.some(response)
     }),
-  ).pipe(Effect.catch(() => Effect.succeed(Option.none<HttpClientResponse>())))
+  ).pipe(Effect.orElseSucceed(() => Option.none<HttpClientResponse>()))
 
 /**
  * Makes one export within the bounds, in one attempt: it takes a place among the outstanding

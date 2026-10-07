@@ -156,21 +156,28 @@ const inspectReceipt = Effect.fn('PushAdapter.receipt')(function* (ticket: strin
 })
 
 /** Each exchange Scope owns the scoped client response; the ten-second deadline includes decoding. */
-export const pushAdapterLayer = Layer.effect(
-  PushAdapter,
-  Effect.gen(function* () {
-    // Keep stable authorities without shadowing the caller's Scope, Clock or request span.
-    const services = Context.pick(
-      HttpClient.HttpClient,
-      PushConfig,
-    )(yield* Effect.context<HttpClient.HttpClient | PushConfig>())
-    return PushAdapter.of({
-      send: Effect.fn('PushAdapter.send')(
-        function* (destination, payload) {
-          if (PushDestination.guards.Browser(destination))
-            return yield* sendBrowser(destination, payload)
-          return yield* sendPhone(destination, payload)
-        },
+const makePushAdapter = Effect.fn('PushAdapter.make')(function* () {
+  // Keep stable authorities without shadowing the caller's Scope, Clock or request span.
+  const services = Context.pick(
+    HttpClient.HttpClient,
+    PushConfig,
+  )(yield* Effect.context<HttpClient.HttpClient | PushConfig>())
+  return PushAdapter.of({
+    send: Effect.fn('PushAdapter.send')(
+      function* (destination, payload) {
+        if (PushDestination.guards.Browser(destination))
+          return yield* sendBrowser(destination, payload)
+        return yield* sendPhone(destination, payload)
+      },
+      Effect.scoped,
+      Effect.provideContext(services),
+      Effect.timeoutOrElse({
+        duration: '10 seconds',
+        orElse: () => Effect.fail(new PushUncertain({})),
+      }),
+    ),
+    receipt: Effect.fn('PushAdapter.inspect')((ticket) =>
+      inspectReceipt(ticket).pipe(
         Effect.scoped,
         Effect.provideContext(services),
         Effect.timeoutOrElse({
@@ -178,16 +185,9 @@ export const pushAdapterLayer = Layer.effect(
           orElse: () => Effect.fail(new PushUncertain({})),
         }),
       ),
-      receipt: Effect.fn('PushAdapter.inspect')((ticket) =>
-        inspectReceipt(ticket).pipe(
-          Effect.scoped,
-          Effect.provideContext(services),
-          Effect.timeoutOrElse({
-            duration: '10 seconds',
-            orElse: () => Effect.fail(new PushUncertain({})),
-          }),
-        ),
-      ),
-    })
-  }),
-)
+    ),
+  })
+})
+
+/** The delivery Layer captures the same HTTP client and signing configuration as direct acquisition. */
+export const pushAdapterLayer = Layer.effect(PushAdapter, makePushAdapter())

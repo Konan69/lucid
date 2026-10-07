@@ -122,9 +122,9 @@ export const resolveAuthority = Effect.fn('Delivery.resolve')(function* <E, R>(
   const threadId = decodeThread(thread)
   const turn = turnOf(delivery)
   if (Option.isNone(threadId) || Option.isNone(turn))
-    return yield* Effect.fail(
-      new NobodyToActFor({ message: 'There is no Person behind this message to act for.' }),
-    )
+    return yield* new NobodyToActFor({
+      message: 'There is no Person behind this message to act for.',
+    })
   return yield* recover(threadId.value, turn.value)
 })
 

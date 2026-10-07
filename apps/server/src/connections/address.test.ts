@@ -1,7 +1,7 @@
 import { ExecutorSourceUnsupported } from './source.ts'
 import * as NodeHttp from 'node:http'
 import { NodeHttpClient, NodeHttpServer } from '@effect/platform-node'
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { Effect, Ref, Schema, Layer, Option } from 'effect'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
@@ -129,7 +129,7 @@ const fixture = Effect.fn('AddressTest.fixture')(function* () {
                 .pipe(Effect.mapError(() => new PageFailure({ reason: 'could not be reached' })))
               const contentType = response.headers['content-type']
               if (contentType === undefined)
-                return yield* Effect.fail(new PageFailure({ reason: 'not a readable page' }))
+                return yield* new PageFailure({ reason: 'not a readable page' })
               return {
                 status: response.status,
                 location: Option.fromUndefinedOr(response.headers.location),
@@ -148,151 +148,166 @@ const fixture = Effect.fn('AddressTest.fixture')(function* () {
 })
 
 describe('public integration addresses', () => {
-  it.effect('recognizes a linked OpenAPI document and refuses it before import', () =>
-    Effect.gen(function* () {
-      const { client, pages, requests } = yield* fixture()
-      const result = yield* inspectAddress('https://integration.example/linkedredirect').pipe(
-        Effect.provideService(HttpClient.HttpClient, client),
-        Effect.provide(pages),
-        Effect.flip,
-      )
-      expect(result).toEqual(
-        new ExecutorSourceUnsupported({
-          source: 'OpenApi',
-        }),
-      )
-      expect(yield* Ref.get(requests)).toContain('GET /openapi.json')
-      expect(yield* Ref.get(requests)).toContain('GET /spec?format=json')
-    }).pipe(Effect.provide(NodeHttpClient.layerUndici), Effect.scoped),
-  )
-  it.effect('initializes MCP when its GET endpoint rejects content negotiation', () =>
-    Effect.gen(function* () {
-      const { client, pages, requests } = yield* fixture()
-      const result = yield* inspectAddress('https://integration.example/negotiated').pipe(
-        Effect.provideService(HttpClient.HttpClient, client),
-        Effect.provide(pages),
-      )
-      expect(result).toEqual(
-        ConnectionSource.cases.Mcp.make({
-          address: 'https://integration.example/negotiated',
-          authorization: 'auto',
-        }),
-      )
-      expect(yield* Ref.get(requests)).toEqual(['GET /negotiated', 'POST /negotiated'])
-    }).pipe(Effect.provide(NodeHttpClient.layerUndici), Effect.scoped),
-  )
-  it.effect('refuses a recognized OpenAPI document even with public query parameters', () =>
-    Effect.gen(function* () {
-      const { client, pages, requests } = yield* fixture()
-      const result = yield* inspectAddress('https://integration.example/spec?format=json').pipe(
-        Effect.provideService(HttpClient.HttpClient, client),
-        Effect.provide(pages),
-        Effect.flip,
-      )
-      expect(result).toEqual(
-        new ExecutorSourceUnsupported({
-          source: 'OpenApi',
-        }),
-      )
-      expect(yield* Ref.get(requests)).toContain('GET /spec?format=json')
-    }).pipe(Effect.provide(NodeHttpClient.layerUndici), Effect.scoped),
-  )
-  it.effect(
-    'probes a real local MCP protocol fixture and reads a local OpenAPI fixture through the network boundary',
-    () =>
+  layer(NodeHttpClient.layerUndici)((it) => {
+    it.effect('recognizes a linked OpenAPI document and refuses it before import', () =>
       Effect.gen(function* () {
-        const { client, requests, pages } = yield* fixture()
-        const inspect = (path: string) =>
-          inspectAddress(`https://integration.example${path}`).pipe(
+        const { client, pages, requests } = yield* fixture()
+        const result = yield* Effect.gen(function* () {
+          // The page reader must use this listener so linked-document requests reach its recorder.
+          const context = yield* Layer.build(pages)
+          return yield* inspectAddress('https://integration.example/linkedredirect').pipe(
             Effect.provideService(HttpClient.HttpClient, client),
-            Effect.provide(pages),
+            Effect.provide(context),
           )
-        expect(yield* inspect('/mcp')).toEqual(
-          ConnectionSource.cases.Mcp.make({
-            address: 'https://integration.example/mcp',
-            authorization: 'auto',
+        }).pipe(Effect.scoped, Effect.flip)
+        expect(result).toEqual(
+          new ExecutorSourceUnsupported({
+            source: 'OpenApi',
           }),
         )
-        expect(yield* inspect('/linked').pipe(Effect.flip)).toEqual(
-          new ExecutorSourceUnsupported({ source: 'OpenApi' }),
-        )
-        expect(yield* inspect('/postredirect')).toEqual(
-          ConnectionSource.cases.Mcp.make({
-            address: 'https://integration.example/mcp',
-            authorization: 'auto',
-          }),
-        )
-        expect(yield* inspect('/postprivate').pipe(Effect.flip)).toMatchObject({
-          reason: 'not a public web address',
-        })
-        expect(yield* inspect('/spec').pipe(Effect.flip)).toEqual(
-          new ExecutorSourceUnsupported({ source: 'OpenApi' }),
-        )
-        expect(yield* inspect('/redirect').pipe(Effect.flip)).toEqual(
-          new ExecutorSourceUnsupported({ source: 'OpenApi' }),
-        )
-        expect(yield* inspect('/keywithoutmetadata')).toEqual(
-          ConnectionSource.cases.Mcp.make({
-            address: 'https://integration.example/keywithoutmetadata',
-            authorization: 'apiKey',
-          }),
-        )
-        // A bare 403 is a firewall, rate limit or login wall, never a request for a key.
-        expect(yield* inspect('/blocked').pipe(Effect.flip)).toMatchObject({
-          reason: 'not an MCP server or OpenAPI specification',
-        })
-        expect(yield* inspect('/key')).toEqual(
-          ConnectionSource.cases.Mcp.make({
-            address: 'https://integration.example/key',
-            authorization: 'apiKey',
-          }),
-        )
-        expect(yield* inspect('/oauth')).toEqual(
-          ConnectionSource.cases.Mcp.make({
-            address: 'https://integration.example/oauth',
-            authorization: 'auto',
-          }),
-        )
-        expect(yield* Ref.get(requests)).toContain('POST /mcp')
-        expect(yield* inspect('/private').pipe(Effect.flip)).toMatchObject({
-          reason: 'not a public web address',
-        })
-        expect(yield* Ref.get(requests)).not.toContain('GET /')
-        expect(yield* inspect('/docs').pipe(Effect.flip)).toMatchObject({
-          reason: 'documentation page has no OpenAPI specification link',
-        })
-      }).pipe(Effect.provide(NodeHttpClient.layerUndici), Effect.scoped),
-  )
-  it.effect(
-    'refuses private literals, credential URLs and names resolving to loopback at socket creation',
-    () =>
+        expect(yield* Ref.get(requests)).toContain('GET /openapi.json')
+        expect(yield* Ref.get(requests)).toContain('GET /spec?format=json')
+      }),
+    )
+    it.effect('initializes MCP when its GET endpoint rejects content negotiation', () =>
       Effect.gen(function* () {
-        for (const address of [
-          'http://127.1/',
-          'http://2130706433/',
-          'http://169.254.169.254/',
-          'http://10.0.0.1/',
-          'http://[::1]/',
-          'http://[::ffff:127.0.0.1]/',
-          'https://localhost/',
-          'https://service.internal/',
-          'https://user:key@example.com/',
-        ])
-          expect(publicAddress(address)).toBeUndefined()
-        const reader = yield* ConnectionAddress
-        expect(yield* reader.inspect('http://127.0.0.1/').pipe(Effect.flip)).toMatchObject({
-          reason: 'not a public web address',
-        })
-        expect(
-          yield* reader.inspect('https://integration.example/').pipe(Effect.flip),
-        ).toBeInstanceOf(ConnectionAddressUnreachable)
-      }).pipe(
-        Effect.provide(
-          makeConnectionAddressLayer((_hostname, _options, callback) =>
-            callback(null, [{ address: '127.0.0.1', family: 4 }]),
-          ),
-        ),
-        Effect.scoped,
+        const { client, pages, requests } = yield* fixture()
+        const result = yield* Effect.gen(function* () {
+          // Bind page access to the MCP fixture before testing content negotiation.
+          const context = yield* Layer.build(pages)
+          return yield* inspectAddress('https://integration.example/negotiated').pipe(
+            Effect.provideService(HttpClient.HttpClient, client),
+            Effect.provide(context),
+          )
+        }).pipe(Effect.scoped)
+        expect(result).toEqual(
+          ConnectionSource.cases.Mcp.make({
+            address: 'https://integration.example/negotiated',
+            authorization: 'auto',
+          }),
+        )
+        expect(yield* Ref.get(requests)).toEqual(['GET /negotiated', 'POST /negotiated'])
+      }),
+    )
+    it.effect('refuses a recognized OpenAPI document even with public query parameters', () =>
+      Effect.gen(function* () {
+        const { client, pages, requests } = yield* fixture()
+        const result = yield* Effect.gen(function* () {
+          // Public query-parameter inspection uses this case's page transport.
+          const context = yield* Layer.build(pages)
+          return yield* inspectAddress('https://integration.example/spec?format=json').pipe(
+            Effect.provideService(HttpClient.HttpClient, client),
+            Effect.provide(context),
+          )
+        }).pipe(Effect.scoped, Effect.flip)
+        expect(result).toEqual(
+          new ExecutorSourceUnsupported({
+            source: 'OpenApi',
+          }),
+        )
+        expect(yield* Ref.get(requests)).toContain('GET /spec?format=json')
+      }),
+    )
+    it.effect(
+      'probes a real local MCP protocol fixture and reads a local OpenAPI fixture through the network boundary',
+      () =>
+        Effect.gen(function* () {
+          const { client, requests, pages } = yield* fixture()
+          const inspect = (path: string) =>
+            Effect.gen(function* () {
+              // Both page and MCP probes must hit the same recorded network boundary.
+              const context = yield* Layer.build(pages)
+              return yield* inspectAddress(`https://integration.example${path}`).pipe(
+                Effect.provideService(HttpClient.HttpClient, client),
+                Effect.provide(context),
+              )
+            }).pipe(Effect.scoped)
+          expect(yield* inspect('/mcp')).toEqual(
+            ConnectionSource.cases.Mcp.make({
+              address: 'https://integration.example/mcp',
+              authorization: 'auto',
+            }),
+          )
+          expect(yield* inspect('/linked').pipe(Effect.flip)).toEqual(
+            new ExecutorSourceUnsupported({ source: 'OpenApi' }),
+          )
+          expect(yield* inspect('/postredirect')).toEqual(
+            ConnectionSource.cases.Mcp.make({
+              address: 'https://integration.example/mcp',
+              authorization: 'auto',
+            }),
+          )
+          expect(yield* inspect('/postprivate').pipe(Effect.flip)).toMatchObject({
+            reason: 'not a public web address',
+          })
+          expect(yield* inspect('/spec').pipe(Effect.flip)).toEqual(
+            new ExecutorSourceUnsupported({ source: 'OpenApi' }),
+          )
+          expect(yield* inspect('/redirect').pipe(Effect.flip)).toEqual(
+            new ExecutorSourceUnsupported({ source: 'OpenApi' }),
+          )
+          expect(yield* inspect('/keywithoutmetadata')).toEqual(
+            ConnectionSource.cases.Mcp.make({
+              address: 'https://integration.example/keywithoutmetadata',
+              authorization: 'apiKey',
+            }),
+          )
+          // A bare 403 is a firewall, rate limit or login wall, never a request for a key.
+          expect(yield* inspect('/blocked').pipe(Effect.flip)).toMatchObject({
+            reason: 'not an MCP server or OpenAPI specification',
+          })
+          expect(yield* inspect('/key')).toEqual(
+            ConnectionSource.cases.Mcp.make({
+              address: 'https://integration.example/key',
+              authorization: 'apiKey',
+            }),
+          )
+          expect(yield* inspect('/oauth')).toEqual(
+            ConnectionSource.cases.Mcp.make({
+              address: 'https://integration.example/oauth',
+              authorization: 'auto',
+            }),
+          )
+          expect(yield* Ref.get(requests)).toContain('POST /mcp')
+          expect(yield* inspect('/private').pipe(Effect.flip)).toMatchObject({
+            reason: 'not a public web address',
+          })
+          expect(yield* Ref.get(requests)).not.toContain('GET /')
+          expect(yield* inspect('/docs').pipe(Effect.flip)).toMatchObject({
+            reason: 'documentation page has no OpenAPI specification link',
+          })
+        }),
+    )
+    it.layer(
+      makeConnectionAddressLayer((_hostname, _options, callback) =>
+        callback(null, [{ address: '127.0.0.1', family: 4 }]),
       ),
-  )
+    )('private destination policy', (it) => {
+      it.effect(
+        'refuses private literals, credential URLs and names resolving to loopback at socket creation',
+        () =>
+          Effect.gen(function* () {
+            for (const address of [
+              'http://127.1/',
+              'http://2130706433/',
+              'http://169.254.169.254/',
+              'http://10.0.0.1/',
+              'http://[::1]/',
+              'http://[::ffff:127.0.0.1]/',
+              'https://localhost/',
+              'https://service.internal/',
+              'https://user:key@example.com/',
+            ])
+              expect(publicAddress(address)).toBeUndefined()
+            const reader = yield* ConnectionAddress
+            expect(yield* reader.inspect('http://127.0.0.1/').pipe(Effect.flip)).toMatchObject({
+              reason: 'not a public web address',
+            })
+            expect(
+              yield* reader.inspect('https://integration.example/').pipe(Effect.flip),
+            ).toBeInstanceOf(ConnectionAddressUnreachable)
+          }).pipe(Effect.scoped, Effect.scoped),
+      )
+    })
+  })
 })

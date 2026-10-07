@@ -8,13 +8,13 @@ import { type ComputerId, type Manifest, changeBetween, emptyManifest } from './
 
 /** What one capture did. `Unchanged` writes nothing, so an idle Computer costs one walk. */
 export const CaptureResult = Schema.TaggedUnion({
-  Unchanged: { revision: Schema.Number },
+  Unchanged: { revision: Schema.Finite },
   Captured: {
-    revision: Schema.Number,
+    revision: Schema.Finite,
     /** Objects actually sent; files whose bytes the archive already held are not counted. */
-    uploaded: Schema.Number,
-    written: Schema.Number,
-    removed: Schema.Number,
+    uploaded: Schema.Finite,
+    written: Schema.Finite,
+    removed: Schema.Finite,
   },
 })
 export type CaptureResult = typeof CaptureResult.Type

@@ -1,3 +1,5 @@
+import { Effect } from 'effect'
+
 /**
  * Vivid's motion on the web, by name.
  *
@@ -109,26 +111,31 @@ const STAYED_AFTER_MS = 250
  * opening does not jump. `how: 'fade'` is for what fills the window (a scrim): shrinking that
  * would show the page round its edges. Under reduced motion everything only fades. Asked twice
  * of one element, the second call returns at once: the first is already on its way.
+ *
+ * This describes the leaving; whoever closes the surface starts it (`act` in `data/app.ts`), and
+ * the animation begins in that same turn.
  */
-export async function leave(
+export function leave(
   element: Element,
   name: 'exit' | 'popExit',
   how: 'shrink' | 'fade' = 'shrink',
 ) {
-  if (leaving.has(element)) return
-  leaving.add(element)
-  const end = still() || how === 'fade' ? { opacity: GONE.opacity } : GONE
-  // `forwards` holds the last frame until React takes the element out, so it cannot flash back.
-  const playing = element.animate([end], { ...timing(name), fill: 'forwards' })
-  // A cancelled animation rejects; the surface is still to be closed, so either way it is over.
-  await playing.finished.catch(() => undefined)
-  // Whoever asked now takes the element out. If it is still here a moment later (the server
-  // refused, the owner chose to keep it open) it must not stay invisible: it is put back.
-  setTimeout(() => {
-    if (!element.isConnected) return
-    playing.cancel()
-    leaving.delete(element)
-  }, STAYED_AFTER_MS)
+  return Effect.gen(function* () {
+    if (leaving.has(element)) return
+    leaving.add(element)
+    const end = still() || how === 'fade' ? { opacity: GONE.opacity } : GONE
+    // `forwards` holds the last frame until React takes the element out, so it cannot flash back.
+    const playing = element.animate([end], { ...timing(name), fill: 'forwards' })
+    // A cancelled animation rejects; the surface is still to be closed, so either way it is over.
+    yield* Effect.promise(() => playing.finished.catch(() => undefined))
+    // Whoever asked now takes the element out. If it is still here a moment later (the server
+    // refused, the owner chose to keep it open) it must not stay invisible: it is put back.
+    setTimeout(() => {
+      if (!element.isConnected) return
+      playing.cancel()
+      leaving.delete(element)
+    }, STAYED_AFTER_MS)
+  })
 }
 
 /**

@@ -6,7 +6,7 @@ import {
   type DeviceListResponse,
 } from '@vivid/contracts'
 import { DeviceLink } from '@vivid/desktop/bridge'
-import { Option } from 'effect'
+import { Effect, Option } from 'effect'
 
 /**
  * A Person's own computers: the ones the Vivid desktop app has enrolled, which Vivid may use only
@@ -62,15 +62,17 @@ export const stopping =
  * Which Device this window's computer is, when it is one. In a browser tab there is no desktop
  * app and so no such computer; in the desktop app there is none until it has enrolled.
  */
-export const thisComputer = async (): Promise<Option.Option<string>> => {
+export const thisComputer: Effect.Effect<Option.Option<string>> = Effect.gen(function* () {
   if (Option.isNone(bridge)) return Option.none()
-  return here(await bridge.value.get())
-}
+  // The desktop app's bridge answers with a Promise. A rejection is the shell itself broken, not
+  // an answer this has a case for, so it is not given one.
+  return here(yield* Effect.promise(() => bridge.value.get()))
+}).pipe(Effect.withSpan('Computers.thisComputer'))
 
 /** Tells the desktop app its access may have changed, so it asks the server now, not later. */
-export const nudgeThisComputer = async (): Promise<void> => {
-  if (Option.isSome(bridge)) await bridge.value.refresh()
-}
+export const nudgeThisComputer: Effect.Effect<void> = Effect.gen(function* () {
+  if (Option.isSome(bridge)) yield* Effect.promise(() => bridge.value.refresh())
+}).pipe(Effect.withSpan('Computers.nudgeThisComputer'))
 
 const here = (link: DeviceLink): Option.Option<string> =>
   DeviceLink.match(link, {

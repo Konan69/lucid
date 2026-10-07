@@ -81,14 +81,25 @@ export function ChannelControl({ link, acts }: { link: ChannelLink; acts: Textin
   const [asking, setAsking] = useState<Asking>('nothing')
   const [refused, setRefused] = useState<string | null>(null)
 
-  /** Asks once, holds the buttons until the answer, then says the refusal if there was one. */
-  async function ask(what: Exclude<Asking, 'nothing'>, made: Promise<Option.Option<string>>) {
+  /**
+   * Asks once, holds the buttons until the answer, then says the refusal if there was one.
+   *
+   * The act is already running when it gets here: `acts` is the app's boundary, handed in so
+   * that this control can be drawn with no runtime attached (`TextingActs`), and what it hands
+   * back is a Promise. So the answer is followed as one, and nothing is started here.
+   */
+  function ask(what: Exclude<Asking, 'nothing'>, made: Promise<Option.Option<string>>) {
     setAsking(what)
     setRefused(null)
-    // A call that dies instead of answering is still Vivid not being reached.
-    const said = await made.catch(() => Option.some(textingUnreached))
-    setRefused(Option.getOrNull(said))
-    setAsking('nothing')
+    return (
+      made
+        // A call that dies instead of answering is still Vivid not being reached.
+        .catch(() => Option.some(textingUnreached))
+        .then((said) => {
+          setRefused(Option.getOrNull(said))
+          setAsking('nothing')
+        })
+    )
   }
 
   const connect = (written: string) => void ask('connecting', acts.connect(channel, written))

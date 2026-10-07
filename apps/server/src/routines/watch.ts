@@ -9,7 +9,7 @@ import {
   type InvalidRequest,
   type ServiceUnavailable,
 } from '@vivid/contracts'
-import { Context, Schema, Effect, Option } from 'effect'
+import { Context, Schema, Effect } from 'effect'
 import type { Actor } from '../auth/access.ts'
 import type { DatabaseInfrastructureError } from '../database/client.ts'
 
@@ -34,7 +34,7 @@ export const Watch = Schema.Struct({
   cursor: WatchCursor,
   /** Absence means no consecutive read failures, including rows written before retries existed. */
   failures: Schema.OptionFromOptionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))).pipe(
-    Schema.withConstructorDefault(Effect.succeed(Option.none())),
+    Schema.withConstructorDefault(Effect.succeedNone),
   ),
   intervalMillis: Schema.Int.check(Schema.isGreaterThanOrEqualTo(60_000)),
 })

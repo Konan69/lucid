@@ -1,5 +1,5 @@
 import type { Device } from '@vivid/contracts'
-import { Option, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import { Suspense, use, useState } from 'react'
 import {
   allowed,
@@ -9,7 +9,8 @@ import {
   stopping,
   thisComputer,
 } from '../../data/computers'
-import { change, live, LiveState, useLive } from '../../data/live'
+import { act } from '../../data/app'
+import { changing, live, LiveState, useLive } from '../../data/live'
 import { Button } from '../../ui/button'
 import { Empty, Refusal, Row, Section } from './Parts'
 
@@ -40,17 +41,16 @@ export function YourComputers() {
   const state = useLive(live.devices)
   const [refused, setRefused] = useState<string | null>(null)
   // Which computer this window is running on. Only the desktop app can say, and it says once.
-  const [here] = useState(thisComputer)
+  const [here] = useState(() => act(thisComputer))
 
   /** Shows a decision at once, sends it, and says so when the server would not take it. */
-  async function decide(
-    made: ReturnType<typeof change<{ readonly device: Device }>>,
-    words: string,
-  ) {
-    const result = await made
-    setRefused(Result.isFailure(result) ? words : null)
-    // The desktop app hears of the decision now, instead of on its next scheduled look.
-    await nudgeThisComputer()
+  function decide(made: ReturnType<typeof changing<{ readonly device: Device }>>, words: string) {
+    return Effect.gen(function* () {
+      const result = yield* made
+      setRefused(Result.isFailure(result) ? words : null)
+      // The desktop app hears of the decision now, instead of on its next scheduled look.
+      yield* nudgeThisComputer
+    })
   }
 
   const devices = LiveState.$is('Ready')(state) ? state.value.devices : []
@@ -69,21 +69,25 @@ export function YourComputers() {
               devices={devices}
               here={here}
               onAllow={(device) =>
-                void decide(
-                  change(
-                    (client) => client.AllowDevice({ id: device.id }),
-                    () => live.devices.expect(allowing(device.id, Date.now())),
+                void act(
+                  decide(
+                    changing(
+                      (client) => client.AllowDevice({ id: device.id }),
+                      () => live.devices.expect(allowing(device.id, Date.now())),
+                    ),
+                    `${device.name} could not be allowed. Try again.`,
                   ),
-                  `${device.name} could not be allowed. Try again.`,
                 )
               }
               onStop={(device) =>
-                void decide(
-                  change(
-                    (client) => client.RevokeDevice({ id: device.id }),
-                    () => live.devices.expect(stopping(device.id, Date.now())),
+                void act(
+                  decide(
+                    changing(
+                      (client) => client.RevokeDevice({ id: device.id }),
+                      () => live.devices.expect(stopping(device.id, Date.now())),
+                    ),
+                    `${device.name} is still allowed. Try again.`,
                   ),
-                  `${device.name} is still allowed. Try again.`,
                 )
               }
             />
@@ -101,7 +105,7 @@ function ComputerList({
   onStop,
 }: {
   devices: ReadonlyArray<Device>
-  here: ReturnType<typeof thisComputer>
+  here: Promise<Option.Option<string>>
   onAllow: (device: Device) => void
   onStop: (device: Device) => void
 }) {

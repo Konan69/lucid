@@ -1,9 +1,8 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Layer, References } from 'effect'
+import { Effect, Layer, References, Logger } from 'effect'
 import { ServiceId } from '@vivid/contracts'
 import {
   effectScoreCount,
-  effectScoreLogLayer,
   LIVE_METADATA_BUDGET,
   LIVE_METADATA_COHORT_BUDGET_MILLIS,
   liveDecisionEnabled,
@@ -30,33 +29,44 @@ describe.skipIf(!liveDecisionEnabled)('Gateway effect prompt attacks', () => {
     (mode) => {
       const lines: string[] = []
       return Effect.gen(function* () {
-        const effects = yield* ToolEffects
-        const request = {
-          serviceId: ServiceId.make('effect-adversarial'),
-          service: 'Records',
-          tools: descriptions.map((description, index) =>
-            ExecutorTool.make({
-              name: `manage_record_${index}`,
-              description,
-              effect: 'write',
-              input: {},
-            }),
-          ),
-        }
-        const result =
-          mode === 'batch'
-            ? (yield* effects.classifyBatch(request)).map((tool) => tool.effect)
-            : yield* Effect.forEach(request.tools, (tool) => effects.classify({ ...request, tool }))
-        expect(result).toEqual(descriptions.map(() => 'write'))
-        for (const tool of request.tools)
-          expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
-      }).pipe(
-        Effect.provide(
-          toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
-        ),
-        Effect.provideService(References.MinimumLogLevel, 'Debug'),
-        Effect.provide(effectScoreLogLayer(lines)),
-      )
+        const loggers = new Set([
+          Logger.consoleLogFmt,
+          Logger.make(({ message }) => lines.push(JSON.stringify(message))),
+        ])
+        return yield* Effect.gen(function* () {
+          const context = yield* Layer.build(
+            toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
+          )
+          return yield* Effect.gen(function* () {
+            const effects = yield* ToolEffects
+            const request = {
+              serviceId: ServiceId.make('effect-adversarial'),
+              service: 'Records',
+              tools: descriptions.map((description, index) =>
+                ExecutorTool.make({
+                  name: `manage_record_${index}`,
+                  description,
+                  effect: 'write',
+                  input: {},
+                }),
+              ),
+            }
+            const result =
+              mode === 'batch'
+                ? (yield* effects.classifyBatch(request)).map((tool) => tool.effect)
+                : yield* Effect.forEach(request.tools, (tool) =>
+                    effects.classify({ ...request, tool }),
+                  )
+            expect(result).toEqual(descriptions.map(() => 'write'))
+            for (const tool of request.tools)
+              expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
+          }).pipe(Effect.provide(context))
+        }).pipe(
+          Effect.scoped,
+          Effect.provideService(References.MinimumLogLevel, 'Debug'),
+          Effect.provideService(Logger.CurrentLoggers, loggers),
+        )
+      }).pipe(Effect.scoped)
     },
     LIVE_METADATA_COHORT_BUDGET_MILLIS,
   )

@@ -125,13 +125,13 @@ const SuspicionId = Schema.Symbol.pipe(Schema.brand('DecisionSuspicionId'))
 
 const Availability = Schema.TaggedUnion({
   Ready: {},
-  Suspect: { id: SuspicionId, markedAt: Schema.Number, expiresAt: Schema.Number },
-  Cooling: { retryAt: Schema.Number },
-  CredentialCooling: { retryAt: Schema.Number },
+  Suspect: { id: SuspicionId, markedAt: Schema.Finite, expiresAt: Schema.Finite },
+  Cooling: { retryAt: Schema.Finite },
+  CredentialCooling: { retryAt: Schema.Finite },
   Probing: {},
 })
 const Admission = Schema.TaggedUnion({
-  Normal: { startedAt: Schema.Number, suspicion: Schema.Option(SuspicionId) },
+  Normal: { startedAt: Schema.Finite, suspicion: Schema.Option(SuspicionId) },
   Probe: {},
   Backoff: {},
 })
@@ -164,7 +164,7 @@ class AttemptUnavailable extends Schema.TaggedError<AttemptUnavailable>()(
 /** A timeout carries no HTTP classification: silence is weaker evidence than an outage. */
 class AttemptTimedOut extends Schema.TaggedError<AttemptTimedOut>()(
   'DecisionAttemptTimedOut',
-  { budgetMillis: Schema.Number },
+  { budgetMillis: Schema.Finite },
   { title: 'Decision attempt timed out' },
 ) {}
 
@@ -419,7 +419,7 @@ const Configuration = Schema.TaggedUnion({
  * `VIVID_DECISIONS` is `on` or `off` and defaults to `off`: decisions stay switched off until
  * someone turns them on. When off, no key is read. Config decodes the secret once.
  */
-const configuration = Effect.fn('Decisions.configuration')(function* () {
+const configuration = Effect.gen(function* () {
   const flag = yield* Config.schema(
     Schema.Literals(['on', 'off'] as const),
     'VIVID_DECISIONS',
@@ -433,7 +433,7 @@ const configuration = Effect.fn('Decisions.configuration')(function* () {
     Config.withDefault(DECISION_MODEL),
   )
   return Configuration.cases.Gateway.make({ key: key.value, model })
-})()
+}).pipe(Effect.withSpan('Decisions.configuration'))
 
 /**
  * The model provided when there is no provider, registered with its reason. `decideWithin` never

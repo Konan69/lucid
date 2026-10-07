@@ -331,7 +331,7 @@ export const start = Effect.fn('LibraryExtractionProcess.start')(function* (
 ) {
   yield* admission.pipe(Effect.catchTag('ExtractionConfigurationError', changed))
   const { child, pid, ended, inbox } = yield* observe(spawn)
-  if (pid === undefined || pid <= 1) return yield* Effect.fail(new ExtractionUnavailable())
+  if (pid === undefined || pid <= 1) return yield* new ExtractionUnavailable()
   const running: Running = { child, pid, ended, inbox }
   return running
 })
@@ -433,7 +433,7 @@ const receiveError = (message: string) =>
  *
  * The `error` listener and the inbox reader belong to the run's scope and are removed when it closes.
  */
-const platform = Worker.makePlatform<Running>()({
+export const platform = Worker.makePlatform<Running>()({
   setup: ({ worker }) =>
     Effect.succeed({
       postMessage: (message: NodeChildProcess.Serializable) => {

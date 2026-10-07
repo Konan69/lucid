@@ -245,9 +245,7 @@ export const findTools = Effect.fn('Connections.findTools')(function* (
   })
   const limit = request.limit === undefined ? 8 : request.limit
   if (!Number.isFinite(limit) || limit < 1)
-    return yield* Effect.fail(
-      new InvalidRequest({ message: 'Tool limit must be a positive number.' }),
-    )
+    return yield* new InvalidRequest({ message: 'Tool limit must be a positive number.' })
   const available = groups.flat().filter(callableTool)
   const lexical = rank(available, request.query, available.length, (tool) => ({
     own: `${tool.name} ${tool.description}`,
@@ -297,18 +295,17 @@ export const resolveTool = Effect.fn('Connections.resolveTool')(function* (
   const account = namedAccounts(yield* store.records(actor)).find(
     (entry) => entry.account.toLowerCase() === requestedAccount && entry.row.status === 'ready',
   )
-  if (account === undefined) return yield* Effect.fail(new NotFound({ message: 'Tool not found' }))
+  if (account === undefined) return yield* new NotFound({ message: 'Tool not found' })
   const discovery = yield* store.tools(actor, account.row)
   const tools = ToolDiscovery.match(discovery, {
     Ready: ({ tools: catalog }) => catalog,
     Failed: () => [],
   })
   const requested = tools.find((entry) => entry.name === request.tool)
-  if (requested === undefined)
-    return yield* Effect.fail(new NotFound({ message: 'Tool not found' }))
+  if (requested === undefined) return yield* new NotFound({ message: 'Tool not found' })
   const tool = yield* classifyTool(account.row, requested)
   if (account.row.companyId !== null && tool.effect !== 'read')
-    return yield* Effect.fail(new NotFound({ message: 'Tool not found' }))
+    return yield* new NotFound({ message: 'Tool not found' })
   return NamedTool.make({
     ...tool,
     connectionId: account.row.id,
@@ -468,8 +465,8 @@ const prepareTool = Effect.fn('Connections.prepareTool')(function* (
 ) {
   const store = yield* ConnectionStore
   const found = yield* store.get(actor, request.connectionId).pipe(
-    Effect.map(Option.some),
-    Effect.catchTag('NotFound', () => Effect.succeed(Option.none())),
+    Effect.asSome,
+    Effect.catchTag('NotFound', () => Effect.succeedNone),
   )
   if (Option.isNone(found)) {
     // An unavailable scoped record is a Tool refusal; no Integration identity is invented.
@@ -496,7 +493,7 @@ const prepareTool = Effect.fn('Connections.prepareTool')(function* (
           }),
         )
       }),
-      Ready: () => Effect.succeed(Option.none()),
+      Ready: () => Effect.succeedNone,
     },
   )
   if (Option.isSome(refusal)) return Result.fail(refusal.value)
@@ -644,11 +641,9 @@ export const connectionRunner = Effect.fn('Connections.runApproved')(
           yield* recordRefusal(
             Refusal.cases.ToolRejected.make({ reason: 'IntegrationUnavailable' }),
           )
-          return yield* Effect.fail(
-            new InvalidRequest({
-              message: 'Tool discovery failed before the action was sent. Retry discovery.',
-            }),
-          )
+          return yield* new InvalidRequest({
+            message: 'Tool discovery failed before the action was sent. Retry discovery.',
+          })
         }),
       ),
     )
@@ -691,7 +686,7 @@ export const offerConnection = Effect.fn('Connections.offer')(function* (
   const store = yield* ConnectionStore
   const service = yield* store.service(request.service)
   if (ServiceAuthorization.guards.SetupRequired(service.authorization))
-    return yield* Effect.fail(new InvalidRequest({ message: connectionSetupMessage }))
+    return yield* new InvalidRequest({ message: connectionSetupMessage })
   const ready = (yield* store.records(actor)).some(
     (row) => row.service === service.id && row.status === 'ready',
   )

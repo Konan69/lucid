@@ -34,5 +34,5 @@ export const createdSince = Effect.fn('BoatLive.createdSince')(
     const created = Date.parse((yield* decodeRecord(response)).sandbox.createdAt)
     return Number.isFinite(created) && created >= began - CLOCKS_APART
   },
-  (effect) => effect.pipe(Effect.catch(() => Effect.succeed(false))),
+  (effect) => effect.pipe(Effect.orElseSucceed(() => false)),
 )

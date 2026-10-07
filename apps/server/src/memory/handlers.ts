@@ -40,9 +40,7 @@ export const memoryFailure = Effect.fn('Memory.publicFailure')(
             tag: error._tag,
             retryAfter: error.retryAfter,
           })
-          return yield* Effect.fail(
-            ServiceUnavailable.make({ service: 'memory', message: error.message }),
-          )
+          return yield* ServiceUnavailable.make({ service: 'memory', message: error.message })
         }),
       ),
       Match.tag('MemoryNotFound', () =>
@@ -56,12 +54,10 @@ export const memoryFailure = Effect.fn('Memory.publicFailure')(
       Match.orElse((error) =>
         Effect.gen(function* () {
           yield* Effect.logWarning('Memory operation unavailable', { tag: error._tag })
-          return yield* Effect.fail(
-            ServiceUnavailable.make({
-              service: 'memory',
-              message: `Memory operation failed (${error._tag})`,
-            }),
-          )
+          return yield* ServiceUnavailable.make({
+            service: 'memory',
+            message: `Memory operation failed (${error._tag})`,
+          })
         }),
       ),
     ),

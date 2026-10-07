@@ -20,8 +20,8 @@ export const Notification = Schema.Struct({
   title: Schema.String,
   body: Schema.String,
   threadId: Schema.NullOr(ThreadId),
-  createdAt: Schema.Number,
-  readAt: Schema.NullOr(Schema.Number),
+  createdAt: Schema.Finite,
+  readAt: Schema.NullOr(Schema.Finite),
 }).annotate({ identifier: 'Notification', title: 'Notification' })
 /** Decoded notification. */
 export interface Notification extends Schema.Schema.Type<typeof Notification> {}
@@ -32,10 +32,10 @@ export const ReadNotificationsRequest = Schema.Struct({
 /** Notification list response. */
 export const NotificationListResponse = Schema.Struct({
   notifications: Schema.Array(Notification),
-  unreadCount: Schema.Number,
+  unreadCount: Schema.Finite,
 })
 /** Notification mutation response. */
 export const NotificationReadResponse = Schema.Struct({
-  changed: Schema.Number,
-  unreadCount: Schema.Number,
+  changed: Schema.Finite,
+  unreadCount: Schema.Finite,
 })

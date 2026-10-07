@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { ComputerSession, computerScreenAddress } from '@vivid/contracts'
 import { Clock, Effect, Option, Schema } from 'effect'
 import { eq } from 'drizzle-orm'
@@ -69,72 +69,76 @@ const cleanupComputer = Effect.fn('ThreadProof.cleanupComputer')(function* (
 describe.skipIf(process.env['VIVID_LIVE_THREAD_COMPUTER'] !== '1')(
   'Thread Computer live chain',
   () => {
-    it.live(
-      'wakes Boat, types, clicks, reads and streams its scoped session receipt',
-      () =>
-        Effect.gen(function* () {
-          const fixture = yield* chainFixture('Computer chain proof')
-          yield* cleanupComputer(fixture.personId)
-          const runId = yield* fixture.send(
-            'Use your Computer browser, not read_page or run_code, to open https://www.selenium.dev/selenium/web/web-form.html. Type "Vivid chain verified" in Text input, read it back, click Submit, then read the resulting page. Call use_desktop to see the final screen. Tell me the confirmation shown. Use browse directly for every browser step.',
-          )
-          const running = yield* waitForState(fixture.conversation, (state) =>
-            toolParts(state).some(
-              (part) => part.toolName === 'browse' && part.state === 'input-available',
-            ),
-          )
-          const step = toolParts(running).find(
-            (part) => part.toolName === 'browse' && part.state === 'input-available',
-          )
-          if (step === undefined)
-            return yield* Effect.sync(() => expect.fail('The Thread must publish the running tool'))
-          const input = yield* decodeInput(step.input)
-          expect(input.summary).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27}/i)
-          const state = yield* completeRun(fixture, runId)
-          const receipts = toolParts(state).filter(
-            (part) => part.toolName === 'browse' && part.state === 'output-available',
-          )
-          const actions = yield* Effect.forEach(receipts, (part) => decodeInput(part.input))
-          expect(actions.map((value) => value.action.kind)).toEqual(
-            expect.arrayContaining(['open', 'type', 'click', 'read']),
-          )
-          expect(
-            receipts.some((part) =>
-              Option.exists(
-                typedInput(part.input),
-                (value) => value.action.text === 'Vivid chain verified',
+    layer(chainLayer, { excludeTestServices: true, timeout: 240_000 })((it) => {
+      it.effect(
+        'wakes Boat, types, clicks, reads and streams its scoped session receipt',
+        () =>
+          Effect.gen(function* () {
+            const fixture = yield* chainFixture('Computer chain proof')
+            yield* cleanupComputer(fixture.personId)
+            const runId = yield* fixture.send(
+              'Use your Computer browser, not read_page or run_code, to open https://www.selenium.dev/selenium/web/web-form.html. Type "Vivid chain verified" in Text input, read it back, click Submit, then read the resulting page. Call use_desktop to see the final screen. Tell me the confirmation shown. Use browse directly for every browser step.',
+            )
+            const running = yield* waitForState(fixture.conversation, (state) =>
+              toolParts(state).some(
+                (part) => part.toolName === 'browse' && part.state === 'input-available',
               ),
-            ),
-          ).toBe(true)
-          const observations: string[] = []
-          for (const part of receipts) {
-            if (part.state !== 'output-available') continue
-            const result = yield* decodeOutput(part.output)
-            observations.push(result.result.outline)
-            expect(result.computer.screen.address).toBe(computerScreenAddress)
-            expect(JSON.stringify(result.computer)).not.toContain(fixture.personId)
-          }
-          expect(
-            observations.some((outline) => outline.includes('Vivid chain verified')),
-            'A provider receipt must verify the entered value',
-          ).toBe(true)
-          expect(
-            observations.some((outline) => /received/i.test(outline)),
-            'The submitted page must show a real confirmation',
-          ).toBe(true)
-          expect(
-            toolParts(state).some(
-              (part) => part.toolName === 'use_desktop' && part.state === 'output-available',
-            ),
-          ).toBe(true)
-          expect(replyText(state)).toMatch(/received/i)
-          expect((yield* (yield* bindings()).load(computerMachineKey(fixture.personId)))._tag).toBe(
-            'Some',
-          )
-          const other = yield* chainFixture('Computer isolation proof')
-          expect((yield* other.rpc.GetComputer()).computer.state._tag).toBe('Absent')
-        }).pipe(Effect.scoped, Effect.provide(chainLayer)),
-      { timeout: 240_000 },
-    )
+            )
+            const step = toolParts(running).find(
+              (part) => part.toolName === 'browse' && part.state === 'input-available',
+            )
+            if (step === undefined)
+              return yield* Effect.sync(() =>
+                expect.fail('The Thread must publish the running tool'),
+              )
+            const input = yield* decodeInput(step.input)
+            expect(input.summary).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27}/i)
+            const state = yield* completeRun(fixture, runId)
+            const receipts = toolParts(state).filter(
+              (part) => part.toolName === 'browse' && part.state === 'output-available',
+            )
+            const actions = yield* Effect.forEach(receipts, (part) => decodeInput(part.input))
+            expect(actions.map((value) => value.action.kind)).toEqual(
+              expect.arrayContaining(['open', 'type', 'click', 'read']),
+            )
+            expect(
+              receipts.some((part) =>
+                Option.exists(
+                  typedInput(part.input),
+                  (value) => value.action.text === 'Vivid chain verified',
+                ),
+              ),
+            ).toBe(true)
+            const observations: string[] = []
+            for (const part of receipts) {
+              if (part.state !== 'output-available') continue
+              const result = yield* decodeOutput(part.output)
+              observations.push(result.result.outline)
+              expect(result.computer.screen.address).toBe(computerScreenAddress)
+              expect(JSON.stringify(result.computer)).not.toContain(fixture.personId)
+            }
+            expect(
+              observations.some((outline) => outline.includes('Vivid chain verified')),
+              'A provider receipt must verify the entered value',
+            ).toBe(true)
+            expect(
+              observations.some((outline) => /received/i.test(outline)),
+              'The submitted page must show a real confirmation',
+            ).toBe(true)
+            expect(
+              toolParts(state).some(
+                (part) => part.toolName === 'use_desktop' && part.state === 'output-available',
+              ),
+            ).toBe(true)
+            expect(replyText(state)).toMatch(/received/i)
+            expect(
+              (yield* (yield* bindings()).load(computerMachineKey(fixture.personId)))._tag,
+            ).toBe('Some')
+            const other = yield* chainFixture('Computer isolation proof')
+            expect((yield* other.rpc.GetComputer()).computer.state._tag).toBe('Absent')
+          }).pipe(Effect.scoped),
+        { timeout: 240_000 },
+      )
+    })
   },
 )

@@ -71,19 +71,16 @@ const complete = Effect.fn('MemoryExtraction.complete')(function* (
     Effect.mapError(() => ProviderMalformed.make({ operation: input.name })),
   )
   const first = chat.choices[0]
-  if (first === undefined)
-    return yield* Effect.fail(ProviderMalformed.make({ operation: input.name }))
+  if (first === undefined) return yield* ProviderMalformed.make({ operation: input.name })
   if (
     !['stop', 'length'].includes(first.finish_reason) ||
     first.message.content.trim().length === 0
   )
-    return yield* Effect.fail(
-      MemoryGenerationIncomplete.make({
-        operation: input.name,
-        reason: first.finish_reason,
-        outputCharacters: first.message.content.length,
-      }),
-    )
+    return yield* MemoryGenerationIncomplete.make({
+      operation: input.name,
+      reason: first.finish_reason,
+      outputCharacters: first.message.content.length,
+    })
   if (first.finish_reason === 'length')
     return Completion.cases.BudgetReached.make({ text: first.message.content })
   return Completion.cases.Finished.make({ text: first.message.content })

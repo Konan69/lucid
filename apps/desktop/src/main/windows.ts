@@ -158,7 +158,7 @@ const AppEntry = Schema.Struct({
 })
 const WindowEntry = Schema.Struct({
   app: Schema.String,
-  id: Schema.Number,
+  id: Schema.Finite,
   title: Schema.optionalKey(Schema.String),
 })
 const State = Schema.Struct({
@@ -166,8 +166,8 @@ const State = Schema.Struct({
     Schema.Struct({
       id: Schema.String,
       url: Schema.String,
-      width: Schema.Number,
-      height: Schema.Number,
+      width: Schema.Finite,
+      height: Schema.Finite,
     }),
   ),
   accessibility: Schema.Struct({ tree: Schema.String }),
@@ -185,10 +185,10 @@ const lookId = Schema.decodeUnknownOption(LookId)
 
 /** A window Vivid named must be one this turn listed; otherwise it is gone as far as Vivid knows. */
 const windowOf = (table: Table, window: WindowId): Effect.Effect<ComputerWindow, Ended> =>
-  Option.match(Option.fromUndefinedOr(table.windows.get(window)), {
-    onNone: () => Effect.fail(new Ended({ outcome: declined('WindowGone') })),
-    onSome: (known) => Effect.succeed(known),
-  })
+  Effect.fromOption(
+    Option.fromUndefinedOr(table.windows.get(window)),
+    () => new Ended({ outcome: declined('WindowGone') }),
+  )
 
 /** An element number or a point belongs to one look; any other look of that window is stale. */
 const latest = (table: Table, window: WindowId, look: LookId) =>

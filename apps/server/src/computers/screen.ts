@@ -78,6 +78,7 @@ export const screenLifetime = Effect.fn('Computer.screen.lifetime')(function* (i
     yield* sessionWorkspace(identity.personId, identity.sessionId)
     return Option.isNone(yield* store.screen(identity.personId))
   })
+  // @effect-diagnostics-next-line returnEffectInGen:off -- the subscription is acquired here, before dialing; the returned program is the lifetime the caller races beside the relay
   return Stream.concat(Stream.make(undefined), Stream.merge(moved, Stream.tick('5 seconds'))).pipe(
     Stream.mapEffect(() => check()),
     Stream.filter((ended) => ended),
@@ -101,8 +102,8 @@ const screen = Effect.fn('Computer.screen')(function* () {
   )
     return notFound()
   const auth = yield* authenticate(new Headers(Object.entries(request.headers))).pipe(
-    Effect.map(Option.some),
-    Effect.catchTag('Unauthenticated', () => Effect.succeed(Option.none())),
+    Effect.asSome,
+    Effect.catchTag('Unauthenticated', () => Effect.succeedNone),
   )
   if (Option.isNone(auth)) return notFound()
   const store = yield* ComputerStore
@@ -124,14 +125,13 @@ export const computerScreenRoutes = HttpRouter.add(
   '/api/computer/screen/*',
   screen().pipe(
     Effect.scoped,
-    Effect.catchTag('SocketError', (error) =>
-      Effect.logWarning('Computer screen could not connect', error.reason._tag).pipe(
-        Effect.as(HttpServerResponse.empty({ status: 502 })),
-      ),
-    ),
-    Effect.catchTag('HttpServerError', () =>
-      Effect.succeed(HttpServerResponse.empty({ status: 400 })),
-    ),
+    Effect.catchTags({
+      SocketError: (error) =>
+        Effect.logWarning('Computer screen could not connect', error.reason._tag).pipe(
+          Effect.as(HttpServerResponse.empty({ status: 502 })),
+        ),
+      HttpServerError: () => Effect.succeed(HttpServerResponse.empty({ status: 400 })),
+    }),
     Effect.catchTag(
       ['DatabaseFailure', 'DatabaseUnavailable', 'DatabaseConstraintViolation'],
       (error) =>

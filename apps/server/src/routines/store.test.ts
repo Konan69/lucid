@@ -83,6 +83,13 @@ import {
   WatchCursor,
 } from './watch.ts'
 
+/** Native request and response fixture failures retain the original rejection. */
+class WebhookFixtureFailure extends Schema.TaggedError<WebhookFixtureFailure>()(
+  'WebhookFixtureFailure',
+  { message: Schema.String, cause: Schema.Unknown },
+  { title: 'Webhook fixture failed' },
+) {}
+
 /** The delivery authority records calls while storing real Runs, so history joins remain real. */
 class Deliveries extends Context.Service<Deliveries, Ref.Ref<ReadonlyArray<Delivery>>>()(
   'test/RoutineDeliveries',
@@ -114,14 +121,14 @@ const recordedConversationLayer = Layer.effectContext(
     const conversation = Conversation.of({
       /** Routine tests never use the gateway's receipt path; a call there must fail visibly. */
       admit: Effect.fn('Test.RoutineConversation.admit')(function* () {
-        return yield* Effect.fail(
-          new RuntimeUnavailable({ message: 'Gateway admission is outside Routine tests' }),
-        )
+        return yield* new RuntimeUnavailable({
+          message: 'Gateway admission is outside Routine tests',
+        })
       }),
       /** A Run exists durably before delivery returns, just as the production authority promises. */
       deliver: Effect.fn('Test.RoutineConversation.deliver')(function* (delivery) {
         const failed = yield* Ref.getAndSet(failure, Option.none())
-        if (Option.isSome(failed)) return yield* Effect.fail(failed.value)
+        if (Option.isSome(failed)) return yield* failed.value
         // Persist through the production allocator: parallel deliveries and replays keep real turns.
         const id = submissionId(delivery.threadId, delivery.idempotencyKey)
         const reservation = yield* store.start({
@@ -132,7 +139,7 @@ const recordedConversationLayer = Layer.effectContext(
           libraryFolder: delivery.libraryFolder === undefined ? null : delivery.libraryFolder,
         })
         if (TurnReservation.guards.Busy(reservation))
-          return yield* Effect.fail(new Conflict({ message: 'Test Thread is busy' }))
+          return yield* new Conflict({ message: 'Test Thread is busy' })
         if (TurnReservation.guards.Reserved(reservation))
           yield* store.admitted({
             runId: id,
@@ -227,18 +234,14 @@ const fakeWatchLayer = Layer.effectContext(
       ),
       newItems: Effect.fn('Test.IntegrationWatch.newItems')(function* () {
         yield* Ref.update(reads, (count) => count + 1)
-        if (yield* Ref.get(revoked))
-          return yield* Effect.fail(new IntegrationRevoked({ connectionId }))
-        if (yield* Ref.get(transient))
-          return yield* Effect.fail(new IntegrationReadFailed({ connectionId }))
+        if (yield* Ref.get(revoked)) return yield* new IntegrationRevoked({ connectionId })
+        if (yield* Ref.get(transient)) return yield* new IntegrationReadFailed({ connectionId })
         if (yield* Ref.getAndSet(gap, false))
-          return yield* Effect.fail(
-            new IntegrationCursorLost({
-              connectionId,
-              cursor: WatchCursor.cases.Item.make({ id: ProviderEventId.make('baseline-now') }),
-              reason: 'Window',
-            }),
-          )
+          return yield* new IntegrationCursorLost({
+            connectionId,
+            cursor: WatchCursor.cases.Item.make({ id: ProviderEventId.make('baseline-now') }),
+            reason: 'Window',
+          })
         const items = yield* Ref.get(events)
         const last = items[items.length - 1]
         return WatchBatch.make({
@@ -345,7 +348,7 @@ const fixture = Effect.fn('Test.Routines.fixture')(function* () {
   const colleague = actors[1]
   const other = actors[2]
   if (owner === undefined || colleague === undefined || other === undefined)
-    return yield* Effect.fail(new DatabaseFailure({ message: 'Test People are missing' }))
+    return yield* new DatabaseFailure({ message: 'Test People are missing' })
   yield* Ref.set(yield* Published, [])
   yield* Ref.set(yield* Deliveries, [])
   yield* Ref.set(yield* DeliveryFailure, Option.none())
@@ -397,7 +400,7 @@ const sendWebhook = Effect.fn('Test.Routines.sendWebhook')(function* (
           body: input.body,
         }),
       ),
-    catch: (cause) => new Error('Webhook HTTP adapter failed', { cause }),
+    catch: (cause) => new WebhookFixtureFailure({ message: 'Webhook HTTP adapter failed', cause }),
   })
 })
 
@@ -420,7 +423,8 @@ const decodeReceipt = Schema.decodeUnknownEffect(
 const receipt = Effect.fn('Test.Routines.receipt')(function* (response: Response) {
   const text = yield* Effect.tryPromise({
     try: () => response.text(),
-    catch: (cause) => new Error('Webhook response could not be read', { cause }),
+    catch: (cause) =>
+      new WebhookFixtureFailure({ message: 'Webhook response could not be read', cause }),
   })
   return yield* decodeReceipt(text)
 })
@@ -475,6 +479,7 @@ const integrationFixture = Effect.fn('Test.Routines.integrationFixture')(functio
 })
 
 /** Integration tests are gated only by the isolated test database setting. */
+/** Restart assertions build fresh store/scheduler contexts inside each scoped case. */
 describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
   layer(testLayer)((it) => {
     it.effect(
@@ -547,10 +552,10 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           trigger: RoutineTrigger.cases.Once.make({ at: now + 60_000, timezone: 'Africa/Lagos' }),
         })
         expect(routine.nextExpectedAt).toBe(now + 60_000)
-        yield* scheduler.runDue()
+        yield* scheduler.runDue
         expect((yield* store.get(owner, routine.id)).routine.runs).toHaveLength(0)
         yield* TestClock.adjust('1 minute')
-        yield* scheduler.runDue()
+        yield* scheduler.runDue
         const fired = yield* store.list(owner)
         const result = yield* returned(
           fired.filter((item) => item.id === routine.id),
@@ -562,9 +567,11 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         expect((yield* (yield* ThreadStore).list(owner)).map((thread) => thread.id)).toContain(
           occurrence.threadId,
         )
-        yield* scheduler.runDue().pipe(Effect.provide(Layer.fresh(routineSchedulerServiceLayer)))
+        yield* scheduler.runDue.pipe(
+          Effect.provide(yield* Layer.build(Layer.fresh(routineSchedulerServiceLayer))),
+        )
         yield* TestClock.adjust('1 day')
-        yield* scheduler.runDue()
+        yield* scheduler.runDue
         expect(
           (yield* returned(
             (yield* store.list(owner)).filter((item) => item.id === routine.id),
@@ -620,9 +627,9 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             trigger: RoutineTrigger.cases.Once.make({ at: now + 1000, timezone: 'UTC' }),
           })
           yield* TestClock.adjust('1 second')
-          yield* store.claimDue()
+          yield* store.claimDue
           yield* store.patch(owner, routine.id, { enabled: false })
-          yield* (yield* RoutineScheduler).runDue()
+          yield* (yield* RoutineScheduler).runDue
           const result = yield* returned(
             (yield* store.list(owner)).filter((item) => item.id === routine.id),
             'One-off',
@@ -669,12 +676,12 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           trigger: RoutineTrigger.cases.Once.make({ at: now + 1000, timezone: 'UTC' }),
         })
         yield* TestClock.adjust('1 second')
-        const claimed = yield* store.claimDue()
+        const claimed = yield* store.claimDue
         expect(claimed.filter(({ record }) => record.routine.id === routine.id)).toHaveLength(1)
-        yield* (yield* RoutineScheduler)
-          .runDue()
-          .pipe(Effect.provide(Layer.fresh(routineSchedulerServiceLayer)))
-        yield* (yield* RoutineScheduler).runDue()
+        yield* (yield* RoutineScheduler).runDue.pipe(
+          Effect.provide(yield* Layer.build(Layer.fresh(routineSchedulerServiceLayer))),
+        )
+        yield* (yield* RoutineScheduler).runDue
         const result = yield* returned(
           (yield* store.list(owner)).filter((item) => item.id === routine.id),
           'One-off',
@@ -872,10 +879,10 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           trigger: schedule,
         })
         expect(routine.nextRunAt).toBe(60_000)
-        yield* scheduler.runDue()
+        yield* scheduler.runDue
         expect(yield* Ref.get(yield* Deliveries)).toEqual([])
         yield* TestClock.setTime(60_000)
-        yield* Effect.all([scheduler.runDue(), scheduler.runDue()], { concurrency: 2 })
+        yield* Effect.all([scheduler.runDue, scheduler.runDue], { concurrency: 2 })
         expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
         // The scheduler assigns the durable Routine name, protecting it from automatic naming.
         expect(
@@ -893,10 +900,10 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         })
         const latest = stored[0]
         if (latest === undefined)
-          return yield* Effect.fail(new DatabaseFailure({ message: 'Scheduled Routine missing' }))
+          return yield* new DatabaseFailure({ message: 'Scheduled Routine missing' })
         const occurrence = latest.runs[0]
         if (occurrence === undefined || occurrence.submissionId === null)
-          return yield* Effect.fail(new DatabaseFailure({ message: 'Scheduled Run missing' }))
+          return yield* new DatabaseFailure({ message: 'Scheduled Run missing' })
         yield* TestClock.setTime(61_000)
         yield* database.run(
           database
@@ -909,7 +916,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         })
         yield* store.patch(owner, routine.id, { enabled: false })
         yield* TestClock.setTime(180_000)
-        yield* scheduler.runDue()
+        yield* scheduler.runDue
         expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
         return yield* Effect.void
       }),
@@ -926,7 +933,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           trigger: schedule,
         })
         yield* TestClock.setTime(60_000)
-        const claimed = yield* store.claimDue()
+        const claimed = yield* store.claimDue
         const tick = yield* returned(
           claimed.filter(({ record }) => record.routine.id === routine.id),
           'claimed tick',
@@ -936,8 +943,8 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           runs: [{ id: tick.attempt.id, submissionId: null }],
         })
         // A new pass sees the committed receipt despite the schedule already having advanced.
-        yield* (yield* RoutineScheduler).runDue()
-        yield* (yield* RoutineScheduler).runDue()
+        yield* (yield* RoutineScheduler).runDue
+        yield* (yield* RoutineScheduler).runDue
         expect((yield* store.list(owner))[0]).toMatchObject({
           runs: [{ id: tick.attempt.id, status: 'running' }],
         })
@@ -962,7 +969,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           yield* DeliveryFailure,
           Option.some(new RuntimeUnavailable({ message: 'Unavailable' })),
         )
-        expect(yield* (yield* RoutineScheduler).runDue().pipe(Effect.flip)).toBeInstanceOf(
+        expect(yield* (yield* RoutineScheduler).runDue.pipe(Effect.flip)).toBeInstanceOf(
           RuntimeUnavailable,
         )
         const view = yield* returned(yield* store.list(owner), 'Routine')
@@ -972,7 +979,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           error: 'Delivery was not admitted (RuntimeUnavailable)',
           finishedAt: 60_000,
         })
-        yield* (yield* RoutineScheduler).runDue()
+        yield* (yield* RoutineScheduler).runDue
         expect((yield* store.list(owner))[0]).toMatchObject({
           runs: [{ id: failed.id, status: 'running', error: null, finishedAt: null }],
         })
@@ -993,9 +1000,9 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           trigger: schedule,
         })
         yield* TestClock.setTime(60_000)
-        const due = yield* returned(yield* store.claimDue(), 'Scheduled tick')
+        const due = yield* returned(yield* store.claimDue, 'Scheduled tick')
         yield* store.patch(owner, routine.id, { enabled: false })
-        yield* scheduler.runDue()
+        yield* scheduler.runDue
         expect((yield* store.list(owner))[0]).toMatchObject({
           runs: [
             {
@@ -1007,9 +1014,9 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           ],
         })
         yield* store.patch(owner, routine.id, { enabled: true })
-        yield* scheduler.runDue()
+        yield* scheduler.runDue
         expect(yield* Ref.get(yield* Deliveries)).toEqual([])
-        expect(yield* store.claimDue()).toEqual([])
+        expect(yield* store.claimDue).toEqual([])
       }),
     )
 
@@ -1026,11 +1033,11 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             trigger: schedule,
           })
           yield* TestClock.setTime(60_000)
-          if (pending) yield* store.claimDue()
+          if (pending) yield* store.claimDue
           yield* database.run(
             database.delete(membershipTable).where(eq(membershipTable.userId, owner.person.id)),
           )
-          yield* (yield* RoutineScheduler).runDue()
+          yield* (yield* RoutineScheduler).runDue
           const failed = yield* returned(
             (yield* returned(yield* store.list(owner), 'Routine')).runs,
             'Occurrence',
@@ -1041,7 +1048,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             error: 'Its owner is no longer a Member of its Company',
           })
           yield* TestClock.setTime(120_000)
-          yield* (yield* RoutineScheduler).runDue()
+          yield* (yield* RoutineScheduler).runDue
           expect((yield* store.list(owner))[0]).toMatchObject({ enabled: false, runs: [failed] })
           const audit = yield* database.run(
             database.select().from(auditEntries).where(eq(auditEntries.personId, owner.person.id)),
@@ -1090,14 +1097,14 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             trigger: schedule,
           })
           yield* TestClock.setTime(60_000)
-          const due = yield* returned(yield* store.claimDue(), 'Scheduled tick')
+          const due = yield* returned(yield* store.claimDue, 'Scheduled tick')
           // Keep this receipt while moving the next tick beyond the replay window.
           yield* store.patch(owner, routine.id, {
             trigger: RoutineTrigger.cases.Schedule.make({ cron: '0 * * * *', timezone: 'UTC' }),
           })
           const finish = 60_000 + scheduledReplayMillis - (expired ? 0 : 1)
           yield* TestClock.setTime(finish)
-          yield* (yield* RoutineScheduler).runDue()
+          yield* (yield* RoutineScheduler).runDue
           const view = yield* returned(yield* store.list(owner), 'Routine')
           if (expired) {
             expect(view).toMatchObject({
@@ -1112,7 +1119,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
               ],
             })
             yield* TestClock.setTime(finish + 20_000)
-            yield* (yield* RoutineScheduler).runDue()
+            yield* (yield* RoutineScheduler).runDue
             expect((yield* store.list(owner))[0]).toEqual(view)
             expect(yield* Ref.get(yield* Deliveries)).toEqual([])
           } else {
@@ -1134,12 +1141,12 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           yield* DeliveryFailure,
           Option.some(new NotFound({ message: 'Thread cannot be opened' })),
         )
-        expect(yield* (yield* RoutineScheduler).runDue().pipe(Effect.flip)).toBeInstanceOf(NotFound)
+        expect(yield* (yield* RoutineScheduler).runDue.pipe(Effect.flip)).toBeInstanceOf(NotFound)
         const before = yield* store.list(owner)
         expect(before[0]).toMatchObject({
           runs: [{ status: 'failed', error: 'Its thread could not be opened' }],
         })
-        yield* (yield* RoutineScheduler).runDue()
+        yield* (yield* RoutineScheduler).runDue
         expect(yield* store.list(owner)).toEqual(before)
         expect(yield* Ref.get(yield* Deliveries)).toEqual([])
       }),
@@ -1192,7 +1199,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
               .where(eq(threads.id, first.threadId)),
           )
           yield* TestClock.setTime(60_000)
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           yield* store.patch(owner, routine.id, { trigger: webhook })
           const issued = yield* store.issueWebhook(owner, routine.id)
           expect(
@@ -1238,7 +1245,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         })
         const occurrence = yield* scheduler.run(owner, routine.id)
         if (occurrence.submissionId === null)
-          return yield* Effect.fail(new DatabaseFailure({ message: 'Test Run missing' }))
+          return yield* new DatabaseFailure({ message: 'Test Run missing' })
         const id = RunId.make(occurrence.submissionId)
         for (const state of ['failed', 'stopped', 'unknown']) {
           yield* database.run(
@@ -1295,7 +1302,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         })
         yield* obstruct(routine.id, colleague)
         yield* TestClock.setTime(60_000)
-        expect(yield* (yield* RoutineScheduler).runDue().pipe(Effect.flip)).toBeInstanceOf(
+        expect(yield* (yield* RoutineScheduler).runDue.pipe(Effect.flip)).toBeInstanceOf(
           RoutineThreadUnavailable,
         )
         expect((yield* store.list(owner))[0]).toMatchObject({
@@ -1602,7 +1609,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           const { owner, routine, store, scheduler } = yield* integrationFixture()
           yield* Ref.set(yield* WatchEvents, [email(1)])
           yield* TestClock.adjust('5 minutes')
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           const visible = yield* returned(yield* store.list(owner), 'Routine')
           expect(visible.runs).toHaveLength(1)
           expect((yield* returned(visible.runs, 'Occurrence')).submissionId).not.toBeNull()
@@ -1626,9 +1633,9 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         const { owner, store, scheduler } = yield* integrationFixture()
         yield* Ref.set(yield* WatchEvents, [email(1)])
         yield* TestClock.adjust('5 minutes')
-        yield* scheduler.runDue()
+        yield* scheduler.runDue
         yield* TestClock.adjust('5 minutes')
-        yield* scheduler.runDue()
+        yield* scheduler.runDue
         expect((yield* returned(yield* store.list(owner), 'Routine')).runs).toHaveLength(1)
         expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
       }),
@@ -1641,7 +1648,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           const { owner, store, scheduler } = yield* integrationFixture()
           yield* Ref.set(yield* WatchEvents, [email(1), email(2), email(3)])
           yield* TestClock.adjust('5 minutes')
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           const delivered = yield* Ref.get(yield* Deliveries)
           const content = yield* Effect.forEach(delivered, (delivery) =>
             decodeProviderPayload(signalBody(delivery).split('Payload:\n')[1]),
@@ -1672,7 +1679,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           })
           yield* Ref.set(yield* WatchEvents, [email(5)])
           yield* TestClock.adjust('5 minutes')
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           expect((yield* store.get(owner, healthy.id)).routine.enabled).toBe(true)
           expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
           const corrupted = yield* database.run(
@@ -1689,7 +1696,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
               }),
             },
           ])
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
         }),
     )
@@ -1723,7 +1730,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           ).toEqual(Option.some(WatchCursor.cases.Empty.make({})))
           yield* Ref.set(yield* WatchEvents, [email(7)])
           yield* TestClock.adjust('5 minutes')
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           expect((yield* returned(yield* store.list(owner), 'Routine')).runs).toHaveLength(1)
         }),
     )
@@ -1736,7 +1743,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           yield* Ref.set(yield* WatchGap, true)
           yield* Ref.set(yield* WatchEvents, [email(1)])
           yield* TestClock.adjust('5 minutes')
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           const record = yield* store.get(owner, routine.id)
           expect(record.routine.enabled).toBe(true)
           expect(
@@ -1746,14 +1753,14 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           )
           expect((yield* returned(yield* store.list(owner), 'Routine')).runs).toHaveLength(0)
           yield* Ref.set(yield* WatchEvents, [])
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
           expect(
             signalBody(yield* returned(yield* Ref.get(yield* Deliveries), 'Delivery')),
           ).toContain('from now')
           yield* Ref.set(yield* WatchEvents, [email(2)])
           yield* TestClock.adjust('5 minutes')
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           expect((yield* returned(yield* store.list(owner), 'Routine')).runs).toHaveLength(1)
         }),
     )
@@ -1769,11 +1776,16 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           for (const minutes of delays) {
             const reads = yield* Ref.get(yield* WatchReads)
             yield* Effect.gen(function* () {
-              yield* (yield* RoutineScheduler).runDue()
+              yield* (yield* RoutineScheduler).runDue
             }).pipe(
-              Effect.provide(routineSchedulerServiceLayer),
-              Effect.provide(routineStoreServiceLayer),
-              Effect.provide(testConfigLayer),
+              Effect.provide(
+                yield* Layer.build(
+                  routineSchedulerServiceLayer.pipe(
+                    Layer.provide(routineStoreServiceLayer),
+                    Layer.provide(testConfigLayer),
+                  ),
+                ),
+              ),
             )
             const current = yield* store.get(owner, routine.id)
             expect(current.routine.enabled).toBe(true)
@@ -1781,23 +1793,28 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
               (yield* Clock.currentTimeMillis) + minutes * 60_000,
             )
             expect(yield* Ref.get(yield* WatchReads)).toBe(reads + 1)
-            yield* scheduler.runDue()
+            yield* scheduler.runDue
             expect(yield* Ref.get(yield* WatchReads)).toBe(reads + 1)
             yield* TestClock.adjust(minutes * 60_000)
           }
           yield* Ref.set(yield* WatchTransient, false)
           yield* Ref.set(yield* WatchEvents, [email(9)])
           yield* Effect.gen(function* () {
-            yield* (yield* RoutineScheduler).runDue()
+            yield* (yield* RoutineScheduler).runDue
           }).pipe(
-            Effect.provide(routineSchedulerServiceLayer),
-            Effect.provide(routineStoreServiceLayer),
-            Effect.provide(testConfigLayer),
+            Effect.provide(
+              yield* Layer.build(
+                routineSchedulerServiceLayer.pipe(
+                  Layer.provide(routineStoreServiceLayer),
+                  Layer.provide(testConfigLayer),
+                ),
+              ),
+            ),
           )
           expect((yield* returned(yield* store.list(owner), 'Routine')).runs).toHaveLength(1)
           yield* Ref.set(yield* WatchTransient, true)
           yield* TestClock.adjust('5 minutes')
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           expect((yield* store.get(owner, routine.id)).routine.nextExpectedAt).toBe(
             (yield* Clock.currentTimeMillis) + 60_000,
           )
@@ -1817,11 +1834,11 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           )
           yield* Ref.set(yield* Published, [])
           yield* TestClock.adjust('5 minutes')
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           const stopped = yield* store.get(owner, routine.id)
           expect(stopped.routine.enabled).toBe(false)
           expect(stopped.watchRevision).toBe(before.watchRevision + 1)
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           const audit = yield* database.run(
             database.select().from(auditEntries).where(eq(auditEntries.personId, owner.person.id)),
           )
@@ -1851,9 +1868,9 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           const { owner, routine, store, scheduler } = yield* integrationFixture()
           yield* Ref.set(yield* WatchRevoked, true)
           yield* TestClock.adjust('5 minutes')
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           yield* TestClock.adjust('5 minutes')
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           expect((yield* store.get(owner, routine.id)).routine.enabled).toBe(false)
           expect((yield* returned(yield* store.list(owner), 'Routine')).runs).toHaveLength(0)
           expect(yield* store.integrationNotices()).toHaveLength(0)
@@ -1898,12 +1915,17 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           // Fresh store and scheduler services recover only from PostgreSQL, with no timer or provider call.
           const restarted = Effect.gen(function* () {
             const scheduler = yield* RoutineScheduler
-            yield* scheduler.runDue()
-            yield* scheduler.runDue()
+            yield* scheduler.runDue
+            yield* scheduler.runDue
           }).pipe(
-            Effect.provide(routineSchedulerServiceLayer),
-            Effect.provide(routineStoreServiceLayer),
-            Effect.provide(testConfigLayer),
+            Effect.provide(
+              yield* Layer.build(
+                routineSchedulerServiceLayer.pipe(
+                  Layer.provide(routineStoreServiceLayer),
+                  Layer.provide(testConfigLayer),
+                ),
+              ),
+            ),
           )
           yield* restarted
           const visible = yield* returned(yield* store.list(owner), 'Routine')
@@ -1934,13 +1956,13 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             yield* DeliveryFailure,
             Option.some(new RuntimeUnavailable({ message: 'Unavailable' })),
           )
-          expect(yield* scheduler.runDue().pipe(Effect.flip)).toBeInstanceOf(RuntimeUnavailable)
+          expect(yield* scheduler.runDue.pipe(Effect.flip)).toBeInstanceOf(RuntimeUnavailable)
           expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
           expect(yield* store.integrationNotices()).toHaveLength(1)
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           expect(yield* Ref.get(yield* Deliveries)).toHaveLength(2)
           expect(yield* store.integrationNotices()).toHaveLength(0)
-          yield* scheduler.runDue()
+          yield* scheduler.runDue
           expect(yield* Ref.get(yield* Deliveries)).toHaveLength(2)
         }),
     )
@@ -1954,8 +1976,8 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         )
         yield* store.patch(owner, routine.id, { prompt: 'Summarize briefly.' })
         expect(yield* store.integrationNotices()).toHaveLength(1)
-        yield* scheduler.runDue()
-        yield* scheduler.runDue()
+        yield* scheduler.runDue
+        yield* scheduler.runDue
         expect(yield* Ref.get(yield* Deliveries)).toHaveLength(1)
         expect(
           signalBody(yield* returned(yield* Ref.get(yield* Deliveries), 'Delivery')),
@@ -1974,7 +1996,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           }),
         )
         yield* store.patch(owner, routine.id, { trigger: RoutineTrigger.cases.Webhook.make({}) })
-        yield* scheduler.runDue()
+        yield* scheduler.runDue
         expect(yield* store.pendingEvents()).toHaveLength(0)
         const visible = yield* returned(yield* store.list(owner), 'Routine')
         expect((yield* returned(visible.runs, 'Occurrence')).error).toBe(

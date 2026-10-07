@@ -135,7 +135,10 @@ const scenario = <E>(
     const remote = yield* hostedExecutorFixture()
     // A scenario may fork fibers and register finalizers; they end with the scenario, before
     // the recorded requests are checked.
-    yield* run(remote).pipe(Effect.scoped, Effect.provide(remote.configured))
+    yield* Effect.gen(function* () {
+      const context = yield* Layer.build(remote.configured)
+      return yield* run(remote).pipe(Effect.scoped, Effect.provide(context))
+    }).pipe(Effect.scoped)
     const requests = yield* Ref.get(remote.requests)
     // A loopback listener can receive unrelated traffic. Preserve the failing postcondition,
     // but expose a safe receipt before individual assertions hide the request's provenance.
@@ -815,7 +818,7 @@ describe('Executor hosted transport', () => {
         })
         const executor = yield* Executor
         expect(yield* executor.begin(begin).pipe(Effect.flip)).toBeInstanceOf(ExecutorSetupRequired)
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+        expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SetupRequired',
         )
@@ -824,7 +827,7 @@ describe('Executor hosted transport', () => {
         ).length
         yield* Ref.set(remote.replies, new Map())
         yield* TestClock.adjust('9 minutes')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+        expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SetupRequired',
         )
@@ -840,7 +843,7 @@ describe('Executor hosted transport', () => {
           ),
         ).toHaveLength(reads)
         yield* TestClock.adjust('1 minute')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+        expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SetupRequired',
         )
@@ -850,7 +853,7 @@ describe('Executor hosted transport', () => {
             returnAddress: hostedReturnAddress,
           }),
         ).toHaveProperty('_tag', 'SignIn')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+        expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SignIn',
         )
@@ -877,13 +880,13 @@ describe('Executor hosted transport', () => {
           '_tag',
           'ExecutorSignInRequired',
         )
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+        expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SetupRequired',
         )
         yield* Ref.set(remote.replies, new Map())
         yield* TestClock.adjust('9 minutes')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+        expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SetupRequired',
         )
@@ -894,7 +897,7 @@ describe('Executor hosted transport', () => {
           }),
         ).toHaveProperty('_tag', 'SetupRequired')
         yield* TestClock.adjust('1 minute')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+        expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SetupRequired',
         )
@@ -904,7 +907,7 @@ describe('Executor hosted transport', () => {
             returnAddress: hostedReturnAddress,
           }),
         ).toHaveProperty('_tag', 'SignIn')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+        expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SignIn',
         )
@@ -936,12 +939,12 @@ describe('Executor hosted transport', () => {
             body: storageErrorReply.make({}),
           })
           yield* TestClock.adjust('10 minutes')
-          expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
             'authorization._tag',
             'SignIn',
           )
           yield* Deferred.await(entered)
-          expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
             'authorization._tag',
             'SignIn',
           )
@@ -952,7 +955,7 @@ describe('Executor hosted transport', () => {
           const reads = (yield* Ref.get(remote.requests)).filter((request) =>
             request.path.endsWith('/oauth/oauth/setup'),
           ).length
-          expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+          expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
             'authorization._tag',
             'SignIn',
           )
@@ -995,7 +998,7 @@ describe('Executor hosted transport', () => {
           '_tag',
           'ExecutorSetupRequired',
         )
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+        expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SetupRequired',
         )
@@ -1042,7 +1045,7 @@ describe('Executor hosted transport', () => {
         yield* Deferred.await(signInEntered)
         yield* Ref.set(blockSetup, true)
         yield* TestClock.adjust('1 minute')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+        expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SignIn',
         )
@@ -1053,13 +1056,13 @@ describe('Executor hosted transport', () => {
         // Immediate startup reaches the pending cache entry before the refusal is recorded.
         yield* Deferred.succeed(signInRelease, undefined)
         expect(yield* Fiber.join(pendingSignIn)).toHaveProperty('_tag', 'ExecutorSignInRequired')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+        expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SetupRequired',
         )
         yield* Deferred.succeed(setupRelease, undefined)
         expect(yield* Fiber.join(pendingInspection)).toHaveProperty('_tag', 'SetupRequired')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+        expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SetupRequired',
         )
@@ -1106,7 +1109,7 @@ describe('Executor hosted transport', () => {
         yield* Deferred.await(signInEntered)
         yield* Ref.set(blockSetup, true)
         yield* TestClock.adjust('1 minute')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+        expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SignIn',
         )
@@ -1121,7 +1124,7 @@ describe('Executor hosted transport', () => {
         // Immediate startup reaches the pending cache entry before the refusal is recorded.
         yield* Deferred.succeed(signInRelease, undefined)
         expect(yield* Fiber.join(pendingSignIn)).toHaveProperty('_tag', 'ExecutorSignInRequired')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+        expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SetupRequired',
         )
@@ -1133,7 +1136,7 @@ describe('Executor hosted transport', () => {
             returnAddress: hostedReturnAddress,
           }),
         ).toHaveProperty('_tag', 'SetupRequired')
-        expect(remoteEntries(yield* executor.catalog())[0]).toHaveProperty(
+        expect(remoteEntries(yield* executor.catalog)[0]).toHaveProperty(
           'authorization._tag',
           'SetupRequired',
         )
@@ -1268,7 +1271,7 @@ describe('Executor hosted transport', () => {
           yield* Ref.set(remote.redirectUri, 'https://executor.example.test/private-callback')
           const error = yield* (yield* Executor).begin(begin).pipe(Effect.flip)
           expect(error).toBeInstanceOf(ExecutorSetupRequired)
-          expect(remoteEntries(yield* (yield* Executor).catalog())[0]).toHaveProperty(
+          expect(remoteEntries(yield* (yield* Executor).catalog)[0]).toHaveProperty(
             'authorization._tag',
             'SetupRequired',
           )
@@ -1524,8 +1527,8 @@ describe('Executor hosted transport', () => {
 })
 
 const Exchange = Schema.TaggedUnion({
-  Received: { path: Schema.String, port: Schema.Number },
-  Released: { path: Schema.String, port: Schema.Number },
+  Received: { path: Schema.String, port: Schema.Finite },
+  Released: { path: Schema.String, port: Schema.Finite },
 })
 
 /**
@@ -1557,7 +1560,7 @@ const unreadTransport = Effect.fn('ExecutorTest.unreadTransport')(function* () {
       (agent) => Effect.promise(() => agent.destroy()),
     ),
   )
-  const exchange = Effect.fn('ExecutorTest.exchange')(function* () {
+  const exchange = Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
     const port = NodeHttpServerRequest.toIncomingMessage(request).socket.remotePort
     if (port === undefined) return expect.fail('Request socket has no remote port')
@@ -1570,7 +1573,7 @@ const unreadTransport = Effect.fn('ExecutorTest.unreadTransport')(function* () {
       ),
       { status: 401 },
     )
-  })()
+  }).pipe(Effect.withSpan('ExecutorTest.exchange'))
   const listener = HttpServer.serve(exchange).pipe(
     Layer.provideMerge(NodeHttpServer.layer(NodeHttp.createServer, { port: 0 })),
   )
@@ -1605,24 +1608,27 @@ it.effect('releases an unread Executor 401 before returning access denied', () =
     const remote = yield* unreadTransport()
     const path = `${hostedPrefix}/apps/app/profiles/profile`
     yield* Effect.gen(function* () {
-      const result = yield* (yield* Executor).status(references).pipe(Effect.result)
-      expect(Result.isFailure(result) && result.failure._tag).toBe('ExecutorAccessDenied')
-      // Catalogue receipts use other paths and sockets; only this operation's port proves ownership.
-      let received = yield* Queue.take(remote.receipts)
-      while (!Exchange.guards.Received(received) || received.path !== path) {
-        received = yield* Queue.take(remote.receipts)
-      }
-      const socket = remote.sockets.get(received.port)
-      if (socket === undefined) return expect.fail('Received port has no recorded client socket')
-      // RED must fail synchronously here, before waiting for the held stream's release.
-      expect(socket.destroyed).toBe(true)
-      let released = yield* Queue.take(remote.receipts)
-      while (released.path !== path || released.port !== received.port) {
-        released = yield* Queue.take(remote.receipts)
-      }
-      expect(released).toEqual(Exchange.cases.Released.make({ path, port: received.port }))
-      return undefined
-    }).pipe(Effect.provide(remote.configured))
+      const context = yield* Layer.build(remote.configured)
+      return yield* Effect.gen(function* () {
+        const result = yield* (yield* Executor).status(references).pipe(Effect.result)
+        expect(Result.isFailure(result) && result.failure._tag).toBe('ExecutorAccessDenied')
+        // Catalogue receipts use other paths and sockets; only this operation's port proves ownership.
+        let received = yield* Queue.take(remote.receipts)
+        while (!Exchange.guards.Received(received) || received.path !== path) {
+          received = yield* Queue.take(remote.receipts)
+        }
+        const socket = remote.sockets.get(received.port)
+        if (socket === undefined) return expect.fail('Received port has no recorded client socket')
+        // RED must fail synchronously here, before waiting for the held stream's release.
+        expect(socket.destroyed).toBe(true)
+        let released = yield* Queue.take(remote.receipts)
+        while (released.path !== path || released.port !== received.port) {
+          released = yield* Queue.take(remote.receipts)
+        }
+        expect(released).toEqual(Exchange.cases.Released.make({ path, port: received.port }))
+        return undefined
+      }).pipe(Effect.provide(context))
+    }).pipe(Effect.scoped)
   }),
 )
 

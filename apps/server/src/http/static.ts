@@ -17,7 +17,7 @@ const pathname = Effect.fn('Static.pathname')(function* (url: string) {
     catch: () => new StaticPathRejected({}),
   })
   if (decoded.includes('\\') || decoded.includes('\0') || decoded.split('/').includes('..'))
-    return yield* Effect.fail(new StaticPathRejected({}))
+    return yield* new StaticPathRejected({})
   return decoded
 })
 
@@ -26,7 +26,7 @@ const contained = Effect.fn('Static.contained')(function* (root: string, candida
   const path = yield* Path.Path
   const relative = path.relative(root, candidate)
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
-    return yield* Effect.fail(new StaticPathRejected({}))
+    return yield* new StaticPathRejected({})
   return candidate
 })
 
@@ -59,7 +59,7 @@ export function staticRoutes(directory: Option.Option<string>) {
       yield* router.add(
         'GET',
         '/*',
-        Effect.fn('Static.serve')(function* () {
+        Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest
           const name = yield* pathname(request.url)
           if (
@@ -75,7 +75,8 @@ export function staticRoutes(directory: Option.Option<string>) {
           const cache =
             file !== index && hashed ? 'public, max-age=31536000, immutable' : 'no-cache'
           return yield* HttpServerResponse.file(file, { headers: { 'cache-control': cache } })
-        })().pipe(
+        }).pipe(
+          Effect.withSpan('Static.serve'),
           Effect.catchTag('StaticPathRejected', () =>
             Effect.succeed(HttpServerResponse.empty({ status: 400 })),
           ),

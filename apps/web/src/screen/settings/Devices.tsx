@@ -1,5 +1,5 @@
 import { makeWhen, thisReader } from '@vivid/state'
-import { Result } from 'effect'
+import { Effect, Result } from 'effect'
 import { Suspense, use, useState } from 'react'
 import {
   signedInDevices,
@@ -7,7 +7,7 @@ import {
   signOutElsewhere,
   type SignedInDevice,
 } from '../../data/account'
-import { run } from '../../data/app'
+import { act, running } from '../../data/app'
 import { Button } from '../../ui/button'
 import { YourComputers } from './Computers'
 import { Empty, Refusal, Row, Section } from './Parts'
@@ -29,7 +29,13 @@ const reader = thisReader()
 const when = makeWhen(reader)
 
 /** Asks where this Person is signed in, and notes when. A failure is an answer too. */
-const ask = async () => ({ answer: await run(signedInDevices()), at: Date.now() })
+const ask = () =>
+  // Started here because React reads the Promise with `use`: the list suspends while it waits.
+  act(
+    Effect.gen(function* () {
+      return { answer: yield* running(signedInDevices), at: Date.now() }
+    }),
+  )
 
 /**
  * Everywhere this Person is signed in, each with a way to sign it out. A phone that was lost, a
@@ -42,10 +48,12 @@ function SignedIn() {
   const [asked, setAsked] = useState(ask)
   const [refused, setRefused] = useState<string | null>(null)
 
-  async function end(made: Promise<Result.Result<unknown, unknown>>, words: string) {
-    const result = await made
-    setRefused(Result.isFailure(result) ? words : null)
-    setAsked(ask())
+  function end(made: Effect.Effect<Result.Result<unknown, unknown>>, words: string) {
+    return Effect.gen(function* () {
+      const result = yield* made
+      setRefused(Result.isFailure(result) ? words : null)
+      setAsked(ask())
+    })
   }
 
   return (
@@ -59,15 +67,19 @@ function SignedIn() {
           <DeviceList
             asked={asked}
             onSignOut={(device) =>
-              void end(
-                run(signOutDevice(device)),
-                `${device.name} could not be signed out. Try again.`,
+              void act(
+                end(
+                  running(signOutDevice(device)),
+                  `${device.name} could not be signed out. Try again.`,
+                ),
               )
             }
             onSignOutElsewhere={() =>
-              void end(
-                run(signOutElsewhere()),
-                'The other devices could not be signed out. Try again.',
+              void act(
+                end(
+                  running(signOutElsewhere),
+                  'The other devices could not be signed out. Try again.',
+                ),
               )
             }
           />

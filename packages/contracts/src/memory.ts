@@ -36,8 +36,8 @@ export const Memory = Schema.Struct({
   learnedIn: Schema.NullOr(ThreadId),
   /** The Person it was learned from. */
   learnedFrom: PersonSummary,
-  createdAt: Schema.Number,
-  updatedAt: Schema.Number,
+  createdAt: Schema.Finite,
+  updatedAt: Schema.Finite,
 }).annotate({ identifier: 'Memory', title: 'Memory' })
 export interface Memory extends Schema.Schema.Type<typeof Memory> {}
 
@@ -47,7 +47,7 @@ export interface Memory extends Schema.Schema.Type<typeof Memory> {}
  */
 export const MemoryBrief = Schema.Struct({
   text: Schema.String,
-  updatedAt: Schema.NullOr(Schema.Number),
+  updatedAt: Schema.NullOr(Schema.Finite),
 }).annotate({ identifier: 'MemoryBrief', title: 'Memory brief' })
 export interface MemoryBrief extends Schema.Schema.Type<typeof MemoryBrief> {}
 
@@ -60,7 +60,7 @@ export interface MemoryListResponse extends Schema.Schema.Type<typeof MemoryList
 /** Vivid looking something up. Results come only from scopes the acting Person may read here. */
 export const RecallRequest = Schema.Struct({
   query: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(400)),
-  limit: Schema.optionalKey(Schema.Number),
+  limit: Schema.optionalKey(Schema.Finite),
 })
 export interface RecallRequest extends Schema.Schema.Type<typeof RecallRequest> {}
 

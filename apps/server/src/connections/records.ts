@@ -75,8 +75,7 @@ export const getRecord = Effect.fn('Connections.getRecord')(function* (
       .limit(1),
   )
   const row = rows[0]
-  if (row === undefined)
-    return yield* Effect.fail(new NotFound({ message: 'Integration not found' }))
+  if (row === undefined) return yield* new NotFound({ message: 'Integration not found' })
   return yield* decodeRow(row)
 })
 
@@ -104,7 +103,7 @@ export const callbackId = Effect.fn('Connections.callbackId')(function* (
   )
   const row = rows[0]
   if (rows.length !== 1 || row === undefined)
-    return yield* Effect.fail(new NotFound({ message: 'Integration sign-in not found' }))
+    return yield* new NotFound({ message: 'Integration sign-in not found' })
   return yield* decodeConnectionId(row.id).pipe(
     Effect.mapError(() => new DatabaseFailure({ message: 'Invalid integration identity' })),
   )
@@ -162,8 +161,7 @@ export const publicConnection = Effect.fn('Connections.public')(function* (
   row: ConnectionRecord,
 ) {
   const named = namedAccounts(yield* listRecords(actor)).find((entry) => entry.row.id === row.id)
-  if (named === undefined)
-    return yield* Effect.fail(new NotFound({ message: 'Integration not found' }))
+  if (named === undefined) return yield* new NotFound({ message: 'Integration not found' })
   return yield* connectionOf(actor, row, named.account)
 })
 
@@ -216,11 +214,9 @@ export const saveState = Effect.fn('Connections.saveState')(function* (
       .returning(),
   )
   if (rows.length === 0)
-    return yield* Effect.fail(
-      new Conflict({
-        message: 'This integration changed before authorization finished; reload it.',
-      }),
-    )
+    return yield* new Conflict({
+      message: 'This integration changed before authorization finished; reload it.',
+    })
   return yield* decodeRow(yield* returned(rows, 'Connection'))
 })
 
@@ -247,9 +243,9 @@ export const saveIdentity = Effect.fn('Connections.saveIdentity')(function* (
       .returning(),
   )
   if (rows.length === 0)
-    return yield* Effect.fail(
-      new Conflict({ message: 'This integration changed while it was being named; reload it.' }),
-    )
+    return yield* new Conflict({
+      message: 'This integration changed while it was being named; reload it.',
+    })
   return yield* decodeRow(yield* returned(rows, 'Connection'))
 })
 
@@ -282,8 +278,7 @@ export const saveName = Effect.fn('Connections.saveName')(function* (
       )
       .returning(),
   )
-  if (rows.length === 0)
-    return yield* Effect.fail(new NotFound({ message: 'Integration not found' }))
+  if (rows.length === 0) return yield* new NotFound({ message: 'Integration not found' })
   return yield* decodeRow(yield* returned(rows, 'Connection'))
 })
 
@@ -316,8 +311,6 @@ export const retainResumer = Effect.fn('Connections.retainResumer')(function* (
       .returning(),
   )
   if (rows.length === 0)
-    return yield* Effect.fail(
-      new Conflict({ message: 'This integration changed before resume; reload it.' }),
-    )
+    return yield* new Conflict({ message: 'This integration changed before resume; reload it.' })
   return yield* decodeRow(yield* returned(rows, 'Connection'))
 })

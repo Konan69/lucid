@@ -58,30 +58,20 @@ const checkedAttachment = Effect.fn('Pictures.checked')(function* (input: Schema
   )
   const mediaType = decodeMediaType(candidate.mimeType)
   if (candidate.type !== 'image' || Option.isNone(mediaType))
-    return yield* Effect.fail(
-      new UnsupportedAttachment({ message: 'Choose a PNG, JPEG, WebP or GIF picture.' }),
-    )
+    return yield* new UnsupportedAttachment({ message: 'Choose a PNG, JPEG, WebP or GIF picture.' })
   if (candidate.data.length > maxEncodedLength)
-    return yield* Effect.fail(
-      new AttachmentTooLarge({ message: 'Each picture must be 5 MB or smaller.' }),
-    )
+    return yield* new AttachmentTooLarge({ message: 'Each picture must be 5 MB or smaller.' })
   if (!base64.test(candidate.data))
-    return yield* Effect.fail(
-      new InvalidAttachment({ message: 'The picture data must be valid base64.' }),
-    )
+    return yield* new InvalidAttachment({ message: 'The picture data must be valid base64.' })
   const bytes = NodeBuffer.Buffer.from(candidate.data, 'base64')
   if (bytes.byteLength > maxBytes)
-    return yield* Effect.fail(
-      new AttachmentTooLarge({ message: 'Each picture must be 5 MB or smaller.' }),
-    )
+    return yield* new AttachmentTooLarge({ message: 'Each picture must be 5 MB or smaller.' })
   if (bytes.toString('base64') !== candidate.data)
-    return yield* Effect.fail(
-      new InvalidAttachment({ message: 'The picture data must be valid base64.' }),
-    )
+    return yield* new InvalidAttachment({ message: 'The picture data must be valid base64.' })
   if (!Option.contains(pictureType(bytes), mediaType.value))
-    return yield* Effect.fail(
-      new UnsupportedAttachment({ message: 'The picture type does not match its contents.' }),
-    )
+    return yield* new UnsupportedAttachment({
+      message: 'The picture type does not match its contents.',
+    })
   // Candidate has already decoded the fields; byte checks refine its MIME into the allowed domain.
   return MessageAttachment.make({ ...candidate, type: 'image', mimeType: mediaType.value })
 })
@@ -101,16 +91,12 @@ export const messagePictures = Effect.fn('Pictures.message')(function* (
           ),
         )
   if (attachments.length > 0 && thread.audience !== 'private')
-    return yield* Effect.fail(
-      new PicturesRequirePrivateThread({
-        threadId: thread.id,
-        message: 'Pictures can only be sent in a private thread for now.',
-      }),
-    )
+    return yield* new PicturesRequirePrivateThread({
+      threadId: thread.id,
+      message: 'Pictures can only be sent in a private thread for now.',
+    })
   if (attachments.length > 4)
-    return yield* Effect.fail(
-      new TooManyAttachments({ message: 'Send at most four pictures in one message.' }),
-    )
+    return yield* new TooManyAttachments({ message: 'Send at most four pictures in one message.' })
   return yield* Effect.forEach(attachments, (attachment) => checkedAttachment(attachment))
 })
 

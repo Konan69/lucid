@@ -21,13 +21,13 @@ const decodeEnvelope = Schema.decodeUnknownOption(Envelope)
 const metadata = ['$schema', '$defs', 'title', 'description']
 
 /** An unused definition is metadata; unknown root constraints and compositions prevent automatic calls. */
-function onlyKeywords(input: typeof Schema.Json.Type, allowed: readonly string[]) {
+function onlyKeywords(input: Schema.Json, allowed: readonly string[]) {
   const record = decodeRecord(input)
   return Option.isSome(record) && Object.keys(record.value).every((key) => allowed.includes(key))
 }
 
 /** Conservatively prove that {} satisfies an object input; never invent required domain values. */
-function acceptsEmpty(input: typeof Schema.Json.Type) {
+function acceptsEmpty(input: Schema.Json) {
   const object = decodeObject(input)
   if (Option.isNone(object)) return false
   if (object.value.required !== undefined && object.value.required.length > 0) return false
@@ -46,9 +46,9 @@ function acceptsEmpty(input: typeof Schema.Json.Type) {
  * Provider JSON Schema is a second ingress contract within the decoded tool JSON document.
  */
 export function testInput(
-  input: typeof Schema.Json.Type,
+  input: Schema.Json,
   references: ExecutorReferences,
-): Option.Option<typeof Schema.Json.Type> {
+): Option.Option<Schema.Json> {
   if (acceptsEmpty(input)) return Option.some({})
   if (!ExecutorReferences.guards.Authorized(references)) return Option.none()
   const envelope = decodeEnvelope(input)

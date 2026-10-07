@@ -1,3 +1,4 @@
+import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem'
 import { describe, expect, layer } from '@effect/vitest'
 import { Cause, Effect, Exit, Layer, Option, Schedule, Stream } from 'effect'
 import * as SqlClient from 'effect/unstable/sql/SqlClient'
@@ -64,7 +65,7 @@ const documentsAbsent = Effect.fn('LibraryAdoption.documentsAbsent')(function* (
 })
 
 describe.skipIf(!testDatabaseConfigured)('Native Library startup adoption', () => {
-  layer(processLayer)((it) => {
+  layer(Layer.merge(processLayer, NodeFileSystem.layer))((it) => {
     /**
      * Q11: read-only stages distinguish adoption from settlement. rc.116 PersistedQueue.ts:1512
      * writes attempts at claim; acknowledgement at :1739-1740 races the read, so state is unasserted.

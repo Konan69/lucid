@@ -1,10 +1,10 @@
-import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem'
 import * as Deferred from 'effect/Deferred'
 import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
 import * as FileSystem from 'effect/FileSystem'
 import * as Option from 'effect/Option'
 import * as RpcClient from 'effect/unstable/rpc/RpcClient'
+import * as Worker from 'effect/unstable/workers/Worker'
 import {
   ExtractionLimitExceeded,
   ExtractionRpcs,
@@ -22,7 +22,7 @@ import {
   type Running,
   forkExtractor,
   heapEvidence,
-  layer,
+  platform,
   start,
   stop,
 } from './extraction/process.ts'
@@ -75,9 +75,7 @@ const classify = Effect.fn('LibraryExtraction.classify')(function* (
   yield* Effect.logWarning('Library extraction process ended').pipe(
     Effect.annotateLogs({ ...reported(end), evidence: heap ? 'heap' : 'none' }),
   )
-  return yield* Effect.fail(
-    heap ? new ExtractionLimitExceeded({ limit: 'heap' }) : new ExtractionUnavailable(),
-  )
+  return yield* heap ? new ExtractionLimitExceeded({ limit: 'heap' }) : new ExtractionUnavailable()
 })
 
 /**
@@ -100,9 +98,9 @@ const unanswered = Effect.fn('LibraryExtraction.unanswered')(function* (
  * Ask the process for the pages, on the official worker RPC: `RpcClient.makeProtocolWorker`
  * (RpcClient.ts:1254-1420) over the process's Worker platform, with the SDK's own framing.
  *
- * The protocol is built into the caller's outer Scope. `layer(running)` holds two plain values, so
- * providing it here owns no finalizer, and the SDK's fibers live until that outer scope closes,
- * after `stop`.
+ * The protocol is built into the caller's outer Scope. The process platform and Spawner are
+ * provided as plain service values with no finalizers; the Spawner returns the already observed
+ * process. The SDK's fibers live until that outer scope closes, after `stop`.
  *
  * The answer is raced with the native end. The race is required: the SDK forks its worker run and
  * retries a failed run after one second (RpcClient.ts:1337, 1343), and a request sent before
@@ -120,7 +118,8 @@ const verdict = Effect.fn('LibraryExtraction.verdict')(function* (
   bytes: Uint8Array,
 ) {
   const protocol = yield* RpcClient.makeProtocolWorker({ size: 1 }).pipe(
-    Effect.provide(layer(running)),
+    Effect.provideService(Worker.WorkerPlatform, platform),
+    Effect.provideService(Worker.Spawner, () => running),
     Effect.catchTag('WorkerError', () => Effect.fail(new ExtractionUnavailable())),
   )
   const client = yield* RpcClient.make(ExtractionRpcs).pipe(
@@ -184,9 +183,5 @@ export const extractOn = (launch: Launch, deadline: Duration.Duration) =>
     Effect.scoped(attempt(launch, deadline, bytes)),
   )
 
-/** One fresh process per PDF; upload size, deadline and old-generation cap bound the work, not RSS. */
-const extractByProcess = extractOn(forkExtractor(EXTRACTION_HEAP_MB), EXTRACTION_DEADLINE)
-
-/** Production extraction on the Node file system, so callers keep an Effect with no requirement. */
-export const extractPdf = (bytes: Uint8Array) =>
-  extractByProcess(bytes).pipe(Effect.provide(NodeFileSystem.layer))
+/** One fresh process per PDF; the entry point supplies the file system for reports and cleanup. */
+export const extractPdf = extractOn(forkExtractor(EXTRACTION_HEAP_MB), EXTRACTION_DEADLINE)

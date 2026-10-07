@@ -1,9 +1,8 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Array as Arr, Effect, Layer, References } from 'effect'
+import { Array as Arr, Effect, Layer, References, Logger } from 'effect'
 import { ServiceId } from '@vivid/contracts'
 import {
   effectScoreCount,
-  effectScoreLogLayer,
   LIVE_METADATA_BUDGET,
   LIVE_METADATA_COHORT_BUDGET_MILLIS,
   liveDecisionEnabled,
@@ -25,51 +24,62 @@ describe.skipIf(!liveDecisionEnabled)('Gateway batch effects', () => {
     () => {
       const lines: string[] = []
       return Effect.gen(function* () {
-        const effects = yield* ToolEffects
-        const misses: string[] = []
-        const conservativeReads: string[] = []
-        const catalogs = Object.entries(Arr.groupBy(liveTools, (tool) => tool.serviceName)).flatMap(
-          ([service, catalog]) =>
-            Arr.chunksOf(catalog, DECISION_QUESTION_LIMIT).map((batch) => ({ service, batch })),
+        const loggers = new Set([
+          Logger.consoleLogFmt,
+          Logger.make(({ message }) => lines.push(JSON.stringify(message))),
+        ])
+        return yield* Effect.gen(function* () {
+          const context = yield* Layer.build(
+            toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
+          )
+          return yield* Effect.gen(function* () {
+            const effects = yield* ToolEffects
+            const misses: string[] = []
+            const conservativeReads: string[] = []
+            const catalogs = Object.entries(
+              Arr.groupBy(liveTools, (tool) => tool.serviceName),
+            ).flatMap(([service, catalog]) =>
+              Arr.chunksOf(catalog, DECISION_QUESTION_LIMIT).map((batch) => ({ service, batch })),
+            )
+            for (const { service, batch } of catalogs) {
+              const classified = yield* effects.classifyBatch({
+                serviceId: ServiceId.make(`effect-${service}`),
+                service,
+                tools: batch.map((tool) =>
+                  ExecutorTool.make({
+                    name: tool.name,
+                    description: tool.description,
+                    effect: 'write',
+                    input: {},
+                  }),
+                ),
+              })
+              for (const [index, tool] of batch.entries()) {
+                expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
+                const result = classified[index]
+                if (result === undefined) misses.push(tool.name)
+                else if (tool.expected !== 'read' && result.effect === 'read')
+                  misses.push(tool.name)
+                else if (tool.expected === 'read' && result.effect !== 'read')
+                  conservativeReads.push(tool.name)
+              }
+            }
+            yield* Effect.logInfo('Conservative batch reads retaining Approval', {
+              tools: conservativeReads,
+            })
+            yield* Effect.logInfo('Batch read recovery', {
+              recovered: 18 - conservativeReads.length,
+              floor: LIVE_READ_RECOVERY_FLOOR,
+            })
+            expect(18 - conservativeReads.length).toBeGreaterThanOrEqual(LIVE_READ_RECOVERY_FLOOR)
+            expect(misses).toEqual([])
+          }).pipe(Effect.provide(context))
+        }).pipe(
+          Effect.scoped,
+          Effect.provideService(References.MinimumLogLevel, 'Debug'),
+          Effect.provideService(Logger.CurrentLoggers, loggers),
         )
-        for (const { service, batch } of catalogs) {
-          const classified = yield* effects.classifyBatch({
-            serviceId: ServiceId.make(`effect-${service}`),
-            service,
-            tools: batch.map((tool) =>
-              ExecutorTool.make({
-                name: tool.name,
-                description: tool.description,
-                effect: 'write',
-                input: {},
-              }),
-            ),
-          })
-          for (const [index, tool] of batch.entries()) {
-            expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
-            const result = classified[index]
-            if (result === undefined) misses.push(tool.name)
-            else if (tool.expected !== 'read' && result.effect === 'read') misses.push(tool.name)
-            else if (tool.expected === 'read' && result.effect !== 'read')
-              conservativeReads.push(tool.name)
-          }
-        }
-        yield* Effect.logInfo('Conservative batch reads retaining Approval', {
-          tools: conservativeReads,
-        })
-        yield* Effect.logInfo('Batch read recovery', {
-          recovered: 18 - conservativeReads.length,
-          floor: LIVE_READ_RECOVERY_FLOOR,
-        })
-        expect(18 - conservativeReads.length).toBeGreaterThanOrEqual(LIVE_READ_RECOVERY_FLOOR)
-        expect(misses).toEqual([])
-      }).pipe(
-        Effect.provide(
-          toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
-        ),
-        Effect.provideService(References.MinimumLogLevel, 'Debug'),
-        Effect.provide(effectScoreLogLayer(lines)),
-      )
+      }).pipe(Effect.scoped)
     },
     LIVE_METADATA_COHORT_BUDGET_MILLIS,
   )

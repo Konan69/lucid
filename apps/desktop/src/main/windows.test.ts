@@ -14,7 +14,7 @@ import * as Schema from 'effect/Schema'
 import { ComputerCall, ComputerReply, ESCAPE_STOPPED } from './wire.ts'
 import { Performed, blankTable, perform, type Asking } from './windows.ts'
 
-const answered = (result: typeof Schema.Json.Type) => ComputerReply.cases.Answered.make({ result })
+const answered = (result: Schema.Json) => ComputerReply.cases.Answered.make({ result })
 const refusedBy = (name: string) =>
   ComputerReply.cases.Refused.make({ name, delivered: Option.none(), reason: Option.none() })
 /** One window state as the Computer itself answers `get_window_state` (`vendor/computer/README.md`). */

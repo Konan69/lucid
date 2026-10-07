@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { it } from '@effect/vitest'
+import { layer } from '@effect/vitest'
 import { AuditEvent, MemoryScope, Person, PersonId, RunId, ThreadId } from '@vivid/contracts'
 import { RuntimeUnavailable } from '@vivid/contracts/rpc'
 import { eq } from 'drizzle-orm'
@@ -71,112 +71,125 @@ const access = memoryAccessLayer.pipe(
 
 /** One real settled exchange proves learning, provenance, and invalidation through the production authority seams. */
 describe.skipIf(!enabled)('Settled Run learning', () => {
-  it.effect(
-    'takes a private durable note and publishes its Person topic without failing the Run',
-    () =>
-      Effect.gen(function* () {
-        const database = yield* Database
-        const store = yield* MemoryStore
-        const suffix = NodeCrypto.randomUUID()
-        const person = Person.make({
-          id: PersonId.make(`learning-${suffix}`),
-          name: 'Dami',
-          email: `learning-${suffix}@example.test`,
-        })
-        const thread = StoredThread.make({
-          titleSource: 'Person',
-          id: ThreadId.make(`learning-${suffix}`),
-          title: 'A private preference',
-          preview: '',
-          updatedAt: 1,
-          archived: false,
-          personId: person.id,
-          companyId: null,
-          audience: 'private',
-          projectId: null,
-        })
-        const partition = MemoryPartition.make(`p-${person.id}`)
-        const scopes = [MemoryScopeKey.make(`person:${person.id}`)]
-        yield* Effect.addFinalizer(() =>
-          Effect.gen(function* () {
-            const remaining = yield* store.list({ partition, scopes })
-            yield* Effect.forEach(remaining, (memory) => store.forget({ partition, id: memory.id }))
-            yield* database.run(database.delete(personTable).where(eq(personTable.id, person.id)))
-          }).pipe(
-            Effect.match({
-              onFailure: (failure) => expect.fail(`Cleanup failed: ${failure._tag}`),
-              onSuccess: () => undefined,
-            }),
-          ),
-        )
-        yield* database.run(
-          database
-            .insert(personTable)
-            .values({ id: person.id, name: person.name, email: person.email }),
-        )
-        yield* database.run(database.insert(threads).values(thread))
-        const topics = yield* Ref.make<ReadonlyArray<ChangeTopic>>([])
-        const events = yield* Ref.make<ReadonlyArray<AuditEvent>>([])
-        const changes = Changes.of({
-          publish: (moved) => Ref.update(topics, (previous) => [...previous, ...moved]),
-          subscribe: () => Effect.succeed(Stream.never),
-        })
-        const audit = Audit.of({
-          record: (_actor, event) => Ref.update(events, (previous) => [...previous, event]),
-        })
-        yield* Effect.gen(function* () {
-          const learning = yield* Learning
-          yield* learning.afterRun({
-            thread,
-            person,
-            said: 'Remember my lasting personal preference: I want written project updates on Friday mornings. Call that preference quartzfern329. This is just for me.',
-            replied:
-              'I will remember your preference for written project updates on Friday mornings as quartzfern329.',
-            runId: RunId.make(`learning-${suffix}`),
+  /** Only persistence is shared; learning uses per-case audit and publication recordings. */
+  layer(access)((it) => {
+    it.effect(
+      'takes a private durable note and publishes its Person topic without failing the Run',
+      () =>
+        Effect.gen(function* () {
+          const database = yield* Database
+          const store = yield* MemoryStore
+          const suffix = NodeCrypto.randomUUID()
+          const person = Person.make({
+            id: PersonId.make(`learning-${suffix}`),
+            name: 'Dami',
+            email: `learning-${suffix}@example.test`,
           })
-          const remembered = yield* store.list({ partition, scopes })
-          expect(
-            remembered.some((memory) => /Friday|quartzfern329/.test(memory.content)),
-            JSON.stringify(yield* TestConsole.logLines),
-          ).toBe(true)
-          expect(
-            remembered.every(
-              (memory) =>
-                MemoryScope.guards.Person(memory.scope) &&
-                memory.learnedIn === thread.id &&
-                memory.learnedFrom.id === person.id,
+          const thread = StoredThread.make({
+            titleSource: 'Person',
+            id: ThreadId.make(`learning-${suffix}`),
+            title: 'A private preference',
+            preview: '',
+            updatedAt: 1,
+            archived: false,
+            personId: person.id,
+            companyId: null,
+            audience: 'private',
+            projectId: null,
+          })
+          const partition = MemoryPartition.make(`p-${person.id}`)
+          const scopes = [MemoryScopeKey.make(`person:${person.id}`)]
+          yield* Effect.addFinalizer(() =>
+            Effect.gen(function* () {
+              const remaining = yield* store.list({ partition, scopes })
+              yield* Effect.forEach(remaining, (memory) =>
+                store.forget({ partition, id: memory.id }),
+              )
+              yield* database.run(database.delete(personTable).where(eq(personTable.id, person.id)))
+            }).pipe(
+              Effect.match({
+                onFailure: (failure) => expect.fail(`Cleanup failed: ${failure._tag}`),
+                onSuccess: () => undefined,
+              }),
             ),
-          ).toBe(true)
-          expect(yield* Ref.get(topics)).toContain(Topic.person(person.id))
-          expect((yield* Ref.get(events)).some(AuditEvent.guards.MemorySaved)).toBe(true)
-          // Losing the Thread after settlement is logged and dropped before recall or extraction.
-          yield* database.run(database.delete(threads).where(eq(threads.id, thread.id)))
-          const before = yield* store.list({ partition, scopes })
-          yield* learning.afterRun({
-            thread,
-            person,
-            said: 'An inaccessible Thread must not teach new facts.',
-            replied: 'The Run has already finished.',
-            runId: RunId.make(`inaccessible-${suffix}`),
+          )
+          yield* database.run(
+            database
+              .insert(personTable)
+              .values({ id: person.id, name: person.name, email: person.email }),
+          )
+          yield* database.run(database.insert(threads).values(thread))
+          const topics = yield* Ref.make<ReadonlyArray<ChangeTopic>>([])
+          const events = yield* Ref.make<ReadonlyArray<AuditEvent>>([])
+          const changes = Changes.of({
+            publish: (moved) => Ref.update(topics, (previous) => [...previous, ...moved]),
+            subscribe: () => Effect.succeed(Stream.never),
           })
-          expect(yield* store.list({ partition, scopes })).toEqual(before)
-        }).pipe(
-          Effect.provide(learningLayer),
-          Effect.provide(
-            Layer.mock(Runtime, {
-              read: Effect.fn('MemoryTest.noHistory')(() =>
-                Effect.fail(
-                  RuntimeUnavailable.make({ message: 'No conversation in this fixture' }),
+          const audit = Audit.of({
+            record: (_actor, event) => Ref.update(events, (previous) => [...previous, event]),
+          })
+          yield* Effect.gen(function* () {
+            const learning = yield* Learning
+            yield* learning.afterRun({
+              thread,
+              person,
+              said: 'Remember my lasting personal preference: I want written project updates on Friday mornings. Call that preference quartzfern329. This is just for me.',
+              replied:
+                'I will remember your preference for written project updates on Friday mornings as quartzfern329.',
+              runId: RunId.make(`learning-${suffix}`),
+            })
+            const remembered = yield* store.list({ partition, scopes })
+            expect(
+              remembered.some((memory) => /Friday|quartzfern329/.test(memory.content)),
+              JSON.stringify(yield* TestConsole.logLines),
+            ).toBe(true)
+            expect(
+              remembered.every(
+                (memory) =>
+                  MemoryScope.guards.Person(memory.scope) &&
+                  memory.learnedIn === thread.id &&
+                  memory.learnedFrom.id === person.id,
+              ),
+            ).toBe(true)
+            expect(yield* Ref.get(topics)).toContain(Topic.person(person.id))
+            expect((yield* Ref.get(events)).some(AuditEvent.guards.MemorySaved)).toBe(true)
+            // Losing the Thread after settlement is logged and dropped before recall or extraction.
+            yield* database.run(database.delete(threads).where(eq(threads.id, thread.id)))
+            const before = yield* store.list({ partition, scopes })
+            yield* learning.afterRun({
+              thread,
+              person,
+              said: 'An inaccessible Thread must not teach new facts.',
+              replied: 'The Run has already finished.',
+              runId: RunId.make(`inaccessible-${suffix}`),
+            })
+            expect(yield* store.list({ partition, scopes })).toEqual(before)
+          }).pipe(
+            Effect.provide(
+              yield* Layer.build(
+                learningLayer.pipe(
+                  Layer.provide(
+                    Layer.merge(Layer.succeed(Changes, changes), Layer.succeed(Audit, audit)),
+                  ),
+                  Layer.provide(
+                    Layer.mock(Runtime, {
+                      read: Effect.fn('MemoryTest.noHistory')(() =>
+                        Effect.fail(
+                          RuntimeUnavailable.make({ message: 'No conversation in this fixture' }),
+                        ),
+                      ),
+                    }),
+                  ),
                 ),
               ),
-            }),
-          ),
-          Effect.provideService(Changes, changes),
-          Effect.provideService(Audit, audit),
-        )
-        const helix = yield* HelixMemory
-        expect(yield* helix.scopes(partition)).toEqual(scopes)
-      }).pipe(Effect.scoped, Effect.provide(access)),
-    { timeout: 120000 },
-  )
+            ),
+            Effect.provideService(Changes, changes),
+            Effect.provideService(Audit, audit),
+          )
+          const helix = yield* HelixMemory
+          expect(yield* helix.scopes(partition)).toEqual(scopes)
+        }).pipe(Effect.scoped),
+      { timeout: 120000 },
+    )
+  })
 })

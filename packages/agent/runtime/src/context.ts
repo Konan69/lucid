@@ -59,7 +59,7 @@ const loadApps = Effect.fn('Context.loadApps')(
       Installed: ({ apps }) => apps.map((app) => app.name),
     })
   },
-  Effect.catch(() => Effect.succeed([])),
+  Effect.orElseSucceed(() => []),
 )
 
 /** Summaries supply immutable creation order without transporting every procedure's instructions. */
@@ -75,7 +75,7 @@ const loadSkills = Effect.fn('Context.loadSkills')(
       }),
     )
   },
-  Effect.catch(() => Effect.succeed([])),
+  Effect.orElseSucceed(() => []),
 )
 
 /** Missing settings leave the timezone absent rather than inventing a timezone for relative dates. */
@@ -84,7 +84,7 @@ const loadTimezone = Effect.fn('Context.loadTimezone')(
     const settings = yield* asActing(acting, (client) => client.GetSettings())
     return settings.timezone
   },
-  Effect.catch(() => Effect.succeed('')),
+  Effect.orElseSucceed(() => ''),
 )
 
 /**
@@ -103,7 +103,7 @@ const loadIntegrations = Effect.fn('Context.loadIntegrations')(
     )
     return ready.map((connection) => connection.account)
   },
-  Effect.catch(() => Effect.succeed([])),
+  Effect.orElseSucceed(() => []),
 )
 
 /**
@@ -115,7 +115,7 @@ const loadName = Effect.fn('Context.loadName')(
     const appearance = yield* asActing(acting, (client) => client.GetAppearance())
     return appearance.name
   },
-  Effect.catch(() => Effect.succeed(DEFAULT_APPEARANCE.name)),
+  Effect.orElseSucceed(() => DEFAULT_APPEARANCE.name),
 )
 
 /**

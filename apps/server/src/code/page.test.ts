@@ -1,6 +1,6 @@
 import * as NodeHttp from 'node:http'
-import { describe, expect, it } from '@effect/vitest'
-import { Deferred, Effect, Fiber, Layer, Option, Predicate, Ref } from 'effect'
+import { describe, expect, it, layer } from '@effect/vitest'
+import { Context, Deferred, Effect, Fiber, Layer, Option, Predicate, Ref } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { ReadPageOutcome } from '@vivid/contracts'
 import { refusalLogs } from '../observability/testlogger.ts'
@@ -9,14 +9,12 @@ import { PageNetwork, pageNetworkLayer, type PageResponse } from './network.ts'
 import { PageReader, pageReaderLayer } from './page.ts'
 import { budgets } from './budgets.ts'
 
-const publicResolver = Layer.succeed(
-  PageResolver,
-  PageResolver.of({
-    resolve: Effect.fn('Test.resolve')(() =>
-      Effect.succeed([{ address: '93.184.215.14', family: 4 }]),
-    ),
-  }),
-)
+const publicResolverValue = PageResolver.of({
+  resolve: Effect.fn('Test.resolve')(() =>
+    Effect.succeed([{ address: '93.184.215.14', family: 4 }]),
+  ),
+})
+const publicResolver = Layer.succeed(PageResolver, publicResolverValue)
 const document = (body: string): PageResponse => ({
   status: 200,
   location: Option.none(),
@@ -36,56 +34,61 @@ describe('Public pages', () => {
       }),
     )
     return Effect.gen(function* () {
-      const outcome = yield* (yield* PageReader).read({ address: 'http://127.0.0.1/private' })
-      expect(outcome).toEqual(
-        ReadPageOutcome.cases.Refused.make({ reason: 'not a public web address' }),
+      const caseContext = yield* Layer.build(
+        pageReaderLayer.pipe(
+          Layer.provide(Layer.merge(publicResolver, network)),
+          Layer.provideMerge(logs.layer),
+        ),
       )
-      const recorded = logs.recorded()
-      expect(recorded).toHaveLength(1)
-      expect(recorded[0]).toContain('vivid.refusal.kind=PageRefused')
-      expect(recorded[0]).toContain('vivid.refusal.reason="not a public web address"')
-      expect(recorded[0]).not.toContain('/private')
-    }).pipe(
-      Effect.provide(pageReaderLayer.pipe(Layer.provide(Layer.merge(publicResolver, network)))),
-      Effect.provide(logs.layer),
-    )
+      return yield* Effect.gen(function* () {
+        const outcome = yield* (yield* PageReader).read({ address: 'http://127.0.0.1/private' })
+        expect(outcome).toEqual(
+          ReadPageOutcome.cases.Refused.make({ reason: 'not a public web address' }),
+        )
+        const recorded = logs.recorded()
+        expect(recorded).toHaveLength(1)
+        expect(recorded[0]).toContain('vivid.refusal.kind=PageRefused')
+        expect(recorded[0]).toContain('vivid.refusal.reason="not a public web address"')
+        expect(recorded[0]).not.toContain('/private')
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped)
   })
 
-  it.effect('extracts title, headings, paragraphs, lists and links and bounds readable text', () =>
-    Effect.gen(function* () {
-      const network = Layer.succeed(
-        PageNetwork,
-        PageNetwork.of({
-          request: Effect.fn('Test.document')(() =>
-            Effect.succeed(
-              document(
-                '<html><head><title>Useful page</title></head><body><h1>Heading</h1><p>Paragraph</p><ul><li>First</li><li>Second</li></ul><a href="https://example.com/next">Next</a><script>SECRET</script></body></html>',
-              ),
-            ),
+  const documentNetwork = Layer.succeed(
+    PageNetwork,
+    PageNetwork.of({
+      request: Effect.fn('Test.document')(() =>
+        Effect.succeed(
+          document(
+            '<html><head><title>Useful page</title></head><body><h1>Heading</h1><p>Paragraph</p><ul><li>First</li><li>Second</li></ul><a href="https://example.com/next">Next</a><script>SECRET</script></body></html>',
           ),
-        }),
-      )
-      yield* Effect.gen(function* () {
-        const outcome = yield* (yield* PageReader).read({ address: 'https://example.com' })
-        expect(ReadPageOutcome.guards.Read(outcome)).toBe(true)
-        if (ReadPageOutcome.guards.Read(outcome)) {
-          expect(outcome.title).toBe('Useful page')
-          for (const word of [
-            'HEADING',
-            'Paragraph',
-            'First',
-            'Second',
-            'Next',
-            'https://example.com/next',
-          ])
-            expect(outcome.text).toContain(word)
-          expect(outcome.text).not.toContain('SECRET')
-        }
-      }).pipe(
-        Effect.provide(pageReaderLayer.pipe(Layer.provide(Layer.merge(publicResolver, network)))),
-      )
+        ),
+      ),
     }),
   )
+  layer(pageReaderLayer.pipe(Layer.provide(Layer.merge(publicResolver, documentNetwork))))((it) => {
+    it.effect(
+      'extracts title, headings, paragraphs, lists and links and bounds readable text',
+      () =>
+        Effect.gen(function* () {
+          const outcome = yield* (yield* PageReader).read({ address: 'https://example.com' })
+          expect(ReadPageOutcome.guards.Read(outcome)).toBe(true)
+          if (ReadPageOutcome.guards.Read(outcome)) {
+            expect(outcome.title).toBe('Useful page')
+            for (const word of [
+              'HEADING',
+              'Paragraph',
+              'First',
+              'Second',
+              'Next',
+              'https://example.com/next',
+            ])
+              expect(outcome.text).toContain(word)
+            expect(outcome.text).not.toContain('SECRET')
+          }
+        }).pipe(Effect.scoped),
+    )
+  })
 
   it.effect(
     'refuses credentials, non-web schemes, disguised loopback and all non-public address classes before requesting',
@@ -110,21 +113,26 @@ describe('Public pages', () => {
           }),
         )
         yield* Effect.gen(function* () {
-          const reader = yield* PageReader
-          for (const address of [
-            'file:///etc/passwd',
-            'ftp://example.com',
-            'https://person:secret@example.com',
-            'http://2130706433',
-            'http://0177.0.0.1',
-            'http://[::ffff:127.0.0.1]',
-            'http://internal.example',
-          ]) {
-            expect(yield* reader.read({ address })).toEqual(
-              ReadPageOutcome.cases.Refused.make({ reason: 'not a public web address' }),
-            )
-          }
-        }).pipe(Effect.provide(pageReaderLayer.pipe(Layer.provide(Layer.merge(resolver, network)))))
+          const caseContext = yield* Layer.build(
+            pageReaderLayer.pipe(Layer.provide(Layer.merge(resolver, network))),
+          )
+          return yield* Effect.gen(function* () {
+            const reader = yield* PageReader
+            for (const address of [
+              'file:///etc/passwd',
+              'ftp://example.com',
+              'https://person:secret@example.com',
+              'http://2130706433',
+              'http://0177.0.0.1',
+              'http://[::ffff:127.0.0.1]',
+              'http://internal.example',
+            ]) {
+              expect(yield* reader.read({ address })).toEqual(
+                ReadPageOutcome.cases.Refused.make({ reason: 'not a public web address' }),
+              )
+            }
+          }).pipe(Effect.provide(caseContext))
+        }).pipe(Effect.scoped)
         expect(yield* Ref.get(requests)).toBe(0)
         for (const ip of [
           '0.0.0.0',
@@ -183,8 +191,13 @@ describe('Public pages', () => {
           }),
         )
         const outcome = yield* Effect.gen(function* () {
-          return yield* (yield* PageReader).read({ address: 'http://example.com' })
-        }).pipe(Effect.provide(pageReaderLayer.pipe(Layer.provide(Layer.merge(resolver, network)))))
+          const caseContext = yield* Layer.build(
+            pageReaderLayer.pipe(Layer.provide(Layer.merge(resolver, network))),
+          )
+          return yield* Effect.gen(function* () {
+            return yield* (yield* PageReader).read({ address: 'http://example.com' })
+          }).pipe(Effect.provide(caseContext))
+        }).pipe(Effect.scoped)
         expect(outcome).toEqual(
           ReadPageOutcome.cases.Refused.make({ reason: 'not a public web address' }),
         )
@@ -202,10 +215,15 @@ describe('Public pages', () => {
           }),
         )
         yield* Effect.gen(function* () {
-          expect(yield* (yield* PageReader).read({ address: 'https://example.com' })).toEqual(
-            ReadPageOutcome.cases.Refused.make({ reason: 'not a public web address' }),
+          const caseContext = yield* Layer.build(
+            pageReaderLayer.pipe(Layer.provide(Layer.merge(mixed, network))),
           )
-        }).pipe(Effect.provide(pageReaderLayer.pipe(Layer.provide(Layer.merge(mixed, network)))))
+          return yield* Effect.gen(function* () {
+            expect(yield* (yield* PageReader).read({ address: 'https://example.com' })).toEqual(
+              ReadPageOutcome.cases.Refused.make({ reason: 'not a public web address' }),
+            )
+          }).pipe(Effect.provide(caseContext))
+        }).pipe(Effect.scoped)
         expect(yield* Ref.get(requests)).toBe(1)
       }),
   )
@@ -225,22 +243,24 @@ describe('Public pages', () => {
           }),
         )
         yield* Effect.gen(function* () {
-          expect(yield* (yield* PageReader).read({ address: 'https://example.com' })).toEqual(
-            ReadPageOutcome.cases.Refused.make({ reason: 'could not be reached' }),
+          const caseContext = yield* Layer.build(
+            pageReaderLayer.pipe(Layer.provide(Layer.merge(publicResolver, network))),
           )
-        }).pipe(
-          Effect.provide(pageReaderLayer.pipe(Layer.provide(Layer.merge(publicResolver, network)))),
-        )
+          return yield* Effect.gen(function* () {
+            expect(yield* (yield* PageReader).read({ address: 'https://example.com' })).toEqual(
+              ReadPageOutcome.cases.Refused.make({ reason: 'could not be reached' }),
+            )
+          }).pipe(Effect.provide(caseContext))
+        }).pipe(Effect.scoped)
         expect(yield* Ref.get(requests)).toBe(budgets.redirects + 1)
         for (const response of [
           document('é'.repeat(budgets.pageText)),
           { status: 200, location: Option.none(), contentType: 'image/png', body: 'image' },
           document('x'.repeat(budgets.pageBytes + 1)),
         ]) {
-          const current = Layer.succeed(
-            PageNetwork,
-            PageNetwork.of({ request: Effect.fn('Test.pageSize')(() => Effect.succeed(response)) }),
-          )
+          const current = PageNetwork.of({
+            request: Effect.fn('Test.pageSize')(() => Effect.succeed(response)),
+          })
           yield* Effect.gen(function* () {
             const outcome = yield* (yield* PageReader).read({ address: 'https://example.com' })
             expect(outcome._tag).toBe(
@@ -254,9 +274,15 @@ describe('Public pages', () => {
               expect(outcome.truncated).toBe(true)
             } else expect(outcome.reason).toBe('not a readable page')
           }).pipe(
-            Effect.provide(
-              pageReaderLayer.pipe(Layer.provide(Layer.merge(publicResolver, current))),
+            Effect.provideServiceEffect(
+              PageReader,
+              Layer.build(Layer.fresh(pageReaderLayer)).pipe(
+                Effect.map((context) => Context.get(context, PageReader)),
+                Effect.provideService(PageNetwork, current),
+                Effect.provideService(PageResolver, publicResolverValue),
+              ),
             ),
+            Effect.scoped,
           )
         }
       }),
@@ -282,10 +308,13 @@ describe('Public pages', () => {
       )
       const running = yield* Effect.forkChild(
         Effect.gen(function* () {
-          return yield* (yield* PageReader).read({ address: 'https://example.com' })
-        }).pipe(
-          Effect.provide(pageReaderLayer.pipe(Layer.provide(Layer.merge(resolver, network)))),
-        ),
+          const caseContext = yield* Layer.build(
+            pageReaderLayer.pipe(Layer.provide(Layer.merge(resolver, network))),
+          )
+          return yield* Effect.gen(function* () {
+            return yield* (yield* PageReader).read({ address: 'https://example.com' })
+          }).pipe(Effect.provide(caseContext))
+        }).pipe(Effect.scoped),
       )
       yield* Deferred.await(entered)
       yield* TestClock.adjust('11 seconds')
@@ -295,41 +324,43 @@ describe('Public pages', () => {
     }),
   )
 
-  it.effect(
-    'pins the actual Node socket to the supplied IP, keeps Host, bounds body bytes and closes requests',
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const server = NodeHttp.createServer((request, response) => {
-            response.setHeader('Content-Type', 'text/plain')
-            response.end(
-              request.url === '/large' ? 'x'.repeat(budgets.pageBytes + 1) : request.headers.host,
-            )
-          })
-          yield* Effect.acquireRelease(
-            Effect.callback<void>((resume) => {
-              server.listen(0, '127.0.0.1', () => resume(Effect.void))
-              server.on('error', () => resume(Effect.die('Test server could not start')))
-            }),
-            () =>
+  layer(pageNetworkLayer)((it) => {
+    it.effect(
+      'pins the actual Node socket to the supplied IP, keeps Host, bounds body bytes and closes requests',
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const server = NodeHttp.createServer((request, response) => {
+              response.setHeader('Content-Type', 'text/plain')
+              response.end(
+                request.url === '/large' ? 'x'.repeat(budgets.pageBytes + 1) : request.headers.host,
+              )
+            })
+            yield* Effect.acquireRelease(
               Effect.callback<void>((resume) => {
-                server.closeAllConnections()
-                server.close(() => resume(Effect.void))
+                server.listen(0, '127.0.0.1', () => resume(Effect.void))
+                server.on('error', () => resume(Effect.die('Test server could not start')))
               }),
-          )
-          const address = server.address()
-          if (address === null || Predicate.isString(address))
-            return yield* Effect.die('Missing test listener')
-          const network = yield* PageNetwork
-          const url = new URL(`http://never-resolve.invalid:${address.port}/`)
-          const response = yield* network.request(url, { address: '127.0.0.1', family: 4 })
-          expect(response.body).toBe(url.host)
-          const refused = yield* network
-            .request(new URL('/large', url), { address: '127.0.0.1', family: 4 })
-            .pipe(Effect.flip)
-          expect(refused.reason).toBe('not a readable page')
-          return yield* Effect.void
-        }),
-      ).pipe(Effect.provide(pageNetworkLayer)),
-  )
+              () =>
+                Effect.callback<void>((resume) => {
+                  server.closeAllConnections()
+                  server.close(() => resume(Effect.void))
+                }),
+            )
+            const address = server.address()
+            if (address === null || Predicate.isString(address))
+              return yield* Effect.die('Missing test listener')
+            const network = yield* PageNetwork
+            const url = new URL(`http://never-resolve.invalid:${address.port}/`)
+            const response = yield* network.request(url, { address: '127.0.0.1', family: 4 })
+            expect(response.body).toBe(url.host)
+            const refused = yield* network
+              .request(new URL('/large', url), { address: '127.0.0.1', family: 4 })
+              .pipe(Effect.flip)
+            expect(refused.reason).toBe('not a readable page')
+            return yield* Effect.void
+          }),
+        ).pipe(Effect.scoped),
+    )
+  })
 })

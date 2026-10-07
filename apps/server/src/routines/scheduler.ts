@@ -60,7 +60,7 @@ export interface RoutineSchedulerService {
     payload: string,
     invocation: RoutineInvocation,
   ) => Effect.Effect<Occurrence, RoutineDeliveryError>
-  readonly runDue: () => Effect.Effect<void, RoutineDeliveryError | InvalidRoutineSchedule>
+  readonly runDue: Effect.Effect<void, RoutineDeliveryError | InvalidRoutineSchedule>
 }
 
 export class RoutineScheduler extends Context.Service<RoutineScheduler, RoutineSchedulerService>()(
@@ -104,12 +104,10 @@ interface SubmissionServices {
 /** A recorded opening failure stays a failure on retry; an admitted receipt retains its Run. */
 const replay = Effect.fn('RoutineScheduler.replay')(function* (occurrence: Occurrence) {
   if (occurrence.submissionId === null && occurrence.error === THREAD_OPENING_FAILURE) {
-    return yield* Effect.fail(
-      new RoutineThreadUnavailable({
-        routineId: occurrence.routineId,
-        threadId: occurrence.threadId,
-      }),
-    )
+    return yield* new RoutineThreadUnavailable({
+      routineId: occurrence.routineId,
+      threadId: occurrence.threadId,
+    })
   }
   return occurrence.submissionId === null ? Option.none<Occurrence>() : Option.some(occurrence)
 })
@@ -141,12 +139,10 @@ const openingFailed = Effect.fn('RoutineScheduler.openingFailed')(function* (
       threadId: null,
     })
   }
-  return yield* Effect.fail(
-    new RoutineThreadUnavailable({
-      routineId: record.routine.id,
-      threadId: claim.occurrence.threadId,
-    }),
-  )
+  return yield* new RoutineThreadUnavailable({
+    routineId: record.routine.id,
+    threadId: claim.occurrence.threadId,
+  })
 })
 
 /** Ensuring a Thread is a product operation: database failures become a recorded opening failure. */
@@ -396,8 +392,8 @@ export const routineSchedulerServiceLayer = Layer.effect(
     })
 
     /** Every claimed tick already has a receipt; failed admissions remain replayable on later passes. */
-    const runDue = Effect.fn('RoutineScheduler.runDue')(function* () {
-      const due = yield* routines.claimDue()
+    const runDue = Effect.gen(function* () {
+      const due = yield* routines.claimDue
       yield* Effect.forEach(due, ({ record }) => publish(changes)(record), { discard: true })
       const outcomes = yield* Effect.forEach(due, ({ record, attempt }) =>
         Effect.exit(submitScheduled(routines, submit, record, attempt)),
@@ -405,7 +401,7 @@ export const routineSchedulerServiceLayer = Layer.effect(
       const integrationOutcome = yield* Effect.exit(integrationPass())
       for (const outcome of outcomes) yield* outcome
       yield* integrationOutcome
-    })
+    }).pipe(Effect.withSpan('RoutineScheduler.runDue'))
     return RoutineScheduler.of({ run, webhook, runDue })
   }),
 )
@@ -414,7 +410,7 @@ export const routineSchedulerServiceLayer = Layer.effect(
 export const routineSchedulerLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const scheduler = yield* RoutineScheduler
-    const pass = scheduler.runDue().pipe(
+    const pass = scheduler.runDue.pipe(
       // Recorded before `ignore` discards the failure; the retry on the next pass is unchanged.
       observeFailures('schedule'),
       Effect.tapError((error) => Effect.logError('Routine scheduler pass failed', error)),

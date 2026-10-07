@@ -151,8 +151,7 @@ const makeRemove = (database: Database['Service']) =>
           .limit(1)
           .for('update')
         const value = rows[0]
-        if (value === undefined)
-          return yield* Effect.fail(new NotFound({ message: 'Rule not found' }))
+        if (value === undefined) return yield* new NotFound({ message: 'Rule not found' })
         const row = yield* decodeRow(value)
         if (row.companyId !== null) yield* requireAdmin(actor.workspace)
         yield* tx.delete(rules).where(eq(rules.id, id))

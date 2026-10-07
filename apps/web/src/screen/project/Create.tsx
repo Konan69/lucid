@@ -1,8 +1,9 @@
 import type { Project, ProjectId } from '@vivid/contracts'
 import { projects as projectsData } from '@vivid/state'
-import { Result } from 'effect'
+import { Effect, Result } from 'effect'
 import { useId, useState } from 'react'
-import { change, live } from '../../data/live'
+import { act } from '../../data/app'
+import { changing, live } from '../../data/live'
 import { Button } from '../../ui/button'
 import {
   Dialog,
@@ -41,21 +42,23 @@ export function CreateProject({
   // Sent away (Escape, a click outside, the close button) it plays out before `onClose` is told.
   const surface = useSurface(onClose)
 
-  async function create() {
-    if (creating) return
-    setCreating(true)
-    setRefused(false)
-    const result = await change((client) =>
-      client.CreateProject({ name: name.trim(), parentProjectId: inside }),
-    )
-    if (Result.isFailure(result)) {
-      setCreating(false)
-      setRefused(true)
-      return
-    }
-    live.projects.expect(projectsData.confirmed(result.success))(true)
-    onClose()
-    onMade(result.success)
+  function create() {
+    return Effect.gen(function* () {
+      if (creating) return
+      setCreating(true)
+      setRefused(false)
+      const result = yield* changing((client) =>
+        client.CreateProject({ name: name.trim(), parentProjectId: inside }),
+      )
+      if (Result.isFailure(result)) {
+        setCreating(false)
+        setRefused(true)
+        return
+      }
+      live.projects.expect(projectsData.confirmed(result.success))(true)
+      onClose()
+      onMade(result.success)
+    })
   }
 
   return (
@@ -73,7 +76,7 @@ export function CreateProject({
           className="contents"
           onSubmit={(event) => {
             event.preventDefault()
-            void create()
+            void act(create())
           }}
         >
           <Field>

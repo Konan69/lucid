@@ -1,7 +1,8 @@
 import { MemoryScope, type Memory as MemoryRecord } from '@vivid/contracts'
-import { Result } from 'effect'
+import { Effect, Result } from 'effect'
 import { useState } from 'react'
-import { change, live, LiveState, useLive } from '../../data/live'
+import { act } from '../../data/app'
+import { changing, live, LiveState, useLive } from '../../data/live'
 import { orSay } from '../../data/said'
 import { Button } from '../../ui/button'
 import { Input } from '../../ui/input'
@@ -58,21 +59,25 @@ export function Memory() {
 function MemoryRow({ memory }: { memory: MemoryRecord }) {
   const [draft, setDraft] = useState<string | null>(null)
   const forget = () =>
-    void orSay(
-      change((client) => client.ForgetMemory({ id: memory.id })),
-      'That could not be forgotten. Try again.',
+    void act(
+      orSay(
+        changing((client) => client.ForgetMemory({ id: memory.id })),
+        'That could not be forgotten. Try again.',
+      ),
     )
   const [refused, setRefused] = useState(false)
 
   /** Saves a correction. The words stay in the field until it is saved; a refusal keeps them. */
-  async function correct(content: string) {
-    if (content.length === 0 || content === memory.content) {
-      setDraft(null)
-      return
-    }
-    const saved = await change((client) => client.CorrectMemory({ id: memory.id, content }))
-    setRefused(Result.isFailure(saved))
-    if (Result.isSuccess(saved)) setDraft(null)
+  function correct(content: string) {
+    return Effect.gen(function* () {
+      if (content.length === 0 || content === memory.content) {
+        setDraft(null)
+        return
+      }
+      const saved = yield* changing((client) => client.CorrectMemory({ id: memory.id, content }))
+      setRefused(Result.isFailure(saved))
+      if (Result.isSuccess(saved)) setDraft(null)
+    })
   }
 
   if (draft !== null) {
@@ -81,7 +86,7 @@ function MemoryRow({ memory }: { memory: MemoryRecord }) {
         className="flex items-center gap-2 px-4 py-2.5"
         onSubmit={(event) => {
           event.preventDefault()
-          void correct(draft.trim())
+          void act(correct(draft.trim()))
         }}
       >
         <Input

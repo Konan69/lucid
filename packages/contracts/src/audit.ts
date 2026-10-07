@@ -38,7 +38,7 @@ export type AuditEvent = typeof AuditEvent.Type
 
 export const AuditEntry = Schema.Struct({
   id: AuditEntryId,
-  at: Schema.Number,
+  at: Schema.Finite,
   /** The Person who acted, or on whose behalf Vivid did. */
   actor: PersonSummary,
   /** Whether the Person did it themselves or Vivid did it for them. */

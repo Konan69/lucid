@@ -27,7 +27,7 @@ export const StoredThread = Schema.Struct({
   title: Schema.String,
   titleSource: TitleSource,
   preview: Schema.String,
-  updatedAt: Schema.Number,
+  updatedAt: Schema.Finite,
   archived: Schema.Boolean,
   personId: PersonId,
   companyId: Schema.NullOr(CompanyId),
@@ -120,7 +120,7 @@ export const requireThread = Effect.fn('Threads.require')(function* (
 ) {
   const thread = yield* findThread(id)
   if (Option.isNone(thread) || !(yield* canSee(id, personId))) {
-    return yield* Effect.fail(new NotFound({ message: 'Thread not found' }))
+    return yield* new NotFound({ message: 'Thread not found' })
   }
   return thread.value
 })

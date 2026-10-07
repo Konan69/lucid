@@ -2,7 +2,7 @@ import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 
-const defaultDevelopmentRendererUrl = Schema.decodeUnknownSync(Schema.URLFromString)(
+const defaultDevelopmentRendererUrl = Schema.decodeSync(Schema.URLFromString)(
   'http://127.0.0.1:5178',
 )
 

@@ -87,7 +87,7 @@ const DEEPEST = 10
 
 /** The kinds of value that are words. Lists of related nodes and the like are not. */
 const sayable = Schema.decodeUnknownOption(
-  Schema.Union([Schema.String, Schema.Number, Schema.Boolean]),
+  Schema.Union([Schema.String, Schema.Finite, Schema.Boolean]),
 )
 
 /** Words from a wrapped value: text as it is, numbers and booleans as written, nothing else. */

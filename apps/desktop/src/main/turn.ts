@@ -329,7 +329,7 @@ const turnFor = Effect.fn('DesktopTurn.turnFor')(function* (
 /** What the keeper does with how the work ended: the answer to send, or none. */
 const settle = (keeper: Keeper, performed: Performed) =>
   Performed.match(performed, {
-    Unknown: () => Effect.succeed(Option.none<DeviceAnswer>()),
+    Unknown: () => Effect.succeedNone,
     // No hooks, no Escape: the Person could not stop Vivid, so Vivid does not go on.
     HooksLost: () => endTurn(keeper).pipe(Effect.as(Option.some(unsupported))),
     Answered: ({ answer }) =>
@@ -368,8 +368,8 @@ const work = Effect.fn('DesktopTurn.work')(function* (
 const worked = (keeper: Keeper, command: ComputerCommand, input: WindowWork) =>
   work(keeper, command, input).pipe(
     Effect.catchTags({
-      ComputerUnavailable: () => Effect.succeed(Option.some(failed)),
-      NotBegun: ({ answer }) => Effect.succeed(Option.some(answer)),
+      ComputerUnavailable: () => Effect.succeedSome(failed),
+      NotBegun: ({ answer }) => Effect.succeedSome(answer),
     }),
   )
 

@@ -1,9 +1,10 @@
 import { Runtime } from '../runtime/client.ts'
 import * as NodeCrypto from 'node:crypto'
 import { PgClient } from '@effect/sql-pg/PgClient'
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { eq } from 'drizzle-orm'
 import {
+  Clock,
   Context,
   Deferred,
   Effect,
@@ -109,7 +110,7 @@ const runtimeTestLayer = Layer.effectContext(
 const testLayer = deviceLayer.pipe(
   Layer.provideMerge(busLayer),
   Layer.provideMerge(runtimeTestLayer),
-  Layer.provideMerge(testDatabaseLayer),
+  Layer.provideMerge(Layer.effect(Database, Database)),
   Layer.provideMerge(testConfigLayer),
 )
 
@@ -350,311 +351,165 @@ const failureOf = <E extends { readonly _tag: string }>(exit: Exit.Exit<void, E>
     onSome: (failure) => failure._tag,
   })
 
+/** Acquire each Device registry and notice queue in its case scope so links and presence workers cannot survive into another case. Install a fresh clock first, except for production sign-out, which needs real time. */
+function scopedCase<Services, LayerError, Dependencies, A, E, R>(
+  caseLayer: Layer.Layer<Services, LayerError, Dependencies>,
+  program: Effect.Effect<A, E, R>,
+  clock: 'fresh' | 'inherited',
+) {
+  const acquired = Layer.build(caseLayer).pipe(
+    Effect.flatMap((context) => program.pipe(Effect.provide(context))),
+    Effect.scoped,
+  )
+  if (clock === 'inherited') return acquired
+  return acquired.pipe(Effect.provideServiceEffect(Clock.Clock, TestClock.make()))
+}
+
 /** Real PostgreSQL holds the Devices, Runs and ledger; the desktop app is the handlers' caller. */
 describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
-  it.effect('desktop connect and disconnect announce only the Person in a Company workspace', () =>
-    Effect.gen(function* () {
-      const ada = yield* somebody(farFuture)
-      const signedInCompany = yield* companyWorkspace(ada)
-      const { device, installation } = yield* enrolled(ada, 'Laptop')
-      yield* computerHandlers.AllowDevice({ id: device.id }).pipe(signedInCompany)
-      const notices = yield* (yield* PgClient).listen(CHANNEL)
-      const connected = yield* computerHandlers
-        .WatchDeviceRequests({
-          device: device.id,
-          installation,
-          ability: { pages: true, apps: false },
-        })
-        .pipe(Stream.runDrain, signedInCompany, Effect.forkScoped)
-      yield* Queue.take((yield* Bus).watching)
-      yield* payload(notices, [Topic.person(ada.person.id)])
-      yield* Fiber.interrupt(connected)
-      yield* payload(notices, [Topic.person(ada.person.id)])
-      expect(yield* listed(ada)).toEqual([['Laptop', 'Allowed', 'Offline']])
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
+  layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
+    it.effect(
+      'desktop connect and disconnect announce only the Person in a Company workspace',
+      () =>
+        Effect.gen(function* () {
+          const ada = yield* somebody(farFuture)
+          const signedInCompany = yield* companyWorkspace(ada)
+          const { device, installation } = yield* enrolled(ada, 'Laptop')
+          yield* computerHandlers.AllowDevice({ id: device.id }).pipe(signedInCompany)
+          const notices = yield* (yield* PgClient).listen(CHANNEL)
+          const connected = yield* computerHandlers
+            .WatchDeviceRequests({
+              device: device.id,
+              installation,
+              ability: { pages: true, apps: false },
+            })
+            .pipe(Stream.runDrain, signedInCompany, Effect.forkScoped)
+          yield* Queue.take((yield* Bus).watching)
+          yield* payload(notices, [Topic.person(ada.person.id)])
+          yield* Fiber.interrupt(connected)
+          yield* payload(notices, [Topic.person(ada.person.id)])
+          expect(yield* listed(ada)).toEqual([['Laptop', 'Allowed', 'Offline']])
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
 
-  it.effect('refused desktop admission announces nothing on any topic', () =>
-    Effect.gen(function* () {
-      const ada = yield* somebody(farFuture)
-      const signedInCompany = yield* companyWorkspace(ada)
-      const { device, installation } = yield* enrolled(ada, 'Laptop')
-      const notices = yield* (yield* PgClient).listen(CHANNEL)
-      const failure = yield* computerHandlers
-        .WatchDeviceRequests({
-          device: device.id,
-          installation,
-          ability: { pages: true, apps: false },
-        })
-        .pipe(Stream.runDrain, signedInCompany, Effect.flip)
-      expect(failure._tag).toBe('Forbidden')
-      yield* silent(notices)
-      expect(yield* listed(ada)).toEqual([['Laptop', 'Pending', 'Offline']])
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('replacement keeps the Device Connected until the successor disconnects', () =>
-    Effect.gen(function* () {
-      const ada = yield* somebody(farFuture)
-      const { device, installation } = yield* enrolled(ada, 'Laptop')
-      yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
-      const watch = yield* watchingDevices(ada)
-      const previous = yield* listen(ada, device, installation)
-      expect((yield* nextValue(watch)).devices[0]).toMatchObject({
-        presence: DevicePresence.cases.Connected.make({ ability: { pages: true, apps: false } }),
-      })
-      const successor = yield* listen(ada, device, installation)
-      expect(failureOf(yield* Fiber.await(previous.ended))).toBe('ended')
-      // Replacement opens one link and closes the old one. Consume both actual bus receipts
-      // before advancing the debounce clock; neither can emit a false Offline transition.
-      yield* watch.receipt.pipe(Stream.take(2), Stream.runDrain)
-      yield* TestClock.adjust('20 millis')
-      expect(yield* listed(ada)).toEqual([['Laptop', 'Allowed', 'Connected']])
-      expect(yield* Queue.size(watch.values)).toBe(0)
-      yield* Fiber.interrupt(successor.ended)
-      expect((yield* nextValue(watch)).devices[0]).toMatchObject({
-        presence: DevicePresence.cases.Offline.make({}),
-      })
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('WatchDevices emits enrol, allow and revoke using the one-shot loader', () =>
-    Effect.gen(function* () {
-      const ada = yield* somebody(farFuture)
-      const watch = yield* watchingDevices(ada)
-      expect(watch.initial.devices).toEqual([])
-      const { device } = yield* enrolled(ada, 'Laptop')
-      expect((yield* nextValue(watch)).devices).toEqual([device])
-      const allowed = yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
-      expect((yield* nextValue(watch)).devices).toEqual([allowed.device])
-      const revoked = yield* computerHandlers.RevokeDevice({ id: device.id }).pipe(as(ada))
-      const live = yield* nextValue(watch)
-      expect(live.devices).toEqual([revoked.device])
-      expect(yield* computerHandlers.ListDevices().pipe(as(ada))).toEqual(live)
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('WatchDevices emits desktop connection and scoped disconnection', () =>
-    Effect.gen(function* () {
-      const ada = yield* somebody(farFuture)
-      const { device, installation } = yield* enrolled(ada, 'Laptop')
-      yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
-      const watch = yield* watchingDevices(ada)
-      expect(watch.initial.devices[0]).toMatchObject({
-        presence: DevicePresence.cases.Offline.make({}),
-      })
-      const link = yield* listen(ada, device, installation)
-      expect((yield* nextValue(watch)).devices[0]).toMatchObject({
-        presence: DevicePresence.cases.Connected.make({ ability: { pages: true, apps: false } }),
-      })
-      yield* Fiber.interrupt(link.ended)
-      expect((yield* nextValue(watch)).devices[0]).toMatchObject({
-        presence: DevicePresence.cases.Offline.make({}),
-      })
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('WatchDevices only lists the signed-in Person computers', () =>
-    Effect.gen(function* () {
-      const ada = yield* somebody(farFuture)
-      const tola = yield* somebody(farFuture)
-      yield* enrolled(ada, 'Ada’s laptop')
-      const watch = yield* watchingDevices(tola)
-      expect(watch.initial.devices).toEqual([])
-      const { device } = yield* enrolled(tola, 'Tola’s laptop')
-      expect((yield* nextValue(watch)).devices).toEqual([device])
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  /** Only the accepted ledger answer decides Refused; repeats and outward Browse values do not. */
-  it.effect('records a device refusal once after accepting the answer and rejects replay', () => {
-    const logs = refusalLogs()
-    return Effect.gen(function* () {
-      const ada = yield* somebody(farFuture)
-      const { device, installation } = yield* enrolled(ada, 'Laptop')
-      yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
-      const link = yield* listen(ada, device, installation)
-      const { threadId, runId } = yield* working(ada.person, ada.person)
-      const running = yield* (yield* DeviceRegistry)
-        .browse({
-          personId: ada.person.id,
-          threadId,
-          runId,
-          action: read,
-          authority: BrowseAuthority.cases.Acting.make({}),
-        })
-        .pipe(Effect.forkScoped)
-      const request = yield* Queue.take(link.requests)
-      const answer = {
-        device: device.id,
-        id: request.id,
-        answer: DeviceAnswer.cases.Refused.make({ reason: 'NotAllowed' }),
-      }
-      yield* computerHandlers.AnswerDeviceRequest(answer).pipe(as(ada))
-      expect(yield* Fiber.join(running)).toEqual(BrowseOutcome.cases.AddressRefused.make({}))
-      expect(
-        (yield* computerHandlers.AnswerDeviceRequest(answer).pipe(as(ada), Effect.flip))._tag,
-      ).toBe('Forbidden')
-      const database = yield* Database
-      const [row] = yield* database.run(
-        database.select().from(deviceRequests).where(eq(deviceRequests.id, request.id)),
-      )
-      expect(row).toMatchObject({
-        receipt: encodeReceipt(DeviceReceipt.cases.Refused.make({ reason: 'NotAllowed' })),
-      })
-      const recorded = logs.recorded()
-      expect(recorded).toHaveLength(1)
-      expect(recorded[0]).toContain('vivid.refusal.kind=DeviceRefused')
-      expect(recorded[0]).toContain('vivid.refusal.reason=NotAllowed')
-    }).pipe(Effect.scoped, Effect.provide(testLayer), Effect.provide(logs.layer))
-  })
-
-  it.effect('enrolling is repeatable per Person and installation, and grants nothing', () =>
-    Effect.gen(function* () {
-      const ada = yield* somebody(farFuture)
-      const tola = yield* somebody(farFuture)
-      const first = yield* enrolled(ada, 'Ada’s laptop')
-      const again = yield* computerHandlers
-        .EnrolDevice({ installation: first.installation, name: 'Renamed by the app' })
-        .pipe(as(ada))
-      expect(again.device).toEqual(first.device)
-      expect(first.device.access._tag).toBe('Pending')
-      // The same installation signed in as somebody else is that Person's own, separate Device.
-      const theirs = yield* computerHandlers
-        .EnrolDevice({ installation: first.installation, name: 'Shared machine' })
-        .pipe(as(tola))
-      expect(theirs.device.id).not.toBe(first.device.id)
-      expect(yield* listed(ada)).toEqual([['Ada’s laptop', 'Pending', 'Offline']])
-      const vivid = yield* computerHandlers
-        .EnrolDevice({ installation: first.installation, name: 'Vivid' })
-        .pipe(
-          Effect.provideService(
-            AuthContext,
-            AuthState.Vivid({
-              person: ada.person,
-              workspace: Workspace.cases.Personal.make({}),
-              threadId: ThreadId.make('any'),
-            }),
-          ),
-          Effect.flip,
-        )
-      expect(vivid._tag).toBe('Forbidden')
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('only the enrolled installation of an allowed Device may listen', () =>
-    Effect.gen(function* () {
-      const ada = yield* somebody(farFuture)
-      const tola = yield* somebody(farFuture)
-      const { device, installation } = yield* enrolled(ada, 'Ada’s laptop')
-      const refused = (who: Somebody, presented: InstallationId) =>
-        computerHandlers
+    it.effect('refused desktop admission announces nothing on any topic', () =>
+      Effect.gen(function* () {
+        const ada = yield* somebody(farFuture)
+        const signedInCompany = yield* companyWorkspace(ada)
+        const { device, installation } = yield* enrolled(ada, 'Laptop')
+        const notices = yield* (yield* PgClient).listen(CHANNEL)
+        const failure = yield* computerHandlers
           .WatchDeviceRequests({
             device: device.id,
-            installation: presented,
+            installation,
             ability: { pages: true, apps: false },
           })
-          .pipe(
-            Stream.runDrain,
-            as(who),
-            Effect.flip,
-            Effect.map((failure) => failure._tag),
-          )
-      // Enrolled, never allowed.
-      expect(yield* refused(ada, installation)).toBe('Forbidden')
-      yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
-      // A web or mobile session of the same Person knows the Device from the list, but has no
-      // installation to present.
-      expect(yield* refused(ada, InstallationId.make(NodeCrypto.randomUUID()))).toBe('NotFound')
-      // Another Person, even holding the installation value.
-      expect(yield* refused(tola, installation)).toBe('NotFound')
-      expect(yield* listed(ada)).toEqual([['Ada’s laptop', 'Allowed', 'Offline']])
-      const allowing = yield* computerHandlers
-        .AllowDevice({ id: device.id })
-        .pipe(as(tola), Effect.flip)
-      expect(allowing._tag).toBe('NotFound')
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
+          .pipe(Stream.runDrain, signedInCompany, Effect.flip)
+        expect(failure._tag).toBe('Forbidden')
+        yield* silent(notices)
+        expect(yield* listed(ada)).toEqual([['Laptop', 'Pending', 'Offline']])
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
 
-  it.effect('allowing one computer revokes the other and ends its link', () =>
-    Effect.gen(function* () {
-      const ada = yield* somebody(farFuture)
-      const laptop = yield* enrolled(ada, 'Laptop')
-      const tower = yield* enrolled(ada, 'Tower')
-      yield* computerHandlers.AllowDevice({ id: laptop.device.id }).pipe(as(ada))
-      const link = yield* listen(ada, laptop.device, laptop.installation)
-      expect(yield* listed(ada)).toContainEqual(['Laptop', 'Allowed', 'Connected'])
-      yield* computerHandlers.AllowDevice({ id: tower.device.id }).pipe(as(ada))
-      expect(Exit.isSuccess(yield* Fiber.await(link.ended))).toBe(true)
-      expect(new Set(yield* listed(ada))).toEqual(
-        new Set([
-          ['Laptop', 'Revoked', 'Offline'],
-          ['Tower', 'Allowed', 'Offline'],
-        ]),
-      )
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('revoking ends presence at once and the computer cannot listen again', () =>
-    Effect.gen(function* () {
-      const ada = yield* somebody(farFuture)
-      const { device, installation } = yield* enrolled(ada, 'Laptop')
-      yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
-      const link = yield* listen(ada, device, installation)
-      const revoked = yield* computerHandlers.RevokeDevice({ id: device.id }).pipe(as(ada))
-      expect([revoked.device.access._tag, revoked.device.presence._tag]).toEqual([
-        'Revoked',
-        'Offline',
-      ])
-      expect(Exit.isSuccess(yield* Fiber.await(link.ended))).toBe(true)
-      const again = yield* computerHandlers
-        .WatchDeviceRequests({
-          device: device.id,
-          installation,
-          ability: { pages: true, apps: false },
-        })
-        .pipe(Stream.runDrain, as(ada), Effect.flip)
-      expect(again._tag).toBe('Forbidden')
-      const registry = yield* DeviceRegistry
-      expect((yield* registry.requireConnected(ada.person.id).pipe(Effect.flip))._tag).toBe(
-        'NoDeviceConnected',
-      )
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect(
-    'a newer link replaces the older one, a request is bound to its Run, and the ledger keeps no content',
-    () =>
+    it.effect('replacement keeps the Device Connected until the successor disconnects', () =>
       Effect.gen(function* () {
         const ada = yield* somebody(farFuture)
         const { device, installation } = yield* enrolled(ada, 'Laptop')
         yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
-        const stale = yield* listen(ada, device, installation)
-        const fresh = yield* listen(ada, device, installation)
-        expect(Exit.isSuccess(yield* Fiber.await(stale.ended))).toBe(true)
+        const watch = yield* watchingDevices(ada)
+        const previous = yield* listen(ada, device, installation)
+        expect((yield* nextValue(watch)).devices[0]).toMatchObject({
+          presence: DevicePresence.cases.Connected.make({ ability: { pages: true, apps: false } }),
+        })
+        const successor = yield* listen(ada, device, installation)
+        expect(failureOf(yield* Fiber.await(previous.ended))).toBe('ended')
+        // Replacement opens one link and closes the old one. Consume both actual bus receipts
+        // before advancing the debounce clock; neither can emit a false Offline transition.
+        yield* watch.receipt.pipe(Stream.take(2), Stream.runDrain)
+        yield* TestClock.adjust('20 millis')
+        expect(yield* listed(ada)).toEqual([['Laptop', 'Allowed', 'Connected']])
+        expect(yield* Queue.size(watch.values)).toBe(0)
+        yield* Fiber.interrupt(successor.ended)
+        expect((yield* nextValue(watch)).devices[0]).toMatchObject({
+          presence: DevicePresence.cases.Offline.make({}),
+        })
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('WatchDevices emits enrol, allow and revoke using the one-shot loader', () =>
+      Effect.gen(function* () {
+        const ada = yield* somebody(farFuture)
+        const watch = yield* watchingDevices(ada)
+        expect(watch.initial.devices).toEqual([])
+        const { device } = yield* enrolled(ada, 'Laptop')
+        expect((yield* nextValue(watch)).devices).toEqual([device])
+        const allowed = yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
+        expect((yield* nextValue(watch)).devices).toEqual([allowed.device])
+        const revoked = yield* computerHandlers.RevokeDevice({ id: device.id }).pipe(as(ada))
+        const live = yield* nextValue(watch)
+        expect(live.devices).toEqual([revoked.device])
+        expect(yield* computerHandlers.ListDevices().pipe(as(ada))).toEqual(live)
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('WatchDevices emits desktop connection and scoped disconnection', () =>
+      Effect.gen(function* () {
+        const ada = yield* somebody(farFuture)
+        const { device, installation } = yield* enrolled(ada, 'Laptop')
+        yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
+        const watch = yield* watchingDevices(ada)
+        expect(watch.initial.devices[0]).toMatchObject({
+          presence: DevicePresence.cases.Offline.make({}),
+        })
+        const link = yield* listen(ada, device, installation)
+        expect((yield* nextValue(watch)).devices[0]).toMatchObject({
+          presence: DevicePresence.cases.Connected.make({ ability: { pages: true, apps: false } }),
+        })
+        yield* Fiber.interrupt(link.ended)
+        expect((yield* nextValue(watch)).devices[0]).toMatchObject({
+          presence: DevicePresence.cases.Offline.make({}),
+        })
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('WatchDevices only lists the signed-in Person computers', () =>
+      Effect.gen(function* () {
+        const ada = yield* somebody(farFuture)
+        const tola = yield* somebody(farFuture)
+        yield* enrolled(ada, 'Ada’s laptop')
+        const watch = yield* watchingDevices(tola)
+        expect(watch.initial.devices).toEqual([])
+        const { device } = yield* enrolled(tola, 'Tola’s laptop')
+        expect((yield* nextValue(watch)).devices).toEqual([device])
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    /** Only the accepted ledger answer decides Refused; repeats and outward Browse values do not. */
+    it.effect('records a device refusal once after accepting the answer and rejects replay', () => {
+      const logs = refusalLogs()
+      return Effect.gen(function* () {
+        const ada = yield* somebody(farFuture)
+        const { device, installation } = yield* enrolled(ada, 'Laptop')
+        yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
+        const link = yield* listen(ada, device, installation)
         const { threadId, runId } = yield* working(ada.person, ada.person)
-        const registry = yield* DeviceRegistry
-        const running = yield* registry
+        const running = yield* (yield* DeviceRegistry)
           .browse({
             personId: ada.person.id,
             threadId,
             runId,
-            action: BrowserAction.cases.Type.make({ target: 'Password', text: typed }),
+            action: read,
             authority: BrowseAuthority.cases.Acting.make({}),
           })
           .pipe(Effect.forkScoped)
-        const request = yield* Queue.take(fresh.requests)
-        expect([request.threadId, request.runId]).toEqual([threadId, runId])
-        expect(yield* Queue.size(stale.requests)).toBe(0)
-        const answer = { device: device.id, id: request.id, answer: done }
-        // Another session of the same Person is not the link the request went out on.
-        const elsewhere = yield* somebody(farFuture)
-        const other = { person: ada.person, sessionId: elsewhere.sessionId }
-        expect(
-          (yield* computerHandlers.AnswerDeviceRequest(answer).pipe(as(other), Effect.flip))._tag,
-        ).toBe('Forbidden')
+        const request = yield* Queue.take(link.requests)
+        const answer = {
+          device: device.id,
+          id: request.id,
+          answer: DeviceAnswer.cases.Refused.make({ reason: 'NotAllowed' }),
+        }
         yield* computerHandlers.AnswerDeviceRequest(answer).pipe(as(ada))
-        expect(yield* Fiber.join(running)).toEqual(BrowseOutcome.cases.Completed.make({ result }))
+        expect(yield* Fiber.join(running)).toEqual(BrowseOutcome.cases.AddressRefused.make({}))
         expect(
           (yield* computerHandlers.AnswerDeviceRequest(answer).pipe(as(ada), Effect.flip))._tag,
         ).toBe('Forbidden')
@@ -663,578 +518,762 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           database.select().from(deviceRequests).where(eq(deviceRequests.id, request.id)),
         )
         expect(row).toMatchObject({
-          deviceId: device.id,
-          threadId,
-          runId,
-          action: 'Type',
-          status: 'Done',
-          receipt: encodeReceipt(DeviceReceipt.cases.Done.make({})),
+          receipt: encodeReceipt(DeviceReceipt.cases.Refused.make({ reason: 'NotAllowed' })),
         })
-        const kept = JSON.stringify(row)
-        expect(kept).not.toContain(typed)
-        expect(kept).not.toContain(result.outline)
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('a Run acting for another Person in a shared Thread cannot use this computer', () =>
-    Effect.gen(function* () {
-      const ada = yield* somebody(farFuture)
-      const tola = yield* somebody(farFuture)
-      const { device, installation } = yield* enrolled(ada, 'Laptop')
-      yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
-      const link = yield* listen(ada, device, installation)
-      const registry = yield* DeviceRegistry
-      const database = yield* Database
-      // Tola's message started the Run; Ada is only present in the Thread.
-      const shared = yield* working(ada.person, tola.person)
-      const refused = yield* registry
-        .browse({
-          personId: ada.person.id,
-          threadId: shared.threadId,
-          runId: shared.runId,
-          action: read,
-          authority: BrowseAuthority.cases.Acting.make({}),
-        })
-        .pipe(Effect.flip)
-      expect(reasonOf(refused)).toBe('ActsForAnotherPerson')
-      // No Run at all, and a turn that was reserved but never accepted, are refused the same way.
-      const idle = yield* working(ada.person, ada.person)
-      yield* database.run(
-        database.update(runs).set({ admittedAt: null }).where(eq(runs.id, idle.runId)),
+        const recorded = logs.recorded()
+        expect(recorded).toHaveLength(1)
+        expect(recorded[0]).toContain('vivid.refusal.kind=DeviceRefused')
+        expect(recorded[0]).toContain('vivid.refusal.reason=NotAllowed')
+      }).pipe(Effect.scoped, (program) =>
+        scopedCase(testLayer.pipe(Layer.provideMerge(logs.layer)), program, 'fresh'),
       )
-      expect(
-        reasonOf(
-          yield* registry
+    })
+
+    it.effect('enrolling is repeatable per Person and installation, and grants nothing', () =>
+      Effect.gen(function* () {
+        const ada = yield* somebody(farFuture)
+        const tola = yield* somebody(farFuture)
+        const first = yield* enrolled(ada, 'Ada’s laptop')
+        const again = yield* computerHandlers
+          .EnrolDevice({ installation: first.installation, name: 'Renamed by the app' })
+          .pipe(as(ada))
+        expect(again.device).toEqual(first.device)
+        expect(first.device.access._tag).toBe('Pending')
+        // The same installation signed in as somebody else is that Person's own, separate Device.
+        const theirs = yield* computerHandlers
+          .EnrolDevice({ installation: first.installation, name: 'Shared machine' })
+          .pipe(as(tola))
+        expect(theirs.device.id).not.toBe(first.device.id)
+        expect(yield* listed(ada)).toEqual([['Ada’s laptop', 'Pending', 'Offline']])
+        const vivid = yield* computerHandlers
+          .EnrolDevice({ installation: first.installation, name: 'Vivid' })
+          .pipe(
+            Effect.provideService(
+              AuthContext,
+              AuthState.Vivid({
+                person: ada.person,
+                workspace: Workspace.cases.Personal.make({}),
+                threadId: ThreadId.make('any'),
+              }),
+            ),
+            Effect.flip,
+          )
+        expect(vivid._tag).toBe('Forbidden')
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('only the enrolled installation of an allowed Device may listen', () =>
+      Effect.gen(function* () {
+        const ada = yield* somebody(farFuture)
+        const tola = yield* somebody(farFuture)
+        const { device, installation } = yield* enrolled(ada, 'Ada’s laptop')
+        const refused = (who: Somebody, presented: InstallationId) =>
+          computerHandlers
+            .WatchDeviceRequests({
+              device: device.id,
+              installation: presented,
+              ability: { pages: true, apps: false },
+            })
+            .pipe(
+              Stream.runDrain,
+              as(who),
+              Effect.flip,
+              Effect.map((failure) => failure._tag),
+            )
+        // Enrolled, never allowed.
+        expect(yield* refused(ada, installation)).toBe('Forbidden')
+        yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
+        // A web or mobile session of the same Person knows the Device from the list, but has no
+        // installation to present.
+        expect(yield* refused(ada, InstallationId.make(NodeCrypto.randomUUID()))).toBe('NotFound')
+        // Another Person, even holding the installation value.
+        expect(yield* refused(tola, installation)).toBe('NotFound')
+        expect(yield* listed(ada)).toEqual([['Ada’s laptop', 'Allowed', 'Offline']])
+        const allowing = yield* computerHandlers
+          .AllowDevice({ id: device.id })
+          .pipe(as(tola), Effect.flip)
+        expect(allowing._tag).toBe('NotFound')
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('allowing one computer revokes the other and ends its link', () =>
+      Effect.gen(function* () {
+        const ada = yield* somebody(farFuture)
+        const laptop = yield* enrolled(ada, 'Laptop')
+        const tower = yield* enrolled(ada, 'Tower')
+        yield* computerHandlers.AllowDevice({ id: laptop.device.id }).pipe(as(ada))
+        const link = yield* listen(ada, laptop.device, laptop.installation)
+        expect(yield* listed(ada)).toContainEqual(['Laptop', 'Allowed', 'Connected'])
+        yield* computerHandlers.AllowDevice({ id: tower.device.id }).pipe(as(ada))
+        expect(Exit.isSuccess(yield* Fiber.await(link.ended))).toBe(true)
+        expect(new Set(yield* listed(ada))).toEqual(
+          new Set([
+            ['Laptop', 'Revoked', 'Offline'],
+            ['Tower', 'Allowed', 'Offline'],
+          ]),
+        )
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('revoking ends presence at once and the computer cannot listen again', () =>
+      Effect.gen(function* () {
+        const ada = yield* somebody(farFuture)
+        const { device, installation } = yield* enrolled(ada, 'Laptop')
+        yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
+        const link = yield* listen(ada, device, installation)
+        const revoked = yield* computerHandlers.RevokeDevice({ id: device.id }).pipe(as(ada))
+        expect([revoked.device.access._tag, revoked.device.presence._tag]).toEqual([
+          'Revoked',
+          'Offline',
+        ])
+        expect(Exit.isSuccess(yield* Fiber.await(link.ended))).toBe(true)
+        const again = yield* computerHandlers
+          .WatchDeviceRequests({
+            device: device.id,
+            installation,
+            ability: { pages: true, apps: false },
+          })
+          .pipe(Stream.runDrain, as(ada), Effect.flip)
+        expect(again._tag).toBe('Forbidden')
+        const registry = yield* DeviceRegistry
+        expect((yield* registry.requireConnected(ada.person.id).pipe(Effect.flip))._tag).toBe(
+          'NoDeviceConnected',
+        )
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect(
+      'a newer link replaces the older one, a request is bound to its Run, and the ledger keeps no content',
+      () =>
+        Effect.gen(function* () {
+          const ada = yield* somebody(farFuture)
+          const { device, installation } = yield* enrolled(ada, 'Laptop')
+          yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
+          const stale = yield* listen(ada, device, installation)
+          const fresh = yield* listen(ada, device, installation)
+          expect(Exit.isSuccess(yield* Fiber.await(stale.ended))).toBe(true)
+          const { threadId, runId } = yield* working(ada.person, ada.person)
+          const registry = yield* DeviceRegistry
+          const running = yield* registry
             .browse({
               personId: ada.person.id,
-              threadId: idle.threadId,
-              runId: idle.runId,
-              action: read,
+              threadId,
+              runId,
+              action: BrowserAction.cases.Type.make({ target: 'Password', text: typed }),
               authority: BrowseAuthority.cases.Acting.make({}),
             })
-            .pipe(Effect.flip),
-        ),
-      ).toBe('NoWorkingRun')
-      // Actor-derived origin refuses ambiguity; an explicitly absent Run refuses absence.
-      const busy = yield* working(ada.person, ada.person)
-      yield* database.run(
-        database.insert(runs).values({
-          id: RunId.make(NodeCrypto.randomUUID()),
-          threadId: busy.threadId,
-          personId: ada.person.id,
-          turn: 2,
-          state: 'working',
-          origin: encodeOrigin(StoredRunOrigin.cases.Message.make({})),
-          startedAt: 0,
-          admittedAt: 0,
-        }),
-      )
-      expect(reasonOf(yield* actingRun(busy.threadId, ada.person.id).pipe(Effect.flip))).toBe(
-        'SeveralWorkingRuns',
-      )
-      expect(
-        (yield* actionOrigin({
-          person: ada.person,
-          workspace: Workspace.cases.Personal.make({}),
-          by: 'vivid',
-          threadId: Option.some(busy.threadId),
-        }).pipe(Effect.flip))._tag,
-      ).toBe('NotFound')
-      expect(
-        (yield* actionOrigin({
-          person: ada.person,
-          workspace: Workspace.cases.Personal.make({}),
-          by: 'vivid',
-          threadId: Option.some(shared.threadId),
-        }).pipe(Effect.flip))._tag,
-      ).toBe('NotFound')
-      expect(
-        reasonOf(
-          yield* registry
-            .browse({
-              personId: ada.person.id,
-              threadId: busy.threadId,
-              runId: RunId.make(NodeCrypto.randomUUID()),
-              action: read,
-              authority: BrowseAuthority.cases.Acting.make({}),
-            })
-            .pipe(Effect.flip),
-        ),
-      ).toBe('NoWorkingRun')
-      expect(yield* Queue.size(link.requests)).toBe(0)
-      expect(
-        yield* database.run(
-          database.select().from(deviceRequests).where(eq(deviceRequests.deviceId, device.id)),
-        ),
-      ).toEqual([])
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
+            .pipe(Effect.forkScoped)
+          const request = yield* Queue.take(fresh.requests)
+          expect([request.threadId, request.runId]).toEqual([threadId, runId])
+          expect(yield* Queue.size(stale.requests)).toBe(0)
+          const answer = { device: device.id, id: request.id, answer: done }
+          // Another session of the same Person is not the link the request went out on.
+          const elsewhere = yield* somebody(farFuture)
+          const other = { person: ada.person, sessionId: elsewhere.sessionId }
+          expect(
+            (yield* computerHandlers.AnswerDeviceRequest(answer).pipe(as(other), Effect.flip))._tag,
+          ).toBe('Forbidden')
+          yield* computerHandlers.AnswerDeviceRequest(answer).pipe(as(ada))
+          expect(yield* Fiber.join(running)).toEqual(BrowseOutcome.cases.Completed.make({ result }))
+          expect(
+            (yield* computerHandlers.AnswerDeviceRequest(answer).pipe(as(ada), Effect.flip))._tag,
+          ).toBe('Forbidden')
+          const database = yield* Database
+          const [row] = yield* database.run(
+            database.select().from(deviceRequests).where(eq(deviceRequests.id, request.id)),
+          )
+          expect(row).toMatchObject({
+            deviceId: device.id,
+            threadId,
+            runId,
+            action: 'Type',
+            status: 'Done',
+            receipt: encodeReceipt(DeviceReceipt.cases.Done.make({})),
+          })
+          const kept = JSON.stringify(row)
+          expect(kept).not.toContain(typed)
+          expect(kept).not.toContain(result.outline)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
 
-  it.effect('one Person’s unanswered request does not hold up another Person’s computer', () =>
-    Effect.gen(function* () {
-      const ada = yield* somebody(farFuture)
-      const tola = yield* somebody(farFuture)
-      const registry = yield* DeviceRegistry
-      const ready = Effect.fn('DeviceTest.ready')(function* (who: Somebody) {
-        const { device, installation } = yield* enrolled(who, 'Computer')
-        yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(who))
-        const link = yield* listen(who, device, installation)
-        const { threadId, runId } = yield* working(who.person, who.person)
-        const running = yield* registry
+    it.effect('a Run acting for another Person in a shared Thread cannot use this computer', () =>
+      Effect.gen(function* () {
+        const ada = yield* somebody(farFuture)
+        const tola = yield* somebody(farFuture)
+        const { device, installation } = yield* enrolled(ada, 'Laptop')
+        yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
+        const link = yield* listen(ada, device, installation)
+        const registry = yield* DeviceRegistry
+        const database = yield* Database
+        // Tola's message started the Run; Ada is only present in the Thread.
+        const shared = yield* working(ada.person, tola.person)
+        const refused = yield* registry
           .browse({
-            personId: who.person.id,
+            personId: ada.person.id,
+            threadId: shared.threadId,
+            runId: shared.runId,
+            action: read,
+            authority: BrowseAuthority.cases.Acting.make({}),
+          })
+          .pipe(Effect.flip)
+        expect(reasonOf(refused)).toBe('ActsForAnotherPerson')
+        // No Run at all, and a turn that was reserved but never accepted, are refused the same way.
+        const idle = yield* working(ada.person, ada.person)
+        yield* database.run(
+          database.update(runs).set({ admittedAt: null }).where(eq(runs.id, idle.runId)),
+        )
+        expect(
+          reasonOf(
+            yield* registry
+              .browse({
+                personId: ada.person.id,
+                threadId: idle.threadId,
+                runId: idle.runId,
+                action: read,
+                authority: BrowseAuthority.cases.Acting.make({}),
+              })
+              .pipe(Effect.flip),
+          ),
+        ).toBe('NoWorkingRun')
+        // Actor-derived origin refuses ambiguity; an explicitly absent Run refuses absence.
+        const busy = yield* working(ada.person, ada.person)
+        yield* database.run(
+          database.insert(runs).values({
+            id: RunId.make(NodeCrypto.randomUUID()),
+            threadId: busy.threadId,
+            personId: ada.person.id,
+            turn: 2,
+            state: 'working',
+            origin: encodeOrigin(StoredRunOrigin.cases.Message.make({})),
+            startedAt: 0,
+            admittedAt: 0,
+          }),
+        )
+        expect(reasonOf(yield* actingRun(busy.threadId, ada.person.id).pipe(Effect.flip))).toBe(
+          'SeveralWorkingRuns',
+        )
+        expect(
+          (yield* actionOrigin({
+            person: ada.person,
+            workspace: Workspace.cases.Personal.make({}),
+            by: 'vivid',
+            threadId: Option.some(busy.threadId),
+          }).pipe(Effect.flip))._tag,
+        ).toBe('NotFound')
+        expect(
+          (yield* actionOrigin({
+            person: ada.person,
+            workspace: Workspace.cases.Personal.make({}),
+            by: 'vivid',
+            threadId: Option.some(shared.threadId),
+          }).pipe(Effect.flip))._tag,
+        ).toBe('NotFound')
+        expect(
+          reasonOf(
+            yield* registry
+              .browse({
+                personId: ada.person.id,
+                threadId: busy.threadId,
+                runId: RunId.make(NodeCrypto.randomUUID()),
+                action: read,
+                authority: BrowseAuthority.cases.Acting.make({}),
+              })
+              .pipe(Effect.flip),
+          ),
+        ).toBe('NoWorkingRun')
+        expect(yield* Queue.size(link.requests)).toBe(0)
+        expect(
+          yield* database.run(
+            database.select().from(deviceRequests).where(eq(deviceRequests.deviceId, device.id)),
+          ),
+        ).toEqual([])
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('one Person’s unanswered request does not hold up another Person’s computer', () =>
+      Effect.gen(function* () {
+        const ada = yield* somebody(farFuture)
+        const tola = yield* somebody(farFuture)
+        const registry = yield* DeviceRegistry
+        const ready = Effect.fn('DeviceTest.ready')(function* (who: Somebody) {
+          const { device, installation } = yield* enrolled(who, 'Computer')
+          yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(who))
+          const link = yield* listen(who, device, installation)
+          const { threadId, runId } = yield* working(who.person, who.person)
+          const running = yield* registry
+            .browse({
+              personId: who.person.id,
+              threadId,
+              runId,
+              action: read,
+              authority: BrowseAuthority.cases.Acting.make({}),
+            })
+            .pipe(Effect.forkScoped)
+          return { device, running, request: yield* Queue.take(link.requests) }
+        })
+        // Ada's computer has taken a request and says nothing.
+        const slow = yield* ready(ada)
+        const quick = yield* ready(tola)
+        yield* computerHandlers
+          .AnswerDeviceRequest({ device: quick.device.id, id: quick.request.id, answer: done })
+          .pipe(as(tola))
+        expect(yield* Fiber.join(quick.running)).toEqual(
+          BrowseOutcome.cases.Completed.make({ result }),
+        )
+        // Tola cannot answer for Ada's computer either.
+        expect(
+          (yield* computerHandlers
+            .AnswerDeviceRequest({ device: slow.device.id, id: slow.request.id, answer: done })
+            .pipe(as(tola), Effect.flip))._tag,
+        ).toBe('Forbidden')
+        yield* computerHandlers
+          .AnswerDeviceRequest({ device: slow.device.id, id: slow.request.id, answer: done })
+          .pipe(as(ada))
+        expect(yield* Fiber.join(slow.running)).toEqual(
+          BrowseOutcome.cases.Completed.make({ result }),
+        )
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('a passed deadline is recorded as unknown and a late answer changes nothing', () =>
+      Effect.gen(function* () {
+        const ada = yield* somebody(farFuture)
+        const { device, installation } = yield* enrolled(ada, 'Laptop')
+        yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
+        const link = yield* listen(ada, device, installation)
+        const { threadId, runId } = yield* working(ada.person, ada.person)
+        const running = yield* (yield* DeviceRegistry)
+          .browse({
+            personId: ada.person.id,
             threadId,
             runId,
             action: read,
             authority: BrowseAuthority.cases.Acting.make({}),
           })
           .pipe(Effect.forkScoped)
-        return { device, running, request: yield* Queue.take(link.requests) }
-      })
-      // Ada's computer has taken a request and says nothing.
-      const slow = yield* ready(ada)
-      const quick = yield* ready(tola)
-      yield* computerHandlers
-        .AnswerDeviceRequest({ device: quick.device.id, id: quick.request.id, answer: done })
-        .pipe(as(tola))
-      expect(yield* Fiber.join(quick.running)).toEqual(
-        BrowseOutcome.cases.Completed.make({ result }),
-      )
-      // Tola cannot answer for Ada's computer either.
-      expect(
-        (yield* computerHandlers
-          .AnswerDeviceRequest({ device: slow.device.id, id: slow.request.id, answer: done })
-          .pipe(as(tola), Effect.flip))._tag,
-      ).toBe('Forbidden')
-      yield* computerHandlers
-        .AnswerDeviceRequest({ device: slow.device.id, id: slow.request.id, answer: done })
-        .pipe(as(ada))
-      expect(yield* Fiber.join(slow.running)).toEqual(
-        BrowseOutcome.cases.Completed.make({ result }),
-      )
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
+        const request = yield* Queue.take(link.requests)
+        yield* TestClock.adjust('30 seconds')
+        expect(yield* Fiber.join(running)).toEqual(BrowseOutcome.cases.OutcomeUnknown.make({}))
+        expect(
+          (yield* computerHandlers
+            .AnswerDeviceRequest({ device: device.id, id: request.id, answer: done })
+            .pipe(as(ada), Effect.flip))._tag,
+        ).toBe('Forbidden')
+        const database = yield* Database
+        const [row] = yield* database.run(
+          database
+            .select({ status: deviceRequests.status })
+            .from(deviceRequests)
+            .where(eq(deviceRequests.id, request.id)),
+        )
+        expect(row).toEqual({ status: 'OutcomeUnknown' })
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
 
-  it.effect('a passed deadline is recorded as unknown and a late answer changes nothing', () =>
-    Effect.gen(function* () {
-      const ada = yield* somebody(farFuture)
-      const { device, installation } = yield* enrolled(ada, 'Laptop')
-      yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
-      const link = yield* listen(ada, device, installation)
-      const { threadId, runId } = yield* working(ada.person, ada.person)
-      const running = yield* (yield* DeviceRegistry)
-        .browse({
-          personId: ada.person.id,
-          threadId,
-          runId,
-          action: read,
-          authority: BrowseAuthority.cases.Acting.make({}),
+    it.effect('a restarted server closes the expired requests a previous one left open', () =>
+      Effect.gen(function* () {
+        const ada = yield* somebody(farFuture)
+        const { device } = yield* enrolled(ada, 'Laptop')
+        const { threadId, runId } = yield* working(ada.person, ada.person)
+        const database = yield* Database
+        const abandoned = Effect.fn('DeviceTest.abandoned')(function* (expiresAt: number) {
+          const id = DeviceRequestId.make(NodeCrypto.randomUUID())
+          // The crash boundary: the row was committed and the process that was waiting is gone.
+          yield* database.run(
+            database.insert(deviceRequests).values({
+              id,
+              deviceId: device.id,
+              personId: ada.person.id,
+              sessionId: ada.sessionId,
+              subscriptionId: DeviceSubscriptionId.make(NodeCrypto.randomUUID()),
+              threadId,
+              runId,
+              action: 'Click',
+              receipt: encodeReceipt(DeviceReceipt.cases.Dispatched.make({})),
+              dispatchedAt: expiresAt - 30_000,
+              expiresAt,
+            }),
+          )
+          return id
         })
-        .pipe(Effect.forkScoped)
-      const request = yield* Queue.take(link.requests)
-      yield* TestClock.adjust('30 seconds')
-      expect(yield* Fiber.join(running)).toEqual(BrowseOutcome.cases.OutcomeUnknown.make({}))
-      expect(
-        (yield* computerHandlers
-          .AnswerDeviceRequest({ device: device.id, id: request.id, answer: done })
-          .pipe(as(ada), Effect.flip))._tag,
-      ).toBe('Forbidden')
-      const database = yield* Database
-      const [row] = yield* database.run(
-        database
-          .select({ status: deviceRequests.status })
-          .from(deviceRequests)
-          .where(eq(deviceRequests.id, request.id)),
-      )
-      expect(row).toEqual({ status: 'OutcomeUnknown' })
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
+        const expired = yield* abandoned(60_000)
+        // Still inside its deadline: it may belong to a server that is alive, so it is left alone.
+        const live = yield* abandoned(120_000)
+        yield* TestClock.adjust('60 seconds')
+        const statuses = Effect.fn('DeviceTest.statuses')(function* () {
+          const rows = yield* database.run(
+            database.select().from(deviceRequests).where(eq(deviceRequests.deviceId, device.id)),
+          )
+          return new Map(rows.map((row) => [row.id, row.status]))
+        })
+        yield* Effect.gen(function* () {
+          yield* DeviceRegistry
+          expect(yield* statuses()).toEqual(
+            new Map([
+              [expired, 'OutcomeUnknown'],
+              [live, 'Dispatched'],
+            ]),
+          )
+        }).pipe((program) => scopedCase(Layer.fresh(deviceLayer), program, 'inherited'))
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
 
-  it.effect('a restarted server closes the expired requests a previous one left open', () =>
-    Effect.gen(function* () {
-      const ada = yield* somebody(farFuture)
-      const { device } = yield* enrolled(ada, 'Laptop')
-      const { threadId, runId } = yield* working(ada.person, ada.person)
-      const database = yield* Database
-      const abandoned = Effect.fn('DeviceTest.abandoned')(function* (expiresAt: number) {
-        const id = DeviceRequestId.make(NodeCrypto.randomUUID())
-        // The crash boundary: the row was committed and the process that was waiting is gone.
-        yield* database.run(
-          database.insert(deviceRequests).values({
-            id,
-            deviceId: device.id,
-            personId: ada.person.id,
-            sessionId: ada.sessionId,
-            subscriptionId: DeviceSubscriptionId.make(NodeCrypto.randomUUID()),
-            threadId,
-            runId,
-            action: 'Click',
-            receipt: encodeReceipt(DeviceReceipt.cases.Dispatched.make({})),
-            dispatchedAt: expiresAt - 30_000,
-            expiresAt,
-          }),
-        )
-        return id
-      })
-      const expired = yield* abandoned(60_000)
-      // Still inside its deadline: it may belong to a server that is alive, so it is left alone.
-      const live = yield* abandoned(120_000)
-      yield* TestClock.adjust('60 seconds')
-      const statuses = Effect.fn('DeviceTest.statuses')(function* () {
-        const rows = yield* database.run(
-          database.select().from(deviceRequests).where(eq(deviceRequests.deviceId, device.id)),
-        )
-        return new Map(rows.map((row) => [row.id, row.status]))
-      })
-      yield* Effect.gen(function* () {
-        yield* DeviceRegistry
-        expect(yield* statuses()).toEqual(
-          new Map([
-            [expired, 'OutcomeUnknown'],
-            [live, 'Dispatched'],
-          ]),
-        )
-      }).pipe(Effect.provide(Layer.fresh(deviceLayer)))
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
+    it.effect('a session that runs out ends presence without any write', () =>
+      Effect.gen(function* () {
+        const ada = yield* somebody(new Date(60_000))
+        const { device, installation } = yield* enrolled(ada, 'Laptop')
+        yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
+        const link = yield* listen(ada, device, installation)
+        expect(yield* listed(ada)).toEqual([['Laptop', 'Allowed', 'Connected']])
+        yield* TestClock.adjust('60 seconds')
+        const ended = yield* Fiber.await(link.ended)
+        expect(failureOf(ended)).toBe('Unauthenticated')
+        const registry = yield* DeviceRegistry
+        expect((yield* registry.list(ada.person.id)).map((each) => each.presence._tag)).toEqual([
+          'Offline',
+        ])
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
 
-  it.effect('a session that runs out ends presence without any write', () =>
-    Effect.gen(function* () {
-      const ada = yield* somebody(new Date(60_000))
-      const { device, installation } = yield* enrolled(ada, 'Laptop')
-      yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
-      const link = yield* listen(ada, device, installation)
-      expect(yield* listed(ada)).toEqual([['Laptop', 'Allowed', 'Connected']])
-      yield* TestClock.adjust('60 seconds')
-      const ended = yield* Fiber.await(link.ended)
-      expect(failureOf(ended)).toBe('Unauthenticated')
-      const registry = yield* DeviceRegistry
-      expect((yield* registry.list(ada.person.id)).map((each) => each.presence._tag)).toEqual([
-        'Offline',
-      ])
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  /** Real time: production auth signs out and commits the notice that ends device presence. */
-  it.live('signing out ends presence', () =>
-    Effect.gen(function* () {
-      const database = yield* Database
-      const email = `${NodeCrypto.randomUUID()}@example.test`
-      yield* Effect.addFinalizer(() =>
-        database.run(database.delete(personTable).where(eq(personTable.email, email))).pipe(
-          Effect.asVoid,
-          Effect.catch(() => Effect.sync(() => expect.fail('Device fixture cleanup failed'))),
-        ),
-      )
-      const auth = yield* authEffect
-      const call = (path: string, init: RequestInit) =>
-        auth.fetch.pipe(
-          Effect.provideService(
-            HttpServerRequest.HttpServerRequest,
-            HttpServerRequest.fromWeb(new Request(`http://127.0.0.1:8787/api/auth/${path}`, init)),
+    /** Real time: production auth signs out and commits the notice that ends device presence. */
+    it.effect('signing out ends presence', () =>
+      Effect.gen(function* () {
+        const database = yield* Database
+        const email = `${NodeCrypto.randomUUID()}@example.test`
+        yield* Effect.addFinalizer(() =>
+          database.run(database.delete(personTable).where(eq(personTable.email, email))).pipe(
+            Effect.asVoid,
+            Effect.catch(() => Effect.sync(() => expect.fail('Device fixture cleanup failed'))),
           ),
-          Effect.provide(localAuthRuntimeLayer),
         )
-      const json = { 'content-type': 'application/json', origin: 'http://127.0.0.1:8787' }
-      const signedUp = yield* call('sign-up/email', {
-        method: 'POST',
-        headers: json,
-        body: JSON.stringify({ email, name: 'Device test', password: 'test-Device-0123456789' }),
-      })
-      expect(signedUp.status).toBe(200)
-      const cookie = Object.values(signedUp.cookies.cookies)
-        .map((entry) => `${entry.name}=${entry.valueEncoded}`)
-        .join('; ')
-      const [row] = yield* database.run(
-        database
-          .select({ person: personTable, sessionId: sessionTable.id })
-          .from(sessionTable)
-          .innerJoin(personTable, eq(personTable.id, sessionTable.userId))
-          .where(eq(personTable.email, email)),
-      )
-      if (row === undefined) return expect.fail('Sign-up must persist a Person and a session')
-      const ada = {
-        person: yield* decodeStored(Person, 'device test Person')(row.person),
-        sessionId: SessionId.make(row.sessionId),
-      }
-      const { device, installation } = yield* enrolled(ada, 'Laptop')
-      yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
-      const link = yield* listen(ada, device, installation)
-      const signedOut = yield* call('sign-out', {
-        method: 'POST',
-        headers: { ...json, cookie },
-        body: '{}',
-      })
-      expect(signedOut.status).toBe(200)
-      const ended = yield* Fiber.await(link.ended)
-      expect(failureOf(ended)).toBe('Unauthenticated')
-      // The Device and its access are the Person's decision and outlive the session.
-      const [kept] = yield* database.run(
-        database.select({ access: devices.access }).from(devices).where(eq(devices.id, device.id)),
-      )
-      expect(kept).toEqual({ access: 'Allowed' })
-      return undefined
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
+        const auth = yield* authEffect
+        const call = (path: string, init: RequestInit) =>
+          auth.fetch.pipe(
+            Effect.provideService(
+              HttpServerRequest.HttpServerRequest,
+              HttpServerRequest.fromWeb(
+                new Request(`http://127.0.0.1:8787/api/auth/${path}`, init),
+              ),
+            ),
+            (program) => scopedCase(localAuthRuntimeLayer, program, 'inherited'),
+          )
+        const json = { 'content-type': 'application/json', origin: 'http://127.0.0.1:8787' }
+        const signedUp = yield* call('sign-up/email', {
+          method: 'POST',
+          headers: json,
+          body: JSON.stringify({
+            email,
+            name: 'Device test',
+            password: 'test-Device-0123456789',
+          }),
+        })
+        expect(signedUp.status).toBe(200)
+        const cookie = Object.values(signedUp.cookies.cookies)
+          .map((entry) => `${entry.name}=${entry.valueEncoded}`)
+          .join('; ')
+        const [row] = yield* database.run(
+          database
+            .select({ person: personTable, sessionId: sessionTable.id })
+            .from(sessionTable)
+            .innerJoin(personTable, eq(personTable.id, sessionTable.userId))
+            .where(eq(personTable.email, email)),
+        )
+        if (row === undefined) return expect.fail('Sign-up must persist a Person and a session')
+        const ada = {
+          person: yield* decodeStored(Person, 'device test Person')(row.person),
+          sessionId: SessionId.make(row.sessionId),
+        }
+        const { device, installation } = yield* enrolled(ada, 'Laptop')
+        yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
+        const link = yield* listen(ada, device, installation)
+        const signedOut = yield* call('sign-out', {
+          method: 'POST',
+          headers: { ...json, cookie },
+          body: '{}',
+        })
+        expect(signedOut.status).toBe(200)
+        const ended = yield* Fiber.await(link.ended)
+        expect(failureOf(ended)).toBe('Unauthenticated')
+        // The Device and its access are the Person's decision and outlive the session.
+        const [kept] = yield* database.run(
+          database
+            .select({ access: devices.access })
+            .from(devices)
+            .where(eq(devices.id, device.id)),
+        )
+        expect(kept).toEqual({ access: 'Allowed' })
+        return undefined
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'inherited')),
+    )
+  })
 })
 
 /** Windows work crosses the same authenticated handlers and real ledger as page work. */
 describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', () => {
-  it.effect('requires one Working Run before connectivity and admits only runtime callers', () =>
-    Effect.gen(function* () {
-      const test = yield* native()
-      expect(
-        (yield* computerHandlers
-          .UseWindow({ action: look, summary: 'Look' })
-          .pipe(as(test.who), Effect.flip))._tag,
-      ).toBe('Forbidden')
-      const database = yield* Database
-      yield* database.run(
-        database
-          .update(runs)
-          .set({ state: 'completed', finishedAt: 0 })
-          .where(eq(runs.id, test.runId)),
-      )
-      expect(yield* useWindow(test.who, test.threadId, look)).toEqual(
-        WindowOutcome.cases.RunRequired.make({}),
-      )
-      expect(yield* Queue.size(test.link.requests)).toBe(0)
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('offline, Pending and Revoked Devices are NotConnected; capability is live', () =>
-    Effect.gen(function* () {
-      const who = yield* somebody(farFuture)
-      const run = yield* working(who.person, who.person)
-      const call = useWindow(who, run.threadId, look)
-      expect(yield* call).toEqual(WindowOutcome.cases.NotConnected.make({}))
-      const { device, installation } = yield* enrolled(who, 'Laptop')
-      expect(yield* call).toEqual(WindowOutcome.cases.NotConnected.make({}))
-      yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(who))
-      expect(yield* call).toEqual(WindowOutcome.cases.NotConnected.make({}))
-      const link = yield* listen(who, device, installation)
-      expect(yield* call).toEqual(
-        WindowOutcome.cases.Unavailable.make({
-          reason: 'The Windows helper is not running on this computer.',
-        }),
-      )
-      expect(yield* Queue.size(link.requests)).toBe(0)
-      yield* computerHandlers.RevokeDevice({ id: device.id }).pipe(as(who))
-      expect(yield* call).toEqual(WindowOutcome.cases.NotConnected.make({}))
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('another Person never reaches this Device or borrows its Run', () =>
-    Effect.gen(function* () {
-      const test = yield* native()
-      const other = yield* somebody(farFuture)
-      expect(yield* useWindow(other, test.threadId, look)).toEqual(
-        WindowOutcome.cases.RunRequired.make({}),
-      )
-      const run = yield* working(other.person, other.person)
-      expect(yield* useWindow(other, run.threadId, look)).toEqual(
-        WindowOutcome.cases.NotConnected.make({}),
-      )
-      expect(yield* Queue.size(test.link.requests)).toBe(0)
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect(
-    'offers Look without Approval and keeps only action/receipt metadata for window work',
-    () =>
+  layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
+    it.effect('requires one Working Run before connectivity and admits only runtime callers', () =>
       Effect.gen(function* () {
         const test = yield* native()
-        const database = yield* Database
-        const running = yield* useWindow(test.who, test.threadId, look).pipe(Effect.forkScoped)
-        const request = yield* Queue.take(test.link.requests)
-        expect(request.work).toEqual(DeviceWork.cases.Window.make({ action: look }))
         expect(
-          yield* database.run(
-            database.select().from(approvals).where(eq(approvals.personId, test.who.person.id)),
-          ),
-        ).toEqual([])
-        // The durable ledger exists before the desktop has received any answer.
-        const [before] = yield* database.run(
-          database.select().from(deviceRequests).where(eq(deviceRequests.id, request.id)),
+          (yield* computerHandlers
+            .UseWindow({ action: look, summary: 'Look' })
+            .pipe(as(test.who), Effect.flip))._tag,
+        ).toBe('Forbidden')
+        const database = yield* Database
+        yield* database.run(
+          database
+            .update(runs)
+            .set({ state: 'completed', finishedAt: 0 })
+            .where(eq(runs.id, test.runId)),
         )
-        expect(before).toMatchObject({ action: 'Look', status: 'Dispatched' })
-        yield* computerHandlers
-          .AnswerDeviceRequest({
-            device: test.device.id,
-            id: request.id,
-            answer: DeviceAnswer.cases.Did.make({ result: seen }),
-          })
-          .pipe(as(test.who))
-        expect(yield* Fiber.join(running)).toEqual(
-          WindowOutcome.cases.Completed.make({ result: seen }),
+        expect(yield* useWindow(test.who, test.threadId, look)).toEqual(
+          WindowOutcome.cases.RunRequired.make({}),
         )
-        const typing = yield* useWindow(
-          test.who,
-          test.threadId,
-          WindowAction.cases.Type.make({ window: windowId, text: typed }),
-        ).pipe(Effect.forkScoped)
-        const next = yield* Queue.take(test.link.requests)
-        yield* computerHandlers
-          .AnswerDeviceRequest({
-            device: test.device.id,
-            id: next.id,
-            answer: DeviceAnswer.cases.Did.make({ result: seen }),
-          })
-          .pipe(as(test.who))
-        yield* Fiber.join(typing)
-        const rows = yield* database.run(
-          database.select().from(deviceRequests).where(eq(deviceRequests.runId, test.runId)),
-        )
-        expect(rows.map((row) => row.action)).toEqual(['Look', 'Type'])
-        const kept = JSON.stringify(rows)
-        for (const content of [typed, seen.view.picture, seen.view.outline, seen.view.app])
-          expect(kept).not.toContain(content)
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  for (const reason of [
-    'Elevated',
-    'WindowGone',
-    'LookStale',
-    'NotInFront',
-    'Unsupported',
-  ] as const) {
-    it.effect(`returns the desktop refusal ${reason}`, () =>
-      Effect.gen(function* () {
-        const test = yield* native()
-        const running = yield* useWindow(test.who, test.threadId, look).pipe(Effect.forkScoped)
-        const request = yield* Queue.take(test.link.requests)
-        yield* computerHandlers
-          .AnswerDeviceRequest({
-            device: test.device.id,
-            id: request.id,
-            answer: DeviceAnswer.cases.Declined.make({ reason }),
-          })
-          .pipe(as(test.who))
-        expect(yield* Fiber.join(running)).toEqual(WindowOutcome.cases.Refused.make({ reason }))
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+        expect(yield* Queue.size(test.link.requests)).toBe(0)
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
-  }
 
-  it.effect('Stopped revokes dispatch authority and aborts the Run once', () =>
-    Effect.gen(function* () {
-      const test = yield* native()
-      const running = yield* useWindow(test.who, test.threadId, look).pipe(Effect.forkScoped)
-      const request = yield* Queue.take(test.link.requests)
-      yield* computerHandlers
-        .AnswerDeviceRequest({
-          device: test.device.id,
-          id: request.id,
-          answer: DeviceAnswer.cases.Declined.make({ reason: 'Stopped' }),
-        })
-        .pipe(as(test.who))
-      expect(yield* Fiber.join(running)).toEqual(
-        WindowOutcome.cases.Refused.make({ reason: 'Stopped' }),
-      )
-      expect(yield* Queue.take((yield* Stops).calls)).toBe(test.threadId)
-      const report = { device: test.device.id, installation: test.installation, runId: test.runId }
-      yield* computerHandlers.ReportDeviceStop(report).pipe(as(test.who))
-      expect(yield* Queue.size((yield* Stops).calls)).toBe(0)
-      expect(yield* Queue.take(test.link.runEnds)).toBe(test.runId)
-      expect(yield* Queue.size(test.link.runEnds)).toBe(0)
-      expect(yield* useWindow(test.who, test.threadId, look)).toEqual(
-        WindowOutcome.cases.RunRequired.make({}),
-      )
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
+    it.effect('offline, Pending and Revoked Devices are NotConnected; capability is live', () =>
+      Effect.gen(function* () {
+        const who = yield* somebody(farFuture)
+        const run = yield* working(who.person, who.person)
+        const call = useWindow(who, run.threadId, look)
+        expect(yield* call).toEqual(WindowOutcome.cases.NotConnected.make({}))
+        const { device, installation } = yield* enrolled(who, 'Laptop')
+        expect(yield* call).toEqual(WindowOutcome.cases.NotConnected.make({}))
+        yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(who))
+        expect(yield* call).toEqual(WindowOutcome.cases.NotConnected.make({}))
+        const link = yield* listen(who, device, installation)
+        expect(yield* call).toEqual(
+          WindowOutcome.cases.Unavailable.make({
+            reason: 'The Windows helper is not running on this computer.',
+          }),
+        )
+        expect(yield* Queue.size(link.requests)).toBe(0)
+        yield* computerHandlers.RevokeDevice({ id: device.id }).pipe(as(who))
+        expect(yield* call).toEqual(WindowOutcome.cases.NotConnected.make({}))
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
 
-  it.effect(
-    'ReportDeviceStop proves Device, installation and Run ownership and stops idempotently',
-    () =>
+    it.effect('another Person never reaches this Device or borrows its Run', () =>
       Effect.gen(function* () {
         const test = yield* native()
         const other = yield* somebody(farFuture)
+        expect(yield* useWindow(other, test.threadId, look)).toEqual(
+          WindowOutcome.cases.RunRequired.make({}),
+        )
+        const run = yield* working(other.person, other.person)
+        expect(yield* useWindow(other, run.threadId, look)).toEqual(
+          WindowOutcome.cases.NotConnected.make({}),
+        )
+        expect(yield* Queue.size(test.link.requests)).toBe(0)
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect(
+      'offers Look without Approval and keeps only action/receipt metadata for window work',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* native()
+          const database = yield* Database
+          const running = yield* useWindow(test.who, test.threadId, look).pipe(Effect.forkScoped)
+          const request = yield* Queue.take(test.link.requests)
+          expect(request.work).toEqual(DeviceWork.cases.Window.make({ action: look }))
+          expect(
+            yield* database.run(
+              database.select().from(approvals).where(eq(approvals.personId, test.who.person.id)),
+            ),
+          ).toEqual([])
+          // The durable ledger exists before the desktop has received any answer.
+          const [before] = yield* database.run(
+            database.select().from(deviceRequests).where(eq(deviceRequests.id, request.id)),
+          )
+          expect(before).toMatchObject({ action: 'Look', status: 'Dispatched' })
+          yield* computerHandlers
+            .AnswerDeviceRequest({
+              device: test.device.id,
+              id: request.id,
+              answer: DeviceAnswer.cases.Did.make({ result: seen }),
+            })
+            .pipe(as(test.who))
+          expect(yield* Fiber.join(running)).toEqual(
+            WindowOutcome.cases.Completed.make({ result: seen }),
+          )
+          const typing = yield* useWindow(
+            test.who,
+            test.threadId,
+            WindowAction.cases.Type.make({ window: windowId, text: typed }),
+          ).pipe(Effect.forkScoped)
+          const next = yield* Queue.take(test.link.requests)
+          yield* computerHandlers
+            .AnswerDeviceRequest({
+              device: test.device.id,
+              id: next.id,
+              answer: DeviceAnswer.cases.Did.make({ result: seen }),
+            })
+            .pipe(as(test.who))
+          yield* Fiber.join(typing)
+          const rows = yield* database.run(
+            database.select().from(deviceRequests).where(eq(deviceRequests.runId, test.runId)),
+          )
+          expect(rows.map((row) => row.action)).toEqual(['Look', 'Type'])
+          const kept = JSON.stringify(rows)
+          for (const content of [typed, seen.view.picture, seen.view.outline, seen.view.app])
+            expect(kept).not.toContain(content)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    for (const reason of [
+      'Elevated',
+      'WindowGone',
+      'LookStale',
+      'NotInFront',
+      'Unsupported',
+    ] as const) {
+      it.effect(`returns the desktop refusal ${reason}`, () =>
+        Effect.gen(function* () {
+          const test = yield* native()
+          const running = yield* useWindow(test.who, test.threadId, look).pipe(Effect.forkScoped)
+          const request = yield* Queue.take(test.link.requests)
+          yield* computerHandlers
+            .AnswerDeviceRequest({
+              device: test.device.id,
+              id: request.id,
+              answer: DeviceAnswer.cases.Declined.make({ reason }),
+            })
+            .pipe(as(test.who))
+          expect(yield* Fiber.join(running)).toEqual(WindowOutcome.cases.Refused.make({ reason }))
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+      )
+    }
+
+    it.effect('Stopped revokes dispatch authority and aborts the Run once', () =>
+      Effect.gen(function* () {
+        const test = yield* native()
+        const running = yield* useWindow(test.who, test.threadId, look).pipe(Effect.forkScoped)
+        const request = yield* Queue.take(test.link.requests)
+        yield* computerHandlers
+          .AnswerDeviceRequest({
+            device: test.device.id,
+            id: request.id,
+            answer: DeviceAnswer.cases.Declined.make({ reason: 'Stopped' }),
+          })
+          .pipe(as(test.who))
+        expect(yield* Fiber.join(running)).toEqual(
+          WindowOutcome.cases.Refused.make({ reason: 'Stopped' }),
+        )
+        expect(yield* Queue.take((yield* Stops).calls)).toBe(test.threadId)
         const report = {
           device: test.device.id,
           installation: test.installation,
           runId: test.runId,
         }
-        expect(
-          (yield* computerHandlers.ReportDeviceStop(report).pipe(as(other), Effect.flip))._tag,
-        ).toBe('NotFound')
-        expect(
-          (yield* computerHandlers
-            .ReportDeviceStop({
-              ...report,
-              installation: InstallationId.make(NodeCrypto.randomUUID()),
-            })
-            .pipe(as(test.who), Effect.flip))._tag,
-        ).toBe('Forbidden')
-        const foreign = yield* working(other.person, other.person)
-        expect(
-          (yield* computerHandlers
-            .ReportDeviceStop({ ...report, runId: foreign.runId })
-            .pipe(as(test.who), Effect.flip))._tag,
-        ).toBe('NotFound')
-        yield* computerHandlers.ReportDeviceStop(report).pipe(as(test.who))
-        expect(yield* Queue.take((yield* Stops).calls)).toBe(test.threadId)
         yield* computerHandlers.ReportDeviceStop(report).pipe(as(test.who))
         expect(yield* Queue.size((yield* Stops).calls)).toBe(0)
+        expect(yield* Queue.take(test.link.runEnds)).toBe(test.runId)
+        expect(yield* Queue.size(test.link.runEnds)).toBe(0)
         expect(yield* useWindow(test.who, test.threadId, look)).toEqual(
           WindowOutcome.cases.RunRequired.make({}),
         )
-        expect(yield* Queue.size(test.link.runEnds)).toBe(0)
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
 
-  for (const ending of ['timeout', 'disconnect', 'failed', 'wrong vocabulary'] as const) {
-    it.effect(`settles ${ending} without replay`, () =>
+    it.effect(
+      'ReportDeviceStop proves Device, installation and Run ownership and stops idempotently',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* native()
+          const other = yield* somebody(farFuture)
+          const report = {
+            device: test.device.id,
+            installation: test.installation,
+            runId: test.runId,
+          }
+          expect(
+            (yield* computerHandlers.ReportDeviceStop(report).pipe(as(other), Effect.flip))._tag,
+          ).toBe('NotFound')
+          expect(
+            (yield* computerHandlers
+              .ReportDeviceStop({
+                ...report,
+                installation: InstallationId.make(NodeCrypto.randomUUID()),
+              })
+              .pipe(as(test.who), Effect.flip))._tag,
+          ).toBe('Forbidden')
+          const foreign = yield* working(other.person, other.person)
+          expect(
+            (yield* computerHandlers
+              .ReportDeviceStop({ ...report, runId: foreign.runId })
+              .pipe(as(test.who), Effect.flip))._tag,
+          ).toBe('NotFound')
+          yield* computerHandlers.ReportDeviceStop(report).pipe(as(test.who))
+          expect(yield* Queue.take((yield* Stops).calls)).toBe(test.threadId)
+          yield* computerHandlers.ReportDeviceStop(report).pipe(as(test.who))
+          expect(yield* Queue.size((yield* Stops).calls)).toBe(0)
+          expect(yield* useWindow(test.who, test.threadId, look)).toEqual(
+            WindowOutcome.cases.RunRequired.make({}),
+          )
+          expect(yield* Queue.size(test.link.runEnds)).toBe(0)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    for (const ending of ['timeout', 'disconnect', 'failed', 'wrong vocabulary'] as const) {
+      it.effect(`settles ${ending} without replay`, () =>
+        Effect.gen(function* () {
+          const test = yield* native()
+          const running = yield* useWindow(test.who, test.threadId, look).pipe(Effect.forkScoped)
+          const request = yield* Queue.take(test.link.requests)
+          if (ending === 'timeout') yield* TestClock.adjust('30 seconds')
+          if (ending === 'disconnect') yield* Fiber.interrupt(test.link.ended)
+          if (ending === 'failed' || ending === 'wrong vocabulary')
+            yield* computerHandlers
+              .AnswerDeviceRequest({
+                device: test.device.id,
+                id: request.id,
+                answer: ending === 'failed' ? DeviceAnswer.cases.Failed.make({}) : done,
+              })
+              .pipe(as(test.who))
+          expect((yield* Fiber.join(running))._tag).toBe(
+            ending === 'failed' ? 'Unavailable' : 'OutcomeUnknown',
+          )
+          expect(yield* Queue.size(test.link.requests)).toBe(0)
+          const [row] = yield* (yield* Database).run(
+            (yield* Database)
+              .select()
+              .from(deviceRequests)
+              .where(eq(deviceRequests.id, request.id)),
+          )
+          expect(row).toMatchObject({ status: ending === 'failed' ? 'Failed' : 'OutcomeUnknown' })
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+      )
+    }
+
+    it.effect('window-vocabulary answers cannot complete page work', () =>
       Effect.gen(function* () {
         const test = yield* native()
-        const running = yield* useWindow(test.who, test.threadId, look).pipe(Effect.forkScoped)
+        const registry = yield* DeviceRegistry
+        const running = yield* registry
+          .browse({
+            personId: test.who.person.id,
+            threadId: test.threadId,
+            runId: test.runId,
+            action: read,
+            authority: BrowseAuthority.cases.Acting.make({}),
+          })
+          .pipe(Effect.forkScoped)
         const request = yield* Queue.take(test.link.requests)
-        if (ending === 'timeout') yield* TestClock.adjust('30 seconds')
-        if (ending === 'disconnect') yield* Fiber.interrupt(test.link.ended)
-        if (ending === 'failed' || ending === 'wrong vocabulary')
-          yield* computerHandlers
-            .AnswerDeviceRequest({
-              device: test.device.id,
-              id: request.id,
-              answer: ending === 'failed' ? DeviceAnswer.cases.Failed.make({}) : done,
-            })
-            .pipe(as(test.who))
-        expect((yield* Fiber.join(running))._tag).toBe(
-          ending === 'failed' ? 'Unavailable' : 'OutcomeUnknown',
-        )
-        expect(yield* Queue.size(test.link.requests)).toBe(0)
-        const [row] = yield* (yield* Database).run(
-          (yield* Database).select().from(deviceRequests).where(eq(deviceRequests.id, request.id)),
-        )
-        expect(row).toMatchObject({ status: ending === 'failed' ? 'Failed' : 'OutcomeUnknown' })
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+        expect(request.work).toEqual(DeviceWork.cases.Page.make({ action: read }))
+        yield* computerHandlers
+          .AnswerDeviceRequest({
+            device: test.device.id,
+            id: request.id,
+            answer: DeviceAnswer.cases.Did.make({ result: seen }),
+          })
+          .pipe(as(test.who))
+        expect(yield* Fiber.join(running)).toEqual(BrowseOutcome.cases.OutcomeUnknown.make({}))
+        yield* registry.ended(test.runId)
+        expect(yield* Queue.size(test.link.runEnds)).toBe(0)
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
-  }
-
-  it.effect('window-vocabulary answers cannot complete page work', () =>
-    Effect.gen(function* () {
-      const test = yield* native()
-      const registry = yield* DeviceRegistry
-      const running = yield* registry
-        .browse({
-          personId: test.who.person.id,
-          threadId: test.threadId,
-          runId: test.runId,
-          action: read,
-          authority: BrowseAuthority.cases.Acting.make({}),
-        })
-        .pipe(Effect.forkScoped)
-      const request = yield* Queue.take(test.link.requests)
-      expect(request.work).toEqual(DeviceWork.cases.Page.make({ action: read }))
-      yield* computerHandlers
-        .AnswerDeviceRequest({
-          device: test.device.id,
-          id: request.id,
-          answer: DeviceAnswer.cases.Did.make({ result: seen }),
-        })
-        .pipe(as(test.who))
-      expect(yield* Fiber.join(running)).toEqual(BrowseOutcome.cases.OutcomeUnknown.make({}))
-      yield* registry.ended(test.runId)
-      expect(yield* Queue.size(test.link.runEnds)).toBe(0)
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
+  })
 })

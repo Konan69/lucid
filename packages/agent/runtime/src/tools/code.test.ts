@@ -104,7 +104,7 @@ describe('Program model tools', () => {
           )
           const [program, page] = codeTools(toolRunner(scope))
           const context = {
-            signal: new AbortController().signal,
+            signal: yield* Effect.abortSignal,
             toolCallId: 'MARK-call',
             log: { info: () => void 0, warn: () => void 0, error: () => void 0 },
           }

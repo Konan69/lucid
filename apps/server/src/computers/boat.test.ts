@@ -4,7 +4,7 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeBuffer from 'node:buffer'
 import * as NodeHttp from 'node:http'
 import { NodeHttpServer } from '@effect/platform-node'
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import {
   BrowserAction,
   ComputerState,
@@ -18,6 +18,7 @@ import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { eq, inArray } from 'drizzle-orm'
 import {
   ConfigProvider,
+  Clock,
   Context,
   Deferred,
   Effect,
@@ -821,7 +822,7 @@ const serverLayer = Layer.effect(
       )
         return yield* authorized(evidence, request)
       return rejected(404)
-    }).pipe(Effect.catch(() => Effect.succeed(rejected(400))))
+    }).pipe(Effect.orElseSucceed(() => rejected(400)))
     yield* server.serve(application)
     const origin = new URL(HttpServer.formatAddress(server.address))
     origin.hostname = '127.0.0.1'
@@ -844,7 +845,7 @@ const configured = (settings: Readonly<Record<string, string>>) =>
   boatMachineLayer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        testDatabaseLayer,
+        Layer.effect(Database, Database),
         serverLayer,
         ConfigProvider.layer(ConfigProvider.fromUnknown(settings)),
       ),
@@ -1025,7 +1026,7 @@ const unready = Effect.fn('BoatTest.unready')(function* (
       const refusal = yield* refuse(count)
       if (Option.isNone(refusal)) return yield* real.command(...input)
       yield* Queue.offer(asked, count)
-      return yield* Effect.fail(refusal.value)
+      return yield* refusal.value
     }),
   }
   const intent = yield* saved.intend(key, real.create)
@@ -1047,1175 +1048,1211 @@ const fixture = Effect.fn('BoatTest.fixture')(function* () {
   return key
 })
 
+/** Build a separate provider recorder and HTTP server for each case; install its clock before acquisition so provider timers and assertions use the same zero-based time. Real SSH cases retain the live clock. */
+function scopedCase<Services, LayerError, Dependencies, A, E, R>(
+  caseLayer: Layer.Layer<Services, LayerError, Dependencies>,
+  program: Effect.Effect<A, E, R>,
+  clock: 'fresh' | 'inherited',
+) {
+  const acquired = Layer.build(caseLayer).pipe(
+    Effect.flatMap((context) => program.pipe(Effect.provide(context))),
+    Effect.scoped,
+  )
+  if (clock === 'inherited') return acquired
+  return acquired.pipe(Effect.provideServiceEffect(Clock.Clock, TestClock.make()))
+}
+
 describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => {
-  it.effect('adopts for one Person without writing an intent for a refused Person', () =>
-    Effect.gen(function* () {
-      const first = yield* fixture()
-      const second = yield* fixture()
-      const machine = yield* Machine
-      const saved = yield* bindings()
-      const evidence = yield* Evidence
-      expect((yield* machine.ensure(first))._tag).toBe('Running')
-      expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: adoptedId }))
-      const failure = yield* machine.ensure(second).pipe(Effect.flip)
-      expect(failure._tag).toBe('MachineHeld')
-      expect(machineFailureReason(failure)).toBe(
-        'Vivid’s computer is already in use by another account.',
-      )
-      expect(JSON.stringify(failure)).not.toContain(first)
-      expect(JSON.stringify(failure)).not.toContain(second)
-      const refused = yield* saved.load(second)
-      expect(refused).toEqual(Option.none())
-      expect(yield* machine.inspect(second)).toEqual(ComputerState.cases.Absent.make({}))
-      expect(yield* machine.stop(second)).toBeUndefined()
-      expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
-      expect(yield* saved.load(second)).toEqual(refused)
-      expect((yield* machine.ensure(first))._tag).toBe('Running')
-      expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: adoptedId }))
-      expect(yield* Ref.get(evidence.created)).toBe(0)
-      expect(yield* Ref.get(evidence.intents)).toEqual([])
-    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
-  )
-
-  it.live.skipIf(!peerAvailable)(
-    'tells a Run that no machine is free, leaves the Computer stopped, and starts it for the next Run',
-    () =>
+  layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
+    it.effect('adopts for one Person without writing an intent for a refused Person', () =>
       Effect.gen(function* () {
-        const { first } = yield* accounts()
-        const store = yield* ComputerStore
-        const evidence = yield* Evidence
-        // Vivid's shell is the real one: the machine behind the fake provider is the SSH test server.
-        const server = yield* peer()
-        yield* Ref.set(evidence.ssh, Option.some(server))
-        const command = { command: 'echo receipt', directory: server.home, timeoutSeconds: 10 }
-        yield* Ref.set(evidence.state, 'archived')
-        yield* Ref.set(evidence.free, new Set<Size>())
-        // Vivid needs the Computer for a Run; Boat has no machine of any size.
-        const refused = yield* store.run(first.id, command).pipe(Effect.flip)
-        // The provider's own reason, not "the Computer is stopped": the start handed it on.
-        expect(refused).toBeInstanceOf(MachineNoCapacity)
-        expect(
-          (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
-        ).toBe('Stopped')
-        // Nobody presses Start: the next Run asks Boat again and gets the next size up.
-        yield* Ref.set(evidence.free, new Set<Size>(['large']))
-        expect((yield* store.run(first.id, command)).stdout.trim()).toBe('receipt')
-        expect(
-          (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
-        ).toBe('Running')
-      }).pipe(Effect.scoped, Effect.provide(accountsLayer)),
-    30000,
-  )
-
-  /**
-   * The rule a Person relies on: a machine is one account's. This is the whole account-facing
-   * path, not the adapter alone: each account acts through its own RPC and through the store
-   * Vivid acts through, and the refusal is checked where each of them would meet it.
-   */
-  it.live.skipIf(!peerAvailable)(
-    'gives one machine to one account: a second account is refused at every layer and changes nothing',
-    () =>
-      Effect.gen(function* () {
-        const { first, second } = yield* accounts()
-        const store = yield* ComputerStore
+        const first = yield* fixture()
+        const second = yield* fixture()
+        const machine = yield* Machine
         const saved = yield* bindings()
         const evidence = yield* Evidence
-        // Vivid's shell is the real one: the machine behind the fake provider is the SSH test server.
-        const server = yield* peer()
-        yield* Ref.set(evidence.ssh, Option.some(server))
-        const command = { command: 'echo receipt', directory: server.home, timeoutSeconds: 10 }
-        const held = 'Vivid’s computer is already in use by another account.'
-
-        // The first account uses its Computer: the machine becomes its own.
-        expect((yield* store.run(first.id, command)).stdout.trim()).toBe('receipt')
-        expect(
-          (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
-        ).toBe('Running')
-        expect(yield* saved.load(computerMachineKey(first.id))).toMatchObject(
-          Option.some({ providerId: adoptedId }),
+        expect((yield* machine.ensure(first))._tag).toBe('Running')
+        expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: adoptedId }))
+        const failure = yield* machine.ensure(second).pipe(Effect.flip)
+        expect(failure._tag).toBe('MachineHeld')
+        expect(machineFailureReason(failure)).toBe(
+          'Vivid’s computer is already in use by another account.',
         )
-
-        // The second account asks for the same thing through its own RPC, then through Vivid.
-        yield* computerHandlers.StartComputer().pipe(asAccount(second))
-        const sent = (yield* Ref.get(evidence.commands)).length
-        const refused = yield* store.run(second.id, command).pipe(Effect.flip)
-        expect(refused).toMatchObject({ reason: held })
-        const shown = (yield* computerHandlers.GetComputer().pipe(asAccount(second))).computer.state
-        expect(ComputerState.guards.Failed(shown) && shown.reason).toBe(held)
-        expect((yield* store.access(second.id))._tag).toBe('Unavailable')
-        // Nothing of the second account holds the machine, and nothing was sent to it.
-        expect(yield* saved.load(computerMachineKey(second.id))).toEqual(Option.none())
-        const holder = yield* saved.holder(Protocol.ProviderId.make(adoptedId))
-        expect(Option.map(holder, (binding) => binding.key)).toEqual(
-          Option.some(computerMachineKey(first.id)),
-        )
-        expect(yield* Ref.get(evidence.commands)).toHaveLength(sent)
-        expect(yield* Ref.get(evidence.sshKeys)).toHaveLength(1)
-        // The refusal names nobody: not the holder, not the one refused.
-        expect(JSON.stringify(refused)).not.toContain(first.id)
-        expect(JSON.stringify(shown)).not.toContain(first.id)
-
-        // The first account's Computer is exactly as it was.
-        expect((yield* store.run(first.id, command)).stdout.trim()).toBe('receipt')
-        expect(
-          (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
-        ).toBe('Running')
+        expect(JSON.stringify(failure)).not.toContain(first)
+        expect(JSON.stringify(failure)).not.toContain(second)
+        const refused = yield* saved.load(second)
+        expect(refused).toEqual(Option.none())
+        expect(yield* machine.inspect(second)).toEqual(ComputerState.cases.Absent.make({}))
+        expect(yield* machine.stop(second)).toBeUndefined()
+        expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+        expect(yield* saved.load(second)).toEqual(refused)
+        expect((yield* machine.ensure(first))._tag).toBe('Running')
+        expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: adoptedId }))
         expect(yield* Ref.get(evidence.created)).toBe(0)
-      }).pipe(Effect.scoped, Effect.provide(accountsLayer)),
-    30000,
-  )
+        expect(yield* Ref.get(evidence.intents)).toEqual([])
+      }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
+    )
 
-  /**
-   * Two servers have two binding tables, and neither can see the other's. What both do see is
-   * the machine. The other server is played here by taking the first account's row out of the
-   * table, which is exactly what its table looks like: it has never heard of that account.
-   */
-  it.effect(
-    'the machine keeps its one holder against a second server whose table knows nothing of the first',
-    () =>
-      Effect.gen(function* () {
-        const first = yield* fixture()
-        const second = yield* fixture()
-        const machine = yield* Machine
-        const saved = yield* bindings()
-        const database = yield* Database
-        const evidence = yield* Evidence
-        expect((yield* machine.ensure(first))._tag).toBe('Running')
-        const held = (yield* Ref.get(evidence.holders)).get(adoptedId)
-        const ours = yield* database.run(
-          database.select().from(machineBindings).where(eq(machineBindings.key, first)),
-        )
-        expect(ours.map((row) => `${adoptedId} ${row.intent}`)).toEqual([held])
+    it.effect.skipIf(!peerAvailable)(
+      'tells a Run that no machine is free, leaves the Computer stopped, and starts it for the next Run',
+      () =>
+        Effect.gen(function* () {
+          const { first } = yield* accounts()
+          const store = yield* ComputerStore
+          const evidence = yield* Evidence
+          // Vivid's shell is the real one: the machine behind the fake provider is the SSH test server.
+          const server = yield* peer()
+          yield* Ref.set(evidence.ssh, Option.some(server))
+          const command = { command: 'echo receipt', directory: server.home, timeoutSeconds: 10 }
+          yield* Ref.set(evidence.state, 'archived')
+          yield* Ref.set(evidence.free, new Set<Size>())
+          // Vivid needs the Computer for a Run; Boat has no machine of any size.
+          const refused = yield* store.run(first.id, command).pipe(Effect.flip)
+          // The provider's own reason, not "the Computer is stopped": the start handed it on.
+          expect(refused).toBeInstanceOf(MachineNoCapacity)
+          expect(
+            (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
+          ).toBe('Stopped')
+          // Nobody presses Start: the next Run asks Boat again and gets the next size up.
+          yield* Ref.set(evidence.free, new Set<Size>(['large']))
+          expect((yield* store.run(first.id, command)).stdout.trim()).toBe('receipt')
+          expect(
+            (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
+          ).toBe('Running')
+        }).pipe(Effect.scoped, (program) => scopedCase(accountsLayer, program, 'inherited')),
+      30000,
+    )
 
-        // The other server: same machine named in its settings, a table without the first row.
-        yield* database.run(database.delete(machineBindings).where(eq(machineBindings.key, first)))
-        const launched = yield* Ref.get(evidence.launches)
-        const refused = yield* machine.ensure(second).pipe(Effect.flip)
-        expect(refused._tag).toBe('MachineHeld')
-        // Its table let it bind; the machine did not let it in, and no desktop was opened for it.
-        expect(yield* Ref.get(evidence.launches)).toBe(launched)
-        expect((yield* Ref.get(evidence.holders)).get(adoptedId)).toBe(held)
-        // The refused binding is given up, so that table does not claim the machine either.
-        expect(yield* saved.load(second)).toEqual(Option.none())
-        expect(yield* saved.holder(Protocol.ProviderId.make(adoptedId))).toEqual(Option.none())
-        expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+    /**
+     * The rule a Person relies on: a machine is one account's. This is the whole account-facing
+     * path, not the adapter alone: each account acts through its own RPC and through the store
+     * Vivid acts through, and the refusal is checked where each of them would meet it.
+     */
+    it.effect.skipIf(!peerAvailable)(
+      'gives one machine to one account: a second account is refused at every layer and changes nothing',
+      () =>
+        Effect.gen(function* () {
+          const { first, second } = yield* accounts()
+          const store = yield* ComputerStore
+          const saved = yield* bindings()
+          const evidence = yield* Evidence
+          // Vivid's shell is the real one: the machine behind the fake provider is the SSH test server.
+          const server = yield* peer()
+          yield* Ref.set(evidence.ssh, Option.some(server))
+          const command = { command: 'echo receipt', directory: server.home, timeoutSeconds: 10 }
+          const held = 'Vivid’s computer is already in use by another account.'
 
-        // The first server again, with its own row: the machine still knows it.
-        yield* database.run(database.insert(machineBindings).values(ours))
-        expect((yield* machine.ensure(first))._tag).toBe('Running')
-        expect(yield* Ref.get(evidence.launches)).toBe(launched + 1)
-        expect(yield* Ref.get(evidence.created)).toBe(0)
-      }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
-    15000,
-  )
+          // The first account uses its Computer: the machine becomes its own.
+          expect((yield* store.run(first.id, command)).stdout.trim()).toBe('receipt')
+          expect(
+            (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
+          ).toBe('Running')
+          expect(yield* saved.load(computerMachineKey(first.id))).toMatchObject(
+            Option.some({ providerId: adoptedId }),
+          )
 
-  it.effect('a record that came with a copied disk says nothing about this machine', () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const machine = yield* Machine
-      const database = yield* Database
-      const evidence = yield* Evidence
-      // A machine made from a template carries the template machine's own record.
-      yield* Ref.set(
-        evidence.holders,
-        new Map([[adoptedId, 'bx_2222222a 99999999-9999-4999-8999-999999999999']]),
-      )
-      expect((yield* machine.ensure(key))._tag).toBe('Running')
-      const rows = yield* database.run(
-        database.select().from(machineBindings).where(eq(machineBindings.key, key)),
-      )
-      expect(rows.map((row) => `${adoptedId} ${row.intent}`)).toEqual([
-        (yield* Ref.get(evidence.holders)).get(adoptedId),
-      ])
-    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
-  )
+          // The second account asks for the same thing through its own RPC, then through Vivid.
+          yield* computerHandlers.StartComputer().pipe(asAccount(second))
+          const sent = (yield* Ref.get(evidence.commands)).length
+          const refused = yield* store.run(second.id, command).pipe(Effect.flip)
+          expect(refused).toMatchObject({ reason: held })
+          const shown = (yield* computerHandlers.GetComputer().pipe(asAccount(second))).computer
+            .state
+          expect(ComputerState.guards.Failed(shown) && shown.reason).toBe(held)
+          expect((yield* store.access(second.id))._tag).toBe('Unavailable')
+          // Nothing of the second account holds the machine, and nothing was sent to it.
+          expect(yield* saved.load(computerMachineKey(second.id))).toEqual(Option.none())
+          const holder = yield* saved.holder(Protocol.ProviderId.make(adoptedId))
+          expect(Option.map(holder, (binding) => binding.key)).toEqual(
+            Option.some(computerMachineKey(first.id)),
+          )
+          expect(yield* Ref.get(evidence.commands)).toHaveLength(sent)
+          expect(yield* Ref.get(evidence.sshKeys)).toHaveLength(1)
+          // The refusal names nobody: not the holder, not the one refused.
+          expect(JSON.stringify(refused)).not.toContain(first.id)
+          expect(JSON.stringify(shown)).not.toContain(first.id)
 
-  /**
-   * Damage is not a claim. A server that meets a record it cannot read learns nothing about
-   * whose machine it is, so it fails the call and keeps its binding: giving the binding up on
-   * damage would cut the rightful holder off for good.
-   */
-  it.effect('a damaged record fails the call and costs the server no binding', () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const machine = yield* Machine
-      const saved = yield* bindings()
-      const evidence = yield* Evidence
-      expect((yield* machine.ensure(key))._tag).toBe('Running')
-      const before = yield* saved.load(key)
-      const launched = yield* Ref.get(evidence.launches)
-      yield* Ref.set(evidence.holders, new Map([[adoptedId, 'not a record']]))
-      const failed = yield* machine.ensure(key).pipe(Effect.flip)
-      expect(failed).toEqual(new MachineOperationFailed({ operation: 'holder' }))
-      expect(yield* saved.load(key)).toEqual(before)
-      expect(Option.isSome(before)).toBe(true)
-      expect(yield* Ref.get(evidence.launches)).toBe(launched)
-      expect((yield* Ref.get(evidence.holders)).get(adoptedId)).toBe('not a record')
-      // The machine once said yes to this process. It is asked again all the same, and until it
-      // can answer nothing of this binding's reaches it.
-      const refused = yield* machine
-        .exec({ key, command: 'echo receipt', timeoutSeconds: 10 })
-        .pipe(Effect.flip)
-      expect(refused).toEqual(new MachineOperationFailed({ operation: 'holder' }))
-      expect((yield* Ref.get(evidence.commands)).includes('echo receipt')).toBe(false)
-    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
-  )
+          // The first account's Computer is exactly as it was.
+          expect((yield* store.run(first.id, command)).stdout.trim()).toBe('receipt')
+          expect(
+            (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
+          ).toBe('Running')
+          expect(yield* Ref.get(evidence.created)).toBe(0)
+        }).pipe(Effect.scoped, (program) => scopedCase(accountsLayer, program, 'inherited')),
+      30000,
+    )
 
-  it.live.skipIf(!peerAvailable)(
-    'asks Boat to let in a different key for every opening of a machine, and reaches it with that key',
-    () =>
-      Effect.gen(function* () {
-        const machine = yield* Machine
-        const evidence = yield* Evidence
-        const key = yield* fixture()
-        const server = yield* peer()
-        yield* Ref.set(evidence.ssh, Option.some(server))
-        expect((yield* machine.ensure(key))._tag).toBe('Running')
-        const first = yield* machine.run({
-          key,
-          command: 'echo one',
-          directory: server.home,
-          timeoutSeconds: 10,
-        })
-        expect(first.stdout.trim()).toBe('one')
-        // A second command uses the open connection: Boat is not asked again.
-        yield* machine.run({ key, command: 'true', directory: server.home, timeoutSeconds: 10 })
-        expect(yield* Ref.get(evidence.sshKeys)).toHaveLength(1)
-        // The machine stops and resumes: the connection to the machine it was is closed, and the
-        // next command opens another with a key of its own.
-        yield* machine.stop(key)
-        expect((yield* machine.ensure(key))._tag).toBe('Running')
-        const second = yield* machine.run({
-          key,
-          command: 'echo two',
-          directory: server.home,
-          timeoutSeconds: 10,
-        })
-        expect(second.stdout.trim()).toBe('two')
-        const [one, two, ...more] = yield* Ref.get(evidence.sshKeys)
-        if (one === undefined || two === undefined) expect.fail('Two openings were expected')
-        expect(more).toEqual([])
-        expect(one).not.toBe(two)
-        for (const sent of [one, two]) expect(sent.endsWith(` ${KEY_TAG}`)).toBe(true)
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    40_000,
-  )
-
-  /**
-   * A row can name a machine without a wake having made it: written by hand, or left in a table
-   * from before the machine kept its record. Such a server finds the machine running under its
-   * holder and never wakes it, so the wake's check alone would let it straight in. Each use is
-   * tried against a fresh row here, because the first refusal gives the row up.
-   */
-  it.effect(
-    'a server whose row no wake made cannot use, watch or stop a machine that names another holder',
-    () =>
-      Effect.gen(function* () {
-        const first = yield* fixture()
-        const second = yield* fixture()
-        const machine = yield* Machine
-        const saved = yield* bindings()
-        const database = yield* Database
-        const evidence = yield* Evidence
-        expect((yield* machine.ensure(first))._tag).toBe('Running')
-        const held = (yield* Ref.get(evidence.holders)).get(adoptedId)
-        const ours = yield* database.run(
-          database.select().from(machineBindings).where(eq(machineBindings.key, first)),
-        )
-        // The other server's table: the same machine, its own account, an intent of its own.
-        yield* database.run(database.delete(machineBindings).where(eq(machineBindings.key, first)))
-        const theirs = ours.map((row) => rebound(row, second))
-        expect(theirs).toHaveLength(1)
-        const viewers = yield* Ref.get(evidence.viewers)
-        const uses = [
-          machine.exec({ key: second, command: 'echo receipt', timeoutSeconds: 10 }),
-          machine.desktop({ key: second, action: DesktopAction.cases.Look.make({}) }),
-          machine.status(second),
-          machine.stop(second),
-        ]
-        for (const use of uses) {
-          yield* database.run(database.insert(machineBindings).values(theirs))
-          expect((yield* use.pipe(Effect.flip))._tag).toBe('MachineHeld')
-          expect(yield* saved.load(second)).toEqual(Option.none())
-        }
-        // Nothing of its own reached the machine: no command, no viewer, no stop, no new holder.
-        const sent = yield* Ref.get(evidence.commands)
-        expect(sent.filter((command) => !command.startsWith("mine='"))).toEqual([])
-        expect(sent.filter((command) => command.endsWith(launcher))).toHaveLength(1)
-        expect(yield* Ref.get(evidence.viewers)).toBe(viewers)
-        expect(yield* Ref.get(evidence.state)).toBe('ready')
-        expect((yield* Ref.get(evidence.holders)).get(adoptedId)).toBe(held)
-
-        // The holder's own server after a restart is such a process too: its row, a running
-        // machine, no memory of the wake. It is played by an account whose row the machine's
-        // record names. It asks once, opens no desktop, and is not asked again.
-        const third = yield* fixture()
-        const named = ours.map((row) => rebound(row, third))
-        yield* database.run(database.insert(machineBindings).values(named))
-        yield* Ref.set(
-          evidence.holders,
-          new Map(named.map((row) => [adoptedId, `${adoptedId} ${row.intent}`])),
-        )
-        const receipt = machine.exec({ key: third, command: 'echo receipt', timeoutSeconds: 10 })
-        expect((yield* receipt).output).toBe('receipt\n')
-        expect((yield* receipt).output).toBe('receipt\n')
-        const after = (yield* Ref.get(evidence.commands)).slice(sent.length)
-        expect(after.filter((command) => command.startsWith("mine='"))).toHaveLength(1)
-        expect(after.filter((command) => command.endsWith(launcher))).toEqual([])
-        expect(after.slice(1)).toEqual(['echo receipt', 'echo receipt'])
-      }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
-    15000,
-  )
-
-  /** Refusal creates no receipt that could expire while adoption is configured. */
-  it.effect('creates a new paid intent after refused adoption is removed a day later', () =>
-    Effect.gen(function* () {
-      const first = yield* fixture()
-      const second = yield* fixture()
-      const machine = yield* Machine
-      const saved = yield* bindings()
-      yield* machine.ensure(first)
-      expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
-      expect(yield* saved.load(second)).toEqual(Option.none())
-      yield* TestClock.adjust('24 hours')
-      const paidLayer = Layer.fresh(boatMachineLayer).pipe(
-        Layer.provide(
-          ConfigProvider.layer(
-            ConfigProvider.fromUnknown({
-              VIVID_BOAT_API_KEY: 'protocol-test-key',
-              VIVID_BOAT_ORG: 'personal',
-              VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
-            }),
-          ),
-        ),
-      )
-      expect(
-        (yield* Effect.gen(function* () {
-          return yield* (yield* Machine).ensure(second)
-        }).pipe(Effect.provide(paidLayer)))._tag,
-      ).toBe('Running')
-      expect(yield* saved.load(second)).toMatchObject(
-        Option.some({
-          requestedAt: 24 * 60 * 60_000,
-          providerId: id,
-        }),
-      )
-      expect(yield* Ref.get((yield* Evidence).created)).toBe(1)
-      expect((yield* machine.ensure(first))._tag).toBe('Running')
-    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
-  )
-
-  it.effect(
-    'preserves a stale unbound intent and rechecks ownership without the paid-create age limit',
-    () =>
-      Effect.gen(function* () {
-        const first = yield* fixture()
-        const second = yield* fixture()
-        const machine = yield* Machine
-        const saved = yield* bindings()
-        const api = yield* transport()
-        const database = yield* Database
-        yield* machine.ensure(first)
-        yield* saved.intend(second, api.create)
-        yield* database.run(
-          database
-            .update(machineBindings)
-            .set({ requestedAt: -24 * 60 * 60_000 })
-            .where(eq(machineBindings.key, second)),
-        )
-        const original = yield* saved.load(second)
-        expect(original).toMatchObject(
-          Option.some({ providerId: null, requestedAt: -24 * 60 * 60_000 }),
-        )
-        expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
-        expect(yield* saved.load(second)).toEqual(original)
-        expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
-        expect(yield* saved.load(second)).toEqual(original)
-        expect((yield* machine.inspect(second))._tag).toBe('Failed')
-        expect((yield* machine.stop(second).pipe(Effect.flip))._tag).toBe(
-          'MachineCreationUnresolved',
-        )
-        expect(yield* saved.load(second)).toEqual(original)
-        expect((yield* machine.ensure(first))._tag).toBe('Running')
-        expect(yield* Ref.get((yield* Evidence).created)).toBe(0)
-      }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
-  )
-
-  it.effect('maps a real provider-id collision without changing either account’s receipt', () =>
-    Effect.gen(function* () {
-      const first = yield* fixture()
-      const second = yield* fixture()
-      const saved = yield* bindings()
-      const api = yield* transport()
-      const { binding: owner } = yield* saved.intend(first, api.create)
-      const { binding: waiting } = yield* saved.intend(second, api.create)
-      yield* saved.bind(first, owner.intent, Protocol.ProviderId.make(id))
-      expect(
-        (yield* saved.bind(second, waiting.intent, Protocol.ProviderId.make(id)).pipe(Effect.flip))
-          ._tag,
-      ).toBe('MachineHeld')
-      expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: id }))
-      expect(yield* saved.load(second)).toEqual(Option.some(waiting))
-      expect(yield* saved.holder(Protocol.ProviderId.make(id))).toMatchObject(
-        Option.some({ key: first }),
-      )
-    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
-  )
-
-  for (const existing of [false, true]) {
-    /** Two lifecycle instances model separate servers. Real SQL arbitrates the collision;
-     * Deferred gates make both holder checks finish before either bind, with a known winner. */
+    /**
+     * Two servers have two binding tables, and neither can see the other's. What both do see is
+     * the machine. The other server is played here by taking the first account's row out of the
+     * table, which is exactly what its table looks like: it has never heard of that account.
+     */
     it.effect(
-      `cleans an adoption race loser only when its intent is fresh (existing ${existing})`,
+      'the machine keeps its one holder against a second server whose table knows nothing of the first',
       () =>
         Effect.gen(function* () {
           const first = yield* fixture()
           const second = yield* fixture()
+          const machine = yield* Machine
+          const saved = yield* bindings()
+          const database = yield* Database
+          const evidence = yield* Evidence
+          expect((yield* machine.ensure(first))._tag).toBe('Running')
+          const held = (yield* Ref.get(evidence.holders)).get(adoptedId)
+          const ours = yield* database.run(
+            database.select().from(machineBindings).where(eq(machineBindings.key, first)),
+          )
+          expect(ours.map((row) => `${adoptedId} ${row.intent}`)).toEqual([held])
+
+          // The other server: same machine named in its settings, a table without the first row.
+          yield* database.run(
+            database.delete(machineBindings).where(eq(machineBindings.key, first)),
+          )
+          const launched = yield* Ref.get(evidence.launches)
+          const refused = yield* machine.ensure(second).pipe(Effect.flip)
+          expect(refused._tag).toBe('MachineHeld')
+          // Its table let it bind; the machine did not let it in, and no desktop was opened for it.
+          expect(yield* Ref.get(evidence.launches)).toBe(launched)
+          expect((yield* Ref.get(evidence.holders)).get(adoptedId)).toBe(held)
+          // The refused binding is given up, so that table does not claim the machine either.
+          expect(yield* saved.load(second)).toEqual(Option.none())
+          expect(yield* saved.holder(Protocol.ProviderId.make(adoptedId))).toEqual(Option.none())
+          expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+
+          // The first server again, with its own row: the machine still knows it.
+          yield* database.run(database.insert(machineBindings).values(ours))
+          expect((yield* machine.ensure(first))._tag).toBe('Running')
+          expect(yield* Ref.get(evidence.launches)).toBe(launched + 1)
+          expect(yield* Ref.get(evidence.created)).toBe(0)
+        }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
+      15000,
+    )
+
+    it.effect('a record that came with a copied disk says nothing about this machine', () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const database = yield* Database
+        const evidence = yield* Evidence
+        // A machine made from a template carries the template machine's own record.
+        yield* Ref.set(
+          evidence.holders,
+          new Map([[adoptedId, 'bx_2222222a 99999999-9999-4999-8999-999999999999']]),
+        )
+        expect((yield* machine.ensure(key))._tag).toBe('Running')
+        const rows = yield* database.run(
+          database.select().from(machineBindings).where(eq(machineBindings.key, key)),
+        )
+        expect(rows.map((row) => `${adoptedId} ${row.intent}`)).toEqual([
+          (yield* Ref.get(evidence.holders)).get(adoptedId),
+        ])
+      }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
+    )
+
+    /**
+     * Damage is not a claim. A server that meets a record it cannot read learns nothing about
+     * whose machine it is, so it fails the call and keeps its binding: giving the binding up on
+     * damage would cut the rightful holder off for good.
+     */
+    it.effect('a damaged record fails the call and costs the server no binding', () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const saved = yield* bindings()
+        const evidence = yield* Evidence
+        expect((yield* machine.ensure(key))._tag).toBe('Running')
+        const before = yield* saved.load(key)
+        const launched = yield* Ref.get(evidence.launches)
+        yield* Ref.set(evidence.holders, new Map([[adoptedId, 'not a record']]))
+        const failed = yield* machine.ensure(key).pipe(Effect.flip)
+        expect(failed).toEqual(new MachineOperationFailed({ operation: 'holder' }))
+        expect(yield* saved.load(key)).toEqual(before)
+        expect(Option.isSome(before)).toBe(true)
+        expect(yield* Ref.get(evidence.launches)).toBe(launched)
+        expect((yield* Ref.get(evidence.holders)).get(adoptedId)).toBe('not a record')
+        // The machine once said yes to this process. It is asked again all the same, and until it
+        // can answer nothing of this binding's reaches it.
+        const refused = yield* machine
+          .exec({ key, command: 'echo receipt', timeoutSeconds: 10 })
+          .pipe(Effect.flip)
+        expect(refused).toEqual(new MachineOperationFailed({ operation: 'holder' }))
+        expect((yield* Ref.get(evidence.commands)).includes('echo receipt')).toBe(false)
+      }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
+    )
+
+    it.effect.skipIf(!peerAvailable)(
+      'asks Boat to let in a different key for every opening of a machine, and reaches it with that key',
+      () =>
+        Effect.gen(function* () {
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          const key = yield* fixture()
+          const server = yield* peer()
+          yield* Ref.set(evidence.ssh, Option.some(server))
+          expect((yield* machine.ensure(key))._tag).toBe('Running')
+          const first = yield* machine.run({
+            key,
+            command: 'echo one',
+            directory: server.home,
+            timeoutSeconds: 10,
+          })
+          expect(first.stdout.trim()).toBe('one')
+          // A second command uses the open connection: Boat is not asked again.
+          yield* machine.run({ key, command: 'true', directory: server.home, timeoutSeconds: 10 })
+          expect(yield* Ref.get(evidence.sshKeys)).toHaveLength(1)
+          // The machine stops and resumes: the connection to the machine it was is closed, and the
+          // next command opens another with a key of its own.
+          yield* machine.stop(key)
+          expect((yield* machine.ensure(key))._tag).toBe('Running')
+          const second = yield* machine.run({
+            key,
+            command: 'echo two',
+            directory: server.home,
+            timeoutSeconds: 10,
+          })
+          expect(second.stdout.trim()).toBe('two')
+          const [one, two, ...more] = yield* Ref.get(evidence.sshKeys)
+          if (one === undefined || two === undefined) expect.fail('Two openings were expected')
+          expect(more).toEqual([])
+          expect(one).not.toBe(two)
+          for (const sent of [one, two]) expect(sent.endsWith(` ${KEY_TAG}`)).toBe(true)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'inherited')),
+      40_000,
+    )
+
+    /**
+     * A row can name a machine without a wake having made it: written by hand, or left in a table
+     * from before the machine kept its record. Such a server finds the machine running under its
+     * holder and never wakes it, so the wake's check alone would let it straight in. Each use is
+     * tried against a fresh row here, because the first refusal gives the row up.
+     */
+    it.effect(
+      'a server whose row no wake made cannot use, watch or stop a machine that names another holder',
+      () =>
+        Effect.gen(function* () {
+          const first = yield* fixture()
+          const second = yield* fixture()
+          const machine = yield* Machine
+          const saved = yield* bindings()
+          const database = yield* Database
+          const evidence = yield* Evidence
+          expect((yield* machine.ensure(first))._tag).toBe('Running')
+          const held = (yield* Ref.get(evidence.holders)).get(adoptedId)
+          const ours = yield* database.run(
+            database.select().from(machineBindings).where(eq(machineBindings.key, first)),
+          )
+          // The other server's table: the same machine, its own account, an intent of its own.
+          yield* database.run(
+            database.delete(machineBindings).where(eq(machineBindings.key, first)),
+          )
+          const theirs = ours.map((row) => rebound(row, second))
+          expect(theirs).toHaveLength(1)
+          const viewers = yield* Ref.get(evidence.viewers)
+          const uses = [
+            machine.exec({ key: second, command: 'echo receipt', timeoutSeconds: 10 }),
+            machine.desktop({ key: second, action: DesktopAction.cases.Look.make({}) }),
+            machine.status(second),
+            machine.stop(second),
+          ]
+          for (const use of uses) {
+            yield* database.run(database.insert(machineBindings).values(theirs))
+            expect((yield* use.pipe(Effect.flip))._tag).toBe('MachineHeld')
+            expect(yield* saved.load(second)).toEqual(Option.none())
+          }
+          // Nothing of its own reached the machine: no command, no viewer, no stop, no new holder.
+          const sent = yield* Ref.get(evidence.commands)
+          expect(sent.filter((command) => !command.startsWith("mine='"))).toEqual([])
+          expect(sent.filter((command) => command.endsWith(launcher))).toHaveLength(1)
+          expect(yield* Ref.get(evidence.viewers)).toBe(viewers)
+          expect(yield* Ref.get(evidence.state)).toBe('ready')
+          expect((yield* Ref.get(evidence.holders)).get(adoptedId)).toBe(held)
+
+          // The holder's own server after a restart is such a process too: its row, a running
+          // machine, no memory of the wake. It is played by an account whose row the machine's
+          // record names. It asks once, opens no desktop, and is not asked again.
+          const third = yield* fixture()
+          const named = ours.map((row) => rebound(row, third))
+          yield* database.run(database.insert(machineBindings).values(named))
+          yield* Ref.set(
+            evidence.holders,
+            new Map(named.map((row) => [adoptedId, `${adoptedId} ${row.intent}`])),
+          )
+          const receipt = machine.exec({ key: third, command: 'echo receipt', timeoutSeconds: 10 })
+          expect((yield* receipt).output).toBe('receipt\n')
+          expect((yield* receipt).output).toBe('receipt\n')
+          const after = (yield* Ref.get(evidence.commands)).slice(sent.length)
+          expect(after.filter((command) => command.startsWith("mine='"))).toHaveLength(1)
+          expect(after.filter((command) => command.endsWith(launcher))).toEqual([])
+          expect(after.slice(1)).toEqual(['echo receipt', 'echo receipt'])
+        }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
+      15000,
+    )
+
+    /** Refusal creates no receipt that could expire while adoption is configured. */
+    it.effect('creates a new paid intent after refused adoption is removed a day later', () =>
+      Effect.gen(function* () {
+        const first = yield* fixture()
+        const second = yield* fixture()
+        const machine = yield* Machine
+        const saved = yield* bindings()
+        yield* machine.ensure(first)
+        expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+        expect(yield* saved.load(second)).toEqual(Option.none())
+        yield* TestClock.adjust('24 hours')
+        const paidLayer = Layer.fresh(boatMachineLayer).pipe(
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromUnknown({
+                VIVID_BOAT_API_KEY: 'protocol-test-key',
+                VIVID_BOAT_ORG: 'personal',
+                VIVID_BOAT_TEMPLATE: 'vivid-computer-protocol-test',
+              }),
+            ),
+          ),
+        )
+        expect(
+          (yield* Effect.gen(function* () {
+            return yield* (yield* Machine).ensure(second)
+          }).pipe((program) => scopedCase(paidLayer, program, 'inherited')))._tag,
+        ).toBe('Running')
+        expect(yield* saved.load(second)).toMatchObject(
+          Option.some({
+            requestedAt: 24 * 60 * 60_000,
+            providerId: id,
+          }),
+        )
+        expect(yield* Ref.get((yield* Evidence).created)).toBe(1)
+        expect((yield* machine.ensure(first))._tag).toBe('Running')
+      }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
+    )
+
+    it.effect(
+      'preserves a stale unbound intent and rechecks ownership without the paid-create age limit',
+      () =>
+        Effect.gen(function* () {
+          const first = yield* fixture()
+          const second = yield* fixture()
+          const machine = yield* Machine
           const saved = yield* bindings()
           const api = yield* transport()
-          if (existing) yield* saved.intend(second, api.create)
-          const before = yield* saved.load(second)
-          const checked = yield* Ref.make(0)
-          const bothChecked = yield* Deferred.make<void>()
-          const ownerBound = yield* Deferred.make<void>()
-          const racing = {
-            ...saved,
-            holder: Effect.fn('BoatTest.racingHolder')(function* (providerId: Protocol.ProviderId) {
-              const held = yield* saved.holder(providerId)
-              if ((yield* Ref.updateAndGet(checked, (count) => count + 1)) === 2)
-                yield* Deferred.succeed(bothChecked, undefined)
-              yield* Deferred.await(bothChecked)
-              return held
-            }),
-            bind: Effect.fn('BoatTest.racingBind')(function* (
-              key: MachineKey,
-              intent: string,
-              providerId: Protocol.ProviderId,
-            ) {
-              if (key === second) yield* Deferred.await(ownerBound)
-              const bound = yield* saved.bind(key, intent, providerId)
-              if (key === first) yield* Deferred.succeed(ownerBound, undefined)
-              return bound
-            }),
-          }
-          const owner = yield* lifecycle(
-            api,
-            racing,
-            () => Effect.void,
-            (_, identity) => Effect.succeed(identity),
+          const database = yield* Database
+          yield* machine.ensure(first)
+          yield* saved.intend(second, api.create)
+          yield* database.run(
+            database
+              .update(machineBindings)
+              .set({ requestedAt: -24 * 60 * 60_000 })
+              .where(eq(machineBindings.key, second)),
           )
-          const contender = yield* lifecycle(
-            api,
-            racing,
-            () => Effect.void,
-            (_, identity) => Effect.succeed(identity),
+          const original = yield* saved.load(second)
+          expect(original).toMatchObject(
+            Option.some({ providerId: null, requestedAt: -24 * 60 * 60_000 }),
           )
-          const winning = yield* owner.ensure(first).pipe(Effect.forkChild)
-          expect((yield* contender.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
-          expect((yield* Fiber.join(winning))._tag).toBe('Running')
-          expect(yield* saved.load(second)).toEqual(before)
-          if (!existing) {
-            expect(yield* contender.inspect(second)).toEqual(ComputerState.cases.Absent.make({}))
-            expect(yield* contender.stop(second)).toBeUndefined()
-          }
-          expect((yield* owner.inspect(first))._tag).toBe('Running')
+          expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+          expect(yield* saved.load(second)).toEqual(original)
+          expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+          expect(yield* saved.load(second)).toEqual(original)
+          expect((yield* machine.inspect(second))._tag).toBe('Failed')
+          expect((yield* machine.stop(second).pipe(Effect.flip))._tag).toBe(
+            'MachineCreationUnresolved',
+          )
+          expect(yield* saved.load(second)).toEqual(original)
+          expect((yield* machine.ensure(first))._tag).toBe('Running')
           expect(yield* Ref.get((yield* Evidence).created)).toBe(0)
-        }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
+        }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
     )
-  }
 
-  it.effect('replays the original paid-create receipt after adoption is refused and removed', () =>
-    Effect.gen(function* () {
-      const first = yield* fixture()
-      const second = yield* fixture()
-      const machine = yield* Machine
-      const saved = yield* bindings()
-      const api = yield* transport()
-      const evidence = yield* Evidence
-      const { binding: original } = yield* saved.intend(second, api.create)
-      // Rebuild the Machine layer and replace settings to remove adoption, retaining SQL and HTTP.
-      // A new release must not replace the persisted request when recovering the lost receipt.
-      const paidLayer = Layer.fresh(boatMachineLayer).pipe(
-        Layer.provide(
-          ConfigProvider.layer(
-            ConfigProvider.fromUnknown({
-              VIVID_BOAT_API_KEY: 'protocol-test-key',
-              VIVID_BOAT_ORG: 'personal',
-              VIVID_BOAT_TEMPLATE: 'vivid-computer-new-release',
-            }),
-          ),
-        ),
-      )
-      yield* Ref.set(evidence.breakCreate, true)
-      const lost = yield* Effect.gen(function* () {
-        return yield* (yield* Machine).ensure(second).pipe(Effect.flip)
-      }).pipe(Effect.provide(paidLayer))
-      expect(lost._tag).toBe('MachineRequestRejected')
-      expect(yield* saved.load(second)).toEqual(Option.some(original))
-      expect(yield* Ref.get(evidence.created)).toBe(1)
-      expect(yield* Ref.get(evidence.intents)).toEqual([original.intent])
-      expect((yield* machine.ensure(first))._tag).toBe('Running')
-      expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
-      expect(yield* saved.load(second)).toEqual(Option.some(original))
-      expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
-      expect(yield* saved.load(second)).toEqual(Option.some(original))
-      expect((yield* machine.ensure(first))._tag).toBe('Running')
-      yield* TestClock.adjust('22 hours')
-      const recovered = yield* Effect.gen(function* () {
-        return yield* (yield* Machine).ensure(second)
-      }).pipe(Effect.provide(paidLayer))
-      expect(recovered._tag).toBe('Running')
-      expect(yield* saved.load(second)).toMatchObject(
-        Option.some({ intent: original.intent, request: original.request, providerId: id }),
-      )
-      expect(yield* Ref.get(evidence.intents)).toEqual([original.intent, original.intent])
-      expect(yield* Ref.get(evidence.created)).toBe(1)
-      expect((yield* machine.ensure(first))._tag).toBe('Running')
-    }).pipe(Effect.scoped, Effect.provide(adoptedLayer)),
-  )
-
-  it.effect(
-    'proves the sole tab during native-title lag but refuses ambiguous selection among tabs',
-    () =>
+    it.effect('maps a real provider-id collision without changing either account’s receipt', () =>
       Effect.gen(function* () {
-        const key = yield* fixture()
-        const machine = yield* Machine
-        const evidence = yield* Evidence
-        yield* machine.ensure(key)
-        yield* machine.browse({
-          key,
-          action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
-        })
-        yield* Ref.set(evidence.active, null)
-        const read = yield* machine.browse({ key, action: BrowserAction.cases.Read.make({}) })
-        expect(read.tabs).toEqual([
-          { title: 'Example', address: 'https://example.com', showing: true },
-        ])
-        yield* Ref.set(evidence.extraTab, true)
-        const ambiguous = yield* machine
-          .browse({ key, action: BrowserAction.cases.Read.make({}) })
-          .pipe(Effect.flip)
-        expect(ambiguous._tag).toBe('BrowserStepFailed')
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect(
-    'refuses missing click bounds and an unconfirmed text replacement without retrying input',
-    () =>
-      Effect.gen(function* () {
-        const key = yield* fixture()
-        const machine = yield* Machine
-        const evidence = yield* Evidence
-        yield* machine.ensure(key)
-        yield* machine.browse({
-          key,
-          action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
-        })
-        yield* Ref.set(evidence.missingBounds, true)
-        const beforeClick = (yield* Ref.get(evidence.calls)).filter(
-          (tool) => tool === 'click',
-        ).length
-        const refused = yield* machine
-          .browse({ key, action: BrowserAction.cases.Click.make({ target: 'Continue' }) })
-          .pipe(Effect.flip)
-        expect(refused._tag).toBe('BrowserStepFailed')
-        expect((yield* Ref.get(evidence.calls)).filter((tool) => tool === 'click').length).toBe(
-          beforeClick,
+        const first = yield* fixture()
+        const second = yield* fixture()
+        const saved = yield* bindings()
+        const api = yield* transport()
+        const { binding: owner } = yield* saved.intend(first, api.create)
+        const { binding: waiting } = yield* saved.intend(second, api.create)
+        yield* saved.bind(first, owner.intent, Protocol.ProviderId.make(id))
+        expect(
+          (yield* saved
+            .bind(second, waiting.intent, Protocol.ProviderId.make(id))
+            .pipe(Effect.flip))._tag,
+        ).toBe('MachineHeld')
+        expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: id }))
+        expect(yield* saved.load(second)).toEqual(Option.some(waiting))
+        expect(yield* saved.holder(Protocol.ProviderId.make(id))).toMatchObject(
+          Option.some({ key: first }),
         )
-        expect((yield* Ref.get(evidence.files)).size).toBe(0)
-        yield* Ref.set(evidence.noType, true)
-        const unchanged = yield* machine
-          .browse({
+      }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
+    )
+
+    for (const existing of [false, true]) {
+      /** Two lifecycle instances model separate servers. Real SQL arbitrates the collision;
+       * Deferred gates make both holder checks finish before either bind, with a known winner. */
+      it.effect(
+        `cleans an adoption race loser only when its intent is fresh (existing ${existing})`,
+        () =>
+          Effect.gen(function* () {
+            const first = yield* fixture()
+            const second = yield* fixture()
+            const saved = yield* bindings()
+            const api = yield* transport()
+            if (existing) yield* saved.intend(second, api.create)
+            const before = yield* saved.load(second)
+            const checked = yield* Ref.make(0)
+            const bothChecked = yield* Deferred.make<void>()
+            const ownerBound = yield* Deferred.make<void>()
+            const racing = {
+              ...saved,
+              holder: Effect.fn('BoatTest.racingHolder')(function* (
+                providerId: Protocol.ProviderId,
+              ) {
+                const held = yield* saved.holder(providerId)
+                if ((yield* Ref.updateAndGet(checked, (count) => count + 1)) === 2)
+                  yield* Deferred.succeed(bothChecked, undefined)
+                yield* Deferred.await(bothChecked)
+                return held
+              }),
+              bind: Effect.fn('BoatTest.racingBind')(function* (
+                key: MachineKey,
+                intent: string,
+                providerId: Protocol.ProviderId,
+              ) {
+                if (key === second) yield* Deferred.await(ownerBound)
+                const bound = yield* saved.bind(key, intent, providerId)
+                if (key === first) yield* Deferred.succeed(ownerBound, undefined)
+                return bound
+              }),
+            }
+            const owner = yield* lifecycle(
+              api,
+              racing,
+              () => Effect.void,
+              (_, identity) => Effect.succeed(identity),
+            )
+            const contender = yield* lifecycle(
+              api,
+              racing,
+              () => Effect.void,
+              (_, identity) => Effect.succeed(identity),
+            )
+            const winning = yield* owner.ensure(first).pipe(Effect.forkChild)
+            expect((yield* contender.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+            expect((yield* Fiber.join(winning))._tag).toBe('Running')
+            expect(yield* saved.load(second)).toEqual(before)
+            if (!existing) {
+              expect(yield* contender.inspect(second)).toEqual(ComputerState.cases.Absent.make({}))
+              expect(yield* contender.stop(second)).toBeUndefined()
+            }
+            expect((yield* owner.inspect(first))._tag).toBe('Running')
+            expect(yield* Ref.get((yield* Evidence).created)).toBe(0)
+          }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
+      )
+    }
+
+    it.effect(
+      'replays the original paid-create receipt after adoption is refused and removed',
+      () =>
+        Effect.gen(function* () {
+          const first = yield* fixture()
+          const second = yield* fixture()
+          const machine = yield* Machine
+          const saved = yield* bindings()
+          const api = yield* transport()
+          const evidence = yield* Evidence
+          const { binding: original } = yield* saved.intend(second, api.create)
+          // Rebuild the Machine layer and replace settings to remove adoption, retaining SQL and HTTP.
+          // A new release must not replace the persisted request when recovering the lost receipt.
+          const paidLayer = Layer.fresh(boatMachineLayer).pipe(
+            Layer.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromUnknown({
+                  VIVID_BOAT_API_KEY: 'protocol-test-key',
+                  VIVID_BOAT_ORG: 'personal',
+                  VIVID_BOAT_TEMPLATE: 'vivid-computer-new-release',
+                }),
+              ),
+            ),
+          )
+          yield* Ref.set(evidence.breakCreate, true)
+          const lost = yield* Effect.gen(function* () {
+            return yield* (yield* Machine).ensure(second).pipe(Effect.flip)
+          }).pipe((program) => scopedCase(paidLayer, program, 'inherited'))
+          expect(lost._tag).toBe('MachineRequestRejected')
+          expect(yield* saved.load(second)).toEqual(Option.some(original))
+          expect(yield* Ref.get(evidence.created)).toBe(1)
+          expect(yield* Ref.get(evidence.intents)).toEqual([original.intent])
+          expect((yield* machine.ensure(first))._tag).toBe('Running')
+          expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+          expect(yield* saved.load(second)).toEqual(Option.some(original))
+          expect((yield* machine.ensure(second).pipe(Effect.flip))._tag).toBe('MachineHeld')
+          expect(yield* saved.load(second)).toEqual(Option.some(original))
+          expect((yield* machine.ensure(first))._tag).toBe('Running')
+          yield* TestClock.adjust('22 hours')
+          const recovered = yield* Effect.gen(function* () {
+            return yield* (yield* Machine).ensure(second)
+          }).pipe((program) => scopedCase(paidLayer, program, 'inherited'))
+          expect(recovered._tag).toBe('Running')
+          expect(yield* saved.load(second)).toMatchObject(
+            Option.some({ intent: original.intent, request: original.request, providerId: id }),
+          )
+          expect(yield* Ref.get(evidence.intents)).toEqual([original.intent, original.intent])
+          expect(yield* Ref.get(evidence.created)).toBe(1)
+          expect((yield* machine.ensure(first))._tag).toBe('Running')
+        }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
+    )
+
+    it.effect(
+      'proves the sole tab during native-title lag but refuses ambiguous selection among tabs',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          yield* machine.ensure(key)
+          yield* machine.browse({
+            key,
+            action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
+          })
+          yield* Ref.set(evidence.active, null)
+          const read = yield* machine.browse({ key, action: BrowserAction.cases.Read.make({}) })
+          expect(read.tabs).toEqual([
+            { title: 'Example', address: 'https://example.com', showing: true },
+          ])
+          yield* Ref.set(evidence.extraTab, true)
+          const ambiguous = yield* machine
+            .browse({ key, action: BrowserAction.cases.Read.make({}) })
+            .pipe(Effect.flip)
+          expect(ambiguous._tag).toBe('BrowserStepFailed')
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect(
+      'refuses missing click bounds and an unconfirmed text replacement without retrying input',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          yield* machine.ensure(key)
+          yield* machine.browse({
+            key,
+            action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
+          })
+          yield* Ref.set(evidence.missingBounds, true)
+          const beforeClick = (yield* Ref.get(evidence.calls)).filter(
+            (tool) => tool === 'click',
+          ).length
+          const refused = yield* machine
+            .browse({ key, action: BrowserAction.cases.Click.make({ target: 'Continue' }) })
+            .pipe(Effect.flip)
+          expect(refused._tag).toBe('BrowserStepFailed')
+          expect((yield* Ref.get(evidence.calls)).filter((tool) => tool === 'click').length).toBe(
+            beforeClick,
+          )
+          expect((yield* Ref.get(evidence.files)).size).toBe(0)
+          yield* Ref.set(evidence.noType, true)
+          const unchanged = yield* machine
+            .browse({
+              key,
+              action: BrowserAction.cases.Type.make({
+                target: 'Message',
+                text: 'private-fixture-input',
+              }),
+            })
+            .pipe(Effect.flip)
+          expect(unchanged._tag).toBe('BrowserStepFailed')
+          expect(
+            (yield* Ref.get(evidence.calls)).filter((tool) => tool === 'browser_type').length,
+          ).toBe(1)
+          expect((yield* Ref.get(evidence.files)).size).toBe(0)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect(
+      'preserves exit-zero refusal codes and cleans private inputs, even for JSON success decoders',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          yield* machine.ensure(key)
+          const guest = driver(yield* transport(), Protocol.ProviderId.make(id), key, {
+            socket: '/run/ascii-cua/driver.sock',
+            binary: '/opt/ascii/cua-driver/cua-driver',
+          })
+          const invalid = yield* guest
+            .call('get_desktop_state', { max_image_dimension: 0 }, Schema.Json)
+            .pipe(Effect.flip)
+          expect(invalid instanceof ComputerToolRefused).toBe(true)
+          if (invalid instanceof ComputerToolRefused) expect(invalid.code).toBe('invalid_arguments')
+          expect(JSON.stringify(invalid).includes('private-fixture-input')).toBe(false)
+          expect((yield* Ref.get(evidence.files)).size).toBe(0)
+          const inputRefused = yield* guest
+            .call(
+              'browser_click',
+              {
+                target_id: 'fixture-target',
+                tab_id: 'fixture-tab',
+                input_route: 'trusted',
+                ref: 'p1:1',
+              },
+              Schema.Json,
+            )
+            .pipe(Effect.flip)
+          expect(inputRefused instanceof ComputerActionRefused).toBe(true)
+          expect((yield* Ref.get(evidence.files)).size).toBe(0)
+          yield* Ref.set(evidence.refuseBrowser, true)
+          const refused = yield* machine
+            .browse({
+              key,
+              action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
+            })
+            .pipe(Effect.flip)
+          expect(refused instanceof ComputerToolRefused).toBe(true)
+          if (refused instanceof ComputerToolRefused)
+            expect(refused.code).toBe('browser_route_unavailable')
+          expect(JSON.stringify(refused).includes('private-fixture-input')).toBe(false)
+          expect((yield* Ref.get(evidence.files)).size).toBe(0)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect(
+      'creates once, returns a gated viewer, executes native desktop/browser, stops and resumes after Layer restart',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          yield* machine.ensure(key)
+          const running = yield* machine.status(key)
+          if (!ComputerState.guards.Running(running))
+            expect.fail('The created Computer must be running')
+          expect(running.screen._tag).toBe('Viewer')
+          if (Predicate.isTagged(running.screen, 'Viewer'))
+            expect(running.screen.expiresAt > running.since).toBe(true)
+          const view = yield* machine.desktop({ key, action: DesktopAction.cases.Look.make({}) })
+          expect(view).toEqual({
+            picture: png,
+            width: 1,
+            height: 1,
+            pointer: { x: 0, y: 0 },
+            window: 'Fixture Chrome',
+          })
+          yield* machine.desktop({
+            key,
+            action: DesktopAction.cases.Type.make({ text: 'private-fixture-input' }),
+          })
+          expect(
+            (yield* Ref.get(evidence.commands)).some((value) =>
+              value.includes('private-fixture-input'),
+            ),
+          ).toBe(false)
+          expect((yield* Ref.get(evidence.files)).size).toBe(0)
+          const page = yield* machine.browse({
+            key,
+            action: BrowserAction.cases.Open.make({ address: 'https://example.com/proof' }),
+          })
+          expect(page.address).toBe('https://example.com/proof')
+          expect(page.outline).toContain('Continue')
+          expect(page.tabs).toEqual([{ title: 'Example', address: page.address, showing: true }])
+          const clicked = yield* machine.browse({
+            key,
+            action: BrowserAction.cases.Click.make({ target: 'Continue' }),
+          })
+          expect(clicked.address).toBe('https://example.com/continued')
+          const typed = yield* machine.browse({
             key,
             action: BrowserAction.cases.Type.make({
               target: 'Message',
               text: 'private-fixture-input',
             }),
           })
-          .pipe(Effect.flip)
-        expect(unchanged._tag).toBe('BrowserStepFailed')
-        expect(
-          (yield* Ref.get(evidence.calls)).filter((tool) => tool === 'browser_type').length,
-        ).toBe(1)
-        expect((yield* Ref.get(evidence.files)).size).toBe(0)
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
+          expect(typed.outline).toContain('private-fixture-input')
+          expect(
+            (yield* Ref.get(evidence.commands)).some((value) =>
+              value.includes('private-fixture-input'),
+            ),
+          ).toBe(false)
+          expect((yield* Ref.get(evidence.files)).size).toBe(0)
+          expect(
+            (yield* machine.exec({ key, command: 'echo receipt', timeoutSeconds: 10 })).output,
+          ).toBe('receipt\n')
+          yield* machine.stop(key)
+          expect(ComputerState.guards.Stopped(yield* machine.status(key))).toBe(true)
+          const restored = yield* Effect.gen(function* () {
+            const restarted = yield* Machine
+            yield* restarted.ensure(key)
+            return yield* restarted.status(key)
+          }).pipe((program) => scopedCase(boatMachineLayer, program, 'inherited'))
+          if (!ComputerState.guards.Running(restored))
+            expect.fail('The resumed Computer must be running')
+          expect(restored.screen._tag).toBe('Viewer')
+          expect(yield* Ref.get(evidence.created)).toBe(1)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+      15000,
+    )
 
-  it.effect(
-    'preserves exit-zero refusal codes and cleans private inputs, even for JSON success decoders',
-    () =>
-      Effect.gen(function* () {
-        const key = yield* fixture()
-        const machine = yield* Machine
-        const evidence = yield* Evidence
-        yield* machine.ensure(key)
-        const guest = driver(yield* transport(), Protocol.ProviderId.make(id), key, {
-          socket: '/run/ascii-cua/driver.sock',
-          binary: '/opt/ascii/cua-driver/cua-driver',
-        })
-        const invalid = yield* guest
-          .call('get_desktop_state', { max_image_dimension: 0 }, Schema.Json)
-          .pipe(Effect.flip)
-        expect(invalid instanceof ComputerToolRefused).toBe(true)
-        if (invalid instanceof ComputerToolRefused) expect(invalid.code).toBe('invalid_arguments')
-        expect(JSON.stringify(invalid).includes('private-fixture-input')).toBe(false)
-        expect((yield* Ref.get(evidence.files)).size).toBe(0)
-        const inputRefused = yield* guest
-          .call(
-            'browser_click',
-            {
-              target_id: 'fixture-target',
-              tab_id: 'fixture-tab',
-              input_route: 'trusted',
-              ref: 'p1:1',
-            },
-            Schema.Json,
-          )
-          .pipe(Effect.flip)
-        expect(inputRefused instanceof ComputerActionRefused).toBe(true)
-        expect((yield* Ref.get(evidence.files)).size).toBe(0)
-        yield* Ref.set(evidence.refuseBrowser, true)
-        const refused = yield* machine
-          .browse({
-            key,
-            action: BrowserAction.cases.Open.make({ address: 'https://example.com' }),
+    it.effect(
+      'reuses one viewer until sixty seconds before expiry and shares concurrent reads',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          yield* machine.ensure(key)
+          expect(yield* Ref.get(evidence.viewers)).toBe(0)
+          const first = yield* machine.status(key)
+          expect(yield* Ref.get(evidence.viewers)).toBe(1)
+          expect(yield* machine.status(key)).toEqual(first)
+          yield* TestClock.adjust('7 minutes')
+          expect(yield* machine.status(key)).toEqual(first)
+          expect(yield* Ref.get(evidence.viewers)).toBe(1)
+          yield* TestClock.adjust('2 minutes')
+          const refreshed = yield* Effect.all([machine.status(key), machine.status(key)], {
+            concurrency: 'unbounded',
           })
-          .pipe(Effect.flip)
-        expect(refused instanceof ComputerToolRefused).toBe(true)
-        if (refused instanceof ComputerToolRefused)
-          expect(refused.code).toBe('browser_route_unavailable')
-        expect(JSON.stringify(refused).includes('private-fixture-input')).toBe(false)
-        expect((yield* Ref.get(evidence.files)).size).toBe(0)
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
+          expect(refreshed[0]).toEqual(refreshed[1])
+          expect(yield* Ref.get(evidence.viewers)).toBe(2)
+          const database = yield* Database
+          const rows = yield* database.run(
+            database.select().from(machineBindings).where(eq(machineBindings.key, key)),
+          )
+          expect(JSON.stringify(rows).includes('#token=')).toBe(false)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
 
-  it.effect(
-    'creates once, returns a gated viewer, executes native desktop/browser, stops and resumes after Layer restart',
-    () =>
+    it.effect("names no organization when none is configured, so the key's own account pays", () =>
       Effect.gen(function* () {
         const key = yield* fixture()
         const machine = yield* Machine
         const evidence = yield* Evidence
+        // The fake refuses any request, and any create body, that names a payer other than this.
+        yield* Ref.set(evidence.org, Option.none())
         yield* machine.ensure(key)
-        const running = yield* machine.status(key)
-        if (!ComputerState.guards.Running(running))
-          expect.fail('The created Computer must be running')
-        expect(running.screen._tag).toBe('Viewer')
-        if (Predicate.isTagged(running.screen, 'Viewer'))
-          expect(running.screen.expiresAt > running.since).toBe(true)
-        const view = yield* machine.desktop({ key, action: DesktopAction.cases.Look.make({}) })
-        expect(view).toEqual({
-          picture: png,
-          width: 1,
-          height: 1,
-          pointer: { x: 0, y: 0 },
-          window: 'Fixture Chrome',
-        })
-        yield* machine.desktop({
-          key,
-          action: DesktopAction.cases.Type.make({ text: 'private-fixture-input' }),
-        })
-        expect(
-          (yield* Ref.get(evidence.commands)).some((value) =>
-            value.includes('private-fixture-input'),
-          ),
-        ).toBe(false)
-        expect((yield* Ref.get(evidence.files)).size).toBe(0)
-        const page = yield* machine.browse({
-          key,
-          action: BrowserAction.cases.Open.make({ address: 'https://example.com/proof' }),
-        })
-        expect(page.address).toBe('https://example.com/proof')
-        expect(page.outline).toContain('Continue')
-        expect(page.tabs).toEqual([{ title: 'Example', address: page.address, showing: true }])
-        const clicked = yield* machine.browse({
-          key,
-          action: BrowserAction.cases.Click.make({ target: 'Continue' }),
-        })
-        expect(clicked.address).toBe('https://example.com/continued')
-        const typed = yield* machine.browse({
-          key,
-          action: BrowserAction.cases.Type.make({
-            target: 'Message',
-            text: 'private-fixture-input',
-          }),
-        })
-        expect(typed.outline).toContain('private-fixture-input')
-        expect(
-          (yield* Ref.get(evidence.commands)).some((value) =>
-            value.includes('private-fixture-input'),
-          ),
-        ).toBe(false)
-        expect((yield* Ref.get(evidence.files)).size).toBe(0)
-        expect(
-          (yield* machine.exec({ key, command: 'echo receipt', timeoutSeconds: 10 })).output,
-        ).toBe('receipt\n')
-        yield* machine.stop(key)
-        expect(ComputerState.guards.Stopped(yield* machine.status(key))).toBe(true)
-        const restored = yield* Effect.gen(function* () {
-          const restarted = yield* Machine
-          yield* restarted.ensure(key)
-          return yield* restarted.status(key)
-        }).pipe(Effect.provide(boatMachineLayer))
-        if (!ComputerState.guards.Running(restored))
-          expect.fail('The resumed Computer must be running')
-        expect(restored.screen._tag).toBe('Viewer')
         expect(yield* Ref.get(evidence.created)).toBe(1)
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    15000,
-  )
-
-  it.effect('reuses one viewer until sixty seconds before expiry and shares concurrent reads', () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const machine = yield* Machine
-      const evidence = yield* Evidence
-      yield* machine.ensure(key)
-      expect(yield* Ref.get(evidence.viewers)).toBe(0)
-      const first = yield* machine.status(key)
-      expect(yield* Ref.get(evidence.viewers)).toBe(1)
-      expect(yield* machine.status(key)).toEqual(first)
-      yield* TestClock.adjust('7 minutes')
-      expect(yield* machine.status(key)).toEqual(first)
-      expect(yield* Ref.get(evidence.viewers)).toBe(1)
-      yield* TestClock.adjust('2 minutes')
-      const refreshed = yield* Effect.all([machine.status(key), machine.status(key)], {
-        concurrency: 'unbounded',
-      })
-      expect(refreshed[0]).toEqual(refreshed[1])
-      expect(yield* Ref.get(evidence.viewers)).toBe(2)
-      const database = yield* Database
-      const rows = yield* database.run(
-        database.select().from(machineBindings).where(eq(machineBindings.key, key)),
-      )
-      expect(JSON.stringify(rows).includes('#token=')).toBe(false)
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect("names no organization when none is configured, so the key's own account pays", () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const machine = yield* Machine
-      const evidence = yield* Evidence
-      // The fake refuses any request, and any create body, that names a payer other than this.
-      yield* Ref.set(evidence.org, Option.none())
-      yield* machine.ensure(key)
-      expect(yield* Ref.get(evidence.created)).toBe(1)
-      yield* machine.stop(key)
-      expect(yield* Ref.get(evidence.state)).toBe('archived')
-    }).pipe(Effect.scoped, Effect.provide(accountLayer)),
-  )
-
-  it.effect('starts a stopped Computer on the next size when Boat has no machine of its own', () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const machine = yield* Machine
-      const evidence = yield* Evidence
-      yield* machine.ensure(key)
-      yield* machine.stop(key)
-      yield* Ref.set(evidence.resumes, [])
-      yield* Ref.set(evidence.free, new Set<Size>(['large']))
-      expect((yield* machine.ensure(key))._tag).toBe('Running')
-      expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
-      // The next start asks for its own size first again, and gets it once Boat has one.
-      yield* machine.stop(key)
-      yield* Ref.set(evidence.resumes, [])
-      yield* Ref.set(evidence.free, new Set<Size>(['default', 'large']))
-      expect((yield* machine.ensure(key))._tag).toBe('Running')
-      expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect(
-    'leaves the Computer stopped when Boat has no machine of any size, then starts it',
-    () =>
-      Effect.gen(function* () {
-        const key = yield* fixture()
-        const machine = yield* Machine
-        const evidence = yield* Evidence
-        yield* machine.ensure(key)
         yield* machine.stop(key)
-        yield* Ref.set(evidence.resumes, [])
-        yield* Ref.set(evidence.free, new Set<Size>())
-        expect((yield* machine.ensure(key).pipe(Effect.flip))._tag).toBe('MachineNoCapacity')
-        // Never a smaller size than its own: Boat refuses one the disk does not fit.
-        expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large', 'xlarge'])
         expect(yield* Ref.get(evidence.state)).toBe('archived')
-        expect((yield* machine.status(key))._tag).toBe('Stopped')
-        yield* Ref.set(evidence.free, new Set<Size>(['default']))
-        expect((yield* machine.ensure(key))._tag).toBe('Running')
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
+      }).pipe(Effect.scoped, (program) => scopedCase(accountLayer, program, 'fresh')),
+    )
 
-  it.effect('keeps a failing provider apart from one that has no machine free', () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const machine = yield* Machine
-      const evidence = yield* Evidence
-      yield* machine.ensure(key)
-      yield* machine.stop(key)
-      yield* Ref.set(evidence.resumes, [])
-      yield* Ref.set(evidence.breakResume, true)
-      const failure = yield* machine.ensure(key).pipe(Effect.flip)
-      // A 503 without Boat's own code is an outage: no other size is tried on its account.
-      expect(failure._tag).toBe('MachineRequestRejected')
-      expect(isOutage(failure)).toBe(true)
-      expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
+    it.effect(
+      'starts a stopped Computer on the next size when Boat has no machine of its own',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          yield* machine.ensure(key)
+          yield* machine.stop(key)
+          yield* Ref.set(evidence.resumes, [])
+          yield* Ref.set(evidence.free, new Set<Size>(['large']))
+          expect((yield* machine.ensure(key))._tag).toBe('Running')
+          expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
+          // The next start asks for its own size first again, and gets it once Boat has one.
+          yield* machine.stop(key)
+          yield* Ref.set(evidence.resumes, [])
+          yield* Ref.set(evidence.free, new Set<Size>(['default', 'large']))
+          expect((yield* machine.ensure(key))._tag).toBe('Running')
+          expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
 
-  it.effect(
-    'withdraws a start that Boat left waiting for a machine and starts it on a free one',
-    () =>
+    it.effect(
+      'leaves the Computer stopped when Boat has no machine of any size, then starts it',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          yield* machine.ensure(key)
+          yield* machine.stop(key)
+          yield* Ref.set(evidence.resumes, [])
+          yield* Ref.set(evidence.free, new Set<Size>())
+          expect((yield* machine.ensure(key).pipe(Effect.flip))._tag).toBe('MachineNoCapacity')
+          // Never a smaller size than its own: Boat refuses one the disk does not fit.
+          expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large', 'xlarge'])
+          expect(yield* Ref.get(evidence.state)).toBe('archived')
+          expect((yield* machine.status(key))._tag).toBe('Stopped')
+          yield* Ref.set(evidence.free, new Set<Size>(['default']))
+          expect((yield* machine.ensure(key))._tag).toBe('Running')
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('keeps a failing provider apart from one that has no machine free', () =>
       Effect.gen(function* () {
         const key = yield* fixture()
         const machine = yield* Machine
         const evidence = yield* Evidence
         yield* machine.ensure(key)
         yield* machine.stop(key)
-        // Another caller resumed it without `failFast` and Boat has no machine of its size.
-        yield* Ref.set(evidence.state, 'provisioning')
-        yield* Ref.set(evidence.free, new Set<Size>(['large']))
         yield* Ref.set(evidence.resumes, [])
-        const stops = yield* Ref.get(evidence.stops)
-        // The status read is where Vivid first sees the wait; it changes nothing at Boat.
-        expect((yield* machine.status(key))._tag).toBe('Starting')
-        expect(yield* Ref.get(evidence.stops)).toBe(stops)
-        yield* TestClock.adjust('10 seconds')
-        expect((yield* machine.ensure(key))._tag).toBe('Running')
-        expect(yield* Ref.get(evidence.stops)).toBe(stops + 1)
-        expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('moves a Computer whose disk has outgrown its size to the next one', () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const machine = yield* Machine
-      const evidence = yield* Evidence
-      yield* machine.ensure(key)
-      yield* machine.stop(key)
-      yield* Ref.set(evidence.resumes, [])
-      yield* Ref.set(evidence.outgrown, new Set<Size>(['default']))
-      expect((yield* machine.ensure(key))._tag).toBe('Running')
-      expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('says a Computer has outgrown every machine its plan allows, and starts nothing', () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const machine = yield* Machine
-      const evidence = yield* Evidence
-      yield* machine.ensure(key)
-      yield* machine.stop(key)
-      yield* Ref.set(evidence.resumes, [])
-      // Production, 7 October 2026: the data fits neither size the plan includes, and the one
-      // size that would hold it is refused for the plan.
-      yield* Ref.set(evidence.outgrown, new Set<Size>(['default', 'large']))
-      yield* Ref.set(evidence.unplanned, new Set<Size>(['xlarge']))
-      const failure = yield* Effect.flip(machine.ensure(key))
-      expect(failure._tag).toBe('MachineOutgrown')
-      expect(Predicate.isTagged(failure, 'MachineOutgrown') && failure.upgrade).toBe(true)
-      // It does not end by itself, so it is the Computer's state and not an outage.
-      expect(isOutage(failure)).toBe(false)
-      expect(machineFailureReason(failure)).toContain(
-        'once the plan is upgraded or files are removed',
-      )
-      expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large', 'xlarge'])
-      expect((yield* machine.inspect(key))._tag).toBe('Stopped')
-      // The plan now includes the larger size: the same start takes it.
-      yield* Ref.set(evidence.unplanned, new Set<Size>())
-      expect((yield* machine.ensure(key))._tag).toBe('Running')
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('starts a Computer whose desktop launcher fails, and uses it', () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const machine = yield* Machine
-      const evidence = yield* Evidence
-      // Production, 7 October 2026: the machine ran and its holder was settled, the provider's
-      // desktop was not ready, and the failed launcher made the whole start a failed Computer.
-      yield* Ref.set(evidence.desktopDown, true)
-      expect((yield* machine.ensure(key))._tag).toBe('Running')
-      expect(yield* Ref.get(evidence.launches)).toBe(0)
-      expect(
-        (yield* machine.exec({ key, command: 'echo receipt', timeoutSeconds: 10 })).exitCode,
-      ).toBe(0)
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('stops asking when the account has no starts left this hour', () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const machine = yield* Machine
-      const evidence = yield* Evidence
-      yield* machine.ensure(key)
-      yield* machine.stop(key)
-      yield* Ref.set(evidence.resumes, [])
-      yield* Ref.set(evidence.startsSpent, true)
-      const failure = yield* Effect.flip(machine.ensure(key))
-      // It ends by itself within the hour, so it is told like a provider with no machine free
-      // and the Computer stays stopped and whole. One size was asked, not every size.
-      expect(Predicate.isTagged(failure, 'MachineNoCapacity') && failure.limited).toBe(true)
-      expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
-      expect((yield* machine.inspect(key))._tag).toBe('Stopped')
-      yield* Ref.set(evidence.startsSpent, false)
-      expect((yield* machine.ensure(key))._tag).toBe('Running')
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('reads a resume that failed for another reason as a failure, not as a size', () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const machine = yield* Machine
-      const evidence = yield* Evidence
-      yield* machine.ensure(key)
-      yield* machine.stop(key)
-      yield* Ref.set(evidence.resumes, [])
-      yield* Ref.set(evidence.restoreFails, true)
-      const failure = yield* Effect.flip(machine.ensure(key))
-      // Boat uses one code for both; only its sentence about the disk makes it a size's answer.
-      expect(failure._tag).toBe('MachineRequestRejected')
-      expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('withdraws a waiting start within the same start when Vivid had not seen it wait', () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const evidence = yield* Evidence
-      const boat = yield* stepped()
-      yield* boat.machine.ensure(key)
-      yield* boat.machine.stop(key)
-      yield* Ref.set(evidence.state, 'provisioning')
-      yield* Ref.set(evidence.free, new Set<Size>(['large']))
-      yield* Ref.set(evidence.resumes, [])
-      const stops = yield* Ref.get(evidence.stops)
-      // What the binding recorded while the machine was made and stopped is not this start's.
-      yield* Queue.clear(boat.waits)
-      const starting = yield* boat.machine.ensure(key).pipe(Effect.forkChild)
-      // The start has seen the wait and sleeps before its next look.
-      expect(yield* Queue.take(boat.waits)).toBe('provisioning')
-      yield* TestClock.adjust('8 seconds')
-      expect(yield* Ref.get(evidence.stops)).toBe(stops)
-      // The fifth look, ten seconds after the first, still finds it waiting.
-      yield* TestClock.adjust('2 seconds')
-      expect((yield* Fiber.join(starting))._tag).toBe('Running')
-      expect(yield* Ref.get(evidence.stops)).toBe(stops + 1)
-      expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('starts a waiting resume that another caller stops while Vivid looks at it', () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const evidence = yield* Evidence
-      const boat = yield* stepped()
-      yield* boat.machine.ensure(key)
-      yield* boat.machine.stop(key)
-      yield* Ref.set(evidence.state, 'provisioning')
-      yield* Ref.set(evidence.resumes, [])
-      const stops = yield* Ref.get(evidence.stops)
-      // What the binding recorded while the machine was made and stopped is not this start's.
-      yield* Queue.clear(boat.waits)
-      const starting = yield* boat.machine.ensure(key).pipe(Effect.forkChild)
-      expect(yield* Queue.take(boat.waits)).toBe('provisioning')
-      yield* Ref.set(evidence.state, 'archiving')
-      yield* TestClock.adjust('2 seconds')
-      // Vivid sent no stop of its own, waited for the other one to finish, and started the machine.
-      expect((yield* Fiber.join(starting))._tag).toBe('Running')
-      expect(yield* Ref.get(evidence.stops)).toBe(stops)
-      expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('leaves a waiting start alone when Boat gives it a machine within the grace', () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const evidence = yield* Evidence
-      const boat = yield* stepped()
-      yield* boat.machine.ensure(key)
-      yield* boat.machine.stop(key)
-      yield* Ref.set(evidence.state, 'provisioning')
-      // The start's own read and its first look find it waiting; Boat has placed it by the second.
-      yield* Ref.set(evidence.placedAfter, Option.some(2))
-      yield* Ref.set(evidence.resumes, [])
-      const stops = yield* Ref.get(evidence.stops)
-      // What the binding recorded while the machine was made and stopped is not this start's.
-      yield* Queue.clear(boat.waits)
-      const starting = yield* boat.machine.ensure(key).pipe(Effect.forkChild)
-      expect(yield* Queue.take(boat.waits)).toBe('provisioning')
-      yield* TestClock.adjust('4 seconds')
-      expect((yield* Fiber.join(starting))._tag).toBe('Running')
-      expect(yield* Ref.get(evidence.stops)).toBe(stops)
-      expect(yield* Ref.get(evidence.resumes)).toEqual([])
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('asks a machine that has just woken again until it takes its first command', () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const evidence = yield* Evidence
-      // As production saw it on 6 October 2026: Boat calls the machine running, and for the next
-      // half minute a command is answered 409 or 502. Sent once, that failed every wake.
-      const refusals: ReadonlyArray<Unheard> = [
-        new MachineRequestRejected({ status: 409 }),
-        new MachineExecutionUnknown({ key }),
-        new MachineExecutionUnknown({ key }),
-        new MachineExecutionUnknown({ key }),
-      ]
-      const boat = yield* unready(key, (sent) =>
-        Effect.succeed(Option.fromUndefinedOr(refusals[sent - 1])),
-      )
-      const settling = yield* boat.holder.settle(key, boat.identity, wake).pipe(Effect.forkChild)
-      expect(yield* Queue.take(boat.asked)).toBe(1)
-      yield* TestClock.adjust('2 seconds')
-      expect(yield* Queue.take(boat.asked)).toBe(2)
-      yield* TestClock.adjust('2 seconds')
-      expect(yield* Queue.take(boat.asked)).toBe(3)
-      yield* TestClock.adjust('2 seconds')
-      expect(yield* Queue.take(boat.asked)).toBe(4)
-      yield* TestClock.adjust('2 seconds')
-      expect((yield* Fiber.join(settling)).id).toBe(id)
-      expect(yield* Ref.get(boat.sent)).toBe(5)
-      // The machine took it once: one record, one desktop opened.
-      expect((yield* Ref.get(evidence.holders)).get(id)).toBe(
-        `${id} ${boat.identity.binding.intent}`,
-      )
-      expect(yield* Ref.get(evidence.launches)).toBe(1)
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect(
-    'a machine that never takes its first command is an outage, and works once it does',
-    () =>
-      Effect.gen(function* () {
-        const key = yield* fixture()
-        const evidence = yield* Evidence
-        const answering = yield* Ref.make(false)
-        const boat = yield* unready(key, () =>
-          Ref.get(answering).pipe(
-            Effect.map((ready) =>
-              ready ? Option.none() : Option.some(new MachineExecutionUnknown({ key })),
-            ),
-          ),
-        )
-        const settling = yield* boat.holder
-          .settle(key, boat.identity, wake)
-          .pipe(Effect.flip, Effect.forkChild)
-        expect(yield* Queue.take(boat.asked)).toBe(1)
-        yield* TestClock.adjust('75 seconds')
-        const failure = yield* Fiber.join(settling)
-        // An outage is told and never recorded as the Computer's state: the uncertain receipt it
-        // used to be was recorded as a failed Computer.
-        expect(failure._tag).toBe('MachineUnreachable')
-        expect(isOutage(failure)).toBe(true)
-        expect(yield* Ref.get(evidence.launches)).toBe(0)
-        yield* Ref.set(answering, true)
-        expect((yield* boat.holder.admit(key, boat.identity)).id).toBe(id)
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect('status never reconciles an unresolved create or resumes a stopped machine', () =>
-    Effect.gen(function* () {
-      const key = yield* fixture()
-      const machine = yield* Machine
-      const evidence = yield* Evidence
-      yield* Ref.set(evidence.breakCreate, true)
-      yield* machine.ensure(key).pipe(Effect.flip)
-      expect((yield* machine.status(key))._tag).toBe('Failed')
-      expect((yield* Ref.get(evidence.intents)).length).toBe(1)
-      expect((yield* machine.stop(key).pipe(Effect.flip))._tag).toBe('MachineCreationUnresolved')
-      expect((yield* Ref.get(evidence.intents)).length).toBe(1)
-      yield* machine.ensure(key)
-      yield* machine.stop(key)
-      expect((yield* machine.status(key))._tag).toBe('Stopped')
-      expect(yield* Ref.get(evidence.state)).toBe('archived')
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  )
-
-  it.effect(
-    'recovers a lost create receipt with the persisted original body and key after restart',
-    () =>
-      Effect.gen(function* () {
-        const key = yield* fixture()
-        const evidence = yield* Evidence
-        const machine = yield* Machine
-        yield* Ref.set(evidence.breakCreate, true)
-        expect((yield* Effect.flip(machine.ensure(key)))._tag).toBe('MachineRequestRejected')
-        yield* Effect.gen(function* () {
-          yield* (yield* Machine).ensure(key)
-        }).pipe(
-          Effect.provide(
-            boatMachineLayer.pipe(
-              Layer.provide(
-                ConfigProvider.layerAdd(
-                  ConfigProvider.fromUnknown({
-                    VIVID_BOAT_SIZE: 'large',
-                    VIVID_BOAT_LIFETIME_SECONDS: '7200',
-                    VIVID_BOAT_TEMPLATE: 'vivid-computer-new-release',
-                  }),
-                  { asPrimary: true },
-                ),
-              ),
-            ),
-          ),
-        )
-        const intents = yield* Ref.get(evidence.intents)
-        expect(intents.length).toBe(2)
-        expect(intents[0] === intents[1]).toBe(true)
-        expect(yield* Ref.get(evidence.created)).toBe(1)
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    15000,
-  )
-
-  it.effect(
-    'refuses public viewer URLs and malformed state, and never retries an uncertain command',
-    () =>
-      Effect.gen(function* () {
-        const key = yield* fixture()
-        const machine = yield* Machine
-        const evidence = yield* Evidence
-        yield* machine.ensure(key)
-        yield* Ref.set(evidence.publicViewer, true)
-        yield* TestClock.adjust('10 minutes')
-        expect((yield* Effect.flip(machine.status(key)))._tag).toBe('MachineResponseInvalid')
-        yield* Ref.set(evidence.publicViewer, false)
-        yield* Ref.set(evidence.breakCommand, true)
-        const before = (yield* Ref.get(evidence.commands)).length
-        expect(
-          (yield* Effect.flip(machine.exec({ key, command: 'echo receipt', timeoutSeconds: 10 })))
-            ._tag,
-        ).toBe('MachineExecutionUnknown')
-        expect((yield* Ref.get(evidence.commands)).length - before).toBe(1)
-        yield* Ref.set(evidence.malformed, true)
-        expect((yield* Effect.flip(machine.status(key)))._tag).toBe('MachineResponseInvalid')
-        yield* Ref.set(evidence.malformed, false)
-        yield* Ref.set(evidence.wrongIdentity, true)
-        expect((yield* Effect.flip(machine.status(key)))._tag).toBe('MachineResponseInvalid')
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    15000,
-  )
-
-  it.effect(
-    'reads a 5xx whose body is not Boat’s as the provider failing, not as an invalid answer',
-    () =>
-      Effect.gen(function* () {
-        const key = yield* fixture()
-        const machine = yield* Machine
-        const evidence = yield* Evidence
-        yield* machine.ensure(key)
-        yield* Ref.set(evidence.edgeDown, true)
-        // An invalid answer is recorded as the machine's state; an outage never is. An edge's
-        // HTML page must land on the outage side although nothing in it can be decoded.
-        const failure = yield* Effect.flip(machine.inspect(key))
+        yield* Ref.set(evidence.breakResume, true)
+        const failure = yield* machine.ensure(key).pipe(Effect.flip)
+        // A 503 without Boat's own code is an outage: no other size is tried on its account.
         expect(failure._tag).toBe('MachineRequestRejected')
         expect(isOutage(failure)).toBe(true)
-        yield* Ref.set(evidence.edgeDown, false)
-        expect((yield* machine.inspect(key))._tag).toBe('Running')
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    15000,
-  )
+        expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect(
+      'withdraws a start that Boat left waiting for a machine and starts it on a free one',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          yield* machine.ensure(key)
+          yield* machine.stop(key)
+          // Another caller resumed it without `failFast` and Boat has no machine of its size.
+          yield* Ref.set(evidence.state, 'provisioning')
+          yield* Ref.set(evidence.free, new Set<Size>(['large']))
+          yield* Ref.set(evidence.resumes, [])
+          const stops = yield* Ref.get(evidence.stops)
+          // The status read is where Vivid first sees the wait; it changes nothing at Boat.
+          expect((yield* machine.status(key))._tag).toBe('Starting')
+          expect(yield* Ref.get(evidence.stops)).toBe(stops)
+          yield* TestClock.adjust('10 seconds')
+          expect((yield* machine.ensure(key))._tag).toBe('Running')
+          expect(yield* Ref.get(evidence.stops)).toBe(stops + 1)
+          expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('moves a Computer whose disk has outgrown its size to the next one', () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* machine.ensure(key)
+        yield* machine.stop(key)
+        yield* Ref.set(evidence.resumes, [])
+        yield* Ref.set(evidence.outgrown, new Set<Size>(['default']))
+        expect((yield* machine.ensure(key))._tag).toBe('Running')
+        expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect(
+      'says a Computer has outgrown every machine its plan allows, and starts nothing',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          yield* machine.ensure(key)
+          yield* machine.stop(key)
+          yield* Ref.set(evidence.resumes, [])
+          // Production, 7 October 2026: the data fits neither size the plan includes, and the one
+          // size that would hold it is refused for the plan.
+          yield* Ref.set(evidence.outgrown, new Set<Size>(['default', 'large']))
+          yield* Ref.set(evidence.unplanned, new Set<Size>(['xlarge']))
+          const failure = yield* Effect.flip(machine.ensure(key))
+          expect(failure._tag).toBe('MachineOutgrown')
+          expect(Predicate.isTagged(failure, 'MachineOutgrown') && failure.upgrade).toBe(true)
+          // It does not end by itself, so it is the Computer's state and not an outage.
+          expect(isOutage(failure)).toBe(false)
+          expect(machineFailureReason(failure)).toContain(
+            'once the plan is upgraded or files are removed',
+          )
+          expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large', 'xlarge'])
+          expect((yield* machine.inspect(key))._tag).toBe('Stopped')
+          // The plan now includes the larger size: the same start takes it.
+          yield* Ref.set(evidence.unplanned, new Set<Size>())
+          expect((yield* machine.ensure(key))._tag).toBe('Running')
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('starts a Computer whose desktop launcher fails, and uses it', () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        // Production, 7 October 2026: the machine ran and its holder was settled, the provider's
+        // desktop was not ready, and the failed launcher made the whole start a failed Computer.
+        yield* Ref.set(evidence.desktopDown, true)
+        expect((yield* machine.ensure(key))._tag).toBe('Running')
+        expect(yield* Ref.get(evidence.launches)).toBe(0)
+        expect(
+          (yield* machine.exec({ key, command: 'echo receipt', timeoutSeconds: 10 })).exitCode,
+        ).toBe(0)
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('stops asking when the account has no starts left this hour', () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* machine.ensure(key)
+        yield* machine.stop(key)
+        yield* Ref.set(evidence.resumes, [])
+        yield* Ref.set(evidence.startsSpent, true)
+        const failure = yield* Effect.flip(machine.ensure(key))
+        // It ends by itself within the hour, so it is told like a provider with no machine free
+        // and the Computer stays stopped and whole. One size was asked, not every size.
+        expect(Predicate.isTagged(failure, 'MachineNoCapacity') && failure.limited).toBe(true)
+        expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
+        expect((yield* machine.inspect(key))._tag).toBe('Stopped')
+        yield* Ref.set(evidence.startsSpent, false)
+        expect((yield* machine.ensure(key))._tag).toBe('Running')
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('reads a resume that failed for another reason as a failure, not as a size', () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* machine.ensure(key)
+        yield* machine.stop(key)
+        yield* Ref.set(evidence.resumes, [])
+        yield* Ref.set(evidence.restoreFails, true)
+        const failure = yield* Effect.flip(machine.ensure(key))
+        // Boat uses one code for both; only its sentence about the disk makes it a size's answer.
+        expect(failure._tag).toBe('MachineRequestRejected')
+        expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect(
+      'withdraws a waiting start within the same start when Vivid had not seen it wait',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const evidence = yield* Evidence
+          const boat = yield* stepped()
+          yield* boat.machine.ensure(key)
+          yield* boat.machine.stop(key)
+          yield* Ref.set(evidence.state, 'provisioning')
+          yield* Ref.set(evidence.free, new Set<Size>(['large']))
+          yield* Ref.set(evidence.resumes, [])
+          const stops = yield* Ref.get(evidence.stops)
+          // What the binding recorded while the machine was made and stopped is not this start's.
+          yield* Queue.clear(boat.waits)
+          const starting = yield* boat.machine.ensure(key).pipe(Effect.forkChild)
+          // The start has seen the wait and sleeps before its next look.
+          expect(yield* Queue.take(boat.waits)).toBe('provisioning')
+          yield* TestClock.adjust('8 seconds')
+          expect(yield* Ref.get(evidence.stops)).toBe(stops)
+          // The fifth look, ten seconds after the first, still finds it waiting.
+          yield* TestClock.adjust('2 seconds')
+          expect((yield* Fiber.join(starting))._tag).toBe('Running')
+          expect(yield* Ref.get(evidence.stops)).toBe(stops + 1)
+          expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('starts a waiting resume that another caller stops while Vivid looks at it', () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const evidence = yield* Evidence
+        const boat = yield* stepped()
+        yield* boat.machine.ensure(key)
+        yield* boat.machine.stop(key)
+        yield* Ref.set(evidence.state, 'provisioning')
+        yield* Ref.set(evidence.resumes, [])
+        const stops = yield* Ref.get(evidence.stops)
+        // What the binding recorded while the machine was made and stopped is not this start's.
+        yield* Queue.clear(boat.waits)
+        const starting = yield* boat.machine.ensure(key).pipe(Effect.forkChild)
+        expect(yield* Queue.take(boat.waits)).toBe('provisioning')
+        yield* Ref.set(evidence.state, 'archiving')
+        yield* TestClock.adjust('2 seconds')
+        // Vivid sent no stop of its own, waited for the other one to finish, and started the machine.
+        expect((yield* Fiber.join(starting))._tag).toBe('Running')
+        expect(yield* Ref.get(evidence.stops)).toBe(stops)
+        expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('leaves a waiting start alone when Boat gives it a machine within the grace', () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const evidence = yield* Evidence
+        const boat = yield* stepped()
+        yield* boat.machine.ensure(key)
+        yield* boat.machine.stop(key)
+        yield* Ref.set(evidence.state, 'provisioning')
+        // The start's own read and its first look find it waiting; Boat has placed it by the second.
+        yield* Ref.set(evidence.placedAfter, Option.some(2))
+        yield* Ref.set(evidence.resumes, [])
+        const stops = yield* Ref.get(evidence.stops)
+        // What the binding recorded while the machine was made and stopped is not this start's.
+        yield* Queue.clear(boat.waits)
+        const starting = yield* boat.machine.ensure(key).pipe(Effect.forkChild)
+        expect(yield* Queue.take(boat.waits)).toBe('provisioning')
+        yield* TestClock.adjust('4 seconds')
+        expect((yield* Fiber.join(starting))._tag).toBe('Running')
+        expect(yield* Ref.get(evidence.stops)).toBe(stops)
+        expect(yield* Ref.get(evidence.resumes)).toEqual([])
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('asks a machine that has just woken again until it takes its first command', () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const evidence = yield* Evidence
+        // As production saw it on 6 October 2026: Boat calls the machine running, and for the next
+        // half minute a command is answered 409 or 502. Sent once, that failed every wake.
+        const refusals: ReadonlyArray<Unheard> = [
+          new MachineRequestRejected({ status: 409 }),
+          new MachineExecutionUnknown({ key }),
+          new MachineExecutionUnknown({ key }),
+          new MachineExecutionUnknown({ key }),
+        ]
+        const boat = yield* unready(key, (sent) =>
+          Effect.succeed(Option.fromUndefinedOr(refusals[sent - 1])),
+        )
+        const settling = yield* boat.holder.settle(key, boat.identity, wake).pipe(Effect.forkChild)
+        expect(yield* Queue.take(boat.asked)).toBe(1)
+        yield* TestClock.adjust('2 seconds')
+        expect(yield* Queue.take(boat.asked)).toBe(2)
+        yield* TestClock.adjust('2 seconds')
+        expect(yield* Queue.take(boat.asked)).toBe(3)
+        yield* TestClock.adjust('2 seconds')
+        expect(yield* Queue.take(boat.asked)).toBe(4)
+        yield* TestClock.adjust('2 seconds')
+        expect((yield* Fiber.join(settling)).id).toBe(id)
+        expect(yield* Ref.get(boat.sent)).toBe(5)
+        // The machine took it once: one record, one desktop opened.
+        expect((yield* Ref.get(evidence.holders)).get(id)).toBe(
+          `${id} ${boat.identity.binding.intent}`,
+        )
+        expect(yield* Ref.get(evidence.launches)).toBe(1)
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect(
+      'a machine that never takes its first command is an outage, and works once it does',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const evidence = yield* Evidence
+          const answering = yield* Ref.make(false)
+          const boat = yield* unready(key, () =>
+            Ref.get(answering).pipe(
+              Effect.map((ready) =>
+                ready ? Option.none() : Option.some(new MachineExecutionUnknown({ key })),
+              ),
+            ),
+          )
+          const settling = yield* boat.holder
+            .settle(key, boat.identity, wake)
+            .pipe(Effect.flip, Effect.forkChild)
+          expect(yield* Queue.take(boat.asked)).toBe(1)
+          yield* TestClock.adjust('75 seconds')
+          const failure = yield* Fiber.join(settling)
+          // An outage is told and never recorded as the Computer's state: the uncertain receipt it
+          // used to be was recorded as a failed Computer.
+          expect(failure._tag).toBe('MachineUnreachable')
+          expect(isOutage(failure)).toBe(true)
+          expect(yield* Ref.get(evidence.launches)).toBe(0)
+          yield* Ref.set(answering, true)
+          expect((yield* boat.holder.admit(key, boat.identity)).id).toBe(id)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect('status never reconciles an unresolved create or resumes a stopped machine', () =>
+      Effect.gen(function* () {
+        const key = yield* fixture()
+        const machine = yield* Machine
+        const evidence = yield* Evidence
+        yield* Ref.set(evidence.breakCreate, true)
+        yield* machine.ensure(key).pipe(Effect.flip)
+        expect((yield* machine.status(key))._tag).toBe('Failed')
+        expect((yield* Ref.get(evidence.intents)).length).toBe(1)
+        expect((yield* machine.stop(key).pipe(Effect.flip))._tag).toBe('MachineCreationUnresolved')
+        expect((yield* Ref.get(evidence.intents)).length).toBe(1)
+        yield* machine.ensure(key)
+        yield* machine.stop(key)
+        expect((yield* machine.status(key))._tag).toBe('Stopped')
+        expect(yield* Ref.get(evidence.state)).toBe('archived')
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    it.effect(
+      'recovers a lost create receipt with the persisted original body and key after restart',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const evidence = yield* Evidence
+          const machine = yield* Machine
+          yield* Ref.set(evidence.breakCreate, true)
+          expect((yield* Effect.flip(machine.ensure(key)))._tag).toBe('MachineRequestRejected')
+          yield* Effect.gen(function* () {
+            yield* (yield* Machine).ensure(key)
+          }).pipe((program) =>
+            scopedCase(
+              boatMachineLayer.pipe(
+                Layer.provide(
+                  ConfigProvider.layerAdd(
+                    ConfigProvider.fromUnknown({
+                      VIVID_BOAT_SIZE: 'large',
+                      VIVID_BOAT_LIFETIME_SECONDS: '7200',
+                      VIVID_BOAT_TEMPLATE: 'vivid-computer-new-release',
+                    }),
+                    { asPrimary: true },
+                  ),
+                ),
+              ),
+              program,
+              'inherited',
+            ),
+          )
+          const intents = yield* Ref.get(evidence.intents)
+          expect(intents.length).toBe(2)
+          expect(intents[0] === intents[1]).toBe(true)
+          expect(yield* Ref.get(evidence.created)).toBe(1)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+      15000,
+    )
+
+    it.effect(
+      'refuses public viewer URLs and malformed state, and never retries an uncertain command',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          yield* machine.ensure(key)
+          yield* Ref.set(evidence.publicViewer, true)
+          yield* TestClock.adjust('10 minutes')
+          expect((yield* Effect.flip(machine.status(key)))._tag).toBe('MachineResponseInvalid')
+          yield* Ref.set(evidence.publicViewer, false)
+          yield* Ref.set(evidence.breakCommand, true)
+          const before = (yield* Ref.get(evidence.commands)).length
+          expect(
+            (yield* Effect.flip(machine.exec({ key, command: 'echo receipt', timeoutSeconds: 10 })))
+              ._tag,
+          ).toBe('MachineExecutionUnknown')
+          expect((yield* Ref.get(evidence.commands)).length - before).toBe(1)
+          yield* Ref.set(evidence.malformed, true)
+          expect((yield* Effect.flip(machine.status(key)))._tag).toBe('MachineResponseInvalid')
+          yield* Ref.set(evidence.malformed, false)
+          yield* Ref.set(evidence.wrongIdentity, true)
+          expect((yield* Effect.flip(machine.status(key)))._tag).toBe('MachineResponseInvalid')
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+      15000,
+    )
+
+    it.effect(
+      'reads a 5xx whose body is not Boat’s as the provider failing, not as an invalid answer',
+      () =>
+        Effect.gen(function* () {
+          const key = yield* fixture()
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          yield* machine.ensure(key)
+          yield* Ref.set(evidence.edgeDown, true)
+          // An invalid answer is recorded as the machine's state; an outage never is. An edge's
+          // HTML page must land on the outage side although nothing in it can be decoded.
+          const failure = yield* Effect.flip(machine.inspect(key))
+          expect(failure._tag).toBe('MachineRequestRejected')
+          expect(isOutage(failure)).toBe(true)
+          yield* Ref.set(evidence.edgeDown, false)
+          expect((yield* machine.inspect(key))._tag).toBe('Running')
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+      15000,
+    )
+  })
 })

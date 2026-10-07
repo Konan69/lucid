@@ -184,9 +184,9 @@ const requireFreeName = Effect.fn('Connections.requireFreeName')(function* (
         row.name.trim().toLowerCase() === wanted.value,
     )
   if (taken)
-    yield* Effect.fail(
-      new Conflict({ message: 'Another account on this integration already has that name.' }),
-    )
+    return yield* new Conflict({
+      message: 'Another account on this integration already has that name.',
+    })
 })
 
 /** Persist authorization state before auditing readiness; provider calls remain outside transactions. */
@@ -253,7 +253,7 @@ const begin = Effect.fn('Connections.begin')(function* (
   let companyId: CompanyId | null = null
   if (request.shared) companyId = (yield* requireAdmin(actor.workspace)).company.id
   if (ServiceAuthorization.guards.SetupRequired(service.authorization))
-    return yield* Effect.fail(new InvalidRequest({ message: connectionSetupMessage }))
+    return yield* new InvalidRequest({ message: connectionSetupMessage })
   // Refused before anything is allocated at the service: a name is Vivid's own.
   yield* requireFreeName(actor, {
     service: service.id,
@@ -278,7 +278,7 @@ const begin = Effect.fn('Connections.begin')(function* (
       'ExecutorSignInRequired',
       Effect.fn('Connections.cancelSignIn')(function* (error) {
         yield* discardBegin(executor, error.references)
-        return yield* Effect.fail(error)
+        return yield* error
       }),
     ),
     Effect.mapError((error) => (isPublicAddressRequired(error) ? error : executorFailure(error))),
@@ -324,7 +324,7 @@ const begin = Effect.fn('Connections.begin')(function* (
             ),
             Effect.ignore,
           )
-          return yield* Effect.fail(error)
+          return yield* error
         }),
       ),
     )
@@ -360,7 +360,7 @@ const retainAuthorization = Effect.fn('Connections.retainAuthorization')(functio
     error.references,
   )
   yield* recordChanged(actor, saved)
-  return yield* Effect.fail(executorFailure(error))
+  return yield* executorFailure(error)
 })
 
 /** Resume keeps the same Company owner and provider target while attributing the grant to its admin. */
@@ -493,13 +493,22 @@ function listCatalogLifetime(
  * still interrupts it. Starting immediately keeps overlapping zero-TTL readers together.
  * Success refresh and unavailability backoff retain their TTL policy.
  */
-const rememberListCatalog = Effect.fn('Connections.rememberListCatalog')(function* (
-  catalog: Effect.Effect<ReadonlyArray<Service>, ReturnType<typeof executorFailure>>,
-) {
-  const scope = yield* Effect.scope
-  const cached = yield* Effect.cachedWithTTL(catalog, listCatalogLifetime)
-  return cached.pipe(Effect.forkIn(scope, { startImmediately: true }), Effect.flatMap(Fiber.join))
-})
+const rememberListCatalog = Effect.fn('Connections.rememberListCatalog')(
+  (catalog: Effect.Effect<ReadonlyArray<Service>, ReturnType<typeof executorFailure>>) =>
+    Effect.scope.pipe(
+      Effect.flatMap((scope) =>
+        Effect.cachedWithTTL(catalog, listCatalogLifetime).pipe(
+          // Produce the reusable read program without starting a lookup during acquisition.
+          Effect.map((cached) =>
+            cached.pipe(
+              Effect.forkIn(scope, { startImmediately: true }),
+              Effect.flatMap(Fiber.join),
+            ),
+          ),
+        ),
+      ),
+    ),
+)
 
 /** Capture authority once; the adapter owns discovery and catalog cache lifetimes. */
 const makeStore = Effect.fn('Connections.makeStore')(function* () {
@@ -518,7 +527,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     effect: Effect.Effect<A, E, Executor | Database | Audit | ServerConfig | Changes>,
   ) => effect.pipe(Effect.provide(dependencies))
   const catalogServices = Effect.fn('Connections.catalog')(function* () {
-    return (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).map(catalogService)
+    return (yield* executor.catalog.pipe(Effect.mapError(executorFailure))).map(catalogService)
   })
   const listCatalog = yield* rememberListCatalog(catalogServices())
   /** Inspect the selected candidate without retaining any account or credential. */
@@ -553,8 +562,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     id: import('@vivid/contracts').ServiceId,
   ) {
     const entry = (yield* catalogServices()).find((candidate) => candidate.id === id)
-    if (entry === undefined)
-      return yield* Effect.fail(new InvalidRequest({ message: 'Unknown integration.' }))
+    if (entry === undefined) return yield* new InvalidRequest({ message: 'Unknown integration.' })
     if (ServiceAuthorization.guards.SetupRequired(entry.authorization)) return entry
     return yield* inspectService(entry)
   })
@@ -601,9 +609,9 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
       if (request.shared) yield* requireAdmin(actor.workspace)
       const entry = (yield* catalogServices()).find((item) => item.id === request.service)
       if (entry === undefined)
-        return yield* Effect.fail(
-          new InvalidRequest({ message: 'Choose an integration from the current catalogue.' }),
-        )
+        return yield* new InvalidRequest({
+          message: 'Choose an integration from the current catalogue.',
+        })
       const start = Effect.fn('Connections.beginCatalog')(
         (input: Parameters<ExecutorService['begin']>[0]) => executor.begin(input),
       )
@@ -693,7 +701,7 @@ const makeCallbacks = (
         !ExecutorReferences.guards.OAuthSigningIn(row.references) ||
         row.references.stateHash !== hash
       )
-        return yield* Effect.fail(new NotFound({ message: 'Integration sign-in not found' }))
+        return yield* new NotFound({ message: 'Integration sign-in not found' })
       const managing = yield* provide(rowActor(actor, row))
       const references = yield* executor
         .completeSignIn({ references: row.references, callbackAddress })
@@ -737,14 +745,14 @@ const resumeExisting = Effect.fn('Connections.resumeExistingState')(function* (
     Match.when(
       'needs-authorization',
       Effect.fn('Connections.resumePending')(function* () {
-        const service = (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).find(
+        const service = (yield* executor.catalog.pipe(Effect.mapError(executorFailure))).find(
           (entry) => entry.id === row.service,
         )
         if (
           service !== undefined &&
           ServiceAuthorization.guards.SetupRequired(service.authorization)
         )
-          return yield* Effect.fail(new InvalidRequest({ message: connectionSetupMessage }))
+          return yield* new InvalidRequest({ message: connectionSetupMessage })
         const managing = yield* provide(rowActor(actor, row))
         const retained = yield* provide(retainResumer(managing, row))
         return yield* provide(resume(managing, retained))

@@ -8,9 +8,10 @@ import {
   Workspace,
   type MeResponse,
 } from '@vivid/contracts'
-import { Option, Result, Schema } from 'effect'
+import { Effect, Option, Result, Schema } from 'effect'
 import { X } from 'lucide-react'
 import { useId, useRef, useState, type FormEvent, type RefObject } from 'react'
+import { act } from '../../data/app'
 import { live, useLiveValue } from '../../data/live'
 import { faceColorOf, saveAppearance, useAppearance } from '../../data/vivid'
 import { IconButton } from '../../ui/button'
@@ -98,20 +99,22 @@ export function Customise({ onClose }: { onClose: () => void }) {
     outline === saved.outline &&
     faceColorOf(look) === faceColorOf(saved.look)
 
-  async function save(event: FormEvent) {
-    event.preventDefault()
-    const valid = decodeName(name.trim())
-    if (Option.isNone(valid)) {
-      setFault('name')
-      if (field.current !== null) field.current.focus()
-      return
-    }
-    setFault('none')
-    setSaving(true)
-    const result = await saveAppearance(new Appearance({ name: valid.value, look, outline }))
-    setSaving(false)
-    if (Result.isFailure(result)) setFault('unsaved')
-    else onClose()
+  function save(event: FormEvent) {
+    return Effect.gen(function* () {
+      event.preventDefault()
+      const valid = decodeName(name.trim())
+      if (Option.isNone(valid)) {
+        setFault('name')
+        if (field.current !== null) field.current.focus()
+        return
+      }
+      setFault('none')
+      setSaving(true)
+      const result = yield* saveAppearance(new Appearance({ name: valid.value, look, outline }))
+      setSaving(false)
+      if (Result.isFailure(result)) setFault('unsaved')
+      else onClose()
+    })
   }
 
   return (
@@ -126,7 +129,7 @@ export function Customise({ onClose }: { onClose: () => void }) {
             under them is the solid layer (`solid`): nothing would be seen through glass there. */}
         <form
           noValidate
-          onSubmit={(event) => void save(event)}
+          onSubmit={(event) => void act(save(event))}
           className="relative grid grid-cols-1 bg-surface-2 sm:h-120 sm:grid-cols-5"
         >
           {/* The choices. Below the preview on a narrow window, where the preview must stay in

@@ -3,8 +3,9 @@ import { DeviceLink } from '../shared/device.ts'
 import * as NodeFS from 'node:fs'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
 import * as Fiber from 'effect/Fiber'
 import * as Option from 'effect/Option'
 import * as TestClock from 'effect/testing/TestClock'
@@ -50,7 +51,7 @@ const fixture = (
       }),
   )
 
-const decodeListener = Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Number }))
+const decodeListener = Schema.decodeUnknownEffect(Schema.Struct({ port: Schema.Finite }))
 
 /** Convert the real bound port into a valid local origin, refusing an unexpected listener shape. */
 const originOf = Effect.fn('DesktopFixture.origin')(function* (server: NodeHttp.Server) {
@@ -78,324 +79,368 @@ const noSignIn: GoogleSignIn = {
 }
 
 describe('desktop server selection', () => {
-  /** A native allocation refusal survives IPC encoding as a renderer-readable domain receipt. */
-  it.effect('returns the native page limit through the public bridge', () =>
-    Effect.gen(function* () {
-      const root = yield* directory
-      yield* Effect.gen(function* () {
-        const settings = yield* DesktopSettings
-        const reason = new PageLimitReached({ limit: 12 })
-        const handlers: BridgeHandlers = {
-          settings,
-          getAppVersion: () => '1.0.0',
-          device: unlinked,
-          signIn: noSignIn,
-          openExternal: () => Effect.void,
-          pages: () => Effect.fail(reason),
-          onServerChanged: () => {},
-        }
-        expect(
-          yield* handleBridgeRequest(
-            BridgeRequest.cases.Pages.make({
-              request: PagesRequest.cases.Open.make({ address: 'https://example.com/' }),
-            }),
-            handlers,
-            () => true,
-          ),
-        ).toEqual(
-          yield* encodeBridgeResponse(
-            BridgeResponse.cases.Pages.make({
-              value: PagesResponse.cases.Rejected.make({ reason }),
-            }),
-          ),
-        )
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
-    }),
-  )
-  it.effect('denies selected-server documents before shell settings or browsing can change', () =>
-    Effect.gen(function* () {
-      const root = yield* directory
-      yield* Effect.gen(function* () {
-        const settings = yield* DesktopSettings
-        const changes: string[] = []
-        const handlers: BridgeHandlers = {
-          pages: () => Effect.fail(new PageUnavailable({})),
-          settings,
-          getAppVersion: () => '1.0.0',
-          device: unlinked,
-          signIn: noSignIn,
-          openExternal: () => Effect.sync(() => changes.push('external')),
-          onServerChanged: (state) => changes.push(state._tag),
-        }
-        const server = ServerSettings.cases.Server.make({
-          origin: ServerAddress.make('https://vivid.example'),
-        })
-        const authorize = (request: BridgeRequest) =>
-          isAllowedBridgeRequest(
-            'https://vivid.example/api/document',
-            server,
-            'file:///application/chooser.html',
-            request,
-          )
-        for (const request of [
-          BridgeRequest.cases.ChooseServer.make({
-            origin: ServerAddress.make('https://other.example'),
-          }),
-          BridgeRequest.cases.ForgetServer.make({}),
-          BridgeRequest.cases.GetServer.make({}),
-          BridgeRequest.cases.OpenExternal.make({ url: 'https://other.example' }),
-        ])
-          expect(
-            yield* handleBridgeRequest(request, handlers, authorize).pipe(Effect.flip),
-          ).toBeInstanceOf(InvalidBridgeMessage)
-        expect(
-          yield* handleBridgeRequest(
-            BridgeRequest.cases.GetAppVersion.make({}),
-            handlers,
-            authorize,
-          ),
-        ).toEqual(BridgeResponse.cases.AppVersion.make({ value: '1.0.0' }))
-        expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
-        expect(changes).toEqual([])
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
-    }),
-  )
-
-  it.effect(
-    'gives Google sign-in to the selected server’s own document, and to no other sender',
-    () =>
+  layer(FetchHttpClient.layer)((it) => {
+    /** A native allocation refusal survives IPC encoding as a renderer-readable domain receipt. */
+    it.effect('returns the native page limit through the public bridge', () =>
       Effect.gen(function* () {
         const root = yield* directory
         yield* Effect.gen(function* () {
           const settings = yield* DesktopSettings
-          const asked: string[] = []
-          const granted = SignInEnding.cases.Granted.make({
-            code: 'code',
-            state: 'state',
-            verifier: 'verifier',
-          })
+          const reason = new PageLimitReached({ limit: 12 })
+          const handlers: BridgeHandlers = {
+            settings,
+            getAppVersion: () => '1.0.0',
+            device: unlinked,
+            signIn: noSignIn,
+            openExternal: () => Effect.void,
+            pages: () => Effect.fail(reason),
+            onServerChanged: () => {},
+          }
+          expect(
+            yield* handleBridgeRequest(
+              BridgeRequest.cases.Pages.make({
+                request: PagesRequest.cases.Open.make({ address: 'https://example.com/' }),
+              }),
+              handlers,
+              () => true,
+            ),
+          ).toEqual(
+            yield* encodeBridgeResponse(
+              BridgeResponse.cases.Pages.make({
+                value: PagesResponse.cases.Rejected.make({ reason }),
+              }),
+            ),
+          )
+        }).pipe(
+          Effect.provide(
+            yield* Layer.build(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())),
+          ),
+        )
+      }),
+    )
+    it.effect('denies selected-server documents before shell settings or browsing can change', () =>
+      Effect.gen(function* () {
+        const root = yield* directory
+        yield* Effect.gen(function* () {
+          const settings = yield* DesktopSettings
+          const changes: string[] = []
           const handlers: BridgeHandlers = {
             pages: () => Effect.fail(new PageUnavailable({})),
             settings,
             getAppVersion: () => '1.0.0',
             device: unlinked,
-            openExternal: () => Effect.void,
-            onServerChanged: () => undefined,
-            signIn: {
-              begin: Effect.sync(() => asked.push('begin')).pipe(Effect.as('opened')),
-              reopen: Effect.sync(() => asked.push('reopen')).pipe(Effect.as('unopened')),
-              ended: Effect.sync(() => asked.push('ended')).pipe(Effect.as(granted)),
-              cancel: Effect.sync(() => asked.push('cancel')),
-            },
+            signIn: noSignIn,
+            openExternal: () => Effect.sync(() => changes.push('external')),
+            onServerChanged: (state) => changes.push(state._tag),
           }
           const server = ServerSettings.cases.Server.make({
             origin: ServerAddress.make('https://vivid.example'),
           })
-          const from = (url: string) => (request: BridgeRequest) =>
-            isAllowedBridgeRequest(url, server, 'file:///application/chooser.html', request)
-          const answers = [
-            [
-              BridgeRequest.cases.BeginGoogleSignIn.make({}),
-              BridgeResponse.cases.GoogleSignInBegun.make({ browser: 'opened' }),
-            ],
-            [
-              BridgeRequest.cases.ReopenGoogleSignIn.make({}),
-              BridgeResponse.cases.GoogleSignInBegun.make({ browser: 'unopened' }),
-            ],
-            [
-              BridgeRequest.cases.AwaitGoogleSignIn.make({}),
-              BridgeResponse.cases.GoogleSignInEnded.make({ value: granted }),
-            ],
-            [
-              BridgeRequest.cases.CancelGoogleSignIn.make({}),
-              BridgeResponse.cases.GoogleSignInCancelled.make({}),
-            ],
-          ] as const
-          for (const [request, answer] of answers) {
-            expect(
-              yield* handleBridgeRequest(request, handlers, from('https://vivid.example/')),
-            ).toEqual(answer)
-            for (const sender of ['file:///application/chooser.html', 'https://other.example/'])
-              expect(
-                yield* handleBridgeRequest(request, handlers, from(sender)).pipe(Effect.flip),
-              ).toBeInstanceOf(InvalidBridgeMessage)
-          }
-          // Only the four the server's own document sent reached the sign-in, once each.
-          expect(asked).toEqual(['begin', 'reopen', 'ended', 'cancel'])
-        }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
-      }),
-  )
-
-  it.live('verifies /health before saving and bridge forget returns to the chooser', () =>
-    Effect.gen(function* () {
-      const server = yield* fixture((request, response) => {
-        expect(request.url).toBe('/health')
-        expect(request.headers.cookie).toBeUndefined()
-        expect(request.headers.authorization).toBeUndefined()
-        response.end('{"ok":true,"service":"vivid"}')
-      })
-      const origin = yield* originOf(server)
-      const root = yield* directory
-      yield* Effect.gen(function* () {
-        const settings = yield* DesktopSettings
-        const changes: string[] = []
-        const handlers: BridgeHandlers = {
-          settings,
-          getAppVersion: () => '1.0.0',
-          device: unlinked,
-          signIn: noSignIn,
-          openExternal: () => Effect.void,
-          pages: () => Effect.fail(new PageUnavailable({})),
-          onServerChanged: (state) => changes.push(state._tag),
-        }
-        expect(
-          yield* handleBridgeRequest(
-            BridgeRequest.cases.ChooseServer.make({ origin }),
-            handlers,
-            () => true,
-          ),
-        ).toEqual(
-          BridgeResponse.cases.ServerChoice.make({ value: ServerChoice.cases.Chosen.make({}) }),
-        )
-        expect(yield* settings.get).toEqual(ServerSettings.cases.Server.make({ origin }))
-        expect(
-          yield* handleBridgeRequest(
+          const authorize = (request: BridgeRequest) =>
+            isAllowedBridgeRequest(
+              'https://vivid.example/api/document',
+              server,
+              'file:///application/chooser.html',
+              request,
+            )
+          for (const request of [
+            BridgeRequest.cases.ChooseServer.make({
+              origin: ServerAddress.make('https://other.example'),
+            }),
             BridgeRequest.cases.ForgetServer.make({}),
-            handlers,
-            () => true,
+            BridgeRequest.cases.GetServer.make({}),
+            BridgeRequest.cases.OpenExternal.make({ url: 'https://other.example' }),
+          ])
+            expect(
+              yield* handleBridgeRequest(request, handlers, authorize).pipe(Effect.flip),
+            ).toBeInstanceOf(InvalidBridgeMessage)
+          expect(
+            yield* handleBridgeRequest(
+              BridgeRequest.cases.GetAppVersion.make({}),
+              handlers,
+              authorize,
+            ),
+          ).toEqual(BridgeResponse.cases.AppVersion.make({ value: '1.0.0' }))
+          expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
+          expect(changes).toEqual([])
+        }).pipe(
+          Effect.provide(
+            yield* Layer.build(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())),
           ),
-        ).toEqual(BridgeResponse.cases.Forgotten.make({}))
-        expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
-        expect(changes).toEqual(['Server', 'NoServer'])
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
-    }),
-  )
-
-  it.live('does not save a reachable non-Vivid server', () =>
-    Effect.gen(function* () {
-      const server = yield* fixture((_request, response) =>
-        response.end('{"ok":true,"service":"other"}'),
-      )
-      const origin = yield* originOf(server)
-      const root = yield* directory
-      yield* Effect.gen(function* () {
-        const settings = yield* DesktopSettings
-        expect(yield* chooseServer(origin, settings)).toEqual(ServerChoice.cases.NotVivid.make({}))
-        expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
-        expect(NodeFS.readdirSync(root)).toEqual([])
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
-    }),
-  )
-
-  it.live('does not follow health redirects to a different origin', () =>
-    Effect.gen(function* () {
-      let foreignRequests = 0
-      const foreign = yield* fixture((_request, response) => {
-        foreignRequests++
-        response.end('{"ok":true,"service":"vivid"}')
-      })
-      const destination = yield* originOf(foreign)
-      const redirecting = yield* fixture((_request, response) => {
-        response.writeHead(307, { location: `${destination}/health` })
-        response.end()
-      })
-      const root = yield* directory
-      const origin = yield* originOf(redirecting)
-      yield* Effect.gen(function* () {
-        const settings = yield* DesktopSettings
-        const result = yield* chooseServer(origin, settings)
-        expect(result._tag).toBe('Unreachable')
-        expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
-        expect(foreignRequests).toBe(0)
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
-    }),
-  )
-
-  it.live('reports an unreachable server without losing the existing selection', () =>
-    Effect.gen(function* () {
-      const server = yield* fixture((request) => request.socket.destroy())
-      const origin = yield* originOf(server)
-      const root = yield* directory
-      yield* Effect.gen(function* () {
-        const settings = yield* DesktopSettings
-        const before = yield* settings.set(ServerAddress.make('https://vivid.example'))
-        expect((yield* chooseServer(origin, settings))._tag).toBe('Unreachable')
-        expect(yield* settings.get).toEqual(before)
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
-    }),
-  )
-
-  it.effect('bounds a stalled real health probe with the controllable clock', () =>
-    Effect.gen(function* () {
-      const server = yield* fixture(() => undefined)
-      const origin = yield* originOf(server)
-      const root = yield* directory
-      yield* Effect.gen(function* () {
-        const settings = yield* DesktopSettings
-        const received = yield* Effect.callback<void>((resume) => {
-          const accept = (): void => resume(Effect.void)
-          server.once('request', accept)
-          return Effect.sync(() => server.off('request', accept))
-        }).pipe(Effect.forkScoped)
-        const choosing = yield* chooseServer(origin, settings).pipe(Effect.forkScoped)
-        yield* Fiber.join(received)
-        yield* TestClock.adjust('3 seconds')
-        expect(yield* Fiber.join(choosing)).toEqual(
-          ServerChoice.cases.Unreachable.make({
-            reason: 'The server did not respond within 3 seconds.',
-          }),
         )
-        expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
-      }).pipe(Effect.provide(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())))
-    }),
-  )
+      }),
+    )
 
-  it.live(
-    'names the chosen server as the origin of a request Chromium handed over without one',
-    () =>
+    it.effect(
+      'gives Google sign-in to the selected server’s own document, and to no other sender',
+      () =>
+        Effect.gen(function* () {
+          const root = yield* directory
+          yield* Effect.gen(function* () {
+            const settings = yield* DesktopSettings
+            const asked: string[] = []
+            const granted = SignInEnding.cases.Granted.make({
+              code: 'code',
+              state: 'state',
+              verifier: 'verifier',
+            })
+            const handlers: BridgeHandlers = {
+              pages: () => Effect.fail(new PageUnavailable({})),
+              settings,
+              getAppVersion: () => '1.0.0',
+              device: unlinked,
+              openExternal: () => Effect.void,
+              onServerChanged: () => undefined,
+              signIn: {
+                begin: Effect.sync(() => asked.push('begin')).pipe(Effect.as('opened')),
+                reopen: Effect.sync(() => asked.push('reopen')).pipe(Effect.as('unopened')),
+                ended: Effect.sync(() => asked.push('ended')).pipe(Effect.as(granted)),
+                cancel: Effect.sync(() => asked.push('cancel')),
+              },
+            }
+            const server = ServerSettings.cases.Server.make({
+              origin: ServerAddress.make('https://vivid.example'),
+            })
+            const from = (url: string) => (request: BridgeRequest) =>
+              isAllowedBridgeRequest(url, server, 'file:///application/chooser.html', request)
+            const answers = [
+              [
+                BridgeRequest.cases.BeginGoogleSignIn.make({}),
+                BridgeResponse.cases.GoogleSignInBegun.make({ browser: 'opened' }),
+              ],
+              [
+                BridgeRequest.cases.ReopenGoogleSignIn.make({}),
+                BridgeResponse.cases.GoogleSignInBegun.make({ browser: 'unopened' }),
+              ],
+              [
+                BridgeRequest.cases.AwaitGoogleSignIn.make({}),
+                BridgeResponse.cases.GoogleSignInEnded.make({ value: granted }),
+              ],
+              [
+                BridgeRequest.cases.CancelGoogleSignIn.make({}),
+                BridgeResponse.cases.GoogleSignInCancelled.make({}),
+              ],
+            ] as const
+            for (const [request, answer] of answers) {
+              expect(
+                yield* handleBridgeRequest(request, handlers, from('https://vivid.example/')),
+              ).toEqual(answer)
+              for (const sender of ['file:///application/chooser.html', 'https://other.example/'])
+                expect(
+                  yield* handleBridgeRequest(request, handlers, from(sender)).pipe(Effect.flip),
+                ).toBeInstanceOf(InvalidBridgeMessage)
+            }
+            // Only the four the server's own document sent reached the sign-in, once each.
+            expect(asked).toEqual(['begin', 'reopen', 'ended', 'cancel'])
+          }).pipe(
+            Effect.provide(
+              yield* Layer.build(
+                settingsLayer(NodePath.join(root, 'settings.json'), Option.none()),
+              ),
+            ),
+          )
+        }),
+    )
+  })
+  layer(FetchHttpClient.layer, { excludeTestServices: true })((it) => {
+    it.effect('verifies /health before saving and bridge forget returns to the chooser', () =>
       Effect.gen(function* () {
-        const seen: Array<Option.Option<string>> = []
         const server = yield* fixture((request, response) => {
-          seen.push(Option.fromUndefinedOr(request.headers.origin))
-          response.end('{}')
+          expect(request.url).toBe('/health')
+          expect(request.headers.cookie).toBeUndefined()
+          expect(request.headers.authorization).toBeUndefined()
+          response.end('{"ok":true,"service":"vivid"}')
         })
         const origin = yield* originOf(server)
         const root = yield* directory
-        const settings = ServerSettings.cases.Server.make({ origin })
-        const send = (headers: Record<string, string>) =>
-          handleAppRequest(
-            root,
-            new Request(`${origin}/api/auth/sign-up/email`, {
-              method: 'POST',
-              headers,
-              body: '{}',
-            }),
+        yield* Effect.gen(function* () {
+          const settings = yield* DesktopSettings
+          const changes: string[] = []
+          const handlers: BridgeHandlers = {
             settings,
-          )
-        expect((yield* send({})).status).toBe(200)
-        // One that does say where it came from is forwarded as it said.
-        expect((yield* send({ origin: 'https://elsewhere.example' })).status).toBe(200)
-        expect(seen).toEqual([Option.some(origin), Option.some('https://elsewhere.example')])
-      }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer)),
-  )
-
-  it.effect(
-    'rejects foreign API requests before entering the credential-bearing forwarding client',
-    () =>
-      Effect.gen(function* () {
-        const root = yield* directory
-        for (const settings of [
-          ServerSettings.cases.NoServer.make({}),
-          ServerSettings.cases.Server.make({ origin: ServerAddress.make('https://vivid.example') }),
-        ]) {
+            getAppVersion: () => '1.0.0',
+            device: unlinked,
+            signIn: noSignIn,
+            openExternal: () => Effect.void,
+            pages: () => Effect.fail(new PageUnavailable({})),
+            onServerChanged: (state) => changes.push(state._tag),
+          }
           expect(
-            (yield* handleAppRequest(
+            yield* handleBridgeRequest(
+              BridgeRequest.cases.ChooseServer.make({ origin }),
+              handlers,
+              () => true,
+            ),
+          ).toEqual(
+            BridgeResponse.cases.ServerChoice.make({ value: ServerChoice.cases.Chosen.make({}) }),
+          )
+          expect(yield* settings.get).toEqual(ServerSettings.cases.Server.make({ origin }))
+          expect(
+            yield* handleBridgeRequest(
+              BridgeRequest.cases.ForgetServer.make({}),
+              handlers,
+              () => true,
+            ),
+          ).toEqual(BridgeResponse.cases.Forgotten.make({}))
+          expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
+          expect(changes).toEqual(['Server', 'NoServer'])
+        }).pipe(
+          Effect.provide(
+            yield* Layer.build(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())),
+          ),
+        )
+      }),
+    )
+
+    it.effect('does not save a reachable non-Vivid server', () =>
+      Effect.gen(function* () {
+        const server = yield* fixture((_request, response) =>
+          response.end('{"ok":true,"service":"other"}'),
+        )
+        const origin = yield* originOf(server)
+        const root = yield* directory
+        yield* Effect.gen(function* () {
+          const settings = yield* DesktopSettings
+          expect(yield* chooseServer(origin, settings)).toEqual(
+            ServerChoice.cases.NotVivid.make({}),
+          )
+          expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
+          expect(NodeFS.readdirSync(root)).toEqual([])
+        }).pipe(
+          Effect.provide(
+            yield* Layer.build(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())),
+          ),
+        )
+      }),
+    )
+
+    it.effect('does not follow health redirects to a different origin', () =>
+      Effect.gen(function* () {
+        let foreignRequests = 0
+        const foreign = yield* fixture((_request, response) => {
+          foreignRequests++
+          response.end('{"ok":true,"service":"vivid"}')
+        })
+        const destination = yield* originOf(foreign)
+        const redirecting = yield* fixture((_request, response) => {
+          response.writeHead(307, { location: `${destination}/health` })
+          response.end()
+        })
+        const root = yield* directory
+        const origin = yield* originOf(redirecting)
+        yield* Effect.gen(function* () {
+          const settings = yield* DesktopSettings
+          const result = yield* chooseServer(origin, settings)
+          expect(result._tag).toBe('Unreachable')
+          expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
+          expect(foreignRequests).toBe(0)
+        }).pipe(
+          Effect.provide(
+            yield* Layer.build(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())),
+          ),
+        )
+      }),
+    )
+
+    it.effect('reports an unreachable server without losing the existing selection', () =>
+      Effect.gen(function* () {
+        const server = yield* fixture((request) => request.socket.destroy())
+        const origin = yield* originOf(server)
+        const root = yield* directory
+        yield* Effect.gen(function* () {
+          const settings = yield* DesktopSettings
+          const before = yield* settings.set(ServerAddress.make('https://vivid.example'))
+          expect((yield* chooseServer(origin, settings))._tag).toBe('Unreachable')
+          expect(yield* settings.get).toEqual(before)
+        }).pipe(
+          Effect.provide(
+            yield* Layer.build(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())),
+          ),
+        )
+      }),
+    )
+  })
+  layer(FetchHttpClient.layer)((it) => {
+    it.effect('bounds a stalled real health probe with the controllable clock', () =>
+      Effect.gen(function* () {
+        const server = yield* fixture(() => undefined)
+        const origin = yield* originOf(server)
+        const root = yield* directory
+        yield* Effect.gen(function* () {
+          const settings = yield* DesktopSettings
+          const received = yield* Effect.callback<void>((resume) => {
+            const accept = (): void => resume(Effect.void)
+            server.once('request', accept)
+            return Effect.sync(() => server.off('request', accept))
+          }).pipe(Effect.forkScoped)
+          const choosing = yield* chooseServer(origin, settings).pipe(Effect.forkScoped)
+          yield* Fiber.join(received)
+          yield* TestClock.adjust('3 seconds')
+          expect(yield* Fiber.join(choosing)).toEqual(
+            ServerChoice.cases.Unreachable.make({
+              reason: 'The server did not respond within 3 seconds.',
+            }),
+          )
+          expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
+        }).pipe(
+          Effect.provide(
+            yield* Layer.build(settingsLayer(NodePath.join(root, 'settings.json'), Option.none())),
+          ),
+        )
+      }),
+    )
+  })
+  layer(FetchHttpClient.layer, { excludeTestServices: true })((it) => {
+    it.effect(
+      'names the chosen server as the origin of a request Chromium handed over without one',
+      () =>
+        Effect.gen(function* () {
+          const seen: Array<Option.Option<string>> = []
+          const server = yield* fixture((request, response) => {
+            seen.push(Option.fromUndefinedOr(request.headers.origin))
+            response.end('{}')
+          })
+          const origin = yield* originOf(server)
+          const root = yield* directory
+          const settings = ServerSettings.cases.Server.make({ origin })
+          const send = (headers: Record<string, string>) =>
+            handleAppRequest(
               root,
-              new Request('https://foreign.example/api/rpc'),
+              new Request(`${origin}/api/auth/sign-up/email`, {
+                method: 'POST',
+                headers,
+                body: '{}',
+              }),
               settings,
-            )).status,
-          ).toBe(403)
-        }
-      }).pipe(Effect.provide(FetchHttpClient.layer)),
-  )
+            )
+          expect((yield* send({})).status).toBe(200)
+          // One that does say where it came from is forwarded as it said.
+          expect((yield* send({ origin: 'https://elsewhere.example' })).status).toBe(200)
+          expect(seen).toEqual([Option.some(origin), Option.some('https://elsewhere.example')])
+        }).pipe(Effect.scoped),
+    )
+  })
+  layer(FetchHttpClient.layer)((it) => {
+    it.effect(
+      'rejects foreign API requests before entering the credential-bearing forwarding client',
+      () =>
+        Effect.gen(function* () {
+          const root = yield* directory
+          for (const settings of [
+            ServerSettings.cases.NoServer.make({}),
+            ServerSettings.cases.Server.make({
+              origin: ServerAddress.make('https://vivid.example'),
+            }),
+          ]) {
+            expect(
+              (yield* handleAppRequest(
+                root,
+                new Request('https://foreign.example/api/rpc'),
+                settings,
+              )).status,
+            ).toBe(403)
+          }
+        }),
+    )
+  })
 })

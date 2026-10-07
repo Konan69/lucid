@@ -13,7 +13,7 @@ describe.skipIf(!nativeProofAvailable)('Native desktop pages', () => {
       'retains views, revokes stale geometry, routes popups and zoom, and caps native guests',
       () =>
         Effect.gen(function* () {
-          const result = yield* (yield* NativeProof).run()
+          const result = yield* (yield* NativeProof).run
           expect(result.output).toContain(passed)
         }),
     )

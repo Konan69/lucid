@@ -14,7 +14,8 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useCallback, useReducer, useState, useSyncExternalStore } from 'react'
-import { change, live, LiveState, useLive } from '../data/live'
+import { act } from '../data/app'
+import { change, changing, live, LiveState, useLive } from '../data/live'
 import { pages, type Front } from '../data/pages'
 import { split } from '../data/split'
 import { orSay } from '../data/said'
@@ -356,22 +357,28 @@ function ComputerBody({
 }
 
 export const start = () =>
-  void orSay(
-    change((client) => client.StartComputer()),
-    'The computer could not be turned on. Try again.',
+  void act(
+    orSay(
+      changing((client) => client.StartComputer()),
+      'The computer could not be turned on. Try again.',
+    ),
   )
 const stop = () =>
-  void orSay(
-    change((client) => client.StopComputer()),
-    'The computer could not be turned off. Try again.',
+  void act(
+    orSay(
+      changing((client) => client.StopComputer()),
+      'The computer could not be turned off. Try again.',
+    ),
   )
 /** Takes the keyboard and pointer from Vivid, or hands them back; the panel and the Thread's small picture both use it. */
 export const hold = (held: boolean) =>
-  void orSay(
-    change((client) => client.HoldComputer({ held })),
-    held
-      ? 'Vivid still has control: taking over did not go through. Try again.'
-      : 'You still have control: handing back did not go through. Try again.',
+  void act(
+    orSay(
+      changing((client) => client.HoldComputer({ held })),
+      held
+        ? 'Vivid still has control: taking over did not go through. Try again.'
+        : 'You still have control: handing back did not go through. Try again.',
+    ),
   )
 
 const TURN_ON = (

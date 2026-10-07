@@ -1,7 +1,7 @@
 import { Effect, Option, Predicate, Result } from 'effect'
 import { FileText, X } from 'lucide-react'
 import { useState } from 'react'
-import { run } from '../../data/app'
+import { act, running } from '../../data/app'
 import { upload } from '../../data/library'
 import { cn } from '../../ui/cn'
 
@@ -51,24 +51,22 @@ export interface Attachment {
 const readPicture = (file: File) =>
   Effect.callback<Option.Option<Picture & { readonly preview: string }>>((resume) => {
     const reader = new FileReader()
-    reader.addEventListener('error', () => resume(Effect.succeed(Option.none())))
+    reader.addEventListener('error', () => resume(Effect.succeedNone))
     reader.addEventListener('load', () => {
       if (!Predicate.isString(reader.result)) {
-        resume(Effect.succeed(Option.none()))
+        resume(Effect.succeedNone)
         return
       }
       const preview = reader.result
       resume(
-        Effect.succeed(
-          Option.some({
-            type: 'image',
-            mimeType: file.type,
-            // A data URL is "data:<type>;base64,<bytes>"; the message wants the bytes alone.
-            data: preview.slice(preview.indexOf(',') + 1),
-            filename: file.name,
-            preview,
-          }),
-        ),
+        Effect.succeedSome({
+          type: 'image',
+          mimeType: file.type,
+          // A data URL is "data:<type>;base64,<bytes>"; the message wants the bytes alone.
+          data: preview.slice(preview.indexOf(',') + 1),
+          filename: file.name,
+          preview,
+        }),
       )
     })
     reader.readAsDataURL(file)
@@ -90,57 +88,61 @@ export function useAttachments(pictures: boolean) {
     setFiles((now) => now.map((file) => (file.key === key ? { ...file, standing } : file)))
 
   /** A picture is read here and waits with the message; nothing is uploaded until it is sent. */
-  async function hold(file: File) {
-    const key = crypto.randomUUID()
-    const refused = (why: string) =>
-      setFiles((now) => [
-        ...now,
-        { key, name: file.name, standing: { at: 'refused', why }, picture: Option.none() },
-      ])
-    if (!pictures) return refused('Pictures can only be sent in a private thread for now.')
-    if (file.size > LARGEST_PICTURE) return refused('Too large. Pictures can be up to 5 MB.')
-    const read = await run(readPicture(file))
-    if (!Result.isSuccess(read)) return refused('It could not be read. Try another file.')
-    const picture = read.success
-    if (Option.isNone(picture)) return refused('It could not be read. Try another file.')
-    return setFiles((now) =>
-      now.filter((one) => Option.isSome(one.picture)).length >= MOST_PICTURES
-        ? [
-            ...now,
-            {
-              key,
-              name: file.name,
-              standing: { at: 'refused', why: 'A message can carry four pictures.' },
-              picture: Option.none(),
-            },
-          ]
-        : [...now, { key, name: file.name, standing: { at: 'kept' }, picture }],
-    )
+  function hold(file: File) {
+    return Effect.gen(function* () {
+      const key = crypto.randomUUID()
+      const refused = (why: string) =>
+        setFiles((now) => [
+          ...now,
+          { key, name: file.name, standing: { at: 'refused', why }, picture: Option.none() },
+        ])
+      if (!pictures) return refused('Pictures can only be sent in a private thread for now.')
+      if (file.size > LARGEST_PICTURE) return refused('Too large. Pictures can be up to 5 MB.')
+      const read = yield* running(readPicture(file))
+      if (!Result.isSuccess(read)) return refused('It could not be read. Try another file.')
+      const picture = read.success
+      if (Option.isNone(picture)) return refused('It could not be read. Try another file.')
+      return setFiles((now) =>
+        now.filter((one) => Option.isSome(one.picture)).length >= MOST_PICTURES
+          ? [
+              ...now,
+              {
+                key,
+                name: file.name,
+                standing: { at: 'refused', why: 'A message can carry four pictures.' },
+                picture: Option.none(),
+              },
+            ]
+          : [...now, { key, name: file.name, standing: { at: 'kept' }, picture }],
+      )
+    })
   }
 
-  async function send(file: File) {
-    const key = crypto.randomUUID()
-    setFiles((now) => [
-      ...now,
-      { key, name: file.name, standing: { at: 'sending', percent: 0 }, picture: Option.none() },
-    ])
-    const result = await run(
-      upload(file, { shelf: 'Mine', folderId: null }, (percent) =>
-        stand(key, { at: 'sending', percent }),
-      ),
-    )
-    stand(
-      key,
-      Result.isSuccess(result)
-        ? { at: 'kept' }
-        : { at: 'refused', why: 'It did not upload. Take it off and try again.' },
-    )
+  function send(file: File) {
+    return Effect.gen(function* () {
+      const key = crypto.randomUUID()
+      setFiles((now) => [
+        ...now,
+        { key, name: file.name, standing: { at: 'sending', percent: 0 }, picture: Option.none() },
+      ])
+      const result = yield* running(
+        upload(file, { shelf: 'Mine', folderId: null }, (percent) =>
+          stand(key, { at: 'sending', percent }),
+        ),
+      )
+      stand(
+        key,
+        Result.isSuccess(result)
+          ? { at: 'kept' }
+          : { at: 'refused', why: 'It did not upload. Take it off and try again.' },
+      )
+    })
   }
 
   return {
     files,
     add: (picked: ReadonlyArray<File>) => {
-      for (const file of picked) void (file.type.startsWith('image/') ? hold(file) : send(file))
+      for (const file of picked) void act(file.type.startsWith('image/') ? hold(file) : send(file))
     },
     remove: (key: string) => setFiles((now) => now.filter((file) => file.key !== key)),
     /** Still on its way: a message sent now would not carry it. */

@@ -108,10 +108,11 @@ const createRoutine = Effect.fn('Rpc.CreateRoutine')(function* (
   const routine = yield* integrationFailure(
     concealMissing((yield* RoutineStore).create(actor, request)),
   ).pipe(
-    Effect.catchTag('InvalidRoutineSchedule', (error) => Effect.fail(invalidSchedule(error))),
-    Effect.catchTag('RoutineTimePassed', () =>
-      Effect.fail(new InvalidRequest({ message: 'A one-off Routine must be in the future.' })),
-    ),
+    Effect.catchTags({
+      InvalidRoutineSchedule: (error) => Effect.fail(invalidSchedule(error)),
+      RoutineTimePassed: () =>
+        Effect.fail(new InvalidRequest({ message: 'A one-off Routine must be in the future.' })),
+    }),
   )
   yield* changed(actor)
   return RoutineResponse.make({ routine })
@@ -157,10 +158,11 @@ export const routineHandlers = {
     const routine = yield* integrationFailure(
       concealMissing((yield* RoutineStore).patch(actor, id, patch)),
     ).pipe(
-      Effect.catchTag('InvalidRoutineSchedule', (error) => Effect.fail(invalidSchedule(error))),
-      Effect.catchTag('RoutineTimePassed', () =>
-        Effect.fail(new InvalidRequest({ message: 'A one-off Routine must be in the future.' })),
-      ),
+      Effect.catchTags({
+        InvalidRoutineSchedule: (error) => Effect.fail(invalidSchedule(error)),
+        RoutineTimePassed: () =>
+          Effect.fail(new InvalidRequest({ message: 'A one-off Routine must be in the future.' })),
+      }),
     )
     yield* changed(actor)
     return RoutineResponse.make({ routine })

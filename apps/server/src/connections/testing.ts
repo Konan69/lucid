@@ -106,7 +106,7 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
     authorization: Effect.fn('Executor.Test.authorization')(() =>
       Effect.succeed(ServiceAuthorization.cases.None.make({})),
     ),
-    catalog: Effect.fn('Executor.Test.catalog')(function* () {
+    catalog: Effect.gen(function* () {
       yield* Ref.update(probe.catalogs, (count) => count + 1)
       return [
         ExecutorServiceEntry.make({
@@ -117,7 +117,7 @@ const makeExecutor = (probe: ConnectionProbeService): ExecutorService => {
           authorization: ServiceAuthorization.cases.None.make({}),
         }),
       ]
-    }),
+    }).pipe(Effect.withSpan('Executor.Test.catalog')),
     add: Effect.fn('Executor.Test.add')((input) => makeExecutor(probe).begin(input)),
     begin: Effect.fn('Executor.Test.begin')(function* (input) {
       yield* Ref.update(probe.begins, (count) => count + 1)

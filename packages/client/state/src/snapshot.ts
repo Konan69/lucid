@@ -81,7 +81,7 @@ const VERSION = 2
 export const Snapshot = Schema.Struct({
   version: Schema.Literal(VERSION),
   origin: Schema.String,
-  expiresAt: Schema.Number,
+  expiresAt: Schema.Finite,
   me: MeResponse,
   threads: Schema.OptionFromOptionalKey(ThreadListResponse),
   projects: Schema.OptionFromOptionalKey(ProjectListResponse),
@@ -383,7 +383,7 @@ function makeHeld(origin: string, store: SnapshotStore) {
         Queue.offerUnsafe(changes, undefined)
       }
       if (changed !== written) wake()
-      yield* keepLatest(changes, persist())
+      return yield* keepLatest(changes, persist())
     }),
   }
 }

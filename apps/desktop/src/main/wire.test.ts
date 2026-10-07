@@ -2,6 +2,10 @@ import { describe, expect, it } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
+import * as NodeFS from 'node:fs'
+import * as NodeOS from 'node:os'
+import * as NodePath from 'node:path'
+import * as NodeProcess from 'node:process'
 import {
   Framed,
   ComputerCall,
@@ -183,6 +187,22 @@ describe('the Computer’s JSON lines', () => {
         Option.some('iVBORw0KGgo='),
       )
       expect(yield* screenshotPng('notepad.png')).toEqual(Option.none())
+      // On POSIX, a drive-prefixed directory is relative; on Windows the temp directory is
+      // already a drive path. Both exercise the real file ingress without changing process cwd.
+      const prefix =
+        NodeProcess.platform === 'win32'
+          ? NodePath.join(NodeOS.tmpdir(), 'vivid-picture-')
+          : 'C:\\vivid-picture-'
+      const directory = yield* Effect.acquireRelease(
+        Effect.sync(() => NodeFS.mkdtempSync(prefix)),
+        (path) => Effect.sync(() => NodeFS.rmSync(path, { recursive: true, force: true })),
+      )
+      const path = NodePath.join(directory, 'picture.png')
+      const picture = Buffer.from('iVBORw0KGgo=', 'base64')
+      NodeFS.writeFileSync(path, picture)
+      expect(yield* screenshotPng(path)).toEqual(Option.some(picture.toString('base64')))
+      NodeFS.rmSync(path)
+      expect(yield* screenshotPng(path)).toEqual(Option.none())
     }),
   )
 

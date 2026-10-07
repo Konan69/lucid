@@ -105,7 +105,7 @@ export const shownExchange = (exchange: MemoryExchange) => ({
 
 export class MemorySummaryTooLong extends Schema.TaggedError<MemorySummaryTooLong>()(
   'MemorySummaryTooLong',
-  { words: Schema.Number },
+  { words: Schema.Finite },
   { title: 'MemorySummaryTooLong' },
 ) {}
 export type ExtractionFailure = ProviderFailure | MemorySummaryTooLong | MemoryGenerationIncomplete
@@ -233,7 +233,7 @@ export const memoryExtractionLayer = Layer.effect(
         })
         const summary = yield* summaryCompletion(text)
         const words = summary.text.trim().split(/\s+/).length
-        if (words > 600) return yield* Effect.fail(MemorySummaryTooLong.make({ words }))
+        if (words > 600) return yield* MemorySummaryTooLong.make({ words })
         return summary.text
       }),
     })

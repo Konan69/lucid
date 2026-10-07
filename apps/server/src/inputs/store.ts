@@ -60,14 +60,14 @@ const Row = Schema.Union([
     status: Schema.Literal('answered'),
     answeredBy: PersonId,
     answer: Schema.String,
-    settledAt: Schema.Number,
+    settledAt: Schema.Finite,
   }),
   Schema.Struct({
     ...fields,
     status: Schema.Literal('withdrawn'),
     answeredBy: Schema.Null,
     answer: Schema.Null,
-    settledAt: Schema.Number,
+    settledAt: Schema.Finite,
   }),
 ]).pipe(Schema.toTaggedUnion('status'))
 const decodeRow = decodeStored(Row, 'Input request')
@@ -132,7 +132,7 @@ const view = Effect.fn('Inputs.view')(function* (
 })
 
 export interface InputStoreService {
-  readonly replay: () => Effect.Effect<void, DatabaseInfrastructureError>
+  readonly replay: Effect.Effect<void, DatabaseInfrastructureError>
   readonly inThread: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<InputRequest>, DatabaseInfrastructureError>
@@ -155,11 +155,11 @@ export class InputStore extends Context.Service<InputStore, InputStoreService>()
 /** Vivid asks only in its authenticated Thread and addresses the acting Person. */
 const ask = Effect.fn('Inputs.ask')(function* (actor: Actor, request: AskInputRequest) {
   if (actor.by !== 'vivid' || Option.isNone(actor.threadId))
-    return yield* Effect.fail(new NotFound({ message: 'Input request needs a Vivid Thread' }))
+    return yield* new NotFound({ message: 'Input request needs a Vivid Thread' })
   const threadId = actor.threadId.value
   const thread = yield* requireThread(threadId, actor.person.id)
   if (thread.companyId !== companyColumnOf(actor.workspace))
-    return yield* Effect.fail(new NotFound({ message: 'Thread not found in workspace' }))
+    return yield* new NotFound({ message: 'Thread not found in workspace' })
   const database = yield* Database
   const options = yield* encodeOptions(request.options).pipe(
     Effect.mapError(() => new DatabaseFailure({ message: 'Input options could not be encoded' })),
@@ -205,12 +205,11 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
       .limit(1),
   )
   const value = rows[0]
-  if (value === undefined)
-    return yield* Effect.fail(new NotFound({ message: 'Input request not found' }))
+  if (value === undefined) return yield* new NotFound({ message: 'Input request not found' })
   const row = yield* decodeRow(value.request)
   yield* requireThread(row.threadId, actor.person.id)
   if (!row.allowsOwnAnswer && !row.options.some((option) => option.label === request.answer))
-    return yield* Effect.fail(new Conflict({ message: 'Choose one of the offered answers' }))
+    return yield* new Conflict({ message: 'Choose one of the offered answers' })
   const now = yield* Clock.currentTimeMillis
   const signal = Signal.cases.Owed.make({
     idempotencyKey: answerKey(request.id),
@@ -236,7 +235,7 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
       .returning(),
   )
   if (updated.length === 0)
-    return yield* Effect.fail(new Conflict({ message: 'Input request already answered' }))
+    return yield* new Conflict({ message: 'Input request already answered' })
   const input = yield* returned(yield* view(updated), 'Input request')
   yield* changed(actor, Topic.thread(row.threadId))
   yield* replaySignals(inputRequests, Option.some([request.id])).pipe(
@@ -289,7 +288,7 @@ export const inputStoreLayer = Layer.effect(
       }),
       ask: (actor, request) => run(ask(actor, request)),
       answer: (actor, request) => run(answer(actor, request)),
-      replay: () => run(replaySignals(inputRequests, Option.none())),
+      replay: run(replaySignals(inputRequests, Option.none())),
     })
   }),
 )

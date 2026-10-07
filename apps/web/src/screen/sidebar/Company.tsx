@@ -1,6 +1,7 @@
-import { Result } from 'effect'
+import { Effect, Result } from 'effect'
 import { useId, useState } from 'react'
-import { change } from '../../data/live'
+import { act } from '../../data/app'
+import { changing } from '../../data/live'
 import { Route, router } from '../../data/route'
 import { Button } from '../../ui/button'
 import {
@@ -29,17 +30,19 @@ export function CreateCompany({ onClose }: { onClose: () => void }) {
   // Sent away (Escape, a click outside, the close button) it plays out before `onClose` is told.
   const surface = useSurface(onClose)
 
-  async function create() {
-    if (creating) return
-    setCreating(true)
-    const result = await change((client) => client.CreateCompany({ name: name.trim() }))
-    if (Result.isFailure(result)) {
-      setCreating(false)
-      setRefusal('The company could not be created. Try again.')
-      return
-    }
-    onClose()
-    router.go(Route.New())
+  function create() {
+    return Effect.gen(function* () {
+      if (creating) return
+      setCreating(true)
+      const result = yield* changing((client) => client.CreateCompany({ name: name.trim() }))
+      if (Result.isFailure(result)) {
+        setCreating(false)
+        setRefusal('The company could not be created. Try again.')
+        return
+      }
+      onClose()
+      router.go(Route.New())
+    })
   }
 
   return (
@@ -58,7 +61,7 @@ export function CreateCompany({ onClose }: { onClose: () => void }) {
           className="contents"
           onSubmit={(event) => {
             event.preventDefault()
-            void create()
+            void act(create())
           }}
         >
           <Field>

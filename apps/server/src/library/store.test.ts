@@ -1,3 +1,4 @@
+import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem'
 import { extractPdf } from './extraction.ts'
 import { ingestionOperations } from './ingestion.ts'
 import { workLayer } from '../database/work.ts'
@@ -51,7 +52,7 @@ const upload = Effect.fn('LibraryTest.upload')(function* (
 })
 
 describe.skipIf(!testDatabaseConfigured)('Library shelves', () => {
-  layer(testLayer)((it) => {
+  layer(Layer.merge(testLayer, NodeFileSystem.layer))((it) => {
     /** NUL-separated letters must reach PostgreSQL as readable, searchable text, not a driver failure. */
     it.effect('indexes NUL-separated text through public ingestion and search', () =>
       Effect.gen(function* () {

@@ -9,7 +9,7 @@ import { Option, Schema } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { useSyncExternalStore } from 'react'
 import type { FaceColor } from '../ui/Face'
-import { change } from './app'
+import { changing } from './app'
 import { kept } from './kept'
 import { engine } from './runtime'
 import '../styles/vivid.css'
@@ -88,10 +88,11 @@ export const mayCustomise = (me: MeResponse): boolean => mayChangeAppearance(me.
 
 /**
  * Saves a new appearance and shows it at once: the expectation recolours and renames Vivid on
- * every surface before the server has answered, and is taken back if the server refuses.
+ * every surface before the server has answered, and is taken back if the server refuses. This
+ * describes the saving; the form that owns the press starts it.
  */
 export const saveAppearance = (next: Appearance) =>
-  change(
+  changing(
     (client) => client.SetAppearance(next),
     () => appearance.expect(() => next),
   )

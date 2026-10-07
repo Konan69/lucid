@@ -91,7 +91,7 @@ export const Connection = Schema.Struct({
   origin: Schema.Literals(['Catalogue', 'Address']),
   ownership: ConnectionOwnership,
   state: ConnectionState,
-  createdAt: Schema.Number,
+  createdAt: Schema.Finite,
 }).annotate({ identifier: 'Connection', title: 'Integration' })
 /** Decoded Connection. */
 export interface Connection extends Schema.Schema.Type<typeof Connection> {}
@@ -177,7 +177,7 @@ export interface FindServicesRequest extends Schema.Schema.Type<typeof FindServi
  */
 export const ServiceCatalog = Schema.TaggedUnion({
   /** The best matches, most wanted first. `total` counts Core, Useful and Niche services. */
-  Ready: { services: Schema.Array(Service), total: Schema.Number },
+  Ready: { services: Schema.Array(Service), total: Schema.Finite },
   Unavailable: {},
 })
 export type ServiceCatalog = typeof ServiceCatalog.Type
@@ -250,7 +250,7 @@ export interface ConnectionTool extends Schema.Schema.Type<typeof ConnectionTool
 /** Vivid looking for what it can do. Results are limited to what the acting Person may use here. */
 export const FindToolsRequest = Schema.Struct({
   query: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
-  limit: Schema.optionalKey(Schema.Number),
+  limit: Schema.optionalKey(Schema.Finite),
 })
 export interface FindToolsRequest extends Schema.Schema.Type<typeof FindToolsRequest> {}
 
@@ -335,7 +335,7 @@ export interface ConnectionRequestMessage extends Schema.Schema.Type<
  * asked, in milliseconds: an account that was there before does not answer the request, so only
  * one begun after that moment does.
  */
-export const AnotherAccount = Schema.Struct({ askedAt: Schema.Number })
+export const AnotherAccount = Schema.Struct({ askedAt: Schema.Finite })
 export const AnotherAccountMessage = Schema.Struct({
   kind: Schema.Literal('connection-request'),
   service: ServiceId,

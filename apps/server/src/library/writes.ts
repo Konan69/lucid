@@ -92,9 +92,7 @@ const createItemOperation = (
       }
       const existing = yield* dependencies.reads.getItemByDigest(actor, input.shelf, input.sha256)
       if (Option.isNone(existing))
-        return yield* Effect.fail(
-          new NotFound({ message: 'Duplicate Library item no longer exists' }),
-        )
+        return yield* new NotFound({ message: 'Duplicate Library item no longer exists' })
       return {
         value: LibraryUploadResponse.make({ document: existing.value, duplicate: true }),
         moved: [],

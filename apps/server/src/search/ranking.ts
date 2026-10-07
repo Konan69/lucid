@@ -5,7 +5,7 @@ const Candidate = Schema.Struct({
   result: SearchResult,
   title: Schema.String,
   text: Schema.Array(Schema.String),
-  updatedAt: Schema.Number,
+  updatedAt: Schema.Finite,
 })
 type Candidate = typeof Candidate.Type
 

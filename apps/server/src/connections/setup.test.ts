@@ -91,20 +91,24 @@ it.effect(
     Effect.gen(function* () {
       const http = yield* remote()
       yield* Effect.gen(function* () {
-        const executor = yield* Executor
-        const entries = remoteEntries(yield* executor.catalog())
-        expect(entries).toHaveLength(5)
-        expect(entries.slice(0, 4).map((entry) => entry.authorization._tag)).toEqual([
-          'KnownAfterInstall',
-          'KnownAfterInstall',
-          'KnownAfterInstall',
-          'SetupRequired',
-        ])
-        expect(entries[4]).toHaveProperty('authorization._tag', 'None')
-        expect(
-          (yield* Ref.get(http.requests)).every((path) => path === `GET ${hostedPrefix}/catalog`),
-        ).toBe(true)
-      }).pipe(Effect.provide(http.configured))
+        // This HTTP feed records discovery of absent and unknown installation hints.
+        const context = yield* Layer.build(http.configured)
+        return yield* Effect.gen(function* () {
+          const executor = yield* Executor
+          const entries = remoteEntries(yield* executor.catalog)
+          expect(entries).toHaveLength(5)
+          expect(entries.slice(0, 4).map((entry) => entry.authorization._tag)).toEqual([
+            'KnownAfterInstall',
+            'KnownAfterInstall',
+            'KnownAfterInstall',
+            'SetupRequired',
+          ])
+          expect(entries[4]).toHaveProperty('authorization._tag', 'None')
+          expect(
+            (yield* Ref.get(http.requests)).every((path) => path === `GET ${hostedPrefix}/catalog`),
+          ).toBe(true)
+        }).pipe(Effect.provide(context))
+      }).pipe(Effect.scoped)
     }).pipe(Effect.scoped),
 )
 
@@ -123,41 +127,49 @@ describe.skipIf(!testDatabaseConfigured)('setup-required public discovery', () =
           })
           const store = connectionStoreLayer.pipe(Layer.provide(http.configured))
           yield* Effect.gen(function* () {
-            const found = yield* connectionHandlers.FindIntegrations({ query: 'Acme' })
-            expect(found.integrations.map((entry) => entry.name)).toEqual([
-              'Acme Calendar',
-              'Acme Mail',
-              'Acme Drive',
-            ])
-            expect(found.integrations).toMatchObject([
-              {
-                authorization: ServiceAuthorization.cases.KnownAfterInstall.make({}),
-                connected: false,
-              },
-              {
-                authorization: ServiceAuthorization.cases.KnownAfterInstall.make({}),
-                connected: false,
-              },
-              {
-                authorization: ServiceAuthorization.cases.KnownAfterInstall.make({}),
-                connected: false,
-              },
-            ])
-            const service = (yield* (yield* ConnectionStore).catalog()).find(
-              (entry) => entry.id === 'unknown-auth',
-            )
-            if (service === undefined) expect.fail('Expected the unknown-auth service')
-            const error = yield* connectionHandlers
-              .OfferConnection({ service: service.id, reason: 'Read calendar', wanted: 'Service' })
-              .pipe(Effect.flip)
-            expect(error._tag).toBe('InvalidRequest')
-            expect(error.message).toBe(connectionSetupMessage)
-            expect(
-              (yield* Ref.get(http.requests)).every(
-                (path) => path === `GET ${hostedPrefix}/catalog`,
-              ),
-            ).toBe(true)
-          }).pipe(Effect.provide(store, { local: true }), Effect.provideService(AuthContext, auth))
+            // The store and catalogue cache must use this case's controlled HTTP feed.
+            const context = yield* Layer.build(Layer.fresh(store))
+            return yield* Effect.gen(function* () {
+              const found = yield* connectionHandlers.FindIntegrations({ query: 'Acme' })
+              expect(found.integrations.map((entry) => entry.name)).toEqual([
+                'Acme Calendar',
+                'Acme Mail',
+                'Acme Drive',
+              ])
+              expect(found.integrations).toMatchObject([
+                {
+                  authorization: ServiceAuthorization.cases.KnownAfterInstall.make({}),
+                  connected: false,
+                },
+                {
+                  authorization: ServiceAuthorization.cases.KnownAfterInstall.make({}),
+                  connected: false,
+                },
+                {
+                  authorization: ServiceAuthorization.cases.KnownAfterInstall.make({}),
+                  connected: false,
+                },
+              ])
+              const service = (yield* (yield* ConnectionStore).catalog()).find(
+                (entry) => entry.id === 'unknown-auth',
+              )
+              if (service === undefined) expect.fail('Expected the unknown-auth service')
+              const error = yield* connectionHandlers
+                .OfferConnection({
+                  service: service.id,
+                  reason: 'Read calendar',
+                  wanted: 'Service',
+                })
+                .pipe(Effect.flip)
+              expect(error._tag).toBe('InvalidRequest')
+              expect(error.message).toBe(connectionSetupMessage)
+              expect(
+                (yield* Ref.get(http.requests)).every(
+                  (path) => path === `GET ${hostedPrefix}/catalog`,
+                ),
+              ).toBe(true)
+            }).pipe(Effect.provide(context))
+          }).pipe(Effect.scoped, Effect.provideService(AuthContext, auth))
         }).pipe(Effect.scoped),
     )
   })
@@ -206,26 +218,31 @@ describe.skipIf(!testDatabaseConfigured)('catalogue Begin without auth hints', (
             new URL('/api/connections/return', (yield* ServerConfig).PUBLIC_URL).href,
           )
           yield* Effect.gen(function* () {
-            const store = yield* ConnectionStore
-            expect(remoteEntries(yield* store.catalog())[0]).toHaveProperty(
-              'authorization._tag',
-              'KnownAfterInstall',
-            )
-            const step = yield* store.begin(ownerActor, {
-              service: hostedService,
-              name: 'Work',
-              shared: false,
-            })
-            expect(step._tag).toBe(expected)
-            expect(
-              (yield* Ref.get(host.requests)).some(
-                (request) => request.path === `POST ${hostedPrefix}/apps/install`,
-              ),
-            ).toBe(true)
-          }).pipe(
-            Effect.provide(connectionStoreLayer, { local: true }),
-            Effect.provide(host.configured),
-          )
+            // This installation recorder owns the account requirements selected by the current variant.
+            const context = yield* Layer.build(host.configured)
+            return yield* Effect.gen(function* () {
+              // Capture the variant's installed Executor rather than the shared probe adapter.
+              const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+              return yield* Effect.gen(function* () {
+                const store = yield* ConnectionStore
+                expect(remoteEntries(yield* store.catalog())[0]).toHaveProperty(
+                  'authorization._tag',
+                  'KnownAfterInstall',
+                )
+                const step = yield* store.begin(ownerActor, {
+                  service: hostedService,
+                  name: 'Work',
+                  shared: false,
+                })
+                expect(step._tag).toBe(expected)
+                expect(
+                  (yield* Ref.get(host.requests)).some(
+                    (request) => request.path === `POST ${hostedPrefix}/apps/install`,
+                  ),
+                ).toBe(true)
+              }).pipe(Effect.provide(context))
+            }).pipe(Effect.scoped, Effect.provide(context))
+          }).pipe(Effect.scoped)
         }).pipe(Effect.scoped),
       )
     }

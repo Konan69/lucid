@@ -24,6 +24,7 @@ import { searchRequest } from './library.ts'
 import { settle } from './result.ts'
 import { codeTools } from './code.ts'
 import { toolRunner } from './scope.ts'
+import { asActing } from '../client.ts'
 
 const folder = '3a1c68db-241e-4b59-a0aa-4b18867d6da1'
 
@@ -97,7 +98,35 @@ describe('Routine Library authority', () => {
           [runtimeHeaders.thread]: 'test-thread',
           [runtimeHeaders.actor]: 'test-person',
         })
-      }).pipe(Effect.provide(server))
+        // Separate reads inside the server's longer scope must acquire distinct attributed clients.
+        yield* Effect.gen(function* () {
+          const clients: object[] = []
+          for (let call = 0; call < 2; call++) {
+            const result = yield* asActing(
+              Option.some({
+                threadId: ThreadId.make('test-thread'),
+                personId: PersonId.make('test-person'),
+              }),
+              (client) => {
+                clients.push(client)
+                return client.ReadPage({ address: 'https://example.com' })
+              },
+            )
+            // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- This partial assertion matches the response tag and title; it does not construct a domain value.
+            expect(result).toMatchObject({ _tag: 'Read', title: 'Example Domain' })
+          }
+          expect(clients[0]).not.toBe(clients[1])
+          expect(headers).toHaveLength(3)
+        }).pipe(
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromUnknown({
+              VIVID_SERVER_URL: address,
+              VIVID_RUNTIME_TOKEN: 'test-runtime-token',
+            }),
+          ),
+        )
+      }).pipe(Effect.provide(yield* Layer.build(server)))
     }),
   )
   it('uses only a valid server signal folder and puts it in the search request', () => {
@@ -143,9 +172,15 @@ describe('Routine Library authority', () => {
   it.effect('settles missing attribution before tools can access the RPC client', () =>
     Effect.gen(function* () {
       const program = Effect.gen(function* () {
-        yield* Scope
-        return { output: { ok: true } }
-      }).pipe(Effect.provide(scopeLayer('thread', { kind: 'user', body: 'Do it.' }, Option.none())))
+        // Acquisition failure remains inside settle, just like the tool boundary.
+        const context = yield* Layer.build(
+          scopeLayer('thread', { kind: 'user', body: 'Do it.' }, Option.none()),
+        )
+        return yield* Effect.gen(function* () {
+          yield* Scope
+          return { output: { ok: true } }
+        }).pipe(Effect.provide(context))
+      }).pipe(Effect.scoped)
       expect((yield* settle(program, 'test-tool')).output).toEqual({
         ok: false,
         message: 'There is no person behind this message to act for.',

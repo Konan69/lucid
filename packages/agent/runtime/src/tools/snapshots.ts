@@ -49,7 +49,7 @@ export const VividContext = Schema.Struct({
    * read once and frozen with the rest of the context, so every model turn of one response sees
    * the same clock. `None` only for the empty context of a message with nobody behind it.
    */
-  asOf: Schema.Option(Schema.Number),
+  asOf: Schema.Option(Schema.Finite),
   /**
    * The services this Person has connected and that are ready to use, by the name people know
    * them ("Gmail"). Names only: accounts and tools are still resolved through find_tools. Without

@@ -1,7 +1,7 @@
 import { RoutineTrigger, type RoutineId, type RoutineWebhook, type Thread } from '@vivid/contracts'
 import type { RuntimeConversation } from '@vivid/state'
 import type { LiveStateOf } from '@vivid/state'
-import { Data, Option, Redacted, Result } from 'effect'
+import { Data, Effect, Option, Redacted, Result } from 'effect'
 import {
   AlertTriangle,
   ChevronRight,
@@ -17,7 +17,8 @@ import {
   Webhook,
 } from 'lucide-react'
 import { useId, useState, type FormEvent, type ReactNode } from 'react'
-import { change, live, LiveState, useLive, useLiveValue } from '../data/live'
+import { act } from '../data/app'
+import { changing, live, LiveState, useLive, useLiveValue } from '../data/live'
 import { routines as routinesData } from '@vivid/state'
 import type { ProductFailure } from '../data/runtime'
 import { Button, IconButton } from '../ui/button'
@@ -666,28 +667,30 @@ function NewRoutine({
   const [fields, setFields] = useState(start)
   const [saving, setSaving] = useState(false)
 
-  async function create(event: FormEvent) {
-    event.preventDefault()
-    setSaving(true)
-    const result = await change((client) =>
-      client.CreateRoutine({
-        name: fields.name.trim(),
-        prompt: fields.prompt.trim(),
-        trigger: routinesData.triggerOf(fields, zone),
-      }),
-    )
-    setSaving(false)
-    onRefused(refusal(result))
-    if (Result.isFailure(result)) return
-    // The call's answer can arrive before the live query's next result. Showing the Routine the
-    // server just returned, as a change that is already accepted, keeps its page from opening on
-    // a list that does not have it yet.
-    live.routines.expect(routinesData.confirmed(result.success.routine))(true)
-    onCreated(result.success.routine)
+  function create(event: FormEvent) {
+    return Effect.gen(function* () {
+      event.preventDefault()
+      setSaving(true)
+      const result = yield* changing((client) =>
+        client.CreateRoutine({
+          name: fields.name.trim(),
+          prompt: fields.prompt.trim(),
+          trigger: routinesData.triggerOf(fields, zone),
+        }),
+      )
+      setSaving(false)
+      onRefused(refusal(result))
+      if (Result.isFailure(result)) return
+      // The call's answer can arrive before the live query's next result. Showing the Routine the
+      // server just returned, as a change that is already accepted, keeps its page from opening on
+      // a list that does not have it yet.
+      live.routines.expect(routinesData.confirmed(result.success.routine))(true)
+      onCreated(result.success.routine)
+    })
   }
 
   return (
-    <form onSubmit={(event) => void create(event)} className="space-y-4 pt-2">
+    <form onSubmit={(event) => void act(create(event))} className="space-y-4 pt-2">
       <RoutineFieldset fields={fields} zone={zone} focusName onChange={setFields} />
       <div className="flex items-center justify-end gap-2 pt-1">
         <Button type="button" variant="ghost" onClick={onCancel}>
@@ -725,25 +728,27 @@ function RoutineDetail({
     routinesData.fieldsComplete(fields, zone) && routinesData.fieldsDiffer(routine, fields, zone)
 
   /** The page shows the saved Routine at once; a refused save puts it back and says why. */
-  async function save(event: FormEvent) {
-    event.preventDefault()
-    const submitted: routinesData.RoutineFields = {
-      ...fields,
-      name: fields.name.trim(),
-      prompt: fields.prompt.trim(),
-    }
-    const changes = {
-      name: submitted.name,
-      prompt: submitted.prompt,
-      trigger: routinesData.triggerOf(submitted, zone),
-    }
-    const result = await change(
-      (client) => client.PatchRoutine({ id: routine.id, patch: changes }),
-      () => live.routines.expect(routinesData.edited(routine.id, changes)),
-    )
-    // Keep edits made while the request was in flight; only the submitted values now live on the Routine.
-    if (Result.isSuccess(result)) setEdits((current) => routinesData.unsaved(current, submitted))
-    onRefused(refusal(result))
+  function save(event: FormEvent) {
+    return Effect.gen(function* () {
+      event.preventDefault()
+      const submitted: routinesData.RoutineFields = {
+        ...fields,
+        name: fields.name.trim(),
+        prompt: fields.prompt.trim(),
+      }
+      const changes = {
+        name: submitted.name,
+        prompt: submitted.prompt,
+        trigger: routinesData.triggerOf(submitted, zone),
+      }
+      const result = yield* changing(
+        (client) => client.PatchRoutine({ id: routine.id, patch: changes }),
+        () => live.routines.expect(routinesData.edited(routine.id, changes)),
+      )
+      // Keep edits made while the request was in flight; only the submitted values now live on the Routine.
+      if (Result.isSuccess(result)) setEdits((current) => routinesData.unsaved(current, submitted))
+      onRefused(refusal(result))
+    })
   }
 
   return (
@@ -758,7 +763,7 @@ function RoutineDetail({
           </p>
         </div>
       )}
-      <form onSubmit={(event) => void save(event)} className="space-y-4">
+      <form onSubmit={(event) => void act(save(event))} className="space-y-4">
         <RoutineFieldset fields={fields} zone={zone} focusName={false} onChange={setFields} />
         <div className="flex items-center justify-end gap-2 pt-1">
           <Button type="button" variant="ghost" onClick={onBack}>
@@ -791,41 +796,47 @@ function RoutineControls({
   const running = Option.contains(latest, 'running')
   const retry = Option.contains(latest, 'failed') || routine.lastMissedAt !== null
 
-  async function toggle() {
-    const enabled = !routine.enabled
-    const result = await change(
-      (client) => client.PatchRoutine({ id: routine.id, patch: { enabled } }),
-      () => live.routines.expect(routinesData.enabledSet(routine.id, enabled)),
-    )
-    onRefused(refusal(result))
+  function toggle() {
+    return Effect.gen(function* () {
+      const enabled = !routine.enabled
+      const result = yield* changing(
+        (client) => client.PatchRoutine({ id: routine.id, patch: { enabled } }),
+        () => live.routines.expect(routinesData.enabledSet(routine.id, enabled)),
+      )
+      onRefused(refusal(result))
+    })
   }
 
-  async function run() {
-    setStarting(true)
-    const result = await change((client) => client.RunRoutine({ id: routine.id }))
-    setStarting(false)
-    onRefused(refusal(result))
+  function run() {
+    return Effect.gen(function* () {
+      setStarting(true)
+      const result = yield* changing((client) => client.RunRoutine({ id: routine.id }))
+      setStarting(false)
+      onRefused(refusal(result))
+    })
   }
 
   /** Leaves the page at once; if the server refuses, the Routine is back in the list. */
-  async function remove() {
-    if (!window.confirm(`Delete “${routine.name}”? Its history goes with it.`)) return
-    onBack()
-    const result = await change(
-      (client) => client.DeleteRoutine({ id: routine.id }),
-      () => live.routines.expect(routinesData.removed(routine.id)),
-    )
-    onRefused(refusal(result))
+  function remove() {
+    return Effect.gen(function* () {
+      if (!window.confirm(`Delete “${routine.name}”? Its history goes with it.`)) return
+      onBack()
+      const result = yield* changing(
+        (client) => client.DeleteRoutine({ id: routine.id }),
+        () => live.routines.expect(routinesData.removed(routine.id)),
+      )
+      onRefused(refusal(result))
+    })
   }
 
   return (
     <div className="mb-5 border-b border-line-1 pb-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" onClick={() => void toggle()}>
+        <Button variant="outline" onClick={() => void act(toggle())}>
           {routine.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
           {routine.enabled ? 'Pause' : 'Resume'}
         </Button>
-        <Button disabled={starting || running} onClick={() => void run()}>
+        <Button disabled={starting || running} onClick={() => void act(run())}>
           {retry ? <RotateCcw className="size-3.5" /> : <Play className="size-3.5" />}
           {starting || running ? 'Running' : 'Run now'}
         </Button>
@@ -834,7 +845,7 @@ function RoutineControls({
         )}
         <button
           type="button"
-          onClick={() => void remove()}
+          onClick={() => void act(remove())}
           className="ml-auto inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-control px-3 text-label text-danger transition-colors duration-(--dur-fast) hover:bg-danger-soft"
         >
           <Trash2 className="size-3.5" />
@@ -867,17 +878,19 @@ function WebhookAddress({
   const [asking, setAsking] = useState(false)
   const [issued, setIssued] = useState<Option.Option<RoutineWebhook>>(Option.none())
 
-  async function ask() {
-    setAsking(true)
-    const result = await change((client) => client.IssueRoutineWebhook({ id: routine.id }))
-    setAsking(false)
-    onRefused(refusal(result))
-    if (Result.isSuccess(result)) setIssued(Option.some(result.success))
+  function ask() {
+    return Effect.gen(function* () {
+      setAsking(true)
+      const result = yield* changing((client) => client.IssueRoutineWebhook({ id: routine.id }))
+      setAsking(false)
+      onRefused(refusal(result))
+      if (Result.isSuccess(result)) setIssued(Option.some(result.success))
+    })
   }
 
   return (
     <>
-      <Button variant="outline" disabled={asking} onClick={() => void ask()}>
+      <Button variant="outline" disabled={asking} onClick={() => void act(ask())}>
         <Link2 className="size-3.5" />
         Get address
       </Button>

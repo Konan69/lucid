@@ -83,7 +83,7 @@ export const desktopStep = Effect.fn('Machine.boat.desktop.step')(function* (
     Press: Effect.fn('Machine.boat.desktop.press')(function* ({ keys }) {
       const parts = keys.split('+')
       const key = parts.pop()
-      if (key === undefined || key === '') return yield* Effect.fail(new MachineInputInvalid())
+      if (key === undefined || key === '') return yield* new MachineInputInvalid()
       yield* native.call('press_key', { ...common, key, modifiers: parts }, ActionReceipt)
       return undefined
     }),
@@ -102,7 +102,7 @@ export const look = Effect.fn('Machine.boat.desktop.look')(function* (
   const pointer = yield* native.call('get_cursor_position', {}, Cursor)
   const focused = yield* api.command(identity.id, identity.key, focusCommand, 30)
   if (focused.exitCode !== 0 || focused.stdoutTruncated === true)
-    return yield* Effect.fail(new MachineResponseInvalid({ operation: 'focused-window' }))
+    return yield* new MachineResponseInvalid({ operation: 'focused-window' })
   const focus = yield* decodeFocus(focused.stdout).pipe(
     Effect.mapError(() => new MachineResponseInvalid({ operation: 'focused-window' })),
   )
@@ -115,7 +115,7 @@ export const look = Effect.fn('Machine.boat.desktop.look')(function* (
     picture.screenshot_width !== picture.screen_width ||
     picture.screenshot_height !== picture.screen_height
   )
-    return yield* Effect.fail(new MachineResponseInvalid({ operation: 'desktop-picture' }))
+    return yield* new MachineResponseInvalid({ operation: 'desktop-picture' })
   return DesktopView.make({
     picture: picture.screenshot_png_b64,
     width: picture.screen_width,
