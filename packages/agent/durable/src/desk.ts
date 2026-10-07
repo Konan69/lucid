@@ -35,6 +35,30 @@ export type Reader = {
   readonly conversation: Conversation
   readonly context: Context
 }
+/** HookApi cannot identify the winner of a duplicated bridged registration. Presentation
+ * checks only unresolved names so completed history remains readable after registry changes. */
+const uniqueNames = Effect.fn('Durable.uniqueToolNames')(function* (
+  agent: Effect.Success<ReturnType<typeof Pi.agent>>,
+  names: ReadonlySet<string>,
+) {
+  for (const name of names) {
+    const offered = agent.extensions
+      .flatMap((extension) => extension.tools ?? [])
+      .filter((tool) => tool.name === name)
+    if (offered.length > 1 && offered.some((tool) => Option.isSome(planOf(tool))))
+      return yield* new ToolNameDuplicated({ toolName: name })
+  }
+  return undefined
+})
+
+/** Refuse a configuration error before POST admission, so the facade can return HTTP 500
+ * rather than opening an HTTP stream that fails on its first tool input. */
+export const validateTools: (reader: Reader) => Effect.Effect<void, PiFailed | ToolNameDuplicated> =
+  Effect.fn('Durable.validateTools')(function* (reader: Reader) {
+    const agent = yield* Pi.agent(reader.conversation, reader.context)
+    yield* uniqueNames(agent, new Set(agent.tools.map((tool) => tool.name)))
+  })
+
 /** Resolve tool plans at the point of presentation, since the registry can change between turns. */
 export const readDesk = Effect.fn('Durable.readDesk')(function* (
   reader: Reader,
@@ -44,7 +68,7 @@ export const readDesk = Effect.fn('Durable.readDesk')(function* (
     readonly origins: ReadonlyMap<Chunk, TaskId>
   },
   shownHolds: Round['holds'],
-): Effect.fn.Return<Desk, PiFailed> {
+): Effect.fn.Return<Desk, PiFailed | ToolNameDuplicated> {
   const { chunks, live: observedLive, origins } = observation
   const agent = yield* Pi.agent(reader.conversation, reader.context)
   // HookApi cannot resolve its selected registration. Reject ambiguity for active calls only;
@@ -52,16 +76,7 @@ export const readDesk = Effect.fn('Durable.readDesk')(function* (
   const names = new Set(
     chunks.flatMap((chunk) => ('toolName' in chunk && !origins.has(chunk) ? [chunk.toolName] : [])),
   )
-  for (const name of names) {
-    const offered = agent.extensions
-      .flatMap((extension) => extension.tools ?? [])
-      .filter((tool) => tool.name === name)
-    if (offered.length > 1 && offered.some((tool) => Option.isSome(planOf(tool))))
-      return yield* new PiFailed({
-        operation: 'agent',
-        cause: new ToolNameDuplicated({ toolName: name }),
-      })
-  }
+  yield* uniqueNames(agent, names)
   const plans = new Map(
     agent.tools.flatMap((tool) => {
       const plan = planOf(tool)

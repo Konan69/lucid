@@ -350,6 +350,7 @@ export const history: (
   context: Context,
 ) => Effect.Effect<
   HistoryPage,
+  | DurableErrors.ToolNameDuplicated
   | DurableErrors.ConversationMissing
   | HistoryCursorInvalid
   | HistoryPageInvalid
@@ -361,6 +362,7 @@ export const history: (
   context: Context,
 ): Effect.fn.Return<
   HistoryPage,
+  | DurableErrors.ToolNameDuplicated
   | DurableErrors.ConversationMissing
   | DurableErrors.PiFailed
   | HistoryCursorInvalid

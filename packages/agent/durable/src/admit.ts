@@ -13,6 +13,7 @@ import {
 import { Effect, Exit, Option, Scope, Stream } from 'effect'
 import {
   ConversationMissing,
+  ToolNameDuplicated,
   PiFailed,
   TurnBusy,
   TurnConflict,
@@ -23,6 +24,7 @@ import {
   WatchOverflowed,
 } from './errors.ts'
 import * as Pi from './pi.ts'
+import { validateTools } from './desk.ts'
 import { isParked } from './busy.ts'
 
 type InputReceipt = Extract<SubmissionRecord, { type: 'input' }>
@@ -37,6 +39,7 @@ type Draft = {
   readonly draft: InputSubmissionDraft & { readonly requestId: string }
 }
 type AdmissionFailure =
+  | ToolNameDuplicated
   | ConversationMissing
   | PiFailed
   | TurnBusy
@@ -262,6 +265,7 @@ export const admit: (
 ) => Effect.Effect<Admission, AdmissionFailure> = Effect.fn('Durable.admit')(
   function* (harness, input, context, scope) {
     const conversation = yield* Pi.conversation(harness, input.conversationId, context)
+    yield* validateTools({ harness, conversation, context })
     const initialScope = yield* Scope.fork(scope)
     const watched = yield* Pi.watch(harness, input.conversationId, context).pipe(
       Scope.provide(initialScope),

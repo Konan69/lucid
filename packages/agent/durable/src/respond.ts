@@ -299,8 +299,13 @@ export const respond: (
 ) => Effect.Effect<
   Stream.Stream<
     UIMessageChunk,
-    DurableErrors.PiFailed | DurableErrors.WatchClosed | DurableErrors.WatchOverflowed | RunMissing
+    | DurableErrors.ToolNameDuplicated
+    | DurableErrors.PiFailed
+    | DurableErrors.WatchClosed
+    | DurableErrors.WatchOverflowed
+    | RunMissing
   >,
+  | DurableErrors.ToolNameDuplicated
   | DurableErrors.ConversationMissing
   | DurableErrors.LimitInvalid
   | DurableErrors.BusyPolicyInvalid

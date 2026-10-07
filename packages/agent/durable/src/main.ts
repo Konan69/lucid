@@ -160,6 +160,7 @@ function turnResponse(program: ReturnType<typeof Core.respond>) {
     Effect.flatMap((stream) => Stream.toReadableStreamEffect(httpStream(stream))),
     Effect.map((stream) => createUIMessageStreamResponse({ stream })),
     Effect.catchTags({
+      ToolNameDuplicated: (error) => Effect.succeed(new Response(error.message, { status: 500 })),
       TurnWithdrawn: (error) => Effect.succeed(new Response(error.message, { status: 409 })),
       TurnConflict: (error) => Effect.succeed(new Response(error.message, { status: 409 })),
       TurnWaiting: (error) => Effect.succeed(new Response(error.message, { status: 409 })),
@@ -201,9 +202,12 @@ export function respond(
                 ),
             }),
           ),
-          Effect.catchTag('ConversationMissing', () =>
-            Effect.succeed(new Response('Conversation not found', { status: 404 })),
-          ),
+          Effect.catchTags({
+            ConversationMissing: () =>
+              Effect.succeed(new Response('Conversation not found', { status: 404 })),
+            ToolNameDuplicated: (error) =>
+              Effect.succeed(new Response(error.message, { status: 500 })),
+          }),
         )
       }
       if (request.method !== 'POST')

@@ -54,7 +54,12 @@ export type RunInput = {
 /** The public optional wire policy is normalized before any watch or Pi admission. */
 type PreparedInput = Omit<RunInput, 'options'> & { readonly options: InputPolicy }
 
-export type WatchFailure = PiFailed | WatchClosed | WatchOverflowed | RunMissing
+export type WatchFailure =
+  | PiFailed
+  | WatchClosed
+  | WatchOverflowed
+  | RunMissing
+  | DurableErrors.ToolNameDuplicated
 
 type State = {
   readonly state: RunState
@@ -211,6 +216,7 @@ export const prepareRun: (
   context: Context,
 ) => Effect.Effect<
   Stream.Stream<UIMessageChunk, WatchFailure>,
+  | DurableErrors.ToolNameDuplicated
   | DurableErrors.ConversationMissing
   | DurableErrors.LimitInvalid
   | RunMissing
@@ -383,7 +389,7 @@ export const attachRun: (
   context: Context,
 ) => Effect.Effect<
   Option.Option<Stream.Stream<UIMessageChunk, WatchFailure>>,
-  DurableErrors.ConversationMissing | PiFailed | RunMissing
+  DurableErrors.ToolNameDuplicated | DurableErrors.ConversationMissing | PiFailed | RunMissing
 > = Effect.fn('Durable.attachRun')(function* (
   harness: Harness,
   conversationId: ConversationId,
@@ -406,7 +412,7 @@ export const continueRun: (
   context: Context,
 ) => Effect.Effect<
   Stream.Stream<UIMessageChunk, WatchFailure>,
-  DurableErrors.ConversationMissing | PiFailed | RunMissing
+  DurableErrors.ToolNameDuplicated | DurableErrors.ConversationMissing | PiFailed | RunMissing
 > = Effect.fn('Durable.continueRun')(function* (
   harness: Harness,
   conversationId: ConversationId,
@@ -424,7 +430,7 @@ export const completeTurn: (
   context: Context,
 ) => Effect.Effect<
   Stream.Stream<UIMessageChunk, WatchFailure>,
-  DurableErrors.ConversationMissing | PiFailed | RunMissing
+  DurableErrors.ToolNameDuplicated | DurableErrors.ConversationMissing | PiFailed | RunMissing
 > = Effect.fn('Durable.completeTurn')(function* (
   harness: Harness,
   conversationId: ConversationId,
@@ -463,6 +469,7 @@ export const followRun: (
   context: Context,
 ) => Effect.Effect<
   Stream.Stream<UIMessageChunk, WatchFailure>,
+  | DurableErrors.ToolNameDuplicated
   | DurableErrors.ConversationMissing
   | PiFailed
   | RunMissing
