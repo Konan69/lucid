@@ -93,15 +93,12 @@ function stageResult(stage, tasks, run) {
 }
 
 /**
- * What each package's `vitest run` is given. The JSON result is how the verdict counts tests.
- * With a base, Vitest runs only the test files whose imports reach a file changed since that
- * commit; a package nothing reaches then has no test to run, which is a pass. A file a test
- * reads without importing it (a migration, a fixture read from disk) is not in that graph,
- * which is why an affected run is the working loop and the full run is the gate for main.
+ * What each package's test runner (`scripts/test.mjs`) is given. It writes the counts the verdict
+ * reads and runs only the test files whose inputs changed since they passed. With a base, Vitest
+ * further narrows to files whose imports reach a file changed since that commit.
  */
-function vitestArguments(base) {
-  const report = ['--reporter=default', '--reporter=json', `--outputFile.json=${testResult}`]
-  return base === undefined ? report : [...report, `--changed=${base}`, '--passWithNoTests']
+function testArguments(base) {
+  return base === undefined ? [] : ['--', `--changed=${base}`, '--passWithNoTests']
 }
 
 /**
@@ -112,7 +109,7 @@ async function runLane(lane, laneStages, run) {
   const tasks = laneStages.flatMap((stage) => stage.tasks)
   const before = existingSummaries(run.root)
   const concurrency = lane === 'checks' ? '1' : String(run.testTasks)
-  const forwarded = lane === 'tests' ? ['--', ...vitestArguments(run.base)] : []
+  const forwarded = lane === 'tests' ? testArguments(run.base) : []
   const turbo = await logged(
     [
       'node',

@@ -13,7 +13,7 @@
     "updates": "node scripts/publish.mjs",
     "typecheck": "node ../../scripts/types.mjs",
     "lint": "node ../../scripts/lint.mjs",
-    "test": "vitest run"
+    "test": "node ../../scripts/test.mjs"
   },
   "dependencies": {
     "@effect/atom-react": "catalog:",

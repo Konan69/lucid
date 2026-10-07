@@ -141,7 +141,7 @@ void test('test tasks hash every test setting except the database address', () =
       ['VIVID_TEST_*', 'VIVID_LIVE_*', 'EXPLABS_API_KEY', '!VIVID_TEST_DATABASE_URL'],
       key,
     )
-    assert.deepEqual(task.passThroughEnv, ['VIVID_TEST_DATABASE_URL'], key)
+    assert.deepEqual(task.passThroughEnv, ['VIVID_TEST_DATABASE_URL', 'VIVID_GATE_CACHE'], key)
   }
 })
 

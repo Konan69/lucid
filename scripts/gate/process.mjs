@@ -16,19 +16,21 @@ export function runIdentifier() {
 const running = new Set()
 
 /**
- * A gate that is told to stop takes its children with it. Each child leads a process group of
- * its own (`detached`), so Turbo's tasks and Vitest's workers end too; without this a stopped
- * gate freed its locks while its children still wrote into the tree. `finally` blocks do not run
- * on a signal, so the caller's cleanup is given here.
+ * A gate that is told to stop tells its children, and Turbo and Vitest stop their own; without
+ * this a stopped gate freed its locks while its children still wrote into the tree. The children
+ * stay in the gate's process group on purpose: a supervisor that kills the group (which cannot
+ * be caught here) then takes them too. A first version gave each child its own group, and a
+ * killed gate left an Electron test running for ten minutes. `finally` blocks do not run on a
+ * signal, so the caller's cleanup is given here.
  */
 export function stopChildrenOnSignal(cleanup) {
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'])
     process.once(signal, () => {
       for (const child of running) {
         try {
-          process.kill(-child, 'SIGTERM')
+          process.kill(child, 'SIGTERM')
         } catch {
-          // The group ended between its last output and this signal.
+          // The child ended between its last output and this signal.
         }
       }
       void cleanup().finally(() => process.exit(1))
@@ -43,7 +45,6 @@ export async function logged(command, options) {
     cwd: options.cwd,
     env: options.env,
     stdio: ['ignore', log, log],
-    detached: true,
   })
   if (child.pid !== undefined) running.add(child.pid)
   try {

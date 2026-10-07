@@ -95,10 +95,16 @@
     },
     "test": {
       "dependsOn": ["checkinputs"],
-      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/test.mjs"
+      ],
       "outputs": [".cache/gate/tests.json"],
       "env": ["VIVID_TEST_*", "VIVID_LIVE_*", "EXPLABS_API_KEY", "!VIVID_TEST_DATABASE_URL"],
-      "passThroughEnv": ["VIVID_TEST_DATABASE_URL"]
+      "passThroughEnv": ["VIVID_TEST_DATABASE_URL", "VIVID_GATE_CACHE"]
     },
     "dev": {
       "cache": false,
@@ -305,31 +311,55 @@
     },
     "@vivid/skills#test": {
       "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"],
-      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/test.mjs"
+      ],
       "outputs": [".cache/gate/tests.json"],
       "env": ["VIVID_TEST_*", "VIVID_LIVE_*", "EXPLABS_API_KEY", "!VIVID_TEST_DATABASE_URL"],
-      "passThroughEnv": ["VIVID_TEST_DATABASE_URL"]
+      "passThroughEnv": ["VIVID_TEST_DATABASE_URL", "VIVID_GATE_CACHE"]
     },
     "@vivid/agent-runtime#test": {
       "dependsOn": ["checkinputs", "@vivid/server#checkinputs"],
-      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/test.mjs"
+      ],
       "outputs": [".cache/gate/tests.json"],
       "env": ["VIVID_TEST_*", "VIVID_LIVE_*", "EXPLABS_API_KEY", "!VIVID_TEST_DATABASE_URL"],
-      "passThroughEnv": ["VIVID_TEST_DATABASE_URL"]
+      "passThroughEnv": ["VIVID_TEST_DATABASE_URL", "VIVID_GATE_CACHE"]
     },
     "@vivid/server#test": {
       "dependsOn": ["checkinputs", "@vivid/agent-runtime#checkinputs"],
-      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/test.mjs"
+      ],
       "outputs": [".cache/gate/tests.json"],
       "env": ["VIVID_TEST_*", "VIVID_LIVE_*", "EXPLABS_API_KEY", "!VIVID_TEST_DATABASE_URL"],
-      "passThroughEnv": ["VIVID_TEST_DATABASE_URL"]
+      "passThroughEnv": ["VIVID_TEST_DATABASE_URL", "VIVID_GATE_CACHE"]
     },
     "@vivid/mobile#test": {
       "dependsOn": ["checkinputs", "@vivid/web#checkinputs"],
-      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/test.mjs"
+      ],
       "outputs": [".cache/gate/tests.json"],
       "env": ["VIVID_TEST_*", "VIVID_LIVE_*", "EXPLABS_API_KEY", "!VIVID_TEST_DATABASE_URL"],
-      "passThroughEnv": ["VIVID_TEST_DATABASE_URL"]
+      "passThroughEnv": ["VIVID_TEST_DATABASE_URL", "VIVID_GATE_CACHE"]
     },
     "//#test:tooling": {
       "inputs": [
@@ -361,10 +391,16 @@
     },
     "@vivid/desktop#test": {
       "dependsOn": ["checkinputs", "@vivid/tokens#typeinputs"],
-      "inputs": ["$TURBO_DEFAULT$", "!README.md", "!AGENTS.md", "$TURBO_ROOT$/tsconfig.base.json"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!README.md",
+        "!AGENTS.md",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/scripts/test.mjs"
+      ],
       "outputs": [".cache/gate/tests.json"],
       "env": ["VIVID_TEST_*", "VIVID_LIVE_*", "EXPLABS_API_KEY", "!VIVID_TEST_DATABASE_URL"],
-      "passThroughEnv": ["VIVID_TEST_DATABASE_URL"]
+      "passThroughEnv": ["VIVID_TEST_DATABASE_URL", "VIVID_GATE_CACHE"]
     }
   }
 }
