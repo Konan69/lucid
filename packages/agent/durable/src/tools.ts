@@ -11,7 +11,7 @@ import {
   ToolTask,
 } from '@earendil-works/pi-durable'
 import { asSchema, type Tool, type ToolSet } from 'ai'
-import { Data, Effect, Option, Predicate, Schema } from 'effect'
+import { Cause, Data, Effect, Option, Predicate, Schema } from 'effect'
 
 import {
   ToolApprovalUnsupported,
@@ -237,6 +237,35 @@ const validate = (schema: ReturnType<typeof asSchema>, args: SdkValue, name: str
 }
 
 /**
+ * A user resolver is an SDK boundary: reject non-Effects before the fiber runtime sees them, and
+ * translate its typed failures and defects once. Cancellation retains interruption semantics.
+ */
+const resolveContext = Effect.fn('Durable.toolContext')(function* (
+  resolve: NonNullable<ToolsOptions['context']>,
+  scope: ToolScope,
+) {
+  return yield* Effect.suspend(() => {
+    const resolved = resolve(scope)
+    if (Effect.isEffect(resolved)) return resolved
+    // Invalid Promise resolvers are not awaited; observe rejection while reporting the contract error.
+    if (Predicate.isPromiseLike(resolved))
+      resolved.then(
+        () => {},
+        () => {},
+      )
+    return Effect.fail(new Error('Context resolver must return an Effect'))
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasInterrupts(cause)
+        ? Effect.interrupt
+        : Effect.fail(
+            new ToolContextFailed({ toolName: scope.toolName, cause: Cause.squash(cause) }),
+          ),
+    ),
+  )
+})
+
+/**
  * Pulls remain interruptible even when a native generator is suspended in an uncooperative await.
  * return() queues behind next() in native generators: observe its rejection, but never await it
  * during interruption. Normal exhaustion does not call return(), matching SDK execute-tool.ts.
@@ -300,14 +329,7 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
   }
   const resolved = yield* Option.match(server.context, {
     onNone: () => Effect.succeed(scope),
-    onSome: (resolve) =>
-      Effect.try({
-        try: () => resolve(scope),
-        catch: (cause) => new ToolContextFailed({ toolName: server.name, cause }),
-      }).pipe(
-        Effect.flatten,
-        Effect.mapError((cause) => new ToolContextFailed({ toolName: server.name, cause })),
-      ),
+    onSome: (resolve) => resolveContext(resolve, scope),
   })
   // ai/src/generate-text/validate-tool-context.ts:21–33 validates and normalizes before execute.
   const toolContext = yield* Option.match(server.contextSchema, {

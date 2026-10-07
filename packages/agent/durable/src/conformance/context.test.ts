@@ -217,3 +217,80 @@ it.live('preserves ToolScope after process death and safe replay', () =>
     })
   }),
 )
+
+/** Incorrect Effect-entry callback results must not escape as unnamed fiber defects or double prefixes. */
+for (const sample of [
+  {
+    name: 'plain value',
+    resolve: () => ({ owner: 'person' }),
+    diagnostic: 'Context resolver must return an Effect',
+  },
+  {
+    name: 'Promise value',
+    resolve: () => Promise.resolve({ owner: 'person' }),
+    diagnostic: 'Context resolver must return an Effect',
+  },
+  {
+    name: 'synchronous throw',
+    resolve: () => {
+      throw new Error('resolver sync boom')
+    },
+    diagnostic: 'resolver sync boom',
+  },
+  {
+    name: 'Effect defect',
+    resolve: () => Effect.die(new Error('resolver died')),
+    diagnostic: 'resolver died',
+  },
+])
+  it.live(`reports ${sample.name} from a context resolver as one named tool error`, () =>
+    Effect.promise(async () => {
+      let executions = 0
+      const fixture = await host(
+        {
+          scoped: tool({
+            inputSchema: z.object({}),
+            execute: async () => {
+              executions++
+              return 'unexpected'
+            },
+          }),
+        },
+        {
+          // Deliberately exercise the runtime SDK boundary with a caller that violates this entry's type.
+          // @ts-expect-error Effect entry does not accept plain values or Promises.
+          context: sample.resolve,
+        },
+      )
+      const opened = await fixture.open()
+      opened.faux.setResponses([
+        call('scoped', {}, 'invalid-context'),
+        (request) => {
+          expect(request.messages.at(-1)).toMatchObject({
+            role: 'toolResult',
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: `<harness>\n[error] Tool scoped context failed: ${sample.diagnostic}\n</harness>`,
+              },
+            ],
+          })
+          return fauxAssistantMessage('Recovered.')
+        },
+      ])
+      const result = await consume(
+        await streamRun(
+          opened.harness,
+          { conversationId: opened.root.id, content: 'Try', requestId: sample.name },
+          context,
+        ),
+      )
+      expect(result.message.parts.find((part) => part.type === 'tool-scoped')).toMatchObject({
+        state: 'output-error',
+        errorText: `<harness>\n[error] Tool scoped context failed: ${sample.diagnostic}\n</harness>`,
+      })
+      expect(executions).toBe(0)
+      expect(texts(result.message)).toEqual(['Recovered.'])
+    }),
+  )
