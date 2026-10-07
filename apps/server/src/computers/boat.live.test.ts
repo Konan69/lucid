@@ -1,7 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import * as NodeProcess from 'node:process'
 import { NodeHttpClient } from '@effect/platform-node'
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { BrowserAction, ComputerState, DesktopAction } from '@vivid/contracts'
 import { Clock, Config, Duration, Effect, Function, Layer, Option, Predicate } from 'effect'
 import { eq } from 'drizzle-orm'
@@ -174,74 +174,76 @@ const browserProof = Effect.fn('BoatLive.browser')(function* (
 
 /** Exercise the owned Machine seam against a real guest, with explicit compute opt-in. */
 describe.skipIf(!enabled)('Boat native guest live proof', () => {
-  it.live(
-    'creates, views, clicks a link, types and reads values, archives and resumes the same machine',
-    () =>
-      Effect.gen(function* () {
-        const machine = yield* Machine
-        const key = MachineKey.make(NodeCrypto.randomUUID())
-        yield* cleanup(key)
-        yield* measured('create', machine.ensure(key))
-        // A template is usable only when portable archives survive restore, not just preparation.
-        const installed = yield* measured(
-          'verify-restored-apps',
-          machine.exec({
-            key,
-            command: '/opt/vivid/python/bin/python3 /opt/vivid/computer/catalogue.py verify',
-            timeoutSeconds: 60,
-          }),
-        )
-        expect(installed.exitCode).toBe(0)
-        const saved = yield* bindings()
-        const original = yield* saved.load(key)
-        if (Option.isNone(original) || original.value.providerId === null)
-          expect.fail('The created Computer must have a durable identity')
-        yield* Effect.logInfo('Boat live machine created', { id: original.value.providerId })
-        yield* Effect.sync(() =>
-          NodeProcess.stdout.write(`${JSON.stringify({ created: original.value.providerId })}\n`),
-        )
-        const created = yield* measured('viewer', machine.status(key))
-        if (!ComputerState.guards.Running(created))
-          expect.fail('The created Computer must be running')
-        expect(Predicate.isTagged(created.screen, 'Viewer')).toBe(true)
-        const view = yield* measured(
-          'look',
-          machine.desktop({ key, action: DesktopAction.cases.Look.make({}) }),
-        )
-        expect(view.picture.length > 0 && view.width > 0 && view.height > 0).toBe(true)
-        yield* browserProof(machine, key)
-        const written = yield* measured(
-          'write-marker',
-          machine.exec({
-            key,
-            command: `printf '%s' '${key}' > "$HOME/vivid-live-proof"`,
-            timeoutSeconds: 30,
-          }),
-        )
-        expect(written.exitCode).toBe(0)
-        yield* measured('archive', machine.stop(key))
-        expect(ComputerState.guards.Stopped(yield* machine.status(key))).toBe(true)
-        yield* measured('resume', machine.ensure(key))
-        const restoredBinding = yield* saved.load(key)
-        if (Option.isNone(restoredBinding)) expect.fail('Resume must preserve the binding')
-        expect(restoredBinding.value.providerId).toBe(original.value.providerId)
-        const marker = yield* measured(
-          'read-marker',
-          machine.exec({ key, command: 'cat "$HOME/vivid-live-proof"', timeoutSeconds: 30 }),
-        )
-        expect(marker.exitCode).toBe(0)
-        expect(marker.output).toBe(key)
-        const resumed = yield* measured('resumed-viewer', machine.status(key))
-        if (!ComputerState.guards.Running(resumed))
-          expect.fail('The resumed Computer must be running')
-        expect(Predicate.isTagged(resumed.screen, 'Viewer')).toBe(true)
-        const restored = yield* measured(
-          'resumed-look',
-          machine.desktop({ key, action: DesktopAction.cases.Look.make({}) }),
-        )
-        expect(restored.width).toBe(view.width)
-        expect(restored.height).toBe(view.height)
-      }).pipe(Effect.scoped, Effect.provide(provider)),
-    25 * 60_000,
-  )
+  layer(provider, { excludeTestServices: true })((it) => {
+    it.effect(
+      'creates, views, clicks a link, types and reads values, archives and resumes the same machine',
+      () =>
+        Effect.gen(function* () {
+          const machine = yield* Machine
+          const key = MachineKey.make(NodeCrypto.randomUUID())
+          yield* cleanup(key)
+          yield* measured('create', machine.ensure(key))
+          // A template is usable only when portable archives survive restore, not just preparation.
+          const installed = yield* measured(
+            'verify-restored-apps',
+            machine.exec({
+              key,
+              command: '/opt/vivid/python/bin/python3 /opt/vivid/computer/catalogue.py verify',
+              timeoutSeconds: 60,
+            }),
+          )
+          expect(installed.exitCode).toBe(0)
+          const saved = yield* bindings()
+          const original = yield* saved.load(key)
+          if (Option.isNone(original) || original.value.providerId === null)
+            expect.fail('The created Computer must have a durable identity')
+          yield* Effect.logInfo('Boat live machine created', { id: original.value.providerId })
+          yield* Effect.sync(() =>
+            NodeProcess.stdout.write(`${JSON.stringify({ created: original.value.providerId })}\n`),
+          )
+          const created = yield* measured('viewer', machine.status(key))
+          if (!ComputerState.guards.Running(created))
+            expect.fail('The created Computer must be running')
+          expect(Predicate.isTagged(created.screen, 'Viewer')).toBe(true)
+          const view = yield* measured(
+            'look',
+            machine.desktop({ key, action: DesktopAction.cases.Look.make({}) }),
+          )
+          expect(view.picture.length > 0 && view.width > 0 && view.height > 0).toBe(true)
+          yield* browserProof(machine, key)
+          const written = yield* measured(
+            'write-marker',
+            machine.exec({
+              key,
+              command: `printf '%s' '${key}' > "$HOME/vivid-live-proof"`,
+              timeoutSeconds: 30,
+            }),
+          )
+          expect(written.exitCode).toBe(0)
+          yield* measured('archive', machine.stop(key))
+          expect(ComputerState.guards.Stopped(yield* machine.status(key))).toBe(true)
+          yield* measured('resume', machine.ensure(key))
+          const restoredBinding = yield* saved.load(key)
+          if (Option.isNone(restoredBinding)) expect.fail('Resume must preserve the binding')
+          expect(restoredBinding.value.providerId).toBe(original.value.providerId)
+          const marker = yield* measured(
+            'read-marker',
+            machine.exec({ key, command: 'cat "$HOME/vivid-live-proof"', timeoutSeconds: 30 }),
+          )
+          expect(marker.exitCode).toBe(0)
+          expect(marker.output).toBe(key)
+          const resumed = yield* measured('resumed-viewer', machine.status(key))
+          if (!ComputerState.guards.Running(resumed))
+            expect.fail('The resumed Computer must be running')
+          expect(Predicate.isTagged(resumed.screen, 'Viewer')).toBe(true)
+          const restored = yield* measured(
+            'resumed-look',
+            machine.desktop({ key, action: DesktopAction.cases.Look.make({}) }),
+          )
+          expect(restored.width).toBe(view.width)
+          expect(restored.height).toBe(view.height)
+        }).pipe(Effect.scoped),
+      25 * 60_000,
+    )
+  })
 })
