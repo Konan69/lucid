@@ -162,5 +162,10 @@
     "file": "packages/agent/durable/src/examples/serve.ts",
     "classification": "cli-entrypoint",
     "symbols": ["main"]
+  },
+  {
+    "file": "packages/agent/durable/src/holds.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["readPinnedDecision", "pinDecision", "taskDecision"]
   }
 ]

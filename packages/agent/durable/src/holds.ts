@@ -12,13 +12,21 @@ import {
   type ToolSlot,
   type ToolRegistration,
 } from '@earendil-works/pi-durable'
-import type { Message, TextContent, ImageContent } from '@earendil-works/pi-ai'
-import { Deferred, Effect, Match, Option, Predicate, Schema } from 'effect'
+import type { asSchema } from 'ai'
+import type { Message, TextContent, ImageContent, ToolCall } from '@earendil-works/pi-ai'
+import { Deferred, Effect, Match, Option, Predicate, Schema, Result } from 'effect'
 
 import * as Pi from './pi.ts'
 import { type Question } from './delivery.ts'
 import { deliver } from './answers.ts'
-import { CallNotWaiting, HoldId } from './errors.ts'
+import {
+  CallNotWaiting,
+  HoldId,
+  ToolApprovalFailed,
+  ToolApprovalUnsupported,
+  ToolApprovalContextUnavailable,
+  PiFailed,
+} from './errors.ts'
 import { waiting, type Waiting } from './waiting.ts'
 
 /**
@@ -34,7 +42,12 @@ export type Settlement =
   | { kind: 'answered'; output: JsonValue }
 
 /** A provider's call id may be reused; Pi's durable task id identifies the exact held invocation. */
-export type Settled = { taskId: TaskId; callId: string; settlement: Settlement }
+export type Settled = {
+  taskId: TaskId
+  callId: string
+  settlement: Settlement
+  presentation?: { dynamic: boolean; title: string | null }
+}
 
 /**
  * Durable hold state of one conversation.
@@ -95,6 +108,9 @@ export const CallLookup = Schema.TaggedUnion({
     holdId: HoldId,
     callId: Schema.String,
     settlement: SettlementValue,
+    presentation: Schema.Option(
+      Schema.Struct({ dynamic: Schema.Boolean, title: Schema.NullOr(Schema.String) }),
+    ),
   },
   Asked: { taskId: TaskIdentity, holdId: HoldId, callId: Schema.String, toolName: Schema.String },
 })
@@ -186,6 +202,7 @@ function taskState(
       holdId,
       callId,
       settlement: copySettlement(recorded.settlement),
+      presentation: Option.fromNullishOr(recorded.presentation),
     })
   const asked = holds.asked[holdId]
   if (asked !== undefined && asked.taskId === taskId)
@@ -253,6 +270,7 @@ function lookupHold(live: CallState, holds: Readonly<HoldState>, holdId: HoldId)
       callId: recorded.callId,
       taskId: recorded.taskId,
       settlement: copySettlement(recorded.settlement),
+      presentation: Option.fromNullishOr(recorded.presentation),
     })
   const asked = holds.asked[holdId]
   if (asked !== undefined)
@@ -318,7 +336,11 @@ export type Source = 'server' | 'wait' | 'later'
 export type Plan = {
   /** The host's declared global mode, used for native registrations without an explicit mode. */
   readonly execution: 'parallel' | 'sequential'
-  readonly approval: (input: JsonValue) => boolean
+  readonly approval: (
+    input: Parameters<NonNullable<ReturnType<typeof asSchema>['validate']>>[0],
+  ) => boolean
+  /** SDK ingress: Pi coercion followed by the SDK's parsed input, shared by all policy readers. */
+  readonly parse: (call: ToolCall) => Effect.Effect<unknown, DurableErrors.ToolFailed>
   /** SDK identity and display metadata follow the registration through Pi's wrappers. */
   readonly dynamic: boolean
   readonly title: Option.Option<string>
@@ -354,11 +376,92 @@ export const planOf = (tool: ToolRegistration): Option.Option<Plan> => {
   return Option.fromNullishOr((tool as Planned)[planned])
 }
 
-/** What a call waits for under its plan; None means the tool executes without a hold. */
-export function holdKind(plan: Plan, input: JsonValue): Option.Option<'approval' | 'answer'> {
-  if (plan.source === 'wait') return Option.some('answer')
-  return plan.approval(input) ? Option.some('approval') : Option.none()
-}
+/** A decision is JSON so the hook can pin it using Pi's first-writer-wins task memo. */
+export const CallDecision = Schema.TaggedUnion({
+  Held: { kind: Schema.Literals(['approval', 'answer']) },
+  Free: {},
+  Blocked: { reason: Schema.String },
+})
+export type CallDecision = typeof CallDecision.Type
+export const decisionMemo = 'durable.tool.decision'
+
+const decodeDecision = Schema.decodeUnknownEffect(CallDecision)
+/** Memo reads are public Pi I/O; an absent memo means hooks have not pinned this attempt yet. */
+export const readPinnedDecision = Effect.fn('Durable.readPinnedDecision')(function* (
+  api: HookApi,
+  context: Context,
+) {
+  const stored = yield* Effect.tryPromise({
+    try: () => api.memo(decisionMemo, context),
+    catch: (cause) => new PiFailed({ operation: 'snapshot', cause }),
+  })
+  if (stored === undefined) return Option.none<CallDecision>()
+  return Option.some(
+    yield* decodeDecision(stored).pipe(
+      Effect.mapError((cause) => new PiFailed({ operation: 'snapshot', cause })),
+    ),
+  )
+})
+/** Pin before waiting; after process death Pi returns the durable first writer without rerunning policy. */
+export const pinDecision = Effect.fn('Durable.pinDecision')(function* (
+  api: HookApi,
+  chosen: CallDecision,
+  context: Context,
+) {
+  const stored = yield* Effect.tryPromise({
+    try: () => api.memo(decisionMemo, chosen, context),
+    catch: (cause) => new PiFailed({ operation: 'commit', cause }),
+  })
+  return yield* decodeDecision(stored).pipe(
+    Effect.mapError((cause) => new PiFailed({ operation: 'snapshot', cause })),
+  )
+})
+/** A pull reader observes the live memo through getTask; terminal tasks legitimately have no memo. */
+export const taskDecision = Effect.fn('Durable.taskDecision')(function* (
+  harness: Harness,
+  taskId: TaskId,
+  context: Context,
+) {
+  const task = yield* Effect.tryPromise({
+    try: () => harness.getTask(taskId, context),
+    catch: (cause) => new PiFailed({ operation: 'snapshot', cause }),
+  })
+  const stored = Option.fromNullishOr(task).pipe(
+    Option.flatMapNullishOr((record) => record.memos),
+    Option.flatMapNullishOr((memos) => memos[decisionMemo]),
+  )
+  return yield* Option.match(stored, {
+    onNone: () => Effect.succeed(Option.none<CallDecision>()),
+    onSome: (value) =>
+      decodeDecision(value).pipe(
+        Effect.map(Option.some),
+        Effect.mapError((cause) => new PiFailed({ operation: 'snapshot', cause })),
+      ),
+  })
+})
+
+/** Identical parsing and a contained synchronous policy are used in hooks and every active reader.
+ * SDK input is opaque until the SDK validator decodes it; transforms need not produce JSON. */
+export const decision = Effect.fn('Durable.toolDecision')(function* (plan: Plan, call: ToolCall) {
+  const parsed = yield* Effect.result(plan.parse(call))
+  if (Result.isFailure(parsed))
+    return CallDecision.cases.Blocked.make({ reason: parsed.failure.message })
+  if (plan.source === 'wait') return CallDecision.cases.Held.make({ kind: 'answer' })
+  const approved = yield* Effect.result(
+    Effect.try({
+      try: () => plan.approval(parsed.success),
+      catch: (cause) =>
+        cause instanceof ToolApprovalUnsupported || cause instanceof ToolApprovalContextUnavailable
+          ? cause
+          : new ToolApprovalFailed({ toolName: call.name, cause }),
+    }),
+  )
+  if (Result.isFailure(approved))
+    return CallDecision.cases.Blocked.make({ reason: approved.failure.message })
+  return approved.success
+    ? CallDecision.cases.Held.make({ kind: 'approval' })
+    : CallDecision.cases.Free.make({})
+})
 
 /**
  * In-process wake-ups for waits on a settlement, keyed by conversation and hold.
@@ -468,6 +571,15 @@ const settle = Effect.fn('Durable.settle')(function* (
   const kind = input.next.kind === 'answered' ? 'answer' : 'approval'
   const allowed = held.some((call) => call.holdId === input.holdId && call.kind === kind)
   if (!allowed) return yield* new CallNotWaiting({ conversationId, holdId: input.holdId })
+  // Retain SDK identity beside the durable settlement, so removed definitions cannot rewrite history.
+  const row = held.find((call) => call.holdId === input.holdId)
+  const agent = yield* Pi.agent(conversation, context)
+  const plan =
+    row === undefined
+      ? Option.none<Plan>()
+      : Option.fromNullishOr(agent.tools.find((tool) => tool.name === row.toolName)).pipe(
+          Option.flatMap(planOf),
+        )
   const winner = yield* Pi.commitWithLive(
     conversation,
     {
@@ -480,11 +592,17 @@ const settle = Effect.fn('Durable.settle')(function* (
             ? Option.some(copySettlement(latest.settlement))
             : Option.none<Settlement>()
         if (!CallLookup.guards.Ready(latest)) return Option.none<Settlement>()
-        document.settled[input.holdId] = {
+        const record: Settled = {
           taskId: latest.taskId,
           callId: latest.callId,
           settlement: copySettlement(input.next),
         }
+        if (Option.isSome(plan))
+          record.presentation = {
+            dynamic: plan.value.dynamic,
+            title: Option.getOrNull(plan.value.title),
+          }
+        document.settled[input.holdId] = record
         return Option.some(copySettlement(input.next))
       },
     },
@@ -530,7 +648,7 @@ export type Decision = {
 export function decide(
   harness: Harness,
   conversationId: ConversationId,
-  decision: Decision,
+  approval: Decision,
   context: Context,
 ): Effect.Effect<
   Settlement,
@@ -539,7 +657,7 @@ export function decide(
   return settle(
     harness,
     conversationId,
-    { holdId: decision.holdId, next: decisionSettlement(decision), admission: Option.none() },
+    { holdId: approval.holdId, next: decisionSettlement(approval), admission: Option.none() },
     context,
   )
 }
@@ -605,13 +723,13 @@ export function decideObserved(
   Settlement,
   CallNotWaiting | DurableErrors.PiFailed | DurableErrors.ConversationMissing
 > {
-  const { decision } = observed
+  const { decision: approval } = observed
   return settle(
     harness,
     conversationId,
     {
-      holdId: decision.holdId,
-      next: decisionSettlement(decision),
+      holdId: approval.holdId,
+      next: decisionSettlement(approval),
       admission: Option.some(observed.held),
     },
     context,
@@ -641,8 +759,8 @@ export function answerObserved(
 }
 
 /** Direct and batch admission share one decision-to-settlement rule and model-visible denial text. */
-function decisionSettlement(decision: Decision): Settlement {
-  return decision.approved
+function decisionSettlement(approval: Decision): Settlement {
+  return approval.approved
     ? { kind: 'approved' }
-    : { kind: 'denied', reason: decision.reason ?? 'The person denied this call' }
+    : { kind: 'denied', reason: approval.reason ?? 'The person denied this call' }
 }

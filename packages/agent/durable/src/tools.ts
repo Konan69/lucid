@@ -12,6 +12,7 @@ import {
   type ToolRegistration,
   ToolTask,
 } from '@earendil-works/pi-durable'
+import { validateToolArguments } from '@earendil-works/pi-ai/utils/validation'
 import { asSchema, type Tool, type ToolSet } from 'ai'
 import { Cause, Data, Effect, Option, Predicate, Schema } from 'effect'
 
@@ -22,19 +23,23 @@ import {
   ToolFailed,
   ToolOutputFailed,
   ToolSchemaFailed,
-  type PiFailed,
+  PiFailed,
 } from './errors.ts'
 import {
   CallIdentity,
   holdIdOf,
   CallLookup,
   lookupSnapshots,
-  holdKind,
+  decision,
+  readPinnedDecision,
+  pinDecision,
+  CallDecision,
   Holds,
   type Plan,
   type Source,
   settlement,
   withPlan,
+  planOf,
 } from './holds.ts'
 import * as Pi from './pi.ts'
 import { Delivery } from './delivery.ts'
@@ -68,10 +73,11 @@ export type ToolsOptions = {
   /** Own entries opt server tools into crash replay; inherited keys are ignored, default unsafe. */
   readonly replay?: Readonly<Record<string, Replay>>
   /**
+   * Policies are pure, synchronous, input-only; SDK options are unavailable.
    * An own host option wins over the tool's needsApproval, including explicit false.
    * Answer-only tools refuse true or a predicate: Pi cannot hold for both approval and an answer.
    */
-  readonly approval?: Readonly<Record<string, boolean | ((input: JsonValue) => boolean)>>
+  readonly approval?: Readonly<Record<string, boolean | ((input: SdkValue) => boolean)>>
   /** Own entries select wait/later for answer-only tools; default wait. Later answers are new input. */
   readonly answers?: Readonly<Record<string, 'wait' | 'later'>>
 }
@@ -224,6 +230,10 @@ type Server = {
     NonNullable<Tool<unknown, unknown, unknown>['toModelOutput']>
   >
 }
+
+const decodePolicyArguments = Schema.decodeUnknownEffect(
+  Schema.Record(Schema.String, Schema.MutableJson),
+)
 
 /** SDK validators may be synchronous or Promise-based; normalize only this external operation. */
 type SdkValue = Parameters<NonNullable<ReturnType<typeof asSchema>['validate']>>[0]
@@ -524,11 +534,7 @@ function approvalForTool(
   lookups: Lookups,
 ): Plan['approval'] {
   const override = ownOption(lookups.approval, name)
-  if (Option.isSome(override)) {
-    const rule = override.value
-    return Predicate.isFunction(rule) ? rule : () => rule
-  }
-  const rule = tool.needsApproval
+  const rule = Option.isSome(override) ? override.value : tool.needsApproval
   if (rule === undefined) return () => false
   if (!Predicate.isFunction(rule)) return () => rule
   if (Object.prototype.toString.call(rule) === '[object AsyncFunction]')
@@ -536,7 +542,7 @@ function approvalForTool(
   return (input) => {
     const answer = rule(input, approvalOptions(name))
     if (Predicate.isBoolean(answer)) return answer
-    // Observe only rejection of the unsupported SDK Promise; never await or accept its boolean.
+    // A rejected unsupported Promise must not escape as an unhandled rejection.
     if (Predicate.isPromiseLike(answer))
       answer.then(
         () => {},
@@ -596,6 +602,14 @@ function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
   }
   return {
     plan: {
+      parse: (call) =>
+        validate(server.schema, call.arguments, name).pipe(
+          Effect.flatMap((checked) =>
+            checked.success
+              ? Effect.succeed(checked.value)
+              : Effect.fail(new ToolFailed({ toolName: name, cause: checked.error })),
+          ),
+        ),
       approval: source === 'server' ? approval : () => false,
       source,
       execution: lookups.execution,
@@ -677,7 +691,23 @@ const registration = Effect.fn('Durable.registerTool')(function* (
       executionMode: bridged.executionMode,
       execute: bridged.execute,
     },
-    bridged.plan,
+    {
+      ...bridged.plan,
+      // Pi harness/tool.ts:148 uses this exported validator before beforeTool. It clones/coerces.
+      parse: (call) =>
+        Effect.try({
+          try: function validateForPi(): SdkValue {
+            return validateToolArguments({ name, description: '', parameters }, call)
+          },
+          catch: (cause) => new ToolFailed({ toolName: name, cause }),
+        }).pipe(
+          Effect.flatMap((value) => decodePolicyArguments(value)),
+          Effect.mapError((cause) =>
+            cause instanceof ToolFailed ? cause : new ToolFailed({ toolName: name, cause }),
+          ),
+          Effect.flatMap((input) => bridged.plan.parse({ ...call, arguments: input })),
+        ),
+    },
   )
 })
 
@@ -701,12 +731,22 @@ const before = Effect.fn('Durable.beforeTool')(function* (
   )
   if (CallLookup.guards.Duplicate(found)) return Option.some({ block: 'duplicate tool call id' })
   const plan = Option.fromNullishOr(plans.get(call.name))
-  if (Option.isNone(plan) || Option.isNone(holdKind(plan.value, copyJson(call.arguments))))
-    return Option.none<{ block: string }>()
-  const settled = yield* settlement(api, call.id, context)
-  return settled.kind === 'denied'
-    ? Option.some({ block: settled.reason })
-    : Option.none<{ block: string }>()
+  if (Option.isNone(plan)) return Option.none<{ block: string }>()
+  const stored = yield* readPinnedDecision(api, context)
+  const chosen = Option.isSome(stored) ? stored.value : yield* decision(plan.value, call)
+  const checked = yield* pinDecision(api, chosen, context)
+  return yield* CallDecision.match(checked, {
+    Blocked: (blocked) => Effect.succeed(Option.some({ block: blocked.reason })),
+    Free: () => Effect.succeed(Option.none<{ block: string }>()),
+    Held: () =>
+      settlement(api, call.id, context).pipe(
+        Effect.map((settled) =>
+          settled.kind === 'denied'
+            ? Option.some({ block: settled.reason })
+            : Option.none<{ block: string }>(),
+        ),
+      ),
+  })
 })
 
 /** Pi's named hook adapter forwards cancellation into the sole settlement program. */
@@ -723,7 +763,8 @@ function beforeForPi(plans: ReadonlyMap<string, Plan>) {
   }
 }
 
-/** AI SDK tools and the wait hook share one plan per tool; neither snapshots nor streams duplicate it. */
+/** Names must be unique across selected extensions: hooks cannot see the composed phase agent.
+ * SDK needsApproval and host approval predicates must be pure, synchronous and input-only. */
 export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* (
   name: string,
   tools: ToolSet,
@@ -751,7 +792,12 @@ export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* (
     (each) => registration(each.toolName, each.tool, each.bridged, lookups),
     { concurrency: 'unbounded' },
   )
-  const plans = new Map(bridged.map((each) => [each.toolName, each.bridged.plan]))
+  const plans = new Map(
+    registrations.flatMap((tool) => {
+      const plan = planOf(tool)
+      return Option.isNone(plan) ? [] : [[tool.name, plan.value] as const]
+    }),
+  )
   const waits = hook(ToolTask, { beforeTool: beforeForPi(plans) })
   return defineExtension({ name, tools: registrations, hooks: [waits] })
 })

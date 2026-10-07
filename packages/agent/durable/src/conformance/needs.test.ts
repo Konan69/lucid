@@ -1,7 +1,7 @@
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { isToolUIPart, lastAssistantMessageIsCompleteWithApprovalResponses, tool } from 'ai'
 import { expect, it } from '@effect/vitest'
-import { Effect, Predicate } from 'effect'
+import { Effect, Predicate, Option } from 'effect'
 import { z } from 'zod'
 import { PlainChat } from '../fixtures/chat.ts'
 import { ToolApprovalUnsupported, toolsExtension } from '../main.ts'
@@ -36,7 +36,7 @@ for (const sample of [
   {
     name: 'pure function executes',
     declaration: ({ amount }: { amount: number }) => amount > 3,
-    amount: 2,
+    amount: 1,
     held: false,
     approved: true,
     options: {},
@@ -123,7 +123,7 @@ for (const sample of [
       expect(executions).toEqual(sample.approved ? [sample.amount * 2] : [])
       expect(texts(chat.lastMessage)).toEqual(['Resolved.'])
       if ('approval' in sample.options) expect(observed).toEqual([])
-      else expect(observed.every((amount) => amount === sample.amount)).toBe(true)
+      else expect(observed.every((amount) => amount === sample.amount * 2)).toBe(true)
     }),
   )
 
@@ -165,9 +165,15 @@ it.live('rejects a Promise-returning approval predicate at the call', () =>
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
     })
     await chat.sendMessage({ text: 'Pay' })
-    expect(chat.status).toBe('error')
-    expect(chat.error).toMatchObject({
-      message: expect.stringContaining('asynchronous approval function is not supported'),
+    expect(chat.status).toBe('ready')
+    expect(
+      Option.fromNullishOr(chat.lastMessage).pipe(
+        Option.map((message) => message.parts.find(isToolUIPart)),
+        Option.getOrUndefined,
+      ),
+    ).toMatchObject({
+      state: 'output-error',
+      errorText: expect.stringContaining('asynchronous approval function is not supported'),
     })
     await opened.root.waitForIdle(context)
   }),
@@ -190,7 +196,16 @@ it.live('refuses unavailable SDK approval context rather than inventing call ide
     opened.faux.setResponses([call('pay', {}, 'pay'), fauxAssistantMessage('Recovered.')])
     const chat = new PlainChat({ transport: opened.transport })
     await chat.sendMessage({ text: 'Pay' })
-    expect(chat.error).toMatchObject({ message: expect.stringContaining('toolCallId') })
+    expect(chat.status).toBe('ready')
+    expect(
+      Option.fromNullishOr(chat.lastMessage).pipe(
+        Option.map((message) => message.parts.find(isToolUIPart)),
+        Option.getOrUndefined,
+      ),
+    ).toMatchObject({
+      state: 'output-error',
+      errorText: expect.stringContaining('toolCallId'),
+    })
     await opened.root.waitForIdle(context)
   }),
 )

@@ -9,11 +9,13 @@ import {
   CallLookup,
   callsIn,
   lookupSnapshots,
-  holdKind,
+  decision,
+  taskDecision,
+  CallDecision,
   Holds,
   planOf,
 } from './holds.ts'
-import { HoldId } from './errors.ts'
+import { HoldId, PiFailed } from './errors.ts'
 import * as Pi from './pi.ts'
 import { questionOpen } from './answers.ts'
 
@@ -83,18 +85,43 @@ export const waiting: (
   const agent = yield* Pi.agent(conversation, context)
   const view = yield* Pi.view(conversation, context)
   const inputs = new Map(view.entries.flatMap(callsIn).map((call) => [call.id, call]))
-  const current = ready.flatMap((found): Waiting[] => {
-    const callId = found.callId
-    const call = Option.fromNullishOr(inputs.get(callId))
-    if (Option.isNone(call)) return []
-    const tool = agent.tools.find((each) => each.name === call.value.name)
-    const plan = Option.fromNullishOr(tool).pipe(Option.flatMap(planOf))
-    if (Option.isNone(plan)) return []
-    const input = copyJson(call.value.arguments)
-    const kind = holdKind(plan.value, input)
-    return Option.isNone(kind)
-      ? []
-      : [{ kind: kind.value, holdId: found.holdId, callId, toolName: call.value.name, input }]
-  })
-  return [...current, ...later]
+  const current = yield* Effect.forEach(ready, (found) =>
+    waitingCall({ harness, agent, inputs, context }, found),
+  )
+  return [...current.flat(), ...later]
+})
+
+/** Pull readers can see a hook's live task memo; only calls not yet pinned evaluate the shared rule. */
+const waitingCall = Effect.fn('Durable.waitingCall')(function* (
+  reader: {
+    harness: Harness
+    agent: Awaited<ReturnType<import('@earendil-works/pi-durable').Conversation['agent']>>
+    inputs: ReadonlyMap<string, import('@earendil-works/pi-ai').ToolCall>
+    context: Context
+  },
+  found: typeof CallLookup.cases.Ready.Type,
+): Effect.fn.Return<Waiting[], PiFailed> {
+  const call = reader.inputs.get(found.callId)
+  if (call === undefined) return []
+  const stored = yield* taskDecision(reader.harness, found.taskId, reader.context)
+  const tool = reader.agent.tools.find((each) => each.name === call.name)
+  const plan = Option.fromNullishOr(tool).pipe(Option.flatMap(planOf))
+  if (Option.isNone(stored) && Option.isNone(plan)) return []
+  const chosen = Option.isSome(stored)
+    ? stored.value
+    : yield* Option.match(plan, {
+        onNone: () => Effect.succeed(CallDecision.cases.Free.make({})),
+        onSome: (value) => decision(value, call),
+      })
+  return CallDecision.guards.Held(chosen)
+    ? [
+        {
+          kind: chosen.kind,
+          holdId: found.holdId,
+          callId: found.callId,
+          toolName: call.name,
+          input: copyJson(call.arguments),
+        },
+      ]
+    : []
 })

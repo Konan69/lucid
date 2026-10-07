@@ -290,3 +290,25 @@ export class ToolApprovalContextUnavailable extends Schema.TaggedError<ToolAppro
     return `Tool ${this.toolName} approval cannot access ${this.field}; only a pure synchronous predicate over validated input is supported`
   }
 }
+
+/** Hook ownership cannot disambiguate duplicate names across selected extensions in Pi 1.0.4. */
+export class ToolNameDuplicated extends Schema.TaggedError<ToolNameDuplicated>()(
+  'ToolNameDuplicated',
+  { toolName: Schema.String },
+  { title: 'ToolNameDuplicated' },
+) {
+  override get message() {
+    return `Tool ${this.toolName}: tool names must be unique across extensions`
+  }
+}
+
+/** A broken approval policy blocks one call without failing stream or history readers. */
+export class ToolApprovalFailed extends Schema.TaggedError<ToolApprovalFailed>()(
+  'ToolApprovalFailed',
+  { toolName: Schema.String, cause: Schema.Defect() },
+  { title: 'ToolApprovalFailed' },
+) {
+  override get message() {
+    return `Tool ${this.toolName} approval failed: ${Predicate.isError(this.cause) ? this.cause.message : String(this.cause)}`
+  }
+}

@@ -4,7 +4,7 @@ import { fauxAssistantMessage, fauxText, fauxThinking } from '@earendil-works/pi
 import { emptyRound, type Desk } from './calls.ts'
 import { initialRunState, translate, type Chunk } from './chunks.ts'
 import { consume } from './fixtures/reading.ts'
-import { CallLookup } from './holds.ts'
+import { CallLookup, CallDecision } from './holds.ts'
 import { writeStep } from './stream.ts'
 
 /** Task identities arrive from the trusted Pi snapshot; the unit desk models that exact ingress. */
@@ -18,9 +18,11 @@ const ready = (callId: string) =>
   })
 const desk: Desk = {
   sequential: false,
+  decision: () => CallDecision.cases.Held.make({ kind: 'approval' }),
   plan: () =>
     Option.some({
       approval: () => true,
+      parse: (call) => Effect.succeed(call.arguments),
       source: 'server',
       execution: 'parallel',
       dynamic: false,

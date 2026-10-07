@@ -58,3 +58,5 @@ export { HistoryCursor, type HistoryPage, type HistoryRequest, history } from '.
 export { type ToolScope } from './tools.ts'
 export { ToolContextFailed } from './errors.ts'
 export { ToolApprovalUnsupported, ToolApprovalContextUnavailable } from './errors.ts'
+
+export { ToolNameDuplicated, ToolApprovalFailed } from './errors.ts'
