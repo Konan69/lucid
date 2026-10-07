@@ -370,14 +370,17 @@ for (const strict of [true, false, undefined])
   )
 
 /** No input exists at registration to evaluate a predicate; neither form can create two kinds of hold. */
-for (const rule of [true, () => false])
-  it.live(`refuses host ${typeof rule} approval on an answer-only tool`, () =>
+for (const sample of [
+  { name: 'boolean', rule: true },
+  { name: 'function', rule: () => false },
+])
+  it.live(`refuses host ${sample.name} approval on an answer-only tool`, () =>
     Effect.gen(function* () {
       const failed = yield* Effect.flip(
         toolsExtension(
           'unsupported',
           { ask: tool({ inputSchema: z.object({}) }) },
-          { approval: { ask: rule } },
+          { approval: { ask: sample.rule } },
         ),
       )
       expect(failed).toBeInstanceOf(ToolSchemaFailed)

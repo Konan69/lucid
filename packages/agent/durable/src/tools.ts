@@ -265,10 +265,43 @@ const resolveContext = Effect.fn('Durable.toolContext')(function* (
   )
 })
 
+/** Observe SDK cleanup rejection without waiting for return queued behind an uncooperative next. */
+const stopIterator = Effect.fn('Durable.stopToolIterator')(
+  (iterator: AsyncIterator<SdkValue, SdkValue, void>) =>
+    Effect.sync(() => {
+      // Deliberately detach only this external cleanup promise; Pi must regain conversation ownership.
+      void Promise.resolve()
+        .then(() => {
+          if (iterator.return !== undefined) return iterator.return()
+          return undefined
+        })
+        .then(
+          () => {},
+          () => {},
+        )
+    }),
+)
+
+/** Like SDK execute-tool.ts:44–50, retain the last yield and ignore the done result's value. */
+const pullOutput = Effect.fn('Durable.pullToolOutput')(function* (
+  iterator: AsyncIterator<SdkValue, SdkValue, void>,
+  name: string,
+) {
+  let last: SdkValue = undefined
+  while (true) {
+    const next = yield* Effect.tryPromise({
+      try: () => iterator.next(),
+      catch: (cause) => new ToolFailed({ toolName: name, cause }),
+    })
+    if (next.done) return last
+    last = next.value
+  }
+})
+
 /**
  * Pulls remain interruptible even when a native generator is suspended in an uncooperative await.
- * return() queues behind next() in native generators: observe its rejection, but never await it
- * during interruption. Normal exhaustion does not call return(), matching SDK execute-tool.ts.
+ * return() queues behind next() in native generators: request it but never wait during interruption.
+ * Normal exhaustion does not call return(), matching SDK execute-tool.ts.
  */
 const lastOutput = Effect.fn('Durable.lastToolOutput')(function* (
   output: AsyncIterable<SdkValue>,
@@ -278,33 +311,7 @@ const lastOutput = Effect.fn('Durable.lastToolOutput')(function* (
     try: () => output[Symbol.asyncIterator](),
     catch: (cause) => new ToolFailed({ toolName: name, cause }),
   })
-  const pull = Effect.gen(function* () {
-    let last: SdkValue = undefined
-    while (true) {
-      const next = yield* Effect.tryPromise({
-        try: () => iterator.next(),
-        catch: (cause) => new ToolFailed({ toolName: name, cause }),
-      })
-      if (next.done) return last
-      last = next.value
-    }
-  })
-  return yield* pull.pipe(
-    Effect.onInterrupt(() =>
-      Effect.sync(() => {
-        // This narrow SDK cleanup boundary deliberately detaches only the external return promise.
-        void Promise.resolve()
-          .then(() => {
-            if (iterator.return !== undefined) return iterator.return()
-            return undefined
-          })
-          .then(
-            () => {},
-            () => {},
-          )
-      }),
-    ),
-  )
+  return yield* pullOutput(iterator, name).pipe(Effect.onInterrupt(() => stopIterator(iterator)))
 })
 
 /**

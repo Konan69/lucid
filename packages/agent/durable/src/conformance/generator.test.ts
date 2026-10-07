@@ -266,6 +266,7 @@ it.live('does not call iterator return after normal exhaustion', () =>
 it.live('observes a rejecting iterator return during abort', () =>
   Effect.promise(async () => {
     const entered = signal()
+    const suspended = signal()
     let returned = 0
     const fixture = await host(
       {
@@ -277,7 +278,7 @@ it.live('observes a rejecting iterator return during abort', () =>
             },
             next() {
               entered.resolve()
-              return new Promise<IteratorResult<string>>(() => {})
+              return suspended.promise.then(() => ({ done: true as const, value: undefined }))
             },
             async return(): Promise<IteratorResult<string>> {
               returned++
