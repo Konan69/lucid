@@ -177,9 +177,13 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
             text: 'the Thread was deleted',
             device: 'laptop',
           })
-          const saving = yield* Effect.flatMap(DraftStore, (store) =>
-            store.save(test.personal.actor, request),
-          ).pipe(Effect.provide(controlled), Effect.result, Effect.forkScoped)
+          const saving = yield* Effect.gen(function* () {
+            // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
+            const context = yield* Layer.build(controlled)
+            return yield* Effect.flatMap(DraftStore, (store) =>
+              store.save(test.personal.actor, request),
+            ).pipe(Effect.result, Effect.forkScoped, Effect.provide(context))
+          })
           yield* Deferred.await(entered)
           yield* (yield* ThreadStore).remove(test.personal.actor.person.id, id)
           yield* Deferred.succeed(resume, undefined)
