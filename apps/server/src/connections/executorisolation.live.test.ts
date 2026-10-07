@@ -40,7 +40,7 @@ describe.skipIf(!enabled)('GitHub personal ownership acceptance', () => {
           const store = yield* ConnectionStore
           const step = yield* store.begin(ownerActor, {
             service: ServiceId.make('curated/github-com-mcp'),
-            label: 'Personal GitHub',
+            name: 'Personal GitHub',
             shared: false,
           })
           yield* Effect.addFinalizer(() =>

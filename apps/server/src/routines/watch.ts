@@ -87,6 +87,17 @@ export interface IntegrationWatchService {
     actor: Actor,
     trigger: typeof RoutineTrigger.cases.Integration.Type,
   ) => Effect.Effect<Watch, Conflict | InvalidRequest | ServiceUnavailable | WatchError>
+  /**
+   * Takes a fresh baseline for a watch that already exists, on the Connection it is bound to.
+   * A Routine that is switched on again keeps its trigger, so it is not resolved by the account's
+   * name a second time: the account may have been renamed since, and a name that has moved must
+   * never move the Routine to another account. The answer's trigger carries the account's name
+   * as it is now.
+   */
+  readonly rebase: (
+    actor: Actor,
+    watch: Watch,
+  ) => Effect.Effect<Watch, Conflict | InvalidRequest | ServiceUnavailable | WatchError>
   readonly newItems: (input: WatchInput) => Effect.Effect<WatchBatch, WatchError>
 }
 export class IntegrationWatch extends Context.Service<IntegrationWatch, IntegrationWatchService>()(

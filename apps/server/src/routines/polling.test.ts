@@ -51,7 +51,7 @@ const setup = Effect.fn('PollingTest.setup')(function* () {
   ])
   const connected = yield* store.begin(ownerActor, {
     service: serviceId,
-    label: 'Gmail (Work)',
+    name: 'Work',
     shared: false,
   })
   yield* Ref.set(
@@ -62,7 +62,7 @@ const setup = Effect.fn('PollingTest.setup')(function* () {
   )
   yield* Ref.set(probe.calls, 0)
   const trigger = RoutineTrigger.cases.Integration.make({
-    account: 'Gmail (Work)',
+    account: 'Records (Work)',
     event: 'listMail',
     filter,
   })
@@ -110,7 +110,7 @@ describe.skipIf(!testDatabaseConfigured)('Integration polling adapter', () => {
             },
           }),
         ])
-        const discovered = yield* watcher.discover(ownerActor, 'Gmail (Work)')
+        const discovered = yield* watcher.discover(ownerActor, 'Records (Work)')
         expect(discovered.events.map((event) => event.event)).toEqual(['listMail'])
         expect(JSON.stringify(discovered)).not.toContain(account)
         expect(JSON.stringify(discovered)).not.toContain(connected.connection.id)
@@ -236,7 +236,7 @@ describe.skipIf(!testDatabaseConfigured)('Integration polling adapter', () => {
           yield* database.run(
             database
               .update(connections)
-              .set({ label: 'Renamed', status: 'needs-authorization' })
+              .set({ name: 'Renamed', status: 'needs-authorization' })
               .where(eq(connections.id, connected.connection.id)),
           )
           yield* Ref.set(probe.calls, 0)
@@ -251,6 +251,31 @@ describe.skipIf(!testDatabaseConfigured)('Integration polling adapter', () => {
               .pipe(Effect.flip),
           ).toBeInstanceOf(IntegrationRevoked)
           expect(yield* Ref.get(probe.calls)).toBe(0)
+        }),
+    )
+
+    it.effect(
+      'keeps a watch on its own account when that account is renamed, and takes a new baseline',
+      () =>
+        Effect.gen(function* () {
+          const { ownerActor, watcher, trigger, connected } = yield* setup()
+          const watch = yield* watcher.prepare(ownerActor, trigger)
+          const store = yield* ConnectionStore
+          // A second account on the service, then the watched one is renamed.
+          yield* store.begin(ownerActor, { service: serviceId, name: 'Personal', shared: false })
+          yield* store.rename(ownerActor, { id: connected.connection.id, name: 'Office' })
+          // The name the trigger was made under is nobody's now: it cannot be resolved again.
+          expect(yield* watcher.prepare(ownerActor, trigger).pipe(Effect.flip)).toBeInstanceOf(
+            InvalidRequest,
+          )
+          // Switching the Routine on again goes back to the Connection the watch is bound to.
+          const rebased = yield* watcher.rebase(ownerActor, watch)
+          expect(rebased.connectionId).toBe(connected.connection.id)
+          expect(rebased.trigger).toMatchObject({
+            account: 'Records (Office)',
+            event: 'listMail',
+          })
+          expect(rebased.cursor).toEqual(watch.cursor)
         }),
     )
 

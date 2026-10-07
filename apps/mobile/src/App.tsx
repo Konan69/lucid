@@ -1,6 +1,6 @@
 import { RegistryContext } from '@effect/atom-react'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
-import { NavigationContainer } from '@react-navigation/native'
+import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import { workspaceKey } from '@vivid/state'
 import { useState, type ComponentProps } from 'react'
@@ -23,12 +23,17 @@ import { Broken } from './screen/Broken'
 import { Computer } from './screen/Computer'
 import { Door } from './screen/Door'
 import { Home } from './screen/Home'
+import { Account, NameAccount } from './screen/integration/Account'
+import type { ShowKey } from './screen/integration/flow'
+import { Key } from './screen/integration/Key'
+import { FlowProvider } from './screen/integration/Provider'
 import { Panel } from './screen/home/Panel'
 import { Folder, Library } from './screen/Library'
 import { Notifications } from './screen/Notifications'
 import { Project, Projects } from './screen/Projects'
 import { Routines } from './screen/Routines'
 import { Settings } from './screen/Settings'
+import { Integrations } from './screen/settings/Integrations'
 import { Memory } from './screen/settings/Memory'
 import { Texting } from './screen/settings/Texting'
 import { People } from './screen/settings/People'
@@ -36,7 +41,7 @@ import { ThemeProvider, useTheme } from './theme'
 import { Drawer } from './ui/Drawer'
 import { IN_THREAD, ON_GREETING, Presence } from './ui/Presence'
 import { Recover } from './ui/Recover'
-import { GLASS_HEADER, navigationTheme, SCREEN_CHANGE } from './ui/stack'
+import { FITTED_SHEET, GLASS_HEADER, navigationTheme, SCREEN_CHANGE } from './ui/stack'
 import { Button, Face, GUTTER, Label } from './ui/ui'
 import { FrontProvider, MeProvider, useFront, useShowing, type Routes } from './workspace'
 
@@ -213,6 +218,14 @@ type StackLayout = Parameters<NonNullable<ComponentProps<typeof Stack.Navigator>
 /**
  * The stack with the menu over it. The menu can be dragged open only while Home, the first route,
  * is the screen in front: over any other screen the same drag is the system's way back.
+ *
+ * A bottom sheet is a route too (`FITTED_SHEET`). On iOS the system presents it over the whole
+ * window, this layout included. On Android it is a view inside the stack, so what is drawn here
+ * after the stack is drawn over it, and neither thing drawn here is: the menu's panel and scrim
+ * are off the glass and take no touch while it is closed, and it cannot be opened under a sheet
+ * (a sheet is a route over the first, so `reachable` is false and its drag is off); the avatar
+ * is there only while a Thread says so, and a Thread says so only while its screen has the
+ * focus (`useTelling`, `ui/Presence.tsx`), which a sheet takes.
  */
 const underMenu = ({ children, state, navigation }: StackLayout) => (
   <Drawer reachable={state.index === 0} panel={<Panel go={navigation} />}>
@@ -266,42 +279,74 @@ function Vivid({ go }: { go: StackLayout['navigation'] }) {
  * Routes are flat on this one stack, never a nested navigator: one navigation controller is what
  * lets the platform carry a bar from one screen to the next (T3 Code mobile `src/Stack.tsx`, the
  * note beside `THREAD_LINKING_PREFIX`).
+ *
+ * The integration flow is held around the navigator (`FlowProvider`), once for the shell: the
+ * Integrations page, the two bottom sheets and the card in a Thread all begin and finish an
+ * account through it. It is outside the navigator, so it is handed the way to open the one
+ * route it needs, the key form (`showKey`), through this container's own ref.
  */
 function Shell() {
   const { colors: c, dark } = useTheme()
   // What Home shows belongs to this shell, which is built again for each workspace (`Session`).
   const [front] = useState(makeFront)
+  // This shell's navigator, for the flow that is held around it. One for each shell, as the
+  // container is: a ref shared across workspaces would point at whichever mounted last.
+  const [navigation] = useState(() => createNavigationContainerRef<Routes>())
+  /**
+   * Opens the key form over whatever is in front. A press comes from a screen, so the navigator
+   * is ready; were it not, the flow is told, and says the press failed where it was made.
+   */
+  const showKey: ShowKey = (asked) => {
+    if (!navigation.isReady()) return false
+    navigation.navigate('Key', asked)
+    return true
+  }
   return (
     <FrontProvider value={front}>
-      <NavigationContainer theme={navigationTheme(c, dark)}>
-        <Stack.Navigator
-          layout={underMenu}
-          screenOptions={{
-            ...GLASS_HEADER,
-            ...SCREEN_CHANGE,
-            // The bar's glyphs are ink, as the app's own controls are; the navigation theme's
-            // `primary` would paint the way back in the accent.
-            headerTintColor: c.foreground,
-            contentStyle: { backgroundColor: c.screen },
-          }}
-        >
-          {/* Screens that render a bar of their own start with an empty title, so the route's
+      <FlowProvider onKey={showKey}>
+        <NavigationContainer ref={navigation} theme={navigationTheme(c, dark)}>
+          <Stack.Navigator
+            layout={underMenu}
+            screenOptions={{
+              ...GLASS_HEADER,
+              ...SCREEN_CHANGE,
+              // The bar's glyphs are ink, as the app's own controls are; the navigation theme's
+              // `primary` would paint the way back in the accent.
+              headerTintColor: c.foreground,
+              contentStyle: { backgroundColor: c.screen },
+            }}
+          >
+            {/* Screens that render a bar of their own start with an empty title, so the route's
               name is never what the bar says before the screen has spoken. */}
-          <Stack.Screen name="Home" component={Home} options={{ title: '' }} />
-          <Stack.Screen name="Computer" component={Computer} options={{ title: '' }} />
-          <Stack.Screen name="Routines" component={Routines} options={{ title: '' }} />
-          <Stack.Screen name="Library" component={Library} options={{ title: '' }} />
-          <Stack.Screen name="Folder" component={Folder} options={{ title: '' }} />
-          <Stack.Screen name="Projects" component={Projects} options={{ title: '' }} />
-          {/* The bar is only the way back: the Project's name is the page's own first line. */}
-          <Stack.Screen name="Project" component={Project} options={{ title: '' }} />
-          <Stack.Screen name="Settings" component={Settings} options={{ title: 'Settings' }} />
-          <Stack.Screen name="People" component={People} options={{ title: '' }} />
-          <Stack.Screen name="Memory" component={Memory} options={{ title: 'What Vivid knows' }} />
-          <Stack.Screen name="Texting" component={Texting} options={{ title: 'Text Vivid' }} />
-          <Stack.Screen name="Notifications" component={Notifications} options={{ title: '' }} />
-        </Stack.Navigator>
-      </NavigationContainer>
+            <Stack.Screen name="Home" component={Home} options={{ title: '' }} />
+            <Stack.Screen name="Computer" component={Computer} options={{ title: '' }} />
+            <Stack.Screen name="Routines" component={Routines} options={{ title: '' }} />
+            <Stack.Screen name="Library" component={Library} options={{ title: '' }} />
+            <Stack.Screen name="Folder" component={Folder} options={{ title: '' }} />
+            <Stack.Screen name="Projects" component={Projects} options={{ title: '' }} />
+            {/* The bar is only the way back: the Project's name is the page's own first line. */}
+            <Stack.Screen name="Project" component={Project} options={{ title: '' }} />
+            <Stack.Screen name="Settings" component={Settings} options={{ title: 'Settings' }} />
+            <Stack.Screen name="People" component={People} options={{ title: '' }} />
+            <Stack.Screen
+              name="Memory"
+              component={Memory}
+              options={{ title: 'What Vivid knows' }}
+            />
+            <Stack.Screen name="Texting" component={Texting} options={{ title: 'Text Vivid' }} />
+            <Stack.Screen
+              name="Integrations"
+              component={Integrations}
+              options={{ title: 'Integrations' }}
+            />
+            <Stack.Screen name="Notifications" component={Notifications} options={{ title: '' }} />
+            {/* Bottom sheets as tall as what they hold; each undoes the stack's bar and cross-fade. */}
+            <Stack.Screen name="Account" component={Account} options={FITTED_SHEET} />
+            <Stack.Screen name="NameAccount" component={NameAccount} options={FITTED_SHEET} />
+            <Stack.Screen name="Key" component={Key} options={FITTED_SHEET} />
+          </Stack.Navigator>
+        </NavigationContainer>
+      </FlowProvider>
     </FrontProvider>
   )
 }

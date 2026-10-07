@@ -20,9 +20,13 @@ export function integrations(response: FindIntegrationsResponse) {
     omittedAccounts: response.omittedAccounts,
     integrations: response.integrations.map((entry) =>
       ConnectionMatch.match<typeof Schema.Json.Type>(entry, {
-        Account: ({ name, account, connected, shared, state }) => ({
+        // `signedInAs` is who the service says the account is. It is said beside the account's
+        // name because a Person may have named the account ("Gmail (Work)"), and may then ask for
+        // it by either: the name, or the address behind it.
+        Account: ({ name, account, identity, connected, shared, state }) => ({
           name: modelText(name),
           account: modelText(account),
+          signedInAs: identity === null ? null : modelText(identity),
           connected,
           shared,
           state: ConnectionState.match(state, {

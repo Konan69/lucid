@@ -1,3 +1,4 @@
+import { useAtomSet } from '@effect/atom-react'
 import {
   PatchSettingsRequest,
   Settings as SettingsRecord,
@@ -29,11 +30,11 @@ import { NameSheet } from '../ui/Sheet'
 import { confirmDestructive, Label, Notice, Segmented, Skeleton, styles } from '../ui/ui'
 import { useGo, useMe } from '../workspace'
 import { useTheme } from '../theme'
-import { Integrations } from './settings/Integrations'
 import { Record } from './settings/Record'
 import { Rules } from './settings/Rules'
 import { Customise } from './vivid/Customise'
 import { Themes } from './settings/Themes'
+import { useFlow } from './integration/flow'
 
 const THEMES = [
   { value: 'system', label: 'System' },
@@ -46,24 +47,18 @@ type Over = Data.TaggedEnum<{
   Nothing: {}
   Zone: {}
   Customise: {}
-  Integrations: {}
   Rules: {}
   Record: {}
 }>
 const Over = Data.taggedEnum<Over>()
 
 /**
- * What belongs to the workspace and is done in a sheet over Settings: the services Vivid can use,
- * what it may do without asking, and what it did. Each row opened the web app in the phone's
- * browser before; the server answers all three over the app's own connection, so they are done
- * here, where the Person already is.
+ * What belongs to the workspace and is done in a sheet over Settings: what Vivid may do without
+ * asking, and what it did. Each row opened the web app in the phone's browser before; the server
+ * answers both over the app's own connection, so they are done here, where the Person already
+ * is. Integrations is the row before them and a screen of its own (`Shared`).
  */
 const IN_PLACE = [
-  {
-    title: 'Integrations',
-    detail: 'The services Vivid can use for you.',
-    over: Over.Integrations(),
-  },
   { title: 'Rules', detail: 'What Vivid must ask about first.', over: Over.Rules() },
   { title: 'Record', detail: 'What Vivid did, and for whom.', over: Over.Record() },
 ] as const satisfies ReadonlyArray<{ title: string; detail: string; over: Over }>
@@ -80,6 +75,20 @@ export function Settings() {
   const settings = useLive(data.live.settings)
   const [over, setOver] = useState<Over>(Over.Nothing())
   const close = () => setOver(Over.Nothing())
+  const flow = useFlow()
+  const setSearch = useAtomSet(data.serviceSearch)
+
+  /**
+   * Opens the Integrations page as a new visit. The search is the session's, so the catalog's
+   * answer stays warm, and the flow is the shell's, so a card in a Thread can use it; what was
+   * typed and what earlier presses left said are that visit's, and the next one starts from the
+   * services most people want. It is done by the press, so the page needs no effect to do it.
+   */
+  const openIntegrations = () => {
+    setSearch('')
+    flow.rest()
+    go.navigate('Integrations')
+  }
 
   const leave = () =>
     confirmDestructive({
@@ -121,7 +130,12 @@ export function Settings() {
             <Row title="Server" detail={serverName(data.session.server)} />
           </Section>
         )}
-        <Shared workspace={me.workspace} onPeople={() => go.navigate('People')} onOpen={setOver} />
+        <Shared
+          workspace={me.workspace}
+          onPeople={() => go.navigate('People')}
+          onIntegrations={openIntegrations}
+          onOpen={setOver}
+        />
         <Section title="Account">
           <Row title="Sign out" danger onPress={leave} />
         </Section>
@@ -129,7 +143,6 @@ export function Settings() {
       </ScrollView>
       {Over.$is('Zone')(over) && <Zone onClose={close} />}
       {Over.$is('Customise')(over) && <Customise onClose={close} />}
-      {Over.$is('Integrations')(over) && <Integrations onClose={close} />}
       {Over.$is('Rules')(over) && <Rules onClose={close} />}
       {Over.$is('Record')(over) && <Record onClose={close} />}
     </Screen>
@@ -238,15 +251,19 @@ function Sharing({ workspace, onPeople }: { workspace: Workspace; onPeople: () =
 /**
  * What belongs to the workspace the Person is working in, under that workspace's name as the web
  * app has it. Integrations, rules and the record exist in a Company and in a Person's own space
- * alike; each row opens its sheet over this screen (`IN_PLACE`), and none of them leaves the app.
+ * alike. Integrations is a screen of its own; the other two open a sheet over this screen
+ * (`IN_PLACE`). None of them leaves the app.
  */
 function Shared({
   workspace,
   onPeople,
+  onIntegrations,
   onOpen,
 }: {
   workspace: Workspace
   onPeople: () => void
+  /** Goes to the Integrations page. */
+  onIntegrations: () => void
   /** Opens one of the workspace's sheets over Settings. */
   onOpen: (over: Over) => void
 }) {
@@ -258,6 +275,11 @@ function Shared({
       })}
     >
       <Sharing workspace={workspace} onPeople={onPeople} />
+      <Row
+        title="Integrations"
+        detail="The services Vivid can use for you."
+        onPress={onIntegrations}
+      />
       {IN_PLACE.map((sheet) => (
         <Row
           key={sheet.title}

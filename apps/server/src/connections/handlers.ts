@@ -9,6 +9,7 @@ import type {
   FindServicesRequest,
   FindToolsRequest,
   OfferConnectionRequest,
+  RenameConnectionRequest,
   UseToolRequest,
 } from '@vivid/contracts'
 import { requireActor, requirePerson, requireVivid, type Actor } from '../auth/access.ts'
@@ -77,6 +78,11 @@ export const connectionHandlers = {
   }) {
     yield* requirePerson()
     yield* (yield* ConnectionStore).remove(yield* requireActor(), id)
+  }),
+  /** A name is the Person's to give; Vivid does not rename an account on its own. */
+  RenameConnection: Effect.fn('Rpc.RenameConnection')(function* (request: RenameConnectionRequest) {
+    yield* requirePerson()
+    return { connection: yield* (yield* ConnectionStore).rename(yield* requireActor(), request) }
   }),
   FindTools: Effect.fn('Rpc.FindTools')(function* (request: FindToolsRequest) {
     return yield* findTools(yield* requireActor(), request)

@@ -27,7 +27,7 @@ before adding a file. Extend it in the same change that adds a directory.
 ## Enforcement
 
 `pnpm structure` runs [konsistent](https://github.com/vercel-labs/konsistent) against
-`konsistent.json`, and `.husky/pre-push` runs it on every push. It fails on a multi-word source
+`konsistent.json`, and the gate's policy stage (`scripts/gate/stages.mjs`) runs it on every push. It fails on a multi-word source
 file or package directory, on a `utils`/`helpers`/`common`/`shared`/`misc` module, on a server
 `handlers.ts` that imports Drizzle, and on a server `store.ts` that imports an HTTP or RPC module.
 `konsistent.json` currently has no source-consolidation exceptions; its `!` entries only exclude

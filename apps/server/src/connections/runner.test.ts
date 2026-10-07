@@ -64,7 +64,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
             const probe = yield* ConnectionProbe
             const step = yield* store.begin(ownerActor, {
               service: serviceId,
-              label: 'Approved account',
+              name: 'Approved account',
               shared: false,
             })
             const unavailable = yield* Ref.make(phase === 'access')
@@ -109,7 +109,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
           const probe = yield* ConnectionProbe
           const step = yield* store.begin(ownerActor, {
             service: serviceId,
-            label: 'Transport loss',
+            name: 'Transport loss',
             shared: false,
           })
           const executor = yield* Executor
@@ -155,7 +155,7 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
         const probe = yield* ConnectionProbe
         const step = yield* store.begin(ownerActor, {
           service: serviceId,
-          label: 'Private approved account',
+          name: 'Private approved account',
           shared: false,
         })
         const database = yield* Database

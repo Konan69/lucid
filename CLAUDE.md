@@ -25,7 +25,7 @@ Product feel matters. Keep Vivid fast, snappy, and local-first. Prefer caching, 
 
 Minimal correct code wins. Solve the actual problem with the fewest concepts, indirections, and lines that preserve an honest model. Consolidate before adding. Delete wrappers that only rename a standard combinator or preserve obsolete architecture. Concise is not terse: precise types and explanatory comments still apply.
 
-Complexity is linted: classic cyclomatic complexity 12, 120 lines per function, nesting depth 3, four parameters, three nested callbacks. A finding means the function owns more than one decision; split the variant or extract the pure step rather than flattening syntax to pass. Existing findings are ratcheted in `.husky/pre-push` and may only go down.
+Complexity is linted: classic cyclomatic complexity 12, 120 lines per function, nesting depth 3, four parameters, three nested callbacks. A finding means the function owns more than one decision; split the variant or extract the pure step rather than flattening syntax to pass. Existing findings are ratcheted in `scripts/gate/ratchets.mjs` and may only go down.
 
 Keep one responsibility per module. Split files that own unrelated concerns. Pure domain logic must be testable without booting a server, database, Flue runtime, Expo runtime, or browser.
 
@@ -110,7 +110,7 @@ Use the smallest proof that demonstrates the changed behavior: focused tests fir
 
 The developer's PC is shared by every session at once, and it runs out of processor and memory. On 5 October 2026 its load average stood at twice its core count: a production deploy sat for an hour, gates failed on timeouts in code nobody had touched, and a build waited on all of it. So before starting heavy work, measure: `uptime` against `nproc`, `free -g` for memory in swap, and how many `node`, `tsc` and `vitest` processes are already running. Heavy work is a build, a bundle export, a full gate, a whole test suite, a browser run, or anything else that holds a core for minutes.
 
-When the load average is above the core count, or memory is in swap, do the work on the Cloudbox (the developer's Boat machine, reached over SSH) and not on the PC. Check the Cloudbox the same way first; it is a small machine, so it takes one heavy job at a time. Never add the work to a contended PC and then report the timeout as the result.
+When the load average is above the core count, or memory is in swap, do the work on the Cloudbox (the developer's Boat machine, reached over SSH) and not on the PC. The gate goes there by itself: `pnpm gate --host <the Cloudbox's SSH host>` keeps one warm tree per branch on it, with dependencies, build info and a Turbo cache shared by every tree, and needs no upload script. Check the Cloudbox the same way first; it is a small machine, so it takes one heavy job at a time. Never add the work to a contended PC and then report the timeout as the result.
 
 Simulators, emulators and testing run on the Cloudbox, not on the developer's PC, contended or not. That covers the Android emulator, driving a browser or the app to test it, a live proof, a gate and a suite. A focused test of the file being changed is small and may run on the PC. An iOS simulator needs macOS, which neither machine has: the iPhone app is checked on the phone itself or on a macOS runner, and its JavaScript, which is all that most fixes change, is built on the Cloudbox.
 
@@ -133,7 +133,16 @@ Reuse a server already running for the same worktree. Start an independent serve
 
 ## Gates and commits
 
-Full typecheck is a finishing move. Run it once at the end through `.husky/pre-push`, which checks package-manager policy, version lockstep, Effect boundaries, migration integrity, type-aware lint ratchets, formatting, serialized typecheck, and tooling tests. Never run two TypeScript graphs at once or typecheck in parallel with a build; use one focused leaf check only when diagnosing.
+The gate is one command, `pnpm gate` (`scripts/gate.mjs`). Its stages are defined once in `scripts/gate/stages.mjs`: policy (package manager, version lockstep, Effect boundaries, migrations, structure), lint with its ratchets, format, typecheck, tooling tests, and tests. The push hook, the Cloudbox run and each GitHub job call it; never list a check anywhere else. It prints each stage's time and cache hits and ends with one verdict line that names the commit and the run.
+
+- `pnpm gate` is the full gate, and the only verdict that allows a merge. Every stage is a Turbo task hashed per package, tests included, so a package whose files and dependencies did not change is replayed, not run again. Run it as often as you like: with nothing changed it takes seconds.
+- `pnpm gate affected` runs every stage but only the test files whose imports reach what the branch changed. It is the working loop, not a merge gate: a test that reads a file without importing it is outside that graph.
+- `pnpm gate focused <test files...>` runs only the named test files, with the test database. Use it while fixing one suite.
+- `--only lint,typecheck` selects stages. `--host <ssh host>` (or `VIVID_GATE_HOST`) runs in a warm tree on that machine: the commit, or a snapshot of uncommitted work, is pushed there and the result is followed by its run identifier, so an old result is never read as this one. `--here` runs in this checkout.
+
+Every run gets its own empty database on a disposable server and drops it at the end, so two gates never share state and none waits for another. Without a database server the gate fails; it never skips the database suites. Live proofs (`*.live.test.ts` and suites behind a `VIVID_LIVE_*` setting) are not part of the gate: Turbo gives a test task only the settings its definition names, so run a live proof with Vitest directly. Lint and typecheck run one Turbo task at a time, because each holds a whole TypeScript program in memory; tests run beside them. Never run two TypeScript graphs at once outside the gate or typecheck in parallel with a build; use one focused leaf check only when diagnosing.
+
+A Turbo task for one package (`@vivid/server#lint`) replaces the generic task; Turbo does not merge them. Repeat the generic task's `inputs`, `outputs` and environment in every such task; `scripts/gate.test.mjs` fails when one drifts.
 
 Typecheck scripts resolve `tsc` from the pinned native TypeScript preview. Keep `.cache/typescript` build info enabled and keep `@effect/language-service` patched by `prepare`; its errors, warnings, and suggestions fail typecheck. The Effect-boundary audit uses exact file+symbol classifications; add no wildcard, duplicate, or stale allowlist entry.
 

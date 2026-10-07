@@ -67,7 +67,7 @@ describe.skipIf(process.env['VIVID_LIVE_THREAD_CONNECTION'] !== '1')(
           )
           yield* fixture.rpc.BeginConnection({
             service: mail.id,
-            label: mail.name.slice(0, 40),
+            name: null,
             shared: false,
           })
           // This proof cannot supply a Google authorization on behalf of the Person. The existing

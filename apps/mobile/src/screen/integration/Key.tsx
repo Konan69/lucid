@@ -1,18 +1,13 @@
-import { ConnectionState, type ConnectionId } from '@vivid/contracts'
+import type { NativeStackScreenProps } from '@react-navigation/native-stack'
+import { ConnectionState } from '@vivid/contracts'
 import { Option, Redacted, Result } from 'effect'
 import { useState } from 'react'
 import { commit } from '../../data/haptics'
-import type { KeyFields } from '../../data/integration'
 import { useLiveData } from '../../data/live'
-import { Sheet } from '../../ui/Sheet'
+import { FittedSheet } from '../../ui/Sheet'
 import { Button, Field, Labelled, Notice } from '../../ui/ui'
-
-/** An Integration that is waiting for its key: which one, what to call it, and what it asks for. */
-export interface Keying {
-  readonly id: ConnectionId
-  readonly name: string
-  readonly fields: KeyFields
-}
+import type { Routes } from '../../workspace'
+import { useFlow } from './flow'
 
 /**
  * What has been typed, by the name the service gave each field. A value is wrapped the moment it
@@ -34,32 +29,32 @@ const afterTyping = (held: Typed, name: string, text: string): Typed => {
 }
 
 /**
- * Collects the key a service asks for, in a sheet over the Thread. The key goes straight to the
- * Integration (`CompleteConnection`) and nowhere else: it is not put in a message, it is not
- * shown to Vivid, it is not logged, and it is held only in this sheet's own state, which is gone
- * when the sheet is. The inputs keep their own text (they are given no `value`), so nothing here
- * ever reads a key back to draw it.
+ * Collects the key a service asks for, in a bottom sheet over whatever asked: the Integrations
+ * page, or the Thread whose card was pressed. The key goes straight to the Integration
+ * (`CompleteConnection`) and nowhere else: it is not put in a message, it is not shown to Vivid,
+ * it is not logged, and it is held only in this screen's own state, which is gone when the sheet
+ * is. The inputs keep their own text (they are given no `value`), so nothing here ever reads a
+ * key back to draw it. The route carries what the form asks for, never what is typed into it.
  *
  * The inputs are the platform's secure ones: masked, never offered to the keyboard's suggestions
  * or to autofill, and left out of what Android may fill on the Person's behalf.
  *
+ * It is a route on the stack (`Key`, `FITTED_SHEET`). It was a React Native `Modal` mounted from
+ * outside the navigator, and a server that asked for a key while the name sheet was still leaving
+ * had its form refused by UIKit, which presents one thing at a time; the stack orders its own
+ * sheets. `press` is what the press that asked is filed under in the flow, so the row or card
+ * that asked hears that the key was taken (`flow.keyed`).
+ *
  * Adapted from the web's dialog (`apps/web/src/screen/integration/Key.tsx`).
  */
-export function EnterKey({
-  keying,
-  onClose,
-  onConnected,
-}: {
-  keying: Keying
-  onClose: () => void
-  /** The service took the key and the Integration is ready; the card turns to "Carry on". */
-  onConnected: () => void
-}) {
+export function Key({ route, navigation }: NativeStackScreenProps<Routes, 'Key'>) {
+  const { id, name, fields, press } = route.params
   const data = useLiveData()
+  const flow = useFlow()
   const [typed, setTyped] = useState<Typed>(new Map())
   const [busy, setBusy] = useState(false)
   const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
-  const complete = keying.fields.every((field) => typed.has(field.name))
+  const complete = fields.every((field) => typed.has(field.name))
 
   async function submit() {
     if (!complete || busy) return
@@ -68,34 +63,36 @@ export function EnterKey({
     setBusy(true)
     setRefused(Option.none())
     const result = await data.change((client) =>
-      client.CompleteConnection({ id: keying.id, fields: Object.fromEntries(typed) }),
+      client.CompleteConnection({ id, fields: Object.fromEntries(typed) }),
     )
     setBusy(false)
     // The server taking the call is not the service taking the key: the answer says where the
     // Integration stands now, and only "ready" closes the sheet. Anything else keeps it up with
     // what was typed still in it, to be corrected and sent again.
-    const refusal = Result.isFailure(result)
-      ? Option.some(NOT_ACCEPTED)
-      : ConnectionState.match(result.success.connection.state, {
-          Ready: () => Option.none<string>(),
-          NeedsAuthorization: () => Option.some(NOT_ACCEPTED),
-          Failed: ({ reason }) => Option.some(`${keying.name} did not accept that: ${reason}`),
-        })
+    if (Result.isFailure(result)) {
+      setRefused(Option.some(NOT_ACCEPTED))
+      return
+    }
+    const { connection } = result.success
+    const refusal = ConnectionState.match(connection.state, {
+      Ready: () => Option.none<string>(),
+      NeedsAuthorization: () => Option.some(NOT_ACCEPTED),
+      Failed: ({ reason }) => Option.some(`${name} did not accept that: ${reason}`),
+    })
     if (Option.isSome(refusal)) {
       setRefused(refusal)
       return
     }
-    onConnected()
-    onClose()
+    flow.keyed(press, connection)
+    navigation.goBack()
   }
 
   return (
-    <Sheet
-      title={`Connect ${keying.name}`}
+    <FittedSheet
+      title={`Connect ${name}`}
       detail="This goes straight to the integration and is never shown to Vivid or kept in a thread."
-      onClose={onClose}
     >
-      {keying.fields.map((field, place) => (
+      {fields.map((field, place) => (
         <Labelled key={field.name} label={field.label}>
           <Field
             accessibilityLabel={field.label}
@@ -121,6 +118,6 @@ export function EnterKey({
         disabled={busy || !complete}
         onPress={() => void submit()}
       />
-    </Sheet>
+    </FittedSheet>
   )
 }

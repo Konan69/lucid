@@ -129,11 +129,53 @@ export const SCREEN_CHANGE = {
 export const pushAnimation = (_still: boolean): NativeStackNavigationOptions['animation'] =>
   SCREEN_CHANGE.animation
 
-/** A sheet that rests at a little over half the screen and can be pulled nearly full. */
-export const SHEET = {
+/**
+ * How round the top of a fitted sheet is on Android, in points. The library's own value there is
+ * none at all (`Screen.sheetCornerRadius` starts at 0 and a negative one is read as 0,
+ * `ScreenStackFragment.attachShapeToScreen`), which draws a square slab. iOS is left to the
+ * system, whose sheet has its own corners.
+ */
+const SHEET_CORNERS = 28
+
+/**
+ * A bottom sheet as tall as what it holds: a short form or a few choices about one thing, over
+ * the page the Person was on. It is the platform's own sheet, a `UISheetPresentationController`
+ * on iOS and react-native-screens' Material bottom sheet on Android, so the grabber, the swipe
+ * down, the tap on the dimmed page and Android's back all close it, and none of that is written
+ * here. What T3 Code mobile's form sheets are (`src/Stack.tsx`, every
+ * `...FORM_SHEET_PRESENTATION_OPTIONS` screen), with the height taken from the content instead of
+ * a fraction of the screen.
+ *
+ * A route that takes these options spreads them after the stack's own, because it has to undo
+ * two of those:
+ *
+ * - `headerShown: false`. An Android form sheet cannot host the stack's bar, and a sheet this
+ *   small has no room for one: its title is the first line of its own content
+ *   (`FittedSheet`, `ui/Sheet.tsx`).
+ * - `animation: 'default'`, in place of the stack's cross-fade (`SCREEN_CHANGE`). Read in
+ *   react-native-screens 4.26.2: on iOS `fade` sets the presented controller's
+ *   `modalTransitionStyle` to a cross-dissolve (`RNSScreen.mm`, `setStackAnimation`), so the
+ *   sheet would fade in where it rests instead of rising, while `default` touches nothing and
+ *   leaves UIKit's own sheet motion. On Android the value is not read for a form sheet at all:
+ *   its fragment answers `onCreateAnimator` with the sheet's own enter and exit
+ *   (`ScreenStackFragment.kt`), whatever the transaction was told. The duration is the stack
+ *   animator's and is cleared with it.
+ *
+ * `fitToContents` measures the content, so the screen's root must have a height of its own and
+ * never `flex: 1` (the library lays the content out with no bottom edge for exactly this:
+ * `ScreenStackItem.tsx`, `absoluteWithNoBottom`). It is iOS 16's: on iOS 15 the library logs that it
+ * is unsupported and the sheet keeps the system's height (`updateFormSheetPresentationStyle`).
+ * The grabber is iOS's (`sheetGrabberVisible` is not read on Android), so `FittedSheet` draws
+ * Android's handle itself.
+ */
+export const FITTED_SHEET = {
   presentation: 'formSheet',
-  // Android's sheet takes its own height; the detents are iOS's.
-  sheetAllowedDetents: Platform.OS === 'android' ? undefined : [0.55, 0.92],
+  headerShown: false,
+  animation: 'default',
+  animationDuration: undefined,
+  sheetAllowedDetents: 'fitToContents',
+  sheetGrabberVisible: true,
+  sheetCornerRadius: Platform.OS === 'android' ? SHEET_CORNERS : undefined,
 } satisfies NativeStackNavigationOptions
 
 /**

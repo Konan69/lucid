@@ -1,5 +1,6 @@
 const path = require('node:path')
 const { getDefaultConfig } = require('expo/metro-config')
+const { withSentryConfig } = require('@sentry/react-native/metro')
 
 const workspaceRoot = path.resolve(__dirname, '..', '..')
 
@@ -33,4 +34,15 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   return context.resolveRequest(context, moduleName, platform)
 }
 
-module.exports = config
+/**
+ * Sentry's additions (`@sentry/react-native/metro`, SDK 8.29.0, checked against the installed
+ * source). Its serializer stamps a debug ID into every bundle Metro writes — development, an
+ * over-the-air export (`scripts/publish.mjs`) and an embedded iOS or Android build alike — and
+ * writes the same ID into the map beside the bundle, which is what pairs the uploaded map with a
+ * report's stack frames later (`scripts/sentry-upload.mjs`). It also collapses Sentry's own
+ * frames in LogBox. Nothing here changes what the app bundles; only the output is annotated.
+ *
+ * This wraps the resolver fix above, so a report's frame for `packages/...` keeps naming the
+ * source file the import came from.
+ */
+module.exports = withSentryConfig(config)
