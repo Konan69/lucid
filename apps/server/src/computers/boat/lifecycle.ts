@@ -138,8 +138,7 @@ const start = Effect.fn('Machine.boat.start')(function* (api: Transport, id: Pro
       })
     return undefined
   }
-  if (answers.includes('none-free'))
-    return yield* new MachineNoCapacity({ limited: false })
+  if (answers.includes('none-free')) return yield* new MachineNoCapacity({ limited: false })
   // Said in the log with each size's answer: what to do about it is an operator's decision.
   yield* Effect.logError('Computer holds more data than any machine it may be started on', {
     sizes: api.sizes.join(','),
