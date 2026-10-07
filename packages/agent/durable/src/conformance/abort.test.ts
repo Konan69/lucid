@@ -1,13 +1,31 @@
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
-import { expect, it } from 'vitest'
-import { Option } from 'effect'
+import { expect, it, onTestFinished } from 'vitest'
+import { Effect, Option } from 'effect'
+import { waitForFrame } from '../fixtures/provider.ts'
 
 import { abort, history, attachRun, CallNotWaiting, decide, streamRun, waiting } from '../main.ts'
 import { hold, call, consume, context, host, shop, signal, texts } from './fixtures/host.ts'
 
 /** A real partial receipt arms cancellation; no clock wait is used to guess provider progress. */
 it('aborts producing text, emits abort, and retains the committed partial', async () => {
-  const fixture = await host({}, {}, {}, { tokensPerSecond: 60 })
+  const release = signal()
+  let gated = false
+  onTestFinished(() => release.resolve())
+  const fixture = await host(
+    {},
+    {},
+    {},
+    {
+      onFrame: (event, abortSignal) => {
+        if (event.type !== 'text_delta' || gated) return Effect.void
+        gated = true
+        return waitForFrame(
+          Effect.promise(() => release.promise),
+          abortSignal,
+        )
+      },
+    },
+  )
   const opened = await fixture.open()
   const full = 'word '.repeat(3000)
   opened.faux.setResponses([fauxAssistantMessage(full)])
@@ -33,6 +51,7 @@ it('aborts producing text, emits abort, and retains the committed partial', asyn
   })()
   await started.promise
   await abort(opened.harness, opened.root.id, context)
+  release.resolve()
   const result = await chunks
   expect(await watching).toContain('abort')
   const settled = await history(opened.harness, opened.root.id, { limit: 10 }, context)

@@ -1,3 +1,4 @@
+// Explicit function contracts make published error-union changes fail at their signatures.
 export {
   HistoryCursorInvalid,
   HistoryPageInvalid,
@@ -9,8 +10,10 @@ export {
   ConversationMissing,
   PiFailed,
   TurnInvalid,
+  RejoinInvalid,
   PartUnsupported,
   PartTooLarge,
+  LimitInvalid,
   RunMissing,
   ToolSchemaFailed,
   ToolFailed,
@@ -38,7 +41,15 @@ export {
 export { type Replay, type ToolsOptions, toolsExtension } from './tools.ts'
 export { ChatTurn, TurnBody, decodeTurn, respond, type TurnInput } from './respond.ts'
 export { InputPart, InputParts, type InputOptions } from './input.ts'
-export { attachRun, continueRun, type RunInput, prepareRun, streamRun } from './stream.ts'
+export {
+  attachRun,
+  rejoinRun,
+  type Rejoin,
+  continueRun,
+  type RunInput,
+  prepareRun,
+  streamRun,
+} from './stream.ts'
 export type { ResumeInput } from './resume.ts'
 
 export { abort } from './abort.ts'

@@ -8,6 +8,7 @@ import {
   type ToolUIPart,
   type UIMessage,
 } from 'ai'
+import { resumption } from '@vivid/durable/client'
 import { useState } from 'react'
 
 /** The text a person typed into the form's field `name`. */
@@ -17,8 +18,9 @@ function typed(form: HTMLFormElement, name: string) {
 }
 
 /**
- * The client side of the server examples: a stock `useChat` component. Nothing here imports this
- * library; the server speaks the AI SDK's own chat protocol.
+ * The client side of the server examples: a stock `useChat` component. The server speaks the AI
+ * SDK's own chat protocol, so the only import from this library is `resumption`, a small helper
+ * with no server code in it.
  *
  * `messages` is the transcript the page loaded from the `history` route. `resume` makes the hook
  * reconnect on mount to a run that is still in progress or waits for a person.
@@ -26,11 +28,23 @@ function typed(form: HTMLFormElement, name: string) {
 export function Thread(props: { readonly api: string; readonly messages: UIMessage[] }) {
   // One transport for the life of the component; a new one each render would be a new connection
   // owner each time.
-  const [transport] = useState(() => new DefaultChatTransport({ api: props.api }))
+  //
+  // `resumption` remembers what this hook still holds when the network drops in the middle of a
+  // run, and says so on the reconnect request. Without it the server can only replay the whole
+  // run, and the AI SDK keeps the earlier steps it already has, so they would show twice.
+  const [link] = useState(resumption)
+  const [transport] = useState(
+    () =>
+      new DefaultChatTransport({
+        api: props.api,
+        prepareReconnectToStreamRequest: link.prepare,
+      }),
+  )
   const chat = useChat({
     transport,
     messages: props.messages,
     resume: true,
+    onFinish: link.onFinish,
     // Send the approvals and answers back as soon as the person has given all of them.
     sendAutomaticallyWhen: (state) =>
       lastAssistantMessageIsCompleteWithApprovalResponses(state) ||

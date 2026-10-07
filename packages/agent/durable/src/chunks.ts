@@ -12,6 +12,8 @@ import type {
 import type { UIMessageChunk } from 'ai'
 import { Array as Arr, Data, Match, Option, Schema } from 'effect'
 
+import { ArgumentText, argumentDelta, argumentsShortened, rawArguments } from './arguments.ts'
+
 /** Pi's closed event and block types are exhaustive; an impossible branch indicates an SDK contract defect. */
 const unreachable = (value: never): never => {
   throw new Error(`Unexpected Pi variant: ${String(value)}`)
@@ -40,6 +42,8 @@ const Reported = Data.taggedEnum<Reported>()
  * AI SDK assistant message; each turn becomes one AI SDK step.
  */
 export type RunState = {
+  /** Retry entries share the same generation task and therefore the same SDK step. */
+  readonly generation: Option.Option<TaskId>
   /** Durable result entries reported by this reader, across step changes and snapshot/live overlap. */
   readonly results: ReadonlySet<EntryId>
   /** Turns started in this run. */
@@ -53,6 +57,8 @@ export type RunState = {
   readonly blocks: ReadonlyMap<number, Reported>
   /** Latest partial blocks, including later content waiting behind an anonymous tool identity. */
   readonly content: ReadonlyMap<number, Block>
+  /** Raw tool argument prefixes emitted by this reader; offsets survive snapshot/live overlap. */
+  readonly arguments: ReadonlyMap<number, ArgumentText>
   /** Calls opened in this response; rejected anonymous calls cannot emit orphan result chunks. */
   readonly calls: ReadonlySet<string>
   /**
@@ -63,10 +69,12 @@ export type RunState = {
 }
 
 export const initialRunState: RunState = {
+  generation: Option.none(),
   turn: 0,
   response: 0,
   blocks: new Map(),
   content: new Map(),
+  arguments: new Map(),
   calls: new Set(),
   failure: [],
   results: new Set(),
@@ -177,6 +185,7 @@ const startTurn = (state: RunState): Step => ({
     turn: state.turn + 1,
     blocks: new Map(),
     content: new Map(),
+    arguments: new Map(),
     calls: new Set(),
   },
   chunks: [{ type: 'start-step' }],
@@ -193,6 +202,7 @@ function startResponse(state: RunState, partial: AssistantMessage): Step {
     response: state.response + 1,
     blocks: new Map(),
     content: new Map(),
+    arguments: new Map(),
     calls: new Set(),
     failure: [],
   }
@@ -212,6 +222,14 @@ function finishBlock(state: RunState, contentIndex: number, block: Block): Step 
   if (block.type === 'toolCall' && block.name.length === 0) return { state, chunks: [] }
   const reported = state.blocks.get(contentIndex)
   if (reported !== undefined && Reported.$is('Closed')(reported)) return { state, chunks: [] }
+  if (block.type === 'toolCall') {
+    const opened = reportTool(state, contentIndex, block)
+    return {
+      state: mark(opened.state, contentIndex, Reported.Closed()),
+      chunks: [...opened.chunks, ...closeBlock(state, contentIndex, block)],
+    }
+  }
+
   const chunks =
     reported !== undefined && Reported.$is('Open')(reported)
       ? [
@@ -220,6 +238,35 @@ function finishBlock(state: RunState, contentIndex: number, block: Block): Step 
         ]
       : wholeBlock(state, contentIndex, block)
   return { state: mark(recordCall(state, block), contentIndex, Reported.Closed()), chunks }
+}
+
+/** One started tool owns one raw-prefix ledger, regardless of how many block changes Pi emits. */
+function reportTool(
+  state: RunState,
+  contentIndex: number,
+  block: Extract<Block, { type: 'toolCall' }>,
+): Step {
+  const reported = state.blocks.get(contentIndex)
+  const previous = state.arguments.get(contentIndex) ?? ArgumentText.Empty()
+  const next = argumentDelta(previous, rawArguments(block))
+  const opening = reported === undefined ? openBlock(state, contentIndex, block) : []
+  const delta: readonly Chunk[] =
+    next.delta.length === 0
+      ? []
+      : [
+          {
+            type: 'tool-input-delta',
+            toolCallId: block.id,
+            inputTextDelta: next.delta,
+          },
+        ]
+  return {
+    state: {
+      ...mark(recordCall(state, block), contentIndex, Reported.Open({ length: 0 })),
+      arguments: new Map(state.arguments).set(contentIndex, next.state),
+    },
+    chunks: [...opening, ...delta],
+  }
 }
 
 /**
@@ -231,6 +278,8 @@ function reportBlock(state: RunState, contentIndex: number, block: Block): Step 
   if (!identified(block)) return { state, chunks: [] }
   const reported = state.blocks.get(contentIndex)
   if (reported !== undefined && Reported.$is('Closed')(reported)) return { state, chunks: [] }
+  if (block.type === 'toolCall') return reportTool(state, contentIndex, block)
+
   const chunks =
     reported === undefined
       ? [...openBlock(state, contentIndex, block), ...blockBody(state, contentIndex, block, 0)]
@@ -256,22 +305,39 @@ function updateBlock(state: RunState, contentIndex: number, block: Block): Step 
   return join(replaced, releaseContent(replaced.state))
 }
 
-/** SDK text/reasoning deltas append; a shorter authoritative replacement needs reset-step.
- * Reset only this response's step, then rebuild its latest content with the same part ids. This
- * removes Responses' streamed trailing summary separator while retaining earlier steps. Replayed
- * partials start from the captured replacement and therefore follow the same content rule. */
+/** Emitted SDK prefixes cannot be retracted with deltas; test the actual sent prefix, not length.
+ * Missing/changed identities also require a rebuild so the client never retains an orphan part. */
+function extendsReported(before: Block, after: Block, reported: Reported): boolean {
+  const length = Reported.$is('Open')(reported) ? reported.length : bodyLength(before)
+  switch (before.type) {
+    case 'text':
+      return after.type === 'text' && after.text.startsWith(before.text.slice(0, length))
+    case 'thinking':
+      return (
+        after.type === 'thinking' && after.thinking.startsWith(before.thinking.slice(0, length))
+      )
+    case 'toolCall':
+      return after.type === 'toolCall' && after.id === before.id && after.name === before.name
+  }
+  return unreachable(before)
+}
+
+/** An authoritative non-prefix replacement resets this response's SDK step and rebuilds it.
+ * Includes equal/greater-length edits and removed blocks, retaining every earlier durable step.
+ * Buffered anonymous blocks have not been reported and therefore need no client reset. */
 function replaceContent(state: RunState, content: ReadonlyMap<number, Block>): Step {
-  const shortened = [...content].some(([index, block]) => {
-    const reported = state.blocks.get(index)
-    return (
-      reported !== undefined &&
-      Reported.$is('Open')(reported) &&
-      bodyLength(block) < reported.length
-    )
+  const replaced = [...state.blocks].some(([index, reported]) => {
+    const before = state.content.get(index)
+    const after = content.get(index)
+    if (before === undefined || after === undefined) return true
+    const arguments_ = state.arguments.get(index)
+    const shortened =
+      after.type === 'toolCall' && arguments_ !== undefined && argumentsShortened(arguments_, after)
+    return shortened || !extendsReported(before, after, reported)
   })
-  return shortened
+  return replaced
     ? {
-        state: { ...state, content, blocks: new Map(), calls: new Set() },
+        state: { ...state, content, blocks: new Map(), calls: new Set(), arguments: new Map() },
         chunks: [{ type: 'reset-step' }],
       }
     : { state: { ...state, content }, chunks: [] }
@@ -323,7 +389,7 @@ function applyChange(state: RunState, change: MessageChange): Step {
     case 'thinking_delta':
       return appendBody(state, change.contentIndex, change.delta)
     // events.js messageChanges uses this for path-local arguments string appends. Provider scratch
-    // JSON also survives in block/message changes; this bridge does not stream tool arguments yet.
+    // JSON survives in block/message changes and is decoded there; this parsed-property delta is not JSON text.
     case 'toolcall_delta':
       return { state, chunks: [] }
     case 'block':
@@ -470,13 +536,17 @@ export function translate(state: RunState, event: AgentEvent): Step {
       state: initialRunState,
       chunks: [{ type: 'start', messageId: runMessageId(started.inputs) }],
     })),
-    Match.when({ type: 'run_end' }, (): Step => ({
-      state,
-      chunks: [
-        ...state.failure.map((errorText): Chunk => ({ type: 'error', errorText })),
-        { type: 'finish' },
-      ],
-    })),
+    Match.when({ type: 'run_end' }, (ended): Step => {
+      const closed = closeRun(state, runMessageId(ended.inputs))
+      return {
+        state: closed.state,
+        chunks: [
+          ...closed.chunks,
+          ...state.failure.map((errorText): Chunk => ({ type: 'error', errorText })),
+          { type: 'finish' },
+        ],
+      }
+    }),
     Match.when({ type: 'turn_start' }, () => startTurn(state)),
     Match.when({ type: 'message_start' }, (started) =>
       started.message.role === 'assistant'
@@ -520,9 +590,9 @@ export function translate(state: RunState, event: AgentEvent): Step {
 
 const join = (a: Step, b: Step): Step => ({ state: b.state, chunks: [...a.chunks, ...b.chunks] })
 
-/** Entries of the run in progress: everything after the newest user entry of the active transcript. */
+/** Snapshot observation has bounded the entries to the first input of this run; steers are transparent. */
 function runEntries(entries: readonly EntryRecord[]): readonly EntryRecord[] {
-  const start = entries.findLastIndex((entry) => entry.kind === 'pi.user')
+  const start = entries.findIndex((entry) => entry.kind === 'pi.user')
   return entries.slice(start + 1)
 }
 
@@ -532,9 +602,15 @@ export function replayEntry(state: RunState, entry: EntryRecord): Step {
   if (Option.isNone(found)) return { state, chunks: [] }
   const message = found.value
   if (message.role === 'assistant') {
-    const turn = startTurn(state)
-    const response: RunState = { ...turn.state, response: turn.state.response + 1, failure: [] }
-    return join(turn, assistantEnd(response, message))
+    // generation.js retries append another assistant entry under the same task. events.js only
+    // starts a turn when that task changes, so snapshots must reset the attempt within its step.
+    const same = entry.byTaskId !== undefined && Option.contains(state.generation, entry.byTaskId)
+    const turn = same ? { state, chunks: [] } : startTurn(state)
+    const response = startResponse(
+      { ...turn.state, generation: Option.fromNullishOr(entry.byTaskId) },
+      message,
+    )
+    return join(join(turn, response), assistantEnd(response.state, message))
   }
   if (message.role === 'toolResult')
     return resultStep(state, message.toolCallId, Option.some(entry))
@@ -543,7 +619,7 @@ export function replayEntry(state: RunState, entry: EntryRecord): Step {
 
 /** The partial response of the generation in flight: a turn, then each block with its text so far. */
 function replayPartial(state: RunState, message: AssistantMessage): Step {
-  const turn = startTurn(state)
+  const turn = state.failure.length > 0 ? { state, chunks: [] } : startTurn(state)
   return join(turn, startResponse(turn.state, message))
 }
 
@@ -553,7 +629,7 @@ function replayPartial(state: RunState, message: AssistantMessage): Step {
  * prefix that brings an AI SDK reader to that state, and the translator state from which the live
  * events continue. `undefined` means no run is in progress.
  *
- * Limit: a steer adds a user entry inside a run, so the prefix then starts at the steer.
+ * The observation adapter bounds entries to the first placed input; later steers are transparent.
  */
 export function replay(snapshot: SnapshotEvent): Option.Option<Rebuilt> {
   if (snapshot.run === undefined) return Option.none()
@@ -575,7 +651,9 @@ export function replay(snapshot: SnapshotEvent): Option.Option<Rebuilt> {
   )
   const step = Option.match(partial, {
     onNone: () =>
-      snapshot.generation === undefined ? stored : join(stored, startTurn(stored.state)),
+      snapshot.generation === undefined || stored.state.failure.length > 0
+        ? stored
+        : join(stored, startTurn(stored.state)),
     onSome: (message) => join(stored, replayPartial(stored.state, message)),
   })
   return Option.some({ ...step, origins: originsFor(runEntries(snapshot.entries), step.chunks) })
@@ -611,6 +689,8 @@ export function replayAfter(
   readonly live: boolean
   readonly origins: ReadonlyMap<Chunk, TaskId>
 }> {
+  const inFlight = inFlightAfter(snapshot, known)
+  if (Option.isSome(inFlight)) return inFlight
   const at = snapshot.entries.findLastIndex((entry) => callsAny(entry, known))
   if (at === -1) return Option.none()
   const rest = snapshot.entries.slice(at + 1)
@@ -627,7 +707,10 @@ export function replayAfter(
       chunks: [
         { type: 'start' },
         ...called.chunks.filter(
-          (chunk) => chunk.type === 'tool-input-start' || chunk.type === 'tool-input-available',
+          (chunk) =>
+            chunk.type === 'tool-input-start' ||
+            chunk.type === 'tool-input-available' ||
+            chunk.type === 'tool-input-error',
         ),
       ],
     },
@@ -647,6 +730,39 @@ export function replayAfter(
     live,
     origins: originsFor(snapshot.entries.slice(at), step.chunks),
   })
+}
+
+/** A manual POST may name a still-streaming call with no assistant entry yet. Rebuild only the
+ * retained current step, just like rejoinRun: reset-step retains its existing step-start. The full
+ * replay state carries raw offsets into the event tail, so snapshot text is never offered twice. */
+function inFlightAfter(snapshot: SnapshotEvent, known: ReadonlySet<string>) {
+  const partial = Option.fromNullishOr(snapshot.generation).pipe(
+    Option.flatMapNullishOr((generation) => generation.message),
+  )
+  if (
+    Option.isNone(partial) ||
+    !partial.value.content.some((block) => block.type === 'toolCall' && known.has(block.id))
+  )
+    return Option.none<Continuation>()
+  const rebuilt = replay(snapshot)
+  if (Option.isNone(rebuilt)) return Option.none<Continuation>()
+  const chunks = rebuilt.value.chunks
+  const step = chunks.findLastIndex((chunk) => chunk.type === 'start-step')
+  return Option.some({
+    step: {
+      state: rebuilt.value.state,
+      chunks: [...chunks.slice(0, 2), ...chunks.slice(step + 1)],
+    },
+    live: true,
+    origins: rebuilt.value.origins,
+  })
+}
+
+/** Pure continuation data has no runtime or adapter authority. */
+type Continuation = {
+  readonly step: Step
+  readonly live: boolean
+  readonly origins: ReadonlyMap<Chunk, TaskId>
 }
 
 /** Events without a chunk counterpart remain exhaustive without bloating the translator's decisions. */
@@ -752,4 +868,17 @@ export function rebuild(entries: readonly EntryRecord[]): Rebuilt {
 /** Pi events.js changes runs by their first input; steer inputs never change assistant identity. */
 export function runMessageId(inputs: readonly SubmissionId[]) {
   return `run:${Option.getOrThrow(Arr.head(inputs))}`
+}
+
+/** A closed run never ends in a step containing tool parts: an empty closing step makes both
+ * stock automatic predicates false, identically in live, history and terminal replay. SDK
+ * process-ui-message-stream.ts:926-975 does not publish step chunks; the identity-only start
+ * publishes the closing boundary without fabricating metadata or another content part. */
+export function closeRun(state: RunState, messageId: string): Step {
+  if (state.calls.size === 0) return { state, chunks: [] }
+  const closed = startTurn(state)
+  return {
+    state: closed.state,
+    chunks: [...closed.chunks, { type: 'finish-step' }, { type: 'start', messageId }],
+  }
 }

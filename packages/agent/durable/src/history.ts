@@ -1,3 +1,4 @@
+import type * as DurableErrors from './errors.ts'
 import type { Context } from '@earendil-works/chord'
 import type { UserMessage, TextContent, ImageContent } from '@earendil-works/pi-ai'
 import {
@@ -11,7 +12,7 @@ import {
 import type { UIMessage, UIMessageChunk } from 'ai'
 import { Data, Effect, Match, Option, Predicate, Schema, Stream } from 'effect'
 import { emptyRound, present, type Desk } from './calls.ts'
-import { rebuild, type Rebuilt } from './chunks.ts'
+import { closeRun, rebuild, type Rebuilt } from './chunks.ts'
 import { noDesk, readDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
 import { readMessage } from './reading.ts'
@@ -269,6 +270,7 @@ const assistantMessage = Effect.fn('Durable.historyAssistant')(function* (
   const chunks: readonly UIMessageChunk[] = [
     { type: 'start', messageId: `entry:${identity}` },
     ...shown.chunks,
+    ...closeRun(step.state, `entry:${identity}`).chunks,
     { type: 'finish-step' },
     { type: 'finish' },
   ]
@@ -317,15 +319,26 @@ const pageDesk = Effect.fn('Durable.historyDesk')(function* (
  * round is parallel. Live streams and early attachments follow admission. Pi's startToolRound stores
  * provider order and finishToolRound removes live.tools; reader presentation order is not retained.
  */
-export const history = Effect.fn('Durable.history')(function* (
+export const history: (
+  harness: Harness,
+  conversationId: ConversationId,
+  page: HistoryRequest,
+  context: Context,
+) => Effect.Effect<
+  HistoryPage,
+  | DurableErrors.ConversationMissing
+  | HistoryCursorInvalid
+  | HistoryPageInvalid
+  | DurableErrors.PiFailed
+> = Effect.fn('Durable.history')(function* (
   harness: Harness,
   conversationId: ConversationId,
   page: HistoryRequest,
   context: Context,
 ): Effect.fn.Return<
   HistoryPage,
-  | import('./errors.ts').ConversationMissing
-  | import('./errors.ts').PiFailed
+  | DurableErrors.ConversationMissing
+  | DurableErrors.PiFailed
   | HistoryCursorInvalid
   | HistoryPageInvalid
 > {

@@ -1,11 +1,13 @@
 import { copyJson, type Context, type JsonValue } from '@earendil-works/chord'
 import {
   type ConversationId,
+  type Extension,
   type TaskId,
   defineExtension,
   LiveDoc,
   hook,
   type ToolExecutionApi,
+  type ToolHooks,
   type ToolExecutionResult,
   type ToolRegistration,
   ToolTask,
@@ -20,6 +22,7 @@ import {
   ToolFailed,
   ToolOutputFailed,
   ToolSchemaFailed,
+  type PiFailed,
 } from './errors.ts'
 import {
   CallIdentity,
@@ -35,7 +38,7 @@ import {
 } from './holds.ts'
 import * as Pi from './pi.ts'
 import { Delivery } from './delivery.ts'
-import { inputContent } from './input.ts'
+import { inputContent, PartLimit } from './input.ts'
 
 /** Whether an interrupted call may run again after a crash. Pi's own default is unsafe. */
 export type Replay = 'safe' | 'unsafe'
@@ -89,7 +92,7 @@ type Program = (
   context: Context,
 ) => Effect.Effect<
   ToolExecutionResult,
-  ToolContextFailed | ToolFailed | ToolOutputFailed | import('./errors.ts').PiFailed
+  ToolContextFailed | ToolFailed | ToolOutputFailed | PiFailed
 >
 
 const decodeJsonText = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.MutableJson))
@@ -139,7 +142,7 @@ const modelImage = Effect.fn('Durable.toolImage')(function* (
 ) {
   const content = yield* inputContent(
     [{ type: 'file', mediaType, url: `data:${mediaType};base64,${data}` }],
-    {},
+    PartLimit.cases.Unbounded.make({}),
   ).pipe(Effect.mapError((cause) => new ToolOutputFailed({ toolName: name, cause })))
   // An array input must produce native blocks; a future admission change cannot silently emit text.
   if (Predicate.isString(content))
@@ -640,8 +643,8 @@ const registration = Effect.fn('Durable.registerTool')(function* (
 /** The hook only waits for plans that hold; a durable denial is Pi's existing block result. */
 const before = Effect.fn('Durable.beforeTool')(function* (
   plans: ReadonlyMap<string, Plan>,
-  call: Parameters<import('@earendil-works/pi-durable').ToolHooks['beforeTool']>[0],
-  api: Parameters<import('@earendil-works/pi-durable').ToolHooks['beforeTool']>[1],
+  call: Parameters<ToolHooks['beforeTool']>[0],
+  api: Parameters<ToolHooks['beforeTool']>[1],
   context: Context,
 ) {
   const live = yield* Pi.snapshot(api, LiveDoc, api.conversationId, context)
@@ -668,8 +671,8 @@ const before = Effect.fn('Durable.beforeTool')(function* (
 /** Pi's named hook adapter forwards cancellation into the sole settlement program. */
 function beforeForPi(plans: ReadonlyMap<string, Plan>) {
   return function beforeTool(
-    call: Parameters<import('@earendil-works/pi-durable').ToolHooks['beforeTool']>[0],
-    api: Parameters<import('@earendil-works/pi-durable').ToolHooks['beforeTool']>[1],
+    call: Parameters<ToolHooks['beforeTool']>[0],
+    api: Parameters<ToolHooks['beforeTool']>[1],
     context: Context,
   ) {
     return Pi.runForPi(
@@ -684,7 +687,7 @@ export const toolsExtension = Effect.fn('Durable.toolsExtension')(function* (
   name: string,
   tools: ToolSet,
   options: ToolsOptions,
-) {
+): Effect.fn.Return<Extension, ToolSchemaFailed | ToolApprovalUnsupported> {
   const lookups: Lookups = {
     context: Option.fromNullishOr(options.context),
     execution: options.execution ?? 'parallel',

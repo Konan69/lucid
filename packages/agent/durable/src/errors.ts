@@ -1,5 +1,5 @@
 import type { ConversationId as PiConversationId } from '@earendil-works/pi-durable'
-import { Predicate, Schema } from 'effect'
+import { Effect, Predicate, Schema } from 'effect'
 
 /** Pi's types.ts Id is an erased numeric brand; retain that identity in the shared error contract. */
 const ConversationId = Schema.declare<PiConversationId>((value): value is PiConversationId =>
@@ -56,12 +56,30 @@ export class PiFailed extends Schema.TaggedError<PiFailed>()(
 /** The latest chat message cannot start or resume a run. */
 export class TurnInvalid extends Schema.TaggedError<TurnInvalid>()(
   'TurnInvalid',
-  {},
+  {
+    reason: Schema.Literals(['Malformed', 'Regeneration']).pipe(
+      Schema.withConstructorDefault(Effect.succeed('Malformed')),
+    ),
+  },
   { title: 'TurnInvalid' },
 ) {
   /** Match the HTTP ingress diagnostic for a malformed turn. */
   override get message() {
-    return 'Expected a user message or a message with tool calls'
+    return this.reason === 'Regeneration'
+      ? 'Regeneration is not supported'
+      : 'Expected a user message or a message with tool calls'
+  }
+}
+
+/** A reconnect pair is incomplete, malformed, or names a step beyond the captured run. */
+export class RejoinInvalid extends Schema.TaggedError<RejoinInvalid>()(
+  'RejoinInvalid',
+  {},
+  { title: 'RejoinInvalid' },
+) {
+  /** Keep query diagnostics short without echoing client-supplied identifiers. */
+  override get message() {
+    return 'Invalid reconnect state'
   }
 }
 
@@ -86,6 +104,18 @@ export class PartTooLarge extends Schema.TaggedError<PartTooLarge>()(
   /** Report byte units, never the submitted image or URL. */
   override get message() {
     return `File part is ${this.bytes} bytes; limit is ${this.limit} bytes`
+  }
+}
+
+/** A host byte budget must be a finite nonnegative whole number, before request reading/admission. */
+export class LimitInvalid extends Schema.TaggedError<LimitInvalid>()(
+  'LimitInvalid',
+  { value: Schema.UndefinedOr(Schema.Number) },
+  { title: 'LimitInvalid' },
+) {
+  /** This is a host configuration fault, not a client's unsupported part. */
+  override get message() {
+    return 'Part byte limit must be a finite nonnegative integer'
   }
 }
 

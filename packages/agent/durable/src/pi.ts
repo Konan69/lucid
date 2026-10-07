@@ -1,3 +1,6 @@
+import type { Scope } from 'effect'
+import type { Op } from '@earendil-works/chord/delta'
+import type { SnapshotEvent } from '@earendil-works/pi-durable'
 import type { Context, Draft } from '@earendil-works/chord'
 import type {
   Conversation,
@@ -20,11 +23,13 @@ import { Cause, Effect, Option, Queue, Stream } from 'effect'
 import { ConversationMissing, PiFailed, WatchClosed, WatchOverflowed } from './errors.ts'
 
 /** Absence is a domain failure, distinct from rejection of Harness.conversation itself. */
-export const conversation = Effect.fn('Durable.conversation')(function* (
+export const conversation: (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,
-) {
+) => Effect.Effect<Conversation, ConversationMissing | PiFailed> = Effect.fn(
+  'Durable.conversation',
+)(function* (harness: Harness, conversationId: ConversationId, context: Context) {
   const found = yield* Effect.tryPromise({
     try: () => harness.conversation(conversationId, context),
     catch: (cause) => new PiFailed({ operation: 'conversation', cause }),
@@ -202,7 +207,21 @@ const finishWatch = Effect.fn('Durable.finishWatch')(function* <A>(
  * former controller.enqueue behavior. A replacement snapshot signals lost incremental frames;
  * reconnect rather than translate an incomplete history. Detaching never aborts the durable run.
  */
-export const watch = Effect.fn('Durable.watch')(function* (
+export const watch: (
+  harness: Harness,
+  conversationId: ConversationId,
+  context: Context,
+) => Effect.Effect<
+  {
+    snapshot: SnapshotEvent
+    stream: Stream.Stream<
+      Exclude<AgentEvent, SnapshotEvent>,
+      PiFailed | WatchClosed | WatchOverflowed
+    >
+  },
+  PiFailed,
+  Scope.Scope
+> = Effect.fn('Durable.watch')(function* (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,
@@ -236,7 +255,15 @@ export const abort = (owner: Conversation, context: Context) =>
   })
 
 /** The live document carries sequential task allocations that watchEvents intentionally omits. */
-export const watchLive = Effect.fn('Durable.watchLive')(function* (
+export const watchLive: (
+  harness: Harness,
+  conversationId: ConversationId,
+  context: Context,
+) => Effect.Effect<
+  Stream.Stream<Readonly<LiveState>, PiFailed | WatchClosed>,
+  PiFailed,
+  Scope.Scope
+> = Effect.fn('Durable.watchLive')(function* (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,
@@ -263,7 +290,7 @@ export const watchLive = Effect.fn('Durable.watchLive')(function* (
 function liveForPi(queue: Queue.Queue<Readonly<LiveState>, PiFailed | WatchClosed | Cause.Done>) {
   return function deliverLive(
     live: Readonly<LiveState> | null,
-    _ops: readonly import('@earendil-works/chord/delta').Op[],
+    _ops: readonly Op[],
     context: Context,
   ) {
     return runForPi(

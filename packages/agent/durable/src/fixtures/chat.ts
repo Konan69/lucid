@@ -4,11 +4,15 @@
 import { AbstractChat, type ChatInit, type ChatState, type ChatStatus, type UIMessage } from 'ai'
 
 class PlainState implements ChatState<UIMessage> {
+  /** Publish actual SDK store writes for deterministic tests of in-flight message states. */
+  constructor(readonly onMessage: (message: UIMessage) => void) {}
+
   status: ChatStatus = 'ready'
   error: ChatState<UIMessage>['error'] = undefined
   messages: UIMessage[] = []
   pushMessage = (message: UIMessage) => {
     this.messages = [...this.messages, message]
+    this.onMessage(message)
   }
   popMessage = () => {
     this.messages = this.messages.slice(0, -1)
@@ -19,12 +23,14 @@ class PlainState implements ChatState<UIMessage> {
       structuredClone(message),
       ...this.messages.slice(index + 1),
     ]
+    this.onMessage(message)
   }
   snapshot = <T>(thing: T): T => structuredClone(thing)
 }
 
 export class PlainChat extends AbstractChat<UIMessage> {
-  constructor(init: ChatInit<UIMessage>) {
-    super({ ...init, state: new PlainState() })
+  constructor(init: ChatInit<UIMessage> & { readonly onMessage?: (message: UIMessage) => void }) {
+    const { onMessage = () => {}, ...chat } = init
+    super({ ...chat, state: new PlainState(onMessage) })
   }
 }
