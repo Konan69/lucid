@@ -32,14 +32,13 @@ export const toolsExtension = (
 ): Promise<Extension> => {
   const { context, ...settings } = options
   if (context === undefined) return Effect.runPromise(Core.toolsExtension(name, tools, settings))
-  const resolved: EffectToolsOptions = {
-    ...settings,
-    context: (scope) =>
-      Effect.tryPromise({
-        try: async () => context(scope),
-        catch: Function.identity,
-      }),
-  }
+  // Keep the unsafe callback in this classified Promise entry; core wraps its original failure once.
+  const resolve = Effect.fn('Durable.resolvePromiseToolContext')(function* (scope: ToolScope) {
+    return yield* Effect.tryPromise(async () => context(scope)).pipe(
+      Effect.mapError((error) => error.cause),
+    )
+  })
+  const resolved: EffectToolsOptions = { ...settings, context: resolve }
   return Effect.runPromise(Core.toolsExtension(name, tools, resolved))
 }
 

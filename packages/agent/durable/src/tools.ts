@@ -409,7 +409,9 @@ const executeForSdk = Effect.fn('Durable.projectToolOutput')(function* (
   args: Parameters<NonNullable<Tool<unknown, unknown, unknown>['toModelOutput']>>[0],
 ) {
   const model = yield* Effect.tryPromise({
-    try: async () => convert(args),
+    try: async function executeForSdk() {
+      return convert(args)
+    },
     catch: (cause) => new ToolOutputFailed({ toolName: name, cause }),
   })
   const projected = yield* decodeModelOutput(model).pipe(
