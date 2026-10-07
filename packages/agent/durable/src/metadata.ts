@@ -1,6 +1,6 @@
 import type { AssistantMessage } from '@earendil-works/pi-ai'
 import type { EntryId, EntryRecord } from '@earendil-works/pi-durable'
-import { Schema } from 'effect'
+import { Option, Schema } from 'effect'
 
 const Model = Schema.Struct({
   provider: Schema.String,
@@ -27,6 +27,7 @@ const Tokens = Schema.Struct({
 export const Metadata = Schema.Struct({
   models: Schema.Array(Model),
   usage: Schema.optionalKey(Tokens),
+  failure: Schema.optionalKey(Schema.String),
 })
 export type Metadata = typeof Metadata.Type
 
@@ -101,10 +102,12 @@ function sumTokens(total: typeof Tokens.Type, response: typeof Tokens.Type): typ
 }
 
 /** Absent completed usage stays absent; recorded zero counts are preserved as recorded zero counts. */
-export function messageMetadata(state: MetadataState): Metadata {
+export function messageMetadata(state: MetadataState, failure: Option.Option<string>): Metadata {
   const responses = Array.from(state.responses.values())
   const first = responses[0]
-  if (first === undefined) return Metadata.make({ models: state.models })
-  const usage = responses.slice(1).reduce(sumTokens, first)
-  return Metadata.make({ models: state.models, usage })
+  const metadata =
+    first === undefined
+      ? Metadata.make({ models: state.models })
+      : Metadata.make({ models: state.models, usage: responses.slice(1).reduce(sumTokens, first) })
+  return Option.isSome(failure) ? Metadata.make({ ...metadata, failure: failure.value }) : metadata
 }

@@ -61,7 +61,7 @@ it.each(['done', 'aborted', 'failed', 'active'] as const)(
     retried.messages = [user]
     await retried.sendMessage()
     await finished.promise
-    expect(retried.status).toBe('ready')
+    expect(retried.status).toBe(state === 'failed' ? 'error' : 'ready')
     expect(opened.faux.state.callCount).toBe(1)
     if (retried.lastMessage === undefined || first.lastMessage === undefined)
       throw new Error('Expected messages')

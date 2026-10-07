@@ -240,7 +240,7 @@ function completed(
           {
             type: 'start',
             messageId: input.messageId,
-            messageMetadata: messageMetadata(stored.state.metadata),
+            messageMetadata: messageMetadata(stored.state.metadata, stored.state.failure),
           },
         ]
       : closing
@@ -251,7 +251,7 @@ function completed(
         {
           type: 'start',
           messageId: input.messageId,
-          messageMetadata: messageMetadata(stored.state.metadata),
+          messageMetadata: messageMetadata(stored.state.metadata, stored.state.failure),
         },
         ...correction,
         ...ending,

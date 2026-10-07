@@ -106,7 +106,7 @@ export const placed: (
           const receipt = yield* Pi.inputStatus(input.submission, context)
           if (receipt.status === 'queued')
             return yield* new TurnStranded({ messageId: input.messageId })
-          return Option.some(receipt)
+          return Option.some(yield* endedOrigin(input.harness, event, receipt, context))
         }),
       ),
       Stream.filter(Option.isSome),
@@ -119,6 +119,26 @@ export const placed: (
       cause: new Error('Submission watch ended before placement'),
     })
   return arrived.value
+})
+
+/** Unlike equal failure texts, run_end.inputs is direct membership evidence for a failed steer.
+ * Carry the first input's settled receipt before replacing this watch; no transcript guessing. */
+const endedOrigin = Effect.fn('Durable.endedInputOrigin')(function* (
+  harness: Harness,
+  event: Extract<AgentEvent, { type: 'run_end' }>,
+  receipt: InputReceipt,
+  context: Context,
+) {
+  if (!event.inputs.includes(receipt.id)) return receipt
+  const first = event.inputs[0]
+  if (first === undefined || first === receipt.id) return receipt
+  const input = yield* Pi.submission(harness, first, context)
+  if (Option.isNone(input))
+    return yield* new PiFailed({
+      operation: 'status',
+      cause: new Error('Observed run has no first input receipt'),
+    })
+  return yield* Pi.inputStatus(input.value, context)
 })
 
 /** This is a single public Pi call, kept here because admission owns withdrawal and pi.ts is
@@ -198,6 +218,16 @@ const admitNewTurn = Effect.fn('Durable.admitNewTurn')(function* (
     yield* new TurnWaiting({ conversationId: owner.input.conversationId })
 })
 
+/** A captured run_end receipt is stronger than an equal final-answer comparison. */
+const freshOrigin = Effect.fn('Durable.freshInputOrigin')(function* (
+  harness: Harness,
+  observed: { watched: Watching; before: InputReceipt; current: InputReceipt },
+  context: Context,
+) {
+  if (observed.before.id !== observed.current.id) return observed.before
+  return yield* settledOrigin(harness, observed.watched, observed.current, context)
+})
+
 /**
  * The first watch precedes admission. Queued inputs wait on their own durable receipt before a
  * response is exposed. After placement reopen an atomic snapshot/watch: it includes progress while
@@ -261,12 +291,17 @@ export const admit: (
     const busy = watched.snapshot.run !== undefined && !alreadyRunning
     if (!queued && !busy && input.draft.whenBusy !== 'steer')
       return { conversation, receipt, watched }
+    const observed = receipt
     const fresh = yield* Pi.watch(harness, input.conversationId, context).pipe(Scope.provide(scope))
     // The run may have finished between receipt delivery and the fresh snapshot; read its final status once.
     receipt = yield* Pi.inputStatus(submission, context)
     if (withdrawn(receipt)) return yield* new TurnWithdrawn({ messageId: input.draft.requestId })
     if (queued && (receipt.status === 'done' || receipt.status === 'unanswered'))
-      receipt = yield* settledOrigin(harness, watched, receipt, context)
+      receipt = yield* freshOrigin(
+        harness,
+        { watched, before: observed, current: receipt },
+        context,
+      )
     yield* Scope.close(initialScope, Exit.void)
     return { conversation, receipt, watched: fresh }
   },

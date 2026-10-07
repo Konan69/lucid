@@ -10,6 +10,7 @@ import {
 } from 'ai'
 import { Deferred, Effect, Schema } from 'effect'
 import { z } from 'zod'
+import { onTestFinished } from 'vitest'
 
 import * as Core from '../core.ts'
 import {
@@ -303,4 +304,166 @@ it.live('carries metadata on parked finishes and ended approval replay', () =>
     expect(tail.message.metadata).toEqual(assistant.metadata)
     expect(fixture.paid).toEqual([100])
   }),
+)
+
+/** A non-retried error is the same failure in live, every stored replay and the reloaded metadata.
+ * Pending failures are kept as Option in the core and published only at terminal, not on retries. */
+it.live('preserves a failed run through replay, user retry, history and restart', () =>
+  Effect.promise(async () => {
+    const fixture = await host({}, {}, { retry: { enabled: false, baseDelayMs: 0 } })
+    const opened = await fixture.open()
+    const failure = 'invalid model request'
+    opened.faux.setResponses([
+      fauxAssistantMessage('Half an answer.', { stopReason: 'error', errorMessage: failure }),
+    ])
+    const chat = client(opened)
+    await chat.sendMessage({ text: 'Fail once' })
+    expect(chat.status).toBe('error')
+    if (chat.error === undefined || chat.lastMessage === undefined)
+      throw new Error('Expected failed assistant')
+    expect(chat.error.message).toBe(failure)
+    expect(decodeMetadata(chat.lastMessage.metadata).failure).toBe(failure)
+    const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+    const saved = page.messages.find((message) => message.role === 'assistant')
+    if (saved === undefined) throw new Error('Expected failed history message')
+    expect(saved.parts).toEqual(chat.lastMessage.parts)
+    expect(saved.metadata).toEqual(chat.lastMessage.metadata)
+    const user = chat.messages[0]
+    if (user === undefined || user.role !== 'user') throw new Error('Expected admitted user')
+    const chunks = []
+    for await (const chunk of await followRun(opened.harness, opened.root.id, user.id, context))
+      chunks.push(chunk)
+    expect(chunks.slice(-3)).toEqual([
+      { type: 'message-metadata', messageMetadata: saved.metadata },
+      { type: 'error', errorText: failure },
+      { type: 'finish', messageMetadata: saved.metadata },
+    ])
+    const retry = client(opened)
+    retry.messages = [user]
+    await retry.sendMessage()
+    expect(retry.status).toBe('error')
+    if (retry.error === undefined) throw new Error('Expected replay failure')
+    expect(retry.error.message).toBe(failure)
+    expect(opened.faux.state.callCount).toBe(1)
+    await fixture.close(opened.harness)
+    const restarted = await fixture.open()
+    const replayed = []
+    for await (const chunk of await followRun(
+      restarted.harness,
+      restarted.root.id,
+      user.id,
+      context,
+    ))
+      replayed.push(chunk)
+    expect(replayed).toEqual(chunks)
+    expect(
+      (await history(restarted.harness, restarted.root.id, { limit: 10 }, context)).messages,
+    ).toEqual(page.messages)
+  }),
+)
+
+/** An active snapshot proves the steer's first-input identity before failure; no equal failure
+ * text or generation-task guess is used to associate two input receipts. */
+it.live(
+  'keeps a proven failed steer origin live; restart lacks its terminal-answer membership proof',
+  () =>
+    Effect.promise(async () => {
+      const working = signal()
+      const releaseWork = signal()
+      const failing = signal()
+      const releaseFailure = signal()
+      const joined = signal()
+      onTestFinished(() => {
+        releaseWork.resolve()
+        releaseFailure.resolve()
+      })
+      const fixture = await host(
+        {
+          work: tool({
+            inputSchema: z.object({}),
+            execute: async () => {
+              working.resolve()
+              await releaseWork.promise
+              return 'worked'
+            },
+          }),
+        },
+        {},
+        { retry: { enabled: false, baseDelayMs: 0 } },
+      )
+      const opened = await fixture.open()
+      opened.faux.setResponses([
+        call('work', {}, 'work'),
+        async () => {
+          failing.resolve()
+          await releaseFailure.promise
+          return fauxAssistantMessage('Failed after steer.', {
+            stopReason: 'error',
+            errorMessage: 'invalid model request',
+          })
+        },
+      ])
+      const first = client(opened)
+      const sending = first.sendMessage({ text: 'First' })
+      await working.promise
+      const steered = new Chat<UIMessage<Metadata>>({
+        transport: new DefaultChatTransport({
+          api: 'http://durable.test/chat',
+          fetch: async (url, init) => {
+            const response = await respond(
+              opened.harness,
+              opened.root.id,
+              { request: new Request(url, init), options: { whenBusy: 'steer' } },
+              context,
+            )
+            joined.resolve()
+            return response
+          },
+        }),
+      })
+      const queued = signal()
+      const stop = opened.harness.subscribeCommits((publication) => {
+        if (
+          publication.changes.some(
+            (change) => change.type === 'submission' && change.value.status === 'queued',
+          )
+        )
+          queued.resolve()
+      })
+      const steering = steered.sendMessage({ text: 'Steer' })
+      await queued.promise
+      stop()
+      releaseWork.resolve()
+      await failing.promise
+      await joined.promise
+      releaseFailure.resolve()
+      await sending
+      await steering
+      expect(first.status).toBe('error')
+      expect(steered.status).toBe('error')
+      if (first.lastMessage === undefined || steered.lastMessage === undefined)
+        throw new Error('Expected failed run messages')
+      expect(steered.lastMessage.id).toBe(first.lastMessage.id)
+      expect(steered.lastMessage.metadata).toEqual(first.lastMessage.metadata)
+      const steeredUser = steered.messages[0]
+      if (steeredUser === undefined || steeredUser.role !== 'user')
+        throw new Error('Expected steer input')
+      const originalId = first.lastMessage.id
+      await fixture.close(opened.harness)
+      const restarted = await fixture.open()
+      const chunks = []
+      for await (const chunk of await followRun(
+        restarted.harness,
+        restarted.root.id,
+        steeredUser.id,
+        context,
+      ))
+        chunks.push(chunk)
+      // Unanswered receipts have no shared answer entry. Without the original run_end observation,
+      // Pi's public reads do not prove whether this placed user steered or began a successor run.
+      const start = chunks.find((chunk) => chunk.type === 'start')
+      if (start === undefined) throw new Error('Expected stored replay identity')
+      expect(start.messageId).not.toBe(originalId)
+      expect(chunks).toContainEqual({ type: 'error', errorText: 'invalid model request' })
+    }),
 )

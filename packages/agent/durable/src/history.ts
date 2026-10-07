@@ -272,12 +272,12 @@ const assistantMessage = Effect.fn('Durable.historyAssistant')(function* (
     {
       type: 'start',
       messageId: `entry:${identity}`,
-      messageMetadata: messageMetadata(step.state.metadata),
+      messageMetadata: messageMetadata(step.state.metadata, step.state.failure),
     },
     ...shown.chunks,
     ...closeRun(step.state, `entry:${identity}`).chunks,
     { type: 'finish-step' },
-    { type: 'finish', messageMetadata: messageMetadata(step.state.metadata) },
+    { type: 'finish', messageMetadata: messageMetadata(step.state.metadata, step.state.failure) },
   ]
   return yield* readMessage(yield* Stream.toReadableStreamEffect(Stream.fromIterable(chunks)))
 })

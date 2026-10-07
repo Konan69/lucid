@@ -14,6 +14,7 @@ import { Data, Effect, Exit, Option, Scope, Stream } from 'effect'
 import { type Desk, emptyRound, needsDesk, parked, present, type Round } from './calls.ts'
 import {
   initialRunState,
+  finishRun,
   replay,
   type RunState,
   type Step,
@@ -62,7 +63,7 @@ export function writeStep(current: State, step: Step, settled: boolean, desk: De
   const ending: readonly UIMessageChunk[] = ended
     ? [
         { type: 'finish-step' },
-        { type: 'finish', messageMetadata: messageMetadata(step.state.metadata) },
+        { type: 'finish', messageMetadata: messageMetadata(step.state.metadata, Option.none()) },
       ]
     : []
   return {
@@ -310,10 +311,7 @@ const resume = Effect.fn('Durable.resumeStream')(function* (
   if (written.ended) return head
   const tail = prefix.live
     ? follow(reader, watched.stream, live, written)
-    : Stream.succeed<UIMessageChunk>({
-        type: 'finish',
-        messageMetadata: messageMetadata(prefix.step.state.metadata),
-      })
+    : Stream.fromIterable(finishRun(prefix.step.state))
   return Stream.concat(head, tail)
 })
 
@@ -460,10 +458,11 @@ export const followRun: (
     const record = yield* Pi.request(conversation, requestId, context)
     if (Option.isNone(record) || record.value.type !== 'input')
       return yield* new RunMissing({ conversationId })
+    let observed = record.value
     if (record.value.status === 'queued') {
       const submission = yield* Pi.submission(harness, record.value.id, context)
       if (Option.isNone(submission)) return yield* new RunMissing({ conversationId })
-      yield* placed(
+      observed = yield* placed(
         original,
         {
           harness,
@@ -476,11 +475,7 @@ export const followRun: (
       )
     }
     const watched = yield* Pi.watch(harness, conversationId, context).pipe(Scope.provide(scope))
-    const receipt = yield* reacquireInput(
-      harness,
-      { watched: original, record: record.value },
-      context,
-    )
+    const receipt = yield* reacquireInput(harness, { watched: original, record: observed }, context)
     yield* Scope.close(initialScope, Exit.void)
     const reader = { harness, conversation, context }
     const terminal = receipt.status === 'done' || receipt.status === 'unanswered'

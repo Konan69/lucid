@@ -114,6 +114,8 @@ There is not yet one assistant id shared by live and settled history. Live and r
 
 Assistant `messageMetadata` carries recorded provider/model identities and summed token usage on start/finish chunks and in history, including failed response attempts without double-counting replayed entries. The Promise entry exports the Metadata type; core exports its Schema too. Optional provider token breakdowns are retained when reported. Pi's entries and run records contain no creation/start/end time, so no lifecycle timestamps are invented.
 
+A failed model run ends live and in stored replay with the same SDK error chunk. Its last assistant history message carries the terminal failure text as optional `metadata.failure`; core state keeps absence as an `Option`. A failed steer retains the first-input identity when the original snapshot or `run_end.inputs` proves its membership. After that watch is gone, an unanswered receipt has no shared answer entry to prove membership, so a restarted follower keeps its own input identity.
+
 ## Busy input and retries
 
 Per-turn options accept `whenBusy: 'followUp' | 'steer' | 'reject'`. Pi's public default remains followUp (`harness/submissions.js:149`). Steer joins the current run at its next tool boundary; followUp starts a successor; reject fails before admission with `TurnBusy` and HTTP 409. Busy policy and decoded image limits are validated before admission.

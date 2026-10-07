@@ -76,7 +76,7 @@ export type RunState = {
    * Error text of the newest response when it failed. Pi Durable retries a failed request, so a
    * failure is reported only if the run ends with it still standing. Empty when there is none.
    */
-  readonly failure: readonly string[]
+  readonly failure: Option.Option<string>
 }
 
 export const initialRunState: RunState = {
@@ -89,7 +89,7 @@ export const initialRunState: RunState = {
   content: new Map(),
   arguments: new Map(),
   calls: new Set(),
-  failure: [],
+  failure: Option.none(),
   results: new Set(),
 }
 
@@ -219,7 +219,7 @@ function startResponse(state: RunState, partial: AssistantMessage): Step {
     content: new Map(),
     arguments: new Map(),
     calls: new Set(),
-    failure: [],
+    failure: Option.none(),
   }
   return partial.content.reduce<Step>(
     (step, block, contentIndex) => join(step, updateBlock(step.state, contentIndex, block)),
@@ -227,7 +227,10 @@ function startResponse(state: RunState, partial: AssistantMessage): Step {
       state: fresh,
       // run_start precedes the first provider record; publish its actual model when it exists.
       chunks: [
-        { type: 'message-metadata', messageMetadata: messageMetadata(fresh.metadata) },
+        {
+          type: 'message-metadata',
+          messageMetadata: messageMetadata(fresh.metadata, Option.none()),
+        },
         ...reset,
       ],
     },
@@ -539,10 +542,10 @@ function assistantEnd(state: RunState, message: AssistantMessage): Step {
   const finished = finishMessage(state, message)
   const metadata: Chunk = {
     type: 'message-metadata',
-    messageMetadata: messageMetadata(finished.state.metadata),
+    messageMetadata: messageMetadata(finished.state.metadata, Option.none()),
   }
   if (message.stopReason === 'error') {
-    const failure = [message.errorMessage ?? 'The model request failed']
+    const failure = Option.some(message.errorMessage ?? 'The model request failed')
     return { state: { ...finished.state, failure }, chunks: [...finished.chunks, metadata] }
   }
   const ending: readonly Chunk[] = message.stopReason === 'aborted' ? [{ type: 'abort' }] : []
@@ -567,7 +570,7 @@ export function translate(state: RunState, event: AgentEvent): Step {
         {
           type: 'start',
           messageId: runMessageId(started.inputs),
-          messageMetadata: messageMetadata(emptyMetadata),
+          messageMetadata: messageMetadata(emptyMetadata, Option.none()),
         },
       ],
     })),
@@ -575,11 +578,7 @@ export function translate(state: RunState, event: AgentEvent): Step {
       const closed = closeRun(state, runMessageId(ended.inputs))
       return {
         state: closed.state,
-        chunks: [
-          ...closed.chunks,
-          ...state.failure.map((errorText): Chunk => ({ type: 'error', errorText })),
-          { type: 'finish', messageMetadata: messageMetadata(closed.state.metadata) },
-        ],
+        chunks: [...closed.chunks, ...finishRun(closed.state)],
       }
     }),
     Match.when({ type: 'turn_start' }, () => startTurn(state)),
@@ -677,7 +676,7 @@ function replayPartial(state: RunState, message: AssistantMessage): Step {
   // it on the same task. Only a genuine turn boundary opens another SDK step. Error retries and
   // interrupted attempts both reset their old response when the new partial starts.
   const turn =
-    state.failure.length > 0 || state.interrupted ? { state, chunks: [] } : startTurn(state)
+    Option.isSome(state.failure) || state.interrupted ? { state, chunks: [] } : startTurn(state)
   return join(turn, startResponse(turn.state, message))
 }
 
@@ -700,7 +699,7 @@ export function replay(snapshot: SnapshotEvent): Option.Option<Rebuilt> {
       {
         type: 'start',
         messageId: runMessageId(snapshot.run.inputs),
-        messageMetadata: messageMetadata(metadata),
+        messageMetadata: messageMetadata(metadata, Option.none()),
       },
       { type: 'reset-step' },
     ],
@@ -715,7 +714,7 @@ export function replay(snapshot: SnapshotEvent): Option.Option<Rebuilt> {
   const step = Option.match(partial, {
     onNone: () =>
       snapshot.generation === undefined ||
-      stored.state.failure.length > 0 ||
+      Option.isSome(stored.state.failure) ||
       stored.state.interrupted
         ? stored
         : join(stored, startTurn(stored.state)),
@@ -783,7 +782,10 @@ export function replayAfter(
     {
       state: called.state,
       chunks: [
-        { type: 'start', messageMetadata: messageMetadata(capturedMetadata(snapshot)) },
+        {
+          type: 'start',
+          messageMetadata: messageMetadata(capturedMetadata(snapshot), Option.none()),
+        },
         ...called.chunks.filter(
           (chunk) =>
             chunk.type === 'tool-input-start' ||
@@ -803,7 +805,7 @@ export function replayAfter(
       !live ||
       snapshot.generation === undefined ||
       stored.state.interrupted ||
-      stored.state.failure.length > 0
+      Option.isSome(stored.state.failure)
         ? stored
         : join(stored, startTurn(stored.state)),
     onSome: (message) => join(stored, replayPartial(stored.state, message)),
@@ -967,7 +969,24 @@ export function closeRun(state: RunState, messageId: string): Step {
     chunks: [
       ...closed.chunks,
       { type: 'finish-step' },
-      { type: 'start', messageId, messageMetadata: messageMetadata(closed.state.metadata) },
+      {
+        type: 'start',
+        messageId,
+        messageMetadata: messageMetadata(closed.state.metadata, closed.state.failure),
+      },
     ],
   }
+}
+
+/** A terminal reader always reports the last standing generation failure before finish. Shared
+ * by live run_end and stored continuations; parking is not terminal and never uses this closer.
+ * The core retains Option absence, while the SDK's serialized metadata omits absent failure. */
+export function finishRun(state: RunState): readonly Chunk[] {
+  const metadata = messageMetadata(state.metadata, state.failure)
+  const errors = Option.toArray(state.failure).flatMap((errorText): readonly Chunk[] => [
+    // Chat's error handler throws at the error chunk; publish failure metadata before it.
+    { type: 'message-metadata', messageMetadata: metadata },
+    { type: 'error', errorText },
+  ])
+  return [...errors, { type: 'finish', messageMetadata: metadata }]
 }
