@@ -200,3 +200,44 @@ it.live('automatically resumes stock Chat after a client tool error', () =>
     expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
   }),
 )
+
+/** A corrupt durable receipt is an authority failure, not an untyped Effect defect. */
+it.live('reports a missing late-answer receipt through waiting as a typed failure', () =>
+  Effect.promise(async () => {
+    const fixture = await host(
+      { ask: tool({ inputSchema: z.object({}) }) },
+      { answers: { ask: 'later' } },
+    )
+    const opened = await fixture.open()
+    opened.faux.setResponses([call('ask', {}, 'ask'), fauxAssistantMessage('Asked.')])
+    const chat = new PlainChat({ transport: opened.transport })
+    await chat.sendMessage({ text: 'Ask' })
+    await opened.root.waitForIdle(context)
+    const rows = await waiting(opened.harness, opened.root.id, context)
+    if (rows[0] === undefined) throw new Error('Expected question')
+    const other = await host({}, {})
+    const foreign = await other.open()
+    foreign.faux.setResponses([fauxAssistantMessage('One.'), fauxAssistantMessage('Two.')])
+    await foreign.root.submit({ type: 'input', content: 'One' }, context)
+    await foreign.root.waitForIdle(context)
+    const absent = await foreign.root.submit({ type: 'input', content: 'Two' }, context)
+    await foreign.root.waitForIdle(context)
+    expect(await opened.harness.submission(absent.id, context)).toBeUndefined()
+    await opened.root.commit(async (tx) => {
+      const document = await tx.doc(Holds, opened.root.id)
+      const question = document.asked[rows[0].holdId]
+      if (question === undefined) throw new Error('Expected retained question')
+      question.delivery = {
+        _tag: 'Submitted',
+        attempt: 0,
+        output: 'retained',
+        submissionId: absent.id,
+      }
+    }, context)
+    await expect(waiting(opened.harness, opened.root.id, context)).rejects.toMatchObject({
+      _tag: 'PiFailed',
+      operation: 'submission',
+      message: expect.stringContaining('Recorded answer submission is missing'),
+    })
+  }),
+)

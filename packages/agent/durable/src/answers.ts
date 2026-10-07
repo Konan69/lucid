@@ -3,7 +3,7 @@ import { copyJson, type Context, type JsonValue } from '@earendil-works/chord'
 import type { Conversation, Harness } from '@earendil-works/pi-durable'
 import { Effect, Option, Predicate, Schema } from 'effect'
 import { Delivery, copyQuestion, type Question } from './delivery.ts'
-import { type HoldId, CallNotWaiting, ToolOutputFailed } from './errors.ts'
+import { type HoldId, CallNotWaiting, ToolOutputFailed, PiFailed } from './errors.ts'
 import { holdIdOf, Holds, planOf, type Answer, type Settlement } from './holds.ts'
 import * as Pi from './pi.ts'
 
@@ -20,7 +20,11 @@ const receipt = Effect.fn('Durable.answerReceipt')(function* (
   context: Context,
 ) {
   const input = yield* Pi.submission(harness, submitted.submissionId, context)
-  if (Option.isNone(input)) throw new Error('Recorded answer submission is missing')
+  if (Option.isNone(input))
+    return yield* new PiFailed({
+      operation: 'submission',
+      cause: new Error('Recorded answer submission is missing'),
+    })
   return yield* Pi.status(input.value, context)
 })
 
@@ -66,6 +70,11 @@ const observePlacement = Effect.fn('Durable.observeAnswerPlacement')(function* (
   return status.status === 'unanswered'
 })
 
+/** Reserving removes Open by construction; continuations only handle selected or admitted output. */
+type ReservedQuestion = Omit<Question, 'delivery'> & {
+  delivery: Exclude<Delivery, typeof Delivery.cases.Open.Type>
+}
+
 /** First output is selected before Pi admission, fixing different-output retries across crashes. */
 const reserve = Effect.fn('Durable.reserveAnswer')(function* (
   conversation: Conversation,
@@ -79,8 +88,8 @@ const reserve = Effect.fn('Durable.reserveAnswer')(function* (
       conversationId: conversation.id,
       change: (document) => {
         const question = document.asked[input.given.holdId]
-        if (question === undefined) return Option.none<Question>()
-        question.delivery = Delivery.match(question.delivery, {
+        if (question === undefined) return Option.none<ReservedQuestion>()
+        const delivery = Delivery.match(question.delivery, {
           Open: () =>
             Delivery.cases.Reserved.make({ attempt: 0, output: copyJson(input.given.output) }),
           Reserved: (reserved) =>
@@ -100,7 +109,13 @@ const reserve = Effect.fn('Durable.reserveAnswer')(function* (
                   submissionId: submitted.submissionId,
                 }),
         })
-        return Option.some(copyQuestion(question))
+        question.delivery = delivery
+        return Option.some<ReservedQuestion>({
+          taskId: question.taskId,
+          callId: question.callId,
+          toolName: question.toolName,
+          delivery,
+        })
       },
     },
     context,
@@ -275,20 +290,14 @@ export const deliver: (
     }
     const reserved = yield* reserve(conversation, { given, withdrawn }, context)
     if (Option.isNone(reserved)) return yield* deliver(harness, conversation, given, context)
-    return yield* Delivery.match(reserved.value.delivery, {
-      Open: () =>
-        Effect.sync((): Settlement => {
-          throw new Error('Answer reservation did not reserve output')
-        }),
-      Submitted: () => deliver(harness, conversation, given, context),
-      Reserved: (delivery) =>
-        deliverReserved(
-          harness,
-          conversation,
-          { given, question: reserved.value, delivery },
-          context,
-        ),
-    })
+    if (Delivery.guards.Submitted(reserved.value.delivery))
+      return yield* deliver(harness, conversation, given, context)
+    return yield* deliverReserved(
+      harness,
+      conversation,
+      { given, question: reserved.value, delivery: reserved.value.delivery },
+      context,
+    )
   })
 
 /** Admission can race an abort: an already-withdrawn receipt retries from the newly persisted attempt. */
