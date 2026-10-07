@@ -255,7 +255,7 @@ it.live('refuses a stale write receipt as a run identity', () =>
           messages: [
             {
               role: 'assistant',
-              id: `run:${receipt.id}`,
+              id: `gen:${receipt.id + 1}`,
               parts: [{ type: 'tool-pay', toolCallId: 'old' }],
             },
           ],
