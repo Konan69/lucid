@@ -173,5 +173,10 @@
     "file": "packages/agent/durable/src/fixtures/reconnect.ts",
     "classification": "test-process-entrypoint",
     "symbols": ["route", "listen", "close", "main", "<module>", "onFrame"]
+  },
+  {
+    "file": "packages/agent/durable/src/conformance/fixtures/upstream.ts",
+    "classification": "test-fixture-entrypoint",
+    "symbols": ["interrupt"]
   }
 ]
