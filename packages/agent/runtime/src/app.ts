@@ -25,6 +25,7 @@ const runResult = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(Effec
  * browser, phone or desktop app talks to this process; they talk to the server's gateway, which
  * checks who they are and whether they may see the Thread before it forwards anything here.
  */
+// @effect-diagnostics-next-line asyncFunction:off -- Hono middleware owns this Promise callback and next invocation.
 const requireRuntimeToken = async (context: AppContext, next: () => Promise<void>) => {
   const configured = await runResult(Config.option(Config.Redacted('VIVID_RUNTIME_TOKEN')))
   if (Result.isFailure(configured) || Option.isNone(configured.success)) {
@@ -47,6 +48,7 @@ const decodeIncoming = Schema.decodeUnknownOption(Incoming)
 const flueRouter = createAgentRouter(Vivid)
 
 /** Cache authority before the synchronous render, then send a freshly constructed, id-free delivery to Flue. */
+// @effect-diagnostics-next-line asyncFunction:off -- Hono route handler owns the request and Flue fetch Promise boundary.
 const prepareContext = async (context: AppContext) => {
   const incoming = decodeIncoming(await context.req.raw.text())
   if (Option.isNone(incoming)) return context.json({ error: 'Invalid runtime delivery' }, 400)
@@ -75,6 +77,7 @@ const prepareContext = async (context: AppContext) => {
   )
 }
 
+// @effect-diagnostics-next-line asyncFunction:off -- Hono invokes this Promise-returning route handler.
 app.get('/health', async (context) => {
   const model = await runResult(
     Config.String('VIVID_MODEL').pipe(Config.withDefault(DEFAULT_MODEL)),

@@ -147,7 +147,7 @@ describe('RPC result boundary', () => {
             'create_routine',
           )
           yield* settle(Effect.succeed({ output: 'private-successful-output' }), 'read_page')
-        }).pipe(Effect.provide(Logger.layer([logger])))
+        }).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger])))
         expect(logs).toHaveLength(1)
         expect(logs[0]).toContain('Warn')
         expect(logs[0]).toContain('create_routine')
@@ -198,7 +198,7 @@ describe('RPC result boundary', () => {
       expect(yield* settle(Effect.fail(failure), 'test-tool')).toEqual(expected)
       const configuration = Config.String('REQUIRED').pipe(
         Effect.map((value) => ({ output: value })),
-        Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
+        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
       )
       expect(yield* settle(configuration, 'test-tool')).toEqual(expected)
     }),

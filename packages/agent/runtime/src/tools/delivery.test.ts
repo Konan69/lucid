@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Exit, Layer, Option, Predicate, Queue } from 'effect'
+import { Effect, Exit, Option, Predicate, Queue } from 'effect'
 import * as RpcClient from 'effect/unstable/rpc/RpcClient'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import type * as RpcMessage from 'effect/unstable/rpc/RpcMessage'
@@ -127,7 +127,7 @@ describe('delivery authority outside model text', () => {
             delivery,
             Option.none(),
             recoverAuthority,
-          ).pipe(Effect.provide(Layer.succeed(VividRpcClient, rpc.client)))
+          ).pipe(Effect.provideService(VividRpcClient, rpc.client))
           const answer = Effect.fn('Test.DeliveryScope.answer')(function* () {
             const request = yield* Queue.take(requests)
             if (!Predicate.isTagged(request, 'Request')) expect.fail('Expected a scope request')

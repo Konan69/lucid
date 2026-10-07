@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { ShowRequest, Shown } from '@vivid/contracts'
-import { Option, Schema } from 'effect'
+import { Effect, Option, Schema } from 'effect'
 import * as v from 'valibot'
 import { showTools } from './show.ts'
 
@@ -131,7 +131,7 @@ describe('show tool', () => {
     expect(Option.isSome(decodeRequest(input))).toBe(true)
   })
 
-  it.each([
+  it.effect.each([
     {
       name: 'too many rows',
       value: { ...samples.Table, rows: Array.from({ length: 61 }, () => ['Row']) },
@@ -352,91 +352,132 @@ describe('show tool', () => {
         pictures: Array.from({ length: 13 }, () => ({ address: 'https://example.test/a.png' })),
       },
     },
-  ])('refuses $name without weakening the surface contract', async ({ value }) => {
-    const input = { summary: 'Launch details', show: value }
-    const result = decodeRefusal(await show.run({ ...context, data: v.parse(show.input, input) }))
-    expect(result.output.ok).toBe(false)
-    expect(Option.isSome(decodeRequest(input))).toBe(false)
-  })
-
-  it.each(['good', 'bad', 'facts'] as const)(
-    'names the missing %s array and succeeds after one correction',
-    async (field) => {
-      const item = { name: 'Zoom', good: [], bad: [], facts: [] }
-      const incomplete = Object.fromEntries(Object.entries(item).filter(([key]) => key !== field))
+  ])('refuses $name without weakening the surface contract', ({ value }) =>
+    Effect.gen(function* () {
+      const input = { summary: 'Launch details', show: value }
       const result = decodeRefusal(
-        await show.run({
-          ...context,
-          data: v.parse(show.input, {
-            summary: 'Launch details',
-            show: {
-              ...samples.Comparison,
-              items: [incomplete, { name: 'Meet', good: [], bad: [], facts: [] }],
-            },
-          }),
-        }),
+        yield* Effect.promise(() =>
+          Promise.resolve(show.run({ ...context, data: v.parse(show.input, input) })),
+        ),
       )
-      expect(result.output.message).toContain(`show.items.0.${field}: Provide the ${field} array`)
-      expect(result.output.message).toContain('use []')
-      expect(result.output.message).toContain('call show again once')
-      expect(
-        decodeReceipt(
-          await show.run({
-            ...context,
-            data: v.parse(show.input, { summary: 'Launch details', show: samples.Comparison }),
-          }),
-        ).output,
-      ).toEqual({ ok: true, shown: 'comparison' })
-    },
+      expect(result.output.ok).toBe(false)
+      expect(Option.isSome(decodeRequest(input))).toBe(false)
+    }),
   )
 
-  it('refuses quoted JSON instead of silently changing the display payload', async () => {
-    const input = { summary: 'Launch details', show: `${JSON.stringify(samples.Comparison)}]` }
-    const result = decodeRefusal(await show.run({ ...context, data: v.parse(show.input, input) }))
-    expect(result.output.message).toContain('show: Provide show as a JSON object')
-    expect(result.output.message).toContain('do not quote or stringify it')
-    expect(result.output.message).toContain('Nothing was displayed.')
-    expect(Option.isSome(decodeRequest(input))).toBe(false)
-  })
-
-  it('names the field and 200-character rule for an overlong comparison label', async () => {
-    const input = {
-      summary: 'Launch details',
-      show: {
-        ...samples.Comparison,
-        items: [
-          { name: 'x'.repeat(201), good: [], bad: [], facts: [] },
-          { name: 'Meet', good: [], bad: [], facts: [] },
-        ],
-      },
-    }
-    const result = decodeRefusal(await show.run({ ...context, data: v.parse(show.input, input) }))
-    expect(result.output.message).toContain('show.items.0.name: Use at most 200 characters.')
-  })
-
-  it.each([samples.Options, samples.Form, samples.Draft])(
-    'terminates $_tag for the Person to answer',
-    async (sample) => {
-      const result = decodeReceipt(
-        await show.run({
-          ...context,
-          data: v.parse(show.input, { summary: 'Launch details', show: sample }),
-        }),
-      )
-      expect(result.terminate).toBe(true)
-      expect(result.output).toMatchObject({ ok: true, shown: sample._tag.toLowerCase() })
-      expect(result.output.message).toContain('The Person will answer in their next message.')
-      expect(result.output).not.toHaveProperty('show')
-    },
-  )
-
-  it('acknowledges Table without terminating or duplicating its display', async () => {
-    const result = decodeReceipt(
-      await show.run({
-        ...context,
-        data: v.parse(show.input, { summary: 'Launch details', show: samples.Table }),
+  it.effect.each(['good', 'bad', 'facts'] as const)(
+    'names the missing %s array and succeeds after one correction',
+    (field) =>
+      Effect.gen(function* () {
+        const item = { name: 'Zoom', good: [], bad: [], facts: [] }
+        const incomplete = Object.fromEntries(Object.entries(item).filter(([key]) => key !== field))
+        const result = decodeRefusal(
+          yield* Effect.promise(() =>
+            Promise.resolve(
+              show.run({
+                ...context,
+                data: v.parse(show.input, {
+                  summary: 'Launch details',
+                  show: {
+                    ...samples.Comparison,
+                    items: [incomplete, { name: 'Meet', good: [], bad: [], facts: [] }],
+                  },
+                }),
+              }),
+            ),
+          ),
+        )
+        expect(result.output.message).toContain(`show.items.0.${field}: Provide the ${field} array`)
+        expect(result.output.message).toContain('use []')
+        expect(result.output.message).toContain('call show again once')
+        expect(
+          decodeReceipt(
+            yield* Effect.promise(() =>
+              Promise.resolve(
+                show.run({
+                  ...context,
+                  data: v.parse(show.input, {
+                    summary: 'Launch details',
+                    show: samples.Comparison,
+                  }),
+                }),
+              ),
+            ),
+          ).output,
+        ).toEqual({ ok: true, shown: 'comparison' })
       }),
-    )
-    expect(result).toEqual({ output: { ok: true, shown: 'table' }, terminate: false })
-  })
+  )
+
+  it.effect('refuses quoted JSON instead of silently changing the display payload', () =>
+    Effect.gen(function* () {
+      const input = { summary: 'Launch details', show: `${JSON.stringify(samples.Comparison)}]` }
+      const result = decodeRefusal(
+        yield* Effect.promise(() =>
+          Promise.resolve(show.run({ ...context, data: v.parse(show.input, input) })),
+        ),
+      )
+      expect(result.output.message).toContain('show: Provide show as a JSON object')
+      expect(result.output.message).toContain('do not quote or stringify it')
+      expect(result.output.message).toContain('Nothing was displayed.')
+      expect(Option.isSome(decodeRequest(input))).toBe(false)
+    }),
+  )
+
+  it.effect('names the field and 200-character rule for an overlong comparison label', () =>
+    Effect.gen(function* () {
+      const input = {
+        summary: 'Launch details',
+        show: {
+          ...samples.Comparison,
+          items: [
+            { name: 'x'.repeat(201), good: [], bad: [], facts: [] },
+            { name: 'Meet', good: [], bad: [], facts: [] },
+          ],
+        },
+      }
+      const result = decodeRefusal(
+        yield* Effect.promise(() =>
+          Promise.resolve(show.run({ ...context, data: v.parse(show.input, input) })),
+        ),
+      )
+      expect(result.output.message).toContain('show.items.0.name: Use at most 200 characters.')
+    }),
+  )
+
+  it.effect.each([samples.Options, samples.Form, samples.Draft])(
+    'terminates $_tag for the Person to answer',
+    (sample) =>
+      Effect.gen(function* () {
+        const result = decodeReceipt(
+          yield* Effect.promise(() =>
+            Promise.resolve(
+              show.run({
+                ...context,
+                data: v.parse(show.input, { summary: 'Launch details', show: sample }),
+              }),
+            ),
+          ),
+        )
+        expect(result.terminate).toBe(true)
+        expect(result.output).toMatchObject({ ok: true, shown: sample._tag.toLowerCase() })
+        expect(result.output.message).toContain('The Person will answer in their next message.')
+        expect(result.output).not.toHaveProperty('show')
+      }),
+  )
+
+  it.effect('acknowledges Table without terminating or duplicating its display', () =>
+    Effect.gen(function* () {
+      const result = decodeReceipt(
+        yield* Effect.promise(() =>
+          Promise.resolve(
+            show.run({
+              ...context,
+              data: v.parse(show.input, { summary: 'Launch details', show: samples.Table }),
+            }),
+          ),
+        ),
+      )
+      expect(result).toEqual({ output: { ok: true, shown: 'table' }, terminate: false })
+    }),
+  )
 })

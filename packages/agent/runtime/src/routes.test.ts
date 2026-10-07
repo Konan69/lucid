@@ -162,7 +162,7 @@ const catalog = Effect.fn('RuntimeRoutesTest.catalog')(function* (schema: string
 })
 
 /** Reused baseline also proves a fresh public start after the previous scope stopped Flue. */
-const baseline = Effect.fn('RuntimeRoutesTest.baseline')(function* () {
+const baseline = Effect.gen(function* () {
   const runtime = yield* routes
   const id = thread()
   yield* runtime.inspectTools
@@ -172,7 +172,7 @@ const baseline = Effect.fn('RuntimeRoutesTest.baseline')(function* () {
   )
   expect(yield* runtime.modelCalls).toBe(1)
   return runtime.schema
-})()
+}).pipe(Effect.withSpan('RuntimeRoutesTest.baseline'))
 
 describe.skipIf(!testDatabaseConfigured)('production Flue routes on disposable PostgreSQL', () => {
   it.live(
@@ -187,15 +187,16 @@ describe.skipIf(!testDatabaseConfigured)('production Flue routes on disposable P
       const body = yield* encodeAdmission(request)
       const path = `/agents/vivid/${request.threadId}`
       const response = yield* Effect.tryPromise({
-        // Hono's fetch is typed `Response | Promise<Response>`; the async thunk gives
-        // Effect.tryPromise the Promise it requires for either form.
-        try: async () =>
-          await app.fetch(
-            new Request(`http://runtime.test${path}`, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body,
-            }),
+        // Hono may answer synchronously; Promise.resolve preserves either result form.
+        try: () =>
+          Promise.resolve(
+            app.fetch(
+              new Request(`http://runtime.test${path}`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body,
+              }),
+            ),
           ),
         catch: () => new RouteRequestFailed({ path }),
       })

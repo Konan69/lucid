@@ -11,6 +11,7 @@ import type { Pool } from 'pg'
  */
 export const flueStorage = (pool: Pool) => {
   return postgres({
+    // @effect-diagnostics-next-line asyncFunction:off -- Flue PostgreSQL query callback requires a Promise of rows.
     query: async (text, params) => (await pool.query(text, params)).rows,
     transaction: (fn) => {
       const connect = Effect.tryPromise(() => pool.connect())
@@ -20,7 +21,10 @@ export const flueStorage = (pool: Pool) => {
           const run = Effect.fn('FlueDatabase.transaction')(function* () {
             yield* Effect.tryPromise(() => client.query('BEGIN'))
             const result = yield* Effect.tryPromise(() =>
-              fn({ query: async (text, params) => (await client.query(text, params)).rows }),
+              fn({
+                // @effect-diagnostics-next-line asyncFunction:off -- Flue transaction query callback requires a Promise of rows.
+                query: async (text, params) => (await client.query(text, params)).rows,
+              }),
             )
             yield* Effect.tryPromise(() => client.query('COMMIT'))
             return result

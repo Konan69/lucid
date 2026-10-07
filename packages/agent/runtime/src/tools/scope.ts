@@ -48,6 +48,7 @@ export function toolRunner(layer: Layer.Layer<Scope, ToolFailure>) {
     { signal, tool }: Pick<ToolContext<undefined>, 'signal'> & { readonly tool: string },
   ) {
     // oxlint-disable-next-line vivid/no-runpromise-in-library -- This is the single Flue tool execution boundary, classified exactly by the Effect audit.
+    // @effect-diagnostics-next-line strictEffectProvide:off -- The single Flue tool execution boundary owns the tool Layer.
     return Effect.runPromise(settle(program.pipe(Effect.provide(layer)), tool), { signal })
   }
 }
@@ -66,6 +67,7 @@ export function scopedRunner(layer: Layer.Layer<Scope, ToolFailure>) {
     signal: Option.Option<AbortSignal>,
   ): Promise<A> {
     const settled = program.pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- The Flue sandbox execution boundary owns the tool Layer.
       Effect.provide(layer),
       Effect.mapError((failure) =>
         failure instanceof Error && !('_tag' in failure)

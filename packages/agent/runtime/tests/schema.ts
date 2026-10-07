@@ -49,7 +49,7 @@ const poolCloseFailed = Effect.sync(() => expect.fail('Runtime storage pool clos
  * Source: @flue/postgres 2.2.2 dist/index.mjs, postgres; @flue/runtime 2.2.2
  * dist/node/index.mjs, start. No app database composition root is imported.
  */
-export const disposableStorage = Effect.fn('RuntimeTest.disposableStorage')(function* () {
+export const disposableStorage = Effect.gen(function* () {
   const url = yield* Config.Redacted('VIVID_TEST_DATABASE_URL')
   const schema = `runtime_test_${NodeCrypto.randomUUID().replaceAll('-', '')}`
   const cleanup = new Client({ connectionString: Redacted.value(url) })
@@ -89,11 +89,10 @@ export const disposableStorage = Effect.fn('RuntimeTest.disposableStorage')(func
   // Bound to its adapter: close is a method and must keep its receiver when called later.
   const closeStorage = storage.close.bind(storage)
   yield* Effect.addFinalizer(() =>
-    // The async thunk turns the adapter's `void | Promise<void>` into the Promise that
-    // Effect.tryPromise requires, and turns a synchronous throw into a rejection.
-    Effect.tryPromise(async () => {
-      await closeStorage()
-    }).pipe(Effect.catch(() => storageCloseFailed)),
+    // Promise.resolve accepts the adapter's synchronous and asynchronous close forms.
+    Effect.tryPromise(() => Promise.resolve(closeStorage())).pipe(
+      Effect.catch(() => storageCloseFailed),
+    ),
   )
   return { schema, storage } satisfies DisposableStorage
-})()
+}).pipe(Effect.withSpan('RuntimeTest.disposableStorage'))

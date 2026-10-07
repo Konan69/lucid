@@ -97,7 +97,7 @@ describe('Routine Library authority', () => {
           [runtimeHeaders.thread]: 'test-thread',
           [runtimeHeaders.actor]: 'test-person',
         })
-      }).pipe(Effect.provide(server))
+      }).pipe(Effect.provide(yield* Layer.build(server)))
     }),
   )
   it('uses only a valid server signal folder and puts it in the search request', () => {
@@ -143,9 +143,15 @@ describe('Routine Library authority', () => {
   it.effect('settles missing attribution before tools can access the RPC client', () =>
     Effect.gen(function* () {
       const program = Effect.gen(function* () {
-        yield* Scope
-        return { output: { ok: true } }
-      }).pipe(Effect.provide(scopeLayer('thread', { kind: 'user', body: 'Do it.' }, Option.none())))
+        // Acquisition failure remains inside settle, just like the tool boundary.
+        const context = yield* Layer.build(
+          scopeLayer('thread', { kind: 'user', body: 'Do it.' }, Option.none()),
+        )
+        return yield* Effect.gen(function* () {
+          yield* Scope
+          return { output: { ok: true } }
+        }).pipe(Effect.provide(context))
+      }).pipe(Effect.scoped)
       expect((yield* settle(program, 'test-tool')).output).toEqual({
         ok: false,
         message: 'There is no person behind this message to act for.',
