@@ -195,6 +195,7 @@ const TypeScriptConfig = Schema.Struct({
             diagnostics: Schema.optionalKey(Schema.Boolean),
             ignoreEffectErrorsInTscExitCode: Schema.optionalKey(Schema.Boolean),
             ignoreEffectWarningsInTscExitCode: Schema.optionalKey(Schema.Boolean),
+            ignoreEffectSuggestionsInTscExitCode: Schema.optionalKey(Schema.Boolean),
           }),
         ),
       ),
@@ -413,7 +414,7 @@ function rootManifestErrors(manifest, catalog) {
 }
 
 /** Report Effect language-service plugin drift in the shared TypeScript config. */
-function typeScriptConfigErrors(root) {
+export function typeScriptConfigErrors(root) {
   const config = readTypeScriptConfig(root, 'tsconfig.base.json')
   const compilerOptions = config.compilerOptions === undefined ? {} : config.compilerOptions
   const plugins = compilerOptions.plugins === undefined ? [] : compilerOptions.plugins
@@ -425,15 +426,17 @@ function typeScriptConfigErrors(root) {
   if (effectPlugin.diagnostics !== true) {
     errors.push('tsconfig.base.json: Effect diagnostics must be enabled')
   }
-  // Both must be `false` (Effect errors and warnings fail typecheck) once the findings the first
-  // patched run reported are fixed: 1,677 on 7 Oct 2026, being worked off on their own branch.
-  // Until then they are printed and counted by the gate without failing it, so the setting must
-  // at least be stated, one way or the other, and never left to a default.
-  if (effectPlugin.ignoreEffectErrorsInTscExitCode === undefined) {
-    errors.push('tsconfig.base.json: ignoreEffectErrorsInTscExitCode must be stated')
-  }
-  if (effectPlugin.ignoreEffectWarningsInTscExitCode === undefined) {
-    errors.push('tsconfig.base.json: ignoreEffectWarningsInTscExitCode must be stated')
+  // An Effect error, warning or suggestion fails typecheck. The options must be stated `false`:
+  // left out, the compiler prints the finding and exits 0, which is how 1,677 of them gathered
+  // unseen before 7 Oct 2026.
+  for (const option of [
+    'ignoreEffectErrorsInTscExitCode',
+    'ignoreEffectWarningsInTscExitCode',
+    'ignoreEffectSuggestionsInTscExitCode',
+  ]) {
+    if (effectPlugin[option] !== false) {
+      errors.push(`tsconfig.base.json: ${option} must be false`)
+    }
   }
   return errors
 }
