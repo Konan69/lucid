@@ -234,7 +234,7 @@ it.live('includes captured metadata on a reconnect start in the middle of text',
       const first = yield* Effect.promise(() => reader.read())
       expect(first.value).toEqual({
         type: 'start',
-        messageId: expect.stringMatching(/^run:/u),
+        messageId: expect.stringMatching(/^gen:/u),
         messageMetadata: { models: [{ provider: 'faux', modelId: 'faux-1' }] },
       })
       yield* Effect.promise(() => reader.cancel())

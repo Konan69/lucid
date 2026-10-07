@@ -432,14 +432,9 @@ it.each([
 
 // Cloudflare packages/ai-chat/src/tests/streaming-message-id.test.ts:81-98:
 // stamps the persisted assistant id onto a new turn's start chunk when the provider emits none.
-// Gap: live uses run:<first submission>; history uses entry:<first assistant entry>.
-// Pi 1.0.4 types.d.ts:663–721 (Tx) and :755–783 (Session) expose no receipt scan;
-// scanSubmissions is Storage-only (:823–824), and harness.js:151–157 inspection excludes settled
-// receipts. generation.js:408–421 and inbox.js:59–65 attribute onYield and queued successor user
-// entries to the same generation task. conformance/runs.test.ts proves their payloads/provenance
-// agree despite different run boundaries. Keep this failure pending an authorized durable run index.
+// Generation attribution is shared by live, attachment and raw persisted history.
 // Ports packages/ai-chat/src/tests/streaming-message-id.test.ts:81 — Streaming assistant message-id alignment > stamps the persisted assistant id onto a new turn's start chunk when the provider emits none.
-it.fails('stamps the persisted assistant id onto a new turn start chunk', async () => {
+it('stamps the persisted assistant id onto a new turn start chunk', async () => {
   const fixture = await host({}, {})
   const opened = await fixture.open()
   opened.faux.setResponses([fauxAssistantMessage('Hello.')])

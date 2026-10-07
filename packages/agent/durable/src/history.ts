@@ -12,7 +12,14 @@ import {
 import type { UIMessage, UIMessageChunk } from 'ai'
 import { Data, Effect, Match, Option, Predicate, Schema, Stream } from 'effect'
 import { emptyRound, present, type Desk } from './calls.ts'
-import { closeRun, rebuild, type Rebuilt } from './chunks.ts'
+import {
+  type AssistantIdentity,
+  assistantMessageId,
+  entryIdentity,
+  closeRun,
+  rebuild,
+  type Rebuilt,
+} from './chunks.ts'
 import { noDesk, readDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
 import { readMessage } from './reading.ts'
@@ -47,7 +54,11 @@ type Group = Data.TaggedEnum<{
 const Group = Data.taggedEnum<Group>()
 type Prepared = Data.TaggedEnum<{
   User: { readonly entry: EntryRecord }
-  Assistant: { readonly identity: EntryId; readonly step: Rebuilt }
+  Assistant: {
+    readonly first: EntryId
+    readonly identity: AssistantIdentity
+    readonly step: Rebuilt
+  }
 }>
 const Prepared = Data.taggedEnum<Prepared>()
 
@@ -267,15 +278,16 @@ const assistantMessage = Effect.fn('Durable.historyAssistant')(function* (
   desk: Desk,
 ) {
   const { step, identity } = prepared
+  const messageId = assistantMessageId(identity)
   const shown = present(emptyRound, step.chunks, desk)
   const chunks: readonly UIMessageChunk[] = [
     {
       type: 'start',
-      messageId: `entry:${identity}`,
+      messageId,
       messageMetadata: messageMetadata(step.state.metadata, step.state.failure),
     },
     ...shown.chunks,
-    ...closeRun(step.state, `entry:${identity}`).chunks,
+    ...closeRun(step.state, messageId).chunks,
     { type: 'finish-step' },
     { type: 'finish', messageMetadata: messageMetadata(step.state.metadata, step.state.failure) },
   ]
@@ -293,7 +305,8 @@ function prepare(group: Group): Prepared {
       // Pi bills discarded attempts too; content filtering must not discard their recorded usage.
       const metadata = entries.reduce(recordMetadata, emptyMetadata)
       return Prepared.Assistant({
-        identity: first.id,
+        first: first.id,
+        identity: entryIdentity(first),
         step: { ...step, state: { ...step.state, metadata } },
       })
     },
@@ -377,7 +390,7 @@ export const history: (
           HistoryCursor.make({
             entry: Prepared.$match(oldest, {
               User: ({ entry }) => entry.id,
-              Assistant: ({ identity }) => identity,
+              Assistant: ({ first }) => first,
             }),
           }),
         )

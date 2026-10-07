@@ -99,6 +99,8 @@ it.each(['stock', 'guarded'] as const)(
     const stored = history.at(-1)
     if (stored === undefined) throw new Error('Expected settled history')
     expect(texts(last)).toEqual([recoveredReply])
+    expect(last.id).toBe(dropped.id)
+    expect(stored.id).toBe(dropped.id)
     expect(texts(last)).toEqual(texts(stored))
     expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
     if (kind === 'guarded') expect(last.parts).toEqual(stored.parts)

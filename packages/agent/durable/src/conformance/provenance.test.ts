@@ -34,7 +34,7 @@ import { tool } from 'ai'
 import { z } from 'zod'
 import { onTestFinished } from 'vitest'
 import { postgresFixture } from '../postgres/testing.ts'
-import { streamRun, toolsExtension, abort } from '../main.ts'
+import { streamRun, toolsExtension, abort, history, followRun } from '../main.ts'
 import { consume, signal } from './fixtures/host.ts'
 
 const context = BACKGROUND_CONTEXT
@@ -343,6 +343,17 @@ for (const backend of backends) {
         expect(entries[0]).toEqual(prefix[0])
         expect(taskAt(entries, -1)).toBe(observed.tasks.get(input.id))
         expect(taskAt(entries, -1)).not.toBe(taskAt(prefix, 0))
+        const parent = await history(harness, root.id, { limit: 10 }, context)
+        const saved = await history(harness, child.id, { limit: 10 }, context)
+        const parentAssistant = parent.messages.find((message) => message.role === 'assistant')
+        const shared = saved.messages.find((message) => message.role === 'assistant')
+        const own = saved.messages.findLast((message) => message.role === 'assistant')
+        if (parentAssistant === undefined || shared === undefined || own === undefined)
+          throw new Error('Expected forked assistant messages')
+        expect(shared.id).toBe(parentAssistant.id)
+        expect(own.id).not.toBe(shared.id)
+        const followed = await consume(await followRun(harness, child.id, 'child', context))
+        expect(followed.message.id).toBe(own.id)
       }),
   )
 

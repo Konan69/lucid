@@ -17,7 +17,15 @@ import { waitForFrame } from '../fixtures/provider.ts'
 import { resumable, ConnectionLost, connectionLostInput, closeInputs } from '../client.ts'
 import { ChatTurn } from '../core.ts'
 import { PlainChat } from '../fixtures/chat.ts'
-import { respond, waiting, decodeTurn, attachRun, streamRun, TurnWaiting } from '../main.ts'
+import {
+  respond,
+  waiting,
+  decodeTurn,
+  attachRun,
+  streamRun,
+  history,
+  TurnWaiting,
+} from '../main.ts'
 import { context, host, signal, texts, consume } from './fixtures/host.ts'
 
 /** A later response may already be present when a disconnected client resumes from its second step. */
@@ -249,6 +257,8 @@ it.each([
   await chat.sendMessage({ text: 'Start' })
   await fixture.entered.promise
   expect(chat.error).toBeInstanceOf(ConnectionLost)
+  if (chat.lastMessage === undefined) throw new Error('Expected disconnected assistant')
+  const identity = chat.lastMessage.id
   if (marker === 'text-delta' && chat.lastMessage !== undefined) {
     for (const part of chat.lastMessage.parts.filter(isToolUIPart)) {
       expect(part.state).not.toBe('input-streaming')
@@ -262,6 +272,17 @@ it.each([
   expect(chat.status).toBe('ready')
   expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
   assertWhole(chat.lastMessage)
+  if (chat.lastMessage === undefined) throw new Error('Expected resumed assistant')
+  const saved = await history(
+    fixture.opened.harness,
+    fixture.opened.root.id,
+    { limit: 10 },
+    context,
+  )
+  const stored = saved.messages.findLast((message) => message.role === 'assistant')
+  if (stored === undefined) throw new Error('Expected stored assistant')
+  expect(chat.lastMessage.id).toBe(identity)
+  expect(stored.id).toBe(identity)
 })
 
 /** A shared guard holds no claims: a fresh Chat always receives every earlier step too. */

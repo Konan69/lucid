@@ -19,6 +19,7 @@ import {
   type RunState,
   type Step,
   type Rebuilt,
+  type RunEvent,
   translate,
 } from './chunks.ts'
 import { RunMissing, type PiFailed, type WatchClosed, type WatchOverflowed } from './errors.ts'
@@ -26,7 +27,14 @@ import { admit, placed, reacquireInput } from './admit.ts'
 import { readDesk, noDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
 import { messageMetadata } from './metadata.ts'
-import { captureRun, inputReplay, selectRun, type Prefix, type ResumeInput } from './resume.ts'
+import {
+  captureRun,
+  inputReplay,
+  resolveRunIdentity,
+  selectRun,
+  type Prefix,
+  type ResumeInput,
+} from './resume.ts'
 import {
   inputContent,
   inputPolicy,
@@ -46,7 +54,7 @@ export type RunInput = {
 /** The public optional wire policy is normalized before any watch or Pi admission. */
 type PreparedInput = Omit<RunInput, 'options'> & { readonly options: InputPolicy }
 
-export type WatchFailure = PiFailed | WatchClosed | WatchOverflowed
+export type WatchFailure = PiFailed | WatchClosed | WatchOverflowed | RunMissing
 
 type State = {
   readonly state: RunState
@@ -55,6 +63,21 @@ type State = {
   readonly settled: boolean
 }
 type Written = State & { readonly chunks: readonly UIMessageChunk[]; readonly ended: boolean }
+
+/** A reader resolves identity before its first fold and keeps it through terminal handover.
+ * Closing uses the already captured id, so an empty abort cannot rename an existing message. */
+const annotateEvent = Effect.fn('Durable.identifyEvent')(function* (
+  reader: Reader,
+  current: RunState,
+  event: AgentEvent,
+): Effect.fn.Return<RunEvent, PiFailed | RunMissing> {
+  if (event.type !== 'run_start' && event.type !== 'run_end') return event
+  const messageId =
+    event.type === 'run_end' && Option.isSome(current.messageId)
+      ? current.messageId.value
+      : (yield* resolveRunIdentity(reader, event.inputs)).messageId
+  return { ...event, messageId }
+})
 
 /** Parking completes the client's step and response, leaving Pi's durable run untouched. */
 export function writeStep(current: State, step: Step, settled: boolean, desk: Desk): Written {
@@ -81,7 +104,7 @@ const apply = Effect.fn('Durable.streamEvent')(function* (
   current: State,
   event: AgentEvent,
 ) {
-  const translated = translate(current.state, event)
+  const translated = translate(current.state, yield* annotateEvent(reader, current.state, event))
   const needsRefresh =
     event.type === 'message_end' &&
     (current.round.withheld.size > 0 || current.round.inputs.size > 0)

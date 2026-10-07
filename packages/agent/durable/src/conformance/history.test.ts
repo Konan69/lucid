@@ -97,7 +97,16 @@ it.each(['text', 'approved', 'denied', 'answer', 'retry'] as const)(
     expect(page.messages.map((message) => message.parts)).toEqual(
       chat.messages.map((message) => message.parts),
     )
-    expect(page.messages.every((message) => /^entry:[1-9][0-9]*$/u.test(message.id))).toBe(true)
+    expect(
+      page.messages.every((message) =>
+        (message.role === 'assistant' ? /^gen:[1-9][0-9]*$/u : /^entry:[1-9][0-9]*$/u).test(
+          message.id,
+        ),
+      ),
+    ).toBe(true)
+    const saved = page.messages.find((message) => message.role === 'assistant')
+    if (saved === undefined || chat.lastMessage === undefined) throw new Error('Expected assistant')
+    expect(saved.id).toBe(chat.lastMessage.id)
     expect(await history(opened.harness, opened.root.id, { limit: 10 }, context)).toEqual(page)
     expect(page.next).toBeUndefined()
   },

@@ -18,7 +18,7 @@ import { connectionLostInput } from './client.ts'
 import { HoldId, RunMissing, TurnInvalid, TurnRegenerate } from './errors.ts'
 import { answerObserved, decideObserved, errorObserved } from './holds.ts'
 import { isConnectionLostAnswer } from './answers.ts'
-import { runMessageId } from './chunks.ts'
+import { resolveRunIdentity } from './resume.ts'
 import * as Pi from './pi.ts'
 import { LiveDoc } from '@earendil-works/pi-durable'
 import { completeTurn, continueRun, prepareInput } from './stream.ts'
@@ -237,12 +237,13 @@ const settleHolds = Effect.fn('Durable.settleHolds')(function* (
   context: Context,
 ) {
   const live = yield* Pi.snapshot(harness, LiveDoc, conversationId, context)
-  if (
-    Option.isNone(live) ||
-    live.value.run === undefined ||
-    turn.messageId !== runMessageId(live.value.run.inputs)
+  if (Option.isNone(live) || live.value.run === undefined) return
+  const conversation = yield* Pi.conversation(harness, conversationId, context)
+  const resolved = yield* resolveRunIdentity(
+    { harness, conversation, context },
+    live.value.run.inputs,
   )
-    return
+  if (turn.messageId !== resolved.messageId) return
   const held = yield* waiting(harness, conversationId, context)
   const approvable = new Map(
     held.filter((each) => each.kind === 'approval').map((each) => [each.holdId, each.callId]),
@@ -298,7 +299,7 @@ export const respond: (
 ) => Effect.Effect<
   Stream.Stream<
     UIMessageChunk,
-    DurableErrors.PiFailed | DurableErrors.WatchClosed | DurableErrors.WatchOverflowed
+    DurableErrors.PiFailed | DurableErrors.WatchClosed | DurableErrors.WatchOverflowed | RunMissing
   >,
   | DurableErrors.ConversationMissing
   | DurableErrors.LimitInvalid

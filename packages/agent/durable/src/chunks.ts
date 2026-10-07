@@ -6,7 +6,6 @@ import type {
   MessageChange,
   SnapshotEvent,
   TaskId,
-  SubmissionId,
   EntryId,
 } from '@earendil-works/pi-durable'
 import type { UIMessageChunk } from 'ai'
@@ -49,6 +48,8 @@ const Reported = Data.taggedEnum<Reported>()
  * AI SDK assistant message; each turn becomes one AI SDK step.
  */
 export type RunState = {
+  /** Resolved before folding; later handovers and steers cannot rename this reader's message. */
+  readonly messageId: Option.Option<string>
   /** Models and entry-deduplicated usage read from Pi's own provider responses. */
   readonly metadata: MetadataState
   /** Retry entries share the same generation task and therefore the same SDK step. */
@@ -80,6 +81,7 @@ export type RunState = {
 }
 
 export const initialRunState: RunState = {
+  messageId: Option.none(),
   metadata: emptyMetadata,
   generation: Option.none(),
   interrupted: false,
@@ -577,20 +579,27 @@ function assistantEnd(state: RunState, message: AssistantMessage): Step {
  * harness. Events with no AI SDK counterpart (inbox, usage, compaction, agent changes) give no
  * chunks here; they are the caller's to surface.
  */
-export function translate(state: RunState, event: AgentEvent): Step {
+export type RunEvent =
+  | Exclude<AgentEvent, { type: 'run_start' | 'run_end' }>
+  | (Extract<AgentEvent, { type: 'run_start' | 'run_end' }> & { readonly messageId: string })
+/** Atomic snapshots are annotated at observation ingress, including genuine idle absence. */
+export type RunSnapshot = SnapshotEvent & { readonly messageId: Option.Option<string> }
+
+/** Fold identified boundaries without reading Pi; subsequent task handovers cannot rename the run. */
+export function translate(state: RunState, event: RunEvent): Step {
   return Match.value(event).pipe(
     Match.when({ type: 'run_start' }, (started): Step => ({
-      state: initialRunState,
+      state: { ...initialRunState, messageId: Option.some(started.messageId) },
       chunks: [
         {
           type: 'start',
-          messageId: runMessageId(started.inputs),
+          messageId: started.messageId,
           messageMetadata: messageMetadata(emptyMetadata, Option.none()),
         },
       ],
     })),
     Match.when({ type: 'run_end' }, (ended): Step => {
-      const closed = closeRun(state, runMessageId(ended.inputs))
+      const closed = closeRun(state, ended.messageId)
       return {
         state: closed.state,
         chunks: [...closed.chunks, ...finishRun(closed.state)],
@@ -703,17 +712,17 @@ function replayPartial(state: RunState, message: AssistantMessage): Step {
  *
  * The observation adapter bounds entries to the first placed input; later steers are transparent.
  */
-export function replay(snapshot: SnapshotEvent): Option.Option<Rebuilt> {
-  if (snapshot.run === undefined) return Option.none()
+export function replay(snapshot: RunSnapshot): Option.Option<Rebuilt> {
+  if (snapshot.run === undefined || Option.isNone(snapshot.messageId)) return Option.none()
   const metadata = capturedMetadata(snapshot)
   const started: Step = {
-    state: initialRunState,
+    state: { ...initialRunState, messageId: snapshot.messageId },
     // SDK chat.ts retains the streaming state after a network error. Its start chunk only
     // changes identity; process-ui-message-stream.ts reset-step clears the retained current step.
     chunks: [
       {
         type: 'start',
-        messageId: runMessageId(snapshot.run.inputs),
+        messageId: snapshot.messageId.value,
         messageMetadata: messageMetadata(metadata, Option.none()),
       },
       { type: 'reset-step' },
@@ -765,13 +774,15 @@ function callsAny(entry: EntryRecord, known: ReadonlySet<string>): boolean {
  * means no entry made those calls.
  */
 export function replayAfter(
-  snapshot: SnapshotEvent,
+  snapshot: RunSnapshot,
   known: ReadonlySet<string>,
 ): Option.Option<{
   readonly step: Step
   readonly live: boolean
   readonly origins: ReadonlyMap<Chunk, TaskId>
 }> {
+  if (Option.isNone(snapshot.messageId)) return Option.none()
+  const messageId = snapshot.messageId.value
   const inFlight = inFlightAfter(snapshot, known)
   if (Option.isSome(inFlight)) return inFlight
   // Carry the selected entry with its position. Finding an index and then looking it up again
@@ -787,18 +798,20 @@ export function replayAfter(
   const called = replayEntry(
     {
       ...initialRunState,
+      messageId: snapshot.messageId,
       metadata: snapshot.entries.slice(0, index).reduce(recordMetadata, emptyMetadata),
     },
     calledEntry,
   )
   const stored = rest.reduce<Step>(
     (step, entry) => join(step, replayEntry(step.state, entry)),
-    // No message id: the client continues the assistant message it already has.
+    // Name the same assistant explicitly, including readers created without retained SDK state.
     {
       state: called.state,
       chunks: [
         {
           type: 'start',
+          messageId,
           messageMetadata: messageMetadata(capturedMetadata(snapshot), Option.none()),
         },
         ...called.chunks.filter(
@@ -835,7 +848,7 @@ export function replayAfter(
 /** A manual POST may name a still-streaming call with no assistant entry yet. Rebuild only the
  * retained current step: reset-step retains its existing step-start. The full
  * replay state carries raw offsets into the event tail, so snapshot text is never offered twice. */
-function inFlightAfter(snapshot: SnapshotEvent, known: ReadonlySet<string>) {
+function inFlightAfter(snapshot: RunSnapshot, known: ReadonlySet<string>) {
   const partial = Option.fromNullishOr(snapshot.generation).pipe(
     Option.flatMapNullishOr((generation) => generation.message),
   )
@@ -967,9 +980,28 @@ export function rebuild(entries: readonly EntryRecord[]): Rebuilt {
   return { ...step, origins: originsFor(entries, step.chunks) }
 }
 
-/** Pi events.js changes runs by their first input; steer inputs never change assistant identity. */
-export function runMessageId(inputs: readonly SubmissionId[]) {
-  return `run:${Option.getOrThrow(Arr.head(inputs))}`
+/** Generated, host-written and empty stored answers have distinct, honest identity sources. */
+export type AssistantIdentity = Data.TaggedEnum<{
+  Generated: { readonly taskId: TaskId }
+  Written: { readonly entryId: EntryId }
+  Empty: { readonly entryId: EntryId }
+}>
+export const AssistantIdentity = Data.taggedEnum<AssistantIdentity>()
+
+/** Hosts can append assistants without a generation task; preserve that distinct identity source. */
+export function entryIdentity(entry: EntryRecord): AssistantIdentity {
+  return entry.byTaskId === undefined
+    ? AssistantIdentity.Written({ entryId: entry.id })
+    : AssistantIdentity.Generated({ taskId: entry.byTaskId })
+}
+
+/** No receipt lookup belongs in the pure translator. */
+export function assistantMessageId(identity: AssistantIdentity): string {
+  return AssistantIdentity.$match(identity, {
+    Generated: ({ taskId }) => `gen:${taskId}`,
+    Written: ({ entryId }) => `entry:${entryId}`,
+    Empty: ({ entryId }) => `input:${entryId}`,
+  })
 }
 
 /** A closed run never ends in a step containing tool parts: an empty closing step makes both

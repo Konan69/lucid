@@ -41,6 +41,8 @@ export {
   replay,
   replayAfter,
   type RunState,
+  type RunEvent,
+  type RunSnapshot,
   type Step,
   type Chunk,
   translate,

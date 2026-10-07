@@ -7,7 +7,9 @@ import type {
   SubmissionId,
   SubmissionRecord,
   TaskId,
+  LiveState,
 } from '@earendil-works/pi-durable'
+import { LiveDoc } from '@earendil-works/pi-durable'
 import { Effect, Option, Predicate, Schema } from 'effect'
 import {
   type Chunk,
@@ -17,7 +19,10 @@ import {
   rebuild,
   replay,
   replayAfter,
-  runMessageId,
+  assistantMessageId,
+  AssistantIdentity,
+  entryIdentity,
+  type RunSnapshot,
 } from './chunks.ts'
 import type { Reader } from './desk.ts'
 import { RunMissing, TurnWithdrawn, type PiFailed } from './errors.ts'
@@ -44,10 +49,37 @@ const SubmissionIdentity = Schema.declare<SubmissionId>(
 )
 const decodeSubmission = Schema.decodeUnknownOption(SubmissionIdentity)
 
-/** Run ids encode the first input, never a provider call id or a later steer. */
-function inputOf(messageId: string) {
-  const found = /^run:([1-9][0-9]*)$/u.exec(messageId)
-  return found === null ? Option.none<SubmissionId>() : decodeSubmission(Number(found[1]))
+/** The placed receipt and raw entries are carried with the identity, avoiding a second read
+ * when observation also needs the prefix that proved it. */
+type ResolvedRun = {
+  readonly messageId: string
+  readonly receipt: Extract<SubmissionRecord, { type: 'input' }> & { readonly entry: EntryId }
+  readonly entries: readonly EntryRecord[]
+}
+
+/** An appended assistant wins over a later live handover; only an empty transcript needs live. */
+function identityFor(
+  live: Option.Option<Readonly<LiveState>>,
+  receipt: ResolvedRun['receipt'],
+  entries: readonly EntryRecord[],
+): AssistantIdentity {
+  const assistant = entries.find((entry) => entry.kind === 'pi.assistant')
+  if (assistant !== undefined) return entryIdentity(assistant)
+  if (
+    Option.isSome(live) &&
+    live.value.run !== undefined &&
+    live.value.run.inputs[0] === receipt.id
+  )
+    return AssistantIdentity.Generated({ taskId: live.value.run.taskId })
+  return AssistantIdentity.Empty({ entryId: receipt.entry })
+}
+
+/** Closed lookup has exactly one candidate: the idle-admitted receipt immediately before T.
+ * SQLite/PostgreSQL concurrency proofs cover Session's serialized admission commit. Verification
+ * below checks conversation, placement and assistant attribution; arithmetic alone proves nothing. */
+function candidateOf(messageId: string) {
+  const found = /^gen:([1-9][0-9]*)$/u.exec(messageId)
+  return found === null ? Option.none<SubmissionId>() : decodeSubmission(Number(found[1]) - 1)
 }
 
 /** Raw entries preserve the requested run even when model context was compacted or a newer run exists. */
@@ -76,14 +108,17 @@ const entriesOf = Effect.fn('Durable.resumeEntries')(function* (
   }
 })
 
-/** Bound whole-run attachment to its first placed input, never the newest steer or an older run. */
-export const captureRun: (
+/** Read live BEFORE entries: handover cannot precede the first appended assistant. Once that
+ * entry exists its task wins, even when the live read saw a successor or no active run. Empty
+ * settled runs have no durable generation attribution and are explicitly input:<entry>, never
+ * a guessed task. This resolver serves event ingress, snapshots, stored replay and settlements. */
+export const resolveRunIdentity: (
   reader: Reader,
-  snapshot: SnapshotEvent,
-) => Effect.Effect<SnapshotEvent, RunMissing | PiFailed> = Effect.fn('Durable.captureRun')(
-  function* (reader: Reader, snapshot: SnapshotEvent) {
-    if (snapshot.run === undefined) return snapshot
-    const first = snapshot.run.inputs[0]
+  inputs: readonly SubmissionId[],
+) => Effect.Effect<ResolvedRun, RunMissing | PiFailed> = Effect.fn('Durable.resolveRunIdentity')(
+  function* (reader: Reader, inputs: readonly SubmissionId[]) {
+    const live = yield* Pi.snapshot(reader.harness, LiveDoc, reader.conversation.id, reader.context)
+    const first = inputs[0]
     if (first === undefined)
       return yield* new RunMissing({ conversationId: reader.conversation.id })
     const handle = yield* Pi.submission(reader.harness, first, reader.context)
@@ -92,20 +127,39 @@ export const captureRun: (
     const receipt = yield* Pi.status(handle.value, reader.context)
     if (!placedFor(receipt, reader.conversation.id))
       return yield* new RunMissing({ conversationId: reader.conversation.id })
-    // Usually the atomic model view contains the whole run. Compaction can remove its first input;
-    // recover raw entries only then, bounded by the snapshot's tail so the prefix cannot outrun events.
-    if (snapshot.entries.some((entry) => entry.id === receipt.entry))
-      return { ...snapshot, entries: snapshot.entries.filter((entry) => entry.id >= receipt.entry) }
-    const tail = Option.fromNullishOr(snapshot.entries.at(-1))
-    if (Option.isNone(tail))
-      return yield* new RunMissing({ conversationId: reader.conversation.id })
-    const entries = yield* entriesOf(reader, {
-      first: receipt.entry,
-      last: Option.some(tail.value.id),
-    })
-    return { ...snapshot, entries }
+    const entries = closedEntries(
+      yield* entriesOf(reader, { first: receipt.entry, last: Option.none() }),
+      receipt,
+    )
+    return { messageId: assistantMessageId(identityFor(live, receipt, entries)), receipt, entries }
   },
 )
+
+/** Bound whole-run attachment to its first placed input, never the newest steer or an older run. */
+export const captureRun: (
+  reader: Reader,
+  snapshot: SnapshotEvent,
+) => Effect.Effect<RunSnapshot, RunMissing | PiFailed> = Effect.fn('Durable.captureRun')(function* (
+  reader: Reader,
+  snapshot: SnapshotEvent,
+) {
+  if (snapshot.run === undefined) return { ...snapshot, messageId: Option.none() }
+  const resolved = yield* resolveRunIdentity(reader, snapshot.run.inputs)
+  const { receipt } = resolved
+  const messageId = Option.some(resolved.messageId)
+  // Usually the atomic model view contains the whole run. Compaction can remove its first input;
+  // recover raw entries only then, bounded by the snapshot's tail so the prefix cannot outrun events.
+  if (snapshot.entries.some((entry) => entry.id === receipt.entry))
+    return {
+      ...snapshot,
+      messageId,
+      entries: snapshot.entries.filter((entry) => entry.id >= receipt.entry),
+    }
+  const tail = Option.fromNullishOr(snapshot.entries.at(-1))
+  if (Option.isNone(tail)) return yield* new RunMissing({ conversationId: reader.conversation.id })
+  const entries = resolved.entries.filter((entry) => entry.id <= tail.value.id)
+  return { ...snapshot, messageId, entries }
+})
 
 /**
  * The done receipt's answer is the final boundary of its run. Pi generation.js:408–421 places
@@ -144,12 +198,17 @@ export const inputReplay: (
 ) {
   const { run: _run, generation: _generation, ...base } = snapshot
   if (receipt.entry === undefined) return yield* new TurnWithdrawn({ messageId })
-  const placed = yield* entriesOf(reader, { first: receipt.entry, last: Option.none() })
-  const entries = closedEntries(placed, receipt)
-  const found = replay({ ...base, entries, run: { inputs: [receipt.id] } })
+  const resolved = yield* resolveRunIdentity(reader, [receipt.id])
+  const { entries, messageId: identity } = resolved
+  const found = replay({
+    ...base,
+    entries,
+    messageId: Option.some(identity),
+    run: { inputs: [receipt.id] },
+  })
   if (Option.isNone(found)) return yield* new RunMissing({ conversationId: reader.conversation.id })
   const prefix = found.value
-  const closed = closeRun(prefix.state, runMessageId([receipt.id]))
+  const closed = closeRun(prefix.state, identity)
   return {
     step: { state: closed.state, chunks: [...prefix.chunks, ...closed.chunks] },
     live: false,
@@ -178,8 +237,8 @@ function resumable(receipt: SubmissionRecord, active: boolean) {
 }
 
 /** A steer does not change the run's identity; only its first input identifies active ownership. */
-function ownsActiveRun(snapshot: SnapshotEvent, messageId: string) {
-  return snapshot.run !== undefined && messageId === runMessageId(snapshot.run.inputs)
+function ownsActiveRun(snapshot: RunSnapshot, messageId: string) {
+  return snapshot.run !== undefined && Option.contains(snapshot.messageId, messageId)
 }
 
 /** Resolve the exact first input and its stored run before matching calls. Closed runs cannot
@@ -197,28 +256,42 @@ export const selectRun: (
   snapshot: SnapshotEvent,
   intent: 'Replay' | 'Complete',
 ) {
-  const id = inputOf(input.messageId)
+  const activeSnapshot = yield* captureRun(reader, snapshot)
+  const active = ownsActiveRun(activeSnapshot, input.messageId)
+  if (active) {
+    const prefix = replayAfter(activeSnapshot, input.known)
+    if (Option.isNone(prefix))
+      return yield* new RunMissing({ conversationId: reader.conversation.id })
+    return Option.some({ ...prefix.value, known: input.known })
+  }
+  const id = candidateOf(input.messageId)
   if (Option.isNone(id)) return yield* new RunMissing({ conversationId: reader.conversation.id })
   const handle = yield* Pi.submission(reader.harness, id.value, reader.context)
   if (Option.isNone(handle))
     return yield* new RunMissing({ conversationId: reader.conversation.id })
   const receipt = yield* Pi.status(handle.value, reader.context)
-  const active = ownsActiveRun(snapshot, input.messageId)
-  if (!placedFor(receipt, reader.conversation.id) || !resumable(receipt, active))
+  if (!placedFor(receipt, reader.conversation.id) || !resumable(receipt, false))
     return yield* new RunMissing({ conversationId: reader.conversation.id })
   const placed = yield* entriesOf(reader, {
     first: receipt.entry,
     last: Option.none(),
   })
   const entries = closedEntries(placed, receipt)
+  const assistant = entries.find((entry) => entry.kind === 'pi.assistant')
+  if (
+    assistant === undefined ||
+    assistant.byTaskId === undefined ||
+    assistantMessageId(AssistantIdentity.Generated({ taskId: assistant.byTaskId })) !==
+      input.messageId
+  )
+    return yield* new RunMissing({ conversationId: reader.conversation.id })
   // A completed run must not borrow the newer run's generation or live continuation.
   const { run: _run, generation: _generation, ...stored } = snapshot
-  const captured = active ? { ...snapshot, entries } : { ...stored, entries }
+  const captured: RunSnapshot = { ...stored, entries, messageId: Option.some(input.messageId) }
   const prefix = replayAfter(captured, input.known)
   if (Option.isNone(prefix))
     return yield* new RunMissing({ conversationId: reader.conversation.id })
-  if (!active) return Option.some(completed(input, prefix.value, rebuild(entries), intent))
-  return Option.some({ ...prefix.value, known: input.known })
+  return Option.some(completed(input, prefix.value, rebuild(entries), intent))
 })
 
 /** Durable step count distinguishes a retained closing boundary from a client that lost it.
