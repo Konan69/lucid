@@ -6,17 +6,27 @@ import {
   MemoryStorage,
   type HarnessSettings,
 } from '@earendil-works/pi-durable'
-import { Effect } from 'effect'
+import { Effect, Schema, type Scope } from 'effect'
 
-/** Register harness cleanup before creating any conversations, including when an assertion fails. */
+/** Fixture I/O fails at its ingress; callers never inherit an opaque SDK error channel. */
+export class FixtureFailed extends Schema.TaggedError<FixtureFailed>()(
+  'FixtureFailed',
+  { cause: Schema.Defect() },
+  { title: 'FixtureFailed' },
+) {}
+
+/** Register harness cleanup before creating any conversations, including when an assertion fails.
+ * Release defects still fail the case; acquireRelease finalizers cannot have an expected error channel. */
 export const memory = (
   models: ReturnType<typeof createModels>,
   registry: ReturnType<typeof createRegistry>,
   settings: HarnessSettings = {},
-) =>
+): Effect.Effect<Harness, FixtureFailed, Scope.Scope> =>
   Effect.acquireRelease(
-    Effect.promise(() =>
-      Harness.open(new MemoryStorage(), { models, registry, settings }, BACKGROUND_CONTEXT),
-    ),
+    Effect.tryPromise({
+      try: () =>
+        Harness.open(new MemoryStorage(), { models, registry, settings }, BACKGROUND_CONTEXT),
+      catch: (cause) => new FixtureFailed({ cause }),
+    }),
     (harness) => Effect.promise(() => harness.close(BACKGROUND_CONTEXT)),
   )

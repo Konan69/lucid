@@ -1,3 +1,4 @@
+import { consume, consumeReadable } from './fixtures/reading.ts'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { getCurrentTools } from '@earendil-works/pi-ai/utils/transcript'
 import { createModels } from '@earendil-works/pi-ai/models'
@@ -7,15 +8,9 @@ import {
   fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux'
 import { createRegistry } from '@earendil-works/pi-durable'
-import {
-  tool,
-  readUIMessageStream,
-  type UIMessage,
-  type UIMessageChunk,
-  lastAssistantMessageIsCompleteWithToolCalls,
-} from 'ai'
+import { tool, lastAssistantMessageIsCompleteWithToolCalls } from 'ai'
 import { expect, it } from '@effect/vitest'
-import { Array as Arr, Effect, Option, Schema, Stream } from 'effect'
+import { Effect, Deferred, Option } from 'effect'
 import { z } from 'zod'
 
 import {
@@ -25,43 +20,10 @@ import {
   type ToolsOptions,
   type Replay,
 } from './core.ts'
-import { memory } from './fixtures/harness.ts'
+import { FixtureFailed, memory } from './fixtures/harness.ts'
 import { PlainChat } from './fixtures/chat.ts'
-import { host, consume as consumeSdk, call, signal } from './conformance/fixtures/host.ts'
+import { host, call } from './conformance/fixtures/host.ts'
 import { streamRun as streamSdk, answer, waiting } from './main.ts'
-
-/** The shared fixture's SDK failure is opaque and its file belongs to the next conversion round. */
-class SdkReaderFailed extends Schema.TaggedError<SdkReaderFailed>()(
-  'ToolsTest.SdkReaderFailed',
-  {
-    cause: Schema.Defect(),
-  },
-  { title: 'SdkReaderFailed' },
-) {}
-
-/** Preserve the fixture's finite collect/fold order with the same stock SDK reader, decoding its error here. */
-const consume = Effect.fn('ToolsTest.consume')(function* <E>(
-  stream: Stream.Stream<UIMessageChunk, E>,
-  from: Option.Option<UIMessage>,
-) {
-  const chunks = yield* Stream.runCollect(stream)
-  const readable = yield* Stream.toReadableStreamEffect(Stream.fromIterable(chunks))
-  const options = Option.match(from, {
-    onNone: () => ({ stream: readable }),
-    onSome: (message) => ({ stream: readable, message }),
-  })
-  const messages = yield* Stream.runCollect(
-    Stream.fromAsyncIterable(
-      readUIMessageStream(options),
-      (cause) => new SdkReaderFailed({ cause }),
-    ),
-  )
-  return {
-    chunks,
-    types: chunks.map((chunk) => chunk.type),
-    message: Option.getOrThrow(Arr.last(messages)),
-  }
-})
 
 const context = BACKGROUND_CONTEXT
 
@@ -360,19 +322,17 @@ for (const sample of [
 /** Empty provider metadata has no semantics to lose; non-empty metadata remains refused above. */
 it.live('runs a tool with empty providerOptions', () =>
   Effect.gen(function* () {
-    const fixture = yield* Effect.promise(() =>
-      host(
-        {
-          empty: tool({
-            providerOptions: {},
-            inputSchema: z.object({}),
-            execute: () => Promise.resolve('accepted'),
-          }),
-        },
-        {},
-      ),
+    const fixture = yield* host(
+      {
+        empty: tool({
+          providerOptions: {},
+          inputSchema: z.object({}),
+          execute: () => Promise.resolve('accepted'),
+        }),
+      },
+      {},
     )
-    const opened = yield* Effect.promise(() => fixture.open())
+    const opened = yield* fixture.open()
     opened.faux.setResponses([call('empty', {}, 'empty'), fauxAssistantMessage('Done.')])
     const stream = yield* Effect.promise(() =>
       streamSdk(
@@ -381,7 +341,7 @@ it.live('runs a tool with empty providerOptions', () =>
         context,
       ),
     )
-    const result = yield* Effect.promise(() => consumeSdk(stream))
+    const result = yield* consumeReadable(stream, Option.none())
     expect(result.message.parts.find((part) => part.type === 'tool-empty')).toMatchObject({
       output: 'accepted',
     })
@@ -392,19 +352,17 @@ it.live('runs a tool with empty providerOptions', () =>
 for (const strict of [true, false, undefined])
   it.live(`carries SDK strict=${String(strict)} into the Pi model request`, () =>
     Effect.gen(function* () {
-      const fixture = yield* Effect.promise(() =>
-        host(
-          {
-            sampling: tool({
-              strict,
-              inputSchema: z.object({}),
-              execute: () => Promise.resolve('sampled'),
-            }),
-          },
-          {},
-        ),
+      const fixture = yield* host(
+        {
+          sampling: tool({
+            strict,
+            inputSchema: z.object({}),
+            execute: () => Promise.resolve('sampled'),
+          }),
+        },
+        {},
       )
-      const opened = yield* Effect.promise(() => fixture.open())
+      const opened = yield* fixture.open()
       opened.faux.setResponses([
         (request) => {
           const offered = getCurrentTools(request.messages).find(
@@ -425,7 +383,7 @@ for (const strict of [true, false, undefined])
           context,
         ),
       )
-      const result = yield* Effect.promise(() => consumeSdk(stream))
+      const result = yield* consumeReadable(stream, Option.none())
       expect(result.message.parts.find((part) => part.type === 'tool-sampling')).toMatchObject({
         output: 'sampled',
       })
@@ -461,13 +419,11 @@ for (const name of ['constructor', '__proto__'])
         if (policy === 'inherited') Object.setPrototypeOf(replay, { [name]: 'safe' })
         if (policy === 'own')
           Object.defineProperty(replay, name, { value: 'safe', enumerable: true })
-        const fixture = yield* Effect.promise(() =>
-          host(
-            { [name]: tool({ inputSchema: z.object({}), execute: () => Promise.resolve('done') }) },
-            { replay },
-          ),
+        const fixture = yield* host(
+          { [name]: tool({ inputSchema: z.object({}), execute: () => Promise.resolve('done') }) },
+          { replay },
         )
-        const opened = yield* Effect.promise(() => fixture.open())
+        const opened = yield* fixture.open()
         const registered = (yield* Effect.promise(() => opened.root.agent(context))).tools.find(
           (entry) => entry.name === name,
         )
@@ -481,7 +437,7 @@ for (const name of ['constructor', '__proto__'])
             context,
           ),
         )
-        const result = yield* Effect.promise(() => consumeSdk(stream))
+        const result = yield* consumeReadable(stream, Option.none())
         expect(result.message.parts.find((part) => part.type === `tool-${name}`)).toMatchObject({
           output: 'done',
         })
@@ -496,20 +452,22 @@ for (const name of ['constructor', '__proto__'])
       const approval: Record<string, boolean> = {}
       Object.setPrototypeOf(answers, { [name]: 'later' })
       Object.setPrototypeOf(approval, { [name]: true })
-      const fixture = yield* Effect.promise(() =>
-        host(
-          { [name]: tool({ inputSchema: z.object({}), outputSchema: z.string() }) },
-          { answers, approval },
-        ),
+      const fixture = yield* host(
+        { [name]: tool({ inputSchema: z.object({}), outputSchema: z.string() }) },
+        { answers, approval },
       )
-      const opened = yield* Effect.promise(() => fixture.open())
+      const opened = yield* fixture.open()
       opened.faux.setResponses([call(name, {}, name), fauxAssistantMessage('Answered.')])
-      let completed = signal()
+      let completed = yield* Deferred.make<void, FixtureFailed>()
       const chat = new PlainChat({
         transport: opened.transport,
         sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-        onFinish: () => completed.resolve(),
-        onError: (error) => completed.reject(error),
+        onFinish: () => {
+          Deferred.doneUnsafe(completed, Effect.void)
+        },
+        onError: (cause) => {
+          Deferred.doneUnsafe(completed, new FixtureFailed({ cause }))
+        },
       })
       yield* Effect.promise(() => chat.sendMessage({ text: 'Ask' }))
       const rows = yield* Effect.promise(() => waiting(opened.harness, opened.root.id, context))
@@ -517,23 +475,21 @@ for (const name of ['constructor', '__proto__'])
       const row = rows[0]
       if (row === undefined) throw new Error('Expected person-answer hold')
       expect(row.kind).toBe('answer')
-      completed = signal()
+      completed = yield* Deferred.make<void, FixtureFailed>()
       yield* Effect.promise(() =>
         Promise.resolve(chat.addToolOutput({ tool: name, toolCallId: name, output: 'yes' })),
       )
-      yield* Effect.promise(() => completed.promise)
+      yield* Deferred.await(completed)
       if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
       expect(chat.lastMessage.parts.find((part) => part.type === `tool-${name}`)).toMatchObject({
         output: 'yes',
       })
 
-      const own = yield* Effect.promise(() =>
-        host(
-          { [name]: tool({ needsApproval: true, inputSchema: z.object({}) }) },
-          { answers: { [name]: 'later' }, approval: { [name]: false } },
-        ),
+      const own = yield* host(
+        { [name]: tool({ needsApproval: true, inputSchema: z.object({}) }) },
+        { answers: { [name]: 'later' }, approval: { [name]: false } },
       )
-      const other = yield* Effect.promise(() => own.open())
+      const other = yield* own.open()
       other.faux.setResponses([call(name, {}, name), fauxAssistantMessage('Later.')])
       const stream = yield* Effect.promise(() =>
         streamSdk(
@@ -542,7 +498,7 @@ for (const name of ['constructor', '__proto__'])
           context,
         ),
       )
-      const result = yield* Effect.promise(() => consumeSdk(stream))
+      const result = yield* consumeReadable(stream, Option.none())
       expect(result.message.parts.find((part) => part.type === `tool-${name}`)).toMatchObject({
         output: { status: 'asked' },
       })

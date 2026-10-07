@@ -95,7 +95,7 @@
   {
     "file": "packages/agent/durable/src/fixtures/crash.ts",
     "classification": "test-process-entrypoint",
-    "symbols": ["harness", "root", "<module>"]
+    "symbols": ["main", "<module>"]
   },
   {
     "file": "packages/agent/durable/src/fixtures/provider.ts",
@@ -110,17 +110,17 @@
   {
     "file": "packages/agent/durable/src/conformance/fixtures/crash.ts",
     "classification": "test-process-entrypoint",
-    "symbols": ["<module>", "harness", "root"]
+    "symbols": ["main", "<module>"]
   },
   {
     "file": "packages/agent/durable/src/conformance/fixtures/host.ts",
     "classification": "test-fixture-entrypoint",
-    "symbols": ["consume", "host", "open", "fetch", "close", "shop", "execute", "hold", "committed"]
+    "symbols": ["committed", "openFixture", "host"]
   },
   {
     "file": "packages/agent/durable/src/fixtures/task.ts",
     "classification": "test-process-entrypoint",
-    "symbols": ["harness", "root", "<module>"]
+    "symbols": ["main", "<module>"]
   },
   {
     "file": "packages/agent/durable/src/examples/main.ts",
@@ -135,7 +135,7 @@
   {
     "file": "packages/agent/durable/src/fixtures/sequential.ts",
     "classification": "test-process-entrypoint",
-    "symbols": ["<module>", "execute", "main"]
+    "symbols": ["main", "<module>"]
   },
   {
     "file": "packages/agent/durable/src/reading.ts",
@@ -145,7 +145,7 @@
   {
     "file": "packages/agent/durable/src/fixtures/answer.ts",
     "classification": "test-process-entrypoint",
-    "symbols": ["<module>", "execute", "main"]
+    "symbols": ["main", "<module>"]
   },
   {
     "file": "packages/agent/durable/src/examples/serve.ts",
@@ -170,7 +170,7 @@
   {
     "file": "packages/agent/durable/src/fixtures/reconnect.ts",
     "classification": "test-process-entrypoint",
-    "symbols": ["route", "listen", "close", "main", "<module>", "onFrame"]
+    "symbols": ["route", "listen", "close", "onFrame", "main", "<module>"]
   },
   {
     "file": "packages/agent/durable/src/conformance/fixtures/upstream.ts",
@@ -308,5 +308,10 @@
     "file": "packages/agent/durable/src/conformance/fixtures/generation.ts",
     "classification": "test-process-entrypoint",
     "symbols": ["main", "<module>"]
+  },
+  {
+    "file": "packages/agent/durable/src/fixtures/reading.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["checked"]
   }
 ]

@@ -25,8 +25,8 @@ import * as Pi from './pi.ts'
 
 const context = BACKGROUND_CONTEXT
 const Identity = Schema.Struct({
-  taskId: Schema.Number,
-  slotTaskId: Schema.Number,
+  taskId: Schema.Finite,
+  slotTaskId: Schema.Finite,
   status: Schema.Literal('pending'),
 })
 const decodeIdentity = Schema.decodeUnknownEffect(Schema.fromJsonString(Identity))

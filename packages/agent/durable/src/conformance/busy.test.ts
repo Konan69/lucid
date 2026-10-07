@@ -1,38 +1,43 @@
+import { runForPi } from '../pi.ts'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { InboxDoc } from '@earendil-works/pi-durable'
 import { expect, it } from '@effect/vitest'
 import { DefaultChatTransport, tool, type UIMessage } from 'ai'
-import { Effect } from 'effect'
-import { onTestFinished } from 'vitest'
+import { Deferred, Effect, Option } from 'effect'
 import { z } from 'zod'
 import { PlainChat } from '../fixtures/chat.ts'
 import { respond } from '../main.ts'
-import { call, context, host, modelText, signal, texts } from './fixtures/host.ts'
+import { call, context, host, modelText, texts } from './fixtures/host.ts'
 
 /** Pi inbox.js:44 places steers at the post-tools boundary, while follow-ups wait for final.
  * A real pending SDK tool leaves time for a second Chat to POST; durable queue publication releases
  * the first tool, so these three host choices require no scheduler or token-rate timing assumption. */
 for (const whenBusy of ['steer', 'followUp', 'default'] as const)
   it.live(`applies host ${whenBusy} policy through Chat and the native input boundary`, () =>
-    Effect.promise(async () => {
-      const entered = signal()
-      const released = signal()
-      const admitted = signal()
-      onTestFinished(() => released.resolve())
-      const fixture = await host(
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const released = yield* Deferred.make<void>()
+      const admitted = yield* Deferred.make<void>()
+      const fixture = yield* host(
         {
           work: tool({
             inputSchema: z.object({}),
-            execute: async () => {
-              entered.resolve()
-              await released.promise
-              return 'worked'
-            },
+            execute: () =>
+              runForPi(
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(entered, undefined)
+                  yield* Deferred.await(released)
+                  return 'worked'
+                }),
+                undefined,
+              ),
           }),
         },
         {},
       )
-      const opened = await fixture.open()
+      const opened = yield* fixture.open()
+      // Registered after the host: release its tool before the host finalizer waits for idle.
+      yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined))
       let afterTools = ''
       opened.faux.setResponses([
         call('work', {}, 'work'),
@@ -44,7 +49,7 @@ for (const whenBusy of ['steer', 'followUp', 'default'] as const)
       ])
       const first = new PlainChat({ transport: opened.transport })
       const sending = first.sendMessage({ text: 'First input' })
-      await entered.promise
+      yield* Deferred.await(entered)
       const unsubscribe = opened.harness.subscribeCommits((publication) => {
         if (
           publication.changes.some(
@@ -54,41 +59,41 @@ for (const whenBusy of ['steer', 'followUp', 'default'] as const)
               change.value.status === 'queued',
           )
         )
-          admitted.resolve()
+          Deferred.doneUnsafe(admitted, Effect.void)
       })
-      onTestFinished(unsubscribe)
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe))
       const second = new PlainChat({
         generateId: () => 'busy-second',
         transport: new DefaultChatTransport<UIMessage>({
           api: 'http://durable.test/chat',
-          fetch: async (url, init) => {
+          fetch: (url, init) => {
             const request = new Request(url, init)
-            const response = await (whenBusy === 'default'
+            return whenBusy === 'default'
               ? respond(opened.harness, opened.root.id, request, context)
-              : respond(
-                  opened.harness,
-                  opened.root.id,
-                  { request, options: { whenBusy } },
-                  context,
-                ))
-            return response
+              : respond(opened.harness, opened.root.id, { request, options: { whenBusy } }, context)
           },
         }),
       })
       const posting = second.sendMessage({ text: 'Second input' })
-      await admitted.promise
-      const inbox = await opened.harness.snapshot(InboxDoc, opened.root.id, context)
-      if (inbox === undefined) throw new Error('Expected queued input document')
-      const item = inbox.items.find((candidate) => candidate.mode !== 'write')
-      if (item === undefined) throw new Error('Expected queued user input')
+      yield* Deferred.await(admitted)
+      const inbox = Option.getOrThrow(
+        Option.fromNullishOr(
+          yield* Effect.promise(() => opened.harness.snapshot(InboxDoc, opened.root.id, context)),
+        ),
+      )
+      const item = Option.getOrThrow(
+        Option.fromNullishOr(inbox.items.find((candidate) => candidate.mode !== 'write')),
+      )
       expect(item.mode).toBe(whenBusy === 'default' ? 'followUp' : whenBusy)
-      released.resolve()
-      await Promise.all([sending, posting])
+      yield* Deferred.succeed(released, undefined)
+      yield* Effect.all([Effect.promise(() => sending), Effect.promise(() => posting)], {
+        concurrency: 'unbounded',
+      })
       expect(first.status).toBe('ready')
       expect(second.status).toBe('ready')
-      if (first.lastMessage === undefined || second.lastMessage === undefined)
-        throw new Error('Expected both assistant outcomes')
-      expect(texts(first.lastMessage)).toEqual(['First finished.'])
+      const firstMessage = Option.getOrThrow(Option.fromNullishOr(first.lastMessage))
+      const secondMessage = Option.getOrThrow(Option.fromNullishOr(second.lastMessage))
+      expect(texts(firstMessage)).toEqual(['First finished.'])
       expect(first.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
       expect(second.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
       if (whenBusy === 'steer') {
@@ -97,8 +102,8 @@ for (const whenBusy of ['steer', 'followUp', 'default'] as const)
         expect(opened.faux.state.callCount).toBe(2)
       } else {
         expect(afterTools).not.toContain('Second input')
-        expect(texts(second.lastMessage)).toEqual(['Second finished.'])
-        expect(second.lastMessage.id).not.toBe(first.lastMessage.id)
+        expect(texts(secondMessage)).toEqual(['Second finished.'])
+        expect(secondMessage.id).not.toBe(firstMessage.id)
         expect(opened.faux.state.callCount).toBe(3)
       }
     }),

@@ -1,3 +1,4 @@
+import { consumeReadable } from '../fixtures/reading.ts'
 import { Effect } from 'effect'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
 import { createModels } from '@earendil-works/pi-ai/models'
@@ -13,7 +14,7 @@ import { describe, expect, it } from '@effect/vitest'
 import { onTestFinished } from 'vitest'
 import { z } from 'zod'
 import { decide, history, streamRun, toolsExtension, waiting } from '../main.ts'
-import { consume, texts } from '../conformance/fixtures/host.ts'
+import { texts } from '../conformance/fixtures/host.ts'
 import { postgresFixture } from './testing.ts'
 const context = BACKGROUND_CONTEXT
 const testUrl = Option.fromNullishOr(process.env['VIVID_TEST_DATABASE_URL'])
@@ -104,7 +105,7 @@ describe.skipIf(Option.isNone(testUrl))('PostgreSQL run persistence', () => {
             context,
           ),
         ),
-        (_await3) => Effect.promise(() => consume(_await3)),
+        (_await3) => consumeReadable(_await3, Option.none()),
       )
       yield* Effect.promise(() => before.root.waitForIdle(context))
       expect(texts(streamed.message)).toEqual(['The turn completed.'])
@@ -149,7 +150,7 @@ describe.skipIf(Option.isNone(testUrl))('PostgreSQL run persistence', () => {
             context,
           ),
         ),
-        (_await4) => Effect.promise(() => consume(_await4)),
+        (_await4) => consumeReadable(_await4, Option.none()),
       )
       expect(parked.chunks.some((chunk) => chunk.type === 'tool-approval-request')).toBe(true)
       const holds = yield* Effect.promise(() => waiting(before.harness, before.root.id, context))

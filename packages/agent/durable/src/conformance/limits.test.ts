@@ -9,7 +9,8 @@ it.live.each([NaN, Infinity, -Infinity, -1, 1.5])(
   'rejects invalid byte policy %s at all ingresses',
   (value) =>
     Effect.gen(function* () {
-      const opened = yield* Effect.promise(async () => (await host({}, {})).open())
+      const fixture = yield* host({}, {})
+      const opened = yield* fixture.open()
       const options = { maxPartBytes: value }
       const turn = Core.ChatTurn.cases.Input.make({
         messageId: 'limit',
