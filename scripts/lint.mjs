@@ -7,6 +7,9 @@ const repositoryRoot = NodePath.resolve(
   '..',
 )
 
+/** One worker unless the caller named a count. */
+const workersFrom = (setting) => (setting === undefined ? '1' : setting)
+
 /**
  * Keep package checks in the root config's coordinate system: overrides and
  * design-plugin paths are root-relative. Each package owns its whole directory;
@@ -27,18 +30,16 @@ export function runLint(root, cwd, args, environment) {
     process.stderr.write('--workspace is only valid for the root fix command\n')
     return 1
   }
-  const threads =
-    environment.VIVID_LINT_THREADS === undefined ? '1' : environment.VIVID_LINT_THREADS
   const flags = [
     '--type-aware',
-    `--threads=${threads}`,
+    `--threads=${workersFrom(environment.VIVID_LINT_THREADS)}`,
     ...args.filter((arg) => arg !== '--workspace'),
   ]
   if (scope === '' && !wholeWorkspace) {
     flags.push('--ignore-pattern', 'apps/**', '--ignore-pattern', 'packages/**')
   }
   flags.push(scope === '' ? '.' : scope)
-  const goWorkers = environment.GOMAXPROCS === undefined ? '1' : environment.GOMAXPROCS
+  const goWorkers = workersFrom(environment.GOMAXPROCS)
   const result = NodeChildProcess.spawnSync(
     process.execPath,
     [NodePath.join(root, 'node_modules', 'oxlint', 'bin', 'oxlint'), ...flags],
