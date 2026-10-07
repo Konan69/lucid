@@ -6,6 +6,7 @@ import type { ConversationId, Extension, Harness } from '@earendil-works/pi-dura
 import {
   createUIMessageStreamResponse,
   type ToolSet,
+  type ToolExecutionOptions,
   type UIMessage,
   type UIMessageChunk,
 } from 'ai'
@@ -19,7 +20,7 @@ import type { RunInput } from './stream.ts'
 import type { ResumeInput } from './resume.ts'
 import { prepareRun } from './stream.ts'
 import { turnFailure, TurnBody, respondWithPolicy, type TurnInput } from './respond.ts'
-import type { ToolsOptions } from './tools.ts'
+import type { ToolsOptions as EffectToolsOptions, ToolScope } from './tools.ts'
 import { httpStream } from './http.ts'
 import { inputPolicy, type InputOptions } from './input.ts'
 
@@ -34,12 +35,31 @@ const decodeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(TurnBody)
 /** Compile the object ingress once; reject the original tagged class at the Promise boundary. */
 export const decodeTurn = Function.flow(Core.decodeTurn, (effect) => Effect.runPromise(effect))
 
-/** Promise facade; tool registration has one Effect implementation. */
-export const toolsExtension = (
+/** Preserve the SDK ingress type; contextSchema supplies the tool's concrete runtime contract. */
+export type ToolContext = ToolExecutionOptions<unknown>['context']
+
+/** Promise hosts resolve per-call authority with a value or Promise; core hosts return an Effect. */
+export type ToolsOptions<ContextValue = ToolContext> = Omit<EffectToolsOptions, 'context'> & {
+  readonly context?: (scope: ToolScope) => ContextValue | PromiseLike<ContextValue>
+}
+
+/** Convert the resolver once at this Promise facade, before registering the shared Effect bridge. */
+export const toolsExtension = <ContextValue = ToolContext>(
   name: string,
   tools: ToolSet,
-  options: ToolsOptions = {},
-): Promise<Extension> => Effect.runPromise(Core.toolsExtension(name, tools, options))
+  options: ToolsOptions<ContextValue> = {},
+): Promise<Extension> => {
+  const { context, ...settings } = options
+  if (context === undefined) return Effect.runPromise(Core.toolsExtension(name, tools, settings))
+  // Keep the unsafe callback in this classified Promise entry; core wraps its original failure once.
+  const resolve = Effect.fn('Durable.resolvePromiseToolContext')(function* (scope: ToolScope) {
+    return yield* Effect.tryPromise(async () => context(scope)).pipe(
+      Effect.mapError((error) => error.cause),
+    )
+  })
+  const resolved: EffectToolsOptions = { ...settings, context: resolve }
+  return Effect.runPromise(Core.toolsExtension(name, tools, resolved))
+}
 
 /** Preserve the original tagged error classes at the Promise rejection boundary. */
 export const decide = (
@@ -235,7 +255,7 @@ export {
 } from './errors.ts'
 export type { Answer, Decision, Settlement, Plan, Source } from './holds.ts'
 export type { Waiting } from './waiting.ts'
-export type { Replay, ToolsOptions } from './tools.ts'
+export type { Replay } from './tools.ts'
 export type { RunInput } from './stream.ts'
 export type { ResumeInput } from './resume.ts'
 export type { RunState, Step, Chunk } from './chunks.ts'
@@ -300,3 +320,12 @@ export function holdId(text: string): Core.HoldId {
   if (Result.isFailure(result)) throw new HoldIdInvalid({})
   return result.success
 }
+
+export { type ToolScope } from './tools.ts'
+export {
+  ToolContextFailed,
+  ToolApprovalUnsupported,
+  ToolApprovalContextUnavailable,
+  ToolNameDuplicated,
+  ToolApprovalFailed,
+} from './errors.ts'

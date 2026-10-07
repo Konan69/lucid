@@ -296,3 +296,62 @@ export class HistoryPageInvalid extends Schema.TaggedError<HistoryPageInvalid>()
     return 'History limit must be a positive integer'
   }
 }
+
+/** A resolver or SDK context validator failed before the tool acquired its scoped authority. */
+export class ToolContextFailed extends Schema.TaggedError<ToolContextFailed>()(
+  'ToolContextFailed',
+  { toolName: Schema.String, cause: Schema.Defect() },
+  { title: 'ToolContextFailed' },
+) {
+  /** Name the tool without discarding the resolver's diagnostic. */
+  override get message() {
+    const text = Predicate.isError(this.cause) ? this.cause.message : String(this.cause)
+    return `Tool ${this.toolName} context failed: ${text}`
+  }
+}
+
+/** A durable approval rule cannot suspend or produce a truthy value other than a boolean. */
+export class ToolApprovalUnsupported extends Schema.TaggedError<ToolApprovalUnsupported>()(
+  'ToolApprovalUnsupported',
+  { toolName: Schema.String },
+  { title: 'ToolApprovalUnsupported' },
+) {
+  /** Explain the unsupported asynchronous contract without awaiting an unsafe decision. */
+  override get message() {
+    return `Tool ${this.toolName}: an asynchronous approval function is not supported; needsApproval must return a synchronous boolean`
+  }
+}
+
+/** Approval presentation has validated arguments but no execution authority or call options. */
+export class ToolApprovalContextUnavailable extends Schema.TaggedError<ToolApprovalContextUnavailable>()(
+  'ToolApprovalContextUnavailable',
+  { toolName: Schema.String, field: Schema.Literals(['toolCallId', 'messages', 'context']) },
+  { title: 'ToolApprovalContextUnavailable' },
+) {
+  /** Refuse missing context explicitly, so a predicate cannot approve against invented identity. */
+  override get message() {
+    return `Tool ${this.toolName} approval cannot access ${this.field}; only a pure synchronous predicate over validated input is supported`
+  }
+}
+
+/** Hook ownership cannot disambiguate duplicate names across selected extensions in Pi 1.0.4. */
+export class ToolNameDuplicated extends Schema.TaggedError<ToolNameDuplicated>()(
+  'ToolNameDuplicated',
+  { toolName: Schema.String },
+  { title: 'ToolNameDuplicated' },
+) {
+  override get message() {
+    return `Tool ${this.toolName}: tool names must be unique across extensions`
+  }
+}
+
+/** A broken approval policy blocks one call without failing stream or history readers. */
+export class ToolApprovalFailed extends Schema.TaggedError<ToolApprovalFailed>()(
+  'ToolApprovalFailed',
+  { toolName: Schema.String, cause: Schema.Defect() },
+  { title: 'ToolApprovalFailed' },
+) {
+  override get message() {
+    return `Tool ${this.toolName} approval failed: ${Predicate.isError(this.cause) ? this.cause.message : String(this.cause)}`
+  }
+}

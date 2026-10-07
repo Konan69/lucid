@@ -255,9 +255,9 @@ it('should forward options to makeRequest when auto-sending', async () => {
 })
 
 // AI SDK packages/ai/src/ui/chat.test.ts:2844-2986 expects the error output to complete the call.
-// Gap: HTTP ingress recognizes only output-available; output-error leaves the real answer hold open.
+// HTTP error results settle the waiting answer hold and reach the model as tool errors.
 // Ports packages/ai/src/ui/chat.test.ts:2844 — Chat > sendAutomaticallyWhen > should send message when a tool error result is submitted.
-it.fails('should send message when a tool error result is submitted', async () => {
+it('should send message when a tool error result is submitted', async () => {
   const fixture = await shop()
   const opened = await fixture.open()
   opened.faux.setResponses([
@@ -285,9 +285,9 @@ it.fails('should send message when a tool error result is submitted', async () =
 })
 
 // AI SDK packages/ai/src/ui/chat.test.ts:2988-3192, process-ui-message-stream.test.ts:6343-6609.
-// Gap: registered SDK dynamicTool calls are emitted as static tool-name parts, losing dynamic identity.
+// Registered SDK dynamicTool calls retain dynamic identity through client output settlement.
 // Ports packages/ai/src/ui/chat.test.ts:2988 — Chat > sendAutomaticallyWhen > should send message when a dynamic tool output is submitted.
-it.fails('should send message when a dynamic tool output is submitted', async () => {
+it('should send message when a dynamic tool output is submitted', async () => {
   const fixture = await host(
     { dynamic: dynamicTool({ inputSchema: z.object({ question: z.string() }) }) },
     {},
@@ -670,9 +670,9 @@ it('forwards approval options to makeRequest when auto-sending', async () => {
 })
 
 // AI SDK packages/ai/src/ui/process-ui-message-stream.test.ts:8030/9117/9853, dynamic approval request/result/denial final state.
-// Gap: SDK dynamicTool registration emits a static part both while parked and after settlement.
+// SDK dynamicTool registration retains dynamic identity while parked and after settlement.
 // Ports packages/ai/src/ui/process-ui-message-stream.test.ts:8030 — processUIMessageStream > tool approval requests (dynamic tool) > should have the correct final message state.
-it.fails.each([true, false])(
+it.each([true, false])(
   'retains dynamic identity through approval=%s and execution',
   async (approved) => {
     let executions = 0
@@ -734,9 +734,9 @@ it.fails.each([true, false])(
 
 // AI SDK packages/ai/src/ui/process-ui-message-stream.test.ts:7599/7707/7717/7772, tool title support:
 // includes title in static/dynamic invocation parts and preserves it in output/error states.
-// Gap: SDK ToolSet accepts title, but toolsExtension omits it from the emitted tool input.
+// SDK titles are retained through the emitted input and output/error states.
 // Ports packages/ai/src/ui/process-ui-message-stream.test.ts:7599 — processUIMessageStream > tool title support > static tool with title > should include title in tool invocation parts.
-it.fails.each([
+it.each([
   { kind: 'static', failed: false },
   { kind: 'dynamic', failed: false },
   { kind: 'static', failed: true },
@@ -777,11 +777,10 @@ it.fails.each([
 
 // AI SDK packages/ai/src/ui/process-ui-message-stream.test.ts:7521/9422, tool returns preliminary results,
 // including initial tool execution after approval with preliminary tool output.
-// Gap: SDK execute's AsyncIterable final output is serialized as {} instead of the last yielded value.
-// Preliminary values are deliberately not streamed. The tools lane's final-value fix flips these
-// expected failures at merge; preserve all static/dynamic and approval/no-approval variants.
+// AsyncIterable execution retains its final yielded value. Preliminary values are deliberately
+// not streamed; preserve all static/dynamic and approval/no-approval variants.
 // Ports packages/ai/src/ui/process-ui-message-stream.test.ts:7521 — processUIMessageStream > preliminary tool results > should have the correct final message state.
-it.fails.each([
+it.each([
   { kind: 'static', approval: false },
   { kind: 'static', approval: true },
   { kind: 'dynamic', approval: false },

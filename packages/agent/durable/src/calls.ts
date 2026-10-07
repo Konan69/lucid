@@ -2,7 +2,7 @@ import type { Chunk } from './chunks.ts'
 import { Match, Option } from 'effect'
 
 import type { HoldId } from './errors.ts'
-import { CallLookup, holdKind, type Plan } from './holds.ts'
+import { CallLookup, CallDecision, type Plan } from './holds.ts'
 
 /** What the stream must know about a conversation's tools to present their calls. */
 export type Desk = {
@@ -11,6 +11,7 @@ export type Desk = {
   /** The plan of a bridged tool, by name; `undefined` for any other Pi Durable tool. */
   readonly plan: (toolName: string) => Option.Option<Plan>
   /** Every presentation uses the same task/provenance lookup as hooks and admission. */
+  readonly decision: (chunk: Extract<Chunk, { type: 'tool-input-available' }>) => CallDecision
   readonly call: (callId: string) => CallLookup
   readonly origin: (chunk: Extract<Chunk, { toolCallId: string }>) => Option.Option<CallLookup>
   readonly hold: (holdId: HoldId) => CallLookup
@@ -79,22 +80,56 @@ function approvalResponse(found: Extract<CallLookup, { _tag: 'Settled' }>): Chun
     : response
 }
 
+/** The SDK reader chooses static/dynamic parts and retains titles from either input phase. */
+function toolPresentation<
+  Input extends Extract<
+    Chunk,
+    {
+      type:
+        | 'tool-input-start'
+        | 'tool-input-available'
+        | 'tool-input-error'
+        | 'tool-output-available'
+        | 'tool-output-error'
+    }
+  >,
+>(input: Input, plan: Pick<Plan, 'dynamic' | 'title'>) {
+  const { dynamic: _dynamic, ...base } = input
+  const marked = plan.dynamic ? { ...base, dynamic: true } : base
+  return Option.match(plan.title, {
+    onNone: () => marked,
+    onSome: (title) => ({ ...marked, title }),
+  })
+}
+
+/** Stored identity wins for a settled task even if the definition was removed or replaced. */
+function presentationFor(
+  chunk: Extract<Chunk, { toolCallId: string }>,
+  desk: Desk,
+  plan: Option.Option<Plan>,
+) {
+  const found = Option.getOrElse(desk.origin(chunk), () => desk.call(chunk.toolCallId))
+  const recorded = CallLookup.guards.Settled(found) ? found.presentation : Option.none()
+  return Option.isSome(recorded)
+    ? Option.some({
+        dynamic: recorded.value.dynamic,
+        title: Option.fromNullishOr(recorded.value.title),
+      })
+    : plan
+}
+
 /**
- * A call whose input is complete. A bridged tool is a typed tool on the client, so it loses the
- * `dynamic` mark. A call that needs approval is followed by its request, and by the response too
+ * A completed input carries the definition's static/dynamic identity and title. Approval calls
+ * are followed by their request, and by the response too
  * when it is already decided, which is the case for a client that attaches after the decision.
  */
 function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown {
   const plan = desk.plan(chunk.toolName)
-  if (Option.isNone(plan)) {
-    return {
-      round: { ...round, running: new Set([...round.running, chunk.toolCallId]) },
-      chunks: [chunk],
-    }
-  }
-  const { dynamic: _dynamic, ...typed } = chunk
-  const kind = holdKind(plan.value, chunk.input)
   const found = Option.getOrElse(desk.origin(chunk), () => desk.call(chunk.toolCallId))
+  const metadata = presentationFor(chunk, desk, plan)
+  const typed = Option.isNone(metadata) ? chunk : toolPresentation(chunk, metadata.value)
+  const chosen = desk.decision(chunk)
+  const kind = CallDecision.guards.Held(chosen) ? Option.some(chosen.kind) : Option.none()
   const request: readonly Chunk[] =
     Option.contains(kind, 'approval') && CallLookup.isAnyOf(['Ready', 'Settled'])(found)
       ? [
@@ -135,21 +170,23 @@ function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown 
 function showVisible(round: Round, chunk: Chunk, desk: Desk): Shown {
   return Match.value(chunk).pipe(
     Match.when({ type: 'tool-input-start' }, (input): Shown => {
-      if (Option.isNone(desk.plan(input.toolName))) return { round, chunks: [input] }
-      const { dynamic: _dynamic, ...typed } = input
-      return { round, chunks: [typed] }
+      const plan = presentationFor(input, desk, desk.plan(input.toolName))
+      return { round, chunks: [Option.isNone(plan) ? input : toolPresentation(input, plan.value)] }
     }),
     Match.when({ type: 'tool-input-available' }, (input) => inputAvailable(round, input, desk)),
-    Match.when({ type: 'tool-output-available' }, (output): Shown => ({
-      round: close(round, output.toolCallId),
-      chunks: [output],
-    })),
+    Match.when({ type: 'tool-output-available' }, (output): Shown => {
+      const metadata = presentationFor(output, desk, Option.none())
+      return {
+        round: close(round, output.toolCallId),
+        chunks: [Option.isNone(metadata) ? output : toolPresentation(output, metadata.value)],
+      }
+    }),
     Match.when({ type: 'tool-input-error' }, (input): Shown => {
       // This failed input never became executable. Keep bridged parts typed in live and history.
-      const { dynamic: _dynamic, ...typed } = input
+      const plan = presentationFor(input, desk, desk.plan(input.toolName))
       return {
         round: close(round, input.toolCallId),
-        chunks: [Option.isNone(desk.plan(input.toolName)) ? input : typed],
+        chunks: [Option.isNone(plan) ? input : toolPresentation(input, plan.value)],
       }
     }),
     Match.when({ type: 'tool-output-error' }, (output): Shown => {
@@ -316,7 +353,7 @@ function refresh(shown: Shown, desk: Desk): Shown {
   for (const [id, input] of round.inputs) {
     if (round.awaiting.has(id) || !CallLookup.guards.Ready(desk.call(id))) continue
     const plan = desk.plan(input.toolName)
-    if (Option.isNone(plan) || Option.isNone(holdKind(plan.value, input.input))) continue
+    if (Option.isNone(plan) || !CallDecision.guards.Held(desk.decision(input))) continue
     const next = inputAvailable(round, input, desk)
     round = next.round
     chunks.push(...next.chunks.filter((chunk) => chunk.type !== 'tool-input-available'))

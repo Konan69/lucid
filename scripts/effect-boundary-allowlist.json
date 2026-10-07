@@ -282,5 +282,10 @@
     "file": "packages/agent/durable/src/postgres/bench/stream.ts",
     "classification": "third-party-adapter",
     "symbols": ["streamingWrites"]
+  },
+  {
+    "file": "packages/agent/durable/src/holds.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["readPinnedDecision", "pinDecision", "taskDecision"]
   }
 ]

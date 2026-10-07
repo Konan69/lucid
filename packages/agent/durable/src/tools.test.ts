@@ -1,4 +1,5 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
+import { getCurrentTools } from '@earendil-works/pi-ai/utils/transcript'
 import { createModels } from '@earendil-works/pi-ai/models'
 import {
   fauxAssistantMessage,
@@ -6,14 +7,17 @@ import {
   fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux'
 import { createRegistry } from '@earendil-works/pi-durable'
-import { tool } from 'ai'
+import { tool, lastAssistantMessageIsCompleteWithToolCalls } from 'ai'
 import { expect, it } from '@effect/vitest'
 import { Effect, Option } from 'effect'
 import { z } from 'zod'
 
-import { streamRun, toolsExtension, ToolSchemaFailed } from './core.ts'
+import { streamRun, toolsExtension, ToolSchemaFailed, type Replay } from './core.ts'
 import { memory } from './fixtures/harness.ts'
 import { consume } from './fixtures/reading.ts'
+import { PlainChat } from './fixtures/chat.ts'
+import { host, consume as consumeSdk, call, signal } from './conformance/fixtures/host.ts'
+import { streamRun as streamSdk, answer, waiting } from './main.ts'
 
 const context = BACKGROUND_CONTEXT
 
@@ -224,3 +228,250 @@ it.live('persists null for a void tool and gives the model explicit null text', 
     expect(message.parts.at(-1)).toMatchObject({ type: 'text', text: 'Notified.' })
   }),
 )
+
+/** Refuse SDK features whose behavior cannot be represented by Pi's native tool registration. */
+for (const sample of [
+  {
+    name: 'provider-executed',
+    value: tool({
+      type: 'provider',
+      id: 'test.remote',
+      args: {},
+      isProviderExecuted: true,
+      inputSchema: z.object({}),
+      outputSchema: z.object({}),
+      supportsDeferredResults: true,
+    }),
+  },
+  {
+    name: 'provider-defined',
+    value: tool({
+      type: 'provider',
+      id: 'test.local',
+      args: {},
+      isProviderExecuted: false,
+      inputSchema: z.object({}),
+      execute: async () => 'local',
+    }),
+  },
+  {
+    name: 'functional-description',
+    value: tool({
+      description: () => 'Scoped description',
+      inputSchema: z.object({}),
+      execute: async () => 'done',
+    }),
+  },
+  {
+    name: 'deferred-discovery',
+    value: tool({ deferLoading: true, inputSchema: z.object({}), execute: async () => 'done' }),
+  },
+  {
+    name: 'provider-options',
+    value: tool({
+      providerOptions: { openai: { cacheControl: 'required' } },
+      inputSchema: z.object({}),
+      execute: async () => 'done',
+    }),
+  },
+  {
+    name: 'input-start',
+    value: tool({ onInputStart: () => {}, inputSchema: z.object({}), execute: async () => 'done' }),
+  },
+  {
+    name: 'input-delta',
+    value: tool({ onInputDelta: () => {}, inputSchema: z.object({}), execute: async () => 'done' }),
+  },
+  {
+    name: 'input-available',
+    value: tool({
+      onInputAvailable: () => {},
+      inputSchema: z.object({}),
+      execute: async () => 'done',
+    }),
+  },
+  { name: 'answer-approval', value: tool({ needsApproval: true, inputSchema: z.object({}) }) },
+])
+  it.live(`refuses ${sample.name} tools at registration`, () =>
+    Effect.gen(function* () {
+      const failed = yield* Effect.flip(
+        toolsExtension('unsupported', { [sample.name]: sample.value }, {}),
+      )
+      expect(failed).toBeInstanceOf(ToolSchemaFailed)
+      expect(failed.toolName).toBe(sample.name)
+    }),
+  )
+
+/** Empty provider metadata has no semantics to lose; non-empty metadata remains refused above. */
+it.live('runs a tool with empty providerOptions', () =>
+  Effect.promise(async () => {
+    const fixture = await host(
+      {
+        empty: tool({
+          providerOptions: {},
+          inputSchema: z.object({}),
+          execute: async () => 'accepted',
+        }),
+      },
+      {},
+    )
+    const opened = await fixture.open()
+    opened.faux.setResponses([call('empty', {}, 'empty'), fauxAssistantMessage('Done.')])
+    const result = await consumeSdk(
+      await streamSdk(
+        opened.harness,
+        { conversationId: opened.root.id, content: 'Run', requestId: 'empty-options' },
+        context,
+      ),
+    )
+    expect(result.message.parts.find((part) => part.type === 'tool-empty')).toMatchObject({
+      output: 'accepted',
+    })
+  }),
+)
+
+/** Pi exposes constrained sampling through registration; the faux request must receive the declaration. */
+for (const strict of [true, false, undefined])
+  it.live(`carries SDK strict=${String(strict)} into the Pi model request`, () =>
+    Effect.promise(async () => {
+      const fixture = await host(
+        { sampling: tool({ strict, inputSchema: z.object({}), execute: async () => 'sampled' }) },
+        {},
+      )
+      const opened = await fixture.open()
+      opened.faux.setResponses([
+        (request) => {
+          const offered = getCurrentTools(request.messages).find(
+            (entry) => entry.name === 'sampling',
+          )
+          if (offered === undefined) throw new Error('Expected model tool declaration')
+          expect(offered.constrainedSampling).toEqual(
+            strict === true ? { type: 'json_schema', strict: 'prefer' } : strict,
+          )
+          return call('sampling', {}, 'sampling')
+        },
+        fauxAssistantMessage('Done.'),
+      ])
+      const result = await consumeSdk(
+        await streamSdk(
+          opened.harness,
+          { conversationId: opened.root.id, content: 'Run', requestId: `strict-${String(strict)}` },
+          context,
+        ),
+      )
+      expect(result.message.parts.find((part) => part.type === 'tool-sampling')).toMatchObject({
+        output: 'sampled',
+      })
+    }),
+  )
+
+/** No input exists at registration to evaluate a predicate; neither form can create two kinds of hold. */
+for (const sample of [
+  { name: 'boolean', rule: true },
+  { name: 'function', rule: () => false },
+])
+  it.live(`refuses host ${sample.name} approval on an answer-only tool`, () =>
+    Effect.gen(function* () {
+      const failed = yield* Effect.flip(
+        toolsExtension(
+          'unsupported',
+          { ask: tool({ inputSchema: z.object({}) }) },
+          { approval: { ask: sample.rule } },
+        ),
+      )
+      expect(failed).toBeInstanceOf(ToolSchemaFailed)
+      expect(failed.toolName).toBe('ask')
+      expect(failed.message).toContain('approval before person-supplied output')
+    }),
+  )
+
+/** Reserved names must respect own replay entries while ignoring builtin and custom prototypes. */
+for (const name of ['constructor', '__proto__'])
+  for (const policy of ['absent', 'inherited', 'own'] as const)
+    it.live(`uses own per-tool options for server tool ${name} (${policy})`, () =>
+      Effect.promise(async () => {
+        const replay: Record<string, Replay> = {}
+        if (policy === 'inherited') Object.setPrototypeOf(replay, { [name]: 'safe' })
+        if (policy === 'own')
+          Object.defineProperty(replay, name, { value: 'safe', enumerable: true })
+        const fixture = await host(
+          { [name]: tool({ inputSchema: z.object({}), execute: async () => 'done' }) },
+          { replay },
+        )
+        const opened = await fixture.open()
+        const registered = (await opened.root.agent(context)).tools.find(
+          (entry) => entry.name === name,
+        )
+        if (registered === undefined) throw new Error('Expected registered tool')
+        expect(registered.replay).toBe(policy === 'own' ? 'safe' : 'unsafe')
+        opened.faux.setResponses([call(name, {}, name), fauxAssistantMessage('Done.')])
+        const result = await consumeSdk(
+          await streamSdk(
+            opened.harness,
+            { conversationId: opened.root.id, content: 'Run', requestId: name },
+            context,
+          ),
+        )
+        expect(result.message.parts.find((part) => part.type === `tool-${name}`)).toMatchObject({
+          output: 'done',
+        })
+      }),
+    )
+
+/** Inherited answer/approval declarations have no authority; a named own false still overrides SDK approval. */
+for (const name of ['constructor', '__proto__'])
+  it.live(`ignores inherited policies and accepts an own answer policy for ${name}`, () =>
+    Effect.promise(async () => {
+      const answers: Record<string, 'wait' | 'later'> = {}
+      const approval: Record<string, boolean> = {}
+      Object.setPrototypeOf(answers, { [name]: 'later' })
+      Object.setPrototypeOf(approval, { [name]: true })
+      const fixture = await host(
+        { [name]: tool({ inputSchema: z.object({}), outputSchema: z.string() }) },
+        { answers, approval },
+      )
+      const opened = await fixture.open()
+      opened.faux.setResponses([call(name, {}, name), fauxAssistantMessage('Answered.')])
+      let completed = signal()
+      const chat = new PlainChat({
+        transport: opened.transport,
+        sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+        onFinish: () => completed.resolve(),
+        onError: (error) => completed.reject(error),
+      })
+      await chat.sendMessage({ text: 'Ask' })
+      const rows = await waiting(opened.harness, opened.root.id, context)
+      expect(rows).toHaveLength(1)
+      const row = rows[0]
+      if (row === undefined) throw new Error('Expected person-answer hold')
+      expect(row.kind).toBe('answer')
+      completed = signal()
+      await chat.addToolOutput({ tool: name, toolCallId: name, output: 'yes' })
+      await completed.promise
+      if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
+      expect(chat.lastMessage.parts.find((part) => part.type === `tool-${name}`)).toMatchObject({
+        output: 'yes',
+      })
+
+      const own = await host(
+        { [name]: tool({ needsApproval: true, inputSchema: z.object({}) }) },
+        { answers: { [name]: 'later' }, approval: { [name]: false } },
+      )
+      const other = await own.open()
+      other.faux.setResponses([call(name, {}, name), fauxAssistantMessage('Later.')])
+      const result = await consumeSdk(
+        await streamSdk(
+          other.harness,
+          { conversationId: other.root.id, content: 'Ask later', requestId: name },
+          context,
+        ),
+      )
+      expect(result.message.parts.find((part) => part.type === `tool-${name}`)).toMatchObject({
+        output: { status: 'asked' },
+      })
+      const held = (await waiting(other.harness, other.root.id, context))[0]
+      if (held === undefined) throw new Error('Expected later answer hold')
+      other.faux.setResponses([fauxAssistantMessage('Received.')])
+      await answer(other.harness, other.root.id, { holdId: held.holdId, output: 'yes' }, context)
+    }),
+  )

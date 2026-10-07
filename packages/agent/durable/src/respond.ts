@@ -16,7 +16,8 @@ import {
 
 import { connectionLostInput } from './client.ts'
 import { HoldId, RunMissing, TurnInvalid, TurnRegenerate } from './errors.ts'
-import { answerObserved, decideObserved } from './holds.ts'
+import { answerObserved, decideObserved, errorObserved } from './holds.ts'
+import { isConnectionLostAnswer } from './answers.ts'
 import { runMessageId } from './chunks.ts'
 import * as Pi from './pi.ts'
 import { LiveDoc } from '@earendil-works/pi-durable'
@@ -39,7 +40,12 @@ export const ChatTurn = Schema.TaggedUnion({
         reason: Schema.optionalKey(Schema.String),
       }),
     ),
-    outputs: Schema.Array(Schema.Struct({ callId: Schema.String, output: Schema.MutableJson })),
+    outputs: Schema.Array(
+      Schema.Union([
+        Schema.Struct({ callId: Schema.String, output: Schema.MutableJson }),
+        Schema.Struct({ callId: Schema.String, errorText: Schema.String }),
+      ]),
+    ),
   },
 })
 export type ChatTurn = typeof ChatTurn.Type
@@ -88,6 +94,12 @@ const Part = Schema.Union([
     state: Schema.Literal('output-available'),
     output: Schema.MutableJson,
   }),
+  Schema.Struct({
+    type: ToolName,
+    toolCallId: Schema.String,
+    state: Schema.Literal('output-error'),
+    errorText: Schema.String,
+  }),
   Schema.Struct({ type: ToolName, toolCallId: Schema.String }),
   // Unknown part types carry no input/settlement semantics and are intentionally discarded.
   Schema.Struct({ type: Schema.String }),
@@ -125,9 +137,13 @@ function resumed(message: Extract<typeof Message.Type, { role: 'assistant' }>) {
     const { id, ...decision } = part.approval
     return [{ callId: part.toolCallId, holdId: id, ...decision }]
   })
-  const outputs = tools.flatMap((part) =>
-    'output' in part ? [{ callId: part.toolCallId, output: part.output }] : [],
-  )
+  const outputs = tools.flatMap((part): (typeof ChatTurn.cases.Resume.Type)['outputs'] => {
+    if ('output' in part) return [{ callId: part.toolCallId, output: part.output }]
+    // The transport's reserved marker retains call identity, but has no settlement semantics.
+    if ('errorText' in part && !isConnectionLostAnswer(part.errorText))
+      return [{ callId: part.toolCallId, errorText: part.errorText }]
+    return []
+  })
   const resume = {
     steps: parts.filter((part) => part.type === 'step-start').length,
     known: tools.map((part) => part.toolCallId),
@@ -241,13 +257,24 @@ const settleHolds = Effect.fn('Durable.settleHolds')(function* (
   )
   for (const output of turn.outputs) {
     const holdId = answerable.get(output.callId)
-    if (holdId !== undefined)
-      yield* answerObserved(
-        harness,
-        conversationId,
-        { given: { holdId, output: output.output }, held },
-        context,
-      ).pipe(Effect.catchTag('CallNotWaiting', () => Effect.void))
+    if (holdId === undefined) continue
+    // The reconnect client's local marker is a partial-input failure, never a person's settlement.
+    if ('errorText' in output && isConnectionLostAnswer(output.errorText)) continue
+    const settlement =
+      'output' in output
+        ? answerObserved(
+            harness,
+            conversationId,
+            { given: { holdId, output: output.output }, held },
+            context,
+          )
+        : errorObserved(
+            harness,
+            conversationId,
+            { given: { holdId, errorText: output.errorText }, held },
+            context,
+          )
+    yield* settlement.pipe(Effect.catchTag('CallNotWaiting', () => Effect.void))
   }
 })
 
