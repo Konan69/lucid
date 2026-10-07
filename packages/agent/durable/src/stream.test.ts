@@ -52,8 +52,7 @@ const openHarness = Effect.fn('Test.openHarness')(function* () {
           name: 'broken',
           description: 'Always fails',
           parameters: Type.Object({}),
-          execute: (_args, _api, callbackContext) =>
-            runForPi(Effect.fail(new Error('no route to host')), callbackContext.abortSignal),
+          execute: () => Promise.reject(new Error('no route to host')),
         }),
       ],
     }),
@@ -215,7 +214,7 @@ it.live('detaches a stopped consumer while the durable tool finishes', () =>
 it.live('fails an attachment when its observation context is cancelled', () =>
   Effect.gen(function* () {
     const { harness, root } = yield* openHarness()
-    const controller = new AbortController()
+    const controller = yield* Effect.sync(() => new AbortController())
     const observerContext = withAbortSignal(controller.signal, context)
     const watched = yield* Pi.watch(harness, root.id, observerContext)
     controller.abort()

@@ -16,6 +16,7 @@ import { Effect, Option } from 'effect'
 
 import { attachRun } from './core.ts'
 import { consume } from './fixtures/reading.ts'
+import { FixtureFailed } from './fixtures/harness.ts'
 import { runForPi } from './pi.ts'
 
 const context = BACKGROUND_CONTEXT
@@ -35,14 +36,14 @@ const crashMidTool = Effect.fn('Test.crashMidTool')(function* (file: string) {
         spawned.kill('SIGKILL')
       }),
   )
-  yield* Effect.callback<void, Error>((resume) => {
+  yield* Effect.callback<void, FixtureFailed>((resume) => {
     const running = (line: Buffer) =>
       resume(
         Effect.sync(() => {
           expect(line.toString()).toContain('tool-running')
         }),
       )
-    const failed = (error: Error) => resume(Effect.fail(error))
+    const failed = (cause: Error) => resume(Effect.fail(new FixtureFailed({ cause })))
     child.stdout.once('data', running)
     child.once('error', failed)
     return Effect.sync(() => {

@@ -1,39 +1,43 @@
+import { consumeReadable as consume, ReadFailed, type ReadResult } from '../fixtures/reading.ts'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from '@effect/vitest'
 import { isToolUIPart, readUIMessageStream, tool, type UIMessage, type UIMessageChunk } from 'ai'
-import { Effect, Option, Predicate } from 'effect'
-import { onTestFinished } from 'vitest'
+import { Effect, Option, Predicate, Deferred, Fiber, Stream } from 'effect'
 import { z } from 'zod'
 import { attachRun, streamRun } from '../main.ts'
 import { waitForFrame } from '../fixtures/provider.ts'
-import { consume, context, host, signal } from './fixtures/host.ts'
+import { context, host } from './fixtures/host.ts'
 
 /** The reader signals a genuine partial input receipt, then keeps consuming to the final state. */
-async function readPartial(
+const readPartial = Effect.fn('Test.readPartial')(function* (
   stream: ReadableStream<UIMessageChunk>,
   before: (message: UIMessage) => void,
 ) {
   let message = Option.none<UIMessage>()
-  for await (const next of readUIMessageStream({ stream })) {
-    message = Option.some(next)
-    before(next)
-  }
-  if (Option.isNone(message)) throw new Error('Expected message')
+  yield* Stream.runForEach(
+    Stream.fromAsyncIterable(readUIMessageStream({ stream }), (cause) => new ReadFailed({ cause })),
+    (next) =>
+      Effect.sync(() => {
+        message = Option.some(next)
+        before(next)
+      }),
+  )
+  if (Option.isNone(message)) return yield* new ReadFailed({ cause: new Error('Expected message') })
   return message.value
-}
+})
 
 /** One captured raw prefix plus the buffered tail is one JSON text for every reporting entry point. */
 it.live.each(['attach', 'get', 'post'] as const)(
   'reconnects mid-arguments through %s without repeated deltas',
   (kind) =>
-    Effect.promise(async () => {
-      const release = signal()
+    Effect.gen(function* () {
+      const release = yield* Deferred.make<void>()
       let gated = false
-      const fixture = await host(
+      const fixture = yield* host(
         {
           work: tool({
             inputSchema: z.object({ input: z.string() }),
-            execute: async (args) => args,
+            execute: (args) => Promise.resolve(args),
           }),
         },
         {},
@@ -48,15 +52,13 @@ it.live.each(['attach', 'get', 'post'] as const)(
             if (!Predicate.isString(block.arguments.input) || block.arguments.input.length < 5)
               return Effect.void
             gated = true
-            return waitForFrame(
-              Effect.promise(() => release.promise),
-              abortSignal,
-            )
+            return waitForFrame(Deferred.await(release), abortSignal)
           },
         },
       )
-      onTestFinished(() => release.resolve())
-      const opened = await fixture.open()
+      const opened = yield* fixture.open()
+      // Release the provider before scoped harness cleanup waits for the active run.
+      yield* Effect.addFinalizer(() => Effect.sync(() => Deferred.doneUnsafe(release, Effect.void)))
       const input = { input: 'abcdefghijklmnopqrstuvwxyz' }
       opened.faux.setResponses([
         fauxAssistantMessage([fauxToolCall('work', input, { id: 'wire' })], {
@@ -64,53 +66,61 @@ it.live.each(['attach', 'get', 'post'] as const)(
         }),
         fauxAssistantMessage('Finished.'),
       ])
-      const source = await streamRun(
-        opened.harness,
-        { conversationId: opened.root.id, content: 'Work', requestId: 'scratch' },
-        context,
+      const source = yield* Effect.promise(() =>
+        streamRun(
+          opened.harness,
+          { conversationId: opened.root.id, content: 'Work', requestId: 'scratch' },
+          context,
+        ),
       )
       const [raw, folded] = source.tee()
-      const live = consume(raw)
-      const appeared = signal()
+      const live = yield* consume(raw, Option.none()).pipe(Effect.forkScoped)
+      const appeared = yield* Deferred.make<void>()
       let partial = Option.none<UIMessage>()
-      const reading = readPartial(folded, (message) => {
+      const reading = yield* readPartial(folded, (message) => {
         const part = message.parts.find(isToolUIPart)
         if (part === undefined || part.state !== 'input-streaming' || part.input === undefined)
           return
         partial = Option.some(structuredClone(message))
-        appeared.resolve()
-      })
-      await appeared.promise
+        Deferred.doneUnsafe(appeared, Effect.void)
+      }).pipe(Effect.forkScoped)
+      yield* Deferred.await(appeared)
       const retained = Option.getOrThrow(partial)
-      let replay: Promise<Awaited<ReturnType<typeof consume>>>
+      let replay: Fiber.Fiber<ReadResult, ReadFailed>
       switch (kind) {
         case 'post': {
           // The stock transport performs the one real POST and parses its response SSE.
-          const stream = await opened.transport.sendMessages({
-            chatId: 'scratch',
-            messages: [retained],
-            trigger: 'submit-message',
-            messageId: retained.id,
-            abortSignal: undefined,
-          })
-          replay = consume(stream, retained)
+          const stream = yield* Effect.promise(() =>
+            opened.transport.sendMessages({
+              chatId: 'scratch',
+              messages: [retained],
+              trigger: 'submit-message',
+              messageId: retained.id,
+              abortSignal: undefined,
+            }),
+          )
+          replay = yield* consume(stream, Option.some(retained)).pipe(Effect.forkScoped)
           break
         }
         case 'get': {
-          const stream = await opened.transport.reconnectToStream({ chatId: 'scratch' })
+          const stream = yield* Effect.promise(() =>
+            opened.transport.reconnectToStream({ chatId: 'scratch' }),
+          )
           if (stream === null) throw new Error('Expected an active run')
-          replay = consume(stream)
+          replay = yield* consume(stream, Option.none()).pipe(Effect.forkScoped)
           break
         }
         case 'attach': {
-          const attached = await attachRun(opened.harness, opened.root.id, context)
+          const attached = yield* Effect.promise(() =>
+            attachRun(opened.harness, opened.root.id, context),
+          )
           if (attached.status !== 'running') throw new Error('Expected attachment')
-          replay = consume(attached.stream)
+          replay = yield* consume(attached.stream, Option.none()).pipe(Effect.forkScoped)
           break
         }
       }
-      release.resolve()
-      const result = await replay
+      yield* Deferred.succeed(release, undefined)
+      const result = yield* Fiber.join(replay)
       const deltas = result.chunks.flatMap((chunk) =>
         chunk.type === 'tool-input-delta' ? [chunk.inputTextDelta] : [],
       )
@@ -122,7 +132,7 @@ it.live.each(['attach', 'get', 'post'] as const)(
         input,
       })
       expect(result.message.parts.filter((part) => part.type === 'step-start')).toHaveLength(2)
-      expect((await live).message.parts).toEqual(result.message.parts)
-      await reading
+      expect((yield* Fiber.join(live)).message.parts).toEqual(result.message.parts)
+      yield* Fiber.join(reading)
     }),
 )
