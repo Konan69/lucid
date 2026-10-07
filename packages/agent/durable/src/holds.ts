@@ -40,6 +40,7 @@ export type Settlement =
   | { kind: 'approved' }
   | { kind: 'denied'; reason: string }
   | { kind: 'answered'; output: JsonValue }
+  | { kind: 'errored'; errorText: string }
 
 /** A provider's call id may be reused; Pi's durable task id identifies the exact held invocation. */
 export type Settled = {
@@ -77,6 +78,7 @@ const SettlementValue = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('approved') }),
   Schema.Struct({ kind: Schema.Literal('denied'), reason: Schema.String }),
   Schema.Struct({ kind: Schema.Literal('answered'), output: Schema.MutableJson }),
+  Schema.Struct({ kind: Schema.Literal('errored'), errorText: Schema.String }),
 ])
 
 /** Only the slot/generation presentation is needed; atomic event snapshots and live docs agree here. */
@@ -317,6 +319,10 @@ function copySettlement(settled: Settlement): Settlement {
     Match.when({ kind: 'answered' }, (answered): Settlement => ({
       kind: 'answered',
       output: copyJson(answered.output),
+    })),
+    Match.when({ kind: 'errored' }, (errored): Settlement => ({
+      kind: 'errored',
+      errorText: errored.errorText,
     })),
     Match.exhaustive,
   )
@@ -577,7 +583,7 @@ const settle = Effect.fn('Durable.settle')(function* (
   const held = Option.isSome(input.admission)
     ? input.admission.value
     : yield* waiting(harness, conversationId, context)
-  const kind = input.next.kind === 'answered' ? 'answer' : 'approval'
+  const kind = isAnswerSettlement(input.next) ? 'answer' : 'approval'
   const allowed = held.some((call) => call.holdId === input.holdId && call.kind === kind)
   if (!allowed) return yield* new CallNotWaiting({ conversationId, holdId: input.holdId })
   // Retain SDK identity beside the durable settlement, so removed definitions cannot rewrite history.
@@ -624,9 +630,13 @@ const settle = Effect.fn('Durable.settle')(function* (
   return winner.value
 })
 
+/** Both successful and failed client outputs settle an answer, never an approval. */
+export const isAnswerSettlement = (value: Settlement): boolean =>
+  value.kind === 'answered' || value.kind === 'errored'
+
 /** A different kind of interaction cannot reuse another kind's receipt. */
 const sameKind = (left: Settlement, right: Settlement) =>
-  (left.kind === 'answered') === (right.kind === 'answered')
+  isAnswerSettlement(left) === isAnswerSettlement(right)
 
 /** Direct admission starts with its durable hold id; no call-id provenance scan is needed. */
 const readHold = Effect.fn('Durable.readHold')(function* (
@@ -772,4 +782,29 @@ function decisionSettlement(approval: Decision): Settlement {
   return approval.approved
     ? { kind: 'approved' }
     : { kind: 'denied', reason: approval.reason ?? 'The person denied this call' }
+}
+
+/** Error outputs use the same task-scoped first-writer admission as successful client outputs. */
+export function errorObserved(
+  harness: Harness,
+  conversationId: ConversationId,
+  observed: {
+    readonly given: { readonly holdId: HoldId; readonly errorText: string }
+    readonly held: readonly Waiting[]
+  },
+  context: Context,
+): Effect.Effect<
+  Settlement,
+  CallNotWaiting | DurableErrors.PiFailed | DurableErrors.ConversationMissing
+> {
+  return settle(
+    harness,
+    conversationId,
+    {
+      holdId: observed.given.holdId,
+      next: { kind: 'errored', errorText: observed.given.errorText },
+      admission: Option.some(observed.held),
+    },
+    context,
+  )
 }

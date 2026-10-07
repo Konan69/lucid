@@ -14,7 +14,7 @@ import {
 } from '@earendil-works/pi-durable'
 import { validateToolArguments } from '@earendil-works/pi-ai/utils/validation'
 import { asSchema, type Tool, type ToolSet } from 'ai'
-import { Cause, Data, Effect, Option, Predicate, Schema } from 'effect'
+import { Cause, Data, Effect, Match, Option, Predicate, Schema } from 'effect'
 
 import {
   ToolApprovalUnsupported,
@@ -37,6 +37,7 @@ import {
   Holds,
   type Plan,
   type Source,
+  type Settlement,
   settlement,
   withPlan,
   planOf,
@@ -738,16 +739,20 @@ const before = Effect.fn('Durable.beforeTool')(function* (
   return yield* CallDecision.match(checked, {
     Blocked: (blocked) => Effect.succeed(Option.some({ block: blocked.reason })),
     Free: () => Effect.succeed(Option.none<{ block: string }>()),
-    Held: () =>
-      settlement(api, call.id, context).pipe(
-        Effect.map((settled) =>
-          settled.kind === 'denied'
-            ? Option.some({ block: settled.reason })
-            : Option.none<{ block: string }>(),
-        ),
-      ),
+    Held: () => settlement(api, call.id, context).pipe(Effect.map(blockSettlement)),
   })
 })
+
+/** Denial and failed client answers block before intent; neither can execute a tool afterward. */
+function blockSettlement(settled: Settlement): Option.Option<{ block: string }> {
+  return Match.value(settled).pipe(
+    Match.when({ kind: 'denied' }, (value) => Option.some({ block: value.reason })),
+    Match.when({ kind: 'errored' }, (value) => Option.some({ block: value.errorText })),
+    Match.when({ kind: 'approved' }, () => Option.none<{ block: string }>()),
+    Match.when({ kind: 'answered' }, () => Option.none<{ block: string }>()),
+    Match.exhaustive,
+  )
+}
 
 /** Pi's named hook adapter forwards cancellation into the sole settlement program. */
 function beforeForPi(plans: ReadonlyMap<string, Plan>) {

@@ -7,6 +7,15 @@ import { type HoldId, CallNotWaiting, ToolOutputFailed } from './errors.ts'
 import { holdIdOf, Holds, planOf, type Answer, type Settlement } from './holds.ts'
 import * as Pi from './pi.ts'
 
+/** Merge feat/pi-durable's reconnect client, then replace this ONE local copy with the
+ * exported connectionLostInput from ./client.ts. A network interruption is never a tool answer. */
+export const connectionLostInput =
+  '@vivid/durable: the connection was lost before this tool input arrived'
+
+/** Exact equality distinguishes the reserved transport marker from a person's diagnostic text. */
+export const isConnectionLostAnswer = (errorText: string): boolean =>
+  errorText === connectionLostInput
+
 /** A recorded submission must exist in the same durable authority that admitted it. */
 const receipt = Effect.fn('Durable.answerReceipt')(function* (
   harness: Harness,

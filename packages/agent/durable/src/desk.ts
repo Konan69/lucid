@@ -14,6 +14,7 @@ import {
   planOf,
   decision,
   CallDecision,
+  isAnswerSettlement,
 } from './holds.ts'
 import { PiFailed, ToolNameDuplicated } from './errors.ts'
 import * as Pi from './pi.ts'
@@ -167,7 +168,7 @@ const decisionsFor = Effect.fn('Durable.presentationDecisions')(function* (
     if (CallLookup.guards.Settled(found)) {
       decisions.set(
         chunk,
-        found.settlement.kind === 'answered'
+        isAnswerSettlement(found.settlement)
           ? CallDecision.cases.Free.make({})
           : CallDecision.cases.Held.make({ kind: 'approval' }),
       )
