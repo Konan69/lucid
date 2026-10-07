@@ -61,10 +61,10 @@ describe.skipIf(Option.isNone(testUrl))('PostgreSQL round trips', () => {
     }
     console.log(JSON.stringify(measurements))
   })
-  /** One statement snapshot replaces the document read transaction; immutable
-   * recursive ancestry replaces sequential scoped-entry lookups. Exercise actual
+  /** One statement snapshot replaces the document read transaction; scoped
+   * ancestry keeps Pi's TEXT-only sequential lookups. Exercise actual
    * driver calls and lossless text containing SQL-looking data, NUL and surrogates. */
-  it('reads each exact lookup in one driver call and preserves batched JSON text', async () => {
+  it('reads global exact lookups in one call and keeps scoped ancestry as text', async () => {
     const fixture = postgresFixture(Option.getOrThrow(testUrl))
     const database = new CountingDatabase(await openPgDatabase(fixture.pool, fixture.schema))
     const storage = await PostgresStorage.open(database, fixture.schema)
@@ -77,6 +77,12 @@ describe.skipIf(Option.isNone(testUrl))('PostgreSQL round trips', () => {
     const submissionId = await storage.mintId<SubmissionId>()
     const documentId = await storage.mintId<DocumentId>()
     const text = "'; DROP SCHEMA public CASCADE; --\n\\?\u0000\ud800"
+    const rootRecord = { id: root, title: 'root\u0000\ud800' }
+    const childRecord = {
+      id: child,
+      parent: { conversationId: root, at: entryId },
+      title: 'child\u0000\ud800',
+    }
     const entry = { id: entryId, conversationId: root, kind: text, data: { text } }
     const task = {
       id: taskId,
@@ -99,10 +105,10 @@ describe.skipIf(Option.isNone(testUrl))('PostgreSQL round trips', () => {
     const record = { id: documentId, kind: text, scope: { kind: 'session' as const } }
     await storage.commit(
       [
-        { type: 'conversation', value: { id: root } },
+        { type: 'conversation', value: rootRecord },
         {
           type: 'conversation',
-          value: { id: child, parent: { conversationId: root, at: entryId } },
+          value: childRecord,
         },
         { type: 'entry', value: entry },
         { type: 'task', value: task },
@@ -111,22 +117,29 @@ describe.skipIf(Option.isNone(testUrl))('PostgreSQL round trips', () => {
       ],
       context,
     )
+    expect(await storage.conversation(root, context)).toEqual(rootRecord)
+    expect(await storage.conversation(child, context)).toEqual(childRecord)
     const lookups = [
-      { run: () => storage.entry(entryId, context), expected: { entry } },
-      { run: () => storage.entry(child, entryId, context), expected: { entry } },
-      { run: () => storage.task(taskId, context), expected: task },
-      { run: () => storage.submission(submissionId, context), expected: submission },
-      { run: () => storage.submissionByRequest(root, text, context), expected: submission },
-      { run: () => storage.findDocument(record, 'current', context), expected: record },
+      { run: () => storage.entry(entryId, context), expected: { entry }, calls: 1 },
+      { run: () => storage.entry(child, entryId, context), expected: { entry }, calls: 3 },
+      { run: () => storage.task(taskId, context), expected: task, calls: 1 },
+      { run: () => storage.submission(submissionId, context), expected: submission, calls: 1 },
+      {
+        run: () => storage.submissionByRequest(root, text, context),
+        expected: submission,
+        calls: 1,
+      },
+      { run: () => storage.findDocument(record, 'current', context), expected: record, calls: 1 },
       {
         run: () => storage.document(documentId, 'current', context),
         expected: { record, value: { text } },
+        calls: 1,
       },
     ]
     for (const lookup of lookups) {
       database.calls = 0
       expect(await lookup.run()).toMatchObject(lookup.expected)
-      expect(database.calls).toBe(1)
+      expect(database.calls).toBe(lookup.calls)
     }
     // Repeated mutable ids must execute two upserts in order. PostgreSQL multi-row
     // ON CONFLICT cannot do this; the ordered batch retains the last replacement.

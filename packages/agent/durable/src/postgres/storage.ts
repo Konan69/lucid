@@ -616,36 +616,33 @@ export class PostgresStorage implements Storage {
     return { entry, commitSeq: seqFromNumber(safeNumber(row.commit_seq)) }
   }
 
-  /** Pi SqliteStorage.readEntry scoped overload: immutable ancestry and entry
-   * rows need no explicit transaction. Recursive SQL carries the minimum inclusive
-   * parent cutoff to return one indexed entry in one driver call. PostgreSQL json
-   * extracts only numeric parent fields; record TEXT is returned without JSONB
-   * conversion, preserving extensions containing NUL or lone UTF-16 surrogates.
-   * Session guarantees valid acyclic ancestry (Pi src/types.ts:Storage). */
+  /** Pi src/storage/sqlite/storage.ts:SqliteStorage.readEntry scoped overload.
+   * Walk immutable conversation ancestry in JavaScript exactly as the reference
+   * does. PostgreSQL json extraction de-escapes the entire record, rejecting JSON
+   * extensions containing escaped NUL or lone UTF16 surrogates. Reading only TEXT
+   * preserves those values; this costs one indexed read per ancestor instead of
+   * the previous recursive SQL query. No explicit transaction is needed because
+   * ancestry and entries are immutable (Pi src/types.ts:Storage). */
   private async readScopedEntry(conversationId: ConversationId, id: EntryId) {
-    const row = Option.getOrThrow(
-      await this.db.get<{
-        readonly known: boolean
-        readonly record: string | null
-        readonly commit_seq: string | null
-      }>(
-        `WITH RECURSIVE lineage AS (
-      SELECT c.id, c.record, 9223372036854775807::bigint AS cutoff FROM conversations c WHERE c.id = ?
-      UNION ALL
-      SELECT p.id, p.record, LEAST(l.cutoff, (l.record::json -> 'parent' ->> 'at')::bigint)
-      FROM lineage l JOIN conversations p ON p.id = (l.record::json -> 'parent' ->> 'conversationId')::bigint
-    ) SELECT EXISTS(SELECT 1 FROM lineage) AS known, e.record, e.commit_seq
-      FROM (SELECT 1) anchor LEFT JOIN entries e ON e.id = ? AND EXISTS(
-        SELECT 1 FROM lineage l WHERE l.id = e.conversation_id AND e.id <= l.cutoff
-      )`,
-        conversationId,
-        id,
-      ),
+    let conversation = await this.readConversation(conversationId)
+    if (conversation === undefined) throw new Error(`Unknown conversation: ${conversationId}`)
+    const row = Option.getOrUndefined(
+      await this.db.get<EntryJsonRow>('SELECT record, commit_seq FROM entries WHERE id = ?', id),
     )
-    if (!row.known) throw new Error(`Unknown conversation: ${conversationId}`)
-    if (row.record === null) return undefined
-    const commitSeq = Option.getOrThrow(Option.fromNullishOr(row.commit_seq))
-    return { entry: parseEntry(row.record), commitSeq: seqFromNumber(safeNumber(commitSeq)) }
+    if (row === undefined) return undefined
+    const entry = parseEntry(row.record)
+    let upperEntryId = Number.POSITIVE_INFINITY
+    while (conversation.id !== entry.conversationId) {
+      if (conversation.parent === undefined) return undefined
+      upperEntryId = Math.min(upperEntryId, conversation.parent.at)
+      // Session guarantees existing, acyclic parents. Option replaces Pi's
+      // non-null assertion without rewriting or interpreting the stored JSON.
+      conversation = Option.getOrThrow(
+        Option.fromNullishOr(await this.readConversation(conversation.parent.conversationId)),
+      )
+    }
+    if (entry.id > upperEntryId) return undefined
+    return { entry, commitSeq: seqFromNumber(safeNumber(row.commit_seq)) }
   }
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.readLatestHeadMarker.
