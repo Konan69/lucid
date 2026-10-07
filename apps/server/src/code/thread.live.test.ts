@@ -92,7 +92,6 @@ describe.skipIf(process.env['VIVID_LIVE_THREAD_PROGRAM'] !== '1')(
       'a program Vivid writes runs on the Computer, has its calls answered and writes there what it read',
       () =>
         Effect.gen(function* () {
-          // Each case owns fresh mutable services and their resource scope.
           const caseContext = yield* Layer.build(chainLayer)
           return yield* Effect.gen(function* () {
             const fixture = yield* chainFixture('Program chain proof')

@@ -13,7 +13,7 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
-import { Deferred, Effect, Fiber, Layer, Ref, Result, Schema } from 'effect'
+import { Deferred, Effect, Fiber, Layer, Logger, Ref, Result, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { refusalLogs } from '../observability/testlogger.ts'
 import type { Actor } from '../auth/access.ts'
@@ -82,7 +82,6 @@ describe.skipIf(!testDatabaseConfigured)(
         'composes real named Connection calls and a gated Computer command with only selected results returned',
         () =>
           Effect.gen(function* () {
-            // Each case owns fresh mutable services and their resource scope.
             const caseContext = yield* Layer.build(testLayer)
             return yield* Effect.scoped(
               Effect.gen(function* () {
@@ -116,7 +115,6 @@ describe.skipIf(!testDatabaseConfigured)(
                   ),
                 })
                 const outcome = yield* Effect.gen(function* () {
-                  // Each case owns fresh mutable services and their resource scope.
                   const caseContext = yield* Layer.build(Layer.fresh(codeCallsLayer))
                   return yield* run(
                     test.personal,
@@ -156,7 +154,6 @@ describe.skipIf(!testDatabaseConfigured)(
         'returns validation problems to a program and accepts its corrected next call',
         () =>
           Effect.gen(function* () {
-            // Each case owns fresh mutable services and their resource scope.
             const caseContext = yield* Layer.build(testLayer)
             return yield* Effect.scoped(
               Effect.gen(function* () {
@@ -181,7 +178,6 @@ describe.skipIf(!testDatabaseConfigured)(
                   ),
                 })
                 const outcome = yield* Effect.gen(function* () {
-                  // Each case owns fresh mutable services and their resource scope.
                   const caseContext = yield* Layer.build(Layer.fresh(codeCallsLayer))
                   return yield* run(
                     test.personal,
@@ -207,7 +203,6 @@ describe.skipIf(!testDatabaseConfigured)(
         'keeps colliding personal account names scoped and rejects forged ownership fields',
         () =>
           Effect.gen(function* () {
-            // Each case owns fresh mutable services and their resource scope.
             const caseContext = yield* Layer.build(testLayer)
             return yield* Effect.scoped(
               Effect.gen(function* () {
@@ -256,7 +251,6 @@ describe.skipIf(!testDatabaseConfigured)(
           `refreshes ${revocation} after the dispatch barrier and refuses the next queued call`,
           () =>
             Effect.gen(function* () {
-              // Each case owns fresh mutable services and their resource scope.
               const caseContext = yield* Layer.build(testLayer)
               return yield* Effect.scoped(
                 Effect.gen(function* () {
@@ -278,7 +272,6 @@ describe.skipIf(!testDatabaseConfigured)(
                     }),
                   })
                   const program = Effect.gen(function* () {
-                    // Each case owns fresh mutable services and their resource scope.
                     const caseContext = yield* Layer.build(Layer.fresh(codeCallsLayer))
                     return yield* run(
                       test.member,
@@ -313,7 +306,6 @@ describe.skipIf(!testDatabaseConfigured)(
 
       it.effect('refuses shared Connection writes', () =>
         Effect.gen(function* () {
-          // Each case owns fresh mutable services and their resource scope.
           const caseContext = yield* Layer.build(testLayer)
           return yield* Effect.scoped(
             Effect.gen(function* () {
@@ -333,7 +325,6 @@ describe.skipIf(!testDatabaseConfigured)(
 
       it.effect('asks before personal reads enter a shared Thread', () =>
         Effect.gen(function* () {
-          // Each case owns fresh mutable services and their resource scope.
           const caseContext = yield* Layer.build(testLayer)
           return yield* Effect.scoped(
             Effect.gen(function* () {
@@ -366,7 +357,6 @@ describe.skipIf(!testDatabaseConfigured)(
         'stores the exact first action, closes queued effects, and two Approval answers execute once',
         () =>
           Effect.gen(function* () {
-            // Each case owns fresh mutable services and their resource scope.
             const caseContext = yield* Layer.build(testLayer)
             return yield* Effect.scoped(
               Effect.gen(function* () {
@@ -416,7 +406,6 @@ describe.skipIf(!testDatabaseConfigured)(
         'retains an earlier Connection receipt when the next action asks for Approval',
         () =>
           Effect.gen(function* () {
-            // Each case owns fresh mutable services and their resource scope.
             const caseContext = yield* Layer.build(testLayer)
             return yield* Effect.scoped(
               Effect.gen(function* () {
@@ -446,52 +435,52 @@ describe.skipIf(!testDatabaseConfigured)(
 
       // Each decision needs one real interpreter startup; independent questions own independent fixtures.
       for (const decision of ['denied', 'expired'] as const)
-        it.effect(`${decision} program Approvals execute nothing`, () =>
-          Effect.gen(function* () {
-            // Each case owns fresh mutable services and their resource scope.
-            const caseContext = yield* Layer.build(testLayer)
-            return yield* Effect.scoped(
-              Effect.gen(function* () {
-                const test = yield* fixture()
-                yield* (yield* ConnectionStore).begin(test.personal, {
-                  service: serviceId,
-                  name: null,
-                  shared: false,
-                })
-                const store = yield* ApprovalStore
-                yield* run(test.personal, test.personalId, `await ${use('write')};`)
-                const approval = (yield* store.inThread(test.personalId))[0]
-                if (approval === undefined) return yield* Effect.die('No approval')
-                if (decision === 'denied')
-                  yield* store.decide(test.personal, {
-                    id: approval.id,
-                    digest: approval.digest,
-                    decision: ApprovalDecision.cases.Deny.make({}),
+        layer(codeProcessLayer.pipe(Layer.provide(localCodeComputerLayer)))((it) => {
+          it.effect(`${decision} program Approvals execute nothing`, () =>
+            Effect.gen(function* () {
+              const caseContext = yield* Layer.build(testLayer)
+              return yield* Effect.scoped(
+                Effect.gen(function* () {
+                  const test = yield* fixture()
+                  yield* (yield* ConnectionStore).begin(test.personal, {
+                    service: serviceId,
+                    name: null,
+                    shared: false,
                   })
-                else {
-                  yield* TestClock.adjust('25 hours')
-                  expect(
-                    Result.isFailure(
-                      yield* Effect.result(
-                        store.decide(test.personal, {
-                          id: approval.id,
-                          digest: approval.digest,
-                          decision: ApprovalDecision.cases.AllowOnce.make({}),
-                        }),
+                  const store = yield* ApprovalStore
+                  yield* run(test.personal, test.personalId, `await ${use('write')};`)
+                  const approval = (yield* store.inThread(test.personalId))[0]
+                  if (approval === undefined) return yield* Effect.die('No approval')
+                  if (decision === 'denied')
+                    yield* store.decide(test.personal, {
+                      id: approval.id,
+                      digest: approval.digest,
+                      decision: ApprovalDecision.cases.Deny.make({}),
+                    })
+                  else {
+                    yield* TestClock.adjust('25 hours')
+                    expect(
+                      Result.isFailure(
+                        yield* Effect.result(
+                          store.decide(test.personal, {
+                            id: approval.id,
+                            digest: approval.digest,
+                            decision: ApprovalDecision.cases.AllowOnce.make({}),
+                          }),
+                        ),
                       ),
-                    ),
-                  ).toBe(true)
-                }
-                expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
-                return yield* Effect.void
-              }),
-            ).pipe(Effect.provide(caseContext))
-          }).pipe(Effect.scoped),
-        )
+                    ).toBe(true)
+                  }
+                  expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+                  return yield* Effect.void
+                }),
+              ).pipe(Effect.provide(caseContext))
+            }).pipe(Effect.scoped),
+          )
+        })
 
       it.effect('a Never rule is terminal despite a guest catch and queued writes', () =>
         Effect.gen(function* () {
-          // Each case owns fresh mutable services and their resource scope.
           const caseContext = yield* Layer.build(testLayer)
           return yield* Effect.scoped(
             Effect.gen(function* () {
@@ -532,7 +521,6 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
     'records one CallRefused for unavailable %s',
     (surface) =>
       Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
         const caseContext = yield* Layer.build(testLayer)
         return yield* Effect.scoped(
           Effect.gen(function* () {
@@ -553,23 +541,22 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
             }
             const kind = 'browse'
             const outcome = yield* Effect.gen(function* () {
-              // Each case owns fresh mutable services and their resource scope.
-              const caseContext = yield* Layer.build(logs.layer)
+              const caseContext = yield* Layer.build(Layer.fresh(codeCallsLayer))
               return yield* Effect.gen(function* () {
-                // Each case owns fresh mutable services and their resource scope.
-                const caseContext = yield* Layer.build(Layer.fresh(codeCallsLayer))
-                return yield* Effect.gen(function* () {
-                  return yield* (yield* CodeCalls).bind({
-                    person: test.personal.person.id,
-                    thread: test.personalId,
-                  })(WorkerMessage.cases.Call.make({ id: 1, kind, input }))
-                }).pipe(Effect.provide(caseContext))
-              }).pipe(
-                Effect.scoped,
-                Effect.provideService(ComputerStore, unavailable),
-                Effect.provide(caseContext),
-              )
-            }).pipe(Effect.scoped)
+                return yield* (yield* CodeCalls).bind({
+                  person: test.personal.person.id,
+                  thread: test.personalId,
+                })(WorkerMessage.cases.Call.make({ id: 1, kind, input }))
+              }).pipe(Effect.provide(caseContext))
+            }).pipe(
+              Effect.scoped,
+              Effect.provideService(ComputerStore, unavailable),
+              Effect.updateService(
+                Logger.CurrentLoggers,
+                (loggers) => new Set([...loggers, logs.capture]),
+              ),
+              Effect.scoped,
+            )
             expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
             expect(logs.recorded()).toHaveLength(1)
             expect(logs.recorded()[0]).toContain('vivid.refusal.kind=CallRefused')
@@ -583,7 +570,6 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
   /** Provider rejection travels through the real code-call seam without a second refusal. */
   standalone.effect('records exactly one ToolRejected for a rejected use_tool code call', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(testLayer)
       return yield* Effect.scoped(
         Effect.gen(function* () {
@@ -596,44 +582,43 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
           const executor = yield* Executor
           const logs = refusalLogs()
           const outcome = yield* Effect.gen(function* () {
-            // Each case owns fresh mutable services and their resource scope.
-            const caseContext = yield* Layer.build(logs.layer)
+            const caseContext = yield* Layer.build(Layer.fresh(codeCallsLayer))
             return yield* Effect.gen(function* () {
-              // Each case owns fresh mutable services and their resource scope.
-              const caseContext = yield* Layer.build(Layer.fresh(codeCallsLayer))
-              return yield* Effect.gen(function* () {
-                return yield* (yield* CodeCalls).bind({
-                  person: test.personal.person.id,
-                  thread: test.personalId,
-                })(
-                  WorkerMessage.cases.Call.make({
-                    id: 1,
-                    kind: 'use_tool',
-                    input: {
-                      account: 'Records',
-                      tool: 'read',
-                      input: {},
-                      summary: 'Read',
-                      rationale: '',
-                    },
-                  }),
-                )
-              }).pipe(Effect.provide(caseContext))
-            }).pipe(
-              Effect.scoped,
-              Effect.provideService(
-                Executor,
-                Executor.of({
-                  ...executor,
-                  call: () =>
-                    Effect.succeed(
-                      ExecutorCallOutcome.cases.Rejected.make({ message: 'Private rejection' }),
-                    ),
+              return yield* (yield* CodeCalls).bind({
+                person: test.personal.person.id,
+                thread: test.personalId,
+              })(
+                WorkerMessage.cases.Call.make({
+                  id: 1,
+                  kind: 'use_tool',
+                  input: {
+                    account: 'Records',
+                    tool: 'read',
+                    input: {},
+                    summary: 'Read',
+                    rationale: '',
+                  },
                 }),
-              ),
-              Effect.provide(caseContext),
-            )
-          }).pipe(Effect.scoped)
+              )
+            }).pipe(Effect.provide(caseContext))
+          }).pipe(
+            Effect.scoped,
+            Effect.provideService(
+              Executor,
+              Executor.of({
+                ...executor,
+                call: () =>
+                  Effect.succeed(
+                    ExecutorCallOutcome.cases.Rejected.make({ message: 'Private rejection' }),
+                  ),
+              }),
+            ),
+            Effect.updateService(
+              Logger.CurrentLoggers,
+              (loggers) => new Set([...loggers, logs.capture]),
+            ),
+            Effect.scoped,
+          )
           expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
           expect(logs.recorded()).toHaveLength(1)
           expect(logs.recorded()[0]).toContain('vivid.refusal.kind=ToolRejected')
@@ -645,28 +630,29 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
   /** Address policy is decided by the real PageReader before its refused reply reaches code. */
   standalone.effect('records exactly one PageRefused for a refused read_page code call', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(testLayer)
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const test = yield* fixture()
           const logs = refusalLogs()
-          const outcome = yield* Effect.gen(function* () {
-            // Each case owns fresh mutable services and their resource scope.
-            const caseContext = yield* Layer.build(logs.layer)
-            return yield* (yield* CodeCalls)
-              .bind({
-                person: test.personal.person.id,
-                thread: test.personalId,
-              })(
-                WorkerMessage.cases.Call.make({
-                  id: 1,
-                  kind: 'read_page',
-                  input: { address: 'file:///private' },
-                }),
-              )
-              .pipe(Effect.provide(caseContext))
-          }).pipe(Effect.scoped)
+          const outcome = yield* (yield* CodeCalls)
+            .bind({
+              person: test.personal.person.id,
+              thread: test.personalId,
+            })(
+              WorkerMessage.cases.Call.make({
+                id: 1,
+                kind: 'read_page',
+                input: { address: 'file:///private' },
+              }),
+            )
+            .pipe(
+              Effect.updateService(
+                Logger.CurrentLoggers,
+                (loggers) => new Set([...loggers, logs.capture]),
+              ),
+              Effect.scoped,
+            )
           expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
           expect(logs.recorded()).toHaveLength(1)
           expect(logs.recorded()[0]).toContain('vivid.refusal.kind=PageRefused')
@@ -678,41 +664,39 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
   /** This vocabulary has no authority-revocation case; a Blocked receipt must not invent a Gate refusal. */
   standalone.effect('authority revocation blocks without inventing a recorded Gate decision', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(testLayer)
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const test = yield* fixture()
           const logs = refusalLogs()
           const outcome = yield* Effect.gen(function* () {
-            // Each case owns fresh mutable services and their resource scope.
-            const caseContext = yield* Layer.build(logs.layer)
+            const caseContext = yield* Layer.build(Layer.fresh(codeCallsLayer))
             return yield* Effect.gen(function* () {
-              // Each case owns fresh mutable services and their resource scope.
-              const caseContext = yield* Layer.build(Layer.fresh(codeCallsLayer))
-              return yield* Effect.gen(function* () {
-                return yield* (yield* CodeCalls).bind({
-                  person: test.personal.person.id,
-                  thread: test.personalId,
-                })(
-                  WorkerMessage.cases.Call.make({
-                    id: 1,
-                    kind: 'find_tools',
-                    input: { query: 'read' },
-                  }),
-                )
-              }).pipe(Effect.provide(caseContext))
-            }).pipe(
-              Effect.scoped,
-              Effect.provideService(
-                CodeAuthority,
-                CodeAuthority.of({
-                  refresh: () => Effect.fail(new CodeAuthorityRevoked({})),
+              return yield* (yield* CodeCalls).bind({
+                person: test.personal.person.id,
+                thread: test.personalId,
+              })(
+                WorkerMessage.cases.Call.make({
+                  id: 1,
+                  kind: 'find_tools',
+                  input: { query: 'read' },
                 }),
-              ),
-              Effect.provide(caseContext),
-            )
-          }).pipe(Effect.scoped)
+              )
+            }).pipe(Effect.provide(caseContext))
+          }).pipe(
+            Effect.scoped,
+            Effect.provideService(
+              CodeAuthority,
+              CodeAuthority.of({
+                refresh: () => Effect.fail(new CodeAuthorityRevoked({})),
+              }),
+            ),
+            Effect.updateService(
+              Logger.CurrentLoggers,
+              (loggers) => new Set([...loggers, logs.capture]),
+            ),
+            Effect.scoped,
+          )
           expect(CallOutcome.guards.Blocked(outcome)).toBe(true)
           expect(logs.recorded()).toEqual([])
         }),
@@ -725,7 +709,6 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
       `returns a refused ${kind} receipt when authority storage is unavailable`,
       () =>
         Effect.gen(function* () {
-          // Each case owns fresh mutable services and their resource scope.
           const caseContext = yield* Layer.build(testLayer)
           return yield* Effect.scoped(
             Effect.gen(function* () {
@@ -738,26 +721,25 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
               })
               const logs = refusalLogs()
               const outcome = yield* Effect.gen(function* () {
-                // Each case owns fresh mutable services and their resource scope.
-                const caseContext = yield* Layer.build(logs.layer)
-                return yield* Effect.gen(function* () {
-                  // Each case owns fresh mutable services and their resource scope.
-                  const caseContext = yield* Layer.build(
-                    Layer.fresh(codeCallsLayer.pipe(Layer.provideMerge(codeAuthorityLayer))),
-                  )
-                  return yield* Effect.gen(function* () {
-                    const calls = yield* CodeCalls
-                    return yield* calls.bind({
-                      person: test.personal.person.id,
-                      thread: test.personalId,
-                    })(WorkerMessage.cases.Call.make({ id: 1, kind, input: {} }))
-                  }).pipe(Effect.provide(caseContext))
-                }).pipe(
-                  Effect.scoped,
-                  Effect.provideService(Database, unavailable),
-                  Effect.provide(caseContext),
+                const caseContext = yield* Layer.build(
+                  Layer.fresh(codeCallsLayer.pipe(Layer.provideMerge(codeAuthorityLayer))),
                 )
-              }).pipe(Effect.scoped)
+                return yield* Effect.gen(function* () {
+                  const calls = yield* CodeCalls
+                  return yield* calls.bind({
+                    person: test.personal.person.id,
+                    thread: test.personalId,
+                  })(WorkerMessage.cases.Call.make({ id: 1, kind, input: {} }))
+                }).pipe(Effect.provide(caseContext))
+              }).pipe(
+                Effect.scoped,
+                Effect.provideService(Database, unavailable),
+                Effect.updateService(
+                  Logger.CurrentLoggers,
+                  (loggers) => new Set([...loggers, logs.capture]),
+                ),
+                Effect.scoped,
+              )
               expect(CallOutcome.guards.Returned(outcome)).toBe(true)
               expect(outcome).toMatchObject({ end: 'refused', value: { ok: false } })
               const recorded = logs.recorded()
@@ -773,7 +755,6 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
     'returns discovery infrastructure failure to the program without claiming an action happened',
     () =>
       Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
         const caseContext = yield* Layer.build(testLayer)
         return yield* Effect.scoped(
           Effect.gen(function* () {
@@ -788,7 +769,6 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
                 ),
             })
             const outcome = yield* Effect.gen(function* () {
-              // Each case owns fresh mutable services and their resource scope.
               const caseContext = yield* Layer.build(Layer.fresh(codeCallsLayer))
               return yield* Effect.gen(function* () {
                 return yield* (yield* CodeCalls).bind({
@@ -811,14 +791,12 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
   )
   standalone.effect('preserves the infrastructure tag when refreshing authority', () =>
     Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(testLayer)
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const test = yield* fixture()
           const database = yield* Database
           const outcome = yield* Effect.gen(function* () {
-            // Each case owns fresh mutable services and their resource scope.
             const caseContext = yield* Layer.build(Layer.fresh(codeAuthorityLayer))
             return yield* Effect.gen(function* () {
               return yield* (yield* CodeAuthority)

@@ -1,22 +1,20 @@
 import * as NodeHttp from 'node:http'
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, it, layer } from '@effect/vitest'
 import { Deferred, Effect, Fiber, Layer, Option, Predicate, Ref } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { ReadPageOutcome } from '@vivid/contracts'
 import { refusalLogs } from '../observability/testlogger.ts'
 import { PageResolver, publicAddress } from './address.ts'
 import { PageNetwork, pageNetworkLayer, type PageResponse } from './network.ts'
-import { PageReader, pageReaderLayer } from './page.ts'
+import { PageReader, pageReaderLayer, makePageReader } from './page.ts'
 import { budgets } from './budgets.ts'
 
-const publicResolver = Layer.succeed(
-  PageResolver,
-  PageResolver.of({
-    resolve: Effect.fn('Test.resolve')(() =>
-      Effect.succeed([{ address: '93.184.215.14', family: 4 }]),
-    ),
-  }),
-)
+const publicResolverValue = PageResolver.of({
+  resolve: Effect.fn('Test.resolve')(() =>
+    Effect.succeed([{ address: '93.184.215.14', family: 4 }]),
+  ),
+})
+const publicResolver = Layer.succeed(PageResolver, publicResolverValue)
 const document = (body: string): PageResponse => ({
   status: 200,
   location: Option.none(),
@@ -36,7 +34,6 @@ describe('Public pages', () => {
       }),
     )
     return Effect.gen(function* () {
-      // Each case owns fresh mutable services and their resource scope.
       const caseContext = yield* Layer.build(
         pageReaderLayer.pipe(
           Layer.provide(Layer.merge(publicResolver, network)),
@@ -57,26 +54,23 @@ describe('Public pages', () => {
     }).pipe(Effect.scoped)
   })
 
-  it.effect('extracts title, headings, paragraphs, lists and links and bounds readable text', () =>
-    Effect.gen(function* () {
-      const network = Layer.succeed(
-        PageNetwork,
-        PageNetwork.of({
-          request: Effect.fn('Test.document')(() =>
-            Effect.succeed(
-              document(
-                '<html><head><title>Useful page</title></head><body><h1>Heading</h1><p>Paragraph</p><ul><li>First</li><li>Second</li></ul><a href="https://example.com/next">Next</a><script>SECRET</script></body></html>',
-              ),
-            ),
+  const documentNetwork = Layer.succeed(
+    PageNetwork,
+    PageNetwork.of({
+      request: Effect.fn('Test.document')(() =>
+        Effect.succeed(
+          document(
+            '<html><head><title>Useful page</title></head><body><h1>Heading</h1><p>Paragraph</p><ul><li>First</li><li>Second</li></ul><a href="https://example.com/next">Next</a><script>SECRET</script></body></html>',
           ),
-        }),
-      )
-      yield* Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
-        const caseContext = yield* Layer.build(
-          pageReaderLayer.pipe(Layer.provide(Layer.merge(publicResolver, network))),
-        )
-        return yield* Effect.gen(function* () {
+        ),
+      ),
+    }),
+  )
+  layer(pageReaderLayer.pipe(Layer.provide(Layer.merge(publicResolver, documentNetwork))))((it) => {
+    it.effect(
+      'extracts title, headings, paragraphs, lists and links and bounds readable text',
+      () =>
+        Effect.gen(function* () {
           const outcome = yield* (yield* PageReader).read({ address: 'https://example.com' })
           expect(ReadPageOutcome.guards.Read(outcome)).toBe(true)
           if (ReadPageOutcome.guards.Read(outcome)) {
@@ -92,10 +86,9 @@ describe('Public pages', () => {
               expect(outcome.text).toContain(word)
             expect(outcome.text).not.toContain('SECRET')
           }
-        }).pipe(Effect.provide(caseContext))
-      }).pipe(Effect.scoped)
-    }),
-  )
+        }).pipe(Effect.scoped),
+    )
+  })
 
   it.effect(
     'refuses credentials, non-web schemes, disguised loopback and all non-public address classes before requesting',
@@ -120,7 +113,6 @@ describe('Public pages', () => {
           }),
         )
         yield* Effect.gen(function* () {
-          // Each case owns fresh mutable services and their resource scope.
           const caseContext = yield* Layer.build(
             pageReaderLayer.pipe(Layer.provide(Layer.merge(resolver, network))),
           )
@@ -199,7 +191,6 @@ describe('Public pages', () => {
           }),
         )
         const outcome = yield* Effect.gen(function* () {
-          // Each case owns fresh mutable services and their resource scope.
           const caseContext = yield* Layer.build(
             pageReaderLayer.pipe(Layer.provide(Layer.merge(resolver, network))),
           )
@@ -224,7 +215,6 @@ describe('Public pages', () => {
           }),
         )
         yield* Effect.gen(function* () {
-          // Each case owns fresh mutable services and their resource scope.
           const caseContext = yield* Layer.build(
             pageReaderLayer.pipe(Layer.provide(Layer.merge(mixed, network))),
           )
@@ -253,7 +243,6 @@ describe('Public pages', () => {
           }),
         )
         yield* Effect.gen(function* () {
-          // Each case owns fresh mutable services and their resource scope.
           const caseContext = yield* Layer.build(
             pageReaderLayer.pipe(Layer.provide(Layer.merge(publicResolver, network))),
           )
@@ -269,29 +258,31 @@ describe('Public pages', () => {
           { status: 200, location: Option.none(), contentType: 'image/png', body: 'image' },
           document('x'.repeat(budgets.pageBytes + 1)),
         ]) {
-          const current = Layer.succeed(
-            PageNetwork,
-            PageNetwork.of({ request: Effect.fn('Test.pageSize')(() => Effect.succeed(response)) }),
-          )
+          const current = PageNetwork.of({
+            request: Effect.fn('Test.pageSize')(() => Effect.succeed(response)),
+          })
           yield* Effect.gen(function* () {
-            // Each case owns fresh mutable services and their resource scope.
-            const caseContext = yield* Layer.build(
-              pageReaderLayer.pipe(Layer.provide(Layer.merge(publicResolver, current))),
+            const outcome = yield* (yield* PageReader).read({ address: 'https://example.com' })
+            expect(outcome._tag).toBe(
+              response.contentType === 'text/html; charset=utf-8' &&
+                Buffer.byteLength(response.body) <= budgets.pageBytes
+                ? 'Read'
+                : 'Refused',
             )
-            return yield* Effect.gen(function* () {
-              const outcome = yield* (yield* PageReader).read({ address: 'https://example.com' })
-              expect(outcome._tag).toBe(
-                response.contentType === 'text/html; charset=utf-8' &&
-                  Buffer.byteLength(response.body) <= budgets.pageBytes
-                  ? 'Read'
-                  : 'Refused',
-              )
-              if (ReadPageOutcome.guards.Read(outcome)) {
-                expect(Buffer.byteLength(outcome.text)).toBeLessThanOrEqual(budgets.pageText)
-                expect(outcome.truncated).toBe(true)
-              } else expect(outcome.reason).toBe('not a readable page')
-            }).pipe(Effect.provide(caseContext))
-          }).pipe(Effect.scoped)
+            if (ReadPageOutcome.guards.Read(outcome)) {
+              expect(Buffer.byteLength(outcome.text)).toBeLessThanOrEqual(budgets.pageText)
+              expect(outcome.truncated).toBe(true)
+            } else expect(outcome.reason).toBe('not a readable page')
+          }).pipe(
+            Effect.provideServiceEffect(
+              PageReader,
+              makePageReader.pipe(
+                Effect.provideService(PageNetwork, current),
+                Effect.provideService(PageResolver, publicResolverValue),
+              ),
+            ),
+            Effect.scoped,
+          )
         }
       }),
   )
@@ -316,7 +307,6 @@ describe('Public pages', () => {
       )
       const running = yield* Effect.forkChild(
         Effect.gen(function* () {
-          // Each case owns fresh mutable services and their resource scope.
           const caseContext = yield* Layer.build(
             pageReaderLayer.pipe(Layer.provide(Layer.merge(resolver, network))),
           )
@@ -333,13 +323,11 @@ describe('Public pages', () => {
     }),
   )
 
-  it.effect(
-    'pins the actual Node socket to the supplied IP, keeps Host, bounds body bytes and closes requests',
-    () =>
-      Effect.gen(function* () {
-        // Each case owns fresh mutable services and their resource scope.
-        const caseContext = yield* Layer.build(pageNetworkLayer)
-        return yield* Effect.scoped(
+  layer(pageNetworkLayer)((it) => {
+    it.effect(
+      'pins the actual Node socket to the supplied IP, keeps Host, bounds body bytes and closes requests',
+      () =>
+        Effect.scoped(
           Effect.gen(function* () {
             const server = NodeHttp.createServer((request, response) => {
               response.setHeader('Content-Type', 'text/plain')
@@ -371,7 +359,7 @@ describe('Public pages', () => {
             expect(refused.reason).toBe('not a readable page')
             return yield* Effect.void
           }),
-        ).pipe(Effect.provide(caseContext))
-      }).pipe(Effect.scoped),
-  )
+        ).pipe(Effect.scoped),
+    )
+  })
 })
