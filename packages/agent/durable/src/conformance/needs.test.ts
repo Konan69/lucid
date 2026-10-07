@@ -1,12 +1,12 @@
+import { Deferred, Effect, Option, Predicate } from 'effect'
+import { FixtureFailed } from '../fixtures/harness.ts'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { isToolUIPart, lastAssistantMessageIsCompleteWithApprovalResponses, tool } from 'ai'
 import { expect, it } from '@effect/vitest'
-import { Effect, Predicate, Option } from 'effect'
 import { z } from 'zod'
 import { PlainChat } from '../fixtures/chat.ts'
 import { ToolApprovalUnsupported, toolsExtension } from '../main.ts'
-import { call, context, host, signal, texts } from './fixtures/host.ts'
-
+import { call, context, host, texts } from './fixtures/host.ts'
 /** Stock Chat must park, echo the durable approval identity, and automatically post the decision. */
 for (const sample of [
   {
@@ -59,6 +59,7 @@ for (const sample of [
   },
   {
     name: 'host overrides asynchronous tool policy',
+    // @effect-diagnostics-next-line asyncFunction:off -- subject: host override must bypass a native async approval predicate
     declaration: async () => true,
     amount: 5,
     held: false,
@@ -67,7 +68,7 @@ for (const sample of [
   },
 ])
   it.live(`honours ${sample.name} through stock SDK Chat`, () =>
-    Effect.promise(async () => {
+    Effect.gen(function* () {
       const executions: number[] = []
       const observed: number[] = []
       const declaration = sample.declaration
@@ -77,32 +78,33 @@ for (const sample of [
             return declaration(input)
           }
         : declaration
-      const fixture = await host(
+      const fixture = yield* host(
         {
           pay: tool({
             inputSchema: z.object({ amount: z.number().transform((value) => value * 2) }),
             needsApproval,
-            execute: async ({ amount }) => {
+            execute: ({ amount }) => {
               executions.push(amount)
-              return { receipt: amount }
+              return Promise.resolve({ receipt: amount })
             },
           }),
         },
         sample.options,
       )
-      const opened = await fixture.open()
+      const opened = yield* fixture.open()
       opened.faux.setResponses([
         call('pay', { amount: sample.amount }, 'pay'),
         fauxAssistantMessage('Resolved.'),
       ])
-      let completion = signal()
+      let completion = yield* Deferred.make<void, FixtureFailed>()
       const chat = new PlainChat({
         transport: opened.transport,
         sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-        onFinish: () => completion.resolve(),
-        onError: (error) => completion.reject(error),
+        onFinish: () => Deferred.doneUnsafe(completion, Effect.void),
+        onError: (error) =>
+          Deferred.doneUnsafe(completion, Effect.fail(new FixtureFailed({ cause: error }))),
       })
-      await chat.sendMessage({ text: 'Pay' })
+      yield* Effect.promise(() => chat.sendMessage({ text: 'Pay' }))
       if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
       const held = chat.lastMessage.parts.find(
         (part) => isToolUIPart(part) && part.toolCallId === 'pay',
@@ -111,13 +113,17 @@ for (const sample of [
         expect(executions).toEqual([])
         if (held === undefined || !isToolUIPart(held) || held.state !== 'approval-requested')
           throw new Error('Expected approval request')
-        completion = signal()
-        await chat.addToolApprovalResponse({
-          id: held.approval.id,
-          approved: sample.approved,
-          reason: 'Budget decision',
-        })
-        await completion.promise
+        completion = yield* Deferred.make<void, FixtureFailed>()
+        yield* Effect.promise(() =>
+          Promise.resolve(
+            chat.addToolApprovalResponse({
+              id: held.approval.id,
+              approved: sample.approved,
+              reason: 'Budget decision',
+            }),
+          ),
+        )
+        yield* Deferred.await(completion)
       } else expect(held).toMatchObject({ state: 'output-available' })
       expect(chat.status).toBe('ready')
       expect(executions).toEqual(sample.approved ? [sample.amount * 2] : [])
@@ -126,45 +132,61 @@ for (const sample of [
       else expect(observed.every((amount) => amount === sample.amount * 2)).toBe(true)
     }),
   )
-
 /** Async declarations can be rejected before any call; evaluating them is never needed at registration. */
 it.live('rejects an async needsApproval declaration with a named tagged error', () =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     const registration = toolsExtension('async', {
       pay: tool({
         inputSchema: z.object({}),
+        // @effect-diagnostics-next-line asyncFunction:off -- subject: registration must refuse a native async approval predicate
         needsApproval: async () => true,
-        execute: async () => 'paid',
+        execute: () => Promise.resolve('paid'),
       }),
     })
-    await expect(registration).rejects.toBeInstanceOf(ToolApprovalUnsupported)
-    await expect(registration).rejects.toMatchObject({
-      toolName: 'pay',
-      message: expect.stringContaining('asynchronous approval function is not supported'),
-    })
+    yield* Effect.map(
+      Effect.flip(
+        Effect.tryPromise({
+          try: () => registration,
+          catch: (cause) => new FixtureFailed({ cause }),
+        }),
+      ),
+      (failed) => expect(failed.cause).toBeInstanceOf(ToolApprovalUnsupported),
+    )
+    yield* Effect.map(
+      Effect.flip(
+        Effect.tryPromise({
+          try: () => registration,
+          catch: (cause) => new FixtureFailed({ cause }),
+        }),
+      ),
+      (failed) =>
+        expect(failed.cause).toMatchObject({
+          toolName: 'pay',
+          message: expect.stringContaining('asynchronous approval function is not supported'),
+        }),
+    )
   }),
 )
-
 /** A regular function returning a Promise fails synchronously at the public plan, never a truthy hold. */
 it.live('rejects a Promise-returning approval predicate at the call', () =>
-  Effect.promise(async () => {
-    const fixture = await host(
+  Effect.gen(function* () {
+    const fixture = yield* host(
       {
         pay: tool({
           inputSchema: z.object({}),
           needsApproval: () => Promise.resolve(true),
-          execute: async () => 'paid',
+          execute: () => Promise.resolve('paid'),
         }),
       },
       {},
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([call('pay', {}, 'pay'), fauxAssistantMessage('Recovered.')])
     const chat = new PlainChat({
       transport: opened.transport,
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
     })
-    await chat.sendMessage({ text: 'Pay' })
+    yield* Effect.promise(() => chat.sendMessage({ text: 'Pay' }))
     expect(chat.status).toBe('ready')
     expect(
       Option.fromNullishOr(chat.lastMessage).pipe(
@@ -175,27 +197,26 @@ it.live('rejects a Promise-returning approval predicate at the call', () =>
       state: 'output-error',
       errorText: expect.stringContaining('asynchronous approval function is not supported'),
     })
-    await opened.root.waitForIdle(context)
+    yield* Effect.promise(() => opened.root.waitForIdle(context))
   }),
 )
-
 /** Only input-based SDK approval functions fit Plan's replay/presentation contract today. */
 it.live('refuses unavailable SDK approval context rather than inventing call identity', () =>
-  Effect.promise(async () => {
-    const fixture = await host(
+  Effect.gen(function* () {
+    const fixture = yield* host(
       {
         pay: tool({
           inputSchema: z.object({}),
           needsApproval: (_input, options) => options.toolCallId.length > 0,
-          execute: async () => 'paid',
+          execute: () => Promise.resolve('paid'),
         }),
       },
       {},
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([call('pay', {}, 'pay'), fauxAssistantMessage('Recovered.')])
     const chat = new PlainChat({ transport: opened.transport })
-    await chat.sendMessage({ text: 'Pay' })
+    yield* Effect.promise(() => chat.sendMessage({ text: 'Pay' }))
     expect(chat.status).toBe('ready')
     expect(
       Option.fromNullishOr(chat.lastMessage).pipe(
@@ -206,6 +227,6 @@ it.live('refuses unavailable SDK approval context rather than inventing call ide
       state: 'output-error',
       errorText: expect.stringContaining('toolCallId'),
     })
-    await opened.root.waitForIdle(context)
+    yield* Effect.promise(() => opened.root.waitForIdle(context))
   }),
 )
