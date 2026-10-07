@@ -30,6 +30,7 @@ export const authRoute = HttpRouter.add(
   '/api/auth/*',
   Effect.gen(function* () {
     const auth = yield* authEffect
+    // @effect-diagnostics-next-line strictEffectProvide:off -- The Layer is Alchemy's type-only `RuntimeContext.phantom` (`Layer.empty`): it acquires nothing and owns no scope, so there is no lifetime for an entry point to hold.
     return yield* auth.fetch.pipe(Effect.provide(localAuthRuntimeLayer))
   }),
 )

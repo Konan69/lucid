@@ -63,6 +63,7 @@ export const workspaceIn = Effect.fn('Auth.workspaceIn')(function* (
 export const authenticate = Effect.fn('Auth.authenticate')(function* (headers: Headers) {
   const auth = yield* authEffect
   const session = yield* auth.getSession(headers).pipe(
+    // @effect-diagnostics-next-line strictEffectProvide:off -- The Layer is Alchemy's type-only `RuntimeContext.phantom` (`Layer.empty`): it acquires nothing and owns no scope, so there is no lifetime for an entry point to hold.
     Effect.provide(localAuthRuntimeLayer),
     Effect.mapError(() => new Unauthenticated({ message: 'Invalid session' })),
   )
