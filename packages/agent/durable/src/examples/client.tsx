@@ -9,6 +9,7 @@ import {
   type UIMessage,
 } from 'ai'
 import { useState } from 'react'
+import { ConnectionLost, resumable } from '../client.ts'
 
 /** The text a person typed into the form's field `name`. */
 function typed(form: HTMLFormElement, name: string) {
@@ -17,8 +18,11 @@ function typed(form: HTMLFormElement, name: string) {
 }
 
 /**
- * The client side of the server examples: a stock `useChat` component. Nothing here imports this
- * library; the server speaks the AI SDK's own chat protocol.
+ * The client side of the server examples: a stock `useChat` component. The server speaks the AI
+ * SDK's own chat protocol, so the hook, the transport and the continuation predicates are the
+ * SDK's. The one import from this library is `resumable` (an application imports it from
+ * `@vivid/durable/client`): it turns a dropped connection into `ConnectionLost`, after which
+ * `resumeStream()` replays the run in progress and replaces the partial message.
  *
  * `messages` is the transcript the page loaded from the `history` route. `resume` makes the hook
  * reconnect on mount to a run that is still in progress or waits for a person.
@@ -26,7 +30,7 @@ function typed(form: HTMLFormElement, name: string) {
 export function Thread(props: { readonly api: string; readonly messages: UIMessage[] }) {
   // One transport for the life of the component; a new one each render would be a new connection
   // owner each time.
-  const [transport] = useState(() => new DefaultChatTransport({ api: props.api }))
+  const [transport] = useState(() => resumable(new DefaultChatTransport({ api: props.api })))
   const chat = useChat({
     transport,
     messages: props.messages,
@@ -102,6 +106,21 @@ export function Thread(props: { readonly api: string; readonly messages: UIMessa
           {message.parts.filter(isToolUIPart).map(tool)}
         </article>
       ))}
+      {chat.error instanceof ConnectionLost ? (
+        // The run goes on in the server while the connection is down. Reconnecting is the
+        // person's action here: an automatic retry with no delay would spin while offline.
+        <p role="alert">
+          The connection was lost.{' '}
+          <button
+            type="button"
+            onClick={() => {
+              void chat.resumeStream()
+            }}
+          >
+            Reconnect
+          </button>
+        </p>
+      ) : null}
       <form
         onSubmit={(event) => {
           event.preventDefault()
