@@ -8,9 +8,17 @@ import * as Schema from 'effect/Schema'
 const directory = NodeURL.fileURLToPath(new URL('../', import.meta.url))
 // The native preview exports its manifest, not its executable subpath. Use the installed bin
 // location verified in that manifest rather than resolving an unexported package subpath.
-const compiler = NodeURL.fileURLToPath(
+const nativeCompiler = NodeURL.fileURLToPath(
   new URL('bin/tsc', import.meta.resolve('@typescript/native/package.json')),
 )
+// Classic TypeScript is already installed in the repository; this proof adds no dependency.
+const classicCompiler = NodeURL.fileURLToPath(
+  new URL('bin/tsc', import.meta.resolve('typescript/package.json')),
+)
+const compilers = [
+  { name: 'native', file: nativeCompiler },
+  { name: 'classic', file: classicCompiler },
+]
 
 // Read only the manifest fields that define this proof. Decode each file once at ingress;
 // the packed manifest must carry published exports instead of the workspace source entries.
@@ -60,14 +68,12 @@ async function pack(temporary) {
   const files = run('tar', ['-tzf', archive], directory).trim().split('\n')
   NodeAssert.ok(
     files.every((file) =>
-      /^(?:package\/dist\/[^/]+\.(?:js|d\.ts|d\.ts\.map)|package\/(?:README\.md|package\.json))$/u.test(
-        file,
-      ),
+      /^(?:package\/dist\/[^/]+\.(?:js|d\.ts)|package\/(?:README\.md|package\.json))$/u.test(file),
     ),
     'Tarball contains a file outside the published surface',
   )
   for (const entry of ['main', 'core']) {
-    for (const suffix of ['js', 'd.ts', 'd.ts.map']) {
+    for (const suffix of ['js', 'd.ts']) {
       NodeAssert.ok(files.includes(`package/dist/${entry}.${suffix}`))
     }
   }
@@ -127,7 +133,7 @@ async function project(temporary, archive) {
 }
 
 /** Check consumer declarations without inheriting workspace paths, source conditions, or config. */
-async function types(consumer, resolution) {
+async function types(consumer, resolution, compiler) {
   const config = {
     compilerOptions: {
       target: 'ES2022',
@@ -141,10 +147,10 @@ async function types(consumer, resolution) {
     },
     files: ['types.ts'],
   }
-  const file = NodePath.join(consumer, `tsconfig.${resolution}.json`)
+  const file = NodePath.join(consumer, `tsconfig.${compiler.name}.${resolution}.json`)
   await NodeFSP.writeFile(file, `${JSON.stringify(config, null, 2)}\n`)
-  run(process.execPath, [compiler, '-p', file], consumer)
-  process.stdout.write(`Type resolution (${resolution}): passed\n`)
+  run(process.execPath, [compiler.file, '-p', file], consumer)
+  process.stdout.write(`Type resolution (${compiler.name}, ${resolution}): passed\n`)
 }
 
 // Build before creating the proof directory: a compiler failure cannot leave a misleading tarball.
@@ -154,8 +160,10 @@ await NodeFSP.mkdir(cache, { recursive: true })
 const temporary = await NodeFSP.mkdtemp(NodePath.join(cache, 'durable-consumer-'))
 process.stdout.write(`Packaging proof directory: ${temporary}\n`)
 const consumer = await project(temporary, await pack(temporary))
-await types(consumer, 'bundler')
-await types(consumer, 'nodenext')
+for (const compiler of compilers) {
+  await types(consumer, 'bundler', compiler)
+  await types(consumer, 'nodenext', compiler)
+}
 run(process.execPath, ['stream.mjs'], consumer)
 await NodeFSP.rm(temporary, { recursive: true, force: true })
 process.stdout.write('Package consumer proof: passed (temporary directory removed)\n')

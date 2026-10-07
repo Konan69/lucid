@@ -16,8 +16,7 @@ import {
 } from '@earendil-works/pi-ai/providers/faux'
 import { createRegistry, Harness } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
-import { toolsExtension } from '@vivid/durable/core'
-import { ConversationMissing } from '@vivid/durable'
+import { ConversationMissing, toolsExtension } from '@vivid/durable'
 import { tool } from 'ai'
 import { Config, Effect, Exit, Option, Predicate, Result, Schema, Scope, Semaphore } from 'effect'
 import { z } from 'zod'
@@ -26,7 +25,11 @@ import { route } from './main.ts'
 
 const context = BACKGROUND_CONTEXT
 const maximumBody = 5 * 1024 * 1024
-const ChatId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))
+const ChatId = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(200),
+  Schema.isPattern(/^(?!\.{1,2}$)/u),
+)
 const ChatEnvelope = Schema.fromJsonString(Schema.Struct({ id: ChatId }))
 const ChatPath = Schema.Struct({
   id: Schema.StringFromUriComponent.pipe(Schema.decodeTo(ChatId)),
@@ -41,11 +44,11 @@ const StartOptions = Schema.Struct({
 export type StartOptions = typeof StartOptions.Type
 
 const decodeMapping = Schema.decodeUnknownEffect(Mapping)
-const decodeEnvelope = Schema.decodeUnknownEffect(ChatEnvelope)
-const decodePath = Schema.decodeUnknownEffect(ChatPath)
+const decodeEnvelope = Schema.decodeUnknownPromise(ChatEnvelope)
+const decodePath = Schema.decodeUnknownPromise(ChatPath)
 const decodeStart = Schema.decodeUnknownEffect(StartOptions)
 const decodeLength = Schema.decodeUnknownSync(Schema.NumberFromString)
-const decodeIngress = Schema.decodeUnknownEffect(
+const decodeIngress = Schema.decodeUnknownPromise(
   Schema.Struct({ method: Schema.String, url: Schema.String }),
 )
 const decodeAddress = Schema.decodeUnknownResult(
@@ -107,9 +110,11 @@ function messageText(message: Message) {
 function reply(transcript: TranscriptContext) {
   const latest = transcript.messages.at(-1)
   if (latest !== undefined && latest.role === 'toolResult') {
-    const text =
-      latest.toolName === 'pay' ? 'Payment confirmed.' : `Answer received: ${messageText(latest)}`
-    return fauxAssistantMessage(text)
+    if (latest.toolName !== 'pay')
+      return fauxAssistantMessage(`Answer received: ${messageText(latest)}`)
+    return fauxAssistantMessage(
+      latest.isError ? `Payment was not made: ${messageText(latest)}` : 'Payment confirmed.',
+    )
   }
   const user = transcript.messages.findLast((message) => message.role === 'user')
   if (user === undefined) throw new Error('A chat turn must have a user message')
@@ -147,9 +152,9 @@ function models() {
 }
 
 /** Register the same minimal pay/ask setup as the conformance host, using only public APIs. */
-const registry = Effect.fn('Example.registry')(function* () {
+async function registry() {
   const result = createRegistry()
-  const extension = yield* toolsExtension(
+  const extension = await toolsExtension(
     'example',
     {
       pay: tool({
@@ -166,7 +171,7 @@ const registry = Effect.fn('Example.registry')(function* () {
   )
   result.install(extension)
   return result
-})
+}
 
 /** Register close before creating the mapping table; this database contains no Pi-owned state. */
 const mapping = Effect.fn('Example.mapping')(function* (directory: string) {
@@ -193,7 +198,10 @@ type Host = {
   readonly gate: Semaphore.Semaphore
 }
 
-/** Read every request from SQLite. Create independent chats: Harness.root is one reserved singleton. */
+/**
+ * Read every request from SQLite; Harness.root is a singleton, so each SDK chat is independent.
+ * This is where a production host authorizes access; the development example has no authentication.
+ */
 const conversation = Effect.fn('Example.conversation')(function* (
   host: Host,
   id: string,
@@ -256,58 +264,57 @@ async function readBody(request: NodeHttp.IncomingMessage) {
 }
 
 /** Decode only routing identity here; the imported route owns chat, action and query codecs. */
-const requestRoute = Effect.fn('Example.requestRoute')(function* (
-  host: Host,
-  request: Request,
-  body: string,
-) {
+async function requestRoute(host: Host, request: Request, body: string): Promise<Response> {
   const url = new URL(request.url)
   if (url.pathname === '/chat') {
-    if (request.method !== 'POST') return new Response(null, { status: 405 })
-    const envelope = yield* decodeEnvelope(body)
-    const id = yield* conversation(host, envelope.id, true)
-    return yield* Effect.promise(() => route(host.harness, id, request, context))
+    if (request.method !== 'POST')
+      return new Response(null, { status: 405, headers: { Allow: 'POST' } })
+    const envelope = await decodeEnvelope(body)
+    // oxlint-disable-next-line vivid/no-runpromise-in-library -- HTTP ingress to the Pi mapping adapter.
+    const id = await Effect.runPromise(conversation(host, envelope.id, true))
+    return route(host.harness, id, request, context)
   }
   const match = /^\/chat\/([^/]+)\/([^/]+)$/u.exec(url.pathname)
   if (match === null) return new Response(null, { status: 404 })
-  const path = yield* decodePath({ id: match[1], action: match[2] })
+  const path = await decodePath({ id: match[1], action: match[2] })
   const method =
     path.action === 'stream' || path.action === 'history' || path.action === 'waiting'
       ? 'GET'
       : 'POST'
-  if (request.method !== method) return new Response(null, { status: 405 })
-  const id = yield* conversation(host, path.id, false)
+  if (request.method !== method)
+    return new Response(null, { status: 405, headers: { Allow: method } })
+  // oxlint-disable-next-line vivid/no-runpromise-in-library -- HTTP ingress to the Pi mapping adapter.
+  const id = await Effect.runPromise(conversation(host, path.id, false))
   url.pathname = path.action === 'stream' ? '/chat' : `/${path.action}`
-  // Preserve the whole query so future respond reconnect cursors receive message/steps unchanged.
-  const mapped = new Request(url, request)
-  return yield* Effect.promise(() => route(host.harness, id, mapped, context))
-})
+  return route(host.harness, id, new Request(url, request), context)
+}
 
-/** Framework ingress owns raw bytes; resource failures stay visible instead of becoming bad input. */
-const response = Effect.fn('Example.response')(function* (
+/** Node's Promise-only framework ingress reads raw bytes; the imported route owns turn codecs. */
+async function response(
   host: Host,
   incoming: NodeHttp.IncomingMessage,
   signal: AbortSignal,
-) {
+): Promise<Response> {
   if (incoming.method === 'OPTIONS') return new Response(null, { status: 204 })
-  const input = yield* decodeIngress({
-    method: incoming.method,
-    url: incoming.url,
-  })
-  const body =
-    input.method === 'POST'
-      ? yield* Effect.tryPromise({
-          try: () => readBody(incoming),
-          catch: (cause) => (cause instanceof BodyTooLarge ? cause : new BodyUnreadable({ cause })),
-        })
-      : ''
+  const input = await decodeIngress({ method: incoming.method, url: incoming.url })
+  const body = input.method === 'POST' ? await readBody(incoming) : ''
   const url = new URL(input.url, 'http://example.invalid')
   const request =
     input.method === 'POST'
       ? new Request(url, { method: input.method, body, signal })
       : new Request(url, { method: input.method, signal })
-  return yield* requestRoute(host, request, body)
-})
+  return requestRoute(host, request, body)
+}
+
+/** Only host ingress failures are mapped here; main.route keeps the bridge's shared status mapping. */
+function ingressFailure(error: Error): Response {
+  if (error instanceof BodyTooLarge)
+    return new Response('Request body exceeds 5 MB', { status: 413 })
+  if (error instanceof BodyUnreadable) return new Response('Unreadable request', { status: 400 })
+  if (error instanceof Schema.SchemaError) return new Response('Invalid request', { status: 400 })
+  if (error instanceof ChatMissing) return new Response('Chat not found', { status: 404 })
+  throw error
+}
 
 /** Development example only: any origin may use these unauthenticated, disposable chat routes. */
 function cors(outgoing: NodeHttp.ServerResponse) {
@@ -339,27 +346,18 @@ function dispatch(
   const controller = new AbortController()
   const disconnected = () => controller.abort()
   outgoing.once('close', disconnected)
-  const operation = response(host, incoming, controller.signal).pipe(
-    Effect.catchTag('BodyTooLarge', () =>
-      Effect.succeed(new Response('Request body exceeds 5 MB', { status: 413 })),
-    ),
-    Effect.catchTag('BodyUnreadable', () =>
-      Effect.succeed(new Response('Unreadable request', { status: 400 })),
-    ),
-    Effect.catchTag('SchemaError', () =>
-      Effect.succeed(new Response('Invalid request', { status: 400 })),
-    ),
-    Effect.catchTag('ChatMissing', () =>
-      Effect.succeed(new Response('Chat not found', { status: 404 })),
-    ),
-  )
-  // oxlint-disable-next-line vivid/no-runpromise-in-library -- Node HTTP framework ingress.
-  void Effect.runPromise(operation)
+  void response(host, incoming, controller.signal)
+    .catch(ingressFailure)
     .then((result) => writeResponse(outgoing, result, controller.signal))
     .catch((error: Error) => {
-      if (controller.signal.aborted) return
-      console.error(error)
-      if (outgoing.headersSent) outgoing.destroy(error)
+      // pipeTo rejects with this observation's abort reason when the connection closes normally.
+      if (controller.signal.aborted && error === controller.signal.reason) return
+      if (controller.signal.aborted) {
+        console.error('Example HTTP request failed after client disconnect.')
+        return
+      }
+      console.error('Example HTTP request failed.')
+      if (outgoing.headersSent) outgoing.destroy()
       else {
         outgoing.statusCode = 500
         outgoing.end('Example host failed')
@@ -395,7 +393,10 @@ function listen(server: NodeHttp.Server, options: StartOptions) {
 }
 
 /** All acquired resources have finalizers before first use; startup failure closes the private scope. */
-const open = Effect.fn('Example.open')(function* (input: StartOptions) {
+const open = Effect.fn('Example.open')(function* (
+  input: StartOptions,
+  installed: ReturnType<typeof createRegistry>,
+) {
   const options = yield* decodeStart(input)
   yield* Effect.tryPromise({
     try: () => NodeFSP.mkdir(options.dataDirectory, { recursive: true }),
@@ -409,7 +410,6 @@ const open = Effect.fn('Example.open')(function* (input: StartOptions) {
     }),
     (opened) => Effect.promise(() => opened.close(context)),
   )
-  const installed = yield* registry()
   const harness = yield* Effect.acquireRelease(
     Effect.tryPromise({
       try: () =>
@@ -426,6 +426,10 @@ const open = Effect.fn('Example.open')(function* (input: StartOptions) {
     }),
     (opened) => Effect.promise(() => opened.close(context)),
   )
+  /** Pi Durable 1.0.4 README "Persist and Resume" and dist/harness/types.d.ts (harness/types.ts
+   * contract): resume(): void is idempotent, enables recovered pending work, and throws after close.
+   * Read-only viewers never start scheduling; enable it before accepting reconnect GET requests. */
+  harness.resume()
   const gate = yield* Semaphore.make(1)
   const host: Host = { harness, database, gate }
   const server = yield* Effect.acquireRelease(
@@ -439,14 +443,26 @@ const open = Effect.fn('Example.open')(function* (input: StartOptions) {
 })
 
 /** A caller owns the returned close operation; it closes server, harness, and both SQLite files. */
-export const start = Effect.fn('Example.start')(function* (options: StartOptions) {
-  const scope = yield* Scope.make()
-  const host = yield* open(options).pipe(
-    Scope.provide(scope),
-    Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, Exit.void) : Effect.void)),
+export async function start(options: StartOptions) {
+  const installed = await registry()
+  // oxlint-disable-next-line vivid/no-runpromise-in-library -- Node host startup owns the resource scope.
+  const scope = await Effect.runPromise(Scope.make())
+  // oxlint-disable-next-line vivid/no-runpromise-in-library -- Node host startup adapter.
+  const host = await Effect.runPromise(
+    open(options, installed).pipe(
+      Scope.provide(scope),
+      Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, Exit.void) : Effect.void)),
+    ),
   )
-  return { ...host, close: () => Scope.close(scope, Exit.void) }
-})
+  console.warn(
+    'Unauthenticated development example: permissive CORS; do not expose to untrusted networks.',
+  )
+  return {
+    ...host,
+    // oxlint-disable-next-line vivid/no-runpromise-in-library -- Node host shutdown adapter.
+    close: () => Effect.runPromise(Scope.close(scope, Exit.void)),
+  }
+}
 
 /** CLI configuration alone chooses defaults; a supplied directory is retained for future starts. */
 const configured = Effect.fn('Example.configured')(function* () {
@@ -459,20 +475,20 @@ const configured = Effect.fn('Example.configured')(function* () {
         try: () => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'vivid-durable-')),
         catch: (cause) => new ExampleIO({ operation: 'directory', cause }),
       })
-  return yield* start({ host, port, dataDirectory })
+  return { host, port, dataDirectory }
 })
 
 /** Importing start has no CLI side effects; signal handlers exist only for the executable example. */
 async function main() {
   // oxlint-disable-next-line vivid/no-runpromise-in-library -- Executable CLI entry point.
-  const host = await Effect.runPromise(configured())
+  const options = await Effect.runPromise(configured())
+  const host = await start(options)
   console.log(`Durable example listening at ${host.address} (data: ${host.dataDirectory})`)
   const close = () => {
     process.removeListener('SIGINT', close)
     process.removeListener('SIGTERM', close)
-    // oxlint-disable-next-line vivid/no-runpromise-in-library -- CLI signal teardown.
-    void Effect.runPromise(host.close()).catch((error: Error) => {
-      console.error(error)
+    void host.close().catch(() => {
+      console.error('Example host shutdown failed.')
       process.exitCode = 1
     })
   }
@@ -482,7 +498,7 @@ async function main() {
 
 const executable = process.argv[1]
 if (executable !== undefined && import.meta.url === NodeURL.pathToFileURL(executable).href)
-  void main().catch((error: Error) => {
-    console.error(error)
+  void main().catch(() => {
+    console.error('Example host startup failed.')
     process.exitCode = 1
   })

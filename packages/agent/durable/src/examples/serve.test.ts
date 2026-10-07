@@ -1,8 +1,11 @@
+import * as NodeChildProcess from 'node:child_process'
 import * as NodeEvents from 'node:events'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeHttp from 'node:http'
 import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
+import * as NodeReadline from 'node:readline'
+import * as NodeURL from 'node:url'
 
 import { Chat } from '@ai-sdk/react'
 import { expect, it } from '@effect/vitest'
@@ -19,6 +22,7 @@ import { Effect, Schema } from 'effect'
 
 import { start } from './serve.ts'
 
+const decodeListeningAddress = Schema.decodeUnknownSync(Schema.URLFromString)
 const History = Schema.Struct({ messages: Schema.Array(Schema.MutableJson) })
 const decodeHistory = Schema.decodeUnknownSync(Schema.fromJsonString(History))
 const decodeWaiting = Schema.decodeUnknownSync(
@@ -146,6 +150,24 @@ async function approve(chat: Chat<UIMessage>) {
   ])
 }
 
+/** The stock denial continuation must keep the denied part and tell the person no payment occurred. */
+async function deny(chat: Chat<UIMessage>) {
+  await chat.sendMessage({ text: 'approve' })
+  const finished = observed(
+    chat,
+    () => chat.status === 'ready' && text(chat).startsWith('Payment was not made:'),
+  )
+  await chat.addToolApprovalResponse({
+    id: approval(chat),
+    approved: false,
+    reason: 'too expensive',
+  })
+  await finished
+  expect(toolParts(chat)).toMatchObject([{ type: 'tool-pay', state: 'output-denied' }])
+  expect(text(chat)).toContain('too expensive')
+  expect(text(chat)).not.toContain('Payment confirmed.')
+}
+
 /** A tool without execute waits for addToolOutput, which the stock tool-call predicate sends. */
 async function ask(chat: Chat<UIMessage>) {
   await chat.sendMessage({ text: 'ask' })
@@ -162,7 +184,7 @@ async function ask(chat: Chat<UIMessage>) {
   ])
 }
 
-const cases = { echo, slow, approve, ask }
+const cases = { echo, slow, approve, deny, ask }
 
 /** Omit Content-Length to prove the host also enforces its limit while reading chunked bytes. */
 function oversizedChunks(address: string) {
@@ -181,21 +203,25 @@ function oversizedChunks(address: string) {
 }
 
 /** The standalone action routes settle the same public waiting identity as SDK continuations. */
-async function actionRoutes(address: string, kind: 'approve' | 'ask') {
+async function actionRoutes(address: string, kind: 'approve' | 'deny' | 'ask') {
   const chat = client(address, `action-${kind}`)
-  await chat.sendMessage({ text: kind })
+  await chat.sendMessage({ text: kind === 'deny' ? 'approve' : kind })
   const waiting = await fetch(`${address}/chat/${chat.id}/waiting`)
   expect(waiting.status).toBe(200)
   const rows = decodeWaiting(await waiting.text())
   expect(rows).toHaveLength(1)
   const row = rows[0]
   if (row === undefined) throw new Error('Expected a waiting tool')
-  expect(row.kind).toBe(kind === 'approve' ? 'approval' : 'answer')
+  expect(row.kind).toBe(kind === 'ask' ? 'answer' : 'approval')
   const decision =
-    kind === 'approve'
+    kind !== 'ask'
       ? await fetch(`${address}/chat/${chat.id}/decide`, {
           method: 'POST',
-          body: JSON.stringify({ holdId: row.holdId, approved: true }),
+          body: JSON.stringify({
+            holdId: row.holdId,
+            approved: kind === 'approve',
+            reason: 'too expensive',
+          }),
         })
       : await fetch(`${address}/chat/${chat.id}/answer`, {
           method: 'POST',
@@ -211,7 +237,11 @@ async function actionRoutes(address: string, kind: 'approve' | 'ask') {
   const result = assistant.parts
     .flatMap((part) => (part.type === 'text' ? [part.text] : []))
     .join('')
-  expect(result).toContain(kind === 'approve' ? 'Payment confirmed.' : 'savings')
+  if (kind === 'deny') {
+    expect(result).toContain('Payment was not made:')
+    expect(result).toContain('too expensive')
+    expect(result).not.toContain('Payment confirmed.')
+  } else expect(result).toContain(kind === 'approve' ? 'Payment confirmed.' : 'savings')
   const cleared = await fetch(`${address}/chat/${chat.id}/waiting`)
   expect(decodeWaiting(await cleared.text())).toEqual([])
 }
@@ -225,14 +255,14 @@ async function abortRoute(address: string) {
   const stopped = await fetch(`${address}/chat/${chat.id}/abort`, { method: 'POST' })
   expect(stopped.status).toBe(204)
   await sent
-  const idle = await fetch(`${address}/chat/${chat.id}/stream?message=old&steps=0`)
+  const idle = await fetch(`${address}/chat/${chat.id}/stream`)
   expect(idle.status).toBe(204)
   const stored = await history(address, chat.id)
   expect(stored[0]).toMatchObject({ role: 'user', parts: [{ type: 'text', text: 'slow' }] })
 }
 
 // The bound host, global fetch, SDK Chat, SQLite restart and history are all real public seams.
-it.live.each(['echo', 'slow', 'approve', 'ask'] as const)(
+it.live.each(['echo', 'slow', 'approve', 'deny', 'ask'] as const)(
   'serves %s over TCP and preserves its SDK history after restart',
   (kind) =>
     Effect.scoped(
@@ -245,13 +275,19 @@ it.live.each(['echo', 'slow', 'approve', 'ask'] as const)(
             Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
         )
         const options = { host: '127.0.0.1', port: 0, dataDirectory }
-        const first = yield* Effect.acquireRelease(start(options), (host) => host.close())
+        const first = yield* Effect.acquireRelease(
+          Effect.promise(() => start(options)),
+          (host) => Effect.promise(() => host.close()),
+        )
         const chat = client(first.address, `tcp-${kind}`)
         yield* Effect.promise(() => cases[kind](chat, first.address))
         const settled = yield* Effect.promise(() => history(first.address, chat.id))
         expect(contents(settled)).toEqual(contents(chat.messages))
-        yield* first.close()
-        const second = yield* Effect.acquireRelease(start(options), (host) => host.close())
+        yield* Effect.promise(() => first.close())
+        const second = yield* Effect.acquireRelease(
+          Effect.promise(() => start(options)),
+          (host) => Effect.promise(() => host.close()),
+        )
         const restored = yield* Effect.promise(() => history(second.address, chat.id))
         expect(restored).toEqual(settled)
         expect(contents(restored)).toEqual(contents(chat.messages))
@@ -277,8 +313,8 @@ it.live('bounds HTTP request bytes and handles CORS, malformed input and missing
           Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
       )
       const host = yield* Effect.acquireRelease(
-        start({ host: '127.0.0.1', port: 0, dataDirectory }),
-        (opened) => opened.close(),
+        Effect.promise(() => start({ host: '127.0.0.1', port: 0, dataDirectory })),
+        (opened) => Effect.promise(() => opened.close()),
       )
       yield* Effect.promise(async () => {
         const preflight = await fetch(`${host.address}/chat`, { method: 'OPTIONS' })
@@ -286,6 +322,16 @@ it.live('bounds HTTP request bytes and handles CORS, malformed input and missing
         expect(preflight.headers.get('access-control-allow-origin')).toBe('*')
         const invalid = await fetch(`${host.address}/chat`, { method: 'POST', body: '{}' })
         expect(invalid.status).toBe(400)
+        for (const id of ['.', '..']) {
+          const inaccessible = await fetch(`${host.address}/chat`, {
+            method: 'POST',
+            body: JSON.stringify({
+              id,
+              messages: [{ id: 'dot', role: 'user', parts: [{ type: 'text', text: 'hello' }] }],
+            }),
+          })
+          expect(inaccessible.status).toBe(400)
+        }
         const oversized = await fetch(`${host.address}/chat`, {
           method: 'POST',
           body: 'x'.repeat(5 * 1024 * 1024 + 1),
@@ -316,12 +362,154 @@ it.live('serves waiting, decide, answer and explicit abort routes', () =>
           Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
       )
       const host = yield* Effect.acquireRelease(
-        start({ host: '127.0.0.1', port: 0, dataDirectory }),
-        (opened) => opened.close(),
+        Effect.promise(() => start({ host: '127.0.0.1', port: 0, dataDirectory })),
+        (opened) => Effect.promise(() => opened.close()),
       )
       yield* Effect.promise(() => actionRoutes(host.address, 'approve'))
+      yield* Effect.promise(() => actionRoutes(host.address, 'deny'))
       yield* Effect.promise(() => actionRoutes(host.address, 'ask'))
       yield* Effect.promise(() => abortRoute(host.address))
     }),
   ),
+)
+
+/** Own only a PID returned by spawn; finalization never finds or kills another session's process. */
+function processHost(directory: string) {
+  return Effect.acquireRelease(
+    Effect.sync(() => {
+      const child = NodeChildProcess.spawn(
+        process.execPath,
+        [NodeURL.fileURLToPath(new URL('./serve.ts', import.meta.url))],
+        {
+          stdio: 'pipe',
+          env: { ...process.env, HOST: '127.0.0.1', PORT: '0', DURABLE_DATA: directory },
+        },
+      )
+      const pid = child.pid
+      if (pid === undefined) throw new Error('Expected the spawned example PID')
+      const diagnostics: string[] = []
+      const events = new NodeEvents.EventEmitter<{ warning: [] }>()
+      const warning = NodeEvents.EventEmitter.once(events, 'warning').then(() => {})
+      child.stderr.setEncoding('utf8')
+      child.stderr.on('data', (chunk: string) => {
+        diagnostics.push(chunk)
+        if (diagnostics.join('').includes('Unauthenticated development example'))
+          events.emit('warning')
+      })
+      return { child, pid, diagnostics, warning }
+    }),
+    (host) => Effect.promise(() => killHost(host)),
+  )
+}
+
+type ProcessHost = {
+  readonly child: NodeChildProcess.ChildProcessWithoutNullStreams
+  readonly pid: number
+  readonly diagnostics: string[]
+  readonly warning: Promise<void>
+}
+
+/** Harness.beforeClose joins task invocations; SIGKILL models a real crash instead of awaiting close. */
+async function killHost(host: ProcessHost) {
+  if (host.child.exitCode !== null || host.child.signalCode !== null) return
+  const exited = NodeEvents.EventEmitter.once(host.child, 'exit')
+  process.kill(host.pid, 'SIGKILL')
+  await exited
+}
+
+/** Wait for the CLI's actual bind receipt, and verify its warning is emitted once per startup. */
+async function boundAddress(host: ProcessHost) {
+  const lines = NodeReadline.createInterface({ input: host.child.stdout })
+  try {
+    for await (const line of lines) {
+      const prefix = 'Durable example listening at '
+      if (line.startsWith(prefix)) {
+        const bound = decodeListeningAddress(line.slice(prefix.length).split(' ')[0])
+        await host.warning
+        expect(
+          host.diagnostics.join('').match(/Unauthenticated development example/gu),
+        ).toHaveLength(1)
+        return bound.origin
+      }
+    }
+    throw new Error('Example process exited before listening')
+  } finally {
+    lines.close()
+    host.child.stdout.resume()
+  }
+}
+
+// Pi 1.0.4 README "Persist and Resume"; a read-only GET must finish recovered work without another POST.
+it.live.each(['slow', 'approve'] as const)(
+  'recovers a crashed %s turn over TCP exactly once',
+  (kind) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const dataDirectory = yield* Effect.acquireRelease(
+          Effect.promise(() =>
+            NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'durable-example-crash-')),
+          ),
+          (directory) =>
+            Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
+        )
+        const measured = Date.now()
+        const phase = (step: string) => console.log(step, Date.now() - measured)
+        const crashed = yield* processHost(dataDirectory)
+        const firstAddress = yield* Effect.promise(() => boundAddress(crashed))
+        phase('bound')
+        const original = client(firstAddress, `crash-${kind}`)
+        if (kind === 'slow') {
+          const shown = observed(
+            original,
+            () => original.status === 'streaming' && text(original).length > 0,
+          )
+          const sent = original.sendMessage({ text: 'slow' })
+          yield* Effect.promise(() => shown)
+          phase('partial')
+          expect(text(original)).not.toContain('The final sentence')
+          yield* Effect.promise(() => killHost(crashed))
+          yield* Effect.promise(() => sent)
+        } else {
+          yield* Effect.promise(() => original.sendMessage({ text: 'approve' }))
+          expect(toolParts(original)).toMatchObject([
+            { type: 'tool-pay', state: 'approval-requested' },
+          ])
+          yield* Effect.promise(() => killHost(crashed))
+        }
+        phase('killed')
+        const reopened = yield* Effect.acquireRelease(
+          Effect.promise(() => start({ host: '127.0.0.1', port: 0, dataDirectory })),
+          (host) => Effect.promise(() => host.close()),
+        )
+        phase('reopened')
+        const resumed = client(reopened.address, original.id)
+        resumed.messages = yield* Effect.promise(() => history(reopened.address, original.id))
+        phase('history')
+        yield* Effect.promise(() => resumed.resumeStream())
+        phase('resumed')
+        if (kind === 'approve') {
+          expect(approval(resumed)).toBe(approval(original))
+          const finished = observed(
+            resumed,
+            () => resumed.status === 'ready' && text(resumed) === 'Payment confirmed.',
+          )
+          yield* Effect.promise(async () =>
+            resumed.addToolApprovalResponse({ id: approval(resumed), approved: true }),
+          )
+          yield* Effect.promise(() => finished)
+          expect(toolParts(resumed)).toMatchObject([
+            { type: 'tool-pay', state: 'output-available', output: { receipt: 100 } },
+          ])
+        } else
+          expect(text(resumed)).toContain(
+            'The final sentence confirms that the whole reply arrived.',
+          )
+        expect(resumed.status).toBe('ready')
+        expect(resumed.error).toBeUndefined()
+        const stored = yield* Effect.promise(() => history(reopened.address, original.id))
+        expect(stored.map((message) => message.role)).toEqual(['user', 'assistant'])
+        expect(contents(stored)).toEqual(contents(resumed.messages))
+        expect(yield* Effect.promise(() => history(reopened.address, original.id))).toEqual(stored)
+      }),
+    ),
 )
