@@ -16,8 +16,7 @@ import {
 } from '@earendil-works/pi-ai/providers/faux'
 import { createRegistry, Harness } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
-import { toolsExtension } from '@vivid/durable/core'
-import { ConversationMissing } from '@vivid/durable'
+import { ConversationMissing, toolsExtension } from '@vivid/durable'
 import { tool } from 'ai'
 import {
   Config,
@@ -80,6 +79,7 @@ class ExampleIO extends Schema.TaggedError<ExampleIO>()(
       'mapping',
       'storage',
       'harness',
+      'registry',
       'conversation',
       'listen',
     ]),
@@ -178,28 +178,32 @@ function models() {
 /** Register the same minimal pay/ask setup as the conformance host, using only public APIs. */
 const registry = Effect.fn('Example.registry')(function* () {
   const result = createRegistry()
-  const extension = yield* toolsExtension(
-    'example',
-    {
-      pay: tool({
-        description: 'Pay an invoice after approval',
-        inputSchema: z.object({ amount: z.number() }),
-        execute: ({ amount }) => Promise.resolve({ receipt: amount }),
-      }),
-      work: tool({
-        description: 'Prepare a response with a second step',
-        inputSchema: z.object({}),
-        execute: function prepareForSdk() {
-          return Promise.resolve('Prepared.')
+  const extension = yield* Effect.tryPromise({
+    try: () =>
+      toolsExtension(
+        'example',
+        {
+          pay: tool({
+            description: 'Pay an invoice after approval',
+            inputSchema: z.object({ amount: z.number() }),
+            execute: ({ amount }) => Promise.resolve({ receipt: amount }),
+          }),
+          work: tool({
+            description: 'Prepare a response with a second step',
+            inputSchema: z.object({}),
+            execute: function prepareForSdk() {
+              return Promise.resolve('Prepared.')
+            },
+          }),
+          ask: tool({
+            description: 'Ask a person which account to use',
+            inputSchema: z.object({ question: z.string() }),
+          }),
         },
-      }),
-      ask: tool({
-        description: 'Ask a person which account to use',
-        inputSchema: z.object({ question: z.string() }),
-      }),
-    },
-    { approval: { pay: true } },
-  )
+        { approval: { pay: true } },
+      ),
+    catch: (cause) => new ExampleIO({ operation: 'registry', cause }),
+  })
   result.install(extension)
   return result
 })
@@ -291,58 +295,57 @@ async function readBody(request: NodeHttp.IncomingMessage) {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-/** Decode only routing identity here; the imported route owns chat, action and query codecs. */
-const requestRoute = Effect.fn('Example.requestRoute')(function* (
-  host: Host,
-  request: Request,
-  body: string,
-) {
+/** Node's Promise HTTP ingress calls the one imported Promise entry directly,
+ * as reviewed in a020c7be. Wrapping route rejection in Effect.promise would turn
+ * an expected transport failure into a defect. Resource mapping remains Effect. */
+async function requestRoute(host: Host, request: Request, body: string): Promise<Response> {
   const url = new URL(request.url)
   if (url.pathname === '/chat') {
     if (request.method !== 'POST') return new Response(null, { status: 405 })
-    const envelope = yield* decodeEnvelope(body)
-    const id = yield* conversation(host, envelope.id, true)
-    return yield* Effect.promise(() => route(host.harness, id, request, context))
+    const envelope = await runForNode(decodeEnvelope(body))
+    const id = await runForNode(conversation(host, envelope.id, true))
+    return route(host.harness, id, request, context)
   }
   const match = /^\/chat\/([^/]+)\/([^/]+)$/u.exec(url.pathname)
   if (match === null) return new Response(null, { status: 404 })
-  const path = yield* decodePath({ id: match[1], action: match[2] })
+  const path = await runForNode(decodePath({ id: match[1], action: match[2] }))
   const method =
     path.action === 'stream' || path.action === 'history' || path.action === 'waiting'
       ? 'GET'
       : 'POST'
   if (request.method !== method) return new Response(null, { status: 405 })
-  const id = yield* conversation(host, path.id, false)
+  const id = await runForNode(conversation(host, path.id, false))
   url.pathname = path.action === 'stream' ? '/chat' : `/${path.action}`
-  const mapped = new Request(url, request)
-  return yield* Effect.promise(() => route(host.harness, id, mapped, context))
-})
+  return route(host.harness, id, new Request(url, request), context)
+}
 
-/** Framework ingress owns raw bytes; resource failures stay visible instead of becoming bad input. */
-const response = Effect.fn('Example.response')(function* (
+/** Node's Promise-only framework ingress bounds bytes before constructing the
+ * shared Request; expected route statuses remain the Promise route's authority. */
+async function response(
   host: Host,
   incoming: NodeHttp.IncomingMessage,
   signal: AbortSignal,
-) {
+): Promise<Response> {
   if (incoming.method === 'OPTIONS') return new Response(null, { status: 204 })
-  const input = yield* decodeIngress({
-    method: incoming.method,
-    url: incoming.url,
-  })
-  const body =
-    input.method === 'POST'
-      ? yield* Effect.tryPromise({
-          try: () => readBody(incoming),
-          catch: (cause) => (cause instanceof BodyTooLarge ? cause : new BodyUnreadable({ cause })),
-        })
-      : ''
+  const input = await runForNode(decodeIngress({ method: incoming.method, url: incoming.url }))
+  const body = input.method === 'POST' ? await readBody(incoming) : ''
   const url = new URL(input.url, 'http://example.invalid')
   const request =
     input.method === 'POST'
       ? new Request(url, { method: input.method, body, signal })
       : new Request(url, { method: input.method, signal })
-  return yield* requestRoute(host, request, body)
-})
+  return requestRoute(host, request, body)
+}
+
+/** Only host ingress failures are mapped here; main.route owns bridge statuses. */
+function ingressFailure(error: Error): Response {
+  if (error instanceof BodyTooLarge)
+    return new Response('Request body exceeds 5 MB', { status: 413 })
+  if (error instanceof BodyUnreadable) return new Response('Unreadable request', { status: 400 })
+  if (error instanceof Schema.SchemaError) return new Response('Invalid request', { status: 400 })
+  if (error instanceof ChatMissing) return new Response('Chat not found', { status: 404 })
+  throw error
+}
 
 /** Development example only: any origin may use these unauthenticated, disposable chat routes. */
 function cors(outgoing: NodeHttp.ServerResponse) {
@@ -374,26 +377,19 @@ function dispatch(
   const controller = new AbortController()
   const disconnected = () => controller.abort()
   outgoing.once('close', disconnected)
-  const operation = response(host, incoming, controller.signal).pipe(
-    Effect.catchTag('BodyTooLarge', () =>
-      Effect.succeed(new Response('Request body exceeds 5 MB', { status: 413 })),
-    ),
-    Effect.catchTag('BodyUnreadable', () =>
-      Effect.succeed(new Response('Unreadable request', { status: 400 })),
-    ),
-    Effect.catchTag('SchemaError', () =>
-      Effect.succeed(new Response('Invalid request', { status: 400 })),
-    ),
-    Effect.catchTag('ChatMissing', () =>
-      Effect.succeed(new Response('Chat not found', { status: 404 })),
-    ),
-  )
-  void runForNode(operation)
+  void response(host, incoming, controller.signal)
+    .catch(ingressFailure)
     .then((result) => writeResponse(outgoing, result, controller.signal))
     .catch((error: Error) => {
-      if (controller.signal.aborted) return
-      console.error(error)
-      if (outgoing.headersSent) outgoing.destroy(error)
+      // A cancelled pipe reports this observation's abort reason. It is an
+      // ordinary disconnect; any other failure after disconnect gets one line.
+      if (controller.signal.aborted && error === controller.signal.reason) return
+      if (controller.signal.aborted) {
+        console.error('Example HTTP request failed after client disconnect.')
+        return
+      }
+      console.error('Example HTTP request failed.')
+      if (outgoing.headersSent) outgoing.destroy()
       else {
         outgoing.statusCode = 500
         outgoing.end('Example host failed')
@@ -460,7 +456,9 @@ const open = Effect.fn('Example.open')(function* (input: StartOptions) {
     }),
     (opened) => Effect.promise(() => opened.close(context)),
   )
-  // Pi public resume() enables recovered pending work before the first reconnect request.
+  /** Pi Durable 1.0.4 README "Persist and Resume" and dist/harness/types.d.ts:
+   * resume(): void is idempotent, enables recovered pending work, and throws
+   * after close. Read-only viewers do not start scheduling; resume before listen. */
   harness.resume()
   const gate = yield* Semaphore.make(1)
   const host: Host = { harness, database, gate }
