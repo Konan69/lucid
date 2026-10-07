@@ -1,11 +1,44 @@
+import { readUIMessageStream, type UIMessage, type UIMessageChunk } from 'ai'
 import { expect, it } from '@effect/vitest'
-import { Effect, Option, Schema, Stream } from 'effect'
+import { Array as Arr, Effect, Option, Schema, Stream } from 'effect'
 import { fauxAssistantMessage, fauxText, fauxThinking } from '@earendil-works/pi-ai/providers/faux'
 import { emptyRound, type Desk } from './calls.ts'
 import { initialRunState, translate, type Chunk } from './chunks.ts'
-import { consume } from './fixtures/reading.ts'
 import { CallLookup, CallDecision } from './holds.ts'
 import { writeStep } from './stream.ts'
+
+/** The shared fixture's SDK failure is opaque and its file belongs to the next conversion round. */
+class SdkReaderFailed extends Schema.TaggedError<SdkReaderFailed>()(
+  'CallsTest.SdkReaderFailed',
+  {
+    cause: Schema.Defect(),
+  },
+  { title: 'SdkReaderFailed' },
+) {}
+
+/** Preserve the fixture's finite collect/fold order with the same stock SDK reader, decoding its error here. */
+const consume = Effect.fn('CallsTest.consume')(function* <E>(
+  stream: Stream.Stream<UIMessageChunk, E>,
+  from: Option.Option<UIMessage>,
+) {
+  const chunks = yield* Stream.runCollect(stream)
+  const readable = yield* Stream.toReadableStreamEffect(Stream.fromIterable(chunks))
+  const options = Option.match(from, {
+    onNone: () => ({ stream: readable }),
+    onSome: (message) => ({ stream: readable, message }),
+  })
+  const messages = yield* Stream.runCollect(
+    Stream.fromAsyncIterable(
+      readUIMessageStream(options),
+      (cause) => new SdkReaderFailed({ cause }),
+    ),
+  )
+  return {
+    chunks,
+    types: chunks.map((chunk) => chunk.type),
+    message: Option.getOrThrow(Arr.last(messages)),
+  }
+})
 
 /** Task identities arrive from the trusted Pi snapshot; the unit desk models that exact ingress. */
 const decodeTask = Schema.decodeUnknownSync(CallLookup.cases.Ready.fields.taskId)

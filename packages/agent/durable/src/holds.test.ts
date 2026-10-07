@@ -9,13 +9,46 @@ import { createModels } from '@earendil-works/pi-ai/models'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { createRegistry, Harness } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
-import { tool } from 'ai'
+import { tool, readUIMessageStream, type UIMessage, type UIMessageChunk } from 'ai'
 import { expect, it } from '@effect/vitest'
-import { Array as Arr, Effect, Option, Predicate } from 'effect'
+import { Array as Arr, Effect, Option, Predicate, Schema, Stream } from 'effect'
 import { z } from 'zod'
 
 import { answer, decide, waiting, continueRun, streamRun, toolsExtension } from './core.ts'
-import { consume, hold } from './fixtures/reading.ts'
+import { hold } from './fixtures/reading.ts'
+
+/** The shared fixture's SDK failure is opaque and its file belongs to the next conversion round. */
+class SdkReaderFailed extends Schema.TaggedError<SdkReaderFailed>()(
+  'HoldsTest.SdkReaderFailed',
+  {
+    cause: Schema.Defect(),
+  },
+  { title: 'SdkReaderFailed' },
+) {}
+
+/** Preserve the fixture's finite collect/fold order with the same stock SDK reader, decoding its error here. */
+const consume = Effect.fn('HoldsTest.consume')(function* <E>(
+  stream: Stream.Stream<UIMessageChunk, E>,
+  from: Option.Option<UIMessage>,
+) {
+  const chunks = yield* Stream.runCollect(stream)
+  const readable = yield* Stream.toReadableStreamEffect(Stream.fromIterable(chunks))
+  const options = Option.match(from, {
+    onNone: () => ({ stream: readable }),
+    onSome: (message) => ({ stream: readable, message }),
+  })
+  const messages = yield* Stream.runCollect(
+    Stream.fromAsyncIterable(
+      readUIMessageStream(options),
+      (cause) => new SdkReaderFailed({ cause }),
+    ),
+  )
+  return {
+    chunks,
+    types: chunks.map((chunk) => chunk.type),
+    message: Option.getOrThrow(Arr.last(messages)),
+  }
+})
 
 const context = BACKGROUND_CONTEXT
 
@@ -44,9 +77,9 @@ const host = Effect.fn('Test.holdHost')(function* (paid: { amount: number }[]) {
         pay: tool({
           description: 'Pay an invoice',
           inputSchema: z.object({ amount: z.number() }),
-          execute: async (input) => {
+          execute: (input) => {
             paid.push(input)
-            return { receipt: `paid ${input.amount}` }
+            return Promise.resolve({ receipt: `paid ${input.amount}` })
           },
         }),
         ask_person: tool({
