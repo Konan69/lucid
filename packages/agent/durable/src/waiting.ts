@@ -9,8 +9,7 @@ import {
   CallLookup,
   callsIn,
   lookupSnapshots,
-  decision,
-  taskDecision,
+  readerDecision,
   CallDecision,
   Holds,
   planOf,
@@ -103,16 +102,13 @@ const waitingCall = Effect.fn('Durable.waitingCall')(function* (
 ): Effect.fn.Return<Waiting[], PiFailed> {
   const call = reader.inputs.get(found.callId)
   if (call === undefined) return []
-  const stored = yield* taskDecision(reader.harness, found.taskId, reader.context)
   const tool = reader.agent.tools.find((each) => each.name === call.name)
   const plan = Option.fromNullishOr(tool).pipe(Option.flatMap(planOf))
-  if (Option.isNone(stored) && Option.isNone(plan)) return []
-  const chosen = Option.isSome(stored)
-    ? stored.value
-    : yield* Option.match(plan, {
-        onNone: () => Effect.succeed(CallDecision.cases.Free.make({})),
-        onSome: (value) => decision(value, call),
-      })
+  const chosen = yield* readerDecision(
+    reader.harness,
+    { taskId: Option.some(found.taskId), plan, call },
+    reader.context,
+  )
   return CallDecision.guards.Held(chosen)
     ? [
         {

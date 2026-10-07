@@ -14,7 +14,7 @@ import {
   lookupSnapshots,
   Holds,
   planOf,
-  decision,
+  readerDecision,
   CallDecision,
   isAnswerSettlement,
 } from './holds.ts'
@@ -112,7 +112,7 @@ export const readDesk = Effect.fn('Durable.readDesk')(function* (
       if (identity !== undefined) calls.set(callId, lookupSnapshots(live, holds, identity))
     }
   }
-  const decisions = yield* decisionsFor(chunks, { plans, calls, origins, holds })
+  const decisions = yield* decisionsFor(reader, chunks, { plans, calls, origins, holds })
   return {
     sequential,
     decision: (chunk) => decisions.get(chunk) ?? CallDecision.cases.Free.make({}),
@@ -140,6 +140,7 @@ export const readDesk = Effect.fn('Durable.readDesk')(function* (
 const decodeArguments = Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.MutableJson))
 /** Terminal provenance and settlements replace policy evaluation; only active calls need parsing. */
 const decisionsFor = Effect.fn('Durable.presentationDecisions')(function* (
+  reader: Reader,
   chunks: readonly Chunk[],
   state: {
     plans: ReadonlyMap<string, Plan>
@@ -189,16 +190,22 @@ const decisionsFor = Effect.fn('Durable.presentationDecisions')(function* (
     const plan = Option.fromNullishOr(state.plans.get(chunk.toolName))
     decisions.set(
       chunk,
-      Option.isNone(plan)
-        ? CallDecision.cases.Free.make({})
-        : yield* decision(plan.value, {
+      yield* readerDecision(
+        reader.harness,
+        {
+          taskId: CallLookup.guards.Ready(found) ? Option.some(found.taskId) : Option.none(),
+          plan,
+          call: {
             type: 'toolCall',
             id: chunk.toolCallId,
             name: chunk.toolName,
             arguments: yield* decodeArguments(chunk.input).pipe(
               Effect.mapError((cause) => new PiFailed({ operation: 'snapshot', cause })),
             ),
-          }),
+          },
+        },
+        reader.context,
+      ),
     )
   }
   return decisions

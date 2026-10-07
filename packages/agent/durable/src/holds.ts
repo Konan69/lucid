@@ -452,6 +452,23 @@ export const taskDecision: (
   },
 )
 
+/** Both pull and presentation readers prefer the durable hook pin over a changed registration. */
+export const readerDecision = Effect.fn('Durable.readerDecision')(function* (
+  harness: Harness,
+  input: { taskId: Option.Option<TaskId>; plan: Option.Option<Plan>; call: ToolCall },
+  context: Context,
+): Effect.fn.Return<CallDecision, PiFailed> {
+  const stored = yield* Option.match(input.taskId, {
+    onNone: () => Effect.succeed(Option.none<CallDecision>()),
+    onSome: (taskId) => taskDecision(harness, taskId, context),
+  })
+  if (Option.isSome(stored)) return stored.value
+  return yield* Option.match(input.plan, {
+    onNone: () => Effect.succeed(CallDecision.cases.Free.make({})),
+    onSome: (plan) => decision(plan, input.call),
+  })
+})
+
 /** Identical parsing and a contained synchronous policy are used in hooks and every active reader.
  * SDK input is opaque until the SDK validator decodes it; transforms need not produce JSON. */
 export const decision = Effect.fn('Durable.toolDecision')(function* (
