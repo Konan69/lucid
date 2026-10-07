@@ -1,39 +1,41 @@
+import { Deferred, Effect, Option, Schema } from 'effect'
+import { runForPi } from '../pi.ts'
+import { consumeReadable } from '../fixtures/reading.ts'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeEvents from 'node:events'
 import * as NodeURL from 'node:url'
-import { onTestFinished } from 'vitest'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { tool, isToolUIPart, type ToolSet } from 'ai'
 import { PlainChat } from '../fixtures/chat.ts'
 import { expect, it } from '@effect/vitest'
-import { Effect, Schema } from 'effect'
 import { z } from 'zod'
-
 import { attachRun, streamRun } from '../main.ts'
 import {
   toolsExtension as coreToolsExtension,
   type ToolsOptions as CoreToolsOptions,
 } from '../core.ts'
-import { call, consume, context, host, signal, texts } from './fixtures/host.ts'
-
+import { call, context, host, texts } from './fixtures/host.ts'
 const decodeScope = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Struct({
-      conversationId: Schema.Number,
-      taskId: Schema.Number,
+      conversationId: Schema.Finite,
+      taskId: Schema.Finite,
       callId: Schema.String,
       toolName: Schema.String,
     }),
   ),
 )
-
 /** Concurrent conversations rendezvous inside execution, so a latest-request closure cannot pass. */
 it.live('gives concurrent calls their own durable scope', () =>
-  Effect.promise(async () => {
-    const both = signal()
-    const scopes: { conversationId: number; taskId: number; callId: string; toolName: string }[] =
-      []
-    const fixture = await host(
+  Effect.gen(function* () {
+    const both = yield* Deferred.make<void>()
+    const scopes: {
+      conversationId: number
+      taskId: number
+      callId: string
+      toolName: string
+    }[] = []
+    const fixture = yield* host(
       {
         scope: tool({
           inputSchema: z.object({}),
@@ -43,23 +45,32 @@ it.live('gives concurrent calls their own durable scope', () =>
             callId: z.string(),
             toolName: z.string(),
           }),
-          execute: async (_input, options) => {
-            scopes.push(options.context)
-            if (scopes.length === 2) both.resolve()
-            await both.promise
-            return options.context
-          },
+          execute: (_input, options) =>
+            runForPi(
+              Effect.gen(function* () {
+                scopes.push(options.context)
+                if (scopes.length === 2) Deferred.doneUnsafe(both, Effect.void)
+                yield* Deferred.await(both)
+                return options.context
+              }),
+              undefined,
+            ),
         }),
       },
       { context: (scope) => scope },
     )
-    const opened = await fixture.open()
-    const second = await opened.harness.createConversation(
-      {
-        ownership: { kind: 'ownerless' },
-        agent: { model: { provider: 'faux', modelId: 'faux-1' } },
-      },
-      context,
+    const opened = yield* fixture.open()
+    // Failure before both admissions must still release the rendezvous before closing the host.
+    yield* Effect.addFinalizer(() => Deferred.succeed(both, undefined))
+
+    const second = yield* Effect.promise(() =>
+      opened.harness.createConversation(
+        {
+          ownership: { kind: 'ownerless' },
+          agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+        },
+        context,
+      ),
     )
     opened.faux.setResponses([
       call('scope', {}, 'one'),
@@ -67,17 +78,23 @@ it.live('gives concurrent calls their own durable scope', () =>
       fauxAssistantMessage('Done.'),
       fauxAssistantMessage('Done.'),
     ])
-    const one = await streamRun(
-      opened.harness,
-      { conversationId: opened.root.id, content: 'One', requestId: 'one' },
-      context,
+    const one = yield* Effect.promise(() =>
+      streamRun(
+        opened.harness,
+        { conversationId: opened.root.id, content: 'One', requestId: 'one' },
+        context,
+      ),
     )
-    const two = await streamRun(
-      opened.harness,
-      { conversationId: second.id, content: 'Two', requestId: 'two' },
-      context,
+    const two = yield* Effect.promise(() =>
+      streamRun(
+        opened.harness,
+        { conversationId: second.id, content: 'Two', requestId: 'two' },
+        context,
+      ),
     )
-    await Promise.all([consume(one), consume(two)])
+    yield* Effect.all([consumeReadable(one, Option.none()), consumeReadable(two, Option.none())], {
+      concurrency: 'unbounded',
+    })
     expect(
       scopes.map((scope) => scope.conversationId).toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
     ).toEqual([opened.root.id, second.id].toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)))
@@ -88,20 +105,19 @@ it.live('gives concurrent calls their own durable scope', () =>
     ).toEqual(['one', 'two'])
   }),
 )
-
 /** Resolver failures and SDK validation failures become model-visible tool errors before execution. */
 it.live.each(['resolver', 'schema'] as const)('continues after a %s context failure', (kind) =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     let executions = 0
     let resolutions = 0
-    const fixture = await host(
+    const fixture = yield* host(
       {
         scoped: tool({
           inputSchema: z.object({}),
           contextSchema: z.object({ owner: z.string() }),
-          execute: async () => {
+          execute: () => {
             executions++
-            return 'unexpected'
+            return Promise.resolve('unexpected')
           },
         }),
       },
@@ -113,7 +129,7 @@ it.live.each(['resolver', 'schema'] as const)('continues after a %s context fail
         },
       },
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([
       call('scoped', {}, kind),
       (request) => {
@@ -125,12 +141,15 @@ it.live.each(['resolver', 'schema'] as const)('continues after a %s context fail
         return fauxAssistantMessage('Recovered.')
       },
     ])
-    const result = await consume(
-      await streamRun(
-        opened.harness,
-        { conversationId: opened.root.id, content: 'Try', requestId: kind },
-        context,
+    const result = yield* consumeReadable(
+      yield* Effect.promise(() =>
+        streamRun(
+          opened.harness,
+          { conversationId: opened.root.id, content: 'Try', requestId: kind },
+          context,
+        ),
       ),
+      Option.none(),
     )
     expect(executions).toBe(0)
     expect(resolutions).toBe(1)
@@ -140,17 +159,16 @@ it.live.each(['resolver', 'schema'] as const)('continues after a %s context fail
     })
   }),
 )
-
 /** Schema transformations must reach execute, rather than merely checking and retaining the raw value. */
 it.live('validates and transforms resolved context once per execution', () =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     let resolutions = 0
-    const fixture = await host(
+    const fixture = yield* host(
       {
         scoped: tool({
           inputSchema: z.object({}),
           contextSchema: z.object({ owner: z.string().transform((value) => value.toUpperCase()) }),
-          execute: async (_input, options) => options.context,
+          execute: (_input, options) => Promise.resolve(options.context),
         }),
       },
       {
@@ -160,14 +178,17 @@ it.live('validates and transforms resolved context once per execution', () =>
         },
       },
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([call('scoped', {}, 'scope'), fauxAssistantMessage('Done.')])
-    const result = await consume(
-      await streamRun(
-        opened.harness,
-        { conversationId: opened.root.id, content: 'Try', requestId: 'transform' },
-        context,
+    const result = yield* consumeReadable(
+      yield* Effect.promise(() =>
+        streamRun(
+          opened.harness,
+          { conversationId: opened.root.id, content: 'Try', requestId: 'transform' },
+          context,
+        ),
       ),
+      Option.none(),
     )
     expect(result.message.parts.find((part) => part.type === 'tool-scoped')).toMatchObject({
       output: { owner: `OWNER-${opened.root.id}` },
@@ -175,18 +196,17 @@ it.live('validates and transforms resolved context once per execution', () =>
     expect(resolutions).toBe(1)
   }),
 )
-
 /** A killed process loses closures, but replay must retain all four identities recorded at intent. */
 it.live('preserves ToolScope after process death and safe replay', () =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     const seen: unknown[] = []
-    const fixture = await host(
+    const fixture = yield* host(
       {
         scope: tool({
           inputSchema: z.object({}),
-          execute: async (_input, options) => {
+          execute: (_input, options) => {
             seen.push(options.context)
-            return options.context
+            return Promise.resolve(options.context)
           },
         }),
       },
@@ -197,41 +217,41 @@ it.live('preserves ToolScope after process death and safe replay', () =>
       [NodeURL.fileURLToPath(new URL('./fixtures/toolscrash.mjs', import.meta.url)), fixture.file],
       { stdio: ['ignore', 'pipe', 'inherit'] },
     )
-    onTestFinished(async () => {
-      if (child.exitCode !== null || child.signalCode !== null) return
-      const exited = NodeEvents.EventEmitter.once(child, 'exit')
-      child.kill('SIGKILL')
-      await exited
-    })
-    const [data] = await NodeEvents.EventEmitter.once(child.stdout, 'data')
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        if (child.exitCode !== null || child.signalCode !== null) return
+        const exited = NodeEvents.EventEmitter.once(child, 'exit')
+        child.kill('SIGKILL')
+        yield* Effect.promise(() => exited)
+      }),
+    )
+    const [data] = yield* Effect.promise(() => NodeEvents.EventEmitter.once(child.stdout, 'data'))
     if (!Buffer.isBuffer(data)) throw new Error('Expected scope signal')
     const scope = decodeScope(data.toString())
     const exited = NodeEvents.EventEmitter.once(child, 'exit')
     child.kill('SIGKILL')
-    await exited
-    const opened = await fixture.open()
+    yield* Effect.promise(() => exited)
+    const opened = yield* fixture.open()
     opened.faux.setResponses([fauxAssistantMessage('Recovered.')])
-    const attached = await attachRun(opened.harness, opened.root.id, context)
+    const attached = yield* Effect.promise(() => attachRun(opened.harness, opened.root.id, context))
     if (attached.status === 'idle') throw new Error('Expected interrupted run')
     opened.harness.resume()
-    const result = await consume(attached.stream)
+    const result = yield* consumeReadable(attached.stream, Option.none())
     expect(seen).toEqual([scope])
     expect(result.message.parts.find((part) => part.type === 'tool-scope')).toMatchObject({
       output: scope,
     })
   }),
 )
-
 /** Install an Effect registration into the real harness without routing it through the Promise facade. */
 const coreHost = Effect.fn('Conformance.coreContextHost')(function* (
   tools: ToolSet,
   options: CoreToolsOptions,
 ) {
-  const fixture = yield* Effect.promise(() => host({}, {}))
+  const fixture = yield* host({}, {})
   const extension = yield* coreToolsExtension('context', tools, options)
-  return yield* Effect.promise(() => fixture.open([extension]))
+  return yield* fixture.open([extension])
 })
-
 /** Incorrect Effect-entry callback results must not escape as unnamed fiber defects or double prefixes. */
 for (const sample of [
   {
@@ -269,9 +289,9 @@ for (const sample of [
         {
           scoped: tool({
             inputSchema: z.object({}),
-            execute: async () => {
+            execute: () => {
               executions++
-              return 'unexpected'
+              return Promise.resolve('unexpected')
             },
           }),
         },
@@ -281,52 +301,52 @@ for (const sample of [
           context: sample.resolve,
         },
       )
-      yield* Effect.promise(async () => {
-        opened.faux.setResponses([
-          call('scoped', {}, 'invalid-context'),
-          (request) => {
-            expect(request.messages.at(-1)).toMatchObject({
-              role: 'toolResult',
-              isError: true,
-              content: [
-                {
-                  type: 'text',
-                  text: `<harness>\n[error] Tool scoped context failed: ${sample.diagnostic}\n</harness>`,
-                },
-              ],
-            })
-            return fauxAssistantMessage('Recovered.')
-          },
-        ])
-        const result = await consume(
-          await streamRun(
+      opened.faux.setResponses([
+        call('scoped', {}, 'invalid-context'),
+        (request) => {
+          expect(request.messages.at(-1)).toMatchObject({
+            role: 'toolResult',
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: `<harness>\n[error] Tool scoped context failed: ${sample.diagnostic}\n</harness>`,
+              },
+            ],
+          })
+          return fauxAssistantMessage('Recovered.')
+        },
+      ])
+      const result = yield* consumeReadable(
+        yield* Effect.promise(() =>
+          streamRun(
             opened.harness,
             { conversationId: opened.root.id, content: 'Try', requestId: sample.name },
             context,
           ),
-        )
-        expect(result.message.parts.find((part) => part.type === 'tool-scoped')).toMatchObject({
-          state: 'output-error',
-          errorText: `<harness>\n[error] Tool scoped context failed: ${sample.diagnostic}\n</harness>`,
-        })
-        expect(executions).toBe(0)
-        expect(texts(result.message)).toEqual(['Recovered.'])
+        ),
+        Option.none(),
+      )
+      expect(result.message.parts.find((part) => part.type === 'tool-scoped')).toMatchObject({
+        state: 'output-error',
+        errorText: `<harness>\n[error] Tool scoped context failed: ${sample.diagnostic}\n</harness>`,
       })
+      expect(executions).toBe(0)
+      expect(texts(result.message)).toEqual(['Recovered.'])
     }),
   )
-
 /** Promise hosts must retain the SDK's value-or-Promise context resolver contract. */
 it.live.each(['value', 'promise'] as const)(
   'converts a Promise-entry %s context resolver once',
   (kind) =>
-    Effect.promise(async () => {
+    Effect.gen(function* () {
       let resolutions = 0
-      const fixture = await host(
+      const fixture = yield* host(
         {
           scoped: tool({
             inputSchema: z.object({}),
             contextSchema: z.object({ owner: z.string() }),
-            execute: async (_input, options) => options.context,
+            execute: (_input, options) => Promise.resolve(options.context),
           }),
         },
         {
@@ -337,10 +357,10 @@ it.live.each(['value', 'promise'] as const)(
           },
         },
       )
-      const opened = await fixture.open()
+      const opened = yield* fixture.open()
       opened.faux.setResponses([call('scoped', {}, 'scope'), fauxAssistantMessage('Done.')])
       const chat = new PlainChat({ transport: opened.transport })
-      await chat.sendMessage({ text: 'Scope' })
+      yield* Effect.promise(() => chat.sendMessage({ text: 'Scope' }))
       if (chat.lastMessage === undefined) throw new Error('Expected assistant')
       expect(chat.lastMessage.parts.find(isToolUIPart)).toMatchObject({
         state: 'output-available',
