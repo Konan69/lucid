@@ -3,6 +3,7 @@ import * as Railway from 'alchemy/Railway'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import type { InfrastructureEnvironment } from './env.ts'
+import { repository } from './github.ts'
 import type { DeploymentTarget } from './targets.ts'
 
 /**
@@ -32,6 +33,67 @@ const listenHost = '::'
 
 /** Where the runtime's volume is mounted; each Person's notes are one SQLite file in it. */
 const memoryPath = '/var/lib/vivid/memory'
+
+/**
+ * The server and the runtime are built by Railway from this repository, on a push to `main`
+ * (Railway's GitHub trigger; `alchemy/src/Railway/ServiceProvider.ts`, `syncBranch`). Before
+ * 7 October 2026 a person ran the deploy, which uploaded a working tree for Railway to build, so
+ * production held `main` only when someone had remembered to. Everything after the upload was
+ * Railway's already and still is: it builds each Dockerfile, the server's image exports the phone
+ * app's update, and the server's pre-deploy command migrates.
+ *
+ * Railway's GitHub app must be able to read the repository; that was proved on a disposable
+ * project before this was written. A push is deployed without this stack seeing it, so nothing
+ * here can refuse one: the gate `git push` runs (`.husky/pre-push`) is what keeps a failing tree
+ * off `main`. Railway can also wait for GitHub's checks, which do not run for this repository
+ * today.
+ *
+ * Each service is given what its image is built from as `watchPatterns` (the two lists below),
+ * so a push that changes none of it starts no build there (Railway "Watch Paths":
+ * gitignore-style, from the repository's root). `scripts/infra-verify.mjs` fails when a
+ * Dockerfile copies a path its service does not watch.
+ */
+const builtFromMain = {
+  repo: `${repository.owner}/${repository.name}`,
+  branch: 'main',
+  autoUpdates: true,
+} as const
+
+/**
+ * What the runtime's image is built from (`packages/agent/runtime/Dockerfile`). A push to the
+ * server, the web app or the phone app alone leaves the runtime running.
+ */
+const runtimeInputs = [
+  '/packages/**',
+  '/patches/**',
+  '/apps/*/package.json',
+  '/package.json',
+  '/pnpm-lock.yaml',
+  '/pnpm-workspace.yaml',
+  '/tsconfig.base.json',
+  '/.dockerignore',
+]
+
+/**
+ * What the server's image is built from (`apps/server/Dockerfile`). The phone app is here
+ * because this image exports its update, and the desktop app's shared sources because the web
+ * app's build reads them.
+ */
+const serverInputs = [
+  '/apps/server/**',
+  '/apps/web/**',
+  '/apps/mobile/**',
+  '/apps/desktop/src/shared/**',
+  '/apps/*/package.json',
+  '/packages/**',
+  '/patches/**',
+  '/scripts/migrate.mjs',
+  '/package.json',
+  '/pnpm-lock.yaml',
+  '/pnpm-workspace.yaml',
+  '/tsconfig.base.json',
+  '/.dockerignore',
+]
 
 /**
  * Sign-in with Google. `infra/env.ts` requires all three, so the hosted server always offers it.
@@ -228,7 +290,8 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
   const runtime = yield* Railway.Service('Runtime', {
     project,
     name: serviceNames.runtime,
-    context: '.',
+    ...builtFromMain,
+    watchPatterns: runtimeInputs,
     dockerfilePath: 'packages/agent/runtime/Dockerfile',
     port: ports.runtime,
     publicDomain: false,
@@ -260,7 +323,8 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
   const server = yield* Railway.Service('Server', {
     project,
     name: serviceNames.server,
-    context: '.',
+    ...builtFromMain,
+    watchPatterns: serverInputs,
     dockerfilePath: 'apps/server/Dockerfile',
     port: ports.server,
     publicDomain: true,

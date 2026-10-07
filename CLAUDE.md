@@ -118,7 +118,7 @@ Simulators, emulators and testing run on the Cloudbox, not on the developer's PC
 
 A change to the phone app reaches the developer's iPhone one of two ways, and which one is decided by whether the native side changed.
 
-- **JavaScript only** (screens, state, copy, assets; `pnpm-lock.yaml`, `patches/`, the `app.json` plugins and `version` all unchanged): it goes over the air. Merge it; the next production deploy publishes it, and the installed app takes it on its second open. Do not build or hand over an IPA for it.
+- **JavaScript only** (screens, state, copy, assets; `pnpm-lock.yaml`, `patches/`, the `app.json` plugins and `version` all unchanged): it goes over the air. Merge it: Railway builds the server from that push to `main` and the new server publishes the update, and the installed app takes it on its second open. Do not build or hand over an IPA for it.
 - **Native** (a native module added or changed, a config plugin, a patch to a native package, an Expo SDK move): raise `version` in `apps/mobile/app.json`, build the IPA from `main`, and put it in the developer's Downloads folder named with its version, `Vivid-<version>.ipa` (`Vivid-0.3.0.ipa`). Delete the IPA it replaces, there and among the CI artifacts, so there is one build to install and its name says which.
 
 Say in the report which of the two the change was. `apps/mobile/README.md` ("Over-the-air updates") has the mechanism.

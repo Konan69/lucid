@@ -30,8 +30,22 @@ fixes and remote verification described below.
 
 Keep the server at one Railway replica until desktop presence is shared and browse requests route to the replica holding the socket.
 
-`pnpm infra:deploy --yes` needs `RAILWAY_API_TOKEN` for the personal Railway account, and is run
-from a clean checkout of `main` so half-edited files never ship.
+A push to `main` deploys itself (since 7 October 2026). The server and the runtime are connected to
+this repository (`builtFromMain` in `infra/railway.ts`). Railway builds a service when a push
+changes a path that service watches, exports the phone app's update inside the server's image, and
+runs the server's migrations before the new server takes traffic. Nobody runs a command for a code
+change. A push that changes neither image (a document, the gate, this stack's own files) starts
+nothing, and a push to the server, the web app or the phone app alone leaves the runtime running.
+
+Nothing in the stack sees a push before Railway builds it, so the gate that `git push` runs is the
+only thing that keeps a failing tree out of production. Judge a deploy by Railway's deployment
+status and `/health`.
+
+`pnpm infra:deploy --yes` is now only for a change to the stack itself: a service, a variable, a
+volume, a watch path. It needs `RAILWAY_API_TOKEN` for the personal Railway account, and is run
+from a clean checkout of current `main`. A checkout from before 7 October 2026 still declares an
+uploaded working tree; run from one, the provider disconnects both services from the repository
+and deletes their triggers (`alchemy/src/Railway/ServiceProvider.ts`, `clearDeploymentTriggers`).
 
 It reads its settings from `.env.production` in that checkout, never from `.env`. `.env` is a
 developer's local file; a deploy that read it once sent production a model with no key and no
@@ -318,8 +332,8 @@ other's resource outputs. Alchemy reconciles them concurrently and collects sibl
 Runtime health cannot prevent Server's build or migrations. Server's pre-deploy command runs
 auth then product migrations inside its image; Runtime has no pre-deploy command. An empty
 Metal scheduling log does not establish a migration or application failure: obtain the Server
-deployment's detailed builder/platform error separately. Redeploy this graph with
-`pnpm infra:deploy`; Dockerfile fixes land only in a new uploaded image.
+deployment's detailed builder/platform error separately. A Dockerfile fix lands when it is pushed
+to `main`, which rebuilds the image; `pnpm infra:deploy` reconciles the graph itself.
 
 ## Outside the current stack
 
