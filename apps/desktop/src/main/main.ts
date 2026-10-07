@@ -5,10 +5,11 @@ import * as NodeURL from 'node:url'
 import * as NodeProcess from 'node:process'
 import * as NodeOS from 'node:os'
 import { DeviceName, DeviceWork } from '@vivid/contracts'
+import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
-import type * as HttpClient from 'effect/unstable/http/HttpClient'
+import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as Exit from 'effect/Exit'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
@@ -208,7 +209,7 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
   // Everything Vivid holds on this computer outside the app's own window lives in this scope:
   // the Computer process and the fibers around it. Quitting closes it, which kills the Computer;
   // the Computer also ends by itself when this process does (`--parent-pid`).
-  const context = yield* Effect.context<never>()
+  const context = Context.empty()
   const held = yield* Scope.make()
   app.on('before-quit', () => {
     Effect.runForkWith(context)(Scope.close(held, Exit.void))
@@ -295,7 +296,10 @@ const linkThisComputer = Effect.fn('DesktopMain.linkThisComputer')(function* (in
     if (change === 'Restart') computer.restart()
     else computer.wake()
   })
-  yield* Effect.forkDetach(computer.run, { startImmediately: true })
+  // The detached link outlives boot; settings and startup spans must not become its context.
+  yield* Effect.forkDetach(computer.run.pipe(Effect.setContext(context)), {
+    startImmediately: true,
+  })
   return { computer, control }
 })
 
@@ -375,7 +379,8 @@ const shippedHome = Effect.fn('DesktopMain.shippedHome')(function* () {
  * convenience cache; renderer, token, and runtime metadata failures stop startup instead.
  */
 const boot = Effect.fn('DesktopMain.boot')(function* () {
-  const context = yield* Effect.context<DesktopSettings | HttpClient.HttpClient>()
+  // Callbacks retain only their HTTP transport, without startup settings or the boot span.
+  const context = Context.make(HttpClient.HttpClient, yield* HttpClient.HttpClient)
   registerProtocolClient()
 
   const surfaces = yield* loadThemeSurfaces(themeTokensPath())
@@ -540,7 +545,7 @@ if (!hasSingleInstanceLock) {
     Effect.flatMap(shippedHome),
     Effect.flatMap((home) =>
       boot().pipe(
-        // @effect-diagnostics-next-line strictEffectProvide:off -- Electron main startup owns the application settings Layer.
+        // @effect-diagnostics-next-line strictEffectProvide:off -- Electron main startup owns the application settings and HTTP client Layer.
         Effect.provide(
           Layer.mergeAll(
             settingsLayer(NodePath.join(app.getPath('userData'), 'settings.json'), home),

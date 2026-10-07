@@ -38,10 +38,9 @@ const forwardRequest = Effect.fn('DesktopRenderer.forward')(function* (request: 
 export function registerPackagedRenderer(
   root: string,
   address: () => ServerAddress,
-  run: (program: Effect.Effect<Response>) => Promise<Response>,
+  run: (program: Effect.Effect<Response, never, HttpClient.HttpClient>) => Promise<Response>,
 ): void {
   const desktopSession = session.defaultSession
-  const forwarding = FetchHttpClient.layer
   const handle = Effect.fn('DesktopRenderer.handle')(function* (request: Request) {
     const url = yield* decodeUrl(request.url)
     const local =
@@ -57,8 +56,6 @@ export function registerPackagedRenderer(
     desktopSession.protocol.handle(scheme, (request) =>
       run(
         handle(request).pipe(
-          // @effect-diagnostics-next-line strictEffectProvide:off -- Electron protocol.handle invokes this request callback with its cookie-aware transport.
-          Effect.provide(forwarding),
           Effect.provideService(FetchHttpClient.Fetch, (input, options) =>
             desktopSession.fetch(input instanceof URL ? input.href : input, {
               ...options,

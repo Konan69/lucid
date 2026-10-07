@@ -65,14 +65,14 @@ export function registerAppProxy(input: {
   readonly root: string
   readonly session: Session
   readonly server: () => ServerSettings
-  readonly run: (program: Effect.Effect<Response>) => Promise<Response>
+  readonly run: (
+    program: Effect.Effect<Response, never, HttpClient.HttpClient>,
+  ) => Promise<Response>
 }): void {
   for (const scheme of ['http', 'https']) {
     input.session.protocol.handle(scheme, (request) =>
       input.run(
         handleAppRequest(input.root, request, input.server()).pipe(
-          // @effect-diagnostics-next-line strictEffectProvide:off -- Electron protocol.handle invokes this request callback with its session-specific transport.
-          Effect.provide(FetchHttpClient.layer),
           Effect.provideService(FetchHttpClient.Fetch, (resource, options) =>
             input.session.fetch(resource instanceof URL ? resource.href : resource, {
               ...options,
