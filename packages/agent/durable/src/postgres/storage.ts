@@ -457,7 +457,9 @@ export class PostgresStorage implements Storage {
    * repeated mutable ids and the first database failure retain Pi's behavior.
    * Domain checks consume prefetched read results in the reference order; later
    * read-only ownership lookups have no effects when an earlier check rejects.
-   * Conditional document reads/copy errors keep their original write barriers. */
+   * Conditional document reads/copy errors keep their original write barriers.
+   * The final segment is prepared for the driver to send with COMMIT, so a plain
+   * append needs only the allocation/preflight response and the durable commit response. */
   async commit(writes: readonly StorageWrite[], _context: Context) {
     this.assertOpen()
     const documentActions = this.prepareDocumentActions(writes)
@@ -490,8 +492,7 @@ export class PostgresStorage implements Storage {
         String(maxId(BigInt(metadata.next_id), candidateNextId)),
         BigInt(committedSeq) + 1n,
       )
-      await transaction.runBatch(statements.values)
-      return committedSeq
+      return { value: committedSeq, statements: statements.values }
     })
     this.nextId = maxId(this.nextId, candidateNextId)
     return seq

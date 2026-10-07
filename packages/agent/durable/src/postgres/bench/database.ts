@@ -4,6 +4,7 @@ import type {
   PostgresExecutor,
   PostgresValue,
   PostgresStatement,
+  PostgresCommit,
 } from '../database.ts'
 
 /** Test-only facade counter: every executor SQL call maps to one driver query;
@@ -41,10 +42,13 @@ export class CountingDatabase implements PostgresDatabase {
     this.calls += 2
     return this.database.transaction((transaction) => callback(this.executor(transaction)))
   }
-  /** BEGIN and preflight reads are one driver call, COMMIT is one more. */
+  /** BEGIN and preflight reads are one driver call, the final write segment plus COMMIT is one more. */
   transactionWithReads<T>(
     reads: readonly PostgresStatement[],
-    callback: (transaction: PostgresExecutor, rows: readonly (readonly object[])[]) => Promise<T>,
+    callback: (
+      transaction: PostgresExecutor,
+      rows: readonly (readonly object[])[],
+    ) => Promise<PostgresCommit<T>>,
   ): Promise<T> {
     this.calls += 2
     return this.database.transactionWithReads(reads, (transaction, rows) =>

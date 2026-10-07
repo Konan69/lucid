@@ -188,7 +188,9 @@
       "openPgDatabase",
       "openPgStorage",
       "runBatch",
-      "transactionWithReads"
+      "transactionWithReads",
+      "commitResult",
+      "commitBatch"
     ]
   },
   {

@@ -22,6 +22,14 @@ export type PostgresValue = null | number | bigint | string | Uint8Array
  * mutable-id upserts; multi-row INSERT would change their order and errors. */
 export type PostgresStatement = { readonly sql: string; readonly params: readonly PostgresValue[] }
 
+/** Pi SqliteStorage.commit's result and final ordered write segment. The driver
+ * executes this segment followed by COMMIT before returning the value. A prepared
+ * plan is not a write acknowledgment; a failed statement still rolls back. */
+export type PostgresCommit<T> = {
+  readonly value: T
+  readonly statements: readonly PostgresStatement[]
+}
+
 export interface PostgresExecutor {
   /** One ordered simple-protocol batch; the first failing statement stops the batch. */
   runBatch(statements: readonly PostgresStatement[]): Promise<void>
@@ -47,10 +55,16 @@ export interface PostgresDatabase extends PostgresExecutor {
   /** Pi transaction's same barrier/rollback rules, with BEGIN and independent
    * preflight reads sent together in their original order. Read results are
    * decoded by storage before any write; no allocation happens outside the transaction.
-   * This owned-facade extension avoids changing the host Pool's pipeline setting. */
+   * This owned-facade extension avoids changing the host Pool's pipeline setting.
+   * The callback returns a prepared final segment, which is sent with COMMIT as
+   * one query. Only successful COMMIT acknowledges its value; any native failure
+   * skips following statements and triggers the reference rollback handling. */
   transactionWithReads<T>(
     reads: readonly PostgresStatement[],
-    callback: (transaction: PostgresExecutor, rows: readonly (readonly object[])[]) => Promise<T>,
+    callback: (
+      transaction: PostgresExecutor,
+      rows: readonly (readonly object[])[],
+    ) => Promise<PostgresCommit<T>>,
   ): Promise<T>
   transaction<T>(callback: (transaction: PostgresExecutor) => Promise<T>): Promise<T>
   close(): Promise<void>

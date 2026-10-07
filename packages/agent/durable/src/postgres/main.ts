@@ -6,6 +6,7 @@ export type {
   PostgresExecutor,
   PostgresValue,
   PostgresStatement,
+  PostgresCommit,
 } from './database.ts'
 export {
   applyPostgresMigrations,

@@ -57,7 +57,7 @@ describe.skipIf(Option.isNone(testUrl))('PostgreSQL round trips', () => {
         measurement.operation === 'stream entry append' ||
         measurement.operation === 'stream submission + entry'
       )
-        expect(measurement.queries).toBeLessThanOrEqual(3)
+        expect(measurement.queries).toBe(2)
     }
     console.log(JSON.stringify(measurements))
   })

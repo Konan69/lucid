@@ -9,6 +9,7 @@ import {
   type PostgresExecutor,
   type PostgresValue,
   type PostgresStatement,
+  type PostgresCommit,
 } from './database.ts'
 export { validateSchema } from './database.ts'
 import { PostgresStorage } from './storage.ts'
@@ -16,25 +17,23 @@ import { PostgresStorage } from './storage.ts'
 /** pg/lib/query.js:_checkForMultirow returns one result per simple-protocol
  * statement. Decode scalar metadata/ownership rows once at the SDK ingress.
  * JSON records remain TEXT, so this never rewrites their keys or numbers. */
-const decodeBatch = Schema.decodeUnknownSync(
-  Schema.Array(
-    Schema.Struct({
-      rows: Schema.Array(
-        Schema.Record(
-          Schema.String,
-          Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Null]),
-        ),
-      ),
-    }),
+const QueryEnvelope = Schema.Struct({
+  rows: Schema.Array(
+    Schema.Record(
+      Schema.String,
+      Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Null]),
+    ),
   ),
-)
+})
+const BatchEnvelope = Schema.Array(QueryEnvelope)
+const isBatch = Schema.is(BatchEnvelope)
+const decodeBatch = Schema.decodeUnknownSync(Schema.Union([BatchEnvelope, QueryEnvelope]))
 
 /** Decode the SDK's actual multi-result envelope inside runTransaction, so a
  * malformed result triggers the same rollback path as callback failure. */
 function batchRows(result: import('pg').QueryResult) {
-  return decodeBatch(result)
-    .slice(1)
-    .map((item) => item.rows)
+  const decoded = decodeBatch(result)
+  return isBatch(decoded) ? decoded.slice(1).map((item) => item.rows) : []
 }
 
 /** PostgreSQL's extended protocol forbids bound multi-statement queries.
@@ -187,7 +186,7 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
       const transaction = new PgTransaction(this.client)
       return this.client
         .query('BEGIN ISOLATION LEVEL REPEATABLE READ')
-        .then(() => this.runTransaction(transaction, callback))
+        .then(() => this.runTransaction(transaction, callback, (value) => this.commitResult(value)))
     })
   }
 
@@ -196,9 +195,11 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
    * A read or decoding failure still rolls back before releasing the barrier. */
   transactionWithReads<T>(
     reads: readonly PostgresStatement[],
-    callback: (transaction: PostgresExecutor, rows: readonly (readonly object[])[]) => Promise<T>,
+    callback: (
+      transaction: PostgresExecutor,
+      rows: readonly (readonly object[])[],
+    ) => Promise<PostgresCommit<T>>,
   ): Promise<T> {
-    if (reads.length === 0) return this.transaction((transaction) => callback(transaction, []))
     return this.access.run(() => {
       this.assertOpen()
       const transaction = new PgTransaction(this.client)
@@ -217,9 +218,11 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
         })
         .then(
           (result) => {
-            return this.runTransaction(transaction, () => {
-              return callback(transaction, batchRows(result))
-            })
+            return this.runTransaction(
+              transaction,
+              () => callback(transaction, batchRows(result)),
+              (prepared) => this.commitBatch(prepared),
+            )
           },
           (cause: unknown) => {
             transaction.active = false
@@ -231,20 +234,36 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
 
   /** Pi NodeSqliteDatabase.transaction settlement step, extracted only to bound
    * callback nesting. COMMIT failure also triggers rollback, exactly as Pi does. */
-  private runTransaction<T>(
+  private runTransaction<T, Result>(
     transaction: PgTransaction,
-    callback: (transaction: PostgresExecutor) => Promise<T>,
+    callback: (transaction: PostgresExecutor) => Promise<Result>,
+    finish: (result: Result) => Promise<T>,
   ): Promise<T> {
     return Promise.resolve()
       .then(() => callback(transaction))
       .then((result) => {
         transaction.active = false
-        return this.client.query('COMMIT').then(() => result)
+        return finish(result)
       })
       .catch((cause: unknown) => {
         transaction.active = false
         return this.rollback(cause)
       })
+  }
+
+  /** Pi NodeSqliteDatabase.transaction's ordinary callback already executed all
+   * writes; acknowledge its value only after the explicit COMMIT succeeds. */
+  private commitResult<T>(value: T): Promise<T> {
+    return this.client.query('COMMIT').then(() => value)
+  }
+
+  /** Pi SqliteStorage.commit's final data statements and COMMIT keep their exact
+   * order in one simple-protocol query. PostgreSQL stops at the first SQL failure,
+   * skipping COMMIT; runTransaction rolls back and retains the original cause.
+   * This removes a transport barrier, never the durability acknowledgment. */
+  private commitBatch<T>(prepared: PostgresCommit<T>): Promise<T> {
+    const text = [...prepared.statements.map(statementText), 'COMMIT'].join(';\n')
+    return this.client.query(text).then(() => prepared.value)
   }
 
   /** Restore the host connection's original search_path before releasing it.
