@@ -629,6 +629,9 @@ function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
 
 /** Pi Tool lacks SDK lifecycle, discovery and kind contracts; refuse behavior that would silently change. */
 function unsupported(name: string, tool: Tool, lookups: Lookups): Option.Option<string> {
+  // A declared SDK contract requires host authority; ToolScope alone is only the undeclared default.
+  if (tool.contextSchema !== undefined && Option.isNone(lookups.context))
+    return Option.some('contextSchema without a context resolver')
   if (tool.type === 'provider') return Option.some('provider-defined and provider-executed tools')
   if (Predicate.isFunction(tool.description)) return Option.some('context-dependent descriptions')
   if (tool.deferLoading === true) return Option.some('deferred tool discovery')

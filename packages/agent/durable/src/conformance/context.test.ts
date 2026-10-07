@@ -51,7 +51,7 @@ it.live('gives concurrent calls their own durable scope', () =>
           },
         }),
       },
-      {},
+      { context: (scope) => scope },
     )
     const opened = await fixture.open()
     const second = await opened.harness.createConversation(
