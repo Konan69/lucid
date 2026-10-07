@@ -31,9 +31,9 @@ const server = Effect.fn('Test.chatServer')(function* (paid: { amount: number }[
         pay: tool({
           description: 'Pay an invoice',
           inputSchema: z.object({ amount: z.number() }),
-          execute: async (input) => {
+          execute: (input) => {
             paid.push(input)
-            return { receipt: `paid ${input.amount}` }
+            return Promise.resolve({ receipt: `paid ${input.amount}` })
           },
         }),
         ask_person: tool({
