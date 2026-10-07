@@ -1,3 +1,4 @@
+import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem'
 import * as NodeFS from 'node:fs'
 import { layer as pgClientLayer, PgClient } from '@effect/sql-pg/PgClient'
 import { describe, expect, layer } from '@effect/vitest'
@@ -155,7 +156,7 @@ const singleConnectionLayer = workLayer.pipe(
 )
 
 describe.skipIf(!testDatabaseConfigured)('Native durable Library ingestion', () => {
-  layer(processLayer)((it) => {
+  layer(Layer.merge(processLayer, NodeFileSystem.layer))((it) => {
     /** Q1: aborted bytes, offer and notice vanish together; the next real delivery completes. */
     it.effect('Q1 rolls back create, offer and notice together', () =>
       Effect.gen(function* () {

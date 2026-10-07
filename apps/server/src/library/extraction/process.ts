@@ -433,7 +433,7 @@ const receiveError = (message: string) =>
  *
  * The `error` listener and the inbox reader belong to the run's scope and are removed when it closes.
  */
-const platform = Worker.makePlatform<Running>()({
+export const platform = Worker.makePlatform<Running>()({
   setup: ({ worker }) =>
     Effect.succeed({
       postMessage: (message: NodeChildProcess.Serializable) => {

@@ -1,7 +1,6 @@
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
 import * as NodeStream from 'node:stream'
-import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
@@ -64,11 +63,9 @@ export const nativeLaunch = (input: typeof Fixture.Type, heapMb: number) => {
   return { launch, entered, ended, reportDir }
 }
 
-/** Provide the real report-file authority while preserving the production extractor signature. */
-export const extractWith =
-  (launch: Launch): typeof extractPdf =>
-  (bytes: Uint8Array) =>
-    extractOn(launch, EXTRACTION_DEADLINE)(bytes).pipe(Effect.provide(NodeFileSystem.layer))
+/** Use the fixture launcher with the same file-system requirement as production extraction. */
+export const extractWith = (launch: Launch): typeof extractPdf =>
+  extractOn(launch, EXTRACTION_DEADLINE)
 
 /** The report directory must not outlive its extraction, whatever the verdict was. */
 export const reportRemoved = (owned: ReturnType<typeof nativeLaunch>) =>
