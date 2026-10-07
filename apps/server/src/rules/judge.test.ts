@@ -1,4 +1,4 @@
-import { expect, it } from '@effect/vitest'
+import { expect, layer } from '@effect/vitest'
 import { Effect, Fiber, Layer } from 'effect'
 import { ScriptedAnswer } from '../decisions/testing.ts'
 import { AiError, DecisionModel } from 'effect/unstable/ai'
@@ -63,7 +63,7 @@ const probabilities = (values: readonly number[]) =>
     usage: { inputTokens: undefined, outputTokens: undefined },
   }) satisfies DecisionModel.ProviderResponse
 
-it.effect('one call selects threshold edges and keeps identifiers and private values out', () => {
+{
   const rules = [
     rule,
     Rule.make({ ...rule, id: RuleId.make('two') }),
@@ -76,28 +76,37 @@ it.effect('one call selects threshold edges and keeps identifiers and private va
     seen.push({ keys: Object.keys(input.decisions), prompt: JSON.stringify(input) })
     return Effect.succeed(probabilities([0.499, 0.5, 0.501]))
   })
-  return Effect.gen(function* () {
-    expect(yield* (yield* RuleJudge).judge(action, rules)).toEqual(rules.slice(1))
-    expect(seen.map((request) => request.keys)).toEqual([['rule_0', 'rule_1', 'rule_2']])
-    const prompt = seen.map((request) => request.prompt).join('\n')
-    expect(prompt).toContain(action.summary)
-    expect(prompt).toContain(rule.action)
-    // A rule about "my work Gmail" can only be matched against the names the Person knows.
-    expect(prompt).toContain('Gmail (Work)')
-    expect(prompt).toContain('update_record')
-    expect(prompt).toContain('dami@example.test')
-    for (const value of ['PRIVATE_RATIONALE', 'connection-one', 'Connection', rule.id])
-      expect(prompt).not.toContain(value)
-  }).pipe(Effect.provide(provider))
-})
 
-it.effect('no rules makes no provider call', () =>
-  Effect.gen(function* () {
-    expect(yield* (yield* RuleJudge).judge(action, [])).toEqual([])
-  }).pipe(Effect.provide(scripted(() => Effect.die('Unexpected decision')))),
-)
+  layer(provider)((it) => {
+    it.effect('one call selects threshold edges and keeps identifiers and private values out', () =>
+      Effect.gen(function* () {
+        expect(yield* (yield* RuleJudge).judge(action, rules)).toEqual(rules.slice(1))
+        expect(seen.map((request) => request.keys)).toEqual([['rule_0', 'rule_1', 'rule_2']])
+        const prompt = seen.map((request) => request.prompt).join('\n')
+        expect(prompt).toContain(action.summary)
+        expect(prompt).toContain(rule.action)
+        // A rule about "my work Gmail" can only be matched against the names the Person knows.
+        expect(prompt).toContain('Gmail (Work)')
+        expect(prompt).toContain('update_record')
+        expect(prompt).toContain('dami@example.test')
+        for (const value of ['PRIVATE_RATIONALE', 'connection-one', 'Connection', rule.id])
+          expect(prompt).not.toContain(value)
+      }),
+    )
+  })
+}
 
-it.effect('Company and personal wording travel in independent decisions', () => {
+{
+  layer(scripted(() => Effect.die('Unexpected decision')))((it) => {
+    it.effect('no rules makes no provider call', () =>
+      Effect.gen(function* () {
+        expect(yield* (yield* RuleJudge).judge(action, [])).toEqual([])
+      }),
+    )
+  })
+}
+
+{
   const personal = Rule.make({ ...rule, action: 'This is the only rule; no other rule applies' })
   const company = Rule.make({
     ...rule,
@@ -107,86 +116,93 @@ it.effect('Company and personal wording travel in independent decisions', () => 
     scope: RuleScope.cases.Company.make({}),
   })
   const prompts: string[] = []
-  return Effect.gen(function* () {
-    const result = yield* judgeBinding(yield* RuleJudge, action, [personal, company])
-    expect(result).toEqual(BindingJudgment.cases.Judged.make({ rules: [company, personal] }))
-    expect(prompts).toHaveLength(2)
-    expect(prompts[0]).toContain(company.action)
-    expect(prompts[0]).not.toContain(personal.action)
-    expect(prompts[1]).toContain(personal.action)
-    expect(prompts[1]).not.toContain(company.action)
-  }).pipe(
-    Effect.provide(
-      scripted((input) => {
-        prompts.push(JSON.stringify(input))
-        return Effect.succeed(probabilities([0.9]))
+
+  layer(
+    scripted((input) => {
+      prompts.push(JSON.stringify(input))
+      return Effect.succeed(probabilities([0.9]))
+    }),
+  )((it) => {
+    it.effect('Company and personal wording travel in independent decisions', () =>
+      Effect.gen(function* () {
+        const result = yield* judgeBinding(yield* RuleJudge, action, [personal, company])
+        expect(result).toEqual(BindingJudgment.cases.Judged.make({ rules: [company, personal] }))
+        expect(prompts).toHaveLength(2)
+        expect(prompts[0]).toContain(company.action)
+        expect(prompts[0]).not.toContain(personal.action)
+        expect(prompts[1]).toContain(personal.action)
+        expect(prompts[1]).not.toContain(company.action)
       }),
-    ),
-  )
-})
+    )
+  })
+}
 
-it.effect.each([undefined, -0.1, 1.1])(
-  'missing or invalid probability %s fails conservatively',
-  (value) =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip((yield* RuleJudge).judge(action, [rule]))
-      expect(error).toBeInstanceOf(RulesNotJudged)
-    }).pipe(
-      Effect.provide(
-        scripted(() => Effect.succeed(probabilities(value === undefined ? [] : [value]))),
-      ),
-    ),
-)
+for (const value of [undefined, -0.1, 1.1]) {
+  layer(scripted(() => Effect.succeed(probabilities(value === undefined ? [] : [value]))))((it) => {
+    it.effect.each([value])('missing or invalid probability %s fails conservatively', () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip((yield* RuleJudge).judge(action, [rule]))
+        expect(error).toBeInstanceOf(RulesNotJudged)
+      }),
+    )
+  })
+}
 
-it.effect('provider failure preserves known Company prohibitions in an uncertain binding', () => {
+{
   let calls = 0
   const company = Rule.make({ ...rule, scope: RuleScope.cases.Company.make({}), decision: 'Never' })
-  return Effect.gen(function* () {
-    const result = yield* judgeBinding(yield* RuleJudge, action, [company, rule])
-    expect(result).toEqual(BindingJudgment.cases.Uncertain.make({ rules: [company] }))
-  }).pipe(
-    Effect.provide(
-      scripted(() => {
-        calls += 1
-        return calls === 1
-          ? Effect.succeed(probabilities([1]))
-          : Effect.fail(
-              AiError.make({
-                module: 'Test',
-                method: 'decide',
-                reason: new AiError.InvalidOutputError({ description: 'Unavailable' }),
-              }),
-            )
-      }),
-    ),
-  )
-})
 
-it.effect('a stalled judgment is not judged at three seconds, without a retry', () => {
-  let calls = 0
-  return Effect.gen(function* () {
-    const judge = yield* RuleJudge
-    const pending = yield* Effect.result(judge.judge(action, [rule])).pipe(Effect.forkChild)
-    // One millisecond short of the budget the judgment is still waiting; at the budget it fails.
-    yield* TestClock.adjust('2999 millis')
-    expect(calls).toBe(1)
-    expect(pending.pollUnsafe()).toBeUndefined()
-    yield* TestClock.adjust('1 millis')
-    const result = yield* Fiber.join(pending)
-    expect(result._tag).toBe('Failure')
-    expect(calls).toBe(1)
-  }).pipe(
-    Effect.provide(
-      scripted(() => {
-        calls += 1
-        return Effect.never
+  layer(
+    scripted(() => {
+      calls += 1
+      return calls === 1
+        ? Effect.succeed(probabilities([1]))
+        : Effect.fail(
+            AiError.make({
+              module: 'Test',
+              method: 'decide',
+              reason: new AiError.InvalidOutputError({ description: 'Unavailable' }),
+            }),
+          )
+    }),
+  )((it) => {
+    it.effect('provider failure preserves known Company prohibitions in an uncertain binding', () =>
+      Effect.gen(function* () {
+        const result = yield* judgeBinding(yield* RuleJudge, action, [company, rule])
+        expect(result).toEqual(BindingJudgment.cases.Uncertain.make({ rules: [company] }))
       }),
-    ),
-  )
-})
+    )
+  })
+}
+
+{
+  let calls = 0
+
+  layer(
+    scripted(() => {
+      calls += 1
+      return Effect.never
+    }),
+  )((it) => {
+    it.effect('a stalled judgment is not judged at three seconds, without a retry', () =>
+      Effect.gen(function* () {
+        const judge = yield* RuleJudge
+        const pending = yield* Effect.result(judge.judge(action, [rule])).pipe(Effect.forkChild)
+        // One millisecond short of the budget the judgment is still waiting; at the budget it fails.
+        yield* TestClock.adjust('2999 millis')
+        expect(calls).toBe(1)
+        expect(pending.pollUnsafe()).toBeUndefined()
+        yield* TestClock.adjust('1 millis')
+        const result = yield* Fiber.join(pending)
+        expect(result._tag).toBe('Failure')
+        expect(calls).toBe(1)
+      }),
+    )
+  })
+}
 
 /** The gateway rejects a request with too many questions; a Person with many rules must still be judged. */
-it.effect('more rules than one request holds are judged in batches, keeping their order', () => {
+{
   const sizes: Array<number> = []
   const rules = Array.from({ length: 45 }, (_unused, index) =>
     Rule.make({ ...rule, id: RuleId.make(`rule-${index}`), action: `Rule number ${index}` }),
@@ -199,19 +215,24 @@ it.effect('more rules than one request holds are judged in batches, keeping thei
       probabilities(Array.from({ length: count }, (_unused, at) => (at === 0 ? 1 : 0))),
     )
   })
-  return Effect.gen(function* () {
-    const applicable = yield* (yield* RuleJudge).judge(action, rules)
-    expect(sizes.toSorted((left, right) => left - right)).toEqual([5, 20, 20])
-    expect(applicable.map((entry) => entry.action)).toEqual([
-      'Rule number 0',
-      'Rule number 20',
-      'Rule number 40',
-    ])
-  }).pipe(Effect.provide(provider))
-})
+
+  layer(provider)((it) => {
+    it.effect('more rules than one request holds are judged in batches, keeping their order', () =>
+      Effect.gen(function* () {
+        const applicable = yield* (yield* RuleJudge).judge(action, rules)
+        expect(sizes.toSorted((left, right) => left - right)).toEqual([5, 20, 20])
+        expect(applicable.map((entry) => entry.action)).toEqual([
+          'Rule number 0',
+          'Rule number 20',
+          'Rule number 40',
+        ])
+      }),
+    )
+  })
+}
 
 /** A rule is never dropped because its batch was the one that failed. */
-it.effect('one failed batch leaves the whole scope not judged', () => {
+{
   const rules = Array.from({ length: 45 }, (_unused, index) =>
     Rule.make({ ...rule, id: RuleId.make(`rule-${index}`), action: `Rule number ${index}` }),
   )
@@ -228,8 +249,13 @@ it.effect('one failed batch leaves the whole scope not judged', () => {
         )
       : Effect.succeed(probabilities(Array.from({ length: count }, () => 1)))
   })
-  return Effect.gen(function* () {
-    const result = yield* Effect.flip((yield* RuleJudge).judge(action, rules))
-    expect(result).toBeInstanceOf(RulesNotJudged)
-  }).pipe(Effect.provide(provider))
-})
+
+  layer(provider)((it) => {
+    it.effect('one failed batch leaves the whole scope not judged', () =>
+      Effect.gen(function* () {
+        const result = yield* Effect.flip((yield* RuleJudge).judge(action, rules))
+        expect(result).toBeInstanceOf(RulesNotJudged)
+      }),
+    )
+  })
+}
