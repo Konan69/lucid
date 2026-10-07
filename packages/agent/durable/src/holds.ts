@@ -390,7 +390,7 @@ const decodeDecision = Schema.decodeUnknownEffect(CallDecision)
 export const readPinnedDecision = Effect.fn('Durable.readPinnedDecision')(function* (
   api: HookApi,
   context: Context,
-) {
+): Effect.fn.Return<Option.Option<CallDecision>, PiFailed> {
   const stored = yield* Effect.tryPromise({
     try: () => api.memo(decisionMemo, context),
     catch: (cause) => new PiFailed({ operation: 'snapshot', cause }),
@@ -407,7 +407,7 @@ export const pinDecision = Effect.fn('Durable.pinDecision')(function* (
   api: HookApi,
   chosen: CallDecision,
   context: Context,
-) {
+): Effect.fn.Return<CallDecision, PiFailed> {
   const stored = yield* Effect.tryPromise({
     try: () => api.memo(decisionMemo, chosen, context),
     catch: (cause) => new PiFailed({ operation: 'commit', cause }),
@@ -417,32 +417,41 @@ export const pinDecision = Effect.fn('Durable.pinDecision')(function* (
   )
 })
 /** A pull reader observes the live memo through getTask; terminal tasks legitimately have no memo. */
-export const taskDecision = Effect.fn('Durable.taskDecision')(function* (
+export const taskDecision: (
   harness: Harness,
   taskId: TaskId,
   context: Context,
-) {
-  const task = yield* Effect.tryPromise({
-    try: () => harness.getTask(taskId, context),
-    catch: (cause) => new PiFailed({ operation: 'snapshot', cause }),
-  })
-  const stored = Option.fromNullishOr(task).pipe(
-    Option.flatMapNullishOr((record) => record.memos),
-    Option.flatMapNullishOr((memos) => memos[decisionMemo]),
-  )
-  return yield* Option.match(stored, {
-    onNone: () => Effect.succeed(Option.none<CallDecision>()),
-    onSome: (value) =>
-      decodeDecision(value).pipe(
-        Effect.map(Option.some),
-        Effect.mapError((cause) => new PiFailed({ operation: 'snapshot', cause })),
-      ),
-  })
-})
+) => Effect.Effect<Option.Option<CallDecision>, PiFailed> = Effect.fn('Durable.taskDecision')(
+  function* (
+    harness: Harness,
+    taskId: TaskId,
+    context: Context,
+  ): Effect.fn.Return<Option.Option<CallDecision>, PiFailed> {
+    const task = yield* Effect.tryPromise({
+      try: () => harness.getTask(taskId, context),
+      catch: (cause) => new PiFailed({ operation: 'snapshot', cause }),
+    })
+    const stored = Option.fromNullishOr(task).pipe(
+      Option.flatMapNullishOr((record) => record.memos),
+      Option.flatMapNullishOr((memos) => memos[decisionMemo]),
+    )
+    return yield* Option.match(stored, {
+      onNone: () => Effect.succeed(Option.none<CallDecision>()),
+      onSome: (value) =>
+        decodeDecision(value).pipe(
+          Effect.map(Option.some),
+          Effect.mapError((cause) => new PiFailed({ operation: 'snapshot', cause })),
+        ),
+    })
+  },
+)
 
 /** Identical parsing and a contained synchronous policy are used in hooks and every active reader.
  * SDK input is opaque until the SDK validator decodes it; transforms need not produce JSON. */
-export const decision = Effect.fn('Durable.toolDecision')(function* (plan: Plan, call: ToolCall) {
+export const decision = Effect.fn('Durable.toolDecision')(function* (
+  plan: Plan,
+  call: ToolCall,
+): Effect.fn.Return<CallDecision> {
   const parsed = yield* Effect.result(plan.parse(call))
   if (Result.isFailure(parsed))
     return CallDecision.cases.Blocked.make({ reason: parsed.failure.message })

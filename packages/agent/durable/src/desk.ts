@@ -41,7 +41,7 @@ export const readDesk = Effect.fn('Durable.readDesk')(function* (
     readonly origins: ReadonlyMap<Chunk, TaskId>
   },
   shownHolds: Round['holds'],
-) {
+): Effect.fn.Return<Desk, PiFailed> {
   const { chunks, live: observedLive, origins } = observation
   const agent = yield* Pi.agent(reader.conversation, reader.context)
   // HookApi cannot resolve its selected registration. Reject ambiguity where the public agent can.
