@@ -1,8 +1,9 @@
 import type { FlueConversationMessage } from '@flue/sdk'
 import type { ThreadDetail } from '@vivid/contracts'
 import { Data, Option, Result } from 'effect'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Image, View } from 'react-native'
+import Animated from 'react-native-reanimated'
 import { AlarmClock, ChevronDown, ChevronRight, Monitor, Repeat2 } from 'lucide-react-native'
 import type { Say } from '../../data/delivery'
 import { CITATION_ADDRESS, linkCitations, openDocument } from '../../data/documents'
@@ -27,6 +28,8 @@ import { when } from '../../data/when'
 import { useTheme } from '../../theme'
 import { ThinkingOrb } from '../../../vendor/orb'
 import { Avatar } from '../../ui/Avatar'
+import { Dots } from '../../ui/Dots'
+import { ANSWERED, SAID } from '../../ui/motion/morph'
 import { openWebLink, Prose } from '../../ui/Prose'
 import { Sheet } from '../../ui/Sheet'
 import { EDGE, Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
@@ -44,6 +47,7 @@ export function Message({
   around,
   detail,
   working,
+  fresh,
   latest,
   unsent,
   onContinue,
@@ -52,6 +56,12 @@ export function Message({
   around: Around
   detail: Option.Option<ThreadDetail>
   working: boolean
+  /**
+   * Whether it arrived in the last moments, while the Thread was on screen (`Transcript`,
+   * `screen/Chat.tsx`). Only then does it arrive with motion; everything that was already in the
+   * Thread is drawn whole.
+   */
+  fresh: boolean
   /** Whether this is the newest visible message, matching the web reply’s answerability. */
   latest: boolean
   /** The ids of the messages written here that did not arrive (`failedSends` of the stream). */
@@ -60,30 +70,50 @@ export function Message({
 }) {
   return Speaker.$match(speakerOf(message, around), {
     Me: () => (
-      <Said
-        text={textOf(message)}
-        pictures={picturesOf(message)}
-        voice={unsent.has(message.id) ? Voice.Unsent() : Voice.Mine()}
-      />
+      <Arriving arrival={fresh ? 'said' : 'there'}>
+        <Said
+          text={textOf(message)}
+          pictures={picturesOf(message)}
+          voice={unsent.has(message.id) ? Voice.Unsent() : Voice.Mine()}
+        />
+      </Arriving>
     ),
     Member: ({ name }) => (
       <Said text={textOf(message)} pictures={picturesOf(message)} voice={Voice.Theirs({ name })} />
     ),
     Vivid: ({ answering }) => (
-      <FromVivid
-        message={message}
-        answering={answering}
-        detail={detail}
-        around={around}
-        working={working}
-        latest={latest}
-        onContinue={onContinue}
-      />
+      <Arriving arrival={fresh ? 'answered' : 'there'}>
+        <FromVivid
+          message={message}
+          answering={answering}
+          detail={detail}
+          around={around}
+          working={working}
+          latest={latest}
+          onContinue={onContinue}
+        />
+      </Arriving>
     ),
     Wake: ({ reason, name }) => <Wake reason={reason} name={name} />,
     Notice: ({ failed }) => <Aside text={textOf(message)} failed={failed} />,
     Silent: () => null,
   })
+}
+
+/** How each kind of arrival comes onto the screen; one that was already there does not. */
+const ARRIVAL = { said: SAID, answered: ANSWERED, there: undefined } as const
+
+/**
+ * A message's row, with how it arrives. The Person's own words rise into place and Vivid's fade
+ * in, when they have just arrived; T3 Code mobile's feed does the same for a message stamped in
+ * the last three seconds (`ThreadFeed.tsx`, `isFreshTimestamp`).
+ *
+ * How it arrives is decided once, when the row is first drawn, and kept: the motion belongs to
+ * the arrival, and a row must not be told it is no longer fresh in the middle of it.
+ */
+function Arriving({ arrival, children }: { arrival: keyof typeof ARRIVAL; children: ReactNode }) {
+  const [entering] = useState(ARRIVAL[arrival])
+  return <Animated.View entering={entering}>{children}</Animated.View>
 }
 
 /**
@@ -436,10 +466,14 @@ function FromVivid({
   const text = textOf(message)
   const tools = toolsOf(message)
   const moment = momentOf(message)
+  // A reply that has started and has nothing to show yet: no words, nothing done. The dots say
+  // Vivid is about to speak, where the row was a face beside nothing.
+  const silent = text.length === 0 && tools.length === 0
+  const awaited = silent && (isStreaming(message) || (latest && working))
   return (
     <View style={{ flexDirection: 'row', gap: 10 }}>
       <View style={{ marginTop: 1 }}>
-        <Face size={24} mood={isStreaming(message) ? 'thinking' : 'neutral'} />
+        <Face size={24} mood={isStreaming(message) || awaited ? 'thinking' : 'neutral'} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         {Option.isSome(answering) && (
@@ -448,6 +482,7 @@ function FromVivid({
           </Label>
         )}
         <Steps steps={stepsOf(tools)} working={working} />
+        {awaited && <Dots />}
         {text.length > 0 && <Words text={text} />}
         <Cards
           tools={tools}

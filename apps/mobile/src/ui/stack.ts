@@ -62,7 +62,14 @@ export const SCROLL_EDGES = {
  * update and from `willMoveToParentViewController`; `RNSScrollViewFinder`), and a
  * Thread's list is mounted after its outline, so it kept the system's default. The Thread's list
  * is therefore also laid out under the bar and not behind it (`Transcript`, `screen/Chat.tsx`).
- * The option stays, for the list that is already there when a Thread takes the screen.
+ *
+ * Under the bar was still not enough: with the keyboard up the conversation was blurred again
+ * (7 October 2026). The list had never been given this at all. So a Thread now asks for it only
+ * once its list has been laid out, and asks again for each list: until then the screen has the
+ * ordinary `SCROLL_EDGES`, and the change from one to the other is what makes the library apply
+ * it, to a scroller that is there to take it. The library finds that scroller only down the
+ * first child of each view (`RNSScrollViewFinder`), which the Thread's layout is written for.
+ * Not seen on an iPhone from here either.
  */
 export const NO_SCROLL_EDGES = {
   top: 'hidden',

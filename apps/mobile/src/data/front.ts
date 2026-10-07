@@ -1,5 +1,6 @@
 import type { ThreadId } from '@vivid/contracts'
-import { Data, Option } from 'effect'
+import { Data } from 'effect'
+import { makeFirsts } from './first'
 
 /**
  * What the first screen is showing: somewhere to start a new Thread, or one Thread.
@@ -13,7 +14,8 @@ import { Data, Option } from 'effect'
  * - `Fresh`: Vivid's greeting and the composer; nothing has been said yet.
  * - `Thread`: that Thread's conversation. `writing` says the Person got here by sending from the
  *   keyboard, so the Thread's composer takes the keyboard over and it never goes down between
- *   the two.
+ *   the two. A Thread started from the greeting is put here the moment its first words are sent,
+ *   before the server has it (`firsts`, `data/first.ts`).
  *
  * It is not a route parameter because it is not somewhere to go back from: the system's way back
  * belongs to the screens pushed over this one.
@@ -34,8 +36,6 @@ const FRESH = Front.Fresh()
  */
 export function makeFront() {
   let showing: Front = FRESH
-  // The empty Thread a first message's failed send left behind, when there is one.
-  let unsaid = Option.none<ThreadId>()
   const listeners = new Set<() => void>()
 
   const show = (next: Front) => {
@@ -58,16 +58,11 @@ export function makeFront() {
       show(Front.Thread({ id, writing }))
     },
     /**
-     * The Thread a first message made and did not reach, for the next send to speak into instead
-     * of making a second one. It is kept here and not by the greeting's screen, because the
-     * greeting is taken down whenever a Thread is put in front, and the Person can come back to
-     * it with their words still in the composer (`data/drafts.ts`).
+     * The first words of the Threads started here, and how far each has got. They are kept here
+     * and not by a screen: the greeting is taken down the moment a Thread is put in front, and
+     * the send goes on after it.
      */
-    unsaid: () => unsaid,
-    /** Records, or forgets, the Thread a first message is still owed to. */
-    owe: (thread: Option.Option<ThreadId>) => {
-      unsaid = thread
-    },
+    firsts: makeFirsts(),
     /** Back to somewhere to start a new Thread. */
     fresh: () => {
       if (Front.$is('Fresh')(showing)) return
