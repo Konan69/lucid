@@ -26,7 +26,6 @@ describe('desktop server settings', () => {
       expect(yield* readServerSettings(path, home)).toEqual(
         ServerSettings.cases.Server.make({ origin }),
       )
-      // Each case owns its mutable settings and disposable directory.
       yield* Effect.gen(function* () {
         const settings = yield* DesktopSettings
         // "Use a Different Vivid" forgets the server; that choice is stored and is kept.
@@ -43,7 +42,6 @@ describe('desktop server settings', () => {
     Effect.gen(function* () {
       const root = yield* directory
       const path = NodePath.join(root, 'settings.json')
-      // Each case owns its mutable settings and disposable directory.
       yield* Effect.gen(function* () {
         const settings = yield* DesktopSettings
         expect(yield* settings.get).toEqual(ServerSettings.cases.NoServer.make({}))
@@ -106,7 +104,6 @@ describe('desktop server settings', () => {
     Effect.gen(function* () {
       const root = yield* directory
       const path = NodePath.join(root, 'settings.json')
-      // Each case owns its mutable settings and disposable directory.
       yield* Effect.gen(function* () {
         const settings = yield* DesktopSettings
         const before = yield* settings.set(yield* decodeAddress('https://vivid.example'))

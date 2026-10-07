@@ -84,7 +84,6 @@ describe('desktop server selection', () => {
     it.effect('returns the native page limit through the public bridge', () =>
       Effect.gen(function* () {
         const root = yield* directory
-        // Each case owns its mutable settings and disposable directory.
         yield* Effect.gen(function* () {
           const settings = yield* DesktopSettings
           const reason = new PageLimitReached({ limit: 12 })
@@ -122,7 +121,6 @@ describe('desktop server selection', () => {
     it.effect('denies selected-server documents before shell settings or browsing can change', () =>
       Effect.gen(function* () {
         const root = yield* directory
-        // Each case owns its mutable settings and disposable directory.
         yield* Effect.gen(function* () {
           const settings = yield* DesktopSettings
           const changes: string[] = []
@@ -178,7 +176,6 @@ describe('desktop server selection', () => {
       () =>
         Effect.gen(function* () {
           const root = yield* directory
-          // Each case owns its mutable settings and disposable directory.
           yield* Effect.gen(function* () {
             const settings = yield* DesktopSettings
             const asked: string[] = []
@@ -256,7 +253,6 @@ describe('desktop server selection', () => {
         })
         const origin = yield* originOf(server)
         const root = yield* directory
-        // Each case owns its mutable settings and disposable directory.
         yield* Effect.gen(function* () {
           const settings = yield* DesktopSettings
           const changes: string[] = []
@@ -303,7 +299,6 @@ describe('desktop server selection', () => {
         )
         const origin = yield* originOf(server)
         const root = yield* directory
-        // Each case owns its mutable settings and disposable directory.
         yield* Effect.gen(function* () {
           const settings = yield* DesktopSettings
           expect(yield* chooseServer(origin, settings)).toEqual(
@@ -333,7 +328,6 @@ describe('desktop server selection', () => {
         })
         const root = yield* directory
         const origin = yield* originOf(redirecting)
-        // Each case owns its mutable settings and disposable directory.
         yield* Effect.gen(function* () {
           const settings = yield* DesktopSettings
           const result = yield* chooseServer(origin, settings)
@@ -353,7 +347,6 @@ describe('desktop server selection', () => {
         const server = yield* fixture((request) => request.socket.destroy())
         const origin = yield* originOf(server)
         const root = yield* directory
-        // Each case owns its mutable settings and disposable directory.
         yield* Effect.gen(function* () {
           const settings = yield* DesktopSettings
           const before = yield* settings.set(ServerAddress.make('https://vivid.example'))
@@ -373,7 +366,6 @@ describe('desktop server selection', () => {
         const server = yield* fixture(() => undefined)
         const origin = yield* originOf(server)
         const root = yield* directory
-        // Each case owns its mutable settings and disposable directory.
         yield* Effect.gen(function* () {
           const settings = yield* DesktopSettings
           const received = yield* Effect.callback<void>((resume) => {
