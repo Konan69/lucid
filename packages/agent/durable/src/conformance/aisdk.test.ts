@@ -16,7 +16,7 @@ import {
 import { expect, it } from 'vitest'
 import { z } from 'zod'
 
-import { resumption } from '../client.ts'
+import { resumable } from '../client.ts'
 import { PlainChat } from '../fixtures/chat.ts'
 import { answer, attachRun, continueRun, decide, respond, streamRun, waiting } from '../main.ts'
 import {
@@ -443,10 +443,8 @@ it('step 1 snapshot reconnect after a network interruption does not duplicate te
     fauxAssistantMessage('Finished.'),
   ])
   const attached = signal()
-  const link = resumption()
   const transport = new DefaultChatTransport<UIMessage>({
     api: 'http://durable.test/chat',
-    prepareReconnectToStreamRequest: link.prepare,
     fetch: async (url, init) => {
       const request = new Request(url, init)
       if (request.method === 'GET') {
@@ -472,7 +470,7 @@ it('step 1 snapshot reconnect after a network interruption does not duplicate te
       return new Response(dropped, { headers: response.headers })
     },
   })
-  const chat = new PlainChat({ transport, onFinish: link.onFinish })
+  const chat = new PlainChat({ transport: resumable(transport) })
   try {
     await chat.sendMessage({ text: 'Build' })
     await entered.promise
@@ -581,10 +579,8 @@ it.each(['text-end', 'tool-input-start', 'tool-input-available'])(
       fauxAssistantMessage('Finished.'),
     ])
     const attached = signal()
-    const link = resumption()
     const transport = new DefaultChatTransport<UIMessage>({
       api: 'http://durable.test/chat',
-      prepareReconnectToStreamRequest: link.prepare,
       fetch: async (url, init) => {
         const request = new Request(url, init)
         const response = await respond(opened.harness, opened.root.id, request, context)
@@ -612,7 +608,7 @@ it.each(['text-end', 'tool-input-start', 'tool-input-available'])(
         return new Response(dropped, { headers: response.headers })
       },
     })
-    const chat = new PlainChat({ transport, onFinish: link.onFinish })
+    const chat = new PlainChat({ transport: resumable(transport) })
     try {
       await chat.sendMessage({ text: 'Build in steps' })
       await entered.promise

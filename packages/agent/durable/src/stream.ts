@@ -20,13 +20,7 @@ import {
   type Rebuilt,
   translate,
 } from './chunks.ts'
-import {
-  RejoinInvalid,
-  RunMissing,
-  type PiFailed,
-  type WatchClosed,
-  type WatchOverflowed,
-} from './errors.ts'
+import { RunMissing, type PiFailed, type WatchClosed, type WatchOverflowed } from './errors.ts'
 import { readDesk, noDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
 import { captureRun, inputReplay, selectRun, type Prefix, type ResumeInput } from './resume.ts'
@@ -333,7 +327,7 @@ function attachedPrefix(found: Option.Option<Rebuilt>): Option.Option<Prefix> {
   }))
 }
 
-/** Whole-run attachment and retained-step rejoin share the same live-prefix contract. */
+/** Whole-run attachment owns one snapshot prefix and the subsequent live tail. */
 export const attachRun: (
   harness: Harness,
   conversationId: ConversationId,
@@ -351,62 +345,6 @@ export const attachRun: (
     conversationId,
     (snapshot, reader) =>
       captureRun(reader, snapshot).pipe(Effect.map(replay), Effect.map(attachedPrefix)),
-    context,
-  )
-})
-
-/** Retained client state identifies its current step; the same one-shot watch ownership as attachRun. */
-export type Rejoin = { readonly messageId: string; readonly steps: number }
-
-/**
- * Replay keeps the full translator state for the live tail. Only the wire prefix is trimmed:
- * reset-step preserves the client's current step-start, so omit that marker and all earlier steps.
- * A different message belongs to another run and receives the ordinary whole-run snapshot.
- */
-function rejoinPrefix(snapshot: SnapshotEvent, input: Rejoin) {
-  return Effect.gen(function* () {
-    const found = replay(snapshot)
-    if (Option.isNone(found)) return found
-    const prefix = found.value
-    const start = prefix.chunks[0]
-    if (start === undefined || start.type !== 'start' || start.messageId !== input.messageId)
-      return found
-    const steps = prefix.chunks.flatMap((chunk, index) =>
-      chunk.type === 'start-step' ? [index] : [],
-    )
-    if (!Number.isInteger(input.steps) || input.steps < 1 || input.steps > steps.length)
-      return yield* new RejoinInvalid({})
-    const at = Option.getOrThrow(Option.fromNullishOr(steps[input.steps - 1]))
-    return Option.some({
-      ...prefix,
-      chunks: [start, ...prefix.chunks.slice(1, 2), ...prefix.chunks.slice(at + 1)],
-    })
-  })
-}
-
-/** Idle returns None; a retained current step resumes without duplicating earlier durable steps. */
-export const rejoinRun: (
-  harness: Harness,
-  conversationId: ConversationId,
-  input: Rejoin,
-  context: Context,
-) => Effect.Effect<
-  Effect.Success<ReturnType<typeof attachRun>>,
-  Effect.Error<ReturnType<typeof attachRun>> | RejoinInvalid
-> = Effect.fn('Durable.rejoinRun')(function* (
-  harness: Harness,
-  conversationId: ConversationId,
-  input: Rejoin,
-  context: Context,
-) {
-  return yield* reconnect(
-    harness,
-    conversationId,
-    (snapshot, reader) =>
-      captureRun(reader, snapshot).pipe(
-        Effect.flatMap((captured) => rejoinPrefix(captured, input)),
-        Effect.map(attachedPrefix),
-      ),
     context,
   )
 })

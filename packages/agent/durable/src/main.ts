@@ -1,12 +1,21 @@
 import type { Context } from '@earendil-works/chord'
-import type { ConversationId, Harness } from '@earendil-works/pi-durable'
-import { createUIMessageStreamResponse, type UIMessageChunk } from 'ai'
+import type { ConversationId, Extension, Harness } from '@earendil-works/pi-durable'
+import {
+  createUIMessageStreamResponse,
+  type ToolSet,
+  type UIMessage,
+  type UIMessageChunk,
+} from 'ai'
 import { Effect, Function, Option, Result, Schema, Stream } from 'effect'
 
 import * as Core from './core.ts'
 import { HoldIdInvalid, TurnInvalid } from './errors.ts'
+import type { Answer, Decision, Settlement } from './holds.ts'
+import type { Waiting } from './waiting.ts'
+import type { RunInput } from './stream.ts'
+import type { ResumeInput } from './resume.ts'
 import { prepareRun } from './stream.ts'
-import { reconnectRequest, turnFailure, TurnBody, respondWithPolicy } from './respond.ts'
+import { turnFailure, TurnBody, respondWithPolicy, type TurnInput } from './respond.ts'
 import type { ToolsOptions } from './tools.ts'
 import { inputLimit, type InputOptions } from './input.ts'
 
@@ -22,26 +31,43 @@ export const decodeTurn = Function.flow(Core.decodeTurn, (effect) => Effect.runP
 /** Promise facade; tool registration has one Effect implementation. */
 export const toolsExtension = (
   name: string,
-  tools: Parameters<typeof Core.toolsExtension>[1],
+  tools: ToolSet,
   options: ToolsOptions = {},
-) => Effect.runPromise(Core.toolsExtension(name, tools, options))
+): Promise<Extension> => Effect.runPromise(Core.toolsExtension(name, tools, options))
 
 /** Preserve the original tagged error classes at the Promise rejection boundary. */
-export const decide = (...args: Parameters<typeof Core.decide>) =>
-  Effect.runPromise(Core.decide(...args))
+export const decide = (
+  harness: Harness,
+  conversationId: ConversationId,
+  decision: Decision,
+  context: Context,
+): Promise<Settlement> => Effect.runPromise(Core.decide(harness, conversationId, decision, context))
 
 /** Person-supplied results use the same durable ordering and idempotency as the Effect API. */
-export const answer = (...args: Parameters<typeof Core.answer>) =>
-  Effect.runPromise(Core.answer(...args))
+export const answer = (
+  harness: Harness,
+  conversationId: ConversationId,
+  given: Answer,
+  context: Context,
+): Promise<Settlement> => Effect.runPromise(Core.answer(harness, conversationId, given, context))
 
 /** No waiting state is mirrored into the facade; it is derived by the core on every call. */
-export const waiting = (...args: Parameters<typeof Core.waiting>) =>
-  Effect.runPromise(Core.waiting(...args))
+export const waiting = (
+  harness: Harness,
+  conversationId: ConversationId,
+  context: Context,
+): Promise<Waiting[]> => Effect.runPromise(Core.waiting(harness, conversationId, context))
 
 /** Stream consumption owns observation; the platform stream cancels only its consumer scope. */
-export const streamRun = (...args: Parameters<typeof Core.streamRun>) =>
+export const streamRun = (
+  harness: Harness,
+  input: RunInput,
+  context: Context,
+): Promise<ReadableStream<UIMessageChunk>> =>
   Effect.runPromise(
-    prepareRun(...args).pipe(Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream))),
+    prepareRun(harness, input, context).pipe(
+      Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream)),
+    ),
   )
 
 export type Attached =
@@ -49,25 +75,13 @@ export type Attached =
   | { readonly status: 'running'; readonly stream: ReadableStream<UIMessageChunk> }
 
 /** Convert core absence once, into the Promise API's explicit idle/running result. */
-export const attachRun = (...args: Parameters<typeof Core.attachRun>): Promise<Attached> =>
+export const attachRun = (
+  harness: Harness,
+  conversationId: ConversationId,
+  context: Context,
+): Promise<Attached> =>
   Effect.runPromise(
-    Core.attachRun(...args).pipe(
-      Effect.flatMap((attached) =>
-        Option.match(attached, {
-          onNone: () => Effect.succeed<Attached>({ status: 'idle' }),
-          onSome: (stream) =>
-            Stream.toReadableStreamEffect(stream).pipe(
-              Effect.map((readable): Attached => ({ status: 'running', stream: readable })),
-            ),
-        }),
-      ),
-    ),
-  )
-
-/** The retained-step counterpart of attachRun has the same Promise result shape. */
-export const rejoinRun = (...args: Parameters<typeof Core.rejoinRun>): Promise<Attached> =>
-  Effect.runPromise(
-    Core.rejoinRun(...args).pipe(
+    Core.attachRun(harness, conversationId, context).pipe(
       Effect.flatMap((attached) =>
         Option.match(attached, {
           onNone: () => Effect.succeed<Attached>({ status: 'idle' }),
@@ -81,9 +95,14 @@ export const rejoinRun = (...args: Parameters<typeof Core.rejoinRun>): Promise<A
   )
 
 /** RunMissing rejects before a platform stream is returned. */
-export const continueRun = (...args: Parameters<typeof Core.continueRun>) =>
+export const continueRun = (
+  harness: Harness,
+  conversationId: ConversationId,
+  input: ResumeInput,
+  context: Context,
+): Promise<ReadableStream<UIMessageChunk>> =>
   Effect.runPromise(
-    Core.continueRun(...args).pipe(
+    Core.continueRun(harness, conversationId, input, context).pipe(
       Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream)),
     ),
   )
@@ -93,7 +112,7 @@ export const continueRun = (...args: Parameters<typeof Core.continueRun>) =>
 export const respondTurn = (
   harness: Harness,
   conversationId: ConversationId,
-  turn: Core.TurnInput,
+  turn: TurnInput,
   context: Context,
 ): Promise<Response> =>
   Effect.runPromise(turnResponse(Core.respond(harness, conversationId, turn, context)))
@@ -131,7 +150,7 @@ export async function respond(
   // AI SDK HttpChatTransport.reconnectToStream sends a bodyless GET and treats 204 as idle.
   if (request.method === 'GET') {
     return Effect.runPromise(
-      reconnectRequest(harness, conversationId, new URL(request.url), context).pipe(
+      Core.attachRun(harness, conversationId, context).pipe(
         Effect.flatMap((attached) =>
           Option.match(attached, {
             onNone: () => Effect.succeed(new Response(null, { status: 204 })),
@@ -140,9 +159,6 @@ export async function respond(
                 Effect.map((readable) => createUIMessageStreamResponse({ stream: readable })),
               ),
           }),
-        ),
-        Effect.catchTag('RejoinInvalid', () =>
-          Effect.succeed(new Response('Invalid reconnect state', { status: 400 })),
         ),
         Effect.catchTag('ConversationMissing', () =>
           Effect.succeed(new Response('Conversation not found', { status: 404 })),
@@ -176,7 +192,6 @@ export {
   ConversationMissing,
   PiFailed,
   TurnInvalid,
-  RejoinInvalid,
   PartUnsupported,
   PartTooLarge,
   LimitInvalid,
@@ -188,19 +203,22 @@ export {
 export type { Answer, Decision, Settlement, Plan, Source } from './holds.ts'
 export type { Waiting } from './waiting.ts'
 export type { Replay, ToolsOptions } from './tools.ts'
-export type { Rejoin, RunInput } from './stream.ts'
+export type { RunInput } from './stream.ts'
 export type { ResumeInput } from './resume.ts'
 export type { RunState, Step, Chunk } from './chunks.ts'
 export type { ChatTurn, TurnInput } from './respond.ts'
 export type { InputPart, InputOptions } from './input.ts'
 
 /** Explicit run cancellation is distinct from a fetch abort or a detached stream reader. */
-export const abort = (...args: Parameters<typeof Core.abort>) =>
-  Effect.runPromise(Core.abort(...args))
+export const abort = (
+  harness: Harness,
+  conversationId: ConversationId,
+  context: Context,
+): Promise<void> => Effect.runPromise(Core.abort(harness, conversationId, context))
 
 export type { HoldId } from './errors.ts'
 
-export type HistoryPage = { readonly messages: import('ai').UIMessage[]; readonly next?: string }
+export type HistoryPage = { readonly messages: UIMessage[]; readonly next?: string }
 export type HistoryRequest = { readonly limit: number; readonly before?: string }
 const encodeCursor = Schema.encodeSync(Schema.fromJsonString(Core.HistoryCursor))
 const decodeCursor = Schema.decodeUnknownEffect(Schema.fromJsonString(Core.HistoryCursor), {

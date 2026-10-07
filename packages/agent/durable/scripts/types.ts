@@ -1,8 +1,8 @@
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
 import { respond, type RequestInput, type HoldId } from '@vivid/durable'
-import { resumption } from '@vivid/durable/client'
-import type { ChatOnFinishCallback, PrepareReconnectToStreamRequest, UIMessage } from 'ai'
+import { resumable, ConnectionLost, connectionLostInput } from '@vivid/durable/client'
+import { DefaultChatTransport, type ChatTransport, type UIMessage } from 'ai'
 import * as Core from '@vivid/durable/core'
 import { Schema } from 'effect'
 
@@ -22,8 +22,6 @@ export const effectTurn = Core.respond
 /** Hold identity crosses entries without losing its public brand. */
 export const identity: HoldId = Schema.decodeUnknownSync(Core.HoldId)('hold:1')
 
-/** Browser/React Native entry resolves both SDK callback types without importing the core. */
-export const link: {
-  prepare: PrepareReconnectToStreamRequest
-  onFinish: ChatOnFinishCallback<UIMessage>
-} = resumption()
+/** Browser/React Native entry resolves the SDK transport without importing the core. */
+export const transport: ChatTransport<UIMessage> = resumable(new DefaultChatTransport())
+export const interruption: Error = new ConnectionLost({ cause: connectionLostInput })

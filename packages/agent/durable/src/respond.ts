@@ -14,52 +14,15 @@ import {
   SchemaIssue,
 } from 'effect'
 
-import { HoldId, RejoinInvalid, RunMissing, TurnInvalid } from './errors.ts'
+import { connectionLostInput } from './client.ts'
+import { HoldId, RunMissing, TurnInvalid } from './errors.ts'
 import { answerObserved, decideObserved } from './holds.ts'
 import { runMessageId } from './chunks.ts'
 import * as Pi from './pi.ts'
 import { LiveDoc } from '@earendil-works/pi-durable'
-import { attachRun, completeTurn, continueRun, prepareInput, rejoinRun } from './stream.ts'
+import { completeTurn, continueRun, prepareInput } from './stream.ts'
 import { waiting } from './waiting.ts'
 import { InputPart, InputParts, type InputOptions, inputLimit, type PartLimit } from './input.ts'
-
-/** The pair is either absent or complete; partial pairs and nonpositive/noninteger counts fail ingress. */
-const RejoinQuery = Schema.Union([
-  Schema.Struct({ message: Schema.Null, steps: Schema.Null }),
-  Schema.Struct({
-    message: Schema.String,
-    steps: Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
-  }),
-])
-const decodeRejoin = Schema.decodeUnknownEffect(RejoinQuery)
-
-/** Decode the GET query once, then choose whole-run or retained-step observation. */
-export const reconnectRequest: (
-  harness: Harness,
-  conversationId: ConversationId,
-  url: URL,
-  context: Context,
-) => Effect.Effect<
-  Effect.Success<ReturnType<typeof attachRun>>,
-  Effect.Error<ReturnType<typeof attachRun>> | RejoinInvalid
-> = Effect.fn('Durable.reconnectRequest')(function* (
-  harness: Harness,
-  conversationId: ConversationId,
-  url: URL,
-  context: Context,
-) {
-  const query = yield* decodeRejoin({
-    message: url.searchParams.get('message'),
-    steps: url.searchParams.get('steps'),
-  }).pipe(Effect.mapError(() => new RejoinInvalid({})))
-  if (query.message === null) return yield* attachRun(harness, conversationId, context)
-  return yield* rejoinRun(
-    harness,
-    conversationId,
-    { messageId: query.message, steps: query.steps },
-    context,
-  )
-})
 
 /** The transport-neutral turn carries only the client's newest input or named tool settlements. */
 export const ChatTurn = Schema.TaggedUnion({
@@ -106,6 +69,13 @@ const Approval = Schema.Struct({
 )
 const Part = Schema.Union([
   InputPart,
+  // Local connection failures name the call but can never authorize or answer it.
+  Schema.Struct({
+    type: ToolName,
+    toolCallId: Schema.String,
+    state: Schema.Literal('output-error'),
+    errorText: Schema.Literal(connectionLostInput),
+  }),
   Schema.Struct({
     type: ToolName,
     toolCallId: Schema.String,

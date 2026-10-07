@@ -308,7 +308,6 @@ const requestRoute = Effect.fn('Example.requestRoute')(function* (
   if (request.method !== method) return new Response(null, { status: 405 })
   const id = yield* conversation(host, path.id, false)
   url.pathname = path.action === 'stream' ? '/chat' : `/${path.action}`
-  // Preserve message/steps verbatim: respond decodes the reconnect pair at its HTTP ingress.
   const mapped = new Request(url, request)
   return yield* Effect.promise(() => route(host.harness, id, mapped, context))
 })

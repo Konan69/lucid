@@ -733,7 +733,7 @@ export function replayAfter(
 }
 
 /** A manual POST may name a still-streaming call with no assistant entry yet. Rebuild only the
- * retained current step, just like rejoinRun: reset-step retains its existing step-start. The full
+ * retained current step: reset-step retains its existing step-start. The full
  * replay state carries raw offsets into the event tail, so snapshot text is never offered twice. */
 function inFlightAfter(snapshot: SnapshotEvent, known: ReadonlySet<string>) {
   const partial = Option.fromNullishOr(snapshot.generation).pipe(

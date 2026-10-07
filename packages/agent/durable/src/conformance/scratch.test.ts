@@ -4,7 +4,7 @@ import { isToolUIPart, readUIMessageStream, tool, type UIMessage, type UIMessage
 import { Effect, Option, Predicate } from 'effect'
 import { onTestFinished } from 'vitest'
 import { z } from 'zod'
-import { attachRun, rejoinRun, streamRun } from '../main.ts'
+import { attachRun, streamRun } from '../main.ts'
 import { waitForFrame } from '../fixtures/provider.ts'
 import { consume, context, host, signal } from './fixtures/host.ts'
 
@@ -23,7 +23,7 @@ async function readPartial(
 }
 
 /** One captured raw prefix plus the buffered tail is one JSON text for every reporting entry point. */
-it.live.each(['attach', 'rejoin', 'post'] as const)(
+it.live.each(['attach', 'get', 'post'] as const)(
   'reconnects mid-arguments through %s without repeated deltas',
   (kind) =>
     Effect.promise(async () => {
@@ -82,32 +82,32 @@ it.live.each(['attach', 'rejoin', 'post'] as const)(
       })
       await appeared.promise
       const retained = Option.getOrThrow(partial)
-      const attached =
-        kind === 'post'
-          ? undefined
-          : await (kind === 'attach'
-              ? attachRun(opened.harness, opened.root.id, context)
-              : rejoinRun(
-                  opened.harness,
-                  opened.root.id,
-                  { messageId: retained.id, steps: 1 },
-                  context,
-                ))
       let replay: Promise<Awaited<ReturnType<typeof consume>>>
-      if (kind === 'post') {
-        // The stock transport performs the one real POST and parses its response SSE.
-        const stream = await opened.transport.sendMessages({
-          chatId: 'scratch',
-          messages: [retained],
-          trigger: 'submit-message',
-          messageId: retained.id,
-          abortSignal: undefined,
-        })
-        replay = consume(stream, retained)
-      } else {
-        if (attached === undefined || attached.status !== 'running')
-          throw new Error('Expected attachment')
-        replay = kind === 'attach' ? consume(attached.stream) : consume(attached.stream, retained)
+      switch (kind) {
+        case 'post': {
+          // The stock transport performs the one real POST and parses its response SSE.
+          const stream = await opened.transport.sendMessages({
+            chatId: 'scratch',
+            messages: [retained],
+            trigger: 'submit-message',
+            messageId: retained.id,
+            abortSignal: undefined,
+          })
+          replay = consume(stream, retained)
+          break
+        }
+        case 'get': {
+          const stream = await opened.transport.reconnectToStream({ chatId: 'scratch' })
+          if (stream === null) throw new Error('Expected an active run')
+          replay = consume(stream)
+          break
+        }
+        case 'attach': {
+          const attached = await attachRun(opened.harness, opened.root.id, context)
+          if (attached.status !== 'running') throw new Error('Expected attachment')
+          replay = consume(attached.stream)
+          break
+        }
       }
       release.resolve()
       const result = await replay

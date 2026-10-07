@@ -18,7 +18,7 @@ import {
 import { Effect, Schema } from 'effect'
 
 import { start } from './serve.ts'
-import { resumption } from '../client.ts'
+import { resumable } from '../client.ts'
 
 const History = Schema.Struct({ messages: Schema.Array(Schema.MutableJson) })
 const decodeHistory = Schema.decodeUnknownSync(Schema.fromJsonString(History))
@@ -226,8 +226,8 @@ async function abortRoute(address: string) {
   const stopped = await fetch(`${address}/chat/${chat.id}/abort`, { method: 'POST' })
   expect(stopped.status).toBe(204)
   await sent
-  const idle = await fetch(`${address}/chat/${chat.id}/stream?message=old&steps=0`)
-  expect(idle.status).toBe(400)
+  const idle = await fetch(`${address}/chat/${chat.id}/stream`)
+  expect(idle.status).toBe(204)
   const stored = await history(address, chat.id)
   expect(stored[0]).toMatchObject({ role: 'user', parts: [{ type: 'text', text: 'slow' }] })
 }
@@ -327,14 +327,13 @@ it.live('serves waiting, decide, answer and explicit abort routes', () =>
   ),
 )
 
-/** A real TCP disconnect in step two keeps SDK resumable state; the helper's GET query trims only
- * that step. Parse SSE boundaries across arbitrary network packets, without sleeps or polling. */
+/** A real TCP disconnect clears SDK stream state; whole-run GET replaces the partial message. Parse SSE boundaries across arbitrary network packets, without sleeps or polling. */
 it.live('resumes a slow second step over TCP without repeating the first step', () =>
   Effect.scoped(
     Effect.gen(function* () {
       const directory = yield* Effect.acquireRelease(
         Effect.promise(() =>
-          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'durable-rejoin-test-')),
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'durable-resume-test-')),
         ),
         (path) => Effect.promise(() => NodeFSP.rm(path, { recursive: true, force: true })),
       )
@@ -343,50 +342,49 @@ it.live('resumes a slow second step over TCP without repeating the first step', 
         (opened) => opened.close(),
       )
       yield* Effect.promise(async () => {
-        const link = resumption()
         const requests: URL[] = []
         const chat = new Chat<UIMessage>({
-          id: 'tcp-rejoin',
-          onFinish: link.onFinish,
-          transport: new DefaultChatTransport({
-            api: `${host.address}/chat`,
-            prepareReconnectToStreamRequest: link.prepare,
-            fetch: async (input, init) => {
-              const request = new Request(input, init)
-              requests.push(new URL(request.url))
-              const response = await fetch(request)
-              if (request.method === 'GET') return response
-              if (response.body === null) throw new Error('Expected SSE response')
-              const encoder = new TextEncoder()
-              const decoder = new TextDecoder()
-              let buffer = ''
-              let steps = 0
-              let secondText = false
-              const body = response.body.pipeThrough(
-                new TransformStream<Uint8Array, Uint8Array>({
-                  transform(chunk, controller) {
-                    buffer += decoder.decode(chunk, { stream: true })
-                    let boundary = buffer.indexOf('\n\n')
-                    while (boundary !== -1) {
-                      const frame = buffer.slice(0, boundary + 2)
-                      buffer = buffer.slice(boundary + 2)
-                      if (frame.includes('"type":"start-step"')) steps += 1
-                      if (steps === 2 && frame.includes('"type":"text-delta"')) {
-                        if (secondText) {
-                          controller.error(new TypeError('network connection lost'))
-                          return
+          id: 'tcp-resume',
+          transport: resumable(
+            new DefaultChatTransport({
+              api: `${host.address}/chat`,
+              fetch: async (input, init) => {
+                const request = new Request(input, init)
+                requests.push(new URL(request.url))
+                const response = await fetch(request)
+                if (request.method === 'GET') return response
+                if (response.body === null) throw new Error('Expected SSE response')
+                const encoder = new TextEncoder()
+                const decoder = new TextDecoder()
+                let buffer = ''
+                let steps = 0
+                let secondText = false
+                const body = response.body.pipeThrough(
+                  new TransformStream<Uint8Array, Uint8Array>({
+                    transform(chunk, controller) {
+                      buffer += decoder.decode(chunk, { stream: true })
+                      let boundary = buffer.indexOf('\n\n')
+                      while (boundary !== -1) {
+                        const frame = buffer.slice(0, boundary + 2)
+                        buffer = buffer.slice(boundary + 2)
+                        if (frame.includes('"type":"start-step"')) steps += 1
+                        if (steps === 2 && frame.includes('"type":"text-delta"')) {
+                          if (secondText) {
+                            controller.error(new TypeError('network connection lost'))
+                            return
+                          }
+                          secondText = true
                         }
-                        secondText = true
+                        controller.enqueue(encoder.encode(frame))
+                        boundary = buffer.indexOf('\n\n')
                       }
-                      controller.enqueue(encoder.encode(frame))
-                      boundary = buffer.indexOf('\n\n')
-                    }
-                  },
-                }),
-              )
-              return new Response(body, { status: response.status, headers: response.headers })
-            },
-          }),
+                    },
+                  }),
+                )
+                return new Response(body, { status: response.status, headers: response.headers })
+              },
+            }),
+          ),
         })
         await chat.sendMessage({ text: 'slow steps' })
         expect(chat.status).toBe('error')
@@ -396,12 +394,11 @@ it.live('resumes a slow second step over TCP without repeating the first step', 
         chat.clearError()
         await chat.resumeStream()
         expect(chat.status).toBe('ready')
-        const get = requests.find((url) => url.searchParams.has('steps'))
-        if (get === undefined) throw new Error('Expected a retained-step GET')
-        expect(get.searchParams.get('steps')).toBe('2')
+        const get = requests.find((url) => url.pathname.endsWith('/stream'))
+        if (get === undefined) throw new Error('Expected a bodyless reconnect GET')
+        expect(get.search).toBe('')
         const message = chat.lastMessage
         if (message === undefined) throw new Error('Expected completed response')
-        expect(get.searchParams.get('message')).toBe(message.id)
         expect(message.parts.map((part) => part.type)).toEqual([
           'step-start',
           'text',
