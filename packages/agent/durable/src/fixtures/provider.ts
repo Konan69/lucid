@@ -27,10 +27,13 @@ export type ProviderFamily =
   | 'end'
   | 'never'
   | 'interleaved'
+  | 'parsed'
 export type ProviderOptions = RegisterFauxProviderOptions & {
   readonly partialFamily?: ProviderFamily
   /** An authoritative replacement fixture starts with these blocks, then returns the scripted final. */
   readonly replacedContent?: AssistantMessage['content']
+  /** Owned provider copy for authoritative replacement tests; never mutates framework objects. */
+  readonly rewriteFrame?: (event: AssistantMessageEvent) => AssistantMessageEvent
   /** Own frame gate for deterministic progress tests; invoked after publishing the captured frame. */
   readonly onFrame?: (
     event: AssistantMessageEvent,
@@ -128,6 +131,7 @@ function toolPartial(block: ToolCall, index: number, state: PartialState): ToolC
       streamIndex: index,
     })),
     Match.when('mistral', () => ({ ...block, arguments: arguments_, partialArgs: text })),
+    Match.when('parsed', () => ({ ...block, arguments: arguments_ })),
     Match.when('custom', () => ({
       ...block,
       arguments: arguments_,
@@ -241,6 +245,7 @@ const relay = Effect.fn('Test.providerRelay')(function* (
     readonly onFrame: NonNullable<ProviderOptions['onFrame']>
     readonly signal: Option.Option<AbortSignal>
     readonly replacedContent: Option.Option<AssistantMessage['content']>
+    readonly rewriteFrame: NonNullable<ProviderOptions['rewriteFrame']>
   },
 ) {
   const state: PartialState = {
@@ -256,8 +261,9 @@ const relay = Effect.fn('Test.providerRelay')(function* (
     Stream.runForEach((event) =>
       Effect.gen(function* () {
         for (const captured of frames(event, state)) {
-          destination.push(captured)
-          yield* gate.onFrame(captured, gate.signal)
+          const published = gate.rewriteFrame(captured)
+          destination.push(published)
+          yield* gate.onFrame(published, gate.signal)
         }
       }),
     ),
@@ -266,11 +272,12 @@ const relay = Effect.fn('Test.providerRelay')(function* (
 })
 
 /** Compose a public provider around faux, leaving its scripting, models and deferred APIs intact. */
-export function streamingProvider(options: ProviderOptions = {}) {
+export function streamingProvider(options: ProviderOptions = {}): ReturnType<typeof fauxProvider> {
   const {
     partialFamily = 'late',
     onFrame = () => Effect.void,
     replacedContent,
+    rewriteFrame = (event) => event,
     ...fauxOptions
   } = options
   const faux = fauxProvider(fauxOptions)
@@ -282,6 +289,7 @@ export function streamingProvider(options: ProviderOptions = {}) {
         onFrame,
         signal,
         replacedContent: Option.fromNullishOr(replacedContent),
+        rewriteFrame,
       }),
       undefined,
     )

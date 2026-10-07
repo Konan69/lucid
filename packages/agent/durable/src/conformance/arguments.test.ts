@@ -139,10 +139,23 @@ for (const partialFamily of families)
               : [],
           )
         expect(recorded).toEqual([{ type: 'toolCall', id: 'wire', name: 'pay', arguments: input }])
-        expect(result.chunks.filter((chunk) => chunk.type.startsWith('tool-input-'))).toEqual([
-          { type: 'tool-input-start', toolCallId: 'wire', toolName: 'pay' },
-          { type: 'tool-input-available', toolCallId: 'wire', toolName: 'pay', input },
-        ])
+        const phases = result.chunks.filter((chunk) => chunk.type.startsWith('tool-input-'))
+        expect(phases[0]).toEqual({ type: 'tool-input-start', toolCallId: 'wire', toolName: 'pay' })
+        expect(phases.at(-1)).toEqual({
+          type: 'tool-input-available',
+          toolCallId: 'wire',
+          toolName: 'pay',
+          input,
+        })
+        expect(phases.filter((chunk) => chunk.type === 'tool-input-start')).toHaveLength(1)
+        expect(phases.filter((chunk) => chunk.type === 'tool-input-available')).toHaveLength(1)
+        const deltas = phases.slice(1, -1)
+        expect(deltas.every((chunk) => chunk.type === 'tool-input-delta')).toBe(true)
+        const raw = deltas
+          .flatMap((chunk) => (chunk.type === 'tool-input-delta' ? [chunk.inputTextDelta] : []))
+          .join('')
+        expect(raw.length).toBeGreaterThan(0)
+        expect(JSON.stringify(input).startsWith(raw)).toBe(true)
         const available = result.chunks.findIndex((chunk) => chunk.type === 'tool-input-available')
         const approval = result.chunks.find((chunk) => chunk.type === 'tool-approval-request')
         if (approval === undefined) throw new Error('Expected approval')

@@ -12,6 +12,8 @@ import type {
 import type { UIMessageChunk } from 'ai'
 import { Array as Arr, Data, Match, Option, Schema } from 'effect'
 
+import { ArgumentText, argumentDelta, argumentsShortened, rawArguments } from './arguments.ts'
+
 /** Pi's closed event and block types are exhaustive; an impossible branch indicates an SDK contract defect. */
 const unreachable = (value: never): never => {
   throw new Error(`Unexpected Pi variant: ${String(value)}`)
@@ -55,6 +57,8 @@ export type RunState = {
   readonly blocks: ReadonlyMap<number, Reported>
   /** Latest partial blocks, including later content waiting behind an anonymous tool identity. */
   readonly content: ReadonlyMap<number, Block>
+  /** Raw tool argument prefixes emitted by this reader; offsets survive snapshot/live overlap. */
+  readonly arguments: ReadonlyMap<number, ArgumentText>
   /** Calls opened in this response; rejected anonymous calls cannot emit orphan result chunks. */
   readonly calls: ReadonlySet<string>
   /**
@@ -70,6 +74,7 @@ export const initialRunState: RunState = {
   response: 0,
   blocks: new Map(),
   content: new Map(),
+  arguments: new Map(),
   calls: new Set(),
   failure: [],
   results: new Set(),
@@ -180,6 +185,7 @@ const startTurn = (state: RunState): Step => ({
     turn: state.turn + 1,
     blocks: new Map(),
     content: new Map(),
+    arguments: new Map(),
     calls: new Set(),
   },
   chunks: [{ type: 'start-step' }],
@@ -196,6 +202,7 @@ function startResponse(state: RunState, partial: AssistantMessage): Step {
     response: state.response + 1,
     blocks: new Map(),
     content: new Map(),
+    arguments: new Map(),
     calls: new Set(),
     failure: [],
   }
@@ -215,6 +222,14 @@ function finishBlock(state: RunState, contentIndex: number, block: Block): Step 
   if (block.type === 'toolCall' && block.name.length === 0) return { state, chunks: [] }
   const reported = state.blocks.get(contentIndex)
   if (reported !== undefined && Reported.$is('Closed')(reported)) return { state, chunks: [] }
+  if (block.type === 'toolCall') {
+    const opened = reportTool(state, contentIndex, block)
+    return {
+      state: mark(opened.state, contentIndex, Reported.Closed()),
+      chunks: [...opened.chunks, ...closeBlock(state, contentIndex, block)],
+    }
+  }
+
   const chunks =
     reported !== undefined && Reported.$is('Open')(reported)
       ? [
@@ -223,6 +238,35 @@ function finishBlock(state: RunState, contentIndex: number, block: Block): Step 
         ]
       : wholeBlock(state, contentIndex, block)
   return { state: mark(recordCall(state, block), contentIndex, Reported.Closed()), chunks }
+}
+
+/** One started tool owns one raw-prefix ledger, regardless of how many block changes Pi emits. */
+function reportTool(
+  state: RunState,
+  contentIndex: number,
+  block: Extract<Block, { type: 'toolCall' }>,
+): Step {
+  const reported = state.blocks.get(contentIndex)
+  const previous = state.arguments.get(contentIndex) ?? ArgumentText.Empty()
+  const next = argumentDelta(previous, rawArguments(block))
+  const opening = reported === undefined ? openBlock(state, contentIndex, block) : []
+  const delta: readonly Chunk[] =
+    next.delta.length === 0
+      ? []
+      : [
+          {
+            type: 'tool-input-delta',
+            toolCallId: block.id,
+            inputTextDelta: next.delta,
+          },
+        ]
+  return {
+    state: {
+      ...mark(recordCall(state, block), contentIndex, Reported.Open({ length: 0 })),
+      arguments: new Map(state.arguments).set(contentIndex, next.state),
+    },
+    chunks: [...opening, ...delta],
+  }
 }
 
 /**
@@ -234,6 +278,8 @@ function reportBlock(state: RunState, contentIndex: number, block: Block): Step 
   if (!identified(block)) return { state, chunks: [] }
   const reported = state.blocks.get(contentIndex)
   if (reported !== undefined && Reported.$is('Closed')(reported)) return { state, chunks: [] }
+  if (block.type === 'toolCall') return reportTool(state, contentIndex, block)
+
   const chunks =
     reported === undefined
       ? [...openBlock(state, contentIndex, block), ...blockBody(state, contentIndex, block, 0)]
@@ -283,11 +329,15 @@ function replaceContent(state: RunState, content: ReadonlyMap<number, Block>): S
   const replaced = [...state.blocks].some(([index, reported]) => {
     const before = state.content.get(index)
     const after = content.get(index)
-    return before === undefined || after === undefined || !extendsReported(before, after, reported)
+    if (before === undefined || after === undefined) return true
+    const arguments_ = state.arguments.get(index)
+    const shortened =
+      after.type === 'toolCall' && arguments_ !== undefined && argumentsShortened(arguments_, after)
+    return shortened || !extendsReported(before, after, reported)
   })
   return replaced
     ? {
-        state: { ...state, content, blocks: new Map(), calls: new Set() },
+        state: { ...state, content, blocks: new Map(), calls: new Set(), arguments: new Map() },
         chunks: [{ type: 'reset-step' }],
       }
     : { state: { ...state, content }, chunks: [] }
@@ -339,7 +389,7 @@ function applyChange(state: RunState, change: MessageChange): Step {
     case 'thinking_delta':
       return appendBody(state, change.contentIndex, change.delta)
     // events.js messageChanges uses this for path-local arguments string appends. Provider scratch
-    // JSON also survives in block/message changes; this bridge does not stream tool arguments yet.
+    // JSON survives in block/message changes and is decoded there; this parsed-property delta is not JSON text.
     case 'toolcall_delta':
       return { state, chunks: [] }
     case 'block':
@@ -635,6 +685,8 @@ export function replayAfter(
   readonly live: boolean
   readonly origins: ReadonlyMap<Chunk, TaskId>
 }> {
+  const inFlight = inFlightAfter(snapshot, known)
+  if (Option.isSome(inFlight)) return inFlight
   const at = snapshot.entries.findLastIndex((entry) => callsAny(entry, known))
   if (at === -1) return Option.none()
   const rest = snapshot.entries.slice(at + 1)
@@ -671,6 +723,39 @@ export function replayAfter(
     live,
     origins: originsFor(snapshot.entries.slice(at), step.chunks),
   })
+}
+
+/** A manual POST may name a still-streaming call with no assistant entry yet. Rebuild only the
+ * retained current step, just like rejoinRun: reset-step retains its existing step-start. The full
+ * replay state carries raw offsets into the event tail, so snapshot text is never offered twice. */
+function inFlightAfter(snapshot: SnapshotEvent, known: ReadonlySet<string>) {
+  const partial = Option.fromNullishOr(snapshot.generation).pipe(
+    Option.flatMapNullishOr((generation) => generation.message),
+  )
+  if (
+    Option.isNone(partial) ||
+    !partial.value.content.some((block) => block.type === 'toolCall' && known.has(block.id))
+  )
+    return Option.none<Continuation>()
+  const rebuilt = replay(snapshot)
+  if (Option.isNone(rebuilt)) return Option.none<Continuation>()
+  const chunks = rebuilt.value.chunks
+  const step = chunks.findLastIndex((chunk) => chunk.type === 'start-step')
+  return Option.some({
+    step: {
+      state: rebuilt.value.state,
+      chunks: [...chunks.slice(0, 2), ...chunks.slice(step + 1)],
+    },
+    live: true,
+    origins: rebuilt.value.origins,
+  })
+}
+
+/** Pure continuation data has no runtime or adapter authority. */
+type Continuation = {
+  readonly step: Step
+  readonly live: boolean
+  readonly origins: ReadonlyMap<Chunk, TaskId>
 }
 
 /** Events without a chunk counterpart remain exhaustive without bloating the translator's decisions. */

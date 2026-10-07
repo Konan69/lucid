@@ -85,6 +85,7 @@
       "waiting",
       "streamRun",
       "attachRun",
+      "rejoinRun",
       "continueRun",
       "respond",
       "respondTurn",

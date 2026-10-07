@@ -213,8 +213,24 @@ function showInput(round: Round, chunk: InputStart | InputAvailable, desk: Desk)
 }
 type InputStart = Extract<Chunk, { type: 'tool-input-start' }>
 
+/** Raw deltas follow an already-presented start or buffer behind its sequential admission.
+ * They never make a call available, request approval, or require another document read. */
+function showDelta(round: Round, chunk: Extract<Chunk, { type: 'tool-input-delta' }>): Shown {
+  const id = chunk.toolCallId
+  if (round.completed.has(id) || round.muted.has(id)) return { round, chunks: [] }
+  if (round.started.has(id)) return { round, chunks: [chunk] }
+  return {
+    round: {
+      ...round,
+      withheld: new Map(round.withheld).set(id, [...(round.withheld.get(id) ?? []), chunk]),
+    },
+    chunks: [],
+  }
+}
+
 /** Buffer complete input phases in provider order. A result itself admits and flushes its input first. */
 function show(round: Round, chunk: Chunk, desk: Desk): Shown {
+  if (chunk.type === 'tool-input-delta') return showDelta(round, chunk)
   if (chunk.type === 'start-step' || chunk.type === 'reset-step')
     return { round: emptyRound, chunks: [chunk] }
   if (chunk.type === 'tool-input-start' || chunk.type === 'tool-input-available') {
@@ -251,6 +267,10 @@ function release(round: Round, id: string, desk: Desk): Shown {
   withheld.delete(id)
   return chunks.reduce<Shown>(
     (shown, chunk) => {
+      if (chunk.type === 'tool-input-delta') {
+        const next = showDelta(shown.round, chunk)
+        return { round: next.round, chunks: [...shown.chunks, ...next.chunks] }
+      }
       if (chunk.type !== 'tool-input-start' && chunk.type !== 'tool-input-available') return shown
       const next = showInput(shown.round, chunk, desk)
       return { round: next.round, chunks: [...shown.chunks, ...next.chunks] }
