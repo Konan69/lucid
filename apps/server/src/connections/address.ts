@@ -220,10 +220,10 @@ const specificationFromPage = Effect.fn('Connections.specificationFromPage')(fun
   for (const link of links) {
     if (publicAddress(link) === undefined) continue
     const candidate = yield* readAddress(link, client).pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.catchTags({
-        ConnectionAddressUnreachable: () => Effect.succeed(Option.none()),
-        ConnectionAddressInvalid: () => Effect.succeed(Option.none()),
+        ConnectionAddressUnreachable: () => Effect.succeedNone,
+        ConnectionAddressInvalid: () => Effect.succeedNone,
       }),
     )
     if (Option.isNone(candidate)) continue
@@ -319,10 +319,10 @@ export const makeConnectionAddressLayer = (resolve: AddressLookup) =>
             Effect.provideService(HttpClient.HttpClient, client),
             Effect.provideService(PageReader, reader),
             Effect.scoped,
-            Effect.timeout('15 seconds'),
-            Effect.catchTag('TimeoutError', () =>
-              Effect.fail(ConnectionAddressUnreachable.make({})),
-            ),
+            Effect.timeoutOrElse({
+              duration: '15 seconds',
+              orElse: () => Effect.fail(ConnectionAddressUnreachable.make({})),
+            }),
           ),
         ),
       })

@@ -33,7 +33,7 @@ const callback = Effect.fn('Http.Connections.return')(function* () {
     // address. The recovery below then answers every failure with the same redirect, so the
     // response says nothing about which state was unknown, foreign, reused or malformed.
     observeFailures('http'),
-    Effect.catch(() => Effect.succeed(new URL('/settings/connections', config.PUBLIC_URL))),
+    Effect.orElseSucceed(() => new URL('/settings/connections', config.PUBLIC_URL)),
   )
   return HttpServerResponse.redirect(destination.href, { status: 303 })
 })

@@ -75,8 +75,8 @@ export const findIntegrations = Effect.fn('Connections.findIntegrations')(functi
     }),
   )
   const catalog = yield* store.catalog().pipe(
-    Effect.map(Option.some),
-    Effect.catchTag('ServiceUnavailable', () => Effect.succeed(Option.none())),
+    Effect.asSome,
+    Effect.catchTag('ServiceUnavailable', () => Effect.succeedNone),
   )
   const services = Option.isNone(catalog)
     ? []

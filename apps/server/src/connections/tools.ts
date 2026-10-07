@@ -465,8 +465,8 @@ const prepareTool = Effect.fn('Connections.prepareTool')(function* (
 ) {
   const store = yield* ConnectionStore
   const found = yield* store.get(actor, request.connectionId).pipe(
-    Effect.map(Option.some),
-    Effect.catchTag('NotFound', () => Effect.succeed(Option.none())),
+    Effect.asSome,
+    Effect.catchTag('NotFound', () => Effect.succeedNone),
   )
   if (Option.isNone(found)) {
     // An unavailable scoped record is a Tool refusal; no Integration identity is invented.
@@ -493,7 +493,7 @@ const prepareTool = Effect.fn('Connections.prepareTool')(function* (
           }),
         )
       }),
-      Ready: () => Effect.succeed(Option.none()),
+      Ready: () => Effect.succeedNone,
     },
   )
   if (Option.isSome(refusal)) return Result.fail(refusal.value)
