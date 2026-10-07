@@ -192,6 +192,7 @@ export const prepareRun: (
   | DurableErrors.TurnInvalid
   | DurableErrors.BusyPolicyInvalid
   | DurableErrors.TurnBusy
+  | DurableErrors.TurnConflict
   | DurableErrors.TurnWithdrawn
   | WatchClosed
   | WatchOverflowed

@@ -14,6 +14,7 @@ import {
   ConversationMissing,
   PiFailed,
   TurnBusy,
+  TurnConflict,
   TurnWithdrawn,
   WatchClosed,
   WatchOverflowed,
@@ -35,6 +36,7 @@ type AdmissionFailure =
   | ConversationMissing
   | PiFailed
   | TurnBusy
+  | TurnConflict
   | TurnWithdrawn
   | WatchClosed
   | WatchOverflowed
@@ -97,6 +99,7 @@ export const admit: (
           : error,
       ),
     )
+    yield* Pi.verifyInput(conversation, input.draft, context)
     let receipt = yield* Pi.inputStatus(submission, context)
     const queued = receipt.status === 'queued'
     if (queued) receipt = yield* placed(watched, submission.id)

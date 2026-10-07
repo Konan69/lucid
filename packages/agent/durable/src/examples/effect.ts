@@ -106,6 +106,9 @@ export function chat(
     Effect.catchTag('TurnWithdrawn', (error) =>
       Effect.succeed(new Response(error.message, { status: 409 })),
     ),
+    Effect.catchTag('TurnConflict', (error) =>
+      Effect.succeed(new Response(error.message, { status: 409 })),
+    ),
     Effect.catchTag('TurnBusy', (error) =>
       Effect.succeed(new Response(error.message, { status: 409 })),
     ),

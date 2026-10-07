@@ -17,11 +17,20 @@ import type {
   SubmissionRecord,
   SubmissionId,
   Cursor,
+  UserInput,
 } from '@earendil-works/pi-durable'
-import { watchEvents, LiveDoc } from '@earendil-works/pi-durable'
+import { watchEvents, LiveDoc, InboxDoc } from '@earendil-works/pi-durable'
 import { Cause, Effect, Option, Queue, Stream } from 'effect'
 
-import { ConversationMissing, PiFailed, WatchClosed, WatchOverflowed } from './errors.ts'
+import {
+  ConversationMissing,
+  PiFailed,
+  TurnConflict,
+  TurnWithdrawn,
+  WatchClosed,
+  WatchOverflowed,
+} from './errors.ts'
+import { sameInput } from './receipt.ts'
 
 /** Absence is a domain failure, distinct from rejection of Harness.conversation itself. */
 export const conversation: (
@@ -380,6 +389,80 @@ function requestForPi(
       Effect.tryPromise({
         try: () => tx.submissionByRequest(conversationId, requestId),
         catch: (cause) => new PiFailed({ operation: 'submission', cause }),
+      }),
+      signal,
+    )
+  }
+}
+
+/** Pi deduplicates solely on request id (submissions.js:115–125). Verify its durable winner after
+ * submit, on the serialized Session transaction line, so concurrent first POSTs cannot both claim
+ * different content. The inbox or the placed entry is authoritative; no second receipt store. */
+export const verifyInput: (
+  owner: Conversation,
+  input: { readonly requestId: string; readonly content: UserInput },
+  context: Context,
+) => Effect.Effect<void, PiFailed | TurnConflict | TurnWithdrawn> = Effect.fn(
+  'Durable.verifyInput',
+)(function* (owner, input, context) {
+  yield* Effect.tryPromise({
+    try: () => owner.commit(verifyForPi(owner.id, input, context.abortSignal), context),
+    catch: (cause) =>
+      cause instanceof TurnConflict || cause instanceof TurnWithdrawn || cause instanceof PiFailed
+        ? cause
+        : new PiFailed({ operation: 'commit', cause }),
+  })
+})
+
+/** A queued input lives in InboxDoc; once placed, exactly its own user entry owns the content. */
+const submittedContent = Effect.fn('Durable.submittedContent')(function* (
+  tx: Tx,
+  receipt: Extract<SubmissionRecord, { type: 'input' }>,
+) {
+  if (receipt.status === 'queued') {
+    const inbox = yield* doc(tx, InboxDoc, receipt.conversationId)
+    const item = inbox.items.find((candidate) => candidate.id === receipt.id)
+    if (item !== undefined && item.mode !== 'write') return item.content
+  } else if (receipt.entry !== undefined) {
+    const entryId = receipt.entry
+    const entry = yield* Effect.tryPromise({
+      try: () => tx.entry(entryId),
+      catch: (cause) => new PiFailed({ operation: 'entry', cause }),
+    })
+    if (entry !== undefined && entry.model !== undefined) {
+      const user = entry.model.find((message) => message.role === 'user')
+      if (user !== undefined && user.role === 'user') return user.content
+    }
+  }
+  return yield* new PiFailed({
+    operation: 'submission',
+    cause: new Error('Admitted input has no authoritative content'),
+  })
+})
+
+/** One named Promise-only callback retains the typed refusal thrown by the Effect program. */
+function verifyForPi(
+  conversationId: ConversationId,
+  input: { readonly requestId: string; readonly content: UserInput },
+  signal: Context['abortSignal'],
+) {
+  return function verifyRequest(tx: Tx) {
+    return runForPi(
+      Effect.gen(function* () {
+        const receipt = yield* Effect.tryPromise({
+          try: () => tx.submissionByRequest(conversationId, input.requestId),
+          catch: (cause) => new PiFailed({ operation: 'submission', cause }),
+        })
+        if (receipt === undefined || receipt.type !== 'input')
+          return yield* new PiFailed({
+            operation: 'submission',
+            cause: new Error('Input receipt is missing'),
+          })
+        if (receipt.status === 'unanswered' && receipt.entry === undefined)
+          return yield* new TurnWithdrawn({ messageId: input.requestId })
+        if (!sameInput(yield* submittedContent(tx, receipt), input.content))
+          return yield* new TurnConflict({ messageId: input.requestId })
+        return undefined
       }),
       signal,
     )

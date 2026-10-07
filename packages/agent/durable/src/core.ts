@@ -13,6 +13,7 @@ export {
   TurnRegenerate,
   TurnWithdrawn,
   TurnBusy,
+  TurnConflict,
   BusyPolicyInvalid,
   PartUnsupported,
   PartTooLarge,

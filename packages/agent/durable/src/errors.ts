@@ -39,6 +39,7 @@ export class PiFailed extends Schema.TaggedError<PiFailed>()(
       'doc',
       'abort',
       'entries',
+      'entry',
       'submission',
       'status',
     ]),
@@ -122,6 +123,18 @@ export class TurnWithdrawn extends Schema.TaggedError<TurnWithdrawn>()(
   /** Clients must send a new input rather than await a run that never admitted this one. */
   override get message() {
     return 'Input was withdrawn before it was placed; send it again'
+  }
+}
+
+/** One request id identifies immutable Person content, including while it is queued. */
+export class TurnConflict extends Schema.TaggedError<TurnConflict>()(
+  'TurnConflict',
+  { messageId: Schema.String },
+  { title: 'TurnConflict' },
+) {
+  /** Never include a supplied text or image in this retry diagnostic. */
+  override get message() {
+    return 'Message id already identifies different content; send a new message id'
   }
 }
 

@@ -79,7 +79,7 @@ async function dispatch(
 }
 ```
 
-Chat `respond` accepts a Request; GET reconnects and returns 204 when idle, POST reads and decodes JSON text. Unsupported methods return 405, missing conversations 404, invalid turns and unsupported file parts 400, oversized parts 413, and missing resume runs 409. Other adapter failures reject with the original tagged error class. `decodeTurn` and `respondTurn` support hosts that already decoded an object body. `holdId(text)` validates an opaque hold id received over another wire and throws `HoldIdInvalid` for malformed values, without requiring a core Schema import.
+Chat `respond` accepts a Request; GET reconnects and returns 204 when idle, POST reads and decodes JSON text. Unsupported methods return 405, missing conversations 404, invalid turns and unsupported file parts 400, oversized parts 413, and missing resume runs or reused message ids with different content 409. Other adapter failures reject with the original tagged error class. `decodeTurn` and `respondTurn` support hosts that already decoded an object body. `holdId(text)` validates an opaque hold id received over another wire and throws `HoldIdInvalid` for malformed values, without requiring a core Schema import.
 
 ## Effect server
 
@@ -186,3 +186,8 @@ completion. Busy policy and decoded byte limits are validated before admission.
 Stock SDK regeneration is refused with the distinct `TurnRegenerate` class and HTTP 400; malformed
 chat bodies fail `TurnInvalid`. Codec issue annotations preserve these tags through JSON-string
 decoding. Neither classification depends on diagnostic text or a constructor default.
+
+A request id names immutable ordered input content, including picture data and filenames. Retrying
+that id with the same content returns the same run; different content fails `TurnConflict` (HTTP
+409), even while queued or in a concurrent admission race. Send a new message id for changed input.
+Pi's existing submission and inbox/entry remain the source of truth; this check adds no receipt store.

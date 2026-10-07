@@ -60,3 +60,8 @@ committed interrupted partial into an aborted entry and replaces it on the same 
 Replay records that interrupted attempt and resets its content when the replacement starts, instead
 of retaining its text in an earlier step. conformance/crashing.test.ts proves same-instance stock
 and resumable TCP reconnect with a captured SIGKILL, provider frame gates and harness.resume().
+
+Request-id idempotence never permits content replacement. After admission, pi.verifyInput reads the
+winner on a serialized transaction, comparing its inbox content or placed Person entry, including
+ordered images and filenames. Concurrent different inputs share one Pi submission but only its
+content winner may observe success. Others fail TurnConflict/HTTP 409; unchanged retries join it.

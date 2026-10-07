@@ -273,6 +273,7 @@ export const respond: (
   | DurableErrors.LimitInvalid
   | DurableErrors.BusyPolicyInvalid
   | DurableErrors.TurnBusy
+  | DurableErrors.TurnConflict
   | DurableErrors.TurnWithdrawn
   | DurableErrors.WatchClosed
   | DurableErrors.WatchOverflowed

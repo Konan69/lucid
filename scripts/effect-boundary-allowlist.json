@@ -62,7 +62,10 @@
       "status",
       "inputStatus",
       "request",
-      "readRequest"
+      "readRequest",
+      "verifyInput",
+      "submittedContent",
+      "verifyRequest"
     ]
   },
   {
