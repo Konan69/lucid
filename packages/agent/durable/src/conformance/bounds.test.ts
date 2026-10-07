@@ -44,7 +44,7 @@ it('locates each known-call subset in a second-turn abort without borrowing the 
     )
     const chunks = []
     for await (const chunk of stream) chunks.push(chunk)
-    expect(chunks.at(-1)).toEqual({ type: 'finish' })
+    expect(chunks.at(-1)).toEqual({ type: 'finish', messageMetadata: first.message.metadata })
     const response = await respond(
       opened.harness,
       opened.root.id,

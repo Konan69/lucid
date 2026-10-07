@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
-import { respond, type RequestInput, type HoldId } from '@vivid/durable'
+import { respond, type RequestInput, type HoldId, type Metadata } from '@vivid/durable'
 import { resumable, ConnectionLost, connectionLostInput } from '@vivid/durable/client'
 import { DefaultChatTransport, type ChatTransport, type UIMessage } from 'ai'
 import * as Core from '@vivid/durable/core'
@@ -28,3 +28,9 @@ export const interruption: Error = new ConnectionLost({ cause: connectionLostInp
 
 /** The optional storage entry stays resolvable when its pg peer is installed by the host. */
 export { openPgStorage } from '@vivid/durable/postgres'
+
+/** A published host reads both entries' identical metadata types on an SDK message. */
+export function models(message: UIMessage<Metadata>): Core.Metadata['models'] {
+  if (message.metadata === undefined) return []
+  return message.metadata.models
+}

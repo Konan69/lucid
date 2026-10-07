@@ -107,7 +107,11 @@ for (const predicate of [
       const chunks = []
       for await (const chunk of stream) chunks.push(chunk)
       expect(chunks).toEqual([
-        { type: 'start', messageId: chat.lastMessage.id },
+        {
+          type: 'start',
+          messageId: chat.lastMessage.id,
+          messageMetadata: chat.lastMessage.metadata,
+        },
         {
           type: 'tool-input-error',
           toolCallId: 'partial',
@@ -117,8 +121,12 @@ for (const predicate of [
         },
         { type: 'start-step' },
         { type: 'finish-step' },
-        { type: 'start', messageId: chat.lastMessage.id },
-        { type: 'finish' },
+        {
+          type: 'start',
+          messageId: chat.lastMessage.id,
+          messageMetadata: chat.lastMessage.metadata,
+        },
+        { type: 'finish', messageMetadata: chat.lastMessage.metadata },
       ])
       const missing = await respond(
         opened.harness,
@@ -231,7 +239,7 @@ it.live('acknowledges a parked aborted run without borrowing the successor gener
     )
     const chunks = []
     for await (const chunk of existing) chunks.push(chunk)
-    expect(chunks.at(-1)).toEqual({ type: 'finish' })
+    expect(chunks.at(-1)).toEqual({ type: 'finish', messageMetadata: old.message.metadata })
     await expect(
       continueRun(
         opened.harness,

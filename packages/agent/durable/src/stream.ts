@@ -24,6 +24,7 @@ import { RunMissing, type PiFailed, type WatchClosed, type WatchOverflowed } fro
 import { admit, placed } from './admit.ts'
 import { readDesk, noDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
+import { messageMetadata } from './metadata.ts'
 import { captureRun, inputReplay, selectRun, type Prefix, type ResumeInput } from './resume.ts'
 import {
   inputContent,
@@ -59,7 +60,10 @@ export function writeStep(current: State, step: Step, settled: boolean, desk: De
   const shown = present(current.round, step.chunks, desk)
   const ended = settled && parked(shown.round)
   const ending: readonly UIMessageChunk[] = ended
-    ? [{ type: 'finish-step' }, { type: 'finish' }]
+    ? [
+        { type: 'finish-step' },
+        { type: 'finish', messageMetadata: messageMetadata(step.state.metadata) },
+      ]
     : []
   return {
     state: step.state,
@@ -305,7 +309,10 @@ const resume = Effect.fn('Durable.resumeStream')(function* (
   if (written.ended) return head
   const tail = prefix.live
     ? follow(reader, watched.stream, live, written)
-    : Stream.succeed<UIMessageChunk>({ type: 'finish' })
+    : Stream.succeed<UIMessageChunk>({
+        type: 'finish',
+        messageMetadata: messageMetadata(prefix.step.state.metadata),
+      })
   return Stream.concat(head, tail)
 })
 

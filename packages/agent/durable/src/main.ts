@@ -23,6 +23,8 @@ import type { ToolsOptions } from './tools.ts'
 import { httpStream } from './http.ts'
 import { inputPolicy, type InputOptions } from './input.ts'
 
+export type { Metadata } from './metadata.ts'
+
 /** A host can bound decoded parts while preserving the four-argument Request ingress. */
 export type RequestInput = Request | { readonly request: Request; readonly options: InputOptions }
 

@@ -37,7 +37,11 @@ import { route, runForNode } from './main.ts'
 
 const context = BACKGROUND_CONTEXT
 const maximumBody = 5 * 1024 * 1024
-const ChatId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))
+const ChatId = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(200),
+  Schema.isPattern(/^(?!\.{1,2}$)/u),
+)
 const ChatEnvelope = Schema.fromJsonString(Schema.Struct({ id: ChatId }))
 const ChatPath = Schema.Struct({
   id: Schema.StringFromUriComponent.pipe(Schema.decodeTo(ChatId)),
@@ -124,7 +128,9 @@ function reply(transcript: TranscriptContext) {
         () =>
           'The second step arrives a little at a time. Its final sentence confirms that reconnect preserved the first step exactly once.',
       ),
-      Match.when('pay', () => 'Payment confirmed.'),
+      Match.when('pay', () =>
+        latest.isError ? `Payment was not made: ${messageText(latest)}` : 'Payment confirmed.',
+      ),
       Match.orElse(() => `Answer received: ${messageText(latest)}`),
     )
     return fauxAssistantMessage(text)
@@ -454,6 +460,8 @@ const open = Effect.fn('Example.open')(function* (input: StartOptions) {
     }),
     (opened) => Effect.promise(() => opened.close(context)),
   )
+  // Pi public resume() enables recovered pending work before the first reconnect request.
+  harness.resume()
   const gate = yield* Semaphore.make(1)
   const host: Host = { harness, database, gate }
   const server = yield* Effect.acquireRelease(
@@ -478,6 +486,11 @@ export const start: (
     Scope.provide(scope),
     Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, Exit.void) : Effect.void)),
   )
+  yield* Effect.sync(() =>
+    console.warn(
+      'Unauthenticated development example: permissive CORS; do not expose to untrusted networks.',
+    ),
+  )
   return { ...host, close: () => Scope.close(scope, Exit.void) }
 })
 
@@ -498,7 +511,6 @@ const configured = Effect.fn('Example.configured')(function* () {
 /** Importing start has no CLI side effects; signal handlers exist only for the executable example. */
 async function main() {
   const host = await runForNode(configured())
-  console.log(`Durable example listening at ${host.address} (data: ${host.dataDirectory})`)
   const close = () => {
     process.removeListener('SIGINT', close)
     process.removeListener('SIGTERM', close)
@@ -509,6 +521,8 @@ async function main() {
   }
   process.once('SIGINT', close)
   process.once('SIGTERM', close)
+  // Publish readiness only after immediate shutdown signals can be handled safely.
+  console.log(`Durable example listening at ${host.address} (data: ${host.dataDirectory})`)
 }
 
 const executable = process.argv[1]

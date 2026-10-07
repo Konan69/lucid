@@ -370,6 +370,9 @@ it.each(['running', 'ended'] as const)(
     )
     expect(texts(replayed.message)).toEqual(['Recovered initial.'])
     expect(replayed.message).toEqual(first.message)
-    expect(replayed.chunks.at(-1)).toEqual({ type: 'finish' })
+    expect(replayed.chunks.at(-1)).toEqual({
+      type: 'finish',
+      messageMetadata: first.message.metadata,
+    })
   },
 )

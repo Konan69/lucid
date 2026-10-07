@@ -22,6 +22,7 @@ import {
 import type { Reader } from './desk.ts'
 import { RunMissing, TurnWithdrawn, type PiFailed } from './errors.ts'
 import * as Pi from './pi.ts'
+import { messageMetadata } from './metadata.ts'
 
 /** A resume names the assistant run as well as the tool parts that the client already holds. */
 export type ResumeInput = {
@@ -235,12 +236,26 @@ function completed(
   const closing = input.steps === expected ? [] : closed.chunks
   const ending: readonly Chunk[] =
     closing.length === 0 && correction.length > 0
-      ? [{ type: 'start', messageId: input.messageId }]
+      ? [
+          {
+            type: 'start',
+            messageId: input.messageId,
+            messageMetadata: messageMetadata(stored.state.metadata),
+          },
+        ]
       : closing
   return {
     step: {
       state: closed.state,
-      chunks: [{ type: 'start', messageId: input.messageId }, ...correction, ...ending],
+      chunks: [
+        {
+          type: 'start',
+          messageId: input.messageId,
+          messageMetadata: messageMetadata(stored.state.metadata),
+        },
+        ...correction,
+        ...ending,
+      ],
     },
     live: false,
     known: input.known,

@@ -13,6 +13,13 @@ import type { UIMessageChunk } from 'ai'
 import { Array as Arr, Data, Match, Option, Schema } from 'effect'
 
 import { ArgumentText, argumentDelta, argumentsShortened, rawArguments } from './arguments.ts'
+import {
+  emptyMetadata,
+  messageMetadata,
+  recordMetadata,
+  startMetadata,
+  type MetadataState,
+} from './metadata.ts'
 
 /** Pi's closed event and block types are exhaustive; an impossible branch indicates an SDK contract defect. */
 const unreachable = (value: never): never => {
@@ -42,6 +49,8 @@ const Reported = Data.taggedEnum<Reported>()
  * AI SDK assistant message; each turn becomes one AI SDK step.
  */
 export type RunState = {
+  /** Models and entry-deduplicated usage read from Pi's own provider responses. */
+  readonly metadata: MetadataState
   /** Retry entries share the same generation task and therefore the same SDK step. */
   readonly generation: Option.Option<TaskId>
   /** A recovered aborted attempt is replaced inside this step, not followed by another step. */
@@ -71,6 +80,7 @@ export type RunState = {
 }
 
 export const initialRunState: RunState = {
+  metadata: emptyMetadata,
   generation: Option.none(),
   interrupted: false,
   turn: 0,
@@ -203,6 +213,7 @@ function startResponse(state: RunState, partial: AssistantMessage): Step {
   const reset: readonly Chunk[] = state.blocks.size > 0 ? [{ type: 'reset-step' }] : []
   const fresh: RunState = {
     ...state,
+    metadata: startMetadata(state.metadata, partial),
     response: state.response + 1,
     blocks: new Map(),
     content: new Map(),
@@ -212,7 +223,14 @@ function startResponse(state: RunState, partial: AssistantMessage): Step {
   }
   return partial.content.reduce<Step>(
     (step, block, contentIndex) => join(step, updateBlock(step.state, contentIndex, block)),
-    { state: fresh, chunks: reset },
+    {
+      state: fresh,
+      // run_start precedes the first provider record; publish its actual model when it exists.
+      chunks: [
+        { type: 'message-metadata', messageMetadata: messageMetadata(fresh.metadata) },
+        ...reset,
+      ],
+    },
   )
 }
 
@@ -519,14 +537,18 @@ function bridgedOutput(
  */
 function assistantEnd(state: RunState, message: AssistantMessage): Step {
   const finished = finishMessage(state, message)
+  const metadata: Chunk = {
+    type: 'message-metadata',
+    messageMetadata: messageMetadata(finished.state.metadata),
+  }
   if (message.stopReason === 'error') {
     const failure = [message.errorMessage ?? 'The model request failed']
-    return { state: { ...finished.state, failure }, chunks: finished.chunks }
+    return { state: { ...finished.state, failure }, chunks: [...finished.chunks, metadata] }
   }
   const ending: readonly Chunk[] = message.stopReason === 'aborted' ? [{ type: 'abort' }] : []
   return {
     state: { ...finished.state, interrupted: message.stopReason === 'aborted' },
-    chunks: [...finished.chunks, ...ending],
+    chunks: [...finished.chunks, metadata, ...ending],
   }
 }
 
@@ -541,7 +563,13 @@ export function translate(state: RunState, event: AgentEvent): Step {
   return Match.value(event).pipe(
     Match.when({ type: 'run_start' }, (started): Step => ({
       state: initialRunState,
-      chunks: [{ type: 'start', messageId: runMessageId(started.inputs) }],
+      chunks: [
+        {
+          type: 'start',
+          messageId: runMessageId(started.inputs),
+          messageMetadata: messageMetadata(emptyMetadata),
+        },
+      ],
     })),
     Match.when({ type: 'run_end' }, (ended): Step => {
       const closed = closeRun(state, runMessageId(ended.inputs))
@@ -550,7 +578,7 @@ export function translate(state: RunState, event: AgentEvent): Step {
         chunks: [
           ...closed.chunks,
           ...state.failure.map((errorText): Chunk => ({ type: 'error', errorText })),
-          { type: 'finish' },
+          { type: 'finish', messageMetadata: messageMetadata(closed.state.metadata) },
         ],
       }
     }),
@@ -584,7 +612,11 @@ export function translate(state: RunState, event: AgentEvent): Step {
         Option.filter((message): message is AssistantMessage => message.role === 'assistant'),
         Option.match({
           onNone: () => ({ state, chunks: [] }),
-          onSome: (message) => assistantEnd(state, message),
+          onSome: (message) =>
+            assistantEnd(
+              { ...state, metadata: recordMetadata(state.metadata, ended.entry) },
+              message,
+            ),
         }),
       ),
     ),
@@ -603,6 +635,15 @@ function runEntries(entries: readonly EntryRecord[]): readonly EntryRecord[] {
   return entries.slice(start + 1)
 }
 
+/** A reconnect starts with every already-recorded response and the model of its captured partial. */
+function capturedMetadata(snapshot: SnapshotEvent): MetadataState {
+  const recorded = runEntries(snapshot.entries).reduce(recordMetadata, emptyMetadata)
+  const generation = snapshot.generation
+  return generation === undefined || generation.message === undefined
+    ? recorded
+    : startMetadata(recorded, generation.message)
+}
+
 /** One stored entry of the run in progress, as the chunks its live events would have produced. */
 export function replayEntry(state: RunState, entry: EntryRecord): Step {
   const found = Option.fromNullishOr(entry.model).pipe(Option.flatMap(Arr.head))
@@ -617,7 +658,13 @@ export function replayEntry(state: RunState, entry: EntryRecord): Step {
       { ...turn.state, generation: Option.fromNullishOr(entry.byTaskId) },
       message,
     )
-    return join(join(turn, response), assistantEnd(response.state, message))
+    return join(
+      join(turn, response),
+      assistantEnd(
+        { ...response.state, metadata: recordMetadata(response.state.metadata, entry) },
+        message,
+      ),
+    )
   }
   if (message.role === 'toolResult')
     return resultStep(state, message.toolCallId, Option.some(entry))
@@ -644,12 +691,17 @@ function replayPartial(state: RunState, message: AssistantMessage): Step {
  */
 export function replay(snapshot: SnapshotEvent): Option.Option<Rebuilt> {
   if (snapshot.run === undefined) return Option.none()
+  const metadata = capturedMetadata(snapshot)
   const started: Step = {
     state: initialRunState,
     // SDK chat.ts retains the streaming state after a network error. Its start chunk only
     // changes identity; process-ui-message-stream.ts reset-step clears the retained current step.
     chunks: [
-      { type: 'start', messageId: runMessageId(snapshot.run.inputs) },
+      {
+        type: 'start',
+        messageId: runMessageId(snapshot.run.inputs),
+        messageMetadata: messageMetadata(metadata),
+      },
       { type: 'reset-step' },
     ],
   }
@@ -714,14 +766,20 @@ export function replayAfter(
   const { entry: calledEntry, index } = found.value
   const rest = snapshot.entries.slice(index + 1)
   const live = snapshot.run !== undefined
-  const called = replayEntry(initialRunState, calledEntry)
+  const called = replayEntry(
+    {
+      ...initialRunState,
+      metadata: snapshot.entries.slice(0, index).reduce(recordMetadata, emptyMetadata),
+    },
+    calledEntry,
+  )
   const stored = rest.reduce<Step>(
     (step, entry) => join(step, replayEntry(step.state, entry)),
     // No message id: the client continues the assistant message it already has.
     {
       state: called.state,
       chunks: [
-        { type: 'start' },
+        { type: 'start', messageMetadata: messageMetadata(capturedMetadata(snapshot)) },
         ...called.chunks.filter(
           (chunk) =>
             chunk.type === 'tool-input-start' ||
@@ -894,12 +952,16 @@ export function runMessageId(inputs: readonly SubmissionId[]) {
 /** A closed run never ends in a step containing tool parts: an empty closing step makes both
  * stock automatic predicates false, identically in live, history and terminal replay. SDK
  * process-ui-message-stream.ts:926-975 does not publish step chunks; the identity-only start
- * publishes the closing boundary without fabricating metadata or another content part. */
+ * publishes the closing boundary and recorded metadata without adding another content part. */
 export function closeRun(state: RunState, messageId: string): Step {
   if (state.calls.size === 0) return { state, chunks: [] }
   const closed = startTurn(state)
   return {
     state: closed.state,
-    chunks: [...closed.chunks, { type: 'finish-step' }, { type: 'start', messageId }],
+    chunks: [
+      ...closed.chunks,
+      { type: 'finish-step' },
+      { type: 'start', messageId, messageMetadata: messageMetadata(closed.state.metadata) },
+    ],
   }
 }
