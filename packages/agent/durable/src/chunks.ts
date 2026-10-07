@@ -724,13 +724,17 @@ export function replay(snapshot: SnapshotEvent): Option.Option<Rebuilt> {
   return Option.some({ ...step, origins: originsFor(runEntries(snapshot.entries), step.chunks) })
 }
 
-/** Whether `entry` is an assistant message that calls one of the tool calls in `known`. */
+/** An empty known set means every client tool input was locally interrupted. The exact run
+ * identity is already verified by selectRun, so its own calls can all be re-presented.
+ * Whether `entry` is an assistant message that calls one of the tool calls in `known`. */
 function callsAny(entry: EntryRecord, known: ReadonlySet<string>): boolean {
   const found = Option.fromNullishOr(entry.model).pipe(Option.flatMap(Arr.head))
   return (
     Option.isSome(found) &&
     found.value.role === 'assistant' &&
-    found.value.content.some((block) => block.type === 'toolCall' && known.has(block.id))
+    found.value.content.some(
+      (block) => block.type === 'toolCall' && (known.size === 0 || known.has(block.id)),
+    )
   )
 }
 
@@ -820,7 +824,9 @@ function inFlightAfter(snapshot: SnapshotEvent, known: ReadonlySet<string>) {
   )
   if (
     Option.isNone(partial) ||
-    !partial.value.content.some((block) => block.type === 'toolCall' && known.has(block.id))
+    !partial.value.content.some(
+      (block) => block.type === 'toolCall' && (known.size === 0 || known.has(block.id)),
+    )
   )
     return Option.none<Continuation>()
   const rebuilt = replay(snapshot)

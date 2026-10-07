@@ -31,7 +31,7 @@ export const ChatTurn = Schema.TaggedUnion({
   Resume: {
     messageId: Schema.optionalKey(Schema.String),
     steps: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
-    known: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
+    known: Schema.Array(Schema.String),
     decisions: Schema.Array(
       Schema.Struct({
         callId: Schema.String,
@@ -75,7 +75,7 @@ const Approval = Schema.Struct({
 )
 const Part = Schema.Union([
   InputPart,
-  // Local connection failures name the call but can never authorize or answer it.
+  // Local connection failures neither name a known call nor authorize or answer it.
   Schema.Struct({
     type: ToolName,
     toolCallId: Schema.String,
@@ -132,6 +132,10 @@ function resumed(message: Extract<typeof Message.Type, { role: 'assistant' }>) {
   const tools = parts.filter(
     (part): part is Extract<typeof Part.Type, { toolCallId: string }> => 'toolCallId' in part,
   )
+  if (tools.length === 0) return Effect.fail(new TurnInvalid({}))
+  const known = tools.filter(
+    (part) => !('errorText' in part && isConnectionLostAnswer(part.errorText)),
+  )
   const decisions = tools.flatMap((part) => {
     if (!('approval' in part)) return []
     const { id, ...decision } = part.approval
@@ -146,7 +150,7 @@ function resumed(message: Extract<typeof Message.Type, { role: 'assistant' }>) {
   })
   const resume = {
     steps: parts.filter((part) => part.type === 'step-start').length,
-    known: tools.map((part) => part.toolCallId),
+    known: known.map((part) => part.toolCallId),
     decisions,
     outputs,
   }

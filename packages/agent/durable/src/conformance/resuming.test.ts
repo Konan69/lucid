@@ -407,7 +407,7 @@ it('resumes a parked approval and approves through the SDK part', async () => {
   expect(texts(chat.lastMessage)).toEqual(['Paid.'])
 })
 
-/** The synthetic output-error marker names a known call but never answers or approves it. */
+/** The synthetic output-error marker is not a known call and never answers or approves it. */
 it('ignores synthetic connection errors in a real resume body', async () => {
   const fixture = await host({ ask: tool({ inputSchema: z.object({}) }) }, {})
   const opened = await fixture.open()
@@ -436,6 +436,7 @@ it('ignores synthetic connection errors in a real resume body', async () => {
   }
   const turn = await decodeTurn(body)
   if (!ChatTurn.guards.Resume(turn)) throw new Error('Expected resume turn')
+  expect(turn.known).toEqual([])
   expect(turn.outputs).toEqual([])
   expect(turn.decisions).toEqual([])
   const response = await respond(
@@ -746,5 +747,90 @@ it.each([false, true])(
     expect(opened.faux.state.callCount).toBe(1)
     expect(chat.messages.filter((message) => message.role === 'user')).toEqual([user])
     expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
+  },
+)
+
+/** The stock output predicate sees the synthetic terminal part as complete. Its one POST must
+ * restore the missing input and request approval, instead of muting the call and looping. */
+it.each(['pay', 'work'] as const)(
+  're-presents a locally interrupted %s input when an earlier client call is answered',
+  async (second) => {
+    const release = signal()
+    const visible = signal()
+    onTestFinished(() => release.resolve())
+    const fixture = await host(
+      {
+        ask: tool({ inputSchema: z.object({}) }),
+        work: tool({
+          inputSchema: z.object({ amount: z.number() }),
+          execute: async () => {
+            await release.promise
+            return 'worked'
+          },
+        }),
+        pay: tool({ inputSchema: z.object({ amount: z.number() }), execute: async () => 'paid' }),
+      },
+      { approval: { pay: true } },
+    )
+    const opened = await fixture.open()
+    opened.faux.setResponses([
+      fauxAssistantMessage(
+        [
+          fauxToolCall('ask', {}, { id: 'ask' }),
+          fauxToolCall(second, { amount: 7 }, { id: 'pay' }),
+        ],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('Finished.'),
+    ])
+    let posts = 0
+    const finished = signal()
+    const chat = new PlainChat({
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+      onMessage: (message) => {
+        if (
+          posts === 2 &&
+          message.parts.some(
+            (part) =>
+              isToolUIPart(part) && part.type === 'tool-work' && part.state === 'input-available',
+          )
+        )
+          visible.resolve()
+      },
+      onFinish: ({ isError }) => {
+        if (posts === 2 && !isError) finished.resolve()
+      },
+      transport: resumable({
+        sendMessages: async (input) => {
+          posts++
+          const stream = await opened.transport.sendMessages(input)
+          return posts === 1
+            ? disconnect(stream, { step: 1, marker: 'tool-input-available' })
+            : stream
+        },
+        reconnectToStream: (input) => opened.transport.reconnectToStream(input),
+      }),
+    })
+    await chat.sendMessage({ text: 'Ask then pay' })
+    expect(chat.error).toBeInstanceOf(ConnectionLost)
+    chat.clearError()
+    await chat.addToolOutput({ tool: 'ask', toolCallId: 'ask', output: 'yes' })
+    if (second === 'work') {
+      await visible.promise
+      release.resolve()
+    }
+    await finished.promise
+    expect(posts).toBe(2)
+    expect(chat.status).toBe('ready')
+    if (chat.lastMessage === undefined) throw new Error('Expected approval')
+    const pay = chat.lastMessage.parts
+      .filter(isToolUIPart)
+      .find((part) => part.toolCallId === 'pay')
+    if (pay === undefined) throw new Error('Expected real pay input')
+    expect(pay.state).toBe(second === 'pay' ? 'approval-requested' : 'output-available')
+    expect(pay.input).toEqual({ amount: 7 })
+    expect(
+      (await waiting(opened.harness, opened.root.id, context)).map((row) => row.callId),
+    ).toEqual(second === 'pay' ? ['pay'] : [])
   },
 )
