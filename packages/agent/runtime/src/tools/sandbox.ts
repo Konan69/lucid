@@ -160,9 +160,12 @@ export function computerSandbox(run: RunScoped, home: string): Sandbox {
     readdir: () => unsupported('readdir'),
     // The machine's own `mkdir` and `rm`: their flags mean what Node's options mean (Flue
     // reference, "SandboxDriver": an adapter that runs verbs through the shell does these there).
-    mkdir: (path, { recursive } = {}) =>
+    // The options are annotated because the type checker (tsc-rs 0.1.0, as TypeScript 7.1's
+    // nightlies since 23 Sep 2026, microsoft/TypeScript pull request 64043) reports TS7031 for a
+    // destructured element missing from a `= {}` default even where `SandboxDriver` types it.
+    mkdir: (path, { recursive }: { recursive?: boolean } = {}) =>
       shell(`mkdir ${recursive === true ? '-p ' : ''}-- ${word(path)}`).then(checked),
-    rm: (path, { recursive, force } = {}) =>
+    rm: (path, { recursive, force }: { recursive?: boolean; force?: boolean } = {}) =>
       shell(
         `rm ${recursive === true ? '-r ' : ''}${force === true ? '-f ' : ''}-- ${word(path)}`,
       ).then(checked),

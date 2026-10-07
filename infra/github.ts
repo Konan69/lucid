@@ -2,6 +2,12 @@ import * as GitHub from 'alchemy/GitHub'
 import * as Effect from 'effect/Effect'
 
 /**
+ * The repository this stack is kept in. Railway builds the server and the runtime from it
+ * (`infra/railway.ts`) and the Computer binaries' release below lives in it.
+ */
+export const repository = { owner: 'Konan69', name: 'vivid' } as const
+
+/**
  * The Computer binaries' release, as infrastructure. The supervisor and its engine are never
  * committed (`apps/desktop/vendor/computer/README.md`); this release is where the desktop app's
  * build fetches them from, and managing it here is what makes that source one of the stack's
@@ -16,8 +22,8 @@ import * as Effect from 'effect/Effect'
  */
 export const computerBinariesRelease = Effect.fn('Infra.GitHub.computerBinaries')(function* () {
   return yield* GitHub.Release('computer-binaries', {
-    owner: 'Konan69',
-    repository: 'vivid',
+    owner: repository.owner,
+    repository: repository.name,
     tagName: 'computer-v1',
     name: 'The Computer binaries (Windows)',
     body: [
