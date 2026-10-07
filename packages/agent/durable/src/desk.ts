@@ -1,4 +1,5 @@
 import type { Context } from '@earendil-works/chord'
+import type { HoldId } from './errors.ts'
 import type { Conversation, Harness, TaskId } from '@earendil-works/pi-durable'
 import { LiveDoc } from '@earendil-works/pi-durable'
 import { Effect, Option } from 'effect'
@@ -108,7 +109,7 @@ export const readDesk = Effect.fn('Durable.readDesk')(function* (
           ),
         ),
       ),
-    hold: (holdId: import('./errors.ts').HoldId) =>
+    hold: (holdId: HoldId) =>
       lookupSnapshots(live, holds, CallIdentity.cases.Hold.make({ holdId })),
   } satisfies Desk
 })

@@ -1,3 +1,5 @@
+import type { Context } from '@earendil-works/chord'
+import type { Harness, ConversationId } from '@earendil-works/pi-durable'
 import { waiting } from '../core.ts'
 
 import { readUIMessageStream, type UIMessage, type UIMessageChunk } from 'ai'
@@ -31,10 +33,10 @@ export const read = Effect.fn('Test.readMessage')(function* (
 
 /** Tests resolve a real waiting task; callers retain this id to repeat that exact interaction. */
 export const hold = Effect.fn('Test.hold')(function* (
-  harness: import('@earendil-works/pi-durable').Harness,
-  conversationId: import('@earendil-works/pi-durable').ConversationId,
+  harness: Harness,
+  conversationId: ConversationId,
   callId: string,
-  context: import('@earendil-works/chord').Context,
+  context: Context,
 ) {
   const rows = (yield* waiting(harness, conversationId, context)).filter(
     (row) => row.callId === callId,

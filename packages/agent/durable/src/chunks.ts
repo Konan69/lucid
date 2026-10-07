@@ -704,14 +704,17 @@ export function replayAfter(
 }> {
   const inFlight = inFlightAfter(snapshot, known)
   if (Option.isSome(inFlight)) return inFlight
-  const at = snapshot.entries.findLastIndex((entry) => callsAny(entry, known))
-  if (at === -1) return Option.none()
-  const rest = snapshot.entries.slice(at + 1)
-  const live = snapshot.run !== undefined
-  const called = replayEntry(
-    initialRunState,
-    Option.getOrThrow(Option.fromNullishOr(snapshot.entries[at])),
+  // Carry the selected entry with its position. Finding an index and then looking it up again
+  // manufactured an impossible getOrThrow failure despite already having proven the match.
+  const found = snapshot.entries.reduce<Option.Option<{ entry: EntryRecord; index: number }>>(
+    (last, entry, index) => (callsAny(entry, known) ? Option.some({ entry, index }) : last),
+    Option.none(),
   )
+  if (Option.isNone(found)) return Option.none()
+  const { entry: calledEntry, index } = found.value
+  const rest = snapshot.entries.slice(index + 1)
+  const live = snapshot.run !== undefined
+  const called = replayEntry(initialRunState, calledEntry)
   const stored = rest.reduce<Step>(
     (step, entry) => join(step, replayEntry(step.state, entry)),
     // No message id: the client continues the assistant message it already has.
@@ -746,7 +749,7 @@ export function replayAfter(
   return Option.some({
     step,
     live,
-    origins: originsFor(snapshot.entries.slice(at), step.chunks),
+    origins: originsFor(snapshot.entries.slice(index), step.chunks),
   })
 }
 
