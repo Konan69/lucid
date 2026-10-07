@@ -19,6 +19,7 @@ import {
   TurnWithdrawn,
   TurnBusy,
   TurnInvalid,
+  TurnRegenerate,
   PartUnsupported,
   PartTooLarge,
 } from '@vivid/durable'
@@ -36,6 +37,7 @@ const refusals = [
       Schema.SchemaError,
       HoldIdInvalid,
       TurnInvalid,
+      TurnRegenerate,
       PartUnsupported,
       HistoryCursorInvalid,
       HistoryPageInvalid,

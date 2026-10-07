@@ -4,6 +4,7 @@ import { createUIMessageStreamResponse, type UIMessageChunk } from 'ai'
 import { Effect, Match, Option, Schema, Stream } from 'effect'
 
 import * as Durable from '@vivid/durable/core'
+import { turnFailure } from '../respond.ts'
 
 const encodeCursor = Schema.encodeSync(Schema.fromJsonString(Durable.HistoryCursor))
 const decodeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(Durable.TurnBody))
@@ -39,7 +40,7 @@ const post = Effect.fn('Example.post')(function* (
   context: Context,
 ) {
   const body = yield* readBody(request)
-  const turn = yield* decodeRequest(body).pipe(Effect.mapError(() => new Durable.TurnInvalid({})))
+  const turn = yield* decodeRequest(body).pipe(Effect.mapError(turnFailure))
   // Host policy, not a library default; middleware also bounds the raw request before reading.
   const stream = yield* Durable.respond(
     harness,
@@ -90,6 +91,9 @@ export function chat(
     ),
   )
   return response.pipe(
+    Effect.catchTag('TurnRegenerate', (error) =>
+      Effect.succeed(new Response(error.message, { status: 400 })),
+    ),
     Effect.catchTag('TurnInvalid', (error) =>
       Effect.succeed(new Response(error.message, { status: 400 })),
     ),

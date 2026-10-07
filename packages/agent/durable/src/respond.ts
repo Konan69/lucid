@@ -15,7 +15,7 @@ import {
 } from 'effect'
 
 import { connectionLostInput } from './client.ts'
-import { HoldId, RunMissing, TurnInvalid } from './errors.ts'
+import { HoldId, RunMissing, TurnInvalid, TurnRegenerate } from './errors.ts'
 import { answerObserved, decideObserved } from './holds.ts'
 import { runMessageId } from './chunks.ts'
 import * as Pi from './pi.ts'
@@ -141,8 +141,7 @@ function resumed(message: Extract<typeof Message.Type, { role: 'assistant' }>) {
 
 /** Validate only the newest message; the historical client transcript is neither trusted nor required. */
 const toTurn = Effect.fn('Durable.decodeTurn')(function* (body: typeof Body.Type) {
-  if (body.trigger === 'regenerate-message')
-    return yield* new TurnInvalid({ reason: 'Regeneration' })
+  if (body.trigger === 'regenerate-message') return yield* new TurnRegenerate({})
   const last = Arr.last(body.messages)
   if (Option.isNone(last)) return yield* new TurnInvalid({})
   const message = yield* decodeMessage(last.value)
@@ -162,8 +161,11 @@ export const TurnBody = Body.pipe(
     decode: SchemaGetter.transformEffect((body) =>
       toTurn(body).pipe(
         Effect.mapError((cause) => {
-          if (cause instanceof TurnInvalid)
-            return new SchemaIssue.InvalidValue({ message: cause.message }, body)
+          if (cause instanceof TurnInvalid || cause instanceof TurnRegenerate)
+            return new SchemaIssue.InvalidValue(
+              { message: cause.message, durableTurnFailure: cause },
+              body,
+            )
           return cause instanceof Schema.SchemaError ? cause.issue : cause
         }),
       ),
@@ -178,24 +180,31 @@ export const decodeTurn = Function.flow(
   Effect.mapError(turnFailure),
 )
 
-/** Inspect only the typed codec issue tree, preserving our regeneration refusal through JSON codecs. */
-function rejectedRegeneration(issue: SchemaIssue.Issue): boolean {
-  if (Predicate.isTagged(issue, 'InvalidValue'))
-    return (
-      issue.annotations !== undefined &&
-      issue.annotations.message === new TurnInvalid({ reason: 'Regeneration' }).message
-    )
-  if ('issue' in issue) return rejectedRegeneration(issue.issue)
-  if ('issues' in issue) return issue.issues.some(rejectedRegeneration)
-  return false
+/** Schema issue annotations carry our tagged refusal through object and JSON-string codecs.
+ * Decode failures without this local annotation are malformed input; diagnostic text is never
+ * a discriminator. Effect Schema Issue annotations explicitly support custom keys. */
+function taggedRefusal(issue: SchemaIssue.Issue): Option.Option<TurnInvalid | TurnRegenerate> {
+  if (Predicate.isTagged(issue, 'InvalidValue') && issue.annotations !== undefined) {
+    const failure = issue.annotations.durableTurnFailure
+    if (failure instanceof TurnInvalid || failure instanceof TurnRegenerate)
+      return Option.some(failure)
+  }
+  if ('issue' in issue) return taggedRefusal(issue.issue)
+  if ('issues' in issue) {
+    for (const child of issue.issues) {
+      const refusal = taggedRefusal(child)
+      if (Option.isSome(refusal)) return refusal
+    }
+  }
+  return Option.none()
 }
 
-/** Body-read failures already carry the domain error; schema failures retain the closed refusal reason. */
-export function turnFailure(error: Schema.SchemaError | TurnInvalid): TurnInvalid {
-  if (error instanceof TurnInvalid) return error
-  return new TurnInvalid({
-    reason: rejectedRegeneration(error.issue) ? 'Regeneration' : 'Malformed',
-  })
+/** Preserve local tagged refusals; failures reading or decoding a body are explicitly malformed. */
+export function turnFailure(
+  error: Schema.SchemaError | TurnInvalid | TurnRegenerate,
+): TurnInvalid | TurnRegenerate {
+  if (error instanceof TurnInvalid || error instanceof TurnRegenerate) return error
+  return Option.getOrElse(taggedRefusal(error.issue), () => new TurnInvalid({}))
 }
 
 /** Only the current run message accepts settlements; stale resumes settle nothing. Outputs match call

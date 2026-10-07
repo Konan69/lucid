@@ -1,5 +1,5 @@
 import type { ConversationId as PiConversationId } from '@earendil-works/pi-durable'
-import { Effect, Predicate, Schema } from 'effect'
+import { Predicate, Schema } from 'effect'
 
 /** Pi's types.ts Id is an erased numeric brand; retain that identity in the shared error contract. */
 const ConversationId = Schema.declare<PiConversationId>((value): value is PiConversationId =>
@@ -56,18 +56,24 @@ export class PiFailed extends Schema.TaggedError<PiFailed>()(
 /** The latest chat message cannot start or resume a run. */
 export class TurnInvalid extends Schema.TaggedError<TurnInvalid>()(
   'TurnInvalid',
-  {
-    reason: Schema.Literals(['Malformed', 'Regeneration']).pipe(
-      Schema.withConstructorDefault(Effect.succeed('Malformed')),
-    ),
-  },
+  {},
   { title: 'TurnInvalid' },
 ) {
   /** Match the HTTP ingress diagnostic for a malformed turn. */
   override get message() {
-    return this.reason === 'Regeneration'
-      ? 'Regeneration is not supported'
-      : 'Expected a user message or a message with tool calls'
+    return 'Expected a user message or a message with tool calls'
+  }
+}
+
+/** Pi's append-only turn protocol does not admit stock SDK regeneration. */
+export class TurnRegenerate extends Schema.TaggedError<TurnRegenerate>()(
+  'TurnRegenerate',
+  {},
+  { title: 'TurnRegenerate' },
+) {
+  /** Keep this refusal distinct from malformed chat input without inspecting diagnostic strings. */
+  override get message() {
+    return 'Regeneration is not supported'
   }
 }
 
@@ -98,7 +104,7 @@ export class PartTooLarge extends Schema.TaggedError<PartTooLarge>()(
 /** A host byte budget must be a finite nonnegative whole number, before request reading/admission. */
 export class LimitInvalid extends Schema.TaggedError<LimitInvalid>()(
   'LimitInvalid',
-  { value: Schema.UndefinedOr(Schema.Number) },
+  { value: Schema.Unknown },
   { title: 'LimitInvalid' },
 ) {
   /** This is a host configuration fault, not a client's unsupported part. */

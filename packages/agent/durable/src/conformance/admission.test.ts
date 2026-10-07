@@ -4,15 +4,19 @@ import { DefaultChatTransport, tool, type UIMessage } from 'ai'
 import { z } from 'zod'
 import * as NodeEvents from 'node:events'
 import type { Harness } from '@earendil-works/pi-durable'
+import { requestBudget } from '../fixtures/budget.mjs'
 import { PlainChat } from '../fixtures/chat.ts'
 import {
   abort,
   followRun,
+  decodeTurn,
   respond,
   streamRun,
   history,
   TurnWithdrawn,
   TurnBusy,
+  LimitInvalid,
+  TurnRegenerate,
   RunMissing,
 } from '../main.ts'
 import { call, consume, context, host, shop, signal, texts } from './fixtures/host.ts'
@@ -280,3 +284,39 @@ it.each(['completed', 'aborted'] as const)(
     ).toBe(false)
   },
 )
+
+/** Non-TypeScript hosts must receive the same tagged refusal, preserving the offending wire value. */
+it.each(['5', null, {}])(
+  'tags a non-numeric host part budget %j without reading or submitting',
+  async (value) => {
+    const opened = await (await shop()).open()
+    const request = requestBudget(
+      opened.harness,
+      { conversationId: opened.root.id, value },
+      context,
+    )
+    await expect(request).rejects.toBeInstanceOf(LimitInvalid)
+    await expect(request).rejects.toMatchObject({ value })
+    expect(opened.faux.state.callCount).toBe(0)
+    expect((await opened.root.entries({}, 10, undefined, context)).items).toEqual([])
+  },
+)
+
+/** Regeneration keeps its own tag through object and JSON-string codecs, never a text comparison. */
+it('rejects regeneration with its own class through both body decoder and Request ingress', async () => {
+  const opened = await (await shop()).open()
+  const body = {
+    trigger: 'regenerate-message',
+    messages: [{ role: 'user', id: 'regenerate', parts: [{ type: 'text', text: 'Again' }] }],
+  }
+  await expect(decodeTurn(body)).rejects.toBeInstanceOf(TurnRegenerate)
+  const response = await respond(
+    opened.harness,
+    opened.root.id,
+    new Request('http://durable.test/chat', { method: 'POST', body: JSON.stringify(body) }),
+    context,
+  )
+  expect(response.status).toBe(400)
+  expect(await response.text()).toBe(new TurnRegenerate({}).message)
+  expect(opened.faux.state.callCount).toBe(0)
+})

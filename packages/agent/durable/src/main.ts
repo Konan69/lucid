@@ -212,6 +212,7 @@ export {
   ConversationMissing,
   PiFailed,
   TurnInvalid,
+  TurnRegenerate,
   TurnWithdrawn,
   TurnBusy,
   BusyPolicyInvalid,
