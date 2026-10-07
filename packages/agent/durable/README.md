@@ -157,7 +157,7 @@ The [round-trip report](src/postgres/bench/report.md) counts actual driver calls
 | Read a 100-entry page                                |            2 |
 | Read a document, including a 1,024-delta replay tail |            1 |
 
-Large-entry measurements are in the report: a 64 MB entry round-tripped under a 1 GB JavaScript heap cap, with about 526 MB peak RSS and a longest synchronous callback of 188 ms. This is a measured case, not a general entry-size guarantee; concurrent large commits and V8's maximum joined-string size were not tested.
+Large-entry measurements are in the report: a 64 MB entry round-tripped under a 1 GB JavaScript heap cap, with about 526 MB peak RSS and a longest synchronous callback of 154 ms. This is a measured case, not a general entry-size guarantee; concurrent large commits and V8's maximum joined-string size were not tested.
 
 All 23 upstream Pi Storage conformance cases pass through this adapter. Its 52 database tests use only disposable schemas through VIVID_TEST_DATABASE_URL and skip when that variable is absent.
 
