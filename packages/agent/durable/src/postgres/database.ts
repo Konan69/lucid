@@ -1,5 +1,5 @@
 import type * as Option from 'effect/Option'
-import type { StorageWrite } from '@earendil-works/pi-durable'
+import type { RecordKind } from './errors.ts'
 
 /**
  * Port of Pi Durable `src/storage/sqlite/database.ts:SqliteValue`.
@@ -19,10 +19,7 @@ export type PostgresStatement = {
 /** Pi src/types.ts:StorageWrite supplies the record vocabulary. Document actions
  * share one record kind; metadata allocation has no user record. Retain this
  * context in SQL plans so a rejected raw NUL identifies its originating record. */
-export type PostgresRecordKind =
-  | Exclude<StorageWrite['type'], `document.${string}`>
-  | 'document'
-  | 'metadata'
+export type PostgresRecordKind = typeof RecordKind.Type
 
 /** Pi SqliteStorage.commit's result and final ordered write segment. The driver
  * executes this segment followed by COMMIT before returning the value. A prepared
@@ -65,6 +62,9 @@ export interface PostgresExecutor {
  * so the caller cannot mistake it for a guaranteed rollback.
  */
 export interface PostgresDatabase extends PostgresExecutor {
+  /** Cached driver health, without SQL: losing a lease fences volatile mintId
+   * as well as persistence. This PostgreSQL addition never reconnects. */
+  assertConnected(): void
   /** Pi transaction's same barrier/rollback rules, with BEGIN and independent
    * preflight reads sent together in their original order. Read results are
    * decoded by storage before any write; no allocation happens outside the transaction.

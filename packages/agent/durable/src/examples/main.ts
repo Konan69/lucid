@@ -115,7 +115,8 @@ async function dispatch(
   }
   if (path === '/waiting' && request.method === 'GET')
     return Response.json(await waiting(harness, conversationId, context))
-  if (request.method !== 'POST') return new Response(null, { status: 405 })
+  if (request.method !== 'POST')
+    return new Response(null, { status: 405, headers: { Allow: 'POST' } })
   if (path === '/abort') {
     await abort(harness, conversationId, context)
     return new Response(null, { status: 204 })

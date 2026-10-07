@@ -483,29 +483,36 @@ export class PostgresStorage implements Storage {
         params: [claim.id],
       })),
     ]
-    const seq = await this.db.transactionWithReads(reads, async (transaction, rows) => {
-      const metadataRows = Option.getOrThrow(Option.fromNullishOr(rows[0]))
-      const metadataRow = Option.fromNullishOr(metadataRows[0])
-      if (Option.isNone(metadataRow)) throw new Error('Durable PostgreSQL metadata is missing')
-      const metadata = decodeMetadataRow(metadataRow.value)
-      const committedSeq = seqFromNumber(safeNumber(metadata.next_seq))
-      this.checkGlobalIds(claims, rows.slice(1))
-      await this.checkDocumentActions(transaction, documentActions)
-      const statements = new Statements()
-      for (const write of writes) this.applyTableWrite(statements, write, committedSeq)
-      if (documentActions.size > 0) {
-        if (statements.values.length > 0) await transaction.runBatch(statements.values)
-        statements.values.length = 0
-        await this.applyDocumentActions(transaction, documentActions, committedSeq)
-      }
-      statements.run(
-        'metadata',
-        'UPDATE durable_metadata SET next_id = ?, next_seq = ? WHERE singleton = 1',
-        String(maxId(BigInt(metadata.next_id), candidateNextId)),
-        BigInt(committedSeq) + 1n,
-      )
-      return { value: committedSeq, statements: statements.values }
-    })
+    const seq = await this.db
+      .transactionWithReads(reads, async (transaction, rows) => {
+        const metadataRows = Option.getOrThrow(Option.fromNullishOr(rows[0]))
+        const metadataRow = Option.fromNullishOr(metadataRows[0])
+        if (Option.isNone(metadataRow)) throw new Error('Durable PostgreSQL metadata is missing')
+        const metadata = decodeMetadataRow(metadataRow.value)
+        const committedSeq = seqFromNumber(safeNumber(metadata.next_seq))
+        this.checkGlobalIds(claims, rows.slice(1))
+        await this.checkDocumentActions(transaction, documentActions)
+        const statements = new Statements()
+        for (const write of writes) this.applyTableWrite(statements, write, committedSeq)
+        if (documentActions.size > 0) {
+          if (statements.values.length > 0) await transaction.runBatch(statements.values)
+          statements.values.length = 0
+          await this.applyDocumentActions(transaction, documentActions, committedSeq)
+        }
+        statements.run(
+          'metadata',
+          'UPDATE durable_metadata SET next_id = ?, next_seq = ? WHERE singleton = 1',
+          String(maxId(BigInt(metadata.next_id), candidateNextId)),
+          BigInt(committedSeq) + 1n,
+        )
+        return { value: committedSeq, statements: statements.values }
+      })
+      .catch((cause: unknown) => {
+        // The facade retains Pi's rollback-failure distinction. At Storage's
+        // boundary, a lost ownership connection always reports its cached fence.
+        this.db.assertConnected()
+        throw cause
+      })
     this.nextId = maxId(this.nextId, candidateNextId)
     return seq
   }
@@ -1300,5 +1307,6 @@ export class PostgresStorage implements Storage {
    * A sealed storage rejects all later operations even while admitted readers are draining. */
   private assertOpen(): void {
     if (this.closed) throw new Error('PostgresStorage is closed')
+    this.db.assertConnected()
   }
 }

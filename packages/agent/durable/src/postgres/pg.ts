@@ -2,7 +2,7 @@ import * as NodeBuffer from 'node:buffer'
 import * as NodeCrypto from 'node:crypto'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import { escapeLiteral, types, type Pool, type PoolClient, type QueryResultRow } from 'pg'
+import { types, type Pool, type PoolClient, type QueryResultRow } from 'pg'
 
 import {
   validateSchema,
@@ -14,7 +14,8 @@ import {
 } from './database.ts'
 export { validateSchema } from './database.ts'
 import { PostgresStorage } from './storage.ts'
-import { ConnectionSettingInvalid, RawNul, StorageOwned } from './errors.ts'
+import { quoteLiteral } from './literal.ts'
+import { ConnectionSettingInvalid, RawNul, StorageOwned, StorageDisconnected } from './errors.ts'
 
 /** pg/lib/query.js:_checkForMultirow returns one result per simple-protocol
  * statement. Decode scalar metadata/ownership rows once at the SDK ingress.
@@ -39,14 +40,14 @@ function batchRows(result: import('pg').QueryResult) {
 }
 
 /** PostgreSQL's extended protocol forbids bound multi-statement queries.
- * pg's public escapeLiteral safely quotes each scalar, including quotes and
+ * Our linear formatter matches pg's public escapeLiteral for each scalar, including quotes and
  * backslashes; byte arrays use lossless hex. This changes transport only, never
  * statement order, durability settings, or the host connection's configuration. */
 const isBytes = Schema.is(Schema.Uint8Array)
 const int8Text = (value: string) => value
 
 /** pg emits settings as text. Decode once at the driver ingress; both string
- * modes are safe with pg.escapeLiteral's explicit E literals on UTF8. */
+ * modes are safe with the formatter's explicit E literals on UTF8. */
 const decodeConnectionSettings = Schema.decodeUnknownSync(
   Schema.Struct({
     search_path: Schema.String,
@@ -86,10 +87,10 @@ function statementText(statement: PostgresStatement): string {
     if (value === undefined) throw new Error('PostgreSQL batch binding is missing')
     if (value === null) return 'NULL'
     if (isBytes(value))
-      return `decode(${escapeLiteral(NodeBuffer.Buffer.from(value).toString('hex'))}, 'hex')`
+      return `decode(${quoteLiteral(NodeBuffer.Buffer.from(value).toString('hex'))}, 'hex')`
     const text = String(value)
     if (text.includes('\u0000')) throw new RawNul({ recordKind: statement.recordKind })
-    return escapeLiteral(text)
+    return quoteLiteral(text)
   })
 }
 
@@ -118,7 +119,12 @@ class SerialOperationQueue {
  * Per-query BIGINT parsing stays text even if the host changed pg's global parser
  * (pg/lib/defaults.js:parseInt8); the storage checks before numeric conversion. */
 abstract class PgExecutor implements PostgresExecutor {
-  constructor(protected readonly client: PoolClient) {}
+  protected readonly client: PoolClient
+  /** Declare fields explicitly: the workspace source entry must load in Node's
+   * strip-only mode, which cannot erase TypeScript parameter properties. */
+  constructor(client: PoolClient) {
+    this.client = client
+  }
 
   /** Pi NodeSqliteExecutor.exec: execute unbound schema statements in the same order as Pi's facade. */
   exec(sql: string): Promise<void> {
@@ -195,23 +201,33 @@ class PgTransaction extends PgExecutor {
 export class PgDatabase extends PgExecutor implements PostgresDatabase {
   private readonly access = new SerialOperationQueue()
   private closed = false
-  private connectionError = Option.none<Error>()
+  private connectionError = Option.none<StorageDisconnected>()
   /** pg Pool removes its idle-client error listener while a connection is leased.
    * pg/lib/client.js:_handleErrorEvent rejects outstanding queries and emits error;
    * retain that cause so idle connection failure cannot become an uncaught event.
    * This is a public driver listener, not reconnect or cross-process coordination. */
   private readonly connectionFailed = (cause: Error) => {
-    this.connectionError = Option.some(cause)
+    if (Option.isNone(this.connectionError))
+      this.connectionError = Option.some(new StorageDisconnected({ schema: this.schema, cause }))
   }
 
+  private readonly previousSearchPath: string
+  private readonly schemaOwnershipKey: string
+  private readonly schema: string
+
   /** Pi NodeSqliteDatabase.constructor, adapted for a host-owned lease. Attach
-   * the public client error listener before any asynchronous facade operation. */
+   * the public client error listener before any asynchronous facade operation.
+   * Explicit field assignments allow Node's native TypeScript type erasure. */
   constructor(
     client: PoolClient,
-    private readonly previousSearchPath: string,
-    private readonly schemaOwnershipKey: string,
+    previousSearchPath: string,
+    schemaOwnershipKey: string,
+    schema: string,
   ) {
     super(client)
+    this.previousSearchPath = previousSearchPath
+    this.schemaOwnershipKey = schemaOwnershipKey
+    this.schema = schema
     client.on('error', this.connectionFailed)
   }
 
@@ -341,7 +357,12 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
   protected runOperation<T>(operation: () => Promise<T>): Promise<T> {
     return this.access.run(() => {
       this.assertOpen()
-      return operation()
+      return operation().catch((cause: unknown) => {
+        // pg publishes a leased-client error before queued rejections settle.
+        // SQL data errors retain their native cause; connection death is typed.
+        this.assertConnected()
+        throw cause
+      })
     })
   }
 
@@ -365,6 +386,11 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
    * connection stays alive, so reject closed or failed facade operations explicitly. */
   private assertOpen(): void {
     if (this.closed) throw new Error('PgDatabase is closed')
+    this.assertConnected()
+  }
+
+  /** Reuse the original tagged failure and driver cause for every later call. */
+  assertConnected(): void {
     if (Option.isSome(this.connectionError)) throw this.connectionError.value
   }
 }
@@ -404,7 +430,7 @@ export async function openPgDatabase(pool: Pool, schema: string): Promise<PgData
       return claimOwnership(client, schema, key)
         .then(() => client.query(`SET search_path TO "${schema}"`))
         .then(() => {
-          const database = new PgDatabase(client, row.search_path, key)
+          const database = new PgDatabase(client, row.search_path, key, schema)
           client.removeListener('error', initializingError)
           return database
         })

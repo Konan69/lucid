@@ -152,9 +152,13 @@ import { openPgStorage } from '@vivid/durable/postgres'
 const storage = await openPgStorage(pool, 'durable')
 ```
 
-PostgreSQL 16 or newer is required; the adapter is tested against PostgreSQL 18. Records stay JSON text. The leased connection must use UTF8; both standard_conforming_strings modes work without silently changing host settings. Raw NUL in SQL text is refused with RawNul, while JSON-escaped NUL and binary zero bytes round-trip. Closing storage releases its lease and does not end the host Pool.
+PostgreSQL 16 or newer is required; the adapter is tested against PostgreSQL 18. Records stay JSON text. The leased connection must use UTF8; both standard_conforming_strings modes work without silently changing host settings. Storage JSON-encodes text, so embedded NUL and lone surrogates round-trip as JSON escapes; binary zero bytes also round-trip. RawNul guards raw SQL bindings at the driver facade, not ordinary Storage records. Closing storage releases its lease and does not end the host Pool.
 
-One connection owns a schema at a time, enforced by a nonblocking session advisory lock acquired before migrations. A competing opener receives StorageOwned. Ownership is released on close or backend/process death; reopen after the previous owner closes. Initialization failure destroys the lease. Migrations are transactional and reject newer unsupported schema versions.
+Storage holds one pool connection for its entire lifetime. Size the pool for that permanently leased connection plus the host's other work, and set connectionTimeoutMillis so an exhausted pool fails instead of leaving open or host queries waiting indefinitely.
+
+One connection owns a schema at a time, enforced by a nonblocking session advisory lock acquired before migrations. A competing opener receives StorageOwned. Use direct connections or session pooling only: transaction-mode poolers cannot preserve the session lock or search_path (transaction-mode pooling has not been run here). Ownership is released on close or backend/process death; reopen after the previous owner closes. Initialization failure destroys the lease. Migrations are transactional and reject newer unsupported schema versions.
+
+A lost connection fences all storage operations, including id minting, with StorageDisconnected carrying the schema and original cause. The storage does not reconnect: close it, then reopen the storage and the Harness.
 
 The [round-trip report](src/postgres/bench/report.md) counts actual driver calls on local PostgreSQL 18; these are not throughput guarantees:
 
@@ -167,7 +171,9 @@ The [round-trip report](src/postgres/bench/report.md) counts actual driver calls
 | Read a 100-entry page                                |            2 |
 | Read a document, including a 1,024-delta replay tail |            1 |
 
-All 23 upstream Pi Storage conformance cases pass through this adapter. Its 48 database tests use only disposable schemas through VIVID_TEST_DATABASE_URL and skip when that variable is absent.
+Large-entry measurements are in the report: a 64 MB entry round-tripped under a 1 GB JavaScript heap cap, with about 526 MB peak RSS and a longest synchronous callback of 154 ms. This is a measured case, not a general entry-size guarantee; concurrent large commits and V8's maximum joined-string size were not tested.
+
+All 23 upstream Pi Storage conformance cases pass through this adapter. Its 52 database tests use only disposable schemas through VIVID_TEST_DATABASE_URL and skip when that variable is absent.
 
 ## Runnable example
 
@@ -177,7 +183,7 @@ From this package:
 pnpm example
 ```
 
-[serve.ts](src/examples/serve.ts) runs a faux model and SQLite with chat, reconnect, history, waiting, decide, answer and abort routes. POST /chat uses the SDK envelope; GET /chat/:id/stream reconnects. History accepts limit and before query parameters. Send pay for approval, ask for a person-supplied output, or slow/slow steps for interrupted-stream recovery. HOST defaults to loopback and PORT to 8787. DURABLE_DATA selects a retained directory; otherwise startup creates a temporary one. Startup resumes persisted work and shutdown handles SIGINT/SIGTERM. This example is unauthenticated with permissive CORS; it is for isolated development, not exposure to untrusted networks.
+[serve.ts](src/examples/serve.ts) runs a faux model and SQLite with chat, reconnect, history, waiting, decide, answer and abort routes. POST /chat uses the SDK envelope; GET /chat/:id/stream reconnects. History accepts limit and before query parameters. Send text containing approve for approval, text containing ask for a person-supplied output, or slow/slow steps for interrupted-stream recovery. Sending pay echoes it; it does not request approval. For same-instance reconnect, wrap the SDK transport with resumable from @vivid/durable/client, as shown above. HOST defaults to loopback and PORT to 8787. DURABLE_DATA selects a retained directory; otherwise startup creates a temporary one. Startup resumes persisted work and shutdown handles SIGINT/SIGTERM. This example is unauthenticated with permissive CORS; it is for isolated development, not exposure to untrusted networks.
 
 ## Remaining limits and verification
 

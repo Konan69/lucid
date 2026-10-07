@@ -161,6 +161,11 @@
   },
   {
     "file": "packages/agent/durable/src/examples/serve.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["registry"]
+  },
+  {
+    "file": "packages/agent/durable/src/examples/serve.ts",
     "classification": "http-framework-entrypoint",
     "symbols": ["readBody", "requestRoute", "response", "writeResponse"]
   },
@@ -178,6 +183,11 @@
     "file": "packages/agent/durable/src/conformance/fixtures/upstream.ts",
     "classification": "test-fixture-entrypoint",
     "symbols": ["interrupt"]
+  },
+  {
+    "file": "packages/agent/durable/src/postgres/bench/entry/main.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["main", "<module>"]
   },
   {
     "file": "packages/agent/durable/src/postgres/bench/main.ts",
