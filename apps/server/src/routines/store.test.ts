@@ -83,6 +83,12 @@ import {
   WatchCursor,
 } from './watch.ts'
 
+/** Native request and response fixture failures retain the original rejection. */
+class WebhookFixtureFailure extends Schema.TaggedError<WebhookFixtureFailure>()(
+  'WebhookFixtureFailure',
+  { message: Schema.String, cause: Schema.Unknown },
+) {}
+
 /** The delivery authority records calls while storing real Runs, so history joins remain real. */
 class Deliveries extends Context.Service<Deliveries, Ref.Ref<ReadonlyArray<Delivery>>>()(
   'test/RoutineDeliveries',
@@ -393,7 +399,7 @@ const sendWebhook = Effect.fn('Test.Routines.sendWebhook')(function* (
           body: input.body,
         }),
       ),
-    catch: (cause) => new Error('Webhook HTTP adapter failed', { cause }),
+    catch: (cause) => new WebhookFixtureFailure({ message: 'Webhook HTTP adapter failed', cause }),
   })
 })
 
@@ -416,7 +422,8 @@ const decodeReceipt = Schema.decodeUnknownEffect(
 const receipt = Effect.fn('Test.Routines.receipt')(function* (response: Response) {
   const text = yield* Effect.tryPromise({
     try: () => response.text(),
-    catch: (cause) => new Error('Webhook response could not be read', { cause }),
+    catch: (cause) =>
+      new WebhookFixtureFailure({ message: 'Webhook response could not be read', cause }),
   })
   return yield* decodeReceipt(text)
 })
@@ -471,6 +478,7 @@ const integrationFixture = Effect.fn('Test.Routines.integrationFixture')(functio
 })
 
 /** Integration tests are gated only by the isolated test database setting. */
+/** Restart assertions build fresh store/scheduler contexts inside each scoped case. */
 describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
   layer(testLayer)((it) => {
     it.effect(
@@ -558,7 +566,9 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         expect((yield* (yield* ThreadStore).list(owner)).map((thread) => thread.id)).toContain(
           occurrence.threadId,
         )
-        yield* scheduler.runDue().pipe(Effect.provide(Layer.fresh(routineSchedulerServiceLayer)))
+        yield* scheduler
+          .runDue()
+          .pipe(Effect.provide(yield* Layer.build(Layer.fresh(routineSchedulerServiceLayer))))
         yield* TestClock.adjust('1 day')
         yield* scheduler.runDue()
         expect(
@@ -616,7 +626,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             trigger: RoutineTrigger.cases.Once.make({ at: now + 1000, timezone: 'UTC' }),
           })
           yield* TestClock.adjust('1 second')
-          yield* store.claimDue()
+          yield* store.claimDue
           yield* store.patch(owner, routine.id, { enabled: false })
           yield* (yield* RoutineScheduler).runDue()
           const result = yield* returned(
@@ -665,11 +675,11 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           trigger: RoutineTrigger.cases.Once.make({ at: now + 1000, timezone: 'UTC' }),
         })
         yield* TestClock.adjust('1 second')
-        const claimed = yield* store.claimDue()
+        const claimed = yield* store.claimDue
         expect(claimed.filter(({ record }) => record.routine.id === routine.id)).toHaveLength(1)
         yield* (yield* RoutineScheduler)
           .runDue()
-          .pipe(Effect.provide(Layer.fresh(routineSchedulerServiceLayer)))
+          .pipe(Effect.provide(yield* Layer.build(Layer.fresh(routineSchedulerServiceLayer))))
         yield* (yield* RoutineScheduler).runDue()
         const result = yield* returned(
           (yield* store.list(owner)).filter((item) => item.id === routine.id),
@@ -922,7 +932,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           trigger: schedule,
         })
         yield* TestClock.setTime(60_000)
-        const claimed = yield* store.claimDue()
+        const claimed = yield* store.claimDue
         const tick = yield* returned(
           claimed.filter(({ record }) => record.routine.id === routine.id),
           'claimed tick',
@@ -989,7 +999,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           trigger: schedule,
         })
         yield* TestClock.setTime(60_000)
-        const due = yield* returned(yield* store.claimDue(), 'Scheduled tick')
+        const due = yield* returned(yield* store.claimDue, 'Scheduled tick')
         yield* store.patch(owner, routine.id, { enabled: false })
         yield* scheduler.runDue()
         expect((yield* store.list(owner))[0]).toMatchObject({
@@ -1005,7 +1015,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
         yield* store.patch(owner, routine.id, { enabled: true })
         yield* scheduler.runDue()
         expect(yield* Ref.get(yield* Deliveries)).toEqual([])
-        expect(yield* store.claimDue()).toEqual([])
+        expect(yield* store.claimDue).toEqual([])
       }),
     )
 
@@ -1022,7 +1032,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             trigger: schedule,
           })
           yield* TestClock.setTime(60_000)
-          if (pending) yield* store.claimDue()
+          if (pending) yield* store.claimDue
           yield* database.run(
             database.delete(membershipTable).where(eq(membershipTable.userId, owner.person.id)),
           )
@@ -1086,7 +1096,7 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             trigger: schedule,
           })
           yield* TestClock.setTime(60_000)
-          const due = yield* returned(yield* store.claimDue(), 'Scheduled tick')
+          const due = yield* returned(yield* store.claimDue, 'Scheduled tick')
           // Keep this receipt while moving the next tick beyond the replay window.
           yield* store.patch(owner, routine.id, {
             trigger: RoutineTrigger.cases.Schedule.make({ cron: '0 * * * *', timezone: 'UTC' }),
@@ -1767,9 +1777,14 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             yield* Effect.gen(function* () {
               yield* (yield* RoutineScheduler).runDue()
             }).pipe(
-              Effect.provide(routineSchedulerServiceLayer),
-              Effect.provide(routineStoreServiceLayer),
-              Effect.provide(testConfigLayer),
+              Effect.provide(
+                yield* Layer.build(
+                  routineSchedulerServiceLayer.pipe(
+                    Layer.provide(routineStoreServiceLayer),
+                    Layer.provide(testConfigLayer),
+                  ),
+                ),
+              ),
             )
             const current = yield* store.get(owner, routine.id)
             expect(current.routine.enabled).toBe(true)
@@ -1786,9 +1801,14 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
           yield* Effect.gen(function* () {
             yield* (yield* RoutineScheduler).runDue()
           }).pipe(
-            Effect.provide(routineSchedulerServiceLayer),
-            Effect.provide(routineStoreServiceLayer),
-            Effect.provide(testConfigLayer),
+            Effect.provide(
+              yield* Layer.build(
+                routineSchedulerServiceLayer.pipe(
+                  Layer.provide(routineStoreServiceLayer),
+                  Layer.provide(testConfigLayer),
+                ),
+              ),
+            ),
           )
           expect((yield* returned(yield* store.list(owner), 'Routine')).runs).toHaveLength(1)
           yield* Ref.set(yield* WatchTransient, true)
@@ -1897,9 +1917,14 @@ describe.skipIf(!testDatabaseConfigured)('personal Routines', () => {
             yield* scheduler.runDue()
             yield* scheduler.runDue()
           }).pipe(
-            Effect.provide(routineSchedulerServiceLayer),
-            Effect.provide(routineStoreServiceLayer),
-            Effect.provide(testConfigLayer),
+            Effect.provide(
+              yield* Layer.build(
+                routineSchedulerServiceLayer.pipe(
+                  Layer.provide(routineStoreServiceLayer),
+                  Layer.provide(testConfigLayer),
+                ),
+              ),
+            ),
           )
           yield* restarted
           const visible = yield* returned(yield* store.list(owner), 'Routine')

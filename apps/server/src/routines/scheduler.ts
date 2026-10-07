@@ -393,7 +393,7 @@ export const routineSchedulerServiceLayer = Layer.effect(
 
     /** Every claimed tick already has a receipt; failed admissions remain replayable on later passes. */
     const runDue = Effect.fn('RoutineScheduler.runDue')(function* () {
-      const due = yield* routines.claimDue()
+      const due = yield* routines.claimDue
       yield* Effect.forEach(due, ({ record }) => publish(changes)(record), { discard: true })
       const outcomes = yield* Effect.forEach(due, ({ record, attempt }) =>
         Effect.exit(submitScheduled(routines, submit, record, attempt)),

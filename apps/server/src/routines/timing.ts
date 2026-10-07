@@ -23,7 +23,7 @@ export const requireFuture = Effect.fn('RoutineSchedule.requireFuture')(function
   now: number,
 ) {
   if (RoutineTrigger.guards.Once(trigger) && trigger.at <= now)
-    yield* new RoutineTimePassed({ at: trigger.at })
+    return yield* new RoutineTimePassed({ at: trigger.at })
 })
 
 /** Reject nonexistent or ambiguous local times rather than silently moving a reminder at DST. */

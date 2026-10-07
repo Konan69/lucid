@@ -143,7 +143,7 @@ export interface RoutineStoreService extends ReturnType<typeof integrationOperat
     id: RoutineId,
     key: Redacted.Redacted,
   ) => Effect.Effect<RoutineRecord, StoreError>
-  readonly claimDue: () => Effect.Effect<
+  readonly claimDue: Effect.Effect<
     ReadonlyArray<ScheduledReceipt>,
     DatabaseInfrastructureError | InvalidRoutineSchedule
   >
@@ -195,7 +195,7 @@ const requireStandingPerson = Effect.fn('RoutineStore.requireStandingPerson')(fu
   prompt: string,
 ) {
   if (prompt === standingRoutine.prompt && actor.by !== 'person')
-    yield* new Forbidden({ message: 'Only the Person may manage this standing Routine.' })
+    return yield* new Forbidden({ message: 'Only the Person may manage this standing Routine.' })
 })
 
 /** The owner-scoped Routine load is also the authorization check before running or issuing keys. */
@@ -667,72 +667,74 @@ const replayScheduled = Effect.fn('RoutineStore.replayScheduled')(function* (
 /** Claims each tick with its receipt atomically. Replay stops on withdrawal, lost authority or
  * the 15-minute admission limit; Conversation still owns keyed admission across process crashes.
  */
-const makeClaimDue = (database: DatabaseService, changes: Changes['Service']) =>
-  Effect.fn('RoutineStore.claimDue')(function* () {
-    const now = yield* Clock.currentTimeMillis
-    const claimed = yield* database.transaction((tx) =>
-      Effect.gen(function* () {
-        const { receipts, topics } = yield* replayScheduled(tx, now)
-        const rows = yield* tx
-          .select()
-          .from(routines)
-          .where(
-            and(
-              inArray(routines.trigger, ['schedule', 'once']),
-              eq(routines.enabled, true),
-              isNotNull(routines.nextExpectedAt),
-              lte(routines.nextExpectedAt, now),
-            ),
+const makeClaimDue = Effect.fn('RoutineStore.claimDue')(function* (
+  database: DatabaseService,
+  changes: Changes['Service'],
+) {
+  const now = yield* Clock.currentTimeMillis
+  const claimed = yield* database.transaction((tx) =>
+    Effect.gen(function* () {
+      const { receipts, topics } = yield* replayScheduled(tx, now)
+      const rows = yield* tx
+        .select()
+        .from(routines)
+        .where(
+          and(
+            inArray(routines.trigger, ['schedule', 'once']),
+            eq(routines.enabled, true),
+            isNotNull(routines.nextExpectedAt),
+            lte(routines.nextExpectedAt, now),
+          ),
+        )
+        .orderBy(asc(routines.nextExpectedAt))
+        .for('update', { skipLocked: true })
+      for (const row of rows) {
+        const record = yield* decodeRoutine(row)
+        if (row.nextExpectedAt === null)
+          return yield* new DatabaseFailure({ message: 'Due Routine has no tick timestamp' })
+        const attempt = scheduledAttempt(record.routine.id, row.nextExpectedAt)
+        const enabled = !RoutineTrigger.guards.Once(record.routine.trigger)
+        const next = yield* nextExpectedAt(record.routine.trigger, enabled, now)
+        const inserted = yield* tx
+          .insert(occurrences)
+          .values({
+            id: attempt.id,
+            routineId: record.routine.id,
+            conversationId: `routine-${record.routine.id}`,
+            submissionId: null,
+            status: 'not-admitted',
+            startedAt: now,
+            finishedAt: null,
+            output: null,
+            error: null,
+          })
+          .onConflictDoNothing({ target: occurrences.id })
+          .returning()
+        yield* tx
+          .update(routines)
+          .set({ enabled, nextExpectedAt: next, updatedAt: now })
+          .where(eq(routines.id, record.routine.id))
+        if (!(yield* memberPresent(tx, record))) {
+          const occurrence = yield* returned(inserted, 'Scheduled receipt')
+          topics.push(
+            ...(yield* retireScheduled(
+              tx,
+              occurrence,
+              ScheduledFailure.cases.Membership.make({}),
+              now,
+            )),
           )
-          .orderBy(asc(routines.nextExpectedAt))
-          .for('update', { skipLocked: true })
-        for (const row of rows) {
-          const record = yield* decodeRoutine(row)
-          if (row.nextExpectedAt === null)
-            return yield* new DatabaseFailure({ message: 'Due Routine has no tick timestamp' })
-          const attempt = scheduledAttempt(record.routine.id, row.nextExpectedAt)
-          const enabled = !RoutineTrigger.guards.Once(record.routine.trigger)
-          const next = yield* nextExpectedAt(record.routine.trigger, enabled, now)
-          const inserted = yield* tx
-            .insert(occurrences)
-            .values({
-              id: attempt.id,
-              routineId: record.routine.id,
-              conversationId: `routine-${record.routine.id}`,
-              submissionId: null,
-              status: 'not-admitted',
-              startedAt: now,
-              finishedAt: null,
-              output: null,
-              error: null,
-            })
-            .onConflictDoNothing({ target: occurrences.id })
-            .returning()
-          yield* tx
-            .update(routines)
-            .set({ enabled, nextExpectedAt: next, updatedAt: now })
-            .where(eq(routines.id, record.routine.id))
-          if (!(yield* memberPresent(tx, record))) {
-            const occurrence = yield* returned(inserted, 'Scheduled receipt')
-            topics.push(
-              ...(yield* retireScheduled(
-                tx,
-                occurrence,
-                ScheduledFailure.cases.Membership.make({}),
-                now,
-              )),
-            )
-            continue
-          }
-          receipts.push({ record, attempt })
+          continue
         }
-        return { receipts, topics }
-      }),
-    )
-    // Live readers wake only once the disabled state and its audit line have both committed.
-    if (claimed.topics.length > 0) yield* changes.publish([...new Set(claimed.topics)])
-    return claimed.receipts
-  })
+        receipts.push({ record, attempt })
+      }
+      return { receipts, topics }
+    }),
+  )
+  // Live readers wake only once the disabled state and its audit line have both committed.
+  if (claimed.topics.length > 0) yield* changes.publish([...new Set(claimed.topics)])
+  return claimed.receipts
+})
 
 /** An authorized Routine receipt remains readable even when its Thread and Run have been deleted. */
 const makeFindOccurrence = (database: DatabaseService) =>
