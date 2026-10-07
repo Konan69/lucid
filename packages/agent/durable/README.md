@@ -169,7 +169,7 @@ From this package:
 pnpm example
 ```
 
-[serve.ts](src/examples/serve.ts) runs a faux model and SQLite with chat, reconnect, history, waiting, decide, answer and abort routes. POST /chat uses the SDK envelope; GET /chat/:id/stream reconnects. History accepts limit and before query parameters. Send pay for approval, ask for a person-supplied output, or slow/slow steps for interrupted-stream recovery. HOST defaults to loopback and PORT to 8787. DURABLE_DATA selects a retained directory; otherwise startup creates a temporary one. Startup resumes persisted work and shutdown handles SIGINT/SIGTERM. This example is unauthenticated with permissive CORS; it is for isolated development, not exposure to untrusted networks.
+[serve.ts](src/examples/serve.ts) runs a faux model and SQLite with chat, reconnect, history, waiting, decide, answer and abort routes. POST /chat uses the SDK envelope; GET /chat/:id/stream reconnects. History accepts limit and before query parameters. Send text containing approve for approval, text containing ask for a person-supplied output, or slow/slow steps for interrupted-stream recovery. Sending pay echoes it; it does not request approval. For same-instance reconnect, wrap the SDK transport with resumable from @vivid/durable/client, as shown above. HOST defaults to loopback and PORT to 8787. DURABLE_DATA selects a retained directory; otherwise startup creates a temporary one. Startup resumes persisted work and shutdown handles SIGINT/SIGTERM. This example is unauthenticated with permissive CORS; it is for isolated development, not exposure to untrusted networks.
 
 ## Remaining limits and verification
 

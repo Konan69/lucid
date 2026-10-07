@@ -118,6 +118,15 @@ async function echo(chat: Chat<UIMessage>) {
   expect(text(chat)).toBe('Echo: hello')
 }
 
+/** Review11c RD1: the pay tool is triggered by "approve", while "pay" itself
+ * follows the echo branch. Keep the README's command claims tested over TCP. */
+async function pay(chat: Chat<UIMessage>) {
+  await chat.sendMessage({ text: 'pay' })
+  expect(chat.status).toBe('ready')
+  expect(text(chat)).toBe('Echo: pay')
+  expect(toolParts(chat)).toEqual([])
+}
+
 /** A fetch abort detaches observation; hydrate history before the SDK's actual GET reconnect. */
 async function slow(chat: Chat<UIMessage>, address: string) {
   const shown = observed(chat, () => chat.status === 'streaming' && text(chat).length > 0)
@@ -185,7 +194,7 @@ async function ask(chat: Chat<UIMessage>) {
   ])
 }
 
-const cases = { echo, slow, approve, deny, ask }
+const cases = { echo, slow, approve, deny, ask, pay }
 
 /** Omit Content-Length to prove the host also enforces its limit while reading chunked bytes. */
 function oversizedChunks(address: string) {
@@ -263,7 +272,7 @@ async function abortRoute(address: string) {
 }
 
 // The bound host, global fetch, SDK Chat, SQLite restart and history are all real public seams.
-it.live.each(['echo', 'slow', 'approve', 'deny', 'ask'] as const)(
+it.live.each(['echo', 'slow', 'approve', 'deny', 'ask', 'pay'] as const)(
   'serves %s over TCP and preserves its SDK history after restart',
   (kind) =>
     Effect.scoped(
