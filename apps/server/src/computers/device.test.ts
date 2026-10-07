@@ -351,9 +351,22 @@ const failureOf = <E extends { readonly _tag: string }>(exit: Exit.Exit<void, E>
     onSome: (failure) => failure._tag,
   })
 
+/** Acquire each Device registry and notice queue in its case scope so links and presence workers cannot survive into another case. Install a fresh clock first, except for production sign-out, which needs real time. */
+function scopedCase<Services, LayerError, Dependencies, A, E, R>(
+  caseLayer: Layer.Layer<Services, LayerError, Dependencies>,
+  program: Effect.Effect<A, E, R>,
+  clock: 'fresh' | 'inherited',
+) {
+  const acquired = Layer.build(caseLayer).pipe(
+    Effect.flatMap((context) => program.pipe(Effect.provide(context))),
+    Effect.scoped,
+  )
+  if (clock === 'inherited') return acquired
+  return acquired.pipe(Effect.provideServiceEffect(Clock.Clock, TestClock.make()))
+}
+
 /** Real PostgreSQL holds the Devices, Runs and ledger; the desktop app is the handlers' caller. */
 describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
-  // Evidence, workers and TestClock stay per case; only database authority is shared.
   layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
     it.effect(
       'desktop connect and disconnect announce only the Person in a Company workspace',
@@ -376,13 +389,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           yield* Fiber.interrupt(connected)
           yield* payload(notices, [Topic.person(ada.person.id)])
           expect(yield* listed(ada)).toEqual([['Laptop', 'Allowed', 'Offline']])
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('refused desktop admission announces nothing on any topic', () =>
@@ -401,13 +408,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         expect(failure._tag).toBe('Forbidden')
         yield* silent(notices)
         expect(yield* listed(ada)).toEqual([['Laptop', 'Pending', 'Offline']])
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('replacement keeps the Device Connected until the successor disconnects', () =>
@@ -432,13 +433,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         expect((yield* nextValue(watch)).devices[0]).toMatchObject({
           presence: DevicePresence.cases.Offline.make({}),
         })
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('WatchDevices emits enrol, allow and revoke using the one-shot loader', () =>
@@ -454,13 +449,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         const live = yield* nextValue(watch)
         expect(live.devices).toEqual([revoked.device])
         expect(yield* computerHandlers.ListDevices().pipe(as(ada))).toEqual(live)
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('WatchDevices emits desktop connection and scoped disconnection', () =>
@@ -480,13 +469,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         expect((yield* nextValue(watch)).devices[0]).toMatchObject({
           presence: DevicePresence.cases.Offline.make({}),
         })
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('WatchDevices only lists the signed-in Person computers', () =>
@@ -498,13 +481,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         expect(watch.initial.devices).toEqual([])
         const { device } = yield* enrolled(tola, 'Tola’s laptop')
         expect((yield* nextValue(watch)).devices).toEqual([device])
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     /** Only the accepted ledger answer decides Refused; repeats and outward Browse values do not. */
@@ -548,11 +525,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         expect(recorded[0]).toContain('vivid.refusal.kind=DeviceRefused')
         expect(recorded[0]).toContain('vivid.refusal.reason=NotAllowed')
       }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer.pipe(Layer.provideMerge(logs.layer))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
+        scopedCase(testLayer.pipe(Layer.provideMerge(logs.layer)), program, 'fresh'),
       )
     })
 
@@ -586,13 +559,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             Effect.flip,
           )
         expect(vivid._tag).toBe('Forbidden')
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('only the enrolled installation of an allowed Device may listen', () =>
@@ -626,13 +593,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           .AllowDevice({ id: device.id })
           .pipe(as(tola), Effect.flip)
         expect(allowing._tag).toBe('NotFound')
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('allowing one computer revokes the other and ends its link', () =>
@@ -651,13 +612,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             ['Tower', 'Allowed', 'Offline'],
           ]),
         )
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('revoking ends presence at once and the computer cannot listen again', () =>
@@ -684,13 +639,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         expect((yield* registry.requireConnected(ada.person.id).pipe(Effect.flip))._tag).toBe(
           'NoDeviceConnected',
         )
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -744,13 +693,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           const kept = JSON.stringify(row)
           expect(kept).not.toContain(typed)
           expect(kept).not.toContain(result.outline)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('a Run acting for another Person in a shared Thread cannot use this computer', () =>
@@ -844,13 +787,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             database.select().from(deviceRequests).where(eq(deviceRequests.deviceId, device.id)),
           ),
         ).toEqual([])
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('one Person’s unanswered request does not hold up another Person’s computer', () =>
@@ -895,13 +832,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         expect(yield* Fiber.join(slow.running)).toEqual(
           BrowseOutcome.cases.Completed.make({ result }),
         )
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('a passed deadline is recorded as unknown and a late answer changes nothing', () =>
@@ -936,13 +867,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
             .where(eq(deviceRequests.id, request.id)),
         )
         expect(row).toEqual({ status: 'OutcomeUnknown' })
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('a restarted server closes the expired requests a previous one left open', () =>
@@ -989,19 +914,8 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
               [live, 'Dispatched'],
             ]),
           )
-        }).pipe((program) =>
-          Layer.build(Layer.fresh(deviceLayer)).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        )
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+        }).pipe((program) => scopedCase(Layer.fresh(deviceLayer), program, 'inherited'))
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('a session that runs out ends presence without any write', () =>
@@ -1018,102 +932,84 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         expect((yield* registry.list(ada.person.id)).map((each) => each.presence._tag)).toEqual([
           'Offline',
         ])
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     /** Real time: production auth signs out and commits the notice that ends device presence. */
-    layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
-      it.effect('signing out ends presence', () =>
-        Effect.gen(function* () {
-          const database = yield* Database
-          const email = `${NodeCrypto.randomUUID()}@example.test`
-          yield* Effect.addFinalizer(() =>
-            database.run(database.delete(personTable).where(eq(personTable.email, email))).pipe(
-              Effect.asVoid,
-              Effect.catch(() => Effect.sync(() => expect.fail('Device fixture cleanup failed'))),
-            ),
-          )
-          const auth = yield* authEffect
-          const call = (path: string, init: RequestInit) =>
-            auth.fetch.pipe(
-              Effect.provideService(
-                HttpServerRequest.HttpServerRequest,
-                HttpServerRequest.fromWeb(
-                  new Request(`http://127.0.0.1:8787/api/auth/${path}`, init),
-                ),
-              ),
-              (program) =>
-                Layer.build(localAuthRuntimeLayer).pipe(
-                  Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-                  Effect.scoped,
-                ),
-            )
-          const json = { 'content-type': 'application/json', origin: 'http://127.0.0.1:8787' }
-          const signedUp = yield* call('sign-up/email', {
-            method: 'POST',
-            headers: json,
-            body: JSON.stringify({
-              email,
-              name: 'Device test',
-              password: 'test-Device-0123456789',
-            }),
-          })
-          expect(signedUp.status).toBe(200)
-          const cookie = Object.values(signedUp.cookies.cookies)
-            .map((entry) => `${entry.name}=${entry.valueEncoded}`)
-            .join('; ')
-          const [row] = yield* database.run(
-            database
-              .select({ person: personTable, sessionId: sessionTable.id })
-              .from(sessionTable)
-              .innerJoin(personTable, eq(personTable.id, sessionTable.userId))
-              .where(eq(personTable.email, email)),
-          )
-          if (row === undefined) return expect.fail('Sign-up must persist a Person and a session')
-          const ada = {
-            person: yield* decodeStored(Person, 'device test Person')(row.person),
-            sessionId: SessionId.make(row.sessionId),
-          }
-          const { device, installation } = yield* enrolled(ada, 'Laptop')
-          yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
-          const link = yield* listen(ada, device, installation)
-          const signedOut = yield* call('sign-out', {
-            method: 'POST',
-            headers: { ...json, cookie },
-            body: '{}',
-          })
-          expect(signedOut.status).toBe(200)
-          const ended = yield* Fiber.await(link.ended)
-          expect(failureOf(ended)).toBe('Unauthenticated')
-          // The Device and its access are the Person's decision and outlive the session.
-          const [kept] = yield* database.run(
-            database
-              .select({ access: devices.access })
-              .from(devices)
-              .where(eq(devices.id, device.id)),
-          )
-          expect(kept).toEqual({ access: 'Allowed' })
-          return undefined
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
+    it.effect('signing out ends presence', () =>
+      Effect.gen(function* () {
+        const database = yield* Database
+        const email = `${NodeCrypto.randomUUID()}@example.test`
+        yield* Effect.addFinalizer(() =>
+          database.run(database.delete(personTable).where(eq(personTable.email, email))).pipe(
+            Effect.asVoid,
+            Effect.catch(() => Effect.sync(() => expect.fail('Device fixture cleanup failed'))),
           ),
-        ),
-      )
-    })
+        )
+        const auth = yield* authEffect
+        const call = (path: string, init: RequestInit) =>
+          auth.fetch.pipe(
+            Effect.provideService(
+              HttpServerRequest.HttpServerRequest,
+              HttpServerRequest.fromWeb(
+                new Request(`http://127.0.0.1:8787/api/auth/${path}`, init),
+              ),
+            ),
+            (program) => scopedCase(localAuthRuntimeLayer, program, 'inherited'),
+          )
+        const json = { 'content-type': 'application/json', origin: 'http://127.0.0.1:8787' }
+        const signedUp = yield* call('sign-up/email', {
+          method: 'POST',
+          headers: json,
+          body: JSON.stringify({
+            email,
+            name: 'Device test',
+            password: 'test-Device-0123456789',
+          }),
+        })
+        expect(signedUp.status).toBe(200)
+        const cookie = Object.values(signedUp.cookies.cookies)
+          .map((entry) => `${entry.name}=${entry.valueEncoded}`)
+          .join('; ')
+        const [row] = yield* database.run(
+          database
+            .select({ person: personTable, sessionId: sessionTable.id })
+            .from(sessionTable)
+            .innerJoin(personTable, eq(personTable.id, sessionTable.userId))
+            .where(eq(personTable.email, email)),
+        )
+        if (row === undefined) return expect.fail('Sign-up must persist a Person and a session')
+        const ada = {
+          person: yield* decodeStored(Person, 'device test Person')(row.person),
+          sessionId: SessionId.make(row.sessionId),
+        }
+        const { device, installation } = yield* enrolled(ada, 'Laptop')
+        yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
+        const link = yield* listen(ada, device, installation)
+        const signedOut = yield* call('sign-out', {
+          method: 'POST',
+          headers: { ...json, cookie },
+          body: '{}',
+        })
+        expect(signedOut.status).toBe(200)
+        const ended = yield* Fiber.await(link.ended)
+        expect(failureOf(ended)).toBe('Unauthenticated')
+        // The Device and its access are the Person's decision and outlive the session.
+        const [kept] = yield* database.run(
+          database
+            .select({ access: devices.access })
+            .from(devices)
+            .where(eq(devices.id, device.id)),
+        )
+        expect(kept).toEqual({ access: 'Allowed' })
+        return undefined
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'inherited')),
+    )
   })
 })
 
 /** Windows work crosses the same authenticated handlers and real ledger as page work. */
 describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', () => {
-  // Evidence, workers and TestClock stay per case; only database authority is shared.
   layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
     it.effect('requires one Working Run before connectivity and admits only runtime callers', () =>
       Effect.gen(function* () {
@@ -1134,13 +1030,7 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
           WindowOutcome.cases.RunRequired.make({}),
         )
         expect(yield* Queue.size(test.link.requests)).toBe(0)
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('offline, Pending and Revoked Devices are NotConnected; capability is live', () =>
@@ -1162,13 +1052,7 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
         expect(yield* Queue.size(link.requests)).toBe(0)
         yield* computerHandlers.RevokeDevice({ id: device.id }).pipe(as(who))
         expect(yield* call).toEqual(WindowOutcome.cases.NotConnected.make({}))
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('another Person never reaches this Device or borrows its Run', () =>
@@ -1183,13 +1067,7 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
           WindowOutcome.cases.NotConnected.make({}),
         )
         expect(yield* Queue.size(test.link.requests)).toBe(0)
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1242,13 +1120,7 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
           const kept = JSON.stringify(rows)
           for (const content of [typed, seen.view.picture, seen.view.outline, seen.view.app])
             expect(kept).not.toContain(content)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     for (const reason of [
@@ -1271,13 +1143,7 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
             })
             .pipe(as(test.who))
           expect(yield* Fiber.join(running)).toEqual(WindowOutcome.cases.Refused.make({ reason }))
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
       )
     }
 
@@ -1309,13 +1175,7 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
         expect(yield* useWindow(test.who, test.threadId, look)).toEqual(
           WindowOutcome.cases.RunRequired.make({}),
         )
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1354,13 +1214,7 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
             WindowOutcome.cases.RunRequired.make({}),
           )
           expect(yield* Queue.size(test.link.runEnds)).toBe(0)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     for (const ending of ['timeout', 'disconnect', 'failed', 'wrong vocabulary'] as const) {
@@ -1390,13 +1244,7 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
               .where(eq(deviceRequests.id, request.id)),
           )
           expect(row).toMatchObject({ status: ending === 'failed' ? 'Failed' : 'OutcomeUnknown' })
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
       )
     }
 
@@ -1425,13 +1273,7 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
         expect(yield* Fiber.join(running)).toEqual(BrowseOutcome.cases.OutcomeUnknown.make({}))
         yield* registry.ended(test.runId)
         expect(yield* Queue.size(test.link.runEnds)).toBe(0)
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
   })
 })

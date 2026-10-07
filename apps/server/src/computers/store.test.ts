@@ -95,6 +95,8 @@ interface EvidenceService {
     readonly output: string
     readonly truncated: boolean
   }>
+  /** A case may observe durable state at publication, after lifecycle timer rearming. */
+  readonly onPublish: Ref.Ref<Effect.Effect<void>>
   readonly states: Ref.Ref<ReadonlyMap<MachineKey, ComputerState>>
   readonly started: Queue.Queue<MachineKey>
   readonly stopped: Queue.Queue<MachineKey>
@@ -127,6 +129,7 @@ const evidenceLayer = Layer.effect(
       stopped: yield* Queue.unbounded<MachineKey>(),
       stopAttempts: yield* Queue.unbounded<MachineKey>(),
       ensures: yield* Ref.make<ReadonlyArray<MachineKey>>([]),
+      onPublish: yield* Ref.make(Effect.void),
       states: yield* Ref.make<ReadonlyMap<MachineKey, ComputerState>>(new Map()),
       calls: yield* Ref.make<ReadonlyArray<MachineKey>>([]),
       decisions: yield* Ref.make<GateDecision>(GateDecision.cases.Allowed.make({})),
@@ -272,10 +275,14 @@ const changesLayer = Layer.effect(
   Changes,
   Effect.gen(function* () {
     const hub = yield* PubSub.unbounded<ReadonlyArray<Topic>>()
+    const evidence = yield* ProviderEvidence
     return Changes.of({
-      publish: Effect.fn('Computer.test.publish')((topics) =>
-        PubSub.publish(hub, topics).pipe(Effect.asVoid),
-      ),
+      // Publication happens after timer rearming; a row snapshot alone cannot prove that ordering.
+      publish: Effect.fn('Computer.test.publish')(function* (topics) {
+        const observePublication = yield* Ref.get(evidence.onPublish)
+        yield* observePublication
+        yield* PubSub.publish(hub, topics)
+      }),
       subscribe: Effect.fn('Computer.test.subscribe')(function* (topics) {
         const subscription = yield* PubSub.subscribe(hub)
         return Stream.fromSubscription(subscription).pipe(
@@ -285,7 +292,7 @@ const changesLayer = Layer.effect(
       }),
     })
   }),
-)
+).pipe(Layer.provide(evidenceLayer))
 
 const gateLayer = Layer.effect(
   Gate,
@@ -527,8 +534,21 @@ const start = Effect.fn('Computer.test.start')(function* (person: Person) {
   expect(Option.isSome(ready)).toBe(true)
 })
 
+/** Keep provider evidence, change subscriptions and lifecycle workers within one case, with a fresh clock installed before their Layer is acquired. The suite shares only its PostgreSQL authority. */
+function scopedCase<Services, LayerError, Dependencies, A, E, R>(
+  caseLayer: Layer.Layer<Services, LayerError, Dependencies>,
+  program: Effect.Effect<A, E, R>,
+  clock: 'fresh' | 'inherited',
+) {
+  const acquired = Layer.build(caseLayer).pipe(
+    Effect.flatMap((context) => program.pipe(Effect.provide(context))),
+    Effect.scoped,
+  )
+  if (clock === 'inherited') return acquired
+  return acquired.pipe(Effect.provideServiceEffect(Clock.Clock, TestClock.make()))
+}
+
 describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
-  // Evidence, workers and TestClock stay per case; only database authority is shared.
   layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
     it.effect(
       'Person browsing reports access and connection failures without dispatch or cloud fallback',
@@ -562,12 +582,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           ).toEqual(BrowseOutcome.cases.NotConnected.make({}))
           expect(yield* Queue.size(browser.requests)).toBe(0)
           expect(yield* Ref.get((yield* ProviderEvidence).calls)).toEqual([])
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(personBrowserLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
     )
 
     for (const step of [
@@ -603,12 +618,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           expect(BrowseOutcome.guards.ApprovalRequired(outcome)).toBe(true)
           expect(yield* Queue.size(browser.requests)).toBe(0)
           expect(yield* (yield* ApprovalStore).inThread(browser.test.companyId)).toHaveLength(1)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(personBrowserLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
       )
     }
 
@@ -642,12 +652,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         })
         expect(denied.state._tag).toBe('Denied')
         expect(yield* Queue.size(browser.requests)).toBe(0)
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(personBrowserLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -699,12 +704,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           expect(JSON.stringify(ledger)).not.toContain(page.picture)
           expect(yield* Queue.size(browser.requests)).toBe(0)
           expect(yield* Ref.get((yield* ProviderEvidence).calls)).toEqual([])
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(personBrowserLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -764,12 +764,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             'Conflict',
           )
           expect(yield* Queue.size(browser.requests)).toBe(0)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(personBrowserLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
     )
 
     for (const [reason, expected] of [
@@ -801,12 +796,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           })
           expect(yield* Fiber.join(running)).toEqual(expected)
           expect(yield* Queue.size(browser.requests)).toBe(0)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(personBrowserLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
       )
     }
 
@@ -857,12 +847,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
               .where(eq(deviceRequests.runId, browser.runId)),
           ),
         ).toEqual([])
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(personBrowserLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
     )
 
     it.effect('a stopped proposing Run reports not sent without dispatch', () =>
@@ -885,12 +870,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           }),
         ).toEqual(BrowseOutcome.cases.RunRequired.make({}))
         expect(yield* Queue.size(browser.requests)).toBe(0)
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(personBrowserLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
     )
 
     it.effect('a link dropping mid-action returns OutcomeUnknown and never replays', () =>
@@ -921,12 +901,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         )
         if (receipt === undefined) expect.fail('Expected persisted receipt')
         expect(receipt.status).toBe('OutcomeUnknown')
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(personBrowserLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
     )
 
     // Raising an Approval ends the Run's turn, so the Run has always completed by the time the
@@ -960,12 +935,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         const settled = yield* Fiber.join(executing)
         expect(ApprovalState.guards.Succeeded(settled.state)).toBe(true)
         expect(yield* Queue.size(browser.requests)).toBe(0)
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(personBrowserLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
     )
 
     // Stopping a Run is the Person saying "no more from this": approving afterwards sends nothing.
@@ -988,12 +958,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         })
         expect(settled.state._tag).toBe('Failed')
         expect(yield* Queue.size(browser.requests)).toBe(0)
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(personBrowserLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
     )
 
     it.effect('direct cloud actions expose corrupt persistence instead of a provider outage', () =>
@@ -1026,12 +991,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           expect(result.failure._tag).toBe('DatabaseFailure')
         }
         expect(yield* Ref.get(evidence.calls)).toEqual([])
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(personBrowserLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1049,12 +1009,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             ),
           )
           expect(yield* Ref.get((yield* ProviderEvidence).calls)).toHaveLength(2)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1093,12 +1048,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           const [pending] = yield* store.inThread(browser.test.companyId)
           if (pending === undefined) expect.fail('Expected pending Approval')
           expect(pending.state._tag).toBe('Pending')
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(personBrowserLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(personBrowserLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1126,12 +1076,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
               yield* computerHandlers.GetComputerApps().pipe(asPerson(first)),
             ),
           ).toBe(true)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1140,11 +1085,27 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         Effect.gen(function* () {
           const { first } = yield* fixture()
           const evidence = yield* ProviderEvidence
-          // The Running publication follows timer rearming; a snapshot can see the row earlier.
-          const changes = yield* Changes
-          const moved = yield* changes.subscribe([Topic.person(first.id)])
+          const store = yield* ComputerStore
+          const publishedRunning = yield* Deferred.make<void>()
+          // The worker can persist Running before its idle timer is armed. Observe the state
+          // at publication, which commitState orders after arming, before advancing this clock.
+          yield* Ref.set(
+            evidence.onPublish,
+            store.get(first.id).pipe(
+              Effect.flatMap((computer) =>
+                ComputerState.guards.Running(computer.state)
+                  ? Deferred.succeed(publishedRunning, undefined).pipe(Effect.asVoid)
+                  : Effect.void,
+              ),
+              Effect.catch(() =>
+                Effect.sync(() =>
+                  expect.fail('Startup publication must expose a readable Computer'),
+                ),
+              ),
+            ),
+          )
           yield* start(first)
-          yield* moved.pipe(Stream.drop(1), Stream.runHead)
+          yield* Deferred.await(publishedRunning)
           yield* TestClock.adjust('19 minutes')
           yield* Ref.set(evidence.commandResult, {
             exitCode: 0,
@@ -1154,18 +1115,12 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           yield* computerHandlers.GetComputerApps().pipe(asPerson(first))
           yield* TestClock.adjust('1 minute')
           expect(yield* Queue.take(evidence.stopped)).toBe(computerMachineKey(first.id))
-          const store = yield* ComputerStore
           const stopped = yield* store
             .probe(first.id, { command: 'true', timeoutSeconds: 10 })
             .pipe(Effect.result)
           expect(Result.isFailure(stopped)).toBe(true)
           expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     for (const receipt of [
@@ -1184,12 +1139,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
               yield* computerHandlers.GetComputerApps().pipe(asPerson(first)),
             ),
           ).toBe(true)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
       )
     }
 
@@ -1221,12 +1171,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             computerMachineKey(first.id),
             computerMachineKey(first.id),
           ])
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('bounds wake readiness at 90 seconds and never retries a failed start', () =>
@@ -1254,12 +1199,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         )
         expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
         expect(yield* Ref.get(evidence.calls)).toEqual([])
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('keeps failed starts and keyboard takeover distinct without retrying either', () =>
@@ -1282,12 +1222,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         expect((yield* store.run(first.id, request).pipe(Effect.flip))._tag).toBe('ComputerHeld')
         expect(yield* Ref.get(evidence.calls)).toEqual([])
         expect(yield* Ref.get(evidence.ensures)).toHaveLength(2)
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('blocked actions leave an absent Computer asleep', () =>
@@ -1321,12 +1256,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         ).toBe('ApprovalRequired')
         expect((yield* (yield* ComputerStore).get(first.id)).state._tag).toBe('Absent')
         expect(yield* Ref.get(evidence.ensures)).toEqual([])
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1347,12 +1277,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           expect((yield* store.get(first.id)).state._tag).toBe('Stopped')
           yield* TestClock.adjust('20 minutes')
           expect(yield* Queue.size(evidence.stopped)).toBe(0)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1385,12 +1310,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           yield* TestClock.adjust('20 minutes')
           expect(yield* Queue.take(evidence.stopped)).toBe(computerMachineKey(first.id))
           expect((yield* store.get(first.id)).state._tag).toBe('Stopped')
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('restores an idle deadline from stored activity when the server layer restarts', () =>
@@ -1402,12 +1322,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             const store = yield* ComputerStore
             yield* store.run(first.id, request)
             return (yield* store.get(first.id)).id
-          }).pipe((program) =>
-            Layer.build(computerStoreLayer).pipe(
-              Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-              Effect.scoped,
-            ),
-          ),
+          }).pipe((program) => scopedCase(computerStoreLayer, program, 'inherited')),
         )
         yield* TestClock.adjust('19 minutes')
         yield* Effect.scoped(
@@ -1418,20 +1333,10 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             yield* TestClock.adjust('1 minute')
             expect(yield* Queue.take(evidence.stopped)).toBe(computerMachineKey(first.id))
             expect((yield* store.get(first.id)).state._tag).toBe('Stopped')
-          }).pipe((program) =>
-            Layer.build(computerStoreLayer).pipe(
-              Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-              Effect.scoped,
-            ),
-          ),
+          }).pipe((program) => scopedCase(computerStoreLayer, program, 'inherited')),
         )
         expect(yield* Ref.get(evidence.ensures)).toHaveLength(1)
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(dependencies.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(dependencies, program, 'fresh')),
     )
 
     it.effect(
@@ -1456,12 +1361,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           yield* TestClock.adjust('20 minutes')
           expect(yield* Queue.take(evidence.stopped)).toBe(computerMachineKey(first.id))
           expect((yield* store.get(first.id)).state._tag).toBe('Stopped')
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('the last of two watching subscriptions starts the idle deadline', () =>
@@ -1491,12 +1391,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         yield* TestClock.adjust('20 minutes')
         expect(yield* Queue.take(evidence.stopped)).toBe(computerMachineKey(first.id))
         expect((yield* store.get(first.id)).state._tag).toBe('Stopped')
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1533,12 +1428,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           yield* Deferred.succeed(gate, undefined)
           expect((yield* Fiber.join(action)).stdout).toBe('hello')
           expect(yield* Ref.get(evidence.ensures)).toEqual([key])
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1629,12 +1519,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             database.select().from(computers).where(eq(computers.personId, first.id)),
           )
           expect(persisted.map((row) => row.status)).toEqual(['stopped'])
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
       15000,
     )
 
@@ -1686,12 +1571,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
               reason: 'This action was not sent because its proposing work is no longer active.',
             }),
           )
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1759,12 +1639,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
               .HoldComputer({ held: false })
               .pipe(asVivid(first), Effect.flip))._tag,
           ).toBe('Forbidden')
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
       15000,
     )
 
@@ -1834,12 +1709,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             DesktopOutcome.cases.Unavailable.make({ reason: 'the Person is using the Computer' }),
           )
           expect((yield* Ref.get(evidence.calls)).length).toBe(count)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
       15000,
     )
 
@@ -1869,12 +1739,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           .UseDesktop({ action: DesktopAction.cases.Look.make({}), summary: 'Look' })
           .pipe(asVivid(first))
         expect(yield* Ref.get(evidence.viewerReads)).toBe(before)
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1909,12 +1774,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             'Unavailable',
           )
           expect(yield* Ref.get(evidence.calls)).toHaveLength(3)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1940,12 +1800,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             'Unavailable',
           )
           expect(yield* Ref.get(evidence.calls)).toHaveLength(1)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('a running state learned by a status read always arms its idle deadline', () =>
@@ -1971,12 +1826,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         yield* TestClock.adjust('20 minutes')
         expect(yield* Queue.take(evidence.stopped)).toBe(key)
         expect((yield* store.get(first.id)).state._tag).toBe('Stopped')
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -2014,12 +1864,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
             expect(failed.value.map((row) => row.reason)).toEqual([
               'The Computer provider could not finish the operation.',
             ])
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
       15000,
     )
     it.effect(
@@ -2060,12 +1905,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           yield* Ref.set(evidence.outage, false)
           expect((yield* store.get(first.id)).state._tag).toBe('Running')
           expect((yield* store.run(first.id, request)).exitCode).toBe(0)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
       15000,
     )
     it.effect('an idle stop that met an outage records nothing and is tried again', () =>
@@ -2091,12 +1931,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
         yield* TestClock.adjust('1 minute')
         expect(yield* Queue.take(evidence.stopped)).toBe(key)
         expect((yield* store.get(first.id)).state._tag).toBe('Stopped')
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
     it.effect(
       'a start that met an outage leaves the Computer stopped, so the next action wakes it',
@@ -2119,12 +1954,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           yield* Ref.set(evidence.outage, false)
           expect((yield* store.run(first.id, request)).exitCode).toBe(0)
           expect((yield* store.get(first.id)).state._tag).toBe('Running')
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
       15000,
     )
     it.effect(
@@ -2150,12 +1980,7 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
           expect(
             Option.match(physical, { onNone: () => false, onSome: ComputerState.guards.Running }),
           ).toBe(false)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer.pipe(Layer.provideMerge(TestClock.layer()))).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
       15000,
     )
   })

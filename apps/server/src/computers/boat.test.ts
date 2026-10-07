@@ -957,8 +957,21 @@ const fixture = Effect.fn('BoatTest.fixture')(function* () {
   return key
 })
 
+/** Build a separate provider recorder and HTTP server for each case; install its clock before acquisition so provider timers and assertions use the same zero-based time. Real SSH cases retain the live clock. */
+function scopedCase<Services, LayerError, Dependencies, A, E, R>(
+  caseLayer: Layer.Layer<Services, LayerError, Dependencies>,
+  program: Effect.Effect<A, E, R>,
+  clock: 'fresh' | 'inherited',
+) {
+  const acquired = Layer.build(caseLayer).pipe(
+    Effect.flatMap((context) => program.pipe(Effect.provide(context))),
+    Effect.scoped,
+  )
+  if (clock === 'inherited') return acquired
+  return acquired.pipe(Effect.provideServiceEffect(Clock.Clock, TestClock.make()))
+}
+
 describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => {
-  // Evidence, workers and TestClock stay per case; only database authority is shared.
   layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
     it.effect('adopts for one Person without writing an intent for a refused Person', () =>
       Effect.gen(function* () {
@@ -986,117 +999,97 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         expect(yield* saved.load(first)).toMatchObject(Option.some({ providerId: adoptedId }))
         expect(yield* Ref.get(evidence.created)).toBe(0)
         expect(yield* Ref.get(evidence.intents)).toEqual([])
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(adoptedLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
     )
 
-    layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
-      it.effect.skipIf(!peerAvailable)(
-        'tells a Run that no machine is free, leaves the Computer stopped, and starts it for the next Run',
-        () =>
-          Effect.gen(function* () {
-            const { first } = yield* accounts()
-            const store = yield* ComputerStore
-            const evidence = yield* Evidence
-            // Vivid's shell is the real one: the machine behind the fake provider is the SSH test server.
-            const server = yield* peer()
-            yield* Ref.set(evidence.ssh, Option.some(server))
-            const command = { command: 'echo receipt', directory: server.home, timeoutSeconds: 10 }
-            yield* Ref.set(evidence.state, 'archived')
-            yield* Ref.set(evidence.free, new Set<Size>())
-            // Vivid needs the Computer for a Run; Boat has no machine of any size.
-            const refused = yield* store.run(first.id, command).pipe(Effect.flip)
-            // The provider's own reason, not "the Computer is stopped": the start handed it on.
-            expect(refused).toBeInstanceOf(MachineNoCapacity)
-            expect(
-              (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
-            ).toBe('Stopped')
-            // Nobody presses Start: the next Run asks Boat again and gets the next size up.
-            yield* Ref.set(evidence.free, new Set<Size>(['large']))
-            expect((yield* store.run(first.id, command)).stdout.trim()).toBe('receipt')
-            expect(
-              (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
-            ).toBe('Running')
-          }).pipe(Effect.scoped, (program) =>
-            Layer.build(accountsLayer).pipe(
-              Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-              Effect.scoped,
-            ),
-          ),
-        30000,
-      )
-    })
+    it.effect.skipIf(!peerAvailable)(
+      'tells a Run that no machine is free, leaves the Computer stopped, and starts it for the next Run',
+      () =>
+        Effect.gen(function* () {
+          const { first } = yield* accounts()
+          const store = yield* ComputerStore
+          const evidence = yield* Evidence
+          // Vivid's shell is the real one: the machine behind the fake provider is the SSH test server.
+          const server = yield* peer()
+          yield* Ref.set(evidence.ssh, Option.some(server))
+          const command = { command: 'echo receipt', directory: server.home, timeoutSeconds: 10 }
+          yield* Ref.set(evidence.state, 'archived')
+          yield* Ref.set(evidence.free, new Set<Size>())
+          // Vivid needs the Computer for a Run; Boat has no machine of any size.
+          const refused = yield* store.run(first.id, command).pipe(Effect.flip)
+          // The provider's own reason, not "the Computer is stopped": the start handed it on.
+          expect(refused).toBeInstanceOf(MachineNoCapacity)
+          expect(
+            (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
+          ).toBe('Stopped')
+          // Nobody presses Start: the next Run asks Boat again and gets the next size up.
+          yield* Ref.set(evidence.free, new Set<Size>(['large']))
+          expect((yield* store.run(first.id, command)).stdout.trim()).toBe('receipt')
+          expect(
+            (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
+          ).toBe('Running')
+        }).pipe(Effect.scoped, (program) => scopedCase(accountsLayer, program, 'inherited')),
+      30000,
+    )
 
     /**
      * The rule a Person relies on: a machine is one account's. This is the whole account-facing
      * path, not the adapter alone: each account acts through its own RPC and through the store
      * Vivid acts through, and the refusal is checked where each of them would meet it.
      */
-    layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
-      it.effect.skipIf(!peerAvailable)(
-        'gives one machine to one account: a second account is refused at every layer and changes nothing',
-        () =>
-          Effect.gen(function* () {
-            const { first, second } = yield* accounts()
-            const store = yield* ComputerStore
-            const saved = yield* bindings()
-            const evidence = yield* Evidence
-            // Vivid's shell is the real one: the machine behind the fake provider is the SSH test server.
-            const server = yield* peer()
-            yield* Ref.set(evidence.ssh, Option.some(server))
-            const command = { command: 'echo receipt', directory: server.home, timeoutSeconds: 10 }
-            const held = 'Vivid’s computer is already in use by another account.'
+    it.effect.skipIf(!peerAvailable)(
+      'gives one machine to one account: a second account is refused at every layer and changes nothing',
+      () =>
+        Effect.gen(function* () {
+          const { first, second } = yield* accounts()
+          const store = yield* ComputerStore
+          const saved = yield* bindings()
+          const evidence = yield* Evidence
+          // Vivid's shell is the real one: the machine behind the fake provider is the SSH test server.
+          const server = yield* peer()
+          yield* Ref.set(evidence.ssh, Option.some(server))
+          const command = { command: 'echo receipt', directory: server.home, timeoutSeconds: 10 }
+          const held = 'Vivid’s computer is already in use by another account.'
 
-            // The first account uses its Computer: the machine becomes its own.
-            expect((yield* store.run(first.id, command)).stdout.trim()).toBe('receipt')
-            expect(
-              (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
-            ).toBe('Running')
-            expect(yield* saved.load(computerMachineKey(first.id))).toMatchObject(
-              Option.some({ providerId: adoptedId }),
-            )
+          // The first account uses its Computer: the machine becomes its own.
+          expect((yield* store.run(first.id, command)).stdout.trim()).toBe('receipt')
+          expect(
+            (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
+          ).toBe('Running')
+          expect(yield* saved.load(computerMachineKey(first.id))).toMatchObject(
+            Option.some({ providerId: adoptedId }),
+          )
 
-            // The second account asks for the same thing through its own RPC, then through Vivid.
-            yield* computerHandlers.StartComputer().pipe(asAccount(second))
-            const sent = (yield* Ref.get(evidence.commands)).length
-            const refused = yield* store.run(second.id, command).pipe(Effect.flip)
-            expect(refused).toMatchObject({ reason: held })
-            const shown = (yield* computerHandlers.GetComputer().pipe(asAccount(second))).computer
-              .state
-            expect(ComputerState.guards.Failed(shown) && shown.reason).toBe(held)
-            expect((yield* store.access(second.id))._tag).toBe('Unavailable')
-            // Nothing of the second account holds the machine, and nothing was sent to it.
-            expect(yield* saved.load(computerMachineKey(second.id))).toEqual(Option.none())
-            const holder = yield* saved.holder(Protocol.ProviderId.make(adoptedId))
-            expect(Option.map(holder, (binding) => binding.key)).toEqual(
-              Option.some(computerMachineKey(first.id)),
-            )
-            expect(yield* Ref.get(evidence.commands)).toHaveLength(sent)
-            expect(yield* Ref.get(evidence.sshKeys)).toHaveLength(1)
-            // The refusal names nobody: not the holder, not the one refused.
-            expect(JSON.stringify(refused)).not.toContain(first.id)
-            expect(JSON.stringify(shown)).not.toContain(first.id)
+          // The second account asks for the same thing through its own RPC, then through Vivid.
+          yield* computerHandlers.StartComputer().pipe(asAccount(second))
+          const sent = (yield* Ref.get(evidence.commands)).length
+          const refused = yield* store.run(second.id, command).pipe(Effect.flip)
+          expect(refused).toMatchObject({ reason: held })
+          const shown = (yield* computerHandlers.GetComputer().pipe(asAccount(second))).computer
+            .state
+          expect(ComputerState.guards.Failed(shown) && shown.reason).toBe(held)
+          expect((yield* store.access(second.id))._tag).toBe('Unavailable')
+          // Nothing of the second account holds the machine, and nothing was sent to it.
+          expect(yield* saved.load(computerMachineKey(second.id))).toEqual(Option.none())
+          const holder = yield* saved.holder(Protocol.ProviderId.make(adoptedId))
+          expect(Option.map(holder, (binding) => binding.key)).toEqual(
+            Option.some(computerMachineKey(first.id)),
+          )
+          expect(yield* Ref.get(evidence.commands)).toHaveLength(sent)
+          expect(yield* Ref.get(evidence.sshKeys)).toHaveLength(1)
+          // The refusal names nobody: not the holder, not the one refused.
+          expect(JSON.stringify(refused)).not.toContain(first.id)
+          expect(JSON.stringify(shown)).not.toContain(first.id)
 
-            // The first account's Computer is exactly as it was.
-            expect((yield* store.run(first.id, command)).stdout.trim()).toBe('receipt')
-            expect(
-              (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
-            ).toBe('Running')
-            expect(yield* Ref.get(evidence.created)).toBe(0)
-          }).pipe(Effect.scoped, (program) =>
-            Layer.build(accountsLayer).pipe(
-              Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-              Effect.scoped,
-            ),
-          ),
-        30000,
-      )
-    })
+          // The first account's Computer is exactly as it was.
+          expect((yield* store.run(first.id, command)).stdout.trim()).toBe('receipt')
+          expect(
+            (yield* computerHandlers.GetComputer().pipe(asAccount(first))).computer.state._tag,
+          ).toBe('Running')
+          expect(yield* Ref.get(evidence.created)).toBe(0)
+        }).pipe(Effect.scoped, (program) => scopedCase(accountsLayer, program, 'inherited')),
+      30000,
+    )
 
     /**
      * Two servers have two binding tables, and neither can see the other's. What both do see is
@@ -1140,13 +1133,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect((yield* machine.ensure(first))._tag).toBe('Running')
           expect(yield* Ref.get(evidence.launches)).toBe(launched + 1)
           expect(yield* Ref.get(evidence.created)).toBe(0)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(adoptedLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
       15000,
     )
 
@@ -1168,13 +1155,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         expect(rows.map((row) => `${adoptedId} ${row.intent}`)).toEqual([
           (yield* Ref.get(evidence.holders)).get(adoptedId),
         ])
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(adoptedLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
     )
 
     /**
@@ -1205,61 +1186,48 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           .pipe(Effect.flip)
         expect(refused).toEqual(new MachineOperationFailed({ operation: 'holder' }))
         expect((yield* Ref.get(evidence.commands)).includes('echo receipt')).toBe(false)
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(adoptedLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
     )
 
-    layer(testDatabaseLayer, { excludeTestServices: true })((it) => {
-      it.effect.skipIf(!peerAvailable)(
-        'asks Boat to let in a different key for every opening of a machine, and reaches it with that key',
-        () =>
-          Effect.gen(function* () {
-            const machine = yield* Machine
-            const evidence = yield* Evidence
-            const key = yield* fixture()
-            const server = yield* peer()
-            yield* Ref.set(evidence.ssh, Option.some(server))
-            expect((yield* machine.ensure(key))._tag).toBe('Running')
-            const first = yield* machine.run({
-              key,
-              command: 'echo one',
-              directory: server.home,
-              timeoutSeconds: 10,
-            })
-            expect(first.stdout.trim()).toBe('one')
-            // A second command uses the open connection: Boat is not asked again.
-            yield* machine.run({ key, command: 'true', directory: server.home, timeoutSeconds: 10 })
-            expect(yield* Ref.get(evidence.sshKeys)).toHaveLength(1)
-            // The machine stops and resumes: the connection to the machine it was is closed, and the
-            // next command opens another with a key of its own.
-            yield* machine.stop(key)
-            expect((yield* machine.ensure(key))._tag).toBe('Running')
-            const second = yield* machine.run({
-              key,
-              command: 'echo two',
-              directory: server.home,
-              timeoutSeconds: 10,
-            })
-            expect(second.stdout.trim()).toBe('two')
-            const [one, two, ...more] = yield* Ref.get(evidence.sshKeys)
-            if (one === undefined || two === undefined) expect.fail('Two openings were expected')
-            expect(more).toEqual([])
-            expect(one).not.toBe(two)
-            for (const sent of [one, two]) expect(sent.endsWith(` ${KEY_TAG}`)).toBe(true)
-          }).pipe(Effect.scoped, (program) =>
-            Layer.build(testLayer).pipe(
-              Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-              Effect.scoped,
-            ),
-          ),
-        40_000,
-      )
-    })
+    it.effect.skipIf(!peerAvailable)(
+      'asks Boat to let in a different key for every opening of a machine, and reaches it with that key',
+      () =>
+        Effect.gen(function* () {
+          const machine = yield* Machine
+          const evidence = yield* Evidence
+          const key = yield* fixture()
+          const server = yield* peer()
+          yield* Ref.set(evidence.ssh, Option.some(server))
+          expect((yield* machine.ensure(key))._tag).toBe('Running')
+          const first = yield* machine.run({
+            key,
+            command: 'echo one',
+            directory: server.home,
+            timeoutSeconds: 10,
+          })
+          expect(first.stdout.trim()).toBe('one')
+          // A second command uses the open connection: Boat is not asked again.
+          yield* machine.run({ key, command: 'true', directory: server.home, timeoutSeconds: 10 })
+          expect(yield* Ref.get(evidence.sshKeys)).toHaveLength(1)
+          // The machine stops and resumes: the connection to the machine it was is closed, and the
+          // next command opens another with a key of its own.
+          yield* machine.stop(key)
+          expect((yield* machine.ensure(key))._tag).toBe('Running')
+          const second = yield* machine.run({
+            key,
+            command: 'echo two',
+            directory: server.home,
+            timeoutSeconds: 10,
+          })
+          expect(second.stdout.trim()).toBe('two')
+          const [one, two, ...more] = yield* Ref.get(evidence.sshKeys)
+          if (one === undefined || two === undefined) expect.fail('Two openings were expected')
+          expect(more).toEqual([])
+          expect(one).not.toBe(two)
+          for (const sent of [one, two]) expect(sent.endsWith(` ${KEY_TAG}`)).toBe(true)
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'inherited')),
+      40_000,
+    )
 
     /**
      * A row can name a machine without a wake having made it: written by hand, or left in a table
@@ -1325,13 +1293,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect(after.filter((command) => command.startsWith("mine='"))).toHaveLength(1)
           expect(after.filter((command) => command.endsWith(launcher))).toEqual([])
           expect(after.slice(1)).toEqual(['echo receipt', 'echo receipt'])
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(adoptedLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
       15000,
     )
 
@@ -1360,12 +1322,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         expect(
           (yield* Effect.gen(function* () {
             return yield* (yield* Machine).ensure(second)
-          }).pipe((program) =>
-            Layer.build(paidLayer).pipe(
-              Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-              Effect.scoped,
-            ),
-          ))._tag,
+          }).pipe((program) => scopedCase(paidLayer, program, 'inherited')))._tag,
         ).toBe('Running')
         expect(yield* saved.load(second)).toMatchObject(
           Option.some({
@@ -1375,13 +1332,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         )
         expect(yield* Ref.get((yield* Evidence).created)).toBe(1)
         expect((yield* machine.ensure(first))._tag).toBe('Running')
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(adoptedLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1417,13 +1368,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect(yield* saved.load(second)).toEqual(original)
           expect((yield* machine.ensure(first))._tag).toBe('Running')
           expect(yield* Ref.get((yield* Evidence).created)).toBe(0)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(adoptedLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
     )
 
     it.effect('maps a real provider-id collision without changing either account’s receipt', () =>
@@ -1445,13 +1390,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         expect(yield* saved.holder(Protocol.ProviderId.make(id))).toMatchObject(
           Option.some({ key: first }),
         )
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(adoptedLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
     )
 
     for (const existing of [false, true]) {
@@ -1514,13 +1453,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
             }
             expect((yield* owner.inspect(first))._tag).toBe('Running')
             expect(yield* Ref.get((yield* Evidence).created)).toBe(0)
-          }).pipe(Effect.scoped, (program) =>
-            Layer.build(adoptedLayer).pipe(
-              Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-              Effect.scoped,
-              Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-            ),
-          ),
+          }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
       )
     }
 
@@ -1551,12 +1484,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           yield* Ref.set(evidence.breakCreate, true)
           const lost = yield* Effect.gen(function* () {
             return yield* (yield* Machine).ensure(second).pipe(Effect.flip)
-          }).pipe((program) =>
-            Layer.build(paidLayer).pipe(
-              Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-              Effect.scoped,
-            ),
-          )
+          }).pipe((program) => scopedCase(paidLayer, program, 'inherited'))
           expect(lost._tag).toBe('MachineRequestRejected')
           expect(yield* saved.load(second)).toEqual(Option.some(original))
           expect(yield* Ref.get(evidence.created)).toBe(1)
@@ -1570,12 +1498,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           yield* TestClock.adjust('22 hours')
           const recovered = yield* Effect.gen(function* () {
             return yield* (yield* Machine).ensure(second)
-          }).pipe((program) =>
-            Layer.build(paidLayer).pipe(
-              Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-              Effect.scoped,
-            ),
-          )
+          }).pipe((program) => scopedCase(paidLayer, program, 'inherited'))
           expect(recovered._tag).toBe('Running')
           expect(yield* saved.load(second)).toMatchObject(
             Option.some({ intent: original.intent, request: original.request, providerId: id }),
@@ -1583,13 +1506,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect(yield* Ref.get(evidence.intents)).toEqual([original.intent, original.intent])
           expect(yield* Ref.get(evidence.created)).toBe(1)
           expect((yield* machine.ensure(first))._tag).toBe('Running')
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(adoptedLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(adoptedLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1614,13 +1531,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
             .browse({ key, action: BrowserAction.cases.Read.make({}) })
             .pipe(Effect.flip)
           expect(ambiguous._tag).toBe('BrowserStepFailed')
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1662,13 +1573,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
             (yield* Ref.get(evidence.calls)).filter((tool) => tool === 'browser_type').length,
           ).toBe(1)
           expect((yield* Ref.get(evidence.files)).size).toBe(0)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1716,13 +1621,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
             expect(refused.code).toBe('browser_route_unavailable')
           expect(JSON.stringify(refused).includes('private-fixture-input')).toBe(false)
           expect((yield* Ref.get(evidence.files)).size).toBe(0)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1792,23 +1691,12 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
             const restarted = yield* Machine
             yield* restarted.ensure(key)
             return yield* restarted.status(key)
-          }).pipe((program) =>
-            Layer.build(boatMachineLayer).pipe(
-              Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-              Effect.scoped,
-            ),
-          )
+          }).pipe((program) => scopedCase(boatMachineLayer, program, 'inherited'))
           if (!ComputerState.guards.Running(restored))
             expect.fail('The resumed Computer must be running')
           expect(restored.screen._tag).toBe('Viewer')
           expect(yield* Ref.get(evidence.created)).toBe(1)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
       15000,
     )
 
@@ -1838,13 +1726,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
             database.select().from(machineBindings).where(eq(machineBindings.key, key)),
           )
           expect(JSON.stringify(rows).includes('#token=')).toBe(false)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect("names no organization when none is configured, so the key's own account pays", () =>
@@ -1858,13 +1740,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         expect(yield* Ref.get(evidence.created)).toBe(1)
         yield* machine.stop(key)
         expect(yield* Ref.get(evidence.state)).toBe('archived')
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(accountLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(accountLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1886,13 +1762,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           yield* Ref.set(evidence.free, new Set<Size>(['default', 'large']))
           expect((yield* machine.ensure(key))._tag).toBe('Running')
           expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1913,13 +1783,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect((yield* machine.status(key))._tag).toBe('Stopped')
           yield* Ref.set(evidence.free, new Set<Size>(['default']))
           expect((yield* machine.ensure(key))._tag).toBe('Running')
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('keeps a failing provider apart from one that has no machine free', () =>
@@ -1936,13 +1800,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         expect(failure._tag).toBe('MachineRequestRejected')
         expect(isOutage(failure)).toBe(true)
         expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -1966,13 +1824,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect((yield* machine.ensure(key))._tag).toBe('Running')
           expect(yield* Ref.get(evidence.stops)).toBe(stops + 1)
           expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('moves a Computer whose disk has outgrown its size to the next one', () =>
@@ -1986,13 +1838,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         yield* Ref.set(evidence.outgrown, new Set<Size>(['default']))
         expect((yield* machine.ensure(key))._tag).toBe('Running')
         expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -2020,13 +1866,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect((yield* Fiber.join(starting))._tag).toBe('Running')
           expect(yield* Ref.get(evidence.stops)).toBe(stops + 1)
           expect(yield* Ref.get(evidence.resumes)).toEqual(['default', 'large'])
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('starts a waiting resume that another caller stops while Vivid looks at it', () =>
@@ -2049,13 +1889,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         expect((yield* Fiber.join(starting))._tag).toBe('Running')
         expect(yield* Ref.get(evidence.stops)).toBe(stops)
         expect(yield* Ref.get(evidence.resumes)).toEqual(['default'])
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('leaves a waiting start alone when Boat gives it a machine within the grace', () =>
@@ -2078,13 +1912,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         expect((yield* Fiber.join(starting))._tag).toBe('Running')
         expect(yield* Ref.get(evidence.stops)).toBe(stops)
         expect(yield* Ref.get(evidence.resumes)).toEqual([])
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect('status never reconciles an unresolved create or resumes a stopped machine', () =>
@@ -2102,13 +1930,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
         yield* machine.stop(key)
         expect((yield* machine.status(key))._tag).toBe('Stopped')
         expect(yield* Ref.get(evidence.state)).toBe('archived')
-      }).pipe(Effect.scoped, (program) =>
-        Layer.build(testLayer).pipe(
-          Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-          Effect.scoped,
-          Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-        ),
-      ),
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
     it.effect(
@@ -2123,7 +1945,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           yield* Effect.gen(function* () {
             yield* (yield* Machine).ensure(key)
           }).pipe((program) =>
-            Layer.build(
+            scopedCase(
               boatMachineLayer.pipe(
                 Layer.provide(
                   ConfigProvider.layerAdd(
@@ -2136,22 +1958,15 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
                   ),
                 ),
               ),
-            ).pipe(
-              Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-              Effect.scoped,
+              program,
+              'inherited',
             ),
           )
           const intents = yield* Ref.get(evidence.intents)
           expect(intents.length).toBe(2)
           expect(intents[0] === intents[1]).toBe(true)
           expect(yield* Ref.get(evidence.created)).toBe(1)
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
       15000,
     )
 
@@ -2179,13 +1994,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           yield* Ref.set(evidence.malformed, false)
           yield* Ref.set(evidence.wrongIdentity, true)
           expect((yield* Effect.flip(machine.status(key)))._tag).toBe('MachineResponseInvalid')
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
       15000,
     )
 
@@ -2205,13 +2014,7 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
           expect(isOutage(failure)).toBe(true)
           yield* Ref.set(evidence.edgeDown, false)
           expect((yield* machine.inspect(key))._tag).toBe('Running')
-        }).pipe(Effect.scoped, (program) =>
-          Layer.build(testLayer).pipe(
-            Effect.flatMap((context) => program.pipe(Effect.provide(context))),
-            Effect.scoped,
-            Effect.provideServiceEffect(Clock.Clock, TestClock.make()),
-          ),
-        ),
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
       15000,
     )
   })
