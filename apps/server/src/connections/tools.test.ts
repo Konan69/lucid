@@ -34,129 +34,82 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
     ])('records %s at the tool decision without private input or service prose', (reason) => {
       const logs = refusalLogs()
       return Effect.gen(function* () {
-        const { ownerActor, memberActor } = yield* fixture()
-        const store = yield* ConnectionStore
-        const probe = yield* ConnectionProbe
-        const previous = yield* Ref.get(probe.outcome)
-        const checked = yield* Ref.get(probe.checked)
-        // The shared Layer survives this test; restore its next reply and Gate observations.
-        yield* Effect.addFinalizer(() =>
-          Ref.set(probe.outcome, previous).pipe(Effect.andThen(Ref.set(probe.checked, checked))),
-        )
-        const step = yield* store.begin(ownerActor, {
-          service: serviceId,
-          name: 'Private account',
-          shared: reason === 'SharedReadOnly',
-        })
-        const row = yield* store.get(ownerActor, step.connection.id)
-        if (reason === 'IntegrationFailed')
-          yield* store.failed(ownerActor, row, 'Private service failure')
-        if (reason === 'ServiceRejected')
-          yield* Ref.set(
-            probe.outcome,
-            ExecutorCallOutcome.cases.Rejected.make({ message: 'Private service refusal' }),
+        // This composed fixture owns per-case state and resources; build it in the test scope.
+        const context = yield* Layer.build(logs.layer)
+        return yield* Effect.gen(function* () {
+          const { ownerActor, memberActor } = yield* fixture()
+          const store = yield* ConnectionStore
+          const probe = yield* ConnectionProbe
+          const previous = yield* Ref.get(probe.outcome)
+          const checked = yield* Ref.get(probe.checked)
+          // The shared Layer survives this test; restore its next reply and Gate observations.
+          yield* Effect.addFinalizer(() =>
+            Ref.set(probe.outcome, previous).pipe(Effect.andThen(Ref.set(probe.checked, checked))),
           )
-        const outcome = yield* useTool(
-          reason === 'IntegrationUnavailable' ? memberActor : ownerActor,
-          {
-            connectionId: row.id,
-            tool: reason === 'ToolUnknown' ? 'private_missing_tool' : 'write',
-            input: { private: 'Private tool input' },
-            summary: 'Private summary',
-            rationale: 'Private rationale',
-          },
-        )
-        expect(ToolOutcome.guards.Rejected(outcome)).toBe(true)
-        const recorded = logs.recorded()
-        expect(recorded).toHaveLength(1)
-        expect(recorded[0]).toContain('vivid.refusal.kind=ToolRejected')
-        expect(recorded[0]).toContain(`vivid.refusal.reason=${reason}`)
-        expect(recorded[0]).not.toContain('Private')
-        expect(recorded[0]).not.toContain('private_missing_tool')
-      }).pipe(Effect.provide(logs.layer))
+          const step = yield* store.begin(ownerActor, {
+            service: serviceId,
+            name: 'Private account',
+            shared: reason === 'SharedReadOnly',
+          })
+          const row = yield* store.get(ownerActor, step.connection.id)
+          if (reason === 'IntegrationFailed')
+            yield* store.failed(ownerActor, row, 'Private service failure')
+          if (reason === 'ServiceRejected')
+            yield* Ref.set(
+              probe.outcome,
+              ExecutorCallOutcome.cases.Rejected.make({ message: 'Private service refusal' }),
+            )
+          const outcome = yield* useTool(
+            reason === 'IntegrationUnavailable' ? memberActor : ownerActor,
+            {
+              connectionId: row.id,
+              tool: reason === 'ToolUnknown' ? 'private_missing_tool' : 'write',
+              input: { private: 'Private tool input' },
+              summary: 'Private summary',
+              rationale: 'Private rationale',
+            },
+          )
+          expect(ToolOutcome.guards.Rejected(outcome)).toBe(true)
+          const recorded = logs.recorded()
+          expect(recorded).toHaveLength(1)
+          expect(recorded[0]).toContain('vivid.refusal.kind=ToolRejected')
+          expect(recorded[0]).toContain(`vivid.refusal.reason=${reason}`)
+          expect(recorded[0]).not.toContain('Private')
+          expect(recorded[0]).not.toContain('private_missing_tool')
+        }).pipe(Effect.provide(context))
+      }).pipe(Effect.scoped)
     })
 
     /** A missing foreign resource is Vivid's durable Integration failure, not a service rejection. */
     it.effect('records IntegrationFailed when execution loses its resource', () => {
       const logs = refusalLogs()
       return Effect.gen(function* () {
-        const { ownerActor } = yield* fixture()
-        const store = yield* ConnectionStore
-        const probe = yield* ConnectionProbe
-        const checked = yield* Ref.get(probe.checked)
-        yield* Effect.addFinalizer(() => Ref.set(probe.checked, checked))
-        const step = yield* store.begin(ownerActor, {
-          service: serviceId,
-          name: 'Work',
-          shared: false,
-        })
-        const executor = yield* Executor
-        const outcome = yield* useTool(ownerActor, {
-          connectionId: step.connection.id,
-          tool: 'read',
-          input: {},
-          summary: 'Read',
-          rationale: '',
-        }).pipe(
-          Effect.provideService(
-            Executor,
-            Executor.of({
-              ...executor,
-              call: () =>
-                Effect.fail(
-                  new ExecutorResourceMissing({
-                    service: 'connections',
-                    tool: 'read',
-                    resource: 'App',
-                  }),
-                ),
-            }),
-          ),
-        )
-        expect(ToolOutcome.guards.Rejected(outcome)).toBe(true)
-        expect((yield* store.get(ownerActor, step.connection.id)).status).toBe('failed')
-        expect(logs.recorded()).toHaveLength(1)
-        expect(logs.recorded()[0]).toContain('vivid.refusal.reason=IntegrationFailed')
-        expect(logs.recorded()[0]).not.toContain('ServiceRejected')
-      }).pipe(Effect.provide(logs.layer))
-    })
-
-    /** Discovery must distinguish a newly failed Integration from an empty ready catalog. */
-    it.effect.each(['direct', 'approved'] as const)(
-      'records IntegrationFailed once when %s discovery loses its resource',
-      (caller) => {
-        const logs = refusalLogs()
-        return Effect.gen(function* () {
+        // This composed fixture owns per-case state and resources; build it in the test scope.
+        const context = yield* Layer.build(logs.layer)
+        return yield* Effect.gen(function* () {
           const { ownerActor } = yield* fixture()
           const store = yield* ConnectionStore
+          const probe = yield* ConnectionProbe
+          const checked = yield* Ref.get(probe.checked)
+          yield* Effect.addFinalizer(() => Ref.set(probe.checked, checked))
           const step = yield* store.begin(ownerActor, {
             service: serviceId,
             name: 'Work',
             shared: false,
           })
           const executor = yield* Executor
-          const target = ActionTarget.cases.Connection.make({
+          const outcome = yield* useTool(ownerActor, {
             connectionId: step.connection.id,
-            account: 'Records (Work)',
             tool: 'read',
             input: {},
-          })
-          const calls = yield* Ref.get((yield* ConnectionProbe).calls)
-          const outcome = yield* Effect.gen(function* () {
-            if (caller === 'approved')
-              return yield* connectionRunner({
-                person: ownerActor.person,
-                workspace: ownerActor.workspace,
-                target,
-              })
-            return yield* useTool(ownerActor, { ...target, summary: 'Read', rationale: '' })
+            summary: 'Read',
+            rationale: '',
           }).pipe(
-            Effect.provide(connectionStoreLayer, { local: true }),
             Effect.provideService(
               Executor,
               Executor.of({
                 ...executor,
-                tools: () =>
+                call: () =>
                   Effect.fail(
                     new ExecutorResourceMissing({
                       service: 'connections',
@@ -167,20 +120,83 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               }),
             ),
           )
-          expect(outcome).toEqual(
-            caller === 'approved'
-              ? ActionOutcome.cases.Failed.make({
-                  reason: 'This tool is no longer available on this integration.',
-                })
-              : ToolOutcome.cases.Rejected.make({
-                  message: 'Tool read is not available on this integration.',
-                }),
-          )
+          expect(ToolOutcome.guards.Rejected(outcome)).toBe(true)
           expect((yield* store.get(ownerActor, step.connection.id)).status).toBe('failed')
-          expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(calls)
           expect(logs.recorded()).toHaveLength(1)
           expect(logs.recorded()[0]).toContain('vivid.refusal.reason=IntegrationFailed')
-        }).pipe(Effect.provide(logs.layer))
+          expect(logs.recorded()[0]).not.toContain('ServiceRejected')
+        }).pipe(Effect.provide(context))
+      }).pipe(Effect.scoped)
+    })
+
+    /** Discovery must distinguish a newly failed Integration from an empty ready catalog. */
+    it.effect.each(['direct', 'approved'] as const)(
+      'records IntegrationFailed once when %s discovery loses its resource',
+      (caller) => {
+        const logs = refusalLogs()
+        return Effect.gen(function* () {
+          // This composed fixture owns per-case state and resources; build it in the test scope.
+          const context = yield* Layer.build(logs.layer)
+          return yield* Effect.gen(function* () {
+            const { ownerActor } = yield* fixture()
+            const store = yield* ConnectionStore
+            const step = yield* store.begin(ownerActor, {
+              service: serviceId,
+              name: 'Work',
+              shared: false,
+            })
+            const executor = yield* Executor
+            const target = ActionTarget.cases.Connection.make({
+              connectionId: step.connection.id,
+              account: 'Records (Work)',
+              tool: 'read',
+              input: {},
+            })
+            const calls = yield* Ref.get((yield* ConnectionProbe).calls)
+            const outcome = yield* Effect.gen(function* () {
+              // Preserve local provision: rebuild against this case's overridden authorities.
+              const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+              return yield* Effect.gen(function* () {
+                if (caller === 'approved')
+                  return yield* connectionRunner({
+                    person: ownerActor.person,
+                    workspace: ownerActor.workspace,
+                    target,
+                  })
+                return yield* useTool(ownerActor, { ...target, summary: 'Read', rationale: '' })
+              }).pipe(Effect.provide(context))
+            }).pipe(
+              Effect.scoped,
+              Effect.provideService(
+                Executor,
+                Executor.of({
+                  ...executor,
+                  tools: () =>
+                    Effect.fail(
+                      new ExecutorResourceMissing({
+                        service: 'connections',
+                        tool: 'read',
+                        resource: 'App',
+                      }),
+                    ),
+                }),
+              ),
+            )
+            expect(outcome).toEqual(
+              caller === 'approved'
+                ? ActionOutcome.cases.Failed.make({
+                    reason: 'This tool is no longer available on this integration.',
+                  })
+                : ToolOutcome.cases.Rejected.make({
+                    message: 'Tool read is not available on this integration.',
+                  }),
+            )
+            expect((yield* store.get(ownerActor, step.connection.id)).status).toBe('failed')
+            expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(calls)
+            expect(logs.recorded()).toHaveLength(1)
+            expect(logs.recorded()[0]).toContain('vivid.refusal.reason=IntegrationFailed')
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped)
       },
     )
 
@@ -194,48 +210,53 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
     ] as const)('approved execution records %s once before dispatch', (reason) => {
       const logs = refusalLogs()
       return Effect.gen(function* () {
-        const { ownerActor, memberActor } = yield* fixture()
-        const store = yield* ConnectionStore
-        const probe = yield* ConnectionProbe
-        const calls = yield* Ref.get(probe.calls)
-        const step = yield* store.begin(ownerActor, {
-          service: serviceId,
-          name: 'Work',
-          shared: reason === 'SharedReadOnly',
-        })
-        const row = yield* store.get(ownerActor, step.connection.id)
-        if (reason === 'IntegrationFailed') yield* store.failed(ownerActor, row, 'Private failure')
-        if (reason === 'NeedsAuthorization') yield* store.notReady(ownerActor, row)
-        const outcome = yield* connectionRunner({
-          person: reason === 'IntegrationUnavailable' ? memberActor.person : ownerActor.person,
-          workspace: ownerActor.workspace,
-          target: ActionTarget.cases.Connection.make({
-            connectionId: row.id,
-            account: 'Records (Work)',
-            tool: reason === 'ToolUnknown' ? 'missing' : 'write',
-            input: {},
-          }),
-        })
-        const expected = {
-          IntegrationUnavailable:
-            'The integration is no longer available; check its authorization and your access.',
-          IntegrationFailed: 'Private failure',
-          NeedsAuthorization: 'This integration needs authorization.',
-          ToolUnknown: 'This tool is no longer available on this integration.',
-          SharedReadOnly: 'This tool is no longer available on this integration.',
-        }
-        expect(outcome).toEqual(ActionOutcome.cases.Failed.make({ reason: expected[reason] }))
-        expect(yield* Ref.get(probe.calls)).toBe(calls)
-        expect(logs.recorded()).toHaveLength(1)
-        if (reason === 'NeedsAuthorization') {
-          expect(logs.recorded()[0]).toContain('vivid.refusal.kind=IntegrationNotReady')
-          expect(logs.recorded()[0]).toContain(`vivid.refusal.service=${serviceId}`)
-        } else {
-          expect(logs.recorded()[0]).toContain('vivid.refusal.kind=ToolRejected')
-          expect(logs.recorded()[0]).toContain(`vivid.refusal.reason=${reason}`)
-        }
-        expect(logs.recorded()[0]).not.toContain('Private failure')
-      }).pipe(Effect.provide(logs.layer))
+        // This composed fixture owns per-case state and resources; build it in the test scope.
+        const context = yield* Layer.build(logs.layer)
+        return yield* Effect.gen(function* () {
+          const { ownerActor, memberActor } = yield* fixture()
+          const store = yield* ConnectionStore
+          const probe = yield* ConnectionProbe
+          const calls = yield* Ref.get(probe.calls)
+          const step = yield* store.begin(ownerActor, {
+            service: serviceId,
+            name: 'Work',
+            shared: reason === 'SharedReadOnly',
+          })
+          const row = yield* store.get(ownerActor, step.connection.id)
+          if (reason === 'IntegrationFailed')
+            yield* store.failed(ownerActor, row, 'Private failure')
+          if (reason === 'NeedsAuthorization') yield* store.notReady(ownerActor, row)
+          const outcome = yield* connectionRunner({
+            person: reason === 'IntegrationUnavailable' ? memberActor.person : ownerActor.person,
+            workspace: ownerActor.workspace,
+            target: ActionTarget.cases.Connection.make({
+              connectionId: row.id,
+              account: 'Records (Work)',
+              tool: reason === 'ToolUnknown' ? 'missing' : 'write',
+              input: {},
+            }),
+          })
+          const expected = {
+            IntegrationUnavailable:
+              'The integration is no longer available; check its authorization and your access.',
+            IntegrationFailed: 'Private failure',
+            NeedsAuthorization: 'This integration needs authorization.',
+            ToolUnknown: 'This tool is no longer available on this integration.',
+            SharedReadOnly: 'This tool is no longer available on this integration.',
+          }
+          expect(outcome).toEqual(ActionOutcome.cases.Failed.make({ reason: expected[reason] }))
+          expect(yield* Ref.get(probe.calls)).toBe(calls)
+          expect(logs.recorded()).toHaveLength(1)
+          if (reason === 'NeedsAuthorization') {
+            expect(logs.recorded()[0]).toContain('vivid.refusal.kind=IntegrationNotReady')
+            expect(logs.recorded()[0]).toContain(`vivid.refusal.service=${serviceId}`)
+          } else {
+            expect(logs.recorded()[0]).toContain('vivid.refusal.kind=ToolRejected')
+            expect(logs.recorded()[0]).toContain(`vivid.refusal.reason=${reason}`)
+          }
+          expect(logs.recorded()[0]).not.toContain('Private failure')
+        }).pipe(Effect.provide(context))
+      }).pipe(Effect.scoped)
     })
 
     /** Discovery failures must retain the approved caller's pre-recording outcomes and prose. */
@@ -245,165 +266,181 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
     ])('approved discovery preserves $_tag outcome and reason', (error) => {
       const logs = refusalLogs()
       return Effect.gen(function* () {
-        const { ownerActor } = yield* fixture()
-        const store = yield* ConnectionStore
-        const step = yield* store.begin(ownerActor, {
-          service: serviceId,
-          name: 'Work',
-          shared: false,
-        })
-        const probe = yield* ConnectionProbe
-        const calls = yield* Ref.get(probe.calls)
-        const outcome = yield* connectionRunner({
-          person: ownerActor.person,
-          workspace: ownerActor.workspace,
-          target: ActionTarget.cases.Connection.make({
-            connectionId: step.connection.id,
-            account: 'Records (Work)',
-            tool: 'read',
-            input: {},
-          }),
-        }).pipe(
-          Effect.provideService(
-            ConnectionStore,
-            ConnectionStore.of({
-              ...store,
-              tools: () => Effect.fail(error),
+        // This composed fixture owns per-case state and resources; build it in the test scope.
+        const context = yield* Layer.build(logs.layer)
+        return yield* Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          const store = yield* ConnectionStore
+          const step = yield* store.begin(ownerActor, {
+            service: serviceId,
+            name: 'Work',
+            shared: false,
+          })
+          const probe = yield* ConnectionProbe
+          const calls = yield* Ref.get(probe.calls)
+          const outcome = yield* connectionRunner({
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
+            target: ActionTarget.cases.Connection.make({
+              connectionId: step.connection.id,
+              account: 'Records (Work)',
+              tool: 'read',
+              input: {},
             }),
-          ),
-        )
-        const expected =
-          error instanceof Conflict
-            ? ActionOutcome.cases.Unknown.make({})
-            : ActionOutcome.cases.Failed.make({ reason: 'Private catalog failure' })
-        expect(outcome).toEqual(expected)
-        expect(yield* Ref.get(probe.calls)).toBe(calls)
-        // A conflict leaves the action Unknown, and an uncertain action is not a refusal.
-        if (error instanceof Conflict) {
-          expect(logs.recorded()).toHaveLength(0)
-          return
-        }
-        expect(logs.recorded()).toHaveLength(1)
-        expect(logs.recorded()[0]).toContain('vivid.refusal.reason=IntegrationUnavailable')
-      }).pipe(Effect.provide(logs.layer))
+          }).pipe(
+            Effect.provideService(
+              ConnectionStore,
+              ConnectionStore.of({
+                ...store,
+                tools: () => Effect.fail(error),
+              }),
+            ),
+          )
+          const expected =
+            error instanceof Conflict
+              ? ActionOutcome.cases.Unknown.make({})
+              : ActionOutcome.cases.Failed.make({ reason: 'Private catalog failure' })
+          expect(outcome).toEqual(expected)
+          expect(yield* Ref.get(probe.calls)).toBe(calls)
+          // A conflict leaves the action Unknown, and an uncertain action is not a refusal.
+          if (error instanceof Conflict) {
+            expect(logs.recorded()).toHaveLength(0)
+            return
+          }
+          expect(logs.recorded()).toHaveLength(1)
+          expect(logs.recorded()[0]).toContain('vivid.refusal.reason=IntegrationUnavailable')
+        }).pipe(Effect.provide(context))
+      }).pipe(Effect.scoped)
     })
 
     /** Pre-dispatch infrastructure loss is a retryable approved failure and one tool refusal. */
     it.effect('approved discovery ServiceUnavailable records IntegrationUnavailable once', () => {
       const logs = refusalLogs()
       return Effect.gen(function* () {
-        const { ownerActor } = yield* fixture()
-        const store = yield* ConnectionStore
-        const step = yield* store.begin(ownerActor, {
-          service: serviceId,
-          name: 'Work',
-          shared: false,
-        })
-        const calls = yield* Ref.get((yield* ConnectionProbe).calls)
-        const outcome = yield* connectionRunner({
-          person: ownerActor.person,
-          workspace: ownerActor.workspace,
-          target: ActionTarget.cases.Connection.make({
-            connectionId: step.connection.id,
-            account: 'Records (Work)',
-            tool: 'read',
-            input: {},
-          }),
-        }).pipe(
-          Effect.provideService(
-            ConnectionStore,
-            ConnectionStore.of({
-              ...store,
-              tools: () =>
-                Effect.fail(
-                  new ServiceUnavailable({
-                    service: 'connections',
-                    message: 'Private discovery outage',
-                  }),
-                ),
+        // This composed fixture owns per-case state and resources; build it in the test scope.
+        const context = yield* Layer.build(logs.layer)
+        return yield* Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          const store = yield* ConnectionStore
+          const step = yield* store.begin(ownerActor, {
+            service: serviceId,
+            name: 'Work',
+            shared: false,
+          })
+          const calls = yield* Ref.get((yield* ConnectionProbe).calls)
+          const outcome = yield* connectionRunner({
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
+            target: ActionTarget.cases.Connection.make({
+              connectionId: step.connection.id,
+              account: 'Records (Work)',
+              tool: 'read',
+              input: {},
             }),
-          ),
-        )
-        expect(outcome).toEqual(
-          ActionOutcome.cases.Failed.make({
-            reason: 'Tool discovery failed before the action was sent. Retry discovery.',
-          }),
-        )
-        expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(calls)
-        expect(logs.recorded()).toHaveLength(1)
-        expect(logs.recorded()[0]).toContain('vivid.refusal.reason=IntegrationUnavailable')
-        expect(logs.recorded()[0]).not.toContain('Private')
-      }).pipe(Effect.provide(logs.layer))
+          }).pipe(
+            Effect.provideService(
+              ConnectionStore,
+              ConnectionStore.of({
+                ...store,
+                tools: () =>
+                  Effect.fail(
+                    new ServiceUnavailable({
+                      service: 'connections',
+                      message: 'Private discovery outage',
+                    }),
+                  ),
+              }),
+            ),
+          )
+          expect(outcome).toEqual(
+            ActionOutcome.cases.Failed.make({
+              reason: 'Tool discovery failed before the action was sent. Retry discovery.',
+            }),
+          )
+          expect(yield* Ref.get((yield* ConnectionProbe).calls)).toBe(calls)
+          expect(logs.recorded()).toHaveLength(1)
+          expect(logs.recorded()[0]).toContain('vivid.refusal.reason=IntegrationUnavailable')
+          expect(logs.recorded()[0]).not.toContain('Private')
+        }).pipe(Effect.provide(context))
+      }).pipe(Effect.scoped)
     })
 
     /** A carried service rejection belongs to runConnection, even when an Approval invokes it. */
     it.effect('approved execution records ServiceRejected once after dispatch', () => {
       const logs = refusalLogs()
       return Effect.gen(function* () {
-        const { ownerActor } = yield* fixture()
-        const store = yield* ConnectionStore
-        const step = yield* store.begin(ownerActor, {
-          service: serviceId,
-          name: 'Work',
-          shared: false,
-        })
-        const probe = yield* ConnectionProbe
-        const previous = yield* Ref.get(probe.outcome)
-        yield* Effect.addFinalizer(() => Ref.set(probe.outcome, previous))
-        yield* Ref.set(
-          probe.outcome,
-          ExecutorCallOutcome.cases.Rejected.make({ message: 'Private service refusal' }),
-        )
-        const calls = yield* Ref.get(probe.calls)
-        const outcome = yield* connectionRunner({
-          person: ownerActor.person,
-          workspace: ownerActor.workspace,
-          target: ActionTarget.cases.Connection.make({
-            connectionId: step.connection.id,
-            account: 'Records (Work)',
-            tool: 'read',
-            input: {},
-          }),
-        })
-        expect(outcome).toEqual(
-          ActionOutcome.cases.Failed.make({ reason: 'Private service refusal' }),
-        )
-        expect(yield* Ref.get(probe.calls)).toBe(calls + 1)
-        expect(logs.recorded()).toHaveLength(1)
-        expect(logs.recorded()[0]).toContain('vivid.refusal.reason=ServiceRejected')
-        expect(logs.recorded()[0]).not.toContain('Private')
-      }).pipe(Effect.provide(logs.layer))
+        // This composed fixture owns per-case state and resources; build it in the test scope.
+        const context = yield* Layer.build(logs.layer)
+        return yield* Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          const store = yield* ConnectionStore
+          const step = yield* store.begin(ownerActor, {
+            service: serviceId,
+            name: 'Work',
+            shared: false,
+          })
+          const probe = yield* ConnectionProbe
+          const previous = yield* Ref.get(probe.outcome)
+          yield* Effect.addFinalizer(() => Ref.set(probe.outcome, previous))
+          yield* Ref.set(
+            probe.outcome,
+            ExecutorCallOutcome.cases.Rejected.make({ message: 'Private service refusal' }),
+          )
+          const calls = yield* Ref.get(probe.calls)
+          const outcome = yield* connectionRunner({
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
+            target: ActionTarget.cases.Connection.make({
+              connectionId: step.connection.id,
+              account: 'Records (Work)',
+              tool: 'read',
+              input: {},
+            }),
+          })
+          expect(outcome).toEqual(
+            ActionOutcome.cases.Failed.make({ reason: 'Private service refusal' }),
+          )
+          expect(yield* Ref.get(probe.calls)).toBe(calls + 1)
+          expect(logs.recorded()).toHaveLength(1)
+          expect(logs.recorded()[0]).toContain('vivid.refusal.reason=ServiceRejected')
+          expect(logs.recorded()[0]).not.toContain('Private')
+        }).pipe(Effect.provide(context))
+      }).pipe(Effect.scoped)
     })
 
     /** Tool metadata can disappear before dispatch; the refusal belongs to this call. */
     it.effect('records unavailable tool discovery as IntegrationUnavailable', () => {
       const logs = refusalLogs()
       return Effect.gen(function* () {
-        const { ownerActor } = yield* fixture()
-        const store = yield* ConnectionStore
-        const step = yield* store.begin(ownerActor, {
-          service: serviceId,
-          name: 'Work',
-          shared: false,
-        })
-        const unavailable = ConnectionStore.of({
-          ...store,
-          tools: () => Effect.fail(new InvalidRequest({ message: 'Private catalog failure' })),
-        })
-        const outcome = yield* useTool(ownerActor, {
-          connectionId: step.connection.id,
-          tool: 'read',
-          input: {},
-          summary: 'Read',
-          rationale: '',
-        }).pipe(Effect.provideService(ConnectionStore, unavailable))
-        expect(ToolOutcome.guards.Rejected(outcome)).toBe(true)
-        const recorded = logs.recorded()
-        expect(recorded).toHaveLength(1)
-        expect(recorded[0]).toContain('vivid.refusal.kind=ToolRejected')
-        expect(recorded[0]).toContain('vivid.refusal.reason=IntegrationUnavailable')
-        expect(recorded[0]).not.toContain('Private catalog failure')
-      }).pipe(Effect.provide(logs.layer))
+        // This composed fixture owns per-case state and resources; build it in the test scope.
+        const context = yield* Layer.build(logs.layer)
+        return yield* Effect.gen(function* () {
+          const { ownerActor } = yield* fixture()
+          const store = yield* ConnectionStore
+          const step = yield* store.begin(ownerActor, {
+            service: serviceId,
+            name: 'Work',
+            shared: false,
+          })
+          const unavailable = ConnectionStore.of({
+            ...store,
+            tools: () => Effect.fail(new InvalidRequest({ message: 'Private catalog failure' })),
+          })
+          const outcome = yield* useTool(ownerActor, {
+            connectionId: step.connection.id,
+            tool: 'read',
+            input: {},
+            summary: 'Read',
+            rationale: '',
+          }).pipe(Effect.provideService(ConnectionStore, unavailable))
+          expect(ToolOutcome.guards.Rejected(outcome)).toBe(true)
+          const recorded = logs.recorded()
+          expect(recorded).toHaveLength(1)
+          expect(recorded[0]).toContain('vivid.refusal.kind=ToolRejected')
+          expect(recorded[0]).toContain('vivid.refusal.reason=IntegrationUnavailable')
+          expect(recorded[0]).not.toContain('Private catalog failure')
+        }).pipe(Effect.provide(context))
+      }).pipe(Effect.scoped)
     })
 
     /** Both stored and service-discovered authorization loss decide one NotReady per call. */
@@ -412,37 +449,43 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
       (source) => {
         const logs = refusalLogs()
         return Effect.gen(function* () {
-          const { ownerActor } = yield* fixture()
-          const store = yield* ConnectionStore
-          const probe = yield* ConnectionProbe
-          const previous = yield* Ref.get(probe.outcome)
-          const checked = yield* Ref.get(probe.checked)
-          // The shared Layer survives this test; restore its next reply and Gate observations.
-          yield* Effect.addFinalizer(() =>
-            Ref.set(probe.outcome, previous).pipe(Effect.andThen(Ref.set(probe.checked, checked))),
-          )
-          const step = yield* store.begin(ownerActor, {
-            service: serviceId,
-            name: 'Private account',
-            shared: false,
-          })
-          const row = yield* store.get(ownerActor, step.connection.id)
-          if (source === 'stored') yield* store.notReady(ownerActor, row)
-          else yield* Ref.set(probe.outcome, ExecutorCallOutcome.cases.NotReady.make({}))
-          const outcome = yield* useTool(ownerActor, {
-            connectionId: row.id,
-            tool: 'read',
-            input: {},
-            summary: 'Read',
-            rationale: '',
-          })
-          expect(ToolOutcome.guards.ConnectionNotReady(outcome)).toBe(true)
-          const recorded = logs.recorded()
-          expect(recorded).toHaveLength(1)
-          expect(recorded[0]).toContain('vivid.refusal.kind=IntegrationNotReady')
-          expect(recorded[0]).toContain(`vivid.refusal.service=${serviceId}`)
-          expect(recorded[0]).not.toContain('Private account')
-        }).pipe(Effect.provide(logs.layer))
+          // This composed fixture owns per-case state and resources; build it in the test scope.
+          const context = yield* Layer.build(logs.layer)
+          return yield* Effect.gen(function* () {
+            const { ownerActor } = yield* fixture()
+            const store = yield* ConnectionStore
+            const probe = yield* ConnectionProbe
+            const previous = yield* Ref.get(probe.outcome)
+            const checked = yield* Ref.get(probe.checked)
+            // The shared Layer survives this test; restore its next reply and Gate observations.
+            yield* Effect.addFinalizer(() =>
+              Ref.set(probe.outcome, previous).pipe(
+                Effect.andThen(Ref.set(probe.checked, checked)),
+              ),
+            )
+            const step = yield* store.begin(ownerActor, {
+              service: serviceId,
+              name: 'Private account',
+              shared: false,
+            })
+            const row = yield* store.get(ownerActor, step.connection.id)
+            if (source === 'stored') yield* store.notReady(ownerActor, row)
+            else yield* Ref.set(probe.outcome, ExecutorCallOutcome.cases.NotReady.make({}))
+            const outcome = yield* useTool(ownerActor, {
+              connectionId: row.id,
+              tool: 'read',
+              input: {},
+              summary: 'Read',
+              rationale: '',
+            })
+            expect(ToolOutcome.guards.ConnectionNotReady(outcome)).toBe(true)
+            const recorded = logs.recorded()
+            expect(recorded).toHaveLength(1)
+            expect(recorded[0]).toContain('vivid.refusal.kind=IntegrationNotReady')
+            expect(recorded[0]).toContain(`vivid.refusal.service=${serviceId}`)
+            expect(recorded[0]).not.toContain('Private account')
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped)
       },
     )
 
@@ -976,27 +1019,33 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           }),
         )
         yield* Effect.gen(function* () {
-          expect(
-            (yield* findTools(ownerActor, { query: 'explain repository' })).tools.map(
-              (tool) => tool.effect,
-            ),
-          ).toEqual(['read'])
-          expect(
-            (yield* resolveTool(ownerActor, { account: 'Records (Wiki)', tool: 'ask_question' }))
-              .effect,
-          ).toBe('read')
-          yield* useTool(ownerActor, {
-            connectionId: connection.connection.id,
-            tool: 'ask_question',
-            input: {},
-            summary: 'Read documentation',
-            rationale: 'Explain the repository',
-          })
-          expect((yield* Ref.get(probe.checked)).map(({ action }) => action.effect)).toEqual([
-            'read',
-          ])
-          expect(effectCalls).toBe(1)
-        }).pipe(Effect.provide(Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer)))))
+          // This composed fixture owns per-case state and resources; build it in the test scope.
+          const context = yield* Layer.build(
+            Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer))),
+          )
+          return yield* Effect.gen(function* () {
+            expect(
+              (yield* findTools(ownerActor, { query: 'explain repository' })).tools.map(
+                (tool) => tool.effect,
+              ),
+            ).toEqual(['read'])
+            expect(
+              (yield* resolveTool(ownerActor, { account: 'Records (Wiki)', tool: 'ask_question' }))
+                .effect,
+            ).toBe('read')
+            yield* useTool(ownerActor, {
+              connectionId: connection.connection.id,
+              tool: 'ask_question',
+              input: {},
+              summary: 'Read documentation',
+              rationale: 'Explain the repository',
+            })
+            expect((yield* Ref.get(probe.checked)).map(({ action }) => action.effect)).toEqual([
+              'read',
+            ])
+            expect(effectCalls).toBe(1)
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped)
       }),
     )
 
@@ -1054,22 +1103,29 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           }),
         )
         yield* Effect.gen(function* () {
-          const start = yield* Clock.currentTimeMillis
-          const pending = yield* findTools(ownerActor, { query: 'record' }).pipe(Effect.forkChild)
-          yield* Deferred.await(effectsStarted)
-          yield* TestClock.adjust('1500 millis')
-          yield* Deferred.succeed(releaseEffects, undefined)
-          expect((yield* Fiber.join(pending)).tools.map((tool) => tool.name)).toEqual([
-            'lookup_0',
-            'lookup_1',
-          ])
-          expect((yield* Clock.currentTimeMillis) - start).toBe(1500)
-          expect(calls).toBe(1)
-          expect(lines.some((line) => line.includes('unavailable'))).toBe(false)
+          // This composed fixture owns per-case state and resources; build it in the test scope.
+          const context = yield* Layer.build(
+            Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer))),
+          )
+          return yield* Effect.gen(function* () {
+            const start = yield* Clock.currentTimeMillis
+            const pending = yield* findTools(ownerActor, { query: 'record' }).pipe(Effect.forkChild)
+            yield* Deferred.await(effectsStarted)
+            yield* TestClock.adjust('1500 millis')
+            yield* Deferred.succeed(releaseEffects, undefined)
+            expect((yield* Fiber.join(pending)).tools.map((tool) => tool.name)).toEqual([
+              'lookup_0',
+              'lookup_1',
+            ])
+            expect((yield* Clock.currentTimeMillis) - start).toBe(1500)
+            expect(calls).toBe(1)
+            expect(lines.some((line) => line.includes('unavailable'))).toBe(false)
+          }).pipe(Effect.provide(context))
         }).pipe(
-          Effect.provide(Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer)))),
-          Effect.provide(
-            Logger.layer([
+          Effect.scoped,
+          Effect.provideService(
+            Logger.CurrentLoggers,
+            new Set([
               Logger.make(({ message }) => {
                 lines.push(JSON.stringify(message))
               }),
@@ -1169,52 +1225,58 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         )
         const lines: string[] = []
         yield* Effect.gen(function* () {
-          const started = yield* Clock.currentTimeMillis
-          const pending = yield* findTools(ownerActor, { query: 'records', limit: 25 }).pipe(
-            Effect.forkChild,
+          // This composed fixture owns per-case state and resources; build it in the test scope.
+          const context = yield* Layer.build(
+            Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer))),
           )
-          yield* Deferred.await(firstStarted)
-          yield* TestClock.adjust('1700 millis')
-          yield* Deferred.succeed(firstRelease, undefined)
-          yield* Deferred.await(secondStarted)
-          yield* TestClock.adjust('300 millis')
-          const first = yield* Fiber.join(pending)
-          expect((yield* Clock.currentTimeMillis) - started).toBe(2000)
-          expect(first.tools.filter((tool) => tool.effect === 'read')).toHaveLength(13)
-          expect(first.tools.filter((tool) => tool.effect === 'write')).toHaveLength(5)
-          expect(firstNames).toHaveLength(4)
-          expect(wave).toBe(2)
-          expect(lines.some((line) => line.includes('unavailable'))).toBe(false)
-          // The first caller has left. Await the late public classification
-          // receipt before the second discovery, proving it reads completed cache.
-          yield* TestClock.adjust('100 millis')
-          yield* Deferred.succeed(secondRelease, undefined)
-          const service = yield* store.service(serviceId)
-          yield* (yield* ToolEffects).classifyBatch({
-            serviceId,
-            service: service.name,
-            tools: first.tools
-              .filter((tool) => tool.effect === 'write')
-              .map((tool) =>
-                ExecutorTool.make({
-                  name: tool.name,
-                  description: tool.description,
-                  effect: tool.effect,
-                  input: {},
-                }),
-              ),
-          })
-          const second = yield* findTools(ownerActor, { query: 'records', limit: 25 })
-          expect(second.tools.every((tool) => tool.effect === 'read')).toBe(true)
-          // The ninth Integration never began its lookup before the deadline;
-          // only that unstarted key needs a new request. Four late keys are cached.
-          expect(retriedNames).toHaveLength(1)
-          expect(wave).toBe(3)
+          return yield* Effect.gen(function* () {
+            const started = yield* Clock.currentTimeMillis
+            const pending = yield* findTools(ownerActor, { query: 'records', limit: 25 }).pipe(
+              Effect.forkChild,
+            )
+            yield* Deferred.await(firstStarted)
+            yield* TestClock.adjust('1700 millis')
+            yield* Deferred.succeed(firstRelease, undefined)
+            yield* Deferred.await(secondStarted)
+            yield* TestClock.adjust('300 millis')
+            const first = yield* Fiber.join(pending)
+            expect((yield* Clock.currentTimeMillis) - started).toBe(2000)
+            expect(first.tools.filter((tool) => tool.effect === 'read')).toHaveLength(13)
+            expect(first.tools.filter((tool) => tool.effect === 'write')).toHaveLength(5)
+            expect(firstNames).toHaveLength(4)
+            expect(wave).toBe(2)
+            expect(lines.some((line) => line.includes('unavailable'))).toBe(false)
+            // The first caller has left. Await the late public classification
+            // receipt before the second discovery, proving it reads completed cache.
+            yield* TestClock.adjust('100 millis')
+            yield* Deferred.succeed(secondRelease, undefined)
+            const service = yield* store.service(serviceId)
+            yield* (yield* ToolEffects).classifyBatch({
+              serviceId,
+              service: service.name,
+              tools: first.tools
+                .filter((tool) => tool.effect === 'write')
+                .map((tool) =>
+                  ExecutorTool.make({
+                    name: tool.name,
+                    description: tool.description,
+                    effect: tool.effect,
+                    input: {},
+                  }),
+                ),
+            })
+            const second = yield* findTools(ownerActor, { query: 'records', limit: 25 })
+            expect(second.tools.every((tool) => tool.effect === 'read')).toBe(true)
+            // The ninth Integration never began its lookup before the deadline;
+            // only that unstarted key needs a new request. Four late keys are cached.
+            expect(retriedNames).toHaveLength(1)
+            expect(wave).toBe(3)
+          }).pipe(Effect.provideService(ConnectionStore, scriptedStore), Effect.provide(context))
         }).pipe(
-          Effect.provideService(ConnectionStore, scriptedStore),
-          Effect.provide(Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer)))),
-          Effect.provide(
-            Logger.layer([
+          Effect.scoped,
+          Effect.provideService(
+            Logger.CurrentLoggers,
+            new Set([
               Logger.make(({ message }) => {
                 lines.push(JSON.stringify(message))
               }),
@@ -1268,28 +1330,34 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           }),
         )
         yield* Effect.gen(function* () {
-          yield* useTool(ownerActor, {
-            connectionId: connection.connection.id,
-            tool: 'lookup_0',
-            input: {},
-            summary: 'Read',
-            rationale: 'Read a record',
-          })
-          yield* resolveTool(ownerActor, { account: 'Records (Work)', tool: 'lookup_1' })
-          yield* connectionRunner({
-            person: ownerActor.person,
-            workspace: ownerActor.workspace,
-            target: ActionTarget.cases.Connection.make({
+          // This composed fixture owns per-case state and resources; build it in the test scope.
+          const context = yield* Layer.build(
+            Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer))),
+          )
+          return yield* Effect.gen(function* () {
+            yield* useTool(ownerActor, {
               connectionId: connection.connection.id,
-              account: 'Records (Work)',
-              tool: 'lookup_2',
+              tool: 'lookup_0',
               input: {},
-            }),
-          })
-          expect(names).toHaveLength(3)
-          for (const [index, question] of names.entries())
-            expect(question).toContain(`"tool":"lookup_${index}"`)
-        }).pipe(Effect.provide(Layer.fresh(toolEffectsLayer.pipe(Layer.provideMerge(modelLayer)))))
+              summary: 'Read',
+              rationale: 'Read a record',
+            })
+            yield* resolveTool(ownerActor, { account: 'Records (Work)', tool: 'lookup_1' })
+            yield* connectionRunner({
+              person: ownerActor.person,
+              workspace: ownerActor.workspace,
+              target: ActionTarget.cases.Connection.make({
+                connectionId: connection.connection.id,
+                account: 'Records (Work)',
+                tool: 'lookup_2',
+                input: {},
+              }),
+            })
+            expect(names).toHaveLength(3)
+            for (const [index, question] of names.entries())
+              expect(question).toContain(`"tool":"lookup_${index}"`)
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped)
       }),
     )
   })

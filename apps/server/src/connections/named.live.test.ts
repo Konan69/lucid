@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { ActionTarget, ApprovalDecision, ApprovalState } from '@vivid/contracts'
 import { Effect, Option, Schema } from 'effect'
 import {
@@ -66,59 +66,61 @@ const saveThrough = Effect.fn('NamedAccountProof.saveThrough')(function* (
  * and not what Vivid reported. One model attempt per ask, no judge, no retry.
  */
 describe.skipIf(process.env['VIVID_LIVE_NAMED_ACCOUNT'] !== '1')('named account live chain', () => {
-  it.live(
-    'saves through the work account when asked, and through the other one when asked for it',
-    () =>
-      Effect.gen(function* () {
-        const fixture = yield* chainFixture('Named account proof')
-        const accounts = yield* proofAccounts(fixture, ['ada@work.example', 'ada@home.example'])
-        // Executor said who each account is; the Person calls the first one "Work".
-        expect([accounts.first.identity, accounts.second.identity]).toEqual([
-          'ada@work.example',
-          'ada@home.example',
-        ])
-        const renamed = yield* fixture.rpc.RenameConnection({
-          id: accounts.first.id,
-          name: 'Work',
-        })
-        expect(renamed.connection.account).toBe('Proof Accounts (Work)')
-        const listed = yield* fixture.rpc.ListConnections()
-        expect(listed.connections.map((item) => item.account).toSorted()).toEqual([
-          'Proof Accounts (Work)',
-          'Proof Accounts (ada@home.example)',
-        ])
-        expect(yield* accounts.records('work account verified')).toEqual([])
+  layer(chainLayer, { excludeTestServices: true })((it) => {
+    it.effect(
+      'saves through the work account when asked, and through the other one when asked for it',
+      () =>
+        Effect.gen(function* () {
+          const fixture = yield* chainFixture('Named account proof')
+          const accounts = yield* proofAccounts(fixture, ['ada@work.example', 'ada@home.example'])
+          // Executor said who each account is; the Person calls the first one "Work".
+          expect([accounts.first.identity, accounts.second.identity]).toEqual([
+            'ada@work.example',
+            'ada@home.example',
+          ])
+          const renamed = yield* fixture.rpc.RenameConnection({
+            id: accounts.first.id,
+            name: 'Work',
+          })
+          expect(renamed.connection.account).toBe('Proof Accounts (Work)')
+          const listed = yield* fixture.rpc.ListConnections()
+          expect(listed.connections.map((item) => item.account).toSorted()).toEqual([
+            'Proof Accounts (Work)',
+            'Proof Accounts (ada@home.example)',
+          ])
+          expect(yield* accounts.records('work account verified')).toEqual([])
 
-        const work = yield* saveThrough(
-          fixture,
-          'In Proof Accounts, save a record whose subject is "work account verified", using my work account. Discover the tool, then call use_tool directly. Do not use a program. Ask me for approval if needed.',
-          0,
-        )
-        // Vivid named the work account and no other, and where the Person was asked first,
-        // they were asked about that account by its own name.
-        expect(new Set(work.named)).toEqual(new Set(['Proof Accounts (Work)']))
-        expect(Option.getOrElse(work.asked, () => 'Proof Accounts (Work)')).toBe(
-          'Proof Accounts (Work)',
-        )
-        expect(yield* accounts.records('work account verified')).toEqual([
-          { subject: 'work account verified', by: 'ada@work.example' },
-        ])
+          const work = yield* saveThrough(
+            fixture,
+            'In Proof Accounts, save a record whose subject is "work account verified", using my work account. Discover the tool, then call use_tool directly. Do not use a program. Ask me for approval if needed.',
+            0,
+          )
+          // Vivid named the work account and no other, and where the Person was asked first,
+          // they were asked about that account by its own name.
+          expect(new Set(work.named)).toEqual(new Set(['Proof Accounts (Work)']))
+          expect(Option.getOrElse(work.asked, () => 'Proof Accounts (Work)')).toBe(
+            'Proof Accounts (Work)',
+          )
+          expect(yield* accounts.records('work account verified')).toEqual([
+            { subject: 'work account verified', by: 'ada@work.example' },
+          ])
 
-        const home = yield* saveThrough(
-          fixture,
-          'Now save another record whose subject is "home account verified", but through the ada@home.example account this time. Call use_tool directly. Ask me for approval if needed.',
-          work.named.length,
-        )
-        expect(new Set(home.named)).toEqual(new Set(['Proof Accounts (ada@home.example)']))
-        expect(Option.getOrElse(home.asked, () => 'Proof Accounts (ada@home.example)')).toBe(
-          'Proof Accounts (ada@home.example)',
-        )
-        expect(yield* accounts.records('home account verified')).toEqual([
-          { subject: 'home account verified', by: 'ada@home.example' },
-        ])
-        // The first record is still the only one of its subject: nothing was replayed.
-        expect(yield* accounts.records('work account verified')).toHaveLength(1)
-      }).pipe(Effect.scoped, Effect.provide(chainLayer)),
-    { timeout: 180_000 },
-  )
+          const home = yield* saveThrough(
+            fixture,
+            'Now save another record whose subject is "home account verified", but through the ada@home.example account this time. Call use_tool directly. Ask me for approval if needed.',
+            work.named.length,
+          )
+          expect(new Set(home.named)).toEqual(new Set(['Proof Accounts (ada@home.example)']))
+          expect(Option.getOrElse(home.asked, () => 'Proof Accounts (ada@home.example)')).toBe(
+            'Proof Accounts (ada@home.example)',
+          )
+          expect(yield* accounts.records('home account verified')).toEqual([
+            { subject: 'home account verified', by: 'ada@home.example' },
+          ])
+          // The first record is still the only one of its subject: nothing was replayed.
+          expect(yield* accounts.records('work account verified')).toHaveLength(1)
+        }).pipe(Effect.scoped),
+      { timeout: 180_000 },
+    )
+  })
 })

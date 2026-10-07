@@ -68,7 +68,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
             Option.some(caller.spanId),
           )
           return undefined
-        }).pipe(Effect.provide(Layer.succeed(Tracer.Tracer, tracer)))
+        }).pipe(Effect.provideService(Tracer.Tracer, tracer))
       }),
     )
 
@@ -95,8 +95,9 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const calls = yield* Ref.make(0)
         const controlled = Executor.of({
           ...executor,
-          catalog: () =>
-            Ref.update(calls, (count) => count + 1).pipe(Effect.andThen(executor.catalog())),
+          catalog: Effect.suspend(() =>
+            Ref.update(calls, (count) => count + 1).pipe(Effect.andThen(executor.catalog)),
+          ),
           authorization: () =>
             Ref.update(calls, (count) => count + 1).pipe(
               Effect.andThen(
@@ -108,13 +109,14 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
             ),
         })
         yield* Effect.gen(function* () {
-          yield* ConnectionStore
-          yield* TestClock.adjust('1 hour')
-          expect(yield* Ref.get(calls)).toBe(0)
-        }).pipe(
-          Effect.provide(connectionStoreLayer, { local: true }),
-          Effect.provideService(Executor, controlled),
-        )
+          // Preserve local provision: rebuild against this case's overridden authorities.
+          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+          return yield* Effect.gen(function* () {
+            yield* ConnectionStore
+            yield* TestClock.adjust('1 hour')
+            expect(yield* Ref.get(calls)).toBe(0)
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped, Effect.provideService(Executor, controlled))
       }),
     )
 
@@ -134,16 +136,16 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
             ),
         })
         const failure = yield* Effect.gen(function* () {
-          return yield* (yield* ConnectionStore).begin(ownerActor, {
-            service: serviceId,
-            name: 'Rejected',
-            shared: false,
-          })
-        }).pipe(
-          Effect.provide(connectionStoreLayer, { local: true }),
-          Effect.provideService(Executor, failed),
-          Effect.flip,
-        )
+          // Preserve local provision: rebuild against this case's overridden authorities.
+          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+          return yield* Effect.gen(function* () {
+            return yield* (yield* ConnectionStore).begin(ownerActor, {
+              service: serviceId,
+              name: 'Rejected',
+              shared: false,
+            })
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped, Effect.provideService(Executor, failed), Effect.flip)
         expect(failure._tag).toBe('DatabaseConstraintViolation')
       }),
     )
@@ -187,43 +189,44 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           },
         })
         yield* Effect.gen(function* () {
-          const resumedStore = yield* ConnectionStore
-          const resumed = yield* resumedStore.resume(admin, begun.connection.id)
-          expect(resumed._tag).toBe('OpenSignIn')
-          const retained = yield* resumedStore.get(admin, begun.connection.id)
-          expect(retained).toMatchObject({
-            personId: admin.person.id,
-            companyId: original.companyId,
-            createdAt: original.createdAt,
-            references: { owner: original.references.owner },
-          })
-          for (const actor of [ownerActor, outsider]) {
+          // Preserve local provision: rebuild against this case's overridden authorities.
+          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+          return yield* Effect.gen(function* () {
+            const resumedStore = yield* ConnectionStore
+            const resumed = yield* resumedStore.resume(admin, begun.connection.id)
+            expect(resumed._tag).toBe('OpenSignIn')
+            const retained = yield* resumedStore.get(admin, begun.connection.id)
+            expect(retained).toMatchObject({
+              personId: admin.person.id,
+              companyId: original.companyId,
+              createdAt: original.createdAt,
+              references: { owner: original.references.owner },
+            })
+            for (const actor of [ownerActor, outsider]) {
+              expect(
+                yield* resumedStore
+                  .callback(
+                    actor,
+                    begun.connection.id,
+                    Redacted.make(`https://example.test/return?state=${begun.connection.id}`),
+                  )
+                  .pipe(Effect.flip),
+              ).toBeInstanceOf(NotFound)
+            }
+            const personal = {
+              ...admin,
+              workspace: Workspace.cases.Personal.make({}),
+              threadId: Option.none(),
+            }
             expect(
-              yield* resumedStore
-                .callback(
-                  actor,
-                  begun.connection.id,
-                  Redacted.make(`https://example.test/return?state=${begun.connection.id}`),
-                )
-                .pipe(Effect.flip),
-            ).toBeInstanceOf(NotFound)
-          }
-          const personal = {
-            ...admin,
-            workspace: Workspace.cases.Personal.make({}),
-            threadId: Option.none(),
-          }
-          expect(
-            (yield* resumedStore.callback(
-              personal,
-              begun.connection.id,
-              Redacted.make(`https://example.test/return?state=${begun.connection.id}`),
-            ))._tag,
-          ).toBe('Ready')
-        }).pipe(
-          Effect.provide(connectionStoreLayer, { local: true }),
-          Effect.provideService(Executor, renewed),
-        )
+              (yield* resumedStore.callback(
+                personal,
+                begun.connection.id,
+                Redacted.make(`https://example.test/return?state=${begun.connection.id}`),
+              ))._tag,
+            ).toBe('Ready')
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped, Effect.provideService(Executor, renewed))
         yield* Ref.set(probe.step, 'Done')
       }),
     )
@@ -306,22 +309,25 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           }),
         })
         yield* Effect.gen(function* () {
-          const scoped = yield* ConnectionStore
-          const slow = yield* scoped.resume(ownerActor, first.connection.id).pipe(Effect.forkChild)
-          yield* Deferred.await(entered)
-          const repeated = yield* scoped
-            .resume(ownerActor, first.connection.id)
-            .pipe(Effect.forkChild)
-          expect((yield* scoped.resume(ownerActor, second.connection.id))._tag).toBe('OpenSignIn')
-          expect(yield* Ref.get(calls)).toBe(1)
-          yield* Deferred.succeed(release, undefined)
-          yield* Fiber.join(slow)
-          yield* Fiber.join(repeated)
-          expect(yield* Ref.get(calls)).toBe(2)
-        }).pipe(
-          Effect.provide(connectionStoreLayer, { local: true }),
-          Effect.provideService(Executor, controlled),
-        )
+          // Preserve local provision: rebuild against this case's overridden authorities.
+          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+          return yield* Effect.gen(function* () {
+            const scoped = yield* ConnectionStore
+            const slow = yield* scoped
+              .resume(ownerActor, first.connection.id)
+              .pipe(Effect.forkChild)
+            yield* Deferred.await(entered)
+            const repeated = yield* scoped
+              .resume(ownerActor, first.connection.id)
+              .pipe(Effect.forkChild)
+            expect((yield* scoped.resume(ownerActor, second.connection.id))._tag).toBe('OpenSignIn')
+            expect(yield* Ref.get(calls)).toBe(1)
+            yield* Deferred.succeed(release, undefined)
+            yield* Fiber.join(slow)
+            yield* Fiber.join(repeated)
+            expect(yield* Ref.get(calls)).toBe(2)
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped, Effect.provideService(Executor, controlled))
         yield* Ref.set(probe.step, 'Done')
       }),
     )
@@ -394,27 +400,28 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const probe = yield* ConnectionProbe
         const unavailable = Executor.of({
           ...executor,
-          catalog: Effect.fn('Executor.Test.unavailable')(function* () {
+          catalog: Effect.gen(function* () {
             yield* Ref.update(probe.catalogs, (count) => count + 1)
             return yield* new ServiceUnavailable({ service: 'connections', message: 'Unavailable' })
-          }),
+          }).pipe(Effect.withSpan('Executor.Test.unavailable')),
         })
         yield* Effect.gen(function* () {
-          const offlineStore = yield* ConnectionStore
-          const listed = yield* offlineStore.list(ownerActor)
-          expect(Object.keys(listed)).toEqual(['connections'])
-          expect(listed.connections.map((row) => row.id)).toContain(step.connection.id)
-          const afterList = yield* Ref.get(probe.catalogs)
-          yield* offlineStore.list(ownerActor)
-          expect(yield* Ref.get(probe.catalogs)).toBe(afterList)
-          expect(yield* offlineStore.find('Records')).toEqual(
-            ServiceCatalog.cases.Unavailable.make({}),
-          )
-          expect(yield* Ref.get(probe.catalogs)).toBe(afterList + 1)
-        }).pipe(
-          Effect.provide(connectionStoreLayer, { local: true }),
-          Effect.provideService(Executor, unavailable),
-        )
+          // Preserve local provision: rebuild against this case's overridden authorities.
+          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+          return yield* Effect.gen(function* () {
+            const offlineStore = yield* ConnectionStore
+            const listed = yield* offlineStore.list(ownerActor)
+            expect(Object.keys(listed)).toEqual(['connections'])
+            expect(listed.connections.map((row) => row.id)).toContain(step.connection.id)
+            const afterList = yield* Ref.get(probe.catalogs)
+            yield* offlineStore.list(ownerActor)
+            expect(yield* Ref.get(probe.catalogs)).toBe(afterList)
+            expect(yield* offlineStore.find('Records')).toEqual(
+              ServiceCatalog.cases.Unavailable.make({}),
+            )
+            expect(yield* Ref.get(probe.catalogs)).toBe(afterList + 1)
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped, Effect.provideService(Executor, unavailable))
       }),
     )
     /** A request disconnect must leave the Layer-owned cold probe and other readers alive. */
@@ -433,42 +440,43 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const secondStarted = yield* Deferred.make<void>()
         const controlled = Executor.of({
           ...executor,
-          catalog: Effect.fn('Executor.Test.slowCatalog')(function* () {
+          catalog: Effect.gen(function* () {
             yield* Ref.update(calls, (count) => count + 1)
             yield* Deferred.succeed(started, undefined)
             yield* Deferred.await(complete)
-            return yield* executor.catalog()
-          }),
+            return yield* executor.catalog
+          }).pipe(Effect.withSpan('Executor.Test.slowCatalog')),
         })
         yield* Effect.gen(function* () {
-          const store = yield* ConnectionStore
-          const first = yield* store.list(ownerActor).pipe(Effect.forkChild)
-          yield* Deferred.await(started)
-          // The public projection follows the final SQL read. Its remaining steps are synchronous,
-          // so this tracer signal puts the second reader at the shared cache before interruption.
-          const tracer = Tracer.make({
-            span(options) {
-              if (options.name === 'Connections.connectionOf')
-                Deferred.doneUnsafe(secondStarted, Effect.void)
-              return new Tracer.NativeSpan(options)
-            },
-          })
-          const second = yield* store
-            .list(ownerActor)
-            .pipe(Effect.withTracer(tracer), Effect.forkChild)
-          yield* Deferred.await(secondStarted)
-          // Let the signalled projection enter the cache wait before disconnecting its owner.
-          yield* Effect.yieldNow
-          yield* Fiber.interrupt(first)
-          yield* Deferred.succeed(complete, undefined)
-          expect((yield* Fiber.join(second)).connections.map((row) => row.id)).toContain(
-            step.connection.id,
-          )
-          expect(yield* Ref.get(calls)).toBe(1)
-        }).pipe(
-          Effect.provide(connectionStoreLayer, { local: true }),
-          Effect.provideService(Executor, controlled),
-        )
+          // Preserve local provision: rebuild against this case's overridden authorities.
+          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+          return yield* Effect.gen(function* () {
+            const store = yield* ConnectionStore
+            const first = yield* store.list(ownerActor).pipe(Effect.forkChild)
+            yield* Deferred.await(started)
+            // The public projection follows the final SQL read. Its remaining steps are synchronous,
+            // so this tracer signal puts the second reader at the shared cache before interruption.
+            const tracer = Tracer.make({
+              span(options) {
+                if (options.name === 'Connections.connectionOf')
+                  Deferred.doneUnsafe(secondStarted, Effect.void)
+                return new Tracer.NativeSpan(options)
+              },
+            })
+            const second = yield* store
+              .list(ownerActor)
+              .pipe(Effect.withTracer(tracer), Effect.forkChild)
+            yield* Deferred.await(secondStarted)
+            // Let the signalled projection enter the cache wait before disconnecting its owner.
+            yield* Effect.yieldNow
+            yield* Fiber.interrupt(first)
+            yield* Deferred.succeed(complete, undefined)
+            expect((yield* Fiber.join(second)).connections.map((row) => row.id)).toContain(
+              step.connection.id,
+            )
+            expect(yield* Ref.get(calls)).toBe(1)
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped, Effect.provideService(Executor, controlled))
       }),
     )
 
@@ -486,7 +494,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const calls = yield* Ref.make(0)
         const controlled = Executor.of({
           ...executor,
-          catalog: Effect.fn('Executor.Test.recoveringCatalog')(function* () {
+          catalog: Effect.gen(function* () {
             yield* Ref.update(calls, (count) => count + 1)
             const domain = yield* Ref.get(site)
             if (Option.isNone(domain))
@@ -494,42 +502,43 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
                 service: 'connections',
                 message: 'Unavailable',
               })
-            return (yield* executor.catalog()).map((entry) =>
+            return (yield* executor.catalog).map((entry) =>
               ExecutorServiceEntry.make({ ...entry, domain: domain.value }),
             )
-          }),
+          }).pipe(Effect.withSpan('Executor.Test.recoveringCatalog')),
         })
         yield* Effect.gen(function* () {
-          const store = yield* ConnectionStore
-          expect((yield* store.list(ownerActor)).connections).toMatchObject([
-            { id: step.connection.id, mark: null },
-          ])
-          yield* Ref.set(site, Option.some('workspace.google.com'))
-          yield* TestClock.adjust('29 seconds')
-          expect((yield* store.list(ownerActor)).connections).toMatchObject([
-            { id: step.connection.id, mark: null },
-          ])
-          expect(yield* Ref.get(calls)).toBe(1)
-          yield* TestClock.adjust('1 second')
-          expect((yield* store.list(ownerActor)).connections).toMatchObject([
-            {
-              id: step.connection.id,
-              mark: 'https://www.google.com/s2/favicons?domain=google.com',
-            },
-          ])
-          expect(yield* Ref.get(calls)).toBe(2)
-          yield* Ref.set(site, Option.some('deepwiki.com'))
-          expect((yield* store.list(ownerActor)).connections).toMatchObject([
-            {
-              id: step.connection.id,
-              mark: 'https://www.google.com/s2/favicons?domain=deepwiki.com',
-            },
-          ])
-          expect(yield* Ref.get(calls)).toBe(3)
-        }).pipe(
-          Effect.provide(connectionStoreLayer, { local: true }),
-          Effect.provideService(Executor, controlled),
-        )
+          // Preserve local provision: rebuild against this case's overridden authorities.
+          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+          return yield* Effect.gen(function* () {
+            const store = yield* ConnectionStore
+            expect((yield* store.list(ownerActor)).connections).toMatchObject([
+              { id: step.connection.id, mark: null },
+            ])
+            yield* Ref.set(site, Option.some('workspace.google.com'))
+            yield* TestClock.adjust('29 seconds')
+            expect((yield* store.list(ownerActor)).connections).toMatchObject([
+              { id: step.connection.id, mark: null },
+            ])
+            expect(yield* Ref.get(calls)).toBe(1)
+            yield* TestClock.adjust('1 second')
+            expect((yield* store.list(ownerActor)).connections).toMatchObject([
+              {
+                id: step.connection.id,
+                mark: 'https://www.google.com/s2/favicons?domain=google.com',
+              },
+            ])
+            expect(yield* Ref.get(calls)).toBe(2)
+            yield* Ref.set(site, Option.some('deepwiki.com'))
+            expect((yield* store.list(ownerActor)).connections).toMatchObject([
+              {
+                id: step.connection.id,
+                mark: 'https://www.google.com/s2/favicons?domain=deepwiki.com',
+              },
+            ])
+            expect(yield* Ref.get(calls)).toBe(3)
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped, Effect.provideService(Executor, controlled))
       }),
     )
     it.effect('searches the full catalog and preserves failures other than unavailability', () =>
@@ -547,7 +556,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const executor = yield* Executor
         const rejected = Executor.of({
           ...executor,
-          catalog: Effect.fn('Executor.Test.rejectedCatalog')(() =>
+          catalog: Effect.suspend(() =>
             Effect.fail(
               ExecutorRejected.make({
                 service: 'connections',
@@ -555,15 +564,15 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
                 message: 'Catalog refused',
               }),
             ),
-          ),
+          ).pipe(Effect.withSpan('Executor.Test.rejectedCatalog')),
         })
         const failure = yield* Effect.gen(function* () {
-          return yield* (yield* ConnectionStore).find('Records')
-        }).pipe(
-          Effect.provide(connectionStoreLayer, { local: true }),
-          Effect.provideService(Executor, rejected),
-          Effect.flip,
-        )
+          // Preserve local provision: rebuild against this case's overridden authorities.
+          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+          return yield* Effect.gen(function* () {
+            return yield* (yield* ConnectionStore).find('Records')
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped, Effect.provideService(Executor, rejected), Effect.flip)
         expect(failure).toBeInstanceOf(InvalidRequest)
       }),
     )
@@ -577,41 +586,42 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           const before = yield* Ref.get(probe.begins)
           const setupRequired = Executor.of({
             ...executor,
-            catalog: Effect.fn('Executor.Test.setupCatalog')(function* () {
-              return (yield* executor.catalog()).map((entry) =>
+            catalog: Effect.gen(function* () {
+              return (yield* executor.catalog).map((entry) =>
                 ExecutorServiceEntry.make({
                   ...entry,
                   authorization: ServiceAuthorization.cases.SetupRequired.make({}),
                 }),
               )
-            }),
+            }).pipe(Effect.withSpan('Executor.Test.setupCatalog')),
             authorization: Effect.fn('Executor.Test.setupRequired')(() =>
               Effect.succeed(ServiceAuthorization.cases.SetupRequired.make({})),
             ),
           })
           yield* Effect.gen(function* () {
-            const store = yield* ConnectionStore
-            const found = yield* store.find('records')
-            expect(found).toHaveProperty(
-              'services.0.authorization',
-              ServiceAuthorization.cases.SetupRequired.make({}),
-            )
-            const prior = yield* store.list(ownerActor)
-            expect(
-              yield* store
-                .begin(ownerActor, {
-                  service: serviceId,
-                  name: 'Setup unavailable',
-                  shared: false,
-                })
-                .pipe(Effect.flip),
-            ).toEqual(new InvalidRequest({ message: connectionSetupMessage }))
-            expect(yield* store.list(ownerActor)).toEqual(prior)
-            expect(yield* Ref.get(probe.begins)).toBe(before)
-          }).pipe(
-            Effect.provide(connectionStoreLayer, { local: true }),
-            Effect.provideService(Executor, setupRequired),
-          )
+            // Preserve local provision: rebuild against this case's overridden authorities.
+            const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+            return yield* Effect.gen(function* () {
+              const store = yield* ConnectionStore
+              const found = yield* store.find('records')
+              expect(found).toHaveProperty(
+                'services.0.authorization',
+                ServiceAuthorization.cases.SetupRequired.make({}),
+              )
+              const prior = yield* store.list(ownerActor)
+              expect(
+                yield* store
+                  .begin(ownerActor, {
+                    service: serviceId,
+                    name: 'Setup unavailable',
+                    shared: false,
+                  })
+                  .pipe(Effect.flip),
+              ).toEqual(new InvalidRequest({ message: connectionSetupMessage }))
+              expect(yield* store.list(ownerActor)).toEqual(prior)
+              expect(yield* Ref.get(probe.begins)).toBe(before)
+            }).pipe(Effect.provide(context))
+          }).pipe(Effect.scoped, Effect.provideService(Executor, setupRequired))
         }),
     )
     it.effect('searches optimistic catalog hints without waiting for inspection', () =>
@@ -632,18 +642,21 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         )
         const inspection = Executor.of({
           ...executor,
-          catalog: Effect.fn('Executor.Test.largeCatalog')(() => Effect.succeed(entries)),
+          catalog: Effect.suspend(() => Effect.succeed(entries)).pipe(
+            Effect.withSpan('Executor.Test.largeCatalog'),
+          ),
           authorization: Effect.fn('Executor.Test.inspect')(function* () {
             yield* Deferred.await(gate)
             return ServiceAuthorization.cases.SetupRequired.make({})
           }),
         })
         const found = yield* Effect.gen(function* () {
-          return yield* (yield* ConnectionStore).find('records')
-        }).pipe(
-          Effect.provide(connectionStoreLayer, { local: true }),
-          Effect.provideService(Executor, inspection),
-        )
+          // Preserve local provision: rebuild against this case's overridden authorities.
+          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+          return yield* Effect.gen(function* () {
+            return yield* (yield* ConnectionStore).find('records')
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped, Effect.provideService(Executor, inspection))
         expect(yield* Deferred.isDone(gate)).toBe(false)
         expect(ServiceCatalog.guards.Ready(found)).toBe(true)
         if (ServiceCatalog.guards.Ready(found)) {
@@ -754,20 +767,24 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           const database = yield* Database
           const expected = (yield* store.get(ownerActor, shared.connection.id)).companyId
           yield* Effect.gen(function* () {
-            const recorded = yield* ConnectionStore
-            yield* recorded.callback(
-              { ...personalActor, by: 'person' },
-              shared.connection.id,
-              Redacted.make(`https://example.test/return?state=${shared.connection.id}`),
+            // This composed fixture owns per-case state and resources; build it in the test scope.
+            const context = yield* Layer.build(
+              Layer.fresh(connectionStoreLayer.pipe(Layer.provide(auditLayer))),
             )
-            yield* recorded.callback(
-              ownerActor,
-              personal.connection.id,
-              Redacted.make(`https://example.test/return?state=${personal.connection.id}`),
-            )
-          }).pipe(
-            Effect.provide(connectionStoreLayer.pipe(Layer.provide(auditLayer)), { local: true }),
-          )
+            return yield* Effect.gen(function* () {
+              const recorded = yield* ConnectionStore
+              yield* recorded.callback(
+                { ...personalActor, by: 'person' },
+                shared.connection.id,
+                Redacted.make(`https://example.test/return?state=${shared.connection.id}`),
+              )
+              yield* recorded.callback(
+                ownerActor,
+                personal.connection.id,
+                Redacted.make(`https://example.test/return?state=${personal.connection.id}`),
+              )
+            }).pipe(Effect.provide(context))
+          }).pipe(Effect.scoped)
           const rows = yield* database.run(
             database
               .select({ companyId: auditEntries.companyId })
@@ -799,16 +816,16 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const before = yield* Ref.get(probe.removals)
         const events = yield* Ref.get(probe.events)
         const failure = yield* Effect.gen(function* () {
-          return yield* (yield* ConnectionStore).begin(ownerActor, {
-            service: serviceId,
-            name: 'Unavailable sign-in',
-            shared: false,
-          })
-        }).pipe(
-          Effect.provide(connectionStoreLayer, { local: true }),
-          Effect.provideService(Executor, blocked),
-          Effect.flip,
-        )
+          // Preserve local provision: rebuild against this case's overridden authorities.
+          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+          return yield* Effect.gen(function* () {
+            return yield* (yield* ConnectionStore).begin(ownerActor, {
+              service: serviceId,
+              name: 'Unavailable sign-in',
+              shared: false,
+            })
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped, Effect.provideService(Executor, blocked), Effect.flip)
         expect(failure._tag).toBe('InvalidRequest')
         expect((yield* store.list(ownerActor)).connections).toEqual([])
         expect(yield* Ref.get(probe.removals)).toBe(before + 1)
@@ -839,16 +856,16 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           ),
         })
         const failure = yield* Effect.gen(function* () {
-          return yield* (yield* ConnectionStore).begin(ownerActor, {
-            service: serviceId,
-            name: 'Unavailable sign-in',
-            shared: false,
-          })
-        }).pipe(
-          Effect.provide(connectionStoreLayer, { local: true }),
-          Effect.provideService(Executor, blocked),
-          Effect.flip,
-        )
+          // Preserve local provision: rebuild against this case's overridden authorities.
+          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+          return yield* Effect.gen(function* () {
+            return yield* (yield* ConnectionStore).begin(ownerActor, {
+              service: serviceId,
+              name: 'Unavailable sign-in',
+              shared: false,
+            })
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped, Effect.provideService(Executor, blocked), Effect.flip)
         expect(failure._tag).toBe('InvalidRequest')
         expect(failure.message).toBe('Sign-in could not start.')
         expect((yield* store.list(ownerActor)).connections).toEqual([])

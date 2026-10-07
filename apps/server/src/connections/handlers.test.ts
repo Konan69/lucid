@@ -1,5 +1,5 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { Effect, Ref } from 'effect'
+import { Layer, Effect, Ref } from 'effect'
 import {
   ConnectionId,
   ConnectionStep,
@@ -62,15 +62,19 @@ describe.skipIf(!testDatabaseConfigured)('Connection transport authentication', 
           threadId,
         })
         yield* Effect.gen(function* () {
-          const found = yield* connectionHandlers.FindTools({ query: 'records' })
-          expect(found.unconnected).toEqual([])
-          expect(
-            yield* connectionHandlers
-              .OfferConnection({ service: serviceId, reason: 'Read records', wanted: 'Service' })
-              .pipe(Effect.flip),
-          ).toEqual(new InvalidRequest({ message: connectionSetupMessage }))
+          // Preserve local provision: rebuild against this case's overridden authorities.
+          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+          return yield* Effect.gen(function* () {
+            const found = yield* connectionHandlers.FindTools({ query: 'records' })
+            expect(found.unconnected).toEqual([])
+            expect(
+              yield* connectionHandlers
+                .OfferConnection({ service: serviceId, reason: 'Read records', wanted: 'Service' })
+                .pipe(Effect.flip),
+            ).toEqual(new InvalidRequest({ message: connectionSetupMessage }))
+          }).pipe(Effect.provide(context))
         }).pipe(
-          Effect.provide(connectionStoreLayer, { local: true }),
+          Effect.scoped,
           Effect.provideService(Executor, setupRequired),
           Effect.provideService(AuthContext, auth),
         )
@@ -165,7 +169,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
           const executor = yield* Executor
           const setup = Executor.of({
             ...executor,
-            catalog: Effect.fn('Executor.Test.setupCatalog')(() =>
+            catalog: Effect.suspend(() =>
               Effect.succeed([
                 ExecutorServiceEntry.make({
                   id: serviceId,
@@ -175,7 +179,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
                   authorization: ServiceAuthorization.cases.SetupRequired.make({}),
                 }),
               ]),
-            ),
+            ).pipe(Effect.withSpan('Executor.Test.setupCatalog')),
           })
           const auth = AuthState.Person({
             person: ownerActor.person,
@@ -183,14 +187,18 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
             sessionId: SessionId.make('setup-session'),
           })
           expect(
-            yield* connectionHandlers
-              .ResumeConnection({ id: begun.connection.id })
-              .pipe(
-                Effect.provide(connectionStoreLayer, { local: true }),
-                Effect.provideService(Executor, setup),
-                Effect.provideService(AuthContext, auth),
-                Effect.flip,
-              ),
+            yield* Effect.gen(function* () {
+              // Preserve local provision: rebuild against this case's overridden authorities.
+              const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+              return yield* connectionHandlers
+                .ResumeConnection({ id: begun.connection.id })
+                .pipe(Effect.provide(context))
+            }).pipe(
+              Effect.scoped,
+              Effect.provideService(Executor, setup),
+              Effect.provideService(AuthContext, auth),
+              Effect.flip,
+            ),
           ).toEqual(new InvalidRequest({ message: connectionSetupMessage }))
           yield* Ref.set(probe.step, 'Done')
         }),
@@ -237,15 +245,19 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
             workspace: ownerActor.workspace,
             sessionId: SessionId.make('lost-session'),
           })
-          const failure = yield* connectionHandlers
-            .ResumeConnection({ id: begun.connection.id })
-            .pipe(
-              Effect.provide(connectionStoreLayer, { local: true }),
-              Effect.provideService(Executor, lost),
-              Effect.provideService(Changes, recording),
-              Effect.provideService(AuthContext, auth),
-              Effect.flip,
-            )
+          const failure = yield* Effect.gen(function* () {
+            // Preserve local provision: rebuild against this case's overridden authorities.
+            const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+            return yield* connectionHandlers
+              .ResumeConnection({ id: begun.connection.id })
+              .pipe(Effect.provide(context))
+          }).pipe(
+            Effect.scoped,
+            Effect.provideService(Executor, lost),
+            Effect.provideService(Changes, recording),
+            Effect.provideService(AuthContext, auth),
+            Effect.flip,
+          )
           expect(failure).toBeInstanceOf(ServiceUnavailable)
           expect((yield* store.get(ownerActor, begun.connection.id)).references).toEqual(pending)
           expect(yield* Ref.get(topics)).toContain(Topic.person(ownerActor.person.id))
@@ -363,19 +375,20 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
             ),
           ),
         })
-        const outcome = yield* connectionRunner({
-          person: ownerActor.person,
-          workspace: ownerActor.workspace,
-          target: ActionTarget.cases.Connection.make({
-            connectionId: begun.connection.id,
-            account: 'Unavailable discovery',
-            tool: 'read',
-            input: {},
-          }),
-        }).pipe(
-          Effect.provide(connectionStoreLayer, { local: true }),
-          Effect.provideService(Executor, unavailable),
-        )
+        const outcome = yield* Effect.gen(function* () {
+          // Preserve local provision: rebuild against this case's overridden authorities.
+          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+          return yield* connectionRunner({
+            person: ownerActor.person,
+            workspace: ownerActor.workspace,
+            target: ActionTarget.cases.Connection.make({
+              connectionId: begun.connection.id,
+              account: 'Unavailable discovery',
+              tool: 'read',
+              input: {},
+            }),
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped, Effect.provideService(Executor, unavailable))
         expect(outcome._tag).toBe('Failed')
         expect(yield* Ref.get(probe.calls)).toBe(calls)
       }),

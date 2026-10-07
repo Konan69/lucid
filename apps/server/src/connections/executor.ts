@@ -161,9 +161,7 @@ export const ExecutorTool = Schema.Struct({
   description: Schema.String,
   input: Schema.Json,
   // An omitted provider schema is genuine absence; schema constructors normalize it to None.
-  output: Schema.Option(Schema.Json).pipe(
-    Schema.withConstructorDefault(Effect.succeed(Option.none())),
-  ),
+  output: Schema.Option(Schema.Json).pipe(Schema.withConstructorDefault(Effect.succeedNone)),
   effect: ActionEffect,
 })
 export const ExecutorCallOutcome = Schema.TaggedUnion({
@@ -369,10 +367,7 @@ export interface ExecutorService {
     readonly service: ServiceId
     readonly returnAddress: string
   }) => Effect.Effect<ServiceAuthorization, ExecutorFailure>
-  readonly catalog: () => Effect.Effect<
-    readonly (typeof ExecutorServiceEntry.Type)[],
-    ExecutorFailure
-  >
+  readonly catalog: Effect.Effect<readonly (typeof ExecutorServiceEntry.Type)[], ExecutorFailure>
   readonly begin: (
     input: typeof BeginInput.Type,
   ) => Effect.Effect<typeof ExecutorStep.Type, ExecutorFailure>
@@ -684,18 +679,16 @@ const isInputInvalid = Match.type<typeof WireFailure.Type>().pipe(
 /** Decode only InputInvalid detail. Other failure diagnostics may contain credentials and are
  * never projected. HostedTools.call imports this exact InputInvalid shape from the SDK.
  */
-const WireInputInvalid = Schema.Struct({
-  _tag: Schema.Literal('InputInvalid'),
+const WireInputInvalid = Schema.TaggedStruct('InputInvalid', {
   problems: Schema.Array(Schema.String),
 })
 const decodeInputInvalid = Schema.decodeUnknownEffect(WireInputInvalid)
 
 /** Decode only the safe reason; never preserve OAuth's callback, diagnostics or supplied values. */
-const WireOAuthSetupFailure = Schema.Struct({
-  _tag: Schema.Literal('OAuthSetupFailed'),
+const WireOAuthSetupFailure = Schema.TaggedStruct('OAuthSetupFailed', {
   reason: OAuthSetupReason,
 })
-const isOAuthSetupFailure = Schema.is(Schema.Struct({ _tag: Schema.Literal('OAuthSetupFailed') }))
+const isOAuthSetupFailure = Schema.is(Schema.TaggedStruct('OAuthSetupFailed', {}))
 const decodeOAuthSetupFailure = Schema.decodeUnknownEffect(WireOAuthSetupFailure)
 
 /** Remote tags determine recovery; arbitrary messages and credential-bearing diagnostics are dropped. */
@@ -779,10 +772,11 @@ function responseReader(client: HttpClient.HttpClient) {
       (effect, _request, tool) =>
         effect.pipe(
           Effect.scoped,
-          Effect.timeout('90 seconds'),
-          Effect.catchTag('TimeoutError', () =>
-            Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool })),
-          ),
+          Effect.timeoutOrElse({
+            duration: '90 seconds',
+            orElse: () =>
+              Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool })),
+          }),
         ),
     )
   }
@@ -857,8 +851,7 @@ const target = (references: ExecutorReferences) =>
 /** Centralized encoding leaves foreign identifiers opaque rather than interpreting their prefixes. */
 const query = (value: string) => encodeURIComponent(value)
 /** Body encoding happens before dispatch and contains no diagnostic/logging of secret fields. */
-const post = (path: string, body: typeof Schema.Json.Type) =>
-  jsonBody(HttpClientRequest.post(path), body)
+const post = (path: string, body: Schema.Json) => jsonBody(HttpClientRequest.post(path), body)
 
 /** Carry only stable identity across state transitions; never copy another variant discriminator. */
 function referenceIdentity(references: ExecutorReferences) {
@@ -1074,11 +1067,11 @@ const validateConnectionTarget = Effect.fn('Executor.validateConnectionTarget')(
   const selection = connection.target
   if (selection === null) {
     if (connection.reconnectAccount === null)
-      yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
+      return yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
     return
   }
   if (selection.profile !== references.profile || selection.app !== references.app)
-    yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
+    return yield* ExecutorResponseInvalid.make({ service: 'connections', tool: null })
 })
 
 /** Native targeted requests atomically select the saved account into the exact profile. */
@@ -1091,7 +1084,7 @@ function makeAuthorize(
     input: typeof BeginInput.Type,
     app: typeof WireApp.Type,
     references: ExecutorReferences,
-    authorization: typeof ServiceAuthorization.Type,
+    authorization: ServiceAuthorization,
   ) {
     const requirements = Object.entries(app.requirements.accounts)
     const first = requirements[0]
@@ -1485,7 +1478,7 @@ function makeInspectionReader(input: {
  */
 const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
   http: ExecutorHttp,
-  catalog: ExecutorService['catalog'],
+  catalog: () => ExecutorService['catalog'],
 ) {
   const inspect = makeInspectSetup(http)
   const scope = yield* Effect.scope
@@ -1514,10 +1507,11 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
       if (Option.isNone(definition)) return entry.authorization
       const authorization = yield* permits.withPermits(1)(
         inspect(definition.value).pipe(
-          Effect.timeout('5 seconds'),
-          Effect.catchTag('TimeoutError', () =>
-            Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
-          ),
+          Effect.timeoutOrElse({
+            duration: '5 seconds',
+            orElse: () =>
+              Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
+          }),
           Effect.catch(
             Effect.fn('Executor.unavailableSetup')(function* (error) {
               if (isSetupRequired(error)) {
@@ -1580,10 +1574,11 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
       const retained = yield* publication.withPermit(refusals.read(input.service))
       if (Option.isSome(retained)) return retained.value
       const inspected = yield* inspect(requirement).pipe(
-        Effect.timeout('5 seconds'),
-        Effect.catchTag('TimeoutError', () =>
-          Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
-        ),
+        Effect.timeoutOrElse({
+          duration: '5 seconds',
+          orElse: () =>
+            Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
+        }),
       )
       return yield* publication.withPermit(
         Effect.gen(function* () {
@@ -1601,11 +1596,11 @@ const makeAuthorization = Effect.fn('Executor.authorizationCache')(function* (
      * expired/missing inspections start in the owning layer scope without blocking the list.
      * Inspection failures are logged by the lookup and retain the last successful display fact.
      */
-    catalog: Effect.fn('Executor.availableCatalog')(function* () {
+    catalog: Effect.gen(function* () {
       const entries = yield* catalog()
       const current = yield* Ref.get(facts)
       return yield* Effect.forEach(entries, (entry) => refreshAvailability(entry, current))
-    }),
+    }).pipe(Effect.withSpan('Executor.availableCatalog')),
     /** Retain refused sign-in for ten minutes, independent of inspection completion or eviction. */
     recordSetupRequired: Effect.fn('Executor.recordSetupRequired')(function* (service: ServiceId) {
       yield* publication.withPermit(
@@ -1699,9 +1694,7 @@ function makeBegin(
   const begin = Effect.fn('Executor.begin')(function* (input: typeof BeginInput.Type) {
     const keyed = keyedService(input.service)
     if (keyed !== undefined) return yield* addKeyed(input, keyed)
-    const entry = (yield* availability.catalog()).find(
-      (candidate) => candidate.id === input.service,
-    )
+    const entry = (yield* availability.catalog).find((candidate) => candidate.id === input.service)
     if (entry === undefined)
       return yield* ExecutorRejected.make({
         service: 'connections',
@@ -2113,8 +2106,8 @@ function makeRemove(http: ExecutorHttp) {
   const resolveRemovalAccount = makeResolveRemovalAccount(http)
   return Effect.fn('Executor.remove')(function* (references: ExecutorReferences) {
     const account = yield* ExecutorReferences.match(references, {
-      Public: () => Effect.succeed(Option.none<Schema.Schema.Type<typeof ExecutorAccountId>>()),
-      Authorized: (value) => Effect.succeed(Option.some(value.account)),
+      Public: () => Effect.succeedNone,
+      Authorized: (value) => Effect.succeedSome(value.account),
       EnteringKey: resolveRemovalAccount,
       SigningIn: resolveRemovalAccount,
       OAuthSigningIn: resolveRemovalAccount,

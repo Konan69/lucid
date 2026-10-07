@@ -10,7 +10,7 @@ import {
   ServiceAuthorization,
   Workspace,
 } from '@vivid/contracts'
-import { Effect, Redacted, Ref, Result } from 'effect'
+import { Layer, Effect, Redacted, Ref, Result } from 'effect'
 import { eq } from 'drizzle-orm'
 import { connections } from './tables.ts'
 import { encodeReferences } from './records.ts'
@@ -328,12 +328,12 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
         const row = (yield* store.records(ownerActor))[0]
         if (row === undefined) return yield* Effect.die('Expected pending account')
         const executor = yield* Executor
-        const catalog = yield* executor.catalog()
+        const catalog = yield* executor.catalog
         const entry = catalog[0]
         if (entry === undefined) return yield* Effect.die('Expected catalogue fixture')
         const unavailable = Executor.of({
           ...executor,
-          catalog: Effect.fn('Test.setupRequired')(() =>
+          catalog: Effect.suspend(() =>
             Effect.succeed([
               {
                 ...entry,
@@ -341,28 +341,31 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
                 authorization: ServiceAuthorization.cases.SetupRequired.make({}),
               },
             ]),
-          ),
+          ).pipe(Effect.withSpan('Test.setupRequired')),
         })
         const addresses = ConnectionAddress.of({
           inspect: Effect.fn('Test.redirect')(() => Effect.succeed(source)),
         })
         for (const address of [source.address, 'https://alias.example/mcp']) {
-          const result = yield* connectionHandlers
-            .AddIntegration({ address, name: 'Again', shared: false })
-            .pipe(
-              Effect.provideService(ConnectionAddress, addresses),
-              Effect.provide(connectionStoreLayer, { local: true }),
-              Effect.provideService(Executor, unavailable),
-              Effect.provideService(
-                AuthContext,
-                AuthState.Vivid({
-                  person: ownerActor.person,
-                  workspace: ownerActor.workspace,
-                  threadId,
-                }),
-              ),
-              Effect.result,
-            )
+          const result = yield* Effect.gen(function* () {
+            // Preserve local provision: rebuild against this case's overridden authorities.
+            const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+            return yield* connectionHandlers
+              .AddIntegration({ address, name: 'Again', shared: false })
+              .pipe(Effect.provideService(ConnectionAddress, addresses), Effect.provide(context))
+          }).pipe(
+            Effect.scoped,
+            Effect.provideService(Executor, unavailable),
+            Effect.provideService(
+              AuthContext,
+              AuthState.Vivid({
+                person: ownerActor.person,
+                workspace: ownerActor.workspace,
+                threadId,
+              }),
+            ),
+            Effect.result,
+          )
           expect(result).toEqual(
             Result.fail(InvalidRequest.make({ message: connectionSetupMessage })),
           )
@@ -391,21 +394,28 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             ),
           ),
         })
-        const result = yield* connectionHandlers
-          .AddIntegration({ address: 'https://server.example/mcp', name: 'Server', shared: false })
-          .pipe(
-            Effect.provideService(ConnectionAddress, addresses),
-            Effect.provide(connectionStoreLayer, { local: true }),
-            Effect.provideService(Executor, refused),
-            Effect.provideService(
-              AuthContext,
-              AuthState.Vivid({
-                person: personalActor.person,
-                workspace: personalActor.workspace,
-                threadId,
-              }),
-            ),
-          )
+        const result = yield* Effect.gen(function* () {
+          // Preserve local provision: rebuild against this case's overridden authorities.
+          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+          return yield* connectionHandlers
+            .AddIntegration({
+              address: 'https://server.example/mcp',
+              name: 'Server',
+              shared: false,
+            })
+            .pipe(Effect.provideService(ConnectionAddress, addresses), Effect.provide(context))
+        }).pipe(
+          Effect.scoped,
+          Effect.provideService(Executor, refused),
+          Effect.provideService(
+            AuthContext,
+            AuthState.Vivid({
+              person: personalActor.person,
+              workspace: personalActor.workspace,
+              threadId,
+            }),
+          ),
+        )
         expect(result).toEqual(
           AddIntegrationOutcome.cases.Unreachable.make({
             reason: 'this Vivid is not set up to add a server by address yet',
@@ -618,49 +628,53 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             sessionId: SessionId.make('integration-test-session'),
           })
           yield* Effect.gen(function* () {
-            const result = yield* connectionHandlers
-              .AddIntegration({
-                address: 'https://integration.example/mcp',
-                name: 'Keyed Records',
-                shared: false,
-              })
-              .pipe(
-                Effect.provideService(AuthContext, vivid),
-                Effect.provideService(ConnectionAddress, address),
-              )
-            expect(result._tag).toBe('NeedsKey')
-            if (!('step' in result) || !ConnectionStep.guards.EnterKey(result.step))
-              return yield* Effect.die('Expected key entry')
-            const completed = yield* connectionHandlers
-              .CompleteConnection({
-                id: result.step.connection.id,
-                fields: { key: Redacted.make(secret) },
-              })
-              .pipe(Effect.provideService(AuthContext, person))
-            expect(completed.connection.state._tag).toBe('Ready')
-            const listed = yield* connectionHandlers
-              .FindIntegrations({ query: 'Keyed' })
-              .pipe(Effect.provideService(AuthContext, vivid))
-            expect(listed.integrations).toHaveLength(1)
-            const store = yield* ConnectionStore
-            const persisted = yield* store.get(ownerActor, completed.connection.id)
-            const database = yield* Database
-            const rows = yield* database.run(
-              database
-                .select()
-                .from(auditEntries)
-                .where(eq(auditEntries.personId, ownerActor.person.id)),
-            )
-            expect(rows.length).toBeGreaterThan(0)
-            expect(JSON.stringify({ result, completed, listed, persisted, rows })).not.toContain(
-              secret,
-            )
-            return yield* Effect.void
-          }).pipe(
-            Effect.provide(connectionStoreLayer, { local: true }),
-            Effect.provide(auditLayer, { local: true }),
-            Effect.provideService(Executor, keyed),
-          )
+            // Preserve local provision: rebuild against this case's overridden authorities.
+            const context = yield* Layer.build(Layer.fresh(auditLayer))
+            return yield* Effect.gen(function* () {
+              // Preserve local provision: rebuild against this case's overridden authorities.
+              const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+              return yield* Effect.gen(function* () {
+                const result = yield* connectionHandlers
+                  .AddIntegration({
+                    address: 'https://integration.example/mcp',
+                    name: 'Keyed Records',
+                    shared: false,
+                  })
+                  .pipe(
+                    Effect.provideService(AuthContext, vivid),
+                    Effect.provideService(ConnectionAddress, address),
+                  )
+                expect(result._tag).toBe('NeedsKey')
+                if (!('step' in result) || !ConnectionStep.guards.EnterKey(result.step))
+                  return yield* Effect.die('Expected key entry')
+                const completed = yield* connectionHandlers
+                  .CompleteConnection({
+                    id: result.step.connection.id,
+                    fields: { key: Redacted.make(secret) },
+                  })
+                  .pipe(Effect.provideService(AuthContext, person))
+                expect(completed.connection.state._tag).toBe('Ready')
+                const listed = yield* connectionHandlers
+                  .FindIntegrations({ query: 'Keyed' })
+                  .pipe(Effect.provideService(AuthContext, vivid))
+                expect(listed.integrations).toHaveLength(1)
+                const store = yield* ConnectionStore
+                const persisted = yield* store.get(ownerActor, completed.connection.id)
+                const database = yield* Database
+                const rows = yield* database.run(
+                  database
+                    .select()
+                    .from(auditEntries)
+                    .where(eq(auditEntries.personId, ownerActor.person.id)),
+                )
+                expect(rows.length).toBeGreaterThan(0)
+                expect(
+                  JSON.stringify({ result, completed, listed, persisted, rows }),
+                ).not.toContain(secret)
+                return yield* Effect.void
+              }).pipe(Effect.provide(context))
+            }).pipe(Effect.scoped, Effect.provide(context))
+          }).pipe(Effect.scoped, Effect.provideService(Executor, keyed))
           expect(yield* Ref.get(submissions)).toBe(1)
           yield* Ref.set(probe.step, 'Done')
         }),

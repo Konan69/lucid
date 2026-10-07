@@ -1,5 +1,5 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { Effect, Logger, Ref } from 'effect'
+import { Layer, Effect, Logger, Ref } from 'effect'
 import { HttpRouter, HttpServerRequest } from 'effect/unstable/http'
 import { ConnectionStep, NotFound } from '@vivid/contracts'
 import { sessionTable } from '../auth/tables.ts'
@@ -56,69 +56,77 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
             ]),
           )
           yield* Effect.gen(function* () {
-            const store = yield* ConnectionStore
-            const step = yield* store.begin(ownerActor, {
-              service: hostedService,
-              name: 'Sign in',
-              shared: false,
-            })
-            if (!ConnectionStep.guards.OpenSignIn(step)) expect.fail('Expected hosted OAuth')
-            const state = new URL(step.address).searchParams.get('state')
-            const callback = new URL(
-              `/api/connections/return?state=${state}&code=private-code`,
-              config.PUBLIC_URL,
-            )
-            const address = Redacted.make(callback.href)
-            const row = yield* store.get(ownerActor, step.connection.id)
-            expect(JSON.stringify(row.references)).not.toContain(state)
-            const before = yield* Ref.get(remote.requests)
-            expect(yield* store.callbackId(memberActor, address).pipe(Effect.flip)).toBeInstanceOf(
-              NotFound,
-            )
-            expect(
-              yield* store.callback(memberActor, step.connection.id, address).pipe(Effect.flip),
-            ).toBeInstanceOf(NotFound)
-            expect(yield* Ref.get(remote.requests)).toEqual(before)
-            expect(yield* store.get(ownerActor, step.connection.id)).toEqual(row)
-            const handle = yield* HttpRouter.toHttpEffect(connectionReturnRoutes)
-            /** Route invocation passes the exact provider URL and authenticated session. */
-            const send = Effect.fn('Connections.ReturnTest.send')(function* (token: string) {
-              return yield* handle.pipe(
-                Effect.provideService(
-                  HttpServerRequest.HttpServerRequest,
-                  HttpServerRequest.fromWeb(
-                    new Request(callback, { headers: { authorization: `Bearer ${token}` } }),
+            // This composed fixture owns per-case state and resources; build it in the test scope.
+            const context = yield* Layer.build(remote.configured)
+            return yield* Effect.gen(function* () {
+              // Preserve local provision: rebuild against this case's overridden authorities.
+              const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+              return yield* Effect.gen(function* () {
+                const store = yield* ConnectionStore
+                const step = yield* store.begin(ownerActor, {
+                  service: hostedService,
+                  name: 'Sign in',
+                  shared: false,
+                })
+                if (!ConnectionStep.guards.OpenSignIn(step)) expect.fail('Expected hosted OAuth')
+                const state = new URL(step.address).searchParams.get('state')
+                const callback = new URL(
+                  `/api/connections/return?state=${state}&code=private-code`,
+                  config.PUBLIC_URL,
+                )
+                const address = Redacted.make(callback.href)
+                const row = yield* store.get(ownerActor, step.connection.id)
+                expect(JSON.stringify(row.references)).not.toContain(state)
+                const before = yield* Ref.get(remote.requests)
+                expect(
+                  yield* store.callbackId(memberActor, address).pipe(Effect.flip),
+                ).toBeInstanceOf(NotFound)
+                expect(
+                  yield* store.callback(memberActor, step.connection.id, address).pipe(Effect.flip),
+                ).toBeInstanceOf(NotFound)
+                expect(yield* Ref.get(remote.requests)).toEqual(before)
+                expect(yield* store.get(ownerActor, step.connection.id)).toEqual(row)
+                const handle = yield* HttpRouter.toHttpEffect(connectionReturnRoutes)
+                /** Route invocation passes the exact provider URL and authenticated session. */
+                const send = Effect.fn('Connections.ReturnTest.send')(function* (token: string) {
+                  return yield* handle.pipe(
+                    Effect.provideService(
+                      HttpServerRequest.HttpServerRequest,
+                      HttpServerRequest.fromWeb(
+                        new Request(callback, { headers: { authorization: `Bearer ${token}` } }),
+                      ),
+                    ),
+                  )
+                })
+                const generic = new URL('/settings/connections', config.PUBLIC_URL).href
+                expect((yield* send(memberToken)).headers.location).toBe(generic)
+                expect((yield* send(ownerToken)).headers.location).toBe(
+                  new URL(
+                    `/settings/connections?connected=${step.connection.id}`,
+                    config.PUBLIC_URL,
+                  ).href,
+                )
+                const completed = yield* store.get(ownerActor, step.connection.id)
+                const after = yield* Ref.get(remote.requests)
+                expect(
+                  yield* store.callbackId(ownerActor, address).pipe(Effect.flip),
+                ).toBeInstanceOf(NotFound)
+                expect(
+                  yield* store.callback(ownerActor, step.connection.id, address).pipe(Effect.flip),
+                ).toBeInstanceOf(NotFound)
+                expect((yield* send(ownerToken)).headers.location).toBe(generic)
+                expect(yield* store.get(ownerActor, step.connection.id)).toEqual(completed)
+                expect(yield* Ref.get(remote.requests)).toEqual(after)
+                expect(
+                  after.filter(
+                    (request) =>
+                      request.path ===
+                      `POST ${hostedPrefix}/connections/authorization/oauth/complete`,
                   ),
-                ),
-              )
-            })
-            const generic = new URL('/settings/connections', config.PUBLIC_URL).href
-            expect((yield* send(memberToken)).headers.location).toBe(generic)
-            expect((yield* send(ownerToken)).headers.location).toBe(
-              new URL(`/settings/connections?connected=${step.connection.id}`, config.PUBLIC_URL)
-                .href,
-            )
-            const completed = yield* store.get(ownerActor, step.connection.id)
-            const after = yield* Ref.get(remote.requests)
-            expect(yield* store.callbackId(ownerActor, address).pipe(Effect.flip)).toBeInstanceOf(
-              NotFound,
-            )
-            expect(
-              yield* store.callback(ownerActor, step.connection.id, address).pipe(Effect.flip),
-            ).toBeInstanceOf(NotFound)
-            expect((yield* send(ownerToken)).headers.location).toBe(generic)
-            expect(yield* store.get(ownerActor, step.connection.id)).toEqual(completed)
-            expect(yield* Ref.get(remote.requests)).toEqual(after)
-            expect(
-              after.filter(
-                (request) =>
-                  request.path === `POST ${hostedPrefix}/connections/authorization/oauth/complete`,
-              ),
-            ).toEqual([expect.objectContaining({ body: { callbackUrl: callback.href } })])
-          }).pipe(
-            Effect.provide(connectionStoreLayer, { local: true }),
-            Effect.provide(remote.configured),
-          )
+                ).toEqual([expect.objectContaining({ body: { callbackUrl: callback.href } })])
+              }).pipe(Effect.provide(context))
+            }).pipe(Effect.scoped, Effect.provide(context))
+          }).pipe(Effect.scoped)
         }).pipe(Effect.scoped),
     )
 
@@ -142,7 +150,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
               ),
             ),
           ),
-          Effect.provide(Logger.layer([logger])),
+          Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
         )
         expect(response.status).toBe(303)
         expect(response.headers.location).toBe(

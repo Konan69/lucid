@@ -30,33 +30,43 @@ describe.skipIf(!liveDecisionEnabled)('Gateway effect prompt attacks', () => {
     (mode) => {
       const lines: string[] = []
       return Effect.gen(function* () {
-        const effects = yield* ToolEffects
-        const request = {
-          serviceId: ServiceId.make('effect-adversarial'),
-          service: 'Records',
-          tools: descriptions.map((description, index) =>
-            ExecutorTool.make({
-              name: `manage_record_${index}`,
-              description,
-              effect: 'write',
-              input: {},
-            }),
-          ),
-        }
-        const result =
-          mode === 'batch'
-            ? (yield* effects.classifyBatch(request)).map((tool) => tool.effect)
-            : yield* Effect.forEach(request.tools, (tool) => effects.classify({ ...request, tool }))
-        expect(result).toEqual(descriptions.map(() => 'write'))
-        for (const tool of request.tools)
-          expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
-      }).pipe(
-        Effect.provide(
-          toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
-        ),
-        Effect.provideService(References.MinimumLogLevel, 'Debug'),
-        Effect.provide(effectScoreLogLayer(lines)),
-      )
+        // This composed fixture owns per-case state and resources; build it in the test scope.
+        const context = yield* Layer.build(effectScoreLogLayer(lines))
+        return yield* Effect.gen(function* () {
+          // This composed fixture owns per-case state and resources; build it in the test scope.
+          const context = yield* Layer.build(
+            toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
+          )
+          return yield* Effect.gen(function* () {
+            const effects = yield* ToolEffects
+            const request = {
+              serviceId: ServiceId.make('effect-adversarial'),
+              service: 'Records',
+              tools: descriptions.map((description, index) =>
+                ExecutorTool.make({
+                  name: `manage_record_${index}`,
+                  description,
+                  effect: 'write',
+                  input: {},
+                }),
+              ),
+            }
+            const result =
+              mode === 'batch'
+                ? (yield* effects.classifyBatch(request)).map((tool) => tool.effect)
+                : yield* Effect.forEach(request.tools, (tool) =>
+                    effects.classify({ ...request, tool }),
+                  )
+            expect(result).toEqual(descriptions.map(() => 'write'))
+            for (const tool of request.tools)
+              expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
+          }).pipe(Effect.provide(context))
+        }).pipe(
+          Effect.scoped,
+          Effect.provideService(References.MinimumLogLevel, 'Debug'),
+          Effect.provide(context),
+        )
+      }).pipe(Effect.scoped)
     },
     LIVE_METADATA_COHORT_BUDGET_MILLIS,
   )

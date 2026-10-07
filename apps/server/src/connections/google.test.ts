@@ -1,5 +1,5 @@
 import { describe, expect, it, layer } from '@effect/vitest'
-import { Clock, Effect, Ref, Schema } from 'effect'
+import { Layer, Clock, Effect, Ref, Schema } from 'effect'
 import { HttpRouter, HttpServerRequest } from 'effect/unstable/http'
 import { ConnectionId, ConnectionStep, ServiceAuthorization } from '@vivid/contracts'
 import { sessionTable } from '../auth/tables.ts'
@@ -41,9 +41,13 @@ describe('Google Integrations', () => {
         'Google Sheets',
         'Google Tasks',
       ])
-      const listed = yield* Effect.flatMap(Executor, (executor) => executor.catalog()).pipe(
-        Effect.provide(hosted.configured),
-      )
+      const listed = yield* Effect.gen(function* () {
+        // This composed fixture owns per-case state and resources; build it in the test scope.
+        const context = yield* Layer.build(hosted.configured)
+        return yield* Effect.flatMap(Executor, (executor) => executor.catalog).pipe(
+          Effect.provide(context),
+        )
+      }).pipe(Effect.scoped)
       const google = listed.slice(0, googleServices.length)
       expect(google.map((entry) => entry.name)).toEqual(names)
       expect(google.every((entry) => ServiceAuthorization.guards.SignIn(entry.authorization))).toBe(
@@ -62,9 +66,13 @@ describe('Google Integrations', () => {
           body: Schema.TaggedStruct('CatalogUnavailable', {}).make({}),
         }),
       )
-      const without = yield* Effect.flatMap(Executor, (executor) => executor.catalog()).pipe(
-        Effect.provide(hosted.configured),
-      )
+      const without = yield* Effect.gen(function* () {
+        // This composed fixture owns per-case state and resources; build it in the test scope.
+        const context = yield* Layer.build(hosted.configured)
+        return yield* Effect.flatMap(Executor, (executor) => executor.catalog).pipe(
+          Effect.provide(context),
+        )
+      }).pipe(Effect.scoped)
       expect(without.map((entry) => entry.name)).toEqual(names)
     }),
   )
@@ -92,12 +100,19 @@ describe('Google Integrations', () => {
           returnAddress: hostedReturnAddress,
         }
         const { first, second } = yield* Effect.gen(function* () {
-          const executor = yield* Executor
-          return {
-            first: yield* executor.begin(input),
-            second: yield* executor.begin({ ...input, connectionId: ConnectionId.make('second') }),
-          }
-        }).pipe(Effect.provide(hosted.configured))
+          // This composed fixture owns per-case state and resources; build it in the test scope.
+          const context = yield* Layer.build(hosted.configured)
+          return yield* Effect.gen(function* () {
+            const executor = yield* Executor
+            return {
+              first: yield* executor.begin(input),
+              second: yield* executor.begin({
+                ...input,
+                connectionId: ConnectionId.make('second'),
+              }),
+            }
+          }).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped)
         if (!ExecutorStep.guards.OpenSignIn(first) || !ExecutorStep.guards.OpenSignIn(second))
           expect.fail('A Google service begins with a sign-in')
         expect(ExecutorReferences.guards.GoogleSigningIn(first.references)).toBe(true)
@@ -250,10 +265,11 @@ describe.skipIf(!testDatabaseConfigured)('Google fixed callback', () => {
             expect((yield* send(`state=${secondState}`, ownerToken)).headers.location).toBe(generic)
             expect(yield* Ref.get(probe.signIns)).toBe(1)
           })
-          yield* run().pipe(
-            Effect.provide(connectionStoreLayer, { local: true }),
-            Effect.provideService(Executor, google),
-          )
+          yield* Effect.gen(function* () {
+            // Preserve local provision: rebuild against this case's overridden authorities.
+            const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+            return yield* run().pipe(Effect.provide(context))
+          }).pipe(Effect.scoped, Effect.provideService(Executor, google))
         }),
     )
   })

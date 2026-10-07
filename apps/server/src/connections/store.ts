@@ -184,7 +184,9 @@ const requireFreeName = Effect.fn('Connections.requireFreeName')(function* (
         row.name.trim().toLowerCase() === wanted.value,
     )
   if (taken)
-    yield* new Conflict({ message: 'Another account on this integration already has that name.' })
+    return yield* new Conflict({
+      message: 'Another account on this integration already has that name.',
+    })
 })
 
 /** Persist authorization state before auditing readiness; provider calls remain outside transactions. */
@@ -516,7 +518,7 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
     effect: Effect.Effect<A, E, Executor | Database | Audit | ServerConfig | Changes>,
   ) => effect.pipe(Effect.provide(dependencies))
   const catalogServices = Effect.fn('Connections.catalog')(function* () {
-    return (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).map(catalogService)
+    return (yield* executor.catalog.pipe(Effect.mapError(executorFailure))).map(catalogService)
   })
   const listCatalog = yield* rememberListCatalog(catalogServices())
   /** Inspect the selected candidate without retaining any account or credential. */
@@ -734,7 +736,7 @@ const resumeExisting = Effect.fn('Connections.resumeExistingState')(function* (
     Match.when(
       'needs-authorization',
       Effect.fn('Connections.resumePending')(function* () {
-        const service = (yield* executor.catalog().pipe(Effect.mapError(executorFailure))).find(
+        const service = (yield* executor.catalog.pipe(Effect.mapError(executorFailure))).find(
           (entry) => entry.id === row.service,
         )
         if (

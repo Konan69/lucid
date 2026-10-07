@@ -1,5 +1,5 @@
 import { describe, expect, layer } from '@effect/vitest'
-import { Effect, Ref } from 'effect'
+import { Layer, Effect, Ref } from 'effect'
 import {
   ActionTarget,
   DatabaseConstraintViolation,
@@ -79,17 +79,21 @@ describe.skipIf(!testDatabaseConfigured)('Approved Connection outcomes', () => {
                 return ExecutorCallOutcome.cases.NotReady.make({})
               }),
             })
-            const outcome = yield* connectionRunner({
-              person: ownerActor.person,
-              workspace: ownerActor.workspace,
-              target: ActionTarget.cases.Connection.make({
-                connectionId: step.connection.id,
-                account: 'Approved account',
-                tool: 'read',
-                input: {},
-              }),
+            const outcome = yield* Effect.gen(function* () {
+              // Preserve local provision: rebuild against this case's overridden authorities.
+              const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+              return yield* connectionRunner({
+                person: ownerActor.person,
+                workspace: ownerActor.workspace,
+                target: ActionTarget.cases.Connection.make({
+                  connectionId: step.connection.id,
+                  account: 'Approved account',
+                  tool: 'read',
+                  input: {},
+                }),
+              }).pipe(Effect.provide(context))
             }).pipe(
-              Effect.provide(connectionStoreLayer, { local: true }),
+              Effect.scoped,
               Effect.provideService(Database, failingDatabase(database, unavailable, failure)),
               Effect.provideService(Executor, dispatch),
             )

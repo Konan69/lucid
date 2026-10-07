@@ -1,7 +1,7 @@
 import * as NodeProcess from 'node:process'
 import { NodeHttpClient } from '@effect/platform-node'
-import { describe, expect, it } from '@effect/vitest'
-import { Effect, Schema } from 'effect'
+import { describe, expect, it, layer } from '@effect/vitest'
+import { Layer, Effect, Schema } from 'effect'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import { ConnectionAddress, connectionAddressLayer } from './address.ts'
@@ -30,47 +30,55 @@ const destinations = [
  * Calling Executor directly ensures Vivid's inspection cannot mask an Executor policy gap.
  */
 describe.skipIf(!enabled)('Public destination live policy', () => {
-  it.live(
-    'Vivid refuses internal addresses and public names resolving to private addresses',
-    () =>
-      Effect.gen(function* () {
-        const reader = yield* ConnectionAddress
-        for (const destination of destinations) {
-          const error = yield* reader.inspect(destination).pipe(Effect.flip)
-          expect(['ConnectionAddressInvalid', 'ConnectionAddressUnreachable']).toContain(error._tag)
-        }
-      }).pipe(Effect.provide(connectionAddressLayer)),
-    { timeout: 120_000 },
-  )
+  layer(connectionAddressLayer, { excludeTestServices: true })((it) => {
+    it.effect(
+      'Vivid refuses internal addresses and public names resolving to private addresses',
+      () =>
+        Effect.gen(function* () {
+          const reader = yield* ConnectionAddress
+          for (const destination of destinations) {
+            const error = yield* reader.inspect(destination).pipe(Effect.flip)
+            expect(['ConnectionAddressInvalid', 'ConnectionAddressUnreachable']).toContain(
+              error._tag,
+            )
+          }
+        }),
+      { timeout: 120_000 },
+    )
+  })
 
   it.live(
     'Executor independently refuses the same destinations before creating an app',
     () =>
       Effect.gen(function* () {
-        if (url === undefined || key === undefined || organization === undefined)
-          return expect.fail('Supply disposable Executor test authority')
-        const client = yield* HttpClient.HttpClient
-        for (const destination of destinations) {
-          const request = yield* HttpClientRequest.bodyJson(
-            HttpClientRequest.post(`${url}/api/organizations/${organization}/apps/import`).pipe(
-              HttpClientRequest.bearerToken(key),
-            ),
-            { source: { kind: 'mcp', name: 'Public policy proof', url: destination } },
-          )
-          const response = yield* client.execute(request)
-          expect(response.status).toBe(422)
-          // Assert a policy refusal, rather than accepting auth failures as proof of isolation.
-          const refusal = yield* response.json.pipe(
-            Effect.flatMap(
-              Schema.decodeUnknownEffect(
-                Schema.Struct({ _tag: Schema.Literal('CatalogImportFailed'), code: Schema.String }),
+        // This composed fixture owns per-case state and resources; build it in the test scope.
+        const context = yield* Layer.build(NodeHttpClient.layerUndici)
+        return yield* Effect.gen(function* () {
+          if (url === undefined || key === undefined || organization === undefined)
+            return expect.fail('Supply disposable Executor test authority')
+          const client = yield* HttpClient.HttpClient
+          for (const destination of destinations) {
+            const request = yield* HttpClientRequest.bodyJson(
+              HttpClientRequest.post(`${url}/api/organizations/${organization}/apps/import`).pipe(
+                HttpClientRequest.bearerToken(key),
               ),
-            ),
-          )
-          expect(['mcp_url', 'mcp_probe', 'mcp_discovery']).toContain(refusal.code)
-        }
-        return yield* Effect.void
-      }).pipe(Effect.provide(NodeHttpClient.layerUndici)),
+              { source: { kind: 'mcp', name: 'Public policy proof', url: destination } },
+            )
+            const response = yield* client.execute(request)
+            expect(response.status).toBe(422)
+            // Assert a policy refusal, rather than accepting auth failures as proof of isolation.
+            const refusal = yield* response.json.pipe(
+              Effect.flatMap(
+                Schema.decodeUnknownEffect(
+                  Schema.TaggedStruct('CatalogImportFailed', { code: Schema.String }),
+                ),
+              ),
+            )
+            expect(['mcp_url', 'mcp_probe', 'mcp_discovery']).toContain(refusal.code)
+          }
+          return yield* Effect.void
+        }).pipe(Effect.provide(context))
+      }).pipe(Effect.scoped),
     { timeout: 120_000 },
   )
 })

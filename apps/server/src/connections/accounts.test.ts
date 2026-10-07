@@ -1,5 +1,5 @@
 import { describe, expect, it, layer } from '@effect/vitest'
-import { Effect, Option, Redacted, Ref, Schema } from 'effect'
+import { Layer, Effect, Option, Redacted, Ref, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import {
   AccountName,
@@ -210,10 +210,11 @@ describe.skipIf(!testDatabaseConfigured)('several accounts on one Integration', 
             Effect.fail(ExecutorTransportFailure.make({ service: 'connections', tool: null })),
           ),
         })
-        const connected = yield* connect(ownerActor, Option.none()).pipe(
-          Effect.provide(connectionStoreLayer, { local: true }),
-          Effect.provideService(Executor, silent),
-        )
+        const connected = yield* Effect.gen(function* () {
+          // Preserve local provision: rebuild against this case's overridden authorities.
+          const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
+          return yield* connect(ownerActor, Option.none()).pipe(Effect.provide(context))
+        }).pipe(Effect.scoped, Effect.provideService(Executor, silent))
         expect(ConnectionState.guards.Ready(connected.state)).toBe(true)
         expect([connected.identity, connected.account]).toEqual([null, 'Records'])
       }),
@@ -405,7 +406,11 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
           email: 'ada@work.example',
           avatarUrl: 'https://images.example/ada.png',
         })
-        const executor = yield* Executor.pipe(Effect.provide(remote.configured))
+        const executor = yield* Effect.gen(function* () {
+          // This composed fixture owns per-case state and resources; build it in the test scope.
+          const context = yield* Layer.build(remote.configured)
+          return yield* Executor.pipe(Effect.provide(context))
+        }).pipe(Effect.scoped)
         expect(yield* executor.identity(references(Option.some('account')))).toEqual(
           Option.some('ada@work.example'),
         )
@@ -417,7 +422,11 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
       Effect.gen(function* () {
         const remote = yield* hostedExecutorFixture()
         yield* Ref.set(remote.identity, { email: `${'a'.repeat(200)}@x.example`, username: 'ada' })
-        const executor = yield* Executor.pipe(Effect.provide(remote.configured))
+        const executor = yield* Effect.gen(function* () {
+          // This composed fixture owns per-case state and resources; build it in the test scope.
+          const context = yield* Layer.build(remote.configured)
+          return yield* Executor.pipe(Effect.provide(context))
+        }).pipe(Effect.scoped)
         expect(yield* executor.identity(references(Option.some('account')))).toEqual(
           Option.some('ada'),
         )
@@ -429,7 +438,11 @@ describe.skipIf(!testDatabaseConfigured)('asking Executor who an account is', ()
       () =>
         Effect.gen(function* () {
           const remote = yield* hostedExecutorFixture()
-          const executor = yield* Executor.pipe(Effect.provide(remote.configured))
+          const executor = yield* Effect.gen(function* () {
+            // This composed fixture owns per-case state and resources; build it in the test scope.
+            const context = yield* Layer.build(remote.configured)
+            return yield* Executor.pipe(Effect.provide(context))
+          }).pipe(Effect.scoped)
           expect(yield* executor.identity(references(Option.some('account')))).toEqual(
             Option.none(),
           )

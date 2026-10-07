@@ -22,30 +22,40 @@ describe.skipIf(!liveDecisionEnabled)('Gateway destructive effects', () => {
     () => {
       const lines: string[] = []
       return Effect.gen(function* () {
-        const effects = yield* ToolEffects
-        const misses: string[] = []
-        for (const tool of liveTools.filter((candidate) => candidate.expected === 'destructive')) {
-          const effect = yield* effects.classify({
-            serviceId: ServiceId.make(`effect-${tool.serviceName}`),
-            service: tool.serviceName,
-            tool: ExecutorTool.make({
-              name: tool.name,
-              description: tool.description,
-              effect: 'write',
-              input: {},
-            }),
-          })
-          expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
-          if (effect !== 'write') misses.push(`${tool.name}:${effect}`)
-        }
-        expect(misses).toEqual([])
-      }).pipe(
-        Effect.provide(
-          toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
-        ),
-        Effect.provideService(References.MinimumLogLevel, 'Debug'),
-        Effect.provide(effectScoreLogLayer(lines)),
-      )
+        // This composed fixture owns per-case state and resources; build it in the test scope.
+        const context = yield* Layer.build(effectScoreLogLayer(lines))
+        return yield* Effect.gen(function* () {
+          // This composed fixture owns per-case state and resources; build it in the test scope.
+          const context = yield* Layer.build(
+            toolEffectsTestLayer(LIVE_METADATA_BUDGET).pipe(Layer.provide(liveDecisionLayer)),
+          )
+          return yield* Effect.gen(function* () {
+            const effects = yield* ToolEffects
+            const misses: string[] = []
+            for (const tool of liveTools.filter(
+              (candidate) => candidate.expected === 'destructive',
+            )) {
+              const effect = yield* effects.classify({
+                serviceId: ServiceId.make(`effect-${tool.serviceName}`),
+                service: tool.serviceName,
+                tool: ExecutorTool.make({
+                  name: tool.name,
+                  description: tool.description,
+                  effect: 'write',
+                  input: {},
+                }),
+              })
+              expect(effectScoreCount(lines, tool.name), tool.name).toBe(1)
+              if (effect !== 'write') misses.push(`${tool.name}:${effect}`)
+            }
+            expect(misses).toEqual([])
+          }).pipe(Effect.provide(context))
+        }).pipe(
+          Effect.scoped,
+          Effect.provideService(References.MinimumLogLevel, 'Debug'),
+          Effect.provide(context),
+        )
+      }).pipe(Effect.scoped)
     },
     LIVE_METADATA_COHORT_BUDGET_MILLIS,
   )
