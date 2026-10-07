@@ -383,8 +383,8 @@ it.live('refuses a message while approval waits and still settles that approval'
 // The Effect route must match the Promise host before headers and preserve its waiting tool.
 it.live('the Effect example maps a waiting turn to 409 and preserves approval', () =>
   Effect.gen(function* () {
-    const fixture = yield* Effect.promise(() => shop())
-    const opened = yield* Effect.promise(() => fixture.open())
+    const fixture = yield* shop()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([call('pay', { amount: 17 }, 'pay'), fauxAssistantMessage('Paid.')])
     const transport = opened.transport
     const chat = new Chat<UIMessage>({
