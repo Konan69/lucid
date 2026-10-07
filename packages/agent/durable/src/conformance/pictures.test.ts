@@ -140,6 +140,25 @@ it.live('sends an inline picture to Pi and restores the same file part from hist
   }),
 )
 
+/** A multi-megabyte HTTP body persists and reloads the entire validated image, without truncation. */
+it.live('round trips a three-megabyte image payload through stock Chat HTTP and history', () =>
+  Effect.promise(async () => {
+    const opened = await (await host({}, {}, {}, images)).open()
+    opened.faux.setResponses([fauxAssistantMessage('Stored the picture.')])
+    const part = largePicture(3, false)
+    const chat = new PlainChat({ transport: opened.transport })
+    await chat.sendMessage({ parts: [part] })
+    expect(chat.status).toBe('ready')
+    const page = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+    expect(partsAt(page.messages, 0)).toEqual([part])
+    const reloaded = new PlainChat({ transport: opened.transport })
+    reloaded.messages = page.messages
+    await reloaded.resumeStream()
+    expect(partsAt(reloaded.messages, 0)).toEqual([part])
+    expect(opened.faux.state.callCount).toBe(1)
+  }),
+)
+
 /** An explicit SDK message retains interleaved text/image order rather than flattening text. */
 it.live('retains ordered text and pictures through chat and raw history', () =>
   Effect.promise(async () => {

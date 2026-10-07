@@ -27,8 +27,13 @@ export type ProviderFamily =
   | 'end'
   | 'never'
   | 'interleaved'
+  | 'parsed'
 export type ProviderOptions = RegisterFauxProviderOptions & {
   readonly partialFamily?: ProviderFamily
+  /** An authoritative replacement fixture starts with these blocks, then returns the scripted final. */
+  readonly replacedContent?: AssistantMessage['content']
+  /** Owned provider copy for authoritative replacement tests; never mutates framework objects. */
+  readonly rewriteFrame?: (event: AssistantMessageEvent) => AssistantMessageEvent
   /** Own frame gate for deterministic progress tests; invoked after publishing the captured frame. */
   readonly onFrame?: (
     event: AssistantMessageEvent,
@@ -42,6 +47,8 @@ type PartialState = {
   readonly ended: Set<number>
   firstTool: number
   revealed: boolean
+  readonly replacedContent: Option.Option<AssistantMessage['content']>
+  replaced: boolean
 }
 
 /** A test frame stays gated until its receipt is inspected or Pi cancels the provider invocation.
@@ -124,6 +131,7 @@ function toolPartial(block: ToolCall, index: number, state: PartialState): ToolC
       streamIndex: index,
     })),
     Match.when('mistral', () => ({ ...block, arguments: arguments_, partialArgs: text })),
+    Match.when('parsed', () => ({ ...block, arguments: arguments_ })),
     Match.when('custom', () => ({
       ...block,
       arguments: arguments_,
@@ -156,10 +164,24 @@ function observeIdentity(event: AssistantMessageEvent, state: PartialState) {
   }
 }
 
+/** A scripted authoritative replacement keeps the old whole partial visible until its end frame. */
+function replacedFrame(
+  event: Exclude<AssistantMessageEvent, { type: 'done' | 'error' }>,
+  state: PartialState,
+): Option.Option<AssistantMessageEvent> {
+  if (Option.isNone(state.replacedContent)) return Option.none()
+  if (event.type === 'text_end') state.replaced = true
+  return state.replaced
+    ? Option.none()
+    : Option.some({ ...event, partial: { ...event.partial, content: state.replacedContent.value } })
+}
+
 /** Provider terminal blocks strip scratch fields; every delta has its own captured partial copy. */
 function adapt(event: AssistantMessageEvent, state: PartialState): AssistantMessageEvent {
   if (event.type === 'done') return event
   if (event.type === 'error') return { ...event, error: terminal(event.error, state) }
+  const replacement = replacedFrame(event, state)
+  if (Option.isSome(replacement)) return replacement.value
   observeIdentity(event, state)
   if (event.type === 'toolcall_start') state.arguments.set(event.contentIndex, '')
   if (event.type === 'toolcall_delta') {
@@ -222,6 +244,8 @@ const relay = Effect.fn('Test.providerRelay')(function* (
   gate: {
     readonly onFrame: NonNullable<ProviderOptions['onFrame']>
     readonly signal: Option.Option<AbortSignal>
+    readonly replacedContent: Option.Option<AssistantMessage['content']>
+    readonly rewriteFrame: NonNullable<ProviderOptions['rewriteFrame']>
   },
 ) {
   const state: PartialState = {
@@ -230,13 +254,16 @@ const relay = Effect.fn('Test.providerRelay')(function* (
     ended: new Set(),
     firstTool: -1,
     revealed: false,
+    replacedContent: gate.replacedContent,
+    replaced: false,
   }
   yield* Stream.fromAsyncIterable(source, String).pipe(
     Stream.runForEach((event) =>
       Effect.gen(function* () {
         for (const captured of frames(event, state)) {
-          destination.push(captured)
-          yield* gate.onFrame(captured, gate.signal)
+          const published = gate.rewriteFrame(captured)
+          destination.push(published)
+          yield* gate.onFrame(published, gate.signal)
         }
       }),
     ),
@@ -245,13 +272,27 @@ const relay = Effect.fn('Test.providerRelay')(function* (
 })
 
 /** Compose a public provider around faux, leaving its scripting, models and deferred APIs intact. */
-export function streamingProvider(options: ProviderOptions = {}) {
-  const { partialFamily = 'late', onFrame = () => Effect.void, ...fauxOptions } = options
+export function streamingProvider(options: ProviderOptions = {}): ReturnType<typeof fauxProvider> {
+  const {
+    partialFamily = 'late',
+    onFrame = () => Effect.void,
+    replacedContent,
+    rewriteFrame = (event) => event,
+    ...fauxOptions
+  } = options
   const faux = fauxProvider(fauxOptions)
   /** Pi's provider API is synchronous: return its event stream and run the owned relay at ingress. */
   const wrap = (source: AssistantMessageEventStream, signal: Option.Option<AbortSignal>) => {
     const destination = createAssistantMessageEventStream()
-    void runForPi(relay(source, destination, partialFamily, { onFrame, signal }), undefined)
+    void runForPi(
+      relay(source, destination, partialFamily, {
+        onFrame,
+        signal,
+        replacedContent: Option.fromNullishOr(replacedContent),
+        rewriteFrame,
+      }),
+      undefined,
+    )
     return destination
   }
   return {

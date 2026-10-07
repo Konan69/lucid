@@ -72,7 +72,7 @@ async function pack(temporary) {
     ),
     'Tarball contains a file outside the published surface',
   )
-  for (const entry of ['main', 'core']) {
+  for (const entry of ['main', 'core', 'client']) {
     for (const suffix of ['js', 'd.ts']) {
       NodeAssert.ok(files.includes(`package/dist/${entry}.${suffix}`))
     }

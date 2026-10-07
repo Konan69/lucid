@@ -14,20 +14,59 @@ import {
   SchemaIssue,
 } from 'effect'
 
-import { HoldId, RunMissing, TurnInvalid } from './errors.ts'
+import { HoldId, RejoinInvalid, RunMissing, TurnInvalid } from './errors.ts'
 import { answerObserved, decideObserved } from './holds.ts'
 import { runMessageId } from './chunks.ts'
 import * as Pi from './pi.ts'
 import { LiveDoc } from '@earendil-works/pi-durable'
-import { completeTurn, continueRun, prepareRun } from './stream.ts'
+import { attachRun, completeTurn, continueRun, prepareInput, rejoinRun } from './stream.ts'
 import { waiting } from './waiting.ts'
-import { InputPart, InputParts, type InputOptions } from './input.ts'
+import { InputPart, InputParts, type InputOptions, inputLimit, type PartLimit } from './input.ts'
+
+/** The pair is either absent or complete; partial pairs and nonpositive/noninteger counts fail ingress. */
+const RejoinQuery = Schema.Union([
+  Schema.Struct({ message: Schema.Null, steps: Schema.Null }),
+  Schema.Struct({
+    message: Schema.String,
+    steps: Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
+  }),
+])
+const decodeRejoin = Schema.decodeUnknownEffect(RejoinQuery)
+
+/** Decode the GET query once, then choose whole-run or retained-step observation. */
+export const reconnectRequest: (
+  harness: Harness,
+  conversationId: ConversationId,
+  url: URL,
+  context: Context,
+) => Effect.Effect<
+  Effect.Success<ReturnType<typeof attachRun>>,
+  Effect.Error<ReturnType<typeof attachRun>> | RejoinInvalid
+> = Effect.fn('Durable.reconnectRequest')(function* (
+  harness: Harness,
+  conversationId: ConversationId,
+  url: URL,
+  context: Context,
+) {
+  const query = yield* decodeRejoin({
+    message: url.searchParams.get('message'),
+    steps: url.searchParams.get('steps'),
+  }).pipe(Effect.mapError(() => new RejoinInvalid({})))
+  if (query.message === null) return yield* attachRun(harness, conversationId, context)
+  return yield* rejoinRun(
+    harness,
+    conversationId,
+    { messageId: query.message, steps: query.steps },
+    context,
+  )
+})
 
 /** The transport-neutral turn carries only the client's newest input or named tool settlements. */
 export const ChatTurn = Schema.TaggedUnion({
   Input: { messageId: Schema.String, parts: InputParts },
   Resume: {
     messageId: Schema.optionalKey(Schema.String),
+    steps: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
     known: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
     decisions: Schema.Array(
       Schema.Struct({
@@ -99,7 +138,10 @@ const Message = Schema.Union([
     parts: Parts,
   }),
 ])
-const Body = Schema.Struct({ messages: Schema.Array(Schema.Unknown) })
+const Body = Schema.Struct({
+  messages: Schema.Array(Schema.Unknown),
+  trigger: Schema.optionalKey(Schema.Literals(['submit-message', 'regenerate-message'])),
+})
 const decodeMessage = Schema.decodeUnknownEffect(Message)
 
 /** Derive only settlements with the complete decoded payload; generic tool parts merely name known calls. */
@@ -117,6 +159,7 @@ function resumed(message: Extract<typeof Message.Type, { role: 'assistant' }>) {
     'output' in part ? [{ callId: part.toolCallId, output: part.output }] : [],
   )
   const resume = {
+    steps: parts.filter((part) => part.type === 'step-start').length,
     known: tools.map((part) => part.toolCallId),
     decisions,
     outputs,
@@ -128,6 +171,8 @@ function resumed(message: Extract<typeof Message.Type, { role: 'assistant' }>) {
 
 /** Validate only the newest message; the historical client transcript is neither trusted nor required. */
 const toTurn = Effect.fn('Durable.decodeTurn')(function* (body: typeof Body.Type) {
+  if (body.trigger === 'regenerate-message')
+    return yield* new TurnInvalid({ reason: 'Regeneration' })
   const last = Arr.last(body.messages)
   if (Option.isNone(last)) return yield* new TurnInvalid({})
   const message = yield* decodeMessage(last.value)
@@ -148,10 +193,7 @@ export const TurnBody = Body.pipe(
       toTurn(body).pipe(
         Effect.mapError((cause) => {
           if (cause instanceof TurnInvalid)
-            return new SchemaIssue.InvalidValue(
-              { message: 'Expected a user message or a message with tool calls' },
-              body,
-            )
+            return new SchemaIssue.InvalidValue({ message: cause.message }, body)
           return cause instanceof Schema.SchemaError ? cause.issue : cause
         }),
       ),
@@ -161,7 +203,30 @@ export const TurnBody = Body.pipe(
 )
 
 /** Compiled ingress accepts untrusted chat bodies without an untyped application function parameter. */
-export const decodeTurn = Schema.decodeUnknownEffect(TurnBody)
+export const decodeTurn = Function.flow(
+  Schema.decodeUnknownEffect(TurnBody),
+  Effect.mapError(turnFailure),
+)
+
+/** Inspect only the typed codec issue tree, preserving our regeneration refusal through JSON codecs. */
+function rejectedRegeneration(issue: SchemaIssue.Issue): boolean {
+  if (Predicate.isTagged(issue, 'InvalidValue'))
+    return (
+      issue.annotations !== undefined &&
+      issue.annotations.message === new TurnInvalid({ reason: 'Regeneration' }).message
+    )
+  if ('issue' in issue) return rejectedRegeneration(issue.issue)
+  if ('issues' in issue) return issue.issues.some(rejectedRegeneration)
+  return false
+}
+
+/** Body-read failures already carry the domain error; schema failures retain the closed refusal reason. */
+export function turnFailure(error: Schema.SchemaError | TurnInvalid): TurnInvalid {
+  if (error instanceof TurnInvalid) return error
+  return new TurnInvalid({
+    reason: rejectedRegeneration(error.issue) ? 'Regeneration' : 'Malformed',
+  })
+}
 
 /** Only the current run message accepts settlements; stale resumes settle nothing. Outputs match call
  * ids and rely on provider ids remaining unique within one run; approvals are task-scoped. Read waiting
@@ -208,8 +273,8 @@ const settleHolds = Effect.fn('Durable.settleHolds')(function* (
 })
 
 type ResponseEffect = Effect.Effect<
-  Effect.Success<ReturnType<typeof prepareRun>>,
-  Effect.Error<ReturnType<typeof prepareRun>> | RunMissing
+  Effect.Success<ReturnType<typeof prepareInput>>,
+  Effect.Error<ReturnType<typeof prepareInput>> | RunMissing
 >
 
 /** Authorize before calling. A stale assistant message settles nothing and still resumes observation.
@@ -226,6 +291,7 @@ export const respond: (
     DurableErrors.PiFailed | DurableErrors.WatchClosed | DurableErrors.WatchOverflowed
   >,
   | DurableErrors.ConversationMissing
+  | DurableErrors.LimitInvalid
   | DurableErrors.PartTooLarge
   | DurableErrors.PartUnsupported
   | DurableErrors.PiFailed
@@ -238,11 +304,31 @@ export const respond: (
   context: Context,
 ) {
   const { turn, options } = 'turn' in input ? input : { turn: input, options: {} }
+  const limit = yield* inputLimit(options)
+  return yield* respondWithPolicy(harness, conversationId, { turn, limit }, context)
+})
+
+/** Request ingress can validate the host policy before reading its body and pass the trusted state. */
+export const respondWithPolicy: (
+  harness: Harness,
+  conversationId: ConversationId,
+  input: { readonly turn: ChatTurn; readonly limit: PartLimit },
+  context: Context,
+) => Effect.Effect<
+  Effect.Success<ReturnType<typeof respond>>,
+  Exclude<Effect.Error<ReturnType<typeof respond>>, DurableErrors.LimitInvalid>
+> = Effect.fn('Durable.respondWithPolicy')(function* (
+  harness: Harness,
+  conversationId: ConversationId,
+  input: { readonly turn: ChatTurn; readonly limit: PartLimit },
+  context: Context,
+) {
+  const { turn, limit } = input
   return yield* ChatTurn.match(turn, {
     Input: ({ parts, messageId }): ResponseEffect =>
-      prepareRun(
+      prepareInput(
         harness,
-        { conversationId, content: parts, requestId: messageId, options },
+        { conversationId, content: parts, requestId: messageId, options: limit },
         context,
       ),
     Resume: (resume): ResponseEffect =>
@@ -255,7 +341,7 @@ export const respond: (
                 : continueRun)(
                 harness,
                 conversationId,
-                { messageId: resume.messageId, known: new Set(resume.known) },
+                { messageId: resume.messageId, steps: resume.steps, known: new Set(resume.known) },
                 context,
               ),
         ),

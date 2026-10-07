@@ -4,6 +4,7 @@ import {
   LiveDoc,
   hook,
   type ToolExecutionApi,
+  type ToolHooks,
   type ToolExecutionResult,
   type ToolRegistration,
   ToolTask,
@@ -11,7 +12,7 @@ import {
 import { asSchema, type Tool, type ToolSet } from 'ai'
 import { Effect, Option, Predicate, Schema } from 'effect'
 
-import { ToolFailed, ToolOutputFailed, ToolSchemaFailed } from './errors.ts'
+import { ToolFailed, ToolOutputFailed, ToolSchemaFailed, type PiFailed } from './errors.ts'
 import {
   CallIdentity,
   holdIdOf,
@@ -61,10 +62,7 @@ type Program = (
   args: Parameters<Execute>[0],
   api: ToolExecutionApi,
   context: Context,
-) => Effect.Effect<
-  ToolExecutionResult,
-  ToolFailed | ToolOutputFailed | import('./errors.ts').PiFailed
->
+) => Effect.Effect<ToolExecutionResult, ToolFailed | ToolOutputFailed | PiFailed>
 
 const decodeJsonText = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.MutableJson))
 
@@ -272,8 +270,8 @@ const registration = Effect.fn('Durable.registerTool')(function* (
 /** The hook only waits for plans that hold; a durable denial is Pi's existing block result. */
 const before = Effect.fn('Durable.beforeTool')(function* (
   plans: ReadonlyMap<string, Plan>,
-  call: Parameters<import('@earendil-works/pi-durable').ToolHooks['beforeTool']>[0],
-  api: Parameters<import('@earendil-works/pi-durable').ToolHooks['beforeTool']>[1],
+  call: Parameters<ToolHooks['beforeTool']>[0],
+  api: Parameters<ToolHooks['beforeTool']>[1],
   context: Context,
 ) {
   const live = yield* Pi.snapshot(api, LiveDoc, api.conversationId, context)
@@ -300,8 +298,8 @@ const before = Effect.fn('Durable.beforeTool')(function* (
 /** Pi's named hook adapter forwards cancellation into the sole settlement program. */
 function beforeForPi(plans: ReadonlyMap<string, Plan>) {
   return function beforeTool(
-    call: Parameters<import('@earendil-works/pi-durable').ToolHooks['beforeTool']>[0],
-    api: Parameters<import('@earendil-works/pi-durable').ToolHooks['beforeTool']>[1],
+    call: Parameters<ToolHooks['beforeTool']>[0],
+    api: Parameters<ToolHooks['beforeTool']>[1],
     context: Context,
   ) {
     return Pi.runForPi(

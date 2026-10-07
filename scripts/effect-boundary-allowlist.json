@@ -85,6 +85,7 @@
       "waiting",
       "streamRun",
       "attachRun",
+      "rejoinRun",
       "continueRun",
       "respond",
       "respondTurn",
@@ -125,7 +126,7 @@
   {
     "file": "packages/agent/durable/src/examples/main.ts",
     "classification": "http-framework-entrypoint",
-    "symbols": ["route", "dispatch"]
+    "symbols": ["route", "dispatch", "runForNode"]
   },
   {
     "file": "packages/agent/durable/src/examples/effect.ts",

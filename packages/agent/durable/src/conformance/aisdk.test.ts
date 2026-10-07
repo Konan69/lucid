@@ -16,6 +16,7 @@ import {
 import { expect, it } from 'vitest'
 import { z } from 'zod'
 
+import { resumption } from '../client.ts'
 import { PlainChat } from '../fixtures/chat.ts'
 import { answer, attachRun, continueRun, decide, respond, streamRun, waiting } from '../main.ts'
 import {
@@ -442,15 +443,16 @@ it('step 1 snapshot reconnect after a network interruption does not duplicate te
     fauxAssistantMessage('Finished.'),
   ])
   const attached = signal()
+  const link = resumption()
   const transport = new DefaultChatTransport<UIMessage>({
     api: 'http://durable.test/chat',
+    prepareReconnectToStreamRequest: link.prepare,
     fetch: async (url, init) => {
       const request = new Request(url, init)
       if (request.method === 'GET') {
-        const attachedRun = await attachRun(opened.harness, opened.root.id, context)
-        if (attachedRun.status === 'idle') return new Response(null, { status: 204 })
+        const response = await respond(opened.harness, opened.root.id, request, context)
         attached.resolve()
-        return createUIMessageStreamResponse({ stream: attachedRun.stream })
+        return response
       }
       const response = await respond(opened.harness, opened.root.id, request, context)
       if (response.body === null) throw new Error('Expected an SSE body')
@@ -470,7 +472,7 @@ it('step 1 snapshot reconnect after a network interruption does not duplicate te
       return new Response(dropped, { headers: response.headers })
     },
   })
-  const chat = new PlainChat({ transport })
+  const chat = new PlainChat({ transport, onFinish: link.onFinish })
   try {
     await chat.sendMessage({ text: 'Build' })
     await entered.promise
@@ -486,6 +488,7 @@ it('step 1 snapshot reconnect after a network interruption does not duplicate te
     expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
     if (chat.lastMessage === undefined) throw new Error('Expected the resumed message')
     expect(texts(chat.lastMessage)).toEqual(['Starting.', 'Finished.'])
+    expect(chat.lastMessage.parts.filter((part) => part.type === 'step-start')).toHaveLength(2)
   } finally {
     release.resolve()
     await opened.root.waitForIdle(context)
@@ -545,95 +548,104 @@ it('reconnectToStream returns the in-progress run through respond', async () => 
   }
 })
 
-// Review step.mjs: the server replays start(messageId), reset-step, then the whole run. Installed
-// ai/src/ui/process-ui-message-stream.ts:144–156,938–963 resets only the current step; start changes
-// identity without replacing older parts. chat.ts:852–882 retains resumable state in this Chat;
-// chat.ts:852–858 also snapshots the last assistant when it has an input-streaming tool part.
-// A reload must replace partial state with settled history before reconnecting; merely creating a
-// fresh Chat is insufficient in that case. No server chunk replaces the earlier steps.
-// This is the one permitted expected failure: applications reload history before reconnecting.
-it.fails('step 2 snapshot reconnect into a retained partial message duplicates earlier text and tools', async () => {
-  const entered = signal()
-  const release = signal()
-  const fixture = await host(
-    {
-      work: tool({ inputSchema: z.object({}), execute: async () => '12 pages' }),
-      pause: tool({
-        inputSchema: z.object({}),
-        execute: async () => {
-          entered.resolve()
-          await release.promise
-          return 'continued'
-        },
-      }),
-    },
-    {},
-  )
-  const opened = await fixture.open()
-  opened.faux.setResponses([
-    fauxAssistantMessage(
-      [{ type: 'text', text: 'Starting.' }, fauxToolCall('work', {}, { id: 'work' })],
-      { stopReason: 'toolUse' },
-    ),
-    fauxAssistantMessage(
-      [{ type: 'text', text: 'Fin' }, fauxToolCall('pause', {}, { id: 'pause' })],
-      { stopReason: 'toolUse' },
-    ),
-    fauxAssistantMessage('Finished.'),
-  ])
-  const attached = signal()
-  const transport = new DefaultChatTransport<UIMessage>({
-    api: 'http://durable.test/chat',
-    fetch: async (url, init) => {
-      const request = new Request(url, init)
-      const response = await respond(opened.harness, opened.root.id, request, context)
-      if (request.method === 'GET') {
-        attached.resolve()
-        return response
-      }
-      if (response.body === null) throw new Error('Expected an SSE body')
-      const decoder = new TextDecoder()
-      // Fault before closing step 2's text, retaining step 1 and the second partial text.
-      let secondText = false
-      const dropped = response.body.pipeThrough(
-        new TransformStream<Uint8Array, Uint8Array>({
-          transform(chunk, controller) {
-            const text = decoder.decode(chunk)
-            if (secondText && text.includes('text-end')) {
-              controller.error(new TypeError('network connection lost'))
-              return
-            }
-            if (text.includes('text-delta') && text.includes('"delta":"Fin"')) secondText = true
-            controller.enqueue(chunk)
+// A retained step 2 needs a step-scoped prefix: reset-step cannot remove earlier SDK steps.
+it.each(['text-end', 'tool-input-start', 'tool-input-available'])(
+  'step 2 retained-state reconnect cut at %s preserves earlier text and tools exactly once',
+  async (cut) => {
+    const entered = signal()
+    const release = signal()
+    const fixture = await host(
+      {
+        work: tool({ inputSchema: z.object({}), execute: async () => '12 pages' }),
+        pause: tool({
+          inputSchema: z.object({}),
+          execute: async () => {
+            entered.resolve()
+            await release.promise
+            return 'continued'
           },
         }),
-      )
-      return new Response(dropped, { headers: response.headers })
-    },
-  })
-  const chat = new PlainChat({ transport })
-  try {
-    await chat.sendMessage({ text: 'Build in steps' })
-    await entered.promise
-    expect(chat.status).toBe('error')
-    if (chat.lastMessage === undefined) throw new Error('Expected the retained message')
-    expect(texts(chat.lastMessage)).toEqual(['Starting.', 'Fin'])
-    expect(chat.lastMessage.parts.filter((part) => part.type === 'tool-work')).toHaveLength(1)
-    const id = chat.lastMessage.id
-    chat.clearError()
-    const resumed = chat.resumeStream()
-    await attached.promise
-    release.resolve()
-    await resumed
-    expect(chat.status).toBe('ready')
-    expect(chat.lastMessage.id).toBe(id)
-    expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
-    expect({
-      text: texts(chat.lastMessage),
-      tools: chat.lastMessage.parts.filter((part) => part.type === 'tool-work').length,
-    }).toEqual({ text: ['Starting.', 'Fin', 'Finished.'], tools: 1 })
-  } finally {
-    release.resolve()
-    await opened.root.waitForIdle(context)
-  }
-})
+      },
+      {},
+    )
+    const opened = await fixture.open()
+    opened.faux.setResponses([
+      fauxAssistantMessage(
+        [{ type: 'text', text: 'Starting.' }, fauxToolCall('work', {}, { id: 'work' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage(
+        [{ type: 'text', text: 'Fin' }, fauxToolCall('pause', {}, { id: 'pause' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('Finished.'),
+    ])
+    const attached = signal()
+    const link = resumption()
+    const transport = new DefaultChatTransport<UIMessage>({
+      api: 'http://durable.test/chat',
+      prepareReconnectToStreamRequest: link.prepare,
+      fetch: async (url, init) => {
+        const request = new Request(url, init)
+        const response = await respond(opened.harness, opened.root.id, request, context)
+        if (request.method === 'GET') {
+          attached.resolve()
+          return response
+        }
+        if (response.body === null) throw new Error('Expected an SSE body')
+        const decoder = new TextDecoder()
+        // Fault before closing step 2's text, retaining step 1 and the second partial text.
+        let secondText = false
+        const dropped = response.body.pipeThrough(
+          new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+              const text = decoder.decode(chunk)
+              if (secondText && text.includes(cut)) {
+                controller.error(new TypeError('network connection lost'))
+                return
+              }
+              if (text.includes('text-delta') && text.includes('"delta":"Fin"')) secondText = true
+              controller.enqueue(chunk)
+            },
+          }),
+        )
+        return new Response(dropped, { headers: response.headers })
+      },
+    })
+    const chat = new PlainChat({ transport, onFinish: link.onFinish })
+    try {
+      await chat.sendMessage({ text: 'Build in steps' })
+      await entered.promise
+      expect(chat.status).toBe('error')
+      if (chat.lastMessage === undefined) throw new Error('Expected the retained message')
+      expect(texts(chat.lastMessage)).toEqual(['Starting.', 'Fin'])
+      expect(chat.lastMessage.parts.filter((part) => part.type === 'tool-work')).toHaveLength(1)
+      const id = chat.lastMessage.id
+      chat.clearError()
+      const resumed = chat.resumeStream()
+      await attached.promise
+      release.resolve()
+      await resumed
+      expect(chat.status).toBe('ready')
+      expect(chat.lastMessage.parts.map((part) => part.type)).toEqual([
+        'step-start',
+        'text',
+        'tool-work',
+        'step-start',
+        'text',
+        'tool-pause',
+        'step-start',
+        'text',
+      ])
+      expect(chat.lastMessage.id).toBe(id)
+      expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
+      expect({
+        text: texts(chat.lastMessage),
+        tools: chat.lastMessage.parts.filter((part) => part.type === 'tool-work').length,
+      }).toEqual({ text: ['Starting.', 'Fin', 'Finished.'], tools: 1 })
+    } finally {
+      release.resolve()
+      await opened.root.waitForIdle(context)
+    }
+  },
+)

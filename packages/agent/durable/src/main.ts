@@ -6,9 +6,9 @@ import { Effect, Function, Option, Result, Schema, Stream } from 'effect'
 import * as Core from './core.ts'
 import { HoldIdInvalid, TurnInvalid } from './errors.ts'
 import { prepareRun } from './stream.ts'
-import { TurnBody } from './respond.ts'
+import { reconnectRequest, turnFailure, TurnBody, respondWithPolicy } from './respond.ts'
 import type { ToolsOptions } from './tools.ts'
-import type { InputOptions } from './input.ts'
+import { inputLimit, type InputOptions } from './input.ts'
 
 /** A host can bound decoded parts while preserving the four-argument Request ingress. */
 export type RequestInput = Request | { readonly request: Request; readonly options: InputOptions }
@@ -17,11 +17,7 @@ export type RequestInput = Request | { readonly request: Request; readonly optio
 const decodeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(TurnBody))
 
 /** Compile the object ingress once; reject the original tagged class at the Promise boundary. */
-export const decodeTurn = Function.flow(
-  Core.decodeTurn,
-  Effect.mapError(() => new TurnInvalid({})),
-  (effect) => Effect.runPromise(effect),
-)
+export const decodeTurn = Function.flow(Core.decodeTurn, (effect) => Effect.runPromise(effect))
 
 /** Promise facade; tool registration has one Effect implementation. */
 export const toolsExtension = (
@@ -68,6 +64,22 @@ export const attachRun = (...args: Parameters<typeof Core.attachRun>): Promise<A
     ),
   )
 
+/** The retained-step counterpart of attachRun has the same Promise result shape. */
+export const rejoinRun = (...args: Parameters<typeof Core.rejoinRun>): Promise<Attached> =>
+  Effect.runPromise(
+    Core.rejoinRun(...args).pipe(
+      Effect.flatMap((attached) =>
+        Option.match(attached, {
+          onNone: () => Effect.succeed<Attached>({ status: 'idle' }),
+          onSome: (stream) =>
+            Stream.toReadableStreamEffect(stream).pipe(
+              Effect.map((readable): Attached => ({ status: 'running', stream: readable })),
+            ),
+        }),
+      ),
+    ),
+  )
+
 /** RunMissing rejects before a platform stream is returned. */
 export const continueRun = (...args: Parameters<typeof Core.continueRun>) =>
   Effect.runPromise(
@@ -84,26 +96,27 @@ export const respondTurn = (
   turn: Core.TurnInput,
   context: Context,
 ): Promise<Response> =>
-  Effect.runPromise(
-    Core.respond(harness, conversationId, turn, context).pipe(
-      Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream)),
-      Effect.map((stream) => createUIMessageStreamResponse({ stream })),
-      Effect.catchTag('RunMissing', () =>
-        Effect.succeed(new Response('No run made these tool calls', { status: 409 })),
-      ),
-      Effect.catchTag('ConversationMissing', () =>
-        Effect.succeed(new Response('Conversation not found', { status: 404 })),
-      ),
-      Effect.catchTag('PartUnsupported', () =>
-        Effect.succeed(
-          new Response('Unsupported file; use an inline base64 image', { status: 400 }),
-        ),
-      ),
-      Effect.catchTag('PartTooLarge', () =>
-        Effect.succeed(new Response('File part too large', { status: 413 })),
-      ),
+  Effect.runPromise(turnResponse(Core.respond(harness, conversationId, turn, context)))
+
+/** Both Request and decoded-turn adapters share exactly the same expected HTTP error mapping. */
+function turnResponse(program: ReturnType<typeof Core.respond>) {
+  return program.pipe(
+    Effect.flatMap((stream) => Stream.toReadableStreamEffect(stream)),
+    Effect.map((stream) => createUIMessageStreamResponse({ stream })),
+    Effect.catchTag('RunMissing', () =>
+      Effect.succeed(new Response('No run made these tool calls', { status: 409 })),
+    ),
+    Effect.catchTag('ConversationMissing', () =>
+      Effect.succeed(new Response('Conversation not found', { status: 404 })),
+    ),
+    Effect.catchTag('PartUnsupported', () =>
+      Effect.succeed(new Response('Unsupported file; use an inline base64 image', { status: 400 })),
+    ),
+    Effect.catchTag('PartTooLarge', () =>
+      Effect.succeed(new Response('File part too large', { status: 413 })),
     ),
   )
+}
 
 /** Read JSON text once; failed reads/decodes are invalid turns. Resumes must name the current run
  * message to settle anything. Outputs require call-id uniqueness within that run; approvals do not. */
@@ -114,10 +127,11 @@ export async function respond(
   context: Context,
 ): Promise<Response> {
   const { request, options } = 'request' in input ? input : { request: input, options: {} }
+  const limit = await Effect.runPromise(inputLimit(options))
   // AI SDK HttpChatTransport.reconnectToStream sends a bodyless GET and treats 204 as idle.
   if (request.method === 'GET') {
     return Effect.runPromise(
-      Core.attachRun(harness, conversationId, context).pipe(
+      reconnectRequest(harness, conversationId, new URL(request.url), context).pipe(
         Effect.flatMap((attached) =>
           Option.match(attached, {
             onNone: () => Effect.succeed(new Response(null, { status: 204 })),
@@ -126,6 +140,9 @@ export async function respond(
                 Effect.map((readable) => createUIMessageStreamResponse({ stream: readable })),
               ),
           }),
+        ),
+        Effect.catchTag('RejoinInvalid', () =>
+          Effect.succeed(new Response('Invalid reconnect state', { status: 400 })),
         ),
         Effect.catchTag('ConversationMissing', () =>
           Effect.succeed(new Response('Conversation not found', { status: 404 })),
@@ -139,15 +156,14 @@ export async function respond(
     Effect.tryPromise({
       try: () => request.text(),
       catch: () => new TurnInvalid({}),
-    }).pipe(
-      Effect.flatMap(decodeRequest),
-      Effect.mapError(() => new TurnInvalid({})),
-      Effect.option,
+    }).pipe(Effect.flatMap(decodeRequest), Effect.mapError(turnFailure), Effect.result),
+  )
+  if (Result.isFailure(turn)) return new Response(turn.failure.message, { status: 400 })
+  return Effect.runPromise(
+    turnResponse(
+      respondWithPolicy(harness, conversationId, { turn: turn.success, limit }, context),
     ),
   )
-  if (Option.isNone(turn))
-    return new Response('Expected a user message or a message with tool calls', { status: 400 })
-  return respondTurn(harness, conversationId, { turn: turn.value, options }, context)
 }
 
 export {
@@ -160,8 +176,10 @@ export {
   ConversationMissing,
   PiFailed,
   TurnInvalid,
+  RejoinInvalid,
   PartUnsupported,
   PartTooLarge,
+  LimitInvalid,
   RunMissing,
   ToolSchemaFailed,
   ToolFailed,
@@ -170,7 +188,7 @@ export {
 export type { Answer, Decision, Settlement, Plan, Source } from './holds.ts'
 export type { Waiting } from './waiting.ts'
 export type { Replay, ToolsOptions } from './tools.ts'
-export type { RunInput } from './stream.ts'
+export type { Rejoin, RunInput } from './stream.ts'
 export type { ResumeInput } from './resume.ts'
 export type { RunState, Step, Chunk } from './chunks.ts'
 export type { ChatTurn, TurnInput } from './respond.ts'
