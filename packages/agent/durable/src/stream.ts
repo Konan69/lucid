@@ -196,6 +196,7 @@ export const prepareRun: (
   | DurableErrors.TurnInvalid
   | DurableErrors.BusyPolicyInvalid
   | DurableErrors.TurnBusy
+  | DurableErrors.TurnWaiting
   | DurableErrors.TurnConflict
   | DurableErrors.TurnWithdrawn
   | WatchClosed
@@ -446,6 +447,7 @@ export const followRun: (
   | RunMissing
   | DurableErrors.TurnWithdrawn
   | DurableErrors.TurnStranded
+  | DurableErrors.TurnWaiting
   | WatchFailure
 > = Effect.fn('Durable.followRun')(function* (harness, conversationId, requestId, context) {
   const scope = yield* Scope.make()
@@ -463,7 +465,13 @@ export const followRun: (
       if (Option.isNone(submission)) return yield* new RunMissing({ conversationId })
       yield* placed(
         original,
-        { harness, submission: submission.value, conversationId, messageId: requestId },
+        {
+          harness,
+          submission: submission.value,
+          conversationId,
+          messageId: requestId,
+          policy: 'follow',
+        },
         context,
       )
     }

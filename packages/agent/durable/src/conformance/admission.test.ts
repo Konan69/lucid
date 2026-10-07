@@ -1,6 +1,13 @@
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it, onTestFinished } from 'vitest'
-import { DefaultChatTransport, tool, type UIMessage } from 'ai'
+import {
+  DefaultChatTransport,
+  tool,
+  isToolUIPart,
+  lastAssistantMessageIsCompleteWithApprovalResponses,
+  lastAssistantMessageIsCompleteWithToolCalls,
+  type UIMessage,
+} from 'ai'
 import { z } from 'zod'
 import * as NodeEvents from 'node:events'
 import type { Harness } from '@earendil-works/pi-durable'
@@ -16,6 +23,7 @@ import {
   history,
   TurnWithdrawn,
   TurnStranded,
+  TurnWaiting,
   TurnBusy,
   LimitInvalid,
   TurnRegenerate,
@@ -475,4 +483,105 @@ it('reports a stranded host input without withdrawing it, then follows its place
     await followRun(opened.harness, opened.root.id, 'host-stranded', context),
   )
   expect(texts(result.message)).toEqual(['Queued answer.'])
+})
+
+/** A new message cannot be answered while this Chat's predecessor waits for a person.
+ * Both installed stock predicates (ui/last-assistant-message-is-complete-*.ts) require a last
+ * assistant message: remove the refused user before approving, then the stock flow works. */
+it.each(['followUp', 'steer', 'reject'] as const)(
+  'refuses new %s input while parked without queuing it',
+  async (whenBusy) => {
+    const fixture = await shop()
+    const opened = await fixture.open()
+    opened.faux.setResponses([call('pay', { amount: 3 }, 'pay'), fauxAssistantMessage('Paid.')])
+    const finished = signal()
+    const chat = new PlainChat({
+      onFinish: () => {
+        if (fixture.paid.length > 0) finished.resolve()
+      },
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+      transport: new DefaultChatTransport<UIMessage>({
+        api: 'http://durable.test/chat',
+        fetch: async (url, init) =>
+          respond(
+            opened.harness,
+            opened.root.id,
+            { request: new Request(url, init), options: { whenBusy } },
+            context,
+          ),
+      }),
+    })
+    await chat.sendMessage({ text: 'Pay' })
+    const held = chat.lastMessage
+    if (held === undefined) throw new Error('Expected held assistant')
+    const part = held.parts.find(isToolUIPart)
+    if (part === undefined || part.state !== 'approval-requested')
+      throw new Error('Expected approval')
+    await chat.sendMessage({ text: 'Another message' })
+    expect(chat.status).toBe('error')
+    if (chat.error === undefined) throw new Error('Expected waiting refusal')
+    expect(chat.error.message).toBe(new TurnWaiting({ conversationId: opened.root.id }).message)
+    const refused = chat.lastMessage
+    if (refused === undefined) throw new Error('Expected refused user message')
+    await expect(
+      followRun(opened.harness, opened.root.id, refused.id, context),
+    ).rejects.toBeInstanceOf(RunMissing)
+    expect(lastAssistantMessageIsCompleteWithApprovalResponses({ messages: chat.messages })).toBe(
+      false,
+    )
+    expect(lastAssistantMessageIsCompleteWithToolCalls({ messages: chat.messages })).toBe(false)
+    chat.messages = chat.messages.slice(0, -1)
+    chat.clearError()
+    await chat.addToolApprovalResponse({ id: part.approval.id, approved: true })
+    await finished.promise
+    expect(chat.status).toBe('ready')
+    expect(fixture.paid).toEqual([3])
+    if (chat.lastMessage === undefined) throw new Error('Expected final message')
+    expect(texts(chat.lastMessage)).toEqual(['Paid.'])
+  },
+)
+
+/** A queued POST is withdrawn when the predecessor parks, using the same waiting rule as
+ * admission. Host-owned receipts may deliberately wait there and are not withdrawn. */
+it('withdraws a queued POST when its predecessor parks, but keeps a host follower', async () => {
+  const entered = signal()
+  const release = signal()
+  onTestFinished(() => release.resolve())
+  const fixture = await shop()
+  const held = await fixture.open()
+  held.faux.setResponses([
+    async () => {
+      entered.resolve()
+      await release.promise
+      return call('pay', { amount: 4 }, 'held')
+    },
+    fauxAssistantMessage('Paid.'),
+    fauxAssistantMessage('Host answered.'),
+  ])
+  const first = new PlainChat({ transport: held.transport })
+  const sending = first.sendMessage({ text: 'First' })
+  await entered.promise
+  const admitted = queued(held.harness, 'queued-before-hold')
+  const next = new PlainChat({ transport: held.transport, generateId: () => 'queued-before-hold' })
+  const posting = next.sendMessage({ text: 'Queued POST' })
+  await admitted
+  const hostInput = await held.root.submit(
+    { type: 'input', content: 'Host input', requestId: 'host-behind-hold' },
+    context,
+  )
+  const following = followRun(held.harness, held.root.id, 'host-behind-hold', context)
+  release.resolve()
+  await sending
+  await posting
+  expect(next.status).toBe('error')
+  if (next.error === undefined) throw new Error('Expected parked refusal')
+  expect(next.error.message).toBe(new TurnWaiting({ conversationId: held.root.id }).message)
+  expect((await hostInput.status(context)).status).toBe('queued')
+  await decide(
+    held.harness,
+    held.root.id,
+    { holdId: await hold(held.harness, held.root.id, 'held'), approved: true },
+    context,
+  )
+  expect(texts((await consume(await following)).message)).toEqual(['Host answered.'])
 })

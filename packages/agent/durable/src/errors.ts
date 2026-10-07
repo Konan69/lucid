@@ -176,6 +176,20 @@ export class TurnStranded extends Schema.TaggedError<TurnStranded>()(
   }
 }
 
+/** A Chat cannot answer a new turn while every active call waits for a person. */
+export class TurnWaiting extends Schema.TaggedError<TurnWaiting>()(
+  'TurnWaiting',
+  {
+    conversationId: ConversationId,
+  },
+  { title: 'TurnWaiting' },
+) {
+  /** The host resolves the held calls before retrying a new turn. */
+  override get message() {
+    return 'Conversation is waiting for a decision or answer; resolve it before sending another message'
+  }
+}
+
 /** None of the stored assistant messages made the tool calls named by a resume. */
 export class RunMissing extends Schema.TaggedError<RunMissing>()(
   'RunMissing',

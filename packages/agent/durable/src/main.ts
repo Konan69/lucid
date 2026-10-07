@@ -167,6 +167,9 @@ function turnResponse(program: ReturnType<typeof Core.respond>) {
     Effect.catchTag('TurnConflict', (error) =>
       Effect.succeed(new Response(error.message, { status: 409 })),
     ),
+    Effect.catchTag('TurnWaiting', (error) =>
+      Effect.succeed(new Response(error.message, { status: 409 })),
+    ),
     Effect.catchTag('TurnBusy', (error) =>
       Effect.succeed(new Response(error.message, { status: 409 })),
     ),
@@ -243,6 +246,7 @@ export {
   TurnRegenerate,
   TurnWithdrawn,
   TurnStranded,
+  TurnWaiting,
   TurnBusy,
   TurnConflict,
   BusyPolicyInvalid,

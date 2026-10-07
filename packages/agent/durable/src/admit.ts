@@ -2,6 +2,7 @@ import type { Context } from '@earendil-works/chord'
 import {
   ConversationBusy,
   LiveDoc,
+  type AgentEvent,
   type Submission,
   type Conversation,
   type Harness,
@@ -17,10 +18,12 @@ import {
   TurnConflict,
   TurnWithdrawn,
   TurnStranded,
+  TurnWaiting,
   WatchClosed,
   WatchOverflowed,
 } from './errors.ts'
 import * as Pi from './pi.ts'
+import { isParked } from './busy.ts'
 
 type InputReceipt = Extract<SubmissionRecord, { type: 'input' }>
 type Watching = Effect.Success<ReturnType<typeof Pi.watch>>
@@ -39,8 +42,16 @@ type AdmissionFailure =
   | TurnBusy
   | TurnConflict
   | TurnWithdrawn
+  | TurnWaiting
   | WatchClosed
   | WatchOverflowed
+
+/** Only settled event boundaries can prove parking; partial text never triggers a transcript read. */
+function admissionSettled(event: AgentEvent): boolean {
+  return (
+    event.type === 'message_end' || event.type === 'tool_execution_end' || event.type === 'turn_end'
+  )
+}
 
 /** An event watch is open before admission. events.js:216 emits run_end before submission
  * receipts in that commit, so re-read this receipt on run_end: placed successors proceed, but a
@@ -53,47 +64,62 @@ export const placed: (
     submission: Submission
     conversationId: ConversationId
     messageId: string
+    policy: 'follow' | 'admit'
   },
   context: Context,
-) => Effect.Effect<InputReceipt, PiFailed | TurnStranded | WatchClosed | WatchOverflowed> =
-  Effect.fn('Durable.awaitPlacement')(function* (watched, input, context) {
-    if (watched.snapshot.run === undefined) {
-      const live = yield* Pi.snapshot(input.harness, LiveDoc, input.conversationId, context)
-      if (Option.isNone(live) || live.value.run === undefined) {
-        const receipt = yield* Pi.inputStatus(input.submission, context)
-        if (receipt.status !== 'queued') return receipt
-        return yield* new TurnStranded({ messageId: input.messageId })
-      }
+) => Effect.Effect<
+  InputReceipt,
+  ConversationMissing | PiFailed | TurnWaiting | TurnStranded | WatchClosed | WatchOverflowed
+> = Effect.fn('Durable.awaitPlacement')(function* (watched, input, context) {
+  if (watched.snapshot.run === undefined) {
+    const live = yield* Pi.snapshot(input.harness, LiveDoc, input.conversationId, context)
+    if (Option.isNone(live) || live.value.run === undefined) {
+      const receipt = yield* Pi.inputStatus(input.submission, context)
+      if (receipt.status !== 'queued') return receipt
+      return yield* new TurnStranded({ messageId: input.messageId })
     }
-    const arrived = yield* Stream.runHead(
-      watched.stream.pipe(
-        Stream.mapEffect((event) =>
-          Effect.gen(function* () {
+  }
+  const arrived = yield* Stream.runHead(
+    watched.stream.pipe(
+      Stream.mapEffect((event) =>
+        Effect.gen(function* () {
+          if (
+            event.type === 'submission' &&
+            event.record.type === 'input' &&
+            event.record.id === input.submission.id &&
+            event.record.status !== 'queued'
+          )
+            return Option.some(event.record)
+          if (event.type !== 'run_end') {
             if (
-              event.type === 'submission' &&
-              event.record.type === 'input' &&
-              event.record.id === input.submission.id &&
-              event.record.status !== 'queued'
-            )
-              return Option.some(event.record)
-            if (event.type !== 'run_end') return Option.none<InputReceipt>()
-            const receipt = yield* Pi.inputStatus(input.submission, context)
-            if (receipt.status === 'queued')
-              return yield* new TurnStranded({ messageId: input.messageId })
-            return Option.some(receipt)
-          }),
-        ),
-        Stream.filter(Option.isSome),
-        Stream.map((record) => record.value),
+              input.policy === 'admit' &&
+              admissionSettled(event) &&
+              (yield* isParked(input.harness, input.conversationId, context))
+            ) {
+              const receipt = yield* Pi.inputStatus(input.submission, context)
+              if (receipt.status === 'queued')
+                return yield* new TurnWaiting({ conversationId: input.conversationId })
+              return Option.some(receipt)
+            }
+            return Option.none<InputReceipt>()
+          }
+          const receipt = yield* Pi.inputStatus(input.submission, context)
+          if (receipt.status === 'queued')
+            return yield* new TurnStranded({ messageId: input.messageId })
+          return Option.some(receipt)
+        }),
       ),
-    )
-    if (Option.isNone(arrived))
-      return yield* new PiFailed({
-        operation: 'watch',
-        cause: new Error('Submission watch ended before placement'),
-      })
-    return arrived.value
-  })
+      Stream.filter(Option.isSome),
+      Stream.map((record) => record.value),
+    ),
+  )
+  if (Option.isNone(arrived))
+    return yield* new PiFailed({
+      operation: 'watch',
+      cause: new Error('Submission watch ended before placement'),
+    })
+  return arrived.value
+})
 
 /** This is a single public Pi call, kept here because admission owns withdrawal and pi.ts is
  * outside this lane's paths. Submission.abort is serialized (submissions.js:65–79); a racing
@@ -161,6 +187,17 @@ export const reacquireInput: (
   },
 )
 
+/** An unchanged retry observes its own admitted run; only a new turn can queue behind it. */
+const admitNewTurn = Effect.fn('Durable.admitNewTurn')(function* (
+  harness: Harness,
+  owner: { conversation: Conversation; input: Draft },
+  context: Context,
+) {
+  const prior = yield* Pi.request(owner.conversation, owner.input.draft.requestId, context)
+  if (Option.isNone(prior) && (yield* isParked(harness, owner.input.conversationId, context)))
+    yield* new TurnWaiting({ conversationId: owner.input.conversationId })
+})
+
 /**
  * The first watch precedes admission. Queued inputs wait on their own durable receipt before a
  * response is exposed. After placement reopen an atomic snapshot/watch: it includes progress while
@@ -180,6 +217,7 @@ export const admit: (
     const watched = yield* Pi.watch(harness, input.conversationId, context).pipe(
       Scope.provide(initialScope),
     )
+    yield* admitNewTurn(harness, { conversation, input }, context)
     const submission = yield* Pi.submit(conversation, input.draft, context).pipe(
       Effect.mapError((error) =>
         error.cause instanceof ConversationBusy
@@ -198,9 +236,18 @@ export const admit: (
           submission,
           conversationId: input.conversationId,
           messageId: input.draft.requestId,
+          policy: 'admit',
         },
         context,
       ).pipe(
+        Effect.catchTag('TurnWaiting', (error) =>
+          Effect.gen(function* () {
+            yield* withdrawSubmission(submission, context)
+            const current = yield* Pi.inputStatus(submission, context)
+            if (withdrawn(current)) return yield* error
+            return current
+          }),
+        ),
         Effect.catchTag('TurnStranded', () =>
           Effect.gen(function* () {
             yield* withdrawSubmission(submission, context)

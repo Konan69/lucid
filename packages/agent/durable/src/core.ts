@@ -14,6 +14,7 @@ export {
   TurnRegenerate,
   TurnWithdrawn,
   TurnStranded,
+  TurnWaiting,
   TurnBusy,
   TurnConflict,
   BusyPolicyInvalid,

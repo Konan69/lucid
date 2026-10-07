@@ -300,6 +300,7 @@ export const respond: (
   | DurableErrors.LimitInvalid
   | DurableErrors.BusyPolicyInvalid
   | DurableErrors.TurnBusy
+  | DurableErrors.TurnWaiting
   | DurableErrors.TurnConflict
   | DurableErrors.TurnWithdrawn
   | DurableErrors.WatchClosed
