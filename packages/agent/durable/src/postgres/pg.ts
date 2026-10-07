@@ -16,21 +16,42 @@ import { PostgresStorage } from './storage.ts'
 /** pg/lib/query.js:_checkForMultirow returns one result per simple-protocol
  * statement. Decode scalar metadata/ownership rows once at the SDK ingress.
  * JSON records remain TEXT, so this never rewrites their keys or numbers. */
-const decodeBatch = Schema.decodeUnknownSync(Schema.Array(Schema.Struct({
-  rows: Schema.Array(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Null]))),
-})))
+const decodeBatch = Schema.decodeUnknownSync(
+  Schema.Array(
+    Schema.Struct({
+      rows: Schema.Array(
+        Schema.Record(
+          Schema.String,
+          Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Null]),
+        ),
+      ),
+    }),
+  ),
+)
+
+/** Decode the SDK's actual multi-result envelope inside runTransaction, so a
+ * malformed result triggers the same rollback path as callback failure. */
+function batchRows(result: import('pg').QueryResult) {
+  return decodeBatch(result)
+    .slice(1)
+    .map((item) => item.rows)
+}
 
 /** PostgreSQL's extended protocol forbids bound multi-statement queries.
  * pg's public escapeLiteral safely quotes each scalar, including quotes and
  * backslashes; byte arrays use lossless hex. This changes transport only, never
  * statement order, durability settings, or the host connection's configuration. */
+const isBytes = Schema.is(Schema.Uint8Array)
+const int8Text = (value: string) => value
+
+/** Bind owned statements safely for PostgreSQL simple-protocol batches. */
 function statementText(statement: PostgresStatement): string {
   let index = 0
   return statement.sql.replace(/\?/gu, () => {
     const value = statement.params[index++]
     if (value === undefined) throw new Error('PostgreSQL batch binding is missing')
     if (value === null) return 'NULL'
-    if (Schema.is(Schema.Uint8Array)(value))
+    if (isBytes(value))
       return `decode(${escapeLiteral(NodeBuffer.Buffer.from(value).toString('hex'))}, 'hex')`
     return escapeLiteral(String(value))
   })
@@ -111,7 +132,7 @@ abstract class PgExecutor implements PostgresExecutor {
           if (oid !== types.builtins.INT8) return types.getTypeParser(oid, format)
           if (format === 'binary')
             return (value: NodeBuffer.Buffer) => value.readBigInt64BE().toString()
-          return (value: string) => value
+          return int8Text
         },
       },
     })
@@ -132,8 +153,9 @@ class PgTransaction extends PgExecutor {
 }
 
 /** Pi src/storage/sqlite/node.ts:NodeSqliteDatabase, one queued connection.
- * PostgreSQL has no BEGIN IMMEDIATE; REPEATABLE READ gives multi-query document
- * reads the single snapshot SQLite provides. Single ownership remains required. */
+ * PostgreSQL has no BEGIN IMMEDIATE; REPEATABLE READ gives conditional commit
+ * validation and copy reads SQLite's stable snapshot. Standalone document reads
+ * use one SQL snapshot. Single ownership remains required. */
 export class PgDatabase extends PgExecutor implements PostgresDatabase {
   private readonly access = new SerialOperationQueue()
   private closed = false
@@ -176,22 +198,34 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
     reads: readonly PostgresStatement[],
     callback: (transaction: PostgresExecutor, rows: readonly (readonly object[])[]) => Promise<T>,
   ): Promise<T> {
+    if (reads.length === 0) return this.transaction((transaction) => callback(transaction, []))
     return this.access.run(() => {
       this.assertOpen()
       const transaction = new PgTransaction(this.client)
-      const text = ['BEGIN ISOLATION LEVEL REPEATABLE READ', ...reads.map(statementText)].join(';\n')
-      return this.client.query({ text, types: { getTypeParser: (oid, format) => {
-        if (oid === types.builtins.INT8) return (value: string) => value
-        return types.getTypeParser(oid, format)
-      } } }).then((result) => {
-        return this.runTransaction(transaction, () => {
-          const rows = decodeBatch(result).slice(1).map((item) => item.rows)
-          return callback(transaction, rows)
+      const text = ['BEGIN ISOLATION LEVEL REPEATABLE READ', ...reads.map(statementText)].join(
+        ';\n',
+      )
+      return this.client
+        .query({
+          text,
+          types: {
+            getTypeParser: (oid, format) => {
+              if (oid === types.builtins.INT8) return int8Text
+              return types.getTypeParser(oid, format)
+            },
+          },
         })
-      }, (cause: unknown) => {
-        transaction.active = false
-        return this.rollback(cause)
-      })
+        .then(
+          (result) => {
+            return this.runTransaction(transaction, () => {
+              return callback(transaction, batchRows(result))
+            })
+          },
+          (cause: unknown) => {
+            transaction.active = false
+            return this.rollback(cause)
+          },
+        )
     })
   }
 

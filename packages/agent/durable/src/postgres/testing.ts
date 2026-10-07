@@ -27,5 +27,9 @@ export function postgresFixture(url: string) {
     storages.add(storage)
     return storage
   }
-  return { pool, schema, open, track: (storage: PostgresStorage) => { storages.add(storage) } }
+  /** Register a storage opened through a counting facade for the same cleanup. */
+  function track(storage: PostgresStorage) {
+    storages.add(storage)
+  }
+  return { pool, schema, open, track }
 }

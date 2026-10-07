@@ -48,7 +48,10 @@ export interface PostgresDatabase extends PostgresExecutor {
    * preflight reads sent together in their original order. Read results are
    * decoded by storage before any write; no allocation happens outside the transaction.
    * This owned-facade extension avoids changing the host Pool's pipeline setting. */
-  transactionWithReads<T>(reads: readonly PostgresStatement[], callback: (transaction: PostgresExecutor, rows: readonly (readonly object[])[]) => Promise<T>): Promise<T>
+  transactionWithReads<T>(
+    reads: readonly PostgresStatement[],
+    callback: (transaction: PostgresExecutor, rows: readonly (readonly object[])[]) => Promise<T>,
+  ): Promise<T>
   transaction<T>(callback: (transaction: PostgresExecutor) => Promise<T>): Promise<T>
   close(): Promise<void>
 }

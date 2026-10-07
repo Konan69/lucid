@@ -1,7 +1,12 @@
 /** PostgreSQL entry stays separate so core consumers never load the optional pg driver. */
 export { openPgDatabase, openPgStorage, PgDatabase, validateSchema } from './pg.ts'
 export { PostgresStorage } from './storage.ts'
-export type { PostgresDatabase, PostgresExecutor, PostgresValue } from './database.ts'
+export type {
+  PostgresDatabase,
+  PostgresExecutor,
+  PostgresValue,
+  PostgresStatement,
+} from './database.ts'
 export {
   applyPostgresMigrations,
   POSTGRES_MIGRATIONS,

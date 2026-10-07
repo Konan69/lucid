@@ -27,7 +27,11 @@ type Measurement = {
 
 /** Pi src/testing/storage-benchmark.ts:seedStorageBenchmark and read cases, once
  * at its smallest published scale. Validate results; impose no timing threshold. */
-async function readNumbers(storage: Storage, backend: string, counter: Option.Option<CountingDatabase>): Promise<Measurement[]> {
+async function readNumbers(
+  storage: Storage,
+  backend: string,
+  counter: Option.Option<CountingDatabase>,
+): Promise<Measurement[]> {
   const scale = Option.getOrThrow(Option.fromNullishOr(STORAGE_MEMORY_SCALES[0]))
   if (Option.isSome(counter)) counter.value.calls = 0
   const started = performance.now()
@@ -44,7 +48,12 @@ async function readNumbers(storage: Storage, backend: string, counter: Option.Op
     if (Option.isSome(counter)) counter.value.calls = 0
     const begin = performance.now()
     const result = await benchmark.run(storage, dataset)
-    rows.push({ backend, operation: benchmark.name, milliseconds: performance.now() - begin, queries: Option.match(counter, { onNone: () => 0, onSome: (value) => value.calls }) })
+    rows.push({
+      backend,
+      operation: benchmark.name,
+      milliseconds: performance.now() - begin,
+      queries: Option.match(counter, { onNone: () => 0, onSome: (value) => value.calls }),
+    })
     if (result !== benchmark.expected(dataset))
       throw new Error(`Read benchmark result differed: ${benchmark.name}`)
   }
@@ -53,14 +62,23 @@ async function readNumbers(storage: Storage, backend: string, counter: Option.Op
 
 /** Pi src/testing/storage-benchmark.ts:seedStorageWriteBenchmark and write cases.
  * Fresh storage ensures immutable root creation does not collide with read seeds. */
-async function writeNumbers(storage: Storage, backend: string, counter: Option.Option<CountingDatabase>): Promise<Measurement[]> {
+async function writeNumbers(
+  storage: Storage,
+  backend: string,
+  counter: Option.Option<CountingDatabase>,
+): Promise<Measurement[]> {
   await seedStorageWriteBenchmark(storage)
   const rows: Measurement[] = []
   for (const benchmark of STORAGE_WRITE_BENCHMARKS) {
     if (Option.isSome(counter)) counter.value.calls = 0
     const begin = performance.now()
     const result = await benchmark.run(storage)
-    rows.push({ backend, operation: benchmark.name, milliseconds: performance.now() - begin, queries: Option.match(counter, { onNone: () => 0, onSome: (value) => value.calls }) })
+    rows.push({
+      backend,
+      operation: benchmark.name,
+      milliseconds: performance.now() - begin,
+      queries: Option.match(counter, { onNone: () => 0, onSome: (value) => value.calls }),
+    })
     if (result !== benchmark.expected)
       throw new Error(`Write benchmark result differed: ${benchmark.name}`)
   }
@@ -68,15 +86,22 @@ async function writeNumbers(storage: Storage, backend: string, counter: Option.O
     if (Option.isSome(counter)) counter.value.calls = 0
     const begin = performance.now()
     await storage.commit(sample.writes, context)
-    rows.push({ backend, operation: sample.name, milliseconds: performance.now() - begin,
-      queries: Option.match(counter, { onNone: () => 0, onSome: (value) => value.calls }) })
+    rows.push({
+      backend,
+      operation: sample.name,
+      milliseconds: performance.now() - begin,
+      queries: Option.match(counter, { onNone: () => 0, onSome: (value) => value.calls }),
+    })
   }
   return rows
 }
 
 /** Cleanup is established before migration writes; only this fresh schema is
  * dropped. No fixtures, credentials, shared database or live provider are used. */
-async function withPostgres<T>(pool: Pool, use: (storage: Storage, counter: Option.Option<CountingDatabase>) => Promise<T>): Promise<T> {
+async function withPostgres<T>(
+  pool: Pool,
+  use: (storage: Storage, counter: Option.Option<CountingDatabase>) => Promise<T>,
+): Promise<T> {
   const schema = `durable_${NodeCrypto.randomUUID().replaceAll('-', '')}`
   let storage = Option.none<Storage>()
   try {
@@ -126,9 +151,13 @@ async function main() {
     throw new Error('Storage benchmark refuses the developer database port')
   const pool = new Pool({ connectionString: url })
   try {
-    const reads = await withPostgres(pool, (storage, counter) => readNumbers(storage, 'PostgreSQL', counter))
+    const reads = await withPostgres(pool, (storage, counter) =>
+      readNumbers(storage, 'PostgreSQL', counter),
+    )
     reads.push(...(await withSqlite((storage) => readNumbers(storage, 'SQLite', Option.none()))))
-    const writes = await withPostgres(pool, (storage, counter) => writeNumbers(storage, 'PostgreSQL', counter))
+    const writes = await withPostgres(pool, (storage, counter) =>
+      writeNumbers(storage, 'PostgreSQL', counter),
+    )
     writes.push(...(await withSqlite((storage) => writeNumbers(storage, 'SQLite', Option.none()))))
     console.log('Read timings (milliseconds, one measured call per operation):')
     console.table(reads)

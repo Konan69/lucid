@@ -82,19 +82,31 @@ function exhaustive(value: never): never {
  * strings until their checked numeric conversion at the Storage boundary. */
 type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>
 type TableName = 'conversation' | 'entry' | 'task' | 'submission' | 'document'
-type RecordIdRow = { readonly record_type: TableName }
 type JsonRow = { readonly record: string }
 type EntryJsonRow = { readonly record: string; readonly commit_seq: string }
-type RevisionRow = {
-  readonly seq: string
-  readonly kind: DocumentContent['kind']
-  readonly version: string
-  readonly content: string
+type DocumentReadRow = {
+  readonly record: string
+  readonly base: string | null
+  readonly tail: string
 }
+const RevisionWire = Schema.Struct({
+  seq: Schema.String,
+  kind: Schema.Literals(['base', 'delta']),
+  version: Schema.String,
+  content: Schema.String,
+})
+const decodeRevision = Schema.decodeUnknownSync(Schema.fromJsonString(RevisionWire))
+const decodeRevisions = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(RevisionWire)))
 type IdRow = { readonly id: string }
 type MetadataRow = { readonly next_id: string; readonly next_seq: string }
-const decodeMetadataRow = Schema.decodeUnknownSync(Schema.Struct({ next_id: Schema.String, next_seq: Schema.String }))
-const decodeRecordIdRow = Schema.decodeUnknownSync(Schema.Struct({ record_type: Schema.Literals(['conversation', 'entry', 'task', 'submission', 'document']) }))
+const decodeMetadataRow = Schema.decodeUnknownSync(
+  Schema.Struct({ next_id: Schema.String, next_seq: Schema.String }),
+)
+const decodeRecordIdRow = Schema.decodeUnknownSync(
+  Schema.Struct({
+    record_type: Schema.Literals(['conversation', 'entry', 'task', 'submission', 'document']),
+  }),
+)
 
 /** Pi checkGlobalIds visits all created record identities in write order. */
 function globalClaims(writes: readonly StorageWrite[]) {
@@ -102,7 +114,10 @@ function globalClaims(writes: readonly StorageWrite[]) {
   for (const write of writes) {
     if (write.type === 'document.change' || write.type === 'document.retire') continue
     const document = write.type === 'document.create' || write.type === 'document.copy'
-    claims.push({ id: document ? write.record.id : write.value.id, table: document ? 'document' : write.type })
+    claims.push({
+      id: document ? write.record.id : write.value.id,
+      table: document ? 'document' : write.type,
+    })
   }
   return claims
 }
@@ -450,10 +465,14 @@ export class PostgresStorage implements Storage {
     const claims = globalClaims(writes)
     const reads = [
       { sql: 'SELECT next_id, next_seq FROM durable_metadata WHERE singleton = 1', params: [] },
-      ...claims.map((claim) => ({ sql: 'SELECT record_type FROM record_ids WHERE id = ?', params: [claim.id] })),
+      ...claims.map((claim) => ({
+        sql: 'SELECT record_type FROM record_ids WHERE id = ?',
+        params: [claim.id],
+      })),
     ]
     const seq = await this.db.transactionWithReads(reads, async (transaction, rows) => {
-      const metadataRow = Option.fromNullishOr(rows[0]?.[0])
+      const metadataRows = Option.getOrThrow(Option.fromNullishOr(rows[0]))
+      const metadataRow = Option.fromNullishOr(metadataRows[0])
       if (Option.isNone(metadataRow)) throw new Error('Durable PostgreSQL metadata is missing')
       const metadata = decodeMetadataRow(metadataRow.value)
       const committedSeq = seqFromNumber(safeNumber(metadata.next_seq))
@@ -574,30 +593,46 @@ export class PostgresStorage implements Storage {
           ? entryId(idOrContext)
           : undefined
     if (id === undefined) throw new TypeError('Storage.entry() requires an entry ID')
-    let conversation: Awaited<ReturnType<Storage['conversation']>>
-    if (context !== undefined) {
-      const requestedConversationId = decodeConversationId(idOrConversationId)
-      conversation = await this.readConversation(requestedConversationId)
-      if (conversation === undefined)
-        throw new Error(`Unknown conversation: ${requestedConversationId}`)
-    }
+    if (context !== undefined)
+      return this.readScopedEntry(decodeConversationId(idOrConversationId), id)
     const row = Option.getOrUndefined(
       await this.db.get<EntryJsonRow>('SELECT record, commit_seq FROM entries WHERE id = ?', id),
     )
     if (row === undefined) return undefined
     const entry = parseEntry(row.record)
-    if (conversation !== undefined) {
-      let upperEntryId = Number.POSITIVE_INFINITY
-      while (conversation.id !== entry.conversationId) {
-        if (conversation.parent === undefined) return undefined
-        upperEntryId = Math.min(upperEntryId, conversation.parent.at)
-        conversation = Option.getOrThrow(
-          Option.fromNullishOr(await this.readConversation(conversation.parent.conversationId)),
-        )
-      }
-      if (entry.id > upperEntryId) return undefined
-    }
     return { entry, commitSeq: seqFromNumber(safeNumber(row.commit_seq)) }
+  }
+
+  /** Pi SqliteStorage.readEntry scoped overload: immutable ancestry and entry
+   * rows need no explicit transaction. Recursive SQL carries the minimum inclusive
+   * parent cutoff to return one indexed entry in one driver call. PostgreSQL json
+   * extracts only numeric parent fields; record TEXT is returned without JSONB
+   * conversion, preserving extensions containing NUL or lone UTF-16 surrogates.
+   * Session guarantees valid acyclic ancestry (Pi src/types.ts:Storage). */
+  private async readScopedEntry(conversationId: ConversationId, id: EntryId) {
+    const row = Option.getOrThrow(
+      await this.db.get<{
+        readonly known: boolean
+        readonly record: string | null
+        readonly commit_seq: string | null
+      }>(
+        `WITH RECURSIVE lineage AS (
+      SELECT c.id, c.record, 9223372036854775807::bigint AS cutoff FROM conversations c WHERE c.id = ?
+      UNION ALL
+      SELECT p.id, p.record, LEAST(l.cutoff, (l.record::json -> 'parent' ->> 'at')::bigint)
+      FROM lineage l JOIN conversations p ON p.id = (l.record::json -> 'parent' ->> 'conversationId')::bigint
+    ) SELECT EXISTS(SELECT 1 FROM lineage) AS known, e.record, e.commit_seq
+      FROM (SELECT 1) anchor LEFT JOIN entries e ON e.id = ? AND EXISTS(
+        SELECT 1 FROM lineage l WHERE l.id = e.conversation_id AND e.id <= l.cutoff
+      )`,
+        conversationId,
+        id,
+      ),
+    )
+    if (!row.known) throw new Error(`Unknown conversation: ${conversationId}`)
+    if (row.record === null) return undefined
+    const commitSeq = Option.getOrThrow(Option.fromNullishOr(row.commit_seq))
+    return { entry: parseEntry(row.record), commitSeq: seqFromNumber(safeNumber(commitSeq)) }
   }
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.readLatestHeadMarker.
@@ -807,11 +842,12 @@ export class PostgresStorage implements Storage {
   }
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.document.
-   * A transaction gives the base and all following deltas one committed snapshot. */
+   * PostgreSQL evaluates the record, preceding base and ordered delta tail in
+   * one statement snapshot. Pi's SQLite transaction protected three reads; a
+   * single PostgreSQL query gives the same snapshot without BEGIN/COMMIT trips. */
   async document(id: DocumentId, at: DocumentPoint, _context: Context) {
     this.assertOpen()
-    // The record and revision queries must observe one committed state; a commit between them can replace the base.
-    return this.db.transaction((transaction) => this.materializeDocument(transaction, id, at))
+    return this.materializeDocument(this.db, id, at)
   }
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.scanDocuments.
@@ -890,10 +926,32 @@ export class PostgresStorage implements Storage {
   }
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.materializeDocument.
-   * Replay from the newest preceding base and reject historical reads of current-only documents. */
+   * Replay from the newest preceding base and reject historical reads of current-only documents.
+   * A lateral lookup and ordered JSON envelope aggregate replace Pi's three SQL
+   * reads with one MVCC snapshot. Only envelope scalars are constructed as JSON;
+   * stored record/content TEXT is never parsed by PostgreSQL. BIGINT envelope
+   * fields are explicitly text, so JSON decoding cannot lose integer precision.
+   * Empty revision tails are real empty arrays; missing bases remain null and
+   * retain Pi's rejection after the lifetime/current-only checks. */
   private async materializeDocument(executor: PostgresExecutor, id: DocumentId, at: DocumentPoint) {
+    const upper = at === 'current' ? Number.MAX_SAFE_INTEGER : at
     const row = Option.getOrUndefined(
-      await executor.get<JsonRow>('SELECT record FROM documents WHERE id = ?', id),
+      await executor.get<DocumentReadRow>(
+        `SELECT d.record,
+        CASE WHEN b.seq IS NULL THEN NULL ELSE json_build_object(
+          'seq', b.seq::text, 'kind', 'base', 'version', b.version::text, 'content', b.content)::text END AS base,
+        COALESCE((SELECT json_agg(json_build_object(
+          'seq', r.seq::text, 'kind', r.kind, 'version', r.version::text, 'content', r.content)
+          ORDER BY r.seq)::text FROM document_revisions r
+          WHERE r.document_id = d.id AND r.seq > b.seq AND r.seq <= ?), '[]') AS tail
+      FROM documents d LEFT JOIN LATERAL (
+        SELECT seq, version, content FROM document_revisions
+        WHERE document_id = d.id AND kind = 'base' AND seq <= ? ORDER BY seq DESC LIMIT 1
+      ) b ON true WHERE d.id = ?`,
+        upper,
+        upper,
+        id,
+      ),
     )
     if (row === undefined) return undefined
     const record = parseDocument(row.record)
@@ -901,25 +959,11 @@ export class PostgresStorage implements Storage {
       throw new Error(`Document ${id} does not retain historical content`)
     }
     if (!isAliveAt(record, at)) return undefined
-    const upper = at === 'current' ? Number.MAX_SAFE_INTEGER : at
-    const base = Option.getOrUndefined(
-      await executor.get<RevisionRow>(
-        `SELECT seq, kind, version, content FROM document_revisions
-				WHERE document_id = ? AND kind = 'base' AND seq <= ? ORDER BY seq DESC LIMIT 1`,
-        id,
-        upper,
-      ),
-    )
-    if (base === undefined) throw new Error(`Document ${id} is missing a required base`)
+    if (row.base === null) throw new Error(`Document ${id} is missing a required base`)
+    const base = decodeRevision(row.base)
     const version = safeNumber(base.version)
     let value = parseObject(base.content)
-    const tail = await executor.all<RevisionRow>(
-      `SELECT seq, kind, version, content FROM document_revisions
-				WHERE document_id = ? AND seq > ? AND seq <= ? ORDER BY seq`,
-      id,
-      base.seq,
-      upper,
-    )
+    const tail = decodeRevisions(row.tail)
     for (const revision of tail) {
       if (revision.kind !== 'delta' || safeNumber(revision.version) !== version) {
         throw new Error(`Document ${id} crosses a stored version boundary without a base`)
@@ -950,7 +994,12 @@ export class PostgresStorage implements Storage {
     for (const [index, claim] of claims.entries()) {
       const rowset = Option.getOrThrow(Option.fromNullishOr(rows[index]))
       const ownership = Option.map(Option.fromNullishOr(rowset[0]), decodeRecordIdRow)
-      checkOwnership(claim.id, claim.table, Option.map(ownership, (row) => row.record_type), Option.fromNullishOr(claimed.get(claim.id)))
+      checkOwnership(
+        claim.id,
+        claim.table,
+        Option.map(ownership, (row) => row.record_type),
+        Option.fromNullishOr(claimed.get(claim.id)),
+      )
       claimed.set(claim.id, claim.table)
     }
   }
@@ -1199,7 +1248,7 @@ export class PostgresStorage implements Storage {
           statements.run('DELETE FROM document_revisions WHERE document_id = ?', id)
         }
       }
-      if (statements.values.length > 0) await executor.runBatch(statements.values)
+      await executor.runBatch(statements.values)
     }
   }
 
