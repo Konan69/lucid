@@ -40,6 +40,7 @@ import type {
   PostgresRecordKind,
   PostgresStatement,
 } from './database.ts'
+import type { StorageDisconnected } from './errors.ts'
 import { safeNumber } from './database.ts'
 import { Statements } from './statements.ts'
 import { applyPostgresMigrations } from './migrations.ts'
@@ -420,6 +421,10 @@ function checkDocumentRecord(
  * domain rejection messages are retained. ON CONFLICT replaces INSERT OR IGNORE.
  */
 export class PostgresStorage implements Storage {
+  /** Concrete PostgreSQL addition, leaving Pi src/types.ts:Storage untouched.
+   * The facade's one lifetime Promise carries the same failure as later calls;
+   * a clean close never resolves it or retains an event-loop handle. */
+  readonly disconnected: Promise<StorageDisconnected>
   private readonly db: PostgresDatabase
   private nextId: bigint
   private closed = false
@@ -430,6 +435,7 @@ export class PostgresStorage implements Storage {
   /** Pi SqliteStorage.constructor: initialize only the volatile watermark; the database remains authoritative for commits. */
   private constructor(db: PostgresDatabase, nextId: bigint) {
     this.db = db
+    this.disconnected = db.disconnected
     this.nextId = nextId
   }
 

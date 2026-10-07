@@ -178,6 +178,11 @@
     "symbols": ["interrupt"]
   },
   {
+    "file": "packages/agent/durable/src/postgres/fixtures/close/main.ts",
+    "classification": "test-process-entrypoint",
+    "symbols": ["main", "<module>"]
+  },
+  {
     "file": "packages/agent/durable/src/postgres/bench/entry/main.ts",
     "classification": "third-party-adapter",
     "symbols": ["main", "<module>"]
