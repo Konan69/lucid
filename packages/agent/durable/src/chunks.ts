@@ -13,6 +13,13 @@ import type { UIMessageChunk } from 'ai'
 import { Array as Arr, Data, Match, Option, Schema } from 'effect'
 
 import { ArgumentText, argumentDelta, argumentsShortened, rawArguments } from './arguments.ts'
+import {
+  emptyMetadata,
+  messageMetadata,
+  recordMetadata,
+  startMetadata,
+  type MetadataState,
+} from './metadata.ts'
 
 /** Pi's closed event and block types are exhaustive; an impossible branch indicates an SDK contract defect. */
 const unreachable = (value: never): never => {
@@ -42,6 +49,8 @@ const Reported = Data.taggedEnum<Reported>()
  * AI SDK assistant message; each turn becomes one AI SDK step.
  */
 export type RunState = {
+  /** Models and entry-deduplicated usage read from Pi's own provider responses. */
+  readonly metadata: MetadataState
   /** Retry entries share the same generation task and therefore the same SDK step. */
   readonly generation: Option.Option<TaskId>
   /** Durable result entries reported by this reader, across step changes and snapshot/live overlap. */
@@ -69,6 +78,7 @@ export type RunState = {
 }
 
 export const initialRunState: RunState = {
+  metadata: emptyMetadata,
   generation: Option.none(),
   turn: 0,
   response: 0,
@@ -199,6 +209,7 @@ function startResponse(state: RunState, partial: AssistantMessage): Step {
   const reset: readonly Chunk[] = state.blocks.size > 0 ? [{ type: 'reset-step' }] : []
   const fresh: RunState = {
     ...state,
+    metadata: startMetadata(state.metadata, partial),
     response: state.response + 1,
     blocks: new Map(),
     content: new Map(),
@@ -208,7 +219,14 @@ function startResponse(state: RunState, partial: AssistantMessage): Step {
   }
   return partial.content.reduce<Step>(
     (step, block, contentIndex) => join(step, updateBlock(step.state, contentIndex, block)),
-    { state: fresh, chunks: reset },
+    {
+      state: fresh,
+      // run_start precedes the first provider record; publish its actual model when it exists.
+      chunks: [
+        { type: 'message-metadata', messageMetadata: messageMetadata(fresh.metadata) },
+        ...reset,
+      ],
+    },
   )
 }
 
@@ -515,12 +533,16 @@ function bridgedOutput(
  */
 function assistantEnd(state: RunState, message: AssistantMessage): Step {
   const finished = finishMessage(state, message)
+  const metadata: Chunk = {
+    type: 'message-metadata',
+    messageMetadata: messageMetadata(finished.state.metadata),
+  }
   if (message.stopReason === 'error') {
     const failure = [message.errorMessage ?? 'The model request failed']
-    return { state: { ...finished.state, failure }, chunks: finished.chunks }
+    return { state: { ...finished.state, failure }, chunks: [...finished.chunks, metadata] }
   }
   const ending: readonly Chunk[] = message.stopReason === 'aborted' ? [{ type: 'abort' }] : []
-  return { state: finished.state, chunks: [...finished.chunks, ...ending] }
+  return { state: finished.state, chunks: [...finished.chunks, metadata, ...ending] }
 }
 
 /**
@@ -534,7 +556,13 @@ export function translate(state: RunState, event: AgentEvent): Step {
   return Match.value(event).pipe(
     Match.when({ type: 'run_start' }, (started): Step => ({
       state: initialRunState,
-      chunks: [{ type: 'start', messageId: runMessageId(started.inputs) }],
+      chunks: [
+        {
+          type: 'start',
+          messageId: runMessageId(started.inputs),
+          messageMetadata: messageMetadata(emptyMetadata),
+        },
+      ],
     })),
     Match.when({ type: 'run_end' }, (ended): Step => {
       const closed = closeRun(state, runMessageId(ended.inputs))
@@ -543,7 +571,7 @@ export function translate(state: RunState, event: AgentEvent): Step {
         chunks: [
           ...closed.chunks,
           ...state.failure.map((errorText): Chunk => ({ type: 'error', errorText })),
-          { type: 'finish' },
+          { type: 'finish', messageMetadata: messageMetadata(closed.state.metadata) },
         ],
       }
     }),
@@ -577,7 +605,11 @@ export function translate(state: RunState, event: AgentEvent): Step {
         Option.filter((message): message is AssistantMessage => message.role === 'assistant'),
         Option.match({
           onNone: () => ({ state, chunks: [] }),
-          onSome: (message) => assistantEnd(state, message),
+          onSome: (message) =>
+            assistantEnd(
+              { ...state, metadata: recordMetadata(state.metadata, ended.entry) },
+              message,
+            ),
         }),
       ),
     ),
@@ -610,7 +642,13 @@ export function replayEntry(state: RunState, entry: EntryRecord): Step {
       { ...turn.state, generation: Option.fromNullishOr(entry.byTaskId) },
       message,
     )
-    return join(join(turn, response), assistantEnd(response.state, message))
+    return join(
+      join(turn, response),
+      assistantEnd(
+        { ...response.state, metadata: recordMetadata(response.state.metadata, entry) },
+        message,
+      ),
+    )
   }
   if (message.role === 'toolResult')
     return resultStep(state, message.toolCallId, Option.some(entry))
@@ -633,12 +671,22 @@ function replayPartial(state: RunState, message: AssistantMessage): Step {
  */
 export function replay(snapshot: SnapshotEvent): Option.Option<Rebuilt> {
   if (snapshot.run === undefined) return Option.none()
+  const recorded = runEntries(snapshot.entries).reduce(recordMetadata, emptyMetadata)
+  const capturedGeneration = snapshot.generation
+  const metadata =
+    capturedGeneration === undefined || capturedGeneration.message === undefined
+      ? recorded
+      : startMetadata(recorded, capturedGeneration.message)
   const started: Step = {
     state: initialRunState,
     // SDK chat.ts retains the streaming state after a network error. Its start chunk only
     // changes identity; process-ui-message-stream.ts reset-step clears the retained current step.
     chunks: [
-      { type: 'start', messageId: runMessageId(snapshot.run.inputs) },
+      {
+        type: 'start',
+        messageId: runMessageId(snapshot.run.inputs),
+        messageMetadata: messageMetadata(metadata),
+      },
       { type: 'reset-step' },
     ],
   }

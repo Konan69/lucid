@@ -18,6 +18,7 @@ import * as Pi from './pi.ts'
 import { readMessage } from './reading.ts'
 import { HistoryCursorInvalid, HistoryPageInvalid } from './errors.ts'
 import { decodeStoredImage } from './input.ts'
+import { emptyMetadata, messageMetadata, recordMetadata } from './metadata.ts'
 
 /** Pi's numeric identity is checked only at the opaque cursor's wire ingress. */
 const EntryIdentity = Schema.declare<EntryId>(
@@ -268,11 +269,15 @@ const assistantMessage = Effect.fn('Durable.historyAssistant')(function* (
   const { step, identity } = prepared
   const shown = present(emptyRound, step.chunks, desk)
   const chunks: readonly UIMessageChunk[] = [
-    { type: 'start', messageId: `entry:${identity}` },
+    {
+      type: 'start',
+      messageId: `entry:${identity}`,
+      messageMetadata: messageMetadata(step.state.metadata),
+    },
     ...shown.chunks,
     ...closeRun(step.state, `entry:${identity}`).chunks,
     { type: 'finish-step' },
-    { type: 'finish' },
+    { type: 'finish', messageMetadata: messageMetadata(step.state.metadata) },
   ]
   return yield* readMessage(yield* Stream.toReadableStreamEffect(Stream.fromIterable(chunks)))
 })
@@ -284,7 +289,13 @@ function prepare(group: Group): Prepared {
     Assistant: ({ entries }) => {
       const first = entries.find((entry) => entry.kind === 'pi.assistant')
       if (first === undefined) throw new Error('History assistant group lacks its first entry')
-      return Prepared.Assistant({ identity: first.id, step: rebuild(settledEntries(entries)) })
+      const step = rebuild(settledEntries(entries))
+      // Pi bills discarded attempts too; content filtering must not discard their recorded usage.
+      const metadata = entries.reduce(recordMetadata, emptyMetadata)
+      return Prepared.Assistant({
+        identity: first.id,
+        step: { ...step, state: { ...step.state, metadata } },
+      })
     },
   })
 }

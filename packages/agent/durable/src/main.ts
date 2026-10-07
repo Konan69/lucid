@@ -10,6 +10,8 @@ import { reconnectRequest, turnFailure, TurnBody, respondWithPolicy } from './re
 import type { ToolsOptions } from './tools.ts'
 import { inputLimit, type InputOptions } from './input.ts'
 
+export type { Metadata } from './metadata.ts'
+
 /** A host can bound decoded parts while preserving the four-argument Request ingress. */
 export type RequestInput = Request | { readonly request: Request; readonly options: InputOptions }
 

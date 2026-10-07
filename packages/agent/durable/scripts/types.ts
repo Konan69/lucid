@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness } from '@earendil-works/pi-durable'
-import { respond, type RequestInput, type HoldId } from '@vivid/durable'
+import { respond, type RequestInput, type HoldId, type Metadata } from '@vivid/durable'
 import { resumption } from '@vivid/durable/client'
 import type { ChatOnFinishCallback, PrepareReconnectToStreamRequest, UIMessage } from 'ai'
 import * as Core from '@vivid/durable/core'
@@ -21,6 +21,12 @@ export function promiseTurn(
 export const effectTurn = Core.respond
 /** Hold identity crosses entries without losing its public brand. */
 export const identity: HoldId = Schema.decodeUnknownSync(Core.HoldId)('hold:1')
+
+/** A published host reads both entries' identical metadata types on an SDK message. */
+export function models(message: UIMessage<Metadata>): Core.Metadata['models'] {
+  if (message.metadata === undefined) return []
+  return message.metadata.models
+}
 
 /** Browser/React Native entry resolves both SDK callback types without importing the core. */
 export const link: {
