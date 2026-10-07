@@ -79,9 +79,22 @@ function approvalResponse(found: Extract<CallLookup, { _tag: 'Settled' }>): Chun
     : response
 }
 
+/** The SDK reader chooses static/dynamic parts and retains titles from either input phase. */
+function toolPresentation<Input extends Extract<Chunk, { toolName: string }>>(
+  input: Input,
+  plan: Plan,
+) {
+  const { dynamic: _dynamic, ...base } = input
+  const marked = plan.dynamic ? { ...base, dynamic: true } : base
+  return Option.match(plan.title, {
+    onNone: () => marked,
+    onSome: (title) => ({ ...marked, title }),
+  })
+}
+
 /**
- * A call whose input is complete. A bridged tool is a typed tool on the client, so it loses the
- * `dynamic` mark. A call that needs approval is followed by its request, and by the response too
+ * A completed input carries the definition's static/dynamic identity and title. Approval calls
+ * are followed by their request, and by the response too
  * when it is already decided, which is the case for a client that attaches after the decision.
  */
 function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown {
@@ -92,7 +105,7 @@ function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown 
       chunks: [chunk],
     }
   }
-  const { dynamic: _dynamic, ...typed } = chunk
+  const typed = toolPresentation(chunk, plan.value)
   const kind = holdKind(plan.value, chunk.input)
   const found = Option.getOrElse(desk.origin(chunk), () => desk.call(chunk.toolCallId))
   const request: readonly Chunk[] =
@@ -135,9 +148,8 @@ function inputAvailable(round: Round, chunk: InputAvailable, desk: Desk): Shown 
 function showVisible(round: Round, chunk: Chunk, desk: Desk): Shown {
   return Match.value(chunk).pipe(
     Match.when({ type: 'tool-input-start' }, (input): Shown => {
-      if (Option.isNone(desk.plan(input.toolName))) return { round, chunks: [input] }
-      const { dynamic: _dynamic, ...typed } = input
-      return { round, chunks: [typed] }
+      const plan = desk.plan(input.toolName)
+      return { round, chunks: [Option.isNone(plan) ? input : toolPresentation(input, plan.value)] }
     }),
     Match.when({ type: 'tool-input-available' }, (input) => inputAvailable(round, input, desk)),
     Match.when({ type: 'tool-output-available' }, (output): Shown => ({
@@ -146,10 +158,10 @@ function showVisible(round: Round, chunk: Chunk, desk: Desk): Shown {
     })),
     Match.when({ type: 'tool-input-error' }, (input): Shown => {
       // This failed input never became executable. Keep bridged parts typed in live and history.
-      const { dynamic: _dynamic, ...typed } = input
+      const plan = desk.plan(input.toolName)
       return {
         round: close(round, input.toolCallId),
-        chunks: [Option.isNone(desk.plan(input.toolName)) ? input : typed],
+        chunks: [Option.isNone(plan) ? input : toolPresentation(input, plan.value)],
       }
     }),
     Match.when({ type: 'tool-output-error' }, (output): Shown => {

@@ -561,6 +561,8 @@ function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
       approval: source === 'server' ? approval : () => false,
       source,
       execution: lookups.execution,
+      dynamic: tool.type === 'dynamic',
+      title: Option.fromNullishOr(tool.title),
     },
     executionMode,
     replay:
@@ -574,7 +576,6 @@ function bridge(name: string, tool: Tool, lookups: Lookups): Bridged {
 /** Pi Tool lacks SDK lifecycle, discovery and kind contracts; refuse behavior that would silently change. */
 function unsupported(name: string, tool: Tool, lookups: Lookups): Option.Option<string> {
   if (tool.type === 'provider') return Option.some('provider-defined and provider-executed tools')
-  if (tool.type === 'dynamic') return Option.some('dynamic SDK UI tool parts')
   if (Predicate.isFunction(tool.description)) return Option.some('context-dependent descriptions')
   if (tool.deferLoading === true) return Option.some('deferred tool discovery')
   if (tool.providerOptions !== undefined && Object.keys(tool.providerOptions).length > 0)
@@ -600,7 +601,8 @@ function unsupportedApproval(name: string, tool: Tool, lookups: Lookups): Option
 
 /**
  * JSON Schema generation is lazy in the SDK; rejection is a registration failure naming the tool.
- * title, inputExamples and metadata have no projection in Pi's native declaration. outputSchema is
+ * SDK title and dynamic identity travel in the plan for client presentation. inputExamples and
+ * metadata have no native projection. outputSchema is
  * not used to validate local execute results by SDK execute-tool.ts either; persistence validates JSON.
  */
 const registration = Effect.fn('Durable.registerTool')(function* (

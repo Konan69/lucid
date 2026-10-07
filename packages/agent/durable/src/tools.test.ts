@@ -255,10 +255,6 @@ for (const sample of [
     }),
   },
   {
-    name: 'dynamic',
-    value: tool({ type: 'dynamic', inputSchema: z.object({}), execute: async () => 'dynamic' }),
-  },
-  {
     name: 'functional-description',
     value: tool({
       description: () => 'Scoped description',

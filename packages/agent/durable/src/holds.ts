@@ -318,6 +318,9 @@ export type Plan = {
   /** The host's declared global mode, used for native registrations without an explicit mode. */
   readonly execution: 'parallel' | 'sequential'
   readonly approval: (input: JsonValue) => boolean
+  /** SDK identity and display metadata follow the registration through Pi's wrappers. */
+  readonly dynamic: boolean
+  readonly title: Option.Option<string>
   readonly source: Source
 }
 
