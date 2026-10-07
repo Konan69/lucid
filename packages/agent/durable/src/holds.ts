@@ -455,8 +455,15 @@ export const taskDecision: (
   },
 )
 
+/** Name the public Pi types explicitly so declaration emission never references its private paths. */
+export type ReaderDecision = (
+  harness: Harness,
+  input: { taskId: Option.Option<TaskId>; plan: Option.Option<Plan>; call: ToolCall },
+  context: Context,
+) => Effect.Effect<CallDecision, PiFailed>
+
 /** Both pull and presentation readers prefer the durable hook pin over a changed registration. */
-export const readerDecision = Effect.fn('Durable.readerDecision')(function* (
+export const readerDecision: ReaderDecision = Effect.fn('Durable.readerDecision')(function* (
   harness: Harness,
   input: { taskId: Option.Option<TaskId>; plan: Option.Option<Plan>; call: ToolCall },
   context: Context,
