@@ -132,7 +132,7 @@ const view = Effect.fn('Inputs.view')(function* (
 })
 
 export interface InputStoreService {
-  readonly replay: () => Effect.Effect<void, DatabaseInfrastructureError>
+  readonly replay: Effect.Effect<void, DatabaseInfrastructureError>
   readonly inThread: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<InputRequest>, DatabaseInfrastructureError>
@@ -288,7 +288,7 @@ export const inputStoreLayer = Layer.effect(
       }),
       ask: (actor, request) => run(ask(actor, request)),
       answer: (actor, request) => run(answer(actor, request)),
-      replay: () => run(replaySignals(inputRequests, Option.none())),
+      replay: run(replaySignals(inputRequests, Option.none())),
     })
   }),
 )

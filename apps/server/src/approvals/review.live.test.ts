@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { Clock, Effect, Option } from 'effect'
 import { ActionTarget, ConnectionId, ProposedAction, type ActionEffect } from '@vivid/contracts'
 import { decide } from '../decisions/model.ts'
@@ -162,50 +162,52 @@ const cases: ReadonlyArray<Case> = [
  * `reviewInput` and decided by production `reviewOutcome`. How the Person's words are found and
  * attributed is `request.test.ts`'s claim, not this one.
  */
-describe.skipIf(!liveDecisionEnabled)('Jev action review', () => {
-  it.live(
-    'runs asked-for and contained actions, and asks for unasked ones that reach others',
-    () =>
-      Effect.gen(function* () {
-        const outcomes: Array<{ readonly summary: string; readonly outcome: ReviewOutcome }> = []
-        for (const entry of cases) {
-          const action = ProposedAction.make({
-            summary: entry.summary,
-            rationale: 'Not shown to the reviewer',
-            effect: entry.effect,
-            target: ActionTarget.cases.Connection.make({
-              connectionId: ConnectionId.make('private-live-connection'),
-              account: entry.account,
-              tool: entry.tool,
-              input: entry.input,
-            }),
-          })
-          const start = yield* Clock.currentTimeMillis
-          const { answers } = yield* decide(
-            ActionReview,
-            reviewInput(
-              { request: [entry.said], earlier: Option.fromUndefinedOr(entry.earlier) },
-              action,
-            ),
+layer(liveDecisionLayer, { excludeTestServices: true })((it) => {
+  describe.skipIf(!liveDecisionEnabled)('Jev action review', () => {
+    it.effect(
+      'runs asked-for and contained actions, and asks for unasked ones that reach others',
+      () =>
+        Effect.gen(function* () {
+          const outcomes: Array<{ readonly summary: string; readonly outcome: ReviewOutcome }> = []
+          for (const entry of cases) {
+            const action = ProposedAction.make({
+              summary: entry.summary,
+              rationale: 'Not shown to the reviewer',
+              effect: entry.effect,
+              target: ActionTarget.cases.Connection.make({
+                connectionId: ConnectionId.make('private-live-connection'),
+                account: entry.account,
+                tool: entry.tool,
+                input: entry.input,
+              }),
+            })
+            const start = yield* Clock.currentTimeMillis
+            const { answers } = yield* decide(
+              ActionReview,
+              reviewInput(
+                { request: [entry.said], earlier: Option.fromUndefinedOr(entry.earlier) },
+                action,
+              ),
+            )
+            const elapsed = (yield* Clock.currentTimeMillis) - start
+            const outcome = reviewOutcome(
+              entry.effect,
+              Review.cases.Reviewed.make({
+                asked: answers.asked.probability,
+                beyond: answers.beyond.probability,
+                contained: answers.consequence.probabilities.contained,
+              }),
+            )
+            yield* Effect.logInfo(
+              `Jev review: "${entry.summary}" asked=${answers.asked.probability.toFixed(2)} beyond=${answers.beyond.probability.toFixed(2)} contained=${answers.consequence.probabilities.contained.toFixed(2)} effect=${entry.effect} outcome=${outcome} expected=${entry.expected} latency=${elapsed}ms`,
+            )
+            outcomes.push({ summary: entry.summary, outcome })
+          }
+          expect(outcomes).toEqual(
+            cases.map((entry) => ({ summary: entry.summary, outcome: entry.expected })),
           )
-          const elapsed = (yield* Clock.currentTimeMillis) - start
-          const outcome = reviewOutcome(
-            entry.effect,
-            Review.cases.Reviewed.make({
-              asked: answers.asked.probability,
-              beyond: answers.beyond.probability,
-              contained: answers.consequence.probabilities.contained,
-            }),
-          )
-          yield* Effect.logInfo(
-            `Jev review: "${entry.summary}" asked=${answers.asked.probability.toFixed(2)} beyond=${answers.beyond.probability.toFixed(2)} contained=${answers.consequence.probabilities.contained.toFixed(2)} effect=${entry.effect} outcome=${outcome} expected=${entry.expected} latency=${elapsed}ms`,
-          )
-          outcomes.push({ summary: entry.summary, outcome })
-        }
-        expect(outcomes).toEqual(
-          cases.map((entry) => ({ summary: entry.summary, outcome: entry.expected })),
-        )
-      }).pipe(Effect.provide(liveDecisionLayer)),
-    90_000,
-  )
+        }),
+      90_000,
+    )
+  })
 })

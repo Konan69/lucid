@@ -214,8 +214,8 @@ export interface ApprovalStoreService {
     actor: Actor,
     id: ApprovalId,
   ) => Effect.Effect<ThreadId, NotFound | Conflict | DatabaseInfrastructureError>
-  readonly replay: () => Effect.Effect<void, DatabaseInfrastructureError>
-  readonly expire: () => Effect.Effect<void, DatabaseInfrastructureError>
+  readonly replay: Effect.Effect<void, DatabaseInfrastructureError>
+  readonly expire: Effect.Effect<void, DatabaseInfrastructureError>
 }
 export class ApprovalStore extends Context.Service<ApprovalStore, ApprovalStoreService>()(
   'vivid/ApprovalStore',
@@ -595,7 +595,7 @@ const settleRecovered = Effect.fn('Approvals.settleRecovered')(
         ),
       )
       yield* deliver(approval.id)
-      if (Result.isFailure(audit)) yield* audit.failure
+      if (Result.isFailure(audit)) return yield* audit.failure
     } else {
       yield* deliver(approval.id)
     }
@@ -678,8 +678,8 @@ export const approvalStoreLayer = Layer.effect(
         if (rows.length === 0) return yield* new Conflict({ message: 'Approval already decided' })
         return row.threadId
       }),
-      expire: () => run(expire()),
-      replay: () => run(replaySignals(approvals, Option.none())),
+      expire: run(expire()),
+      replay: run(replaySignals(approvals, Option.none())),
     })
   }),
 )

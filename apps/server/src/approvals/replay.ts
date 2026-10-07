@@ -119,7 +119,7 @@ const replayOne = Effect.fn('Signals.replayOne')(function* (
       .pipe(
         Effect.interruptible,
         Effect.timeoutOption('30 seconds'),
-        Effect.catchTag(['Conflict', 'RuntimeUnavailable'], () => Effect.succeed(Option.none())),
+        Effect.catchTag(['Conflict', 'RuntimeUnavailable'], () => Effect.succeedNone),
       )
     ending = Option.isSome(admitted)
       ? Signal.cases.Delivered.make({

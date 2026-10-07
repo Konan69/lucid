@@ -188,7 +188,8 @@ const ports = Layer.effectContext(
     })
     const changes = Changes.of({
       publish: Effect.fn('TrustTest.publish')(function* (topics) {
-        if (yield* Ref.get(state.changesDefect)) yield* Effect.die('Injected crash after recording')
+        if (yield* Ref.get(state.changesDefect))
+          return yield* Effect.die('Injected crash after recording')
         yield* Ref.update(state.topics, (previous) => previous.concat(topics))
       }),
       subscribe: () => Effect.succeed(Stream.never),
@@ -204,13 +205,17 @@ const ports = Layer.effectContext(
   }),
 )
 
-const foundation = auditLayer.pipe(Layer.provideMerge(testDatabaseLayer), Layer.provideMerge(ports))
+const foundation = auditLayer.pipe(Layer.provideMerge(ports))
 const policy = ruleStoreLayer.pipe(Layer.provideMerge(foundation))
 /** Production stores over the test ports, for a test that composes the gate with other production Layers. */
-export const stores = Layer.merge(approvalStoreLayer, inputStoreLayer).pipe(
+export const storeServices = Layer.merge(approvalStoreLayer, inputStoreLayer).pipe(
   Layer.provideMerge(policy),
 )
-export const trustTestLayer = gateLayer.pipe(Layer.provideMerge(stores))
+/** Stateful observations and stores are acquired per case over the suite's shared database. */
+export const trustTestServices = gateLayer.pipe(Layer.provideMerge(storeServices))
+/** Complete fixtures remain available to suites that compose their own dependency graph. */
+export const stores = storeServices.pipe(Layer.provideMerge(testDatabaseLayer))
+export const trustTestLayer = trustTestServices.pipe(Layer.provideMerge(testDatabaseLayer))
 
 /** Teardown uses the same live adapter while its Layer is still scoped, and cleanup faults fail tests. */
 const cleanup = Effect.fn('TrustTest.cleanup')(function* (

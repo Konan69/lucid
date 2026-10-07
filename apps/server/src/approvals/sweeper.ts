@@ -15,15 +15,15 @@ export const approvalSweeperLayer = Layer.effectDiscard(
     const observed = observeFailures('schedule')
     const pass = Effect.all(
       [
-        approvals.expire().pipe(
+        approvals.expire.pipe(
           observed,
           Effect.catch(() => Effect.logError('Approval expiry pass failed')),
         ),
-        approvals.replay().pipe(
+        approvals.replay.pipe(
           observed,
           Effect.catch(() => Effect.logError('Approval replay pass failed')),
         ),
-        inputs.replay().pipe(
+        inputs.replay.pipe(
           observed,
           Effect.catch(() => Effect.logError('Input replay pass failed')),
         ),
