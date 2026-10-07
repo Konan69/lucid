@@ -8,13 +8,12 @@ import {
   tool,
   type UIMessage,
 } from 'ai'
-import { Effect, Option, Predicate, Schema } from 'effect'
-import { onTestFinished } from 'vitest'
+import { Effect, Option, Predicate, Schema, Deferred } from 'effect'
 import { z } from 'zod'
 import { PlainChat } from '../fixtures/chat.ts'
 import { waitForFrame } from '../fixtures/provider.ts'
 import { abort, respond } from '../main.ts'
-import { context, host, signal } from './fixtures/host.ts'
+import { context, host } from './fixtures/host.ts'
 
 const partial = Schema.decodeUnknownOption(Schema.Struct({ input: Schema.String }))
 
@@ -23,19 +22,18 @@ it.live.each([
   lastAssistantMessageIsCompleteWithApprovalResponses,
   lastAssistantMessageIsCompleteWithToolCalls,
 ])('aborts a growing input with %s', (predicate) =>
-  Effect.promise(async () => {
-    const release = signal()
-    const started = signal()
-    onTestFinished(() => release.resolve())
+  Effect.gen(function* () {
+    const release = yield* Deferred.make<void>()
+    const started = yield* Deferred.make<void>()
     let gated = false
     const ran: string[] = []
-    const fixture = await host(
+    const fixture = yield* host(
       {
         work: tool({
           inputSchema: z.object({ input: z.string() }),
-          execute: async ({ input }) => {
+          execute: ({ input }) => {
             ran.push(input)
-            return input
+            return Promise.resolve(input)
           },
         }),
       },
@@ -51,14 +49,13 @@ it.live.each([
           if (!Predicate.isString(block.arguments.input) || block.arguments.input.length < 5)
             return Effect.void
           gated = true
-          return waitForFrame(
-            Effect.promise(() => release.promise),
-            abortSignal,
-          )
+          return waitForFrame(Deferred.await(release), abortSignal)
         },
       },
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
+    // Release provider gates before the scoped harness waits for its running work.
+    yield* Effect.addFinalizer(() => Effect.sync(() => Deferred.doneUnsafe(release, Effect.void)))
     opened.faux.setResponses([
       fauxAssistantMessage(
         [fauxToolCall('work', { input: 'abcdefghijklmnopqrstuvwxyz' }, { id: 'wire' })],
@@ -81,14 +78,15 @@ it.live.each([
         const part = message.parts.find(isToolUIPart)
         if (part === undefined || part.state !== 'input-streaming') return
         const input = partial(part.input)
-        if (Option.isSome(input) && input.value.input.length >= 5) started.resolve()
+        if (Option.isSome(input) && input.value.input.length >= 5)
+          Deferred.doneUnsafe(started, Effect.void)
       },
     })
     const sent = chat.sendMessage({ text: 'Work' })
-    await started.promise
-    await abort(opened.harness, opened.root.id, context)
-    release.resolve()
-    await sent
+    yield* Deferred.await(started)
+    yield* Effect.promise(() => abort(opened.harness, opened.root.id, context))
+    yield* Deferred.succeed(release, undefined)
+    yield* Effect.promise(() => sent)
     expect(chat.status).toBe('ready')
     expect(posts).toBe(1)
     if (chat.lastMessage === undefined) throw new Error('Expected aborted assistant')

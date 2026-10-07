@@ -1,14 +1,16 @@
+import { FixtureFailed } from '../fixtures/harness.ts'
+import { consumeReadable as consume } from '../fixtures/reading.ts'
 import type { Message } from '@earendil-works/pi-ai'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import type { Tool } from 'ai'
 import { lastAssistantMessageIsCompleteWithToolCalls, tool } from 'ai'
 import { PlainChat } from '../fixtures/chat.ts'
 import { expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
+import { Effect, Deferred, Option } from 'effect'
 import { z } from 'zod'
 
 import { answer, history, streamRun, waiting } from '../main.ts'
-import { call, consume, context, host, signal, texts } from './fixtures/host.ts'
+import { call, context, host, texts } from './fixtures/host.ts'
 
 type ModelOutput = Awaited<
   ReturnType<NonNullable<Tool<unknown, unknown, unknown>['toModelOutput']>>
@@ -106,18 +108,18 @@ const supported: {
 /** Observe the next actual Pi model request, the stock SDK reader and public persisted history. */
 for (const sample of supported)
   it.live(`converts ${sample.name} for the model while preserving JSON`, () =>
-    Effect.promise(async () => {
+    Effect.gen(function* () {
       let model: readonly Message[] = []
       const conversion: {
         toolCallId: string
         input: { amount: number }
         output: { private: string }
       }[] = []
-      const fixture = await host(
+      const fixture = yield* host(
         {
           project: tool({
             inputSchema: z.object({ amount: z.number().transform((value) => value * 2) }),
-            execute: async () => ({ private: 'retained JSON' }),
+            execute: () => Promise.resolve({ private: 'retained JSON' }),
             toModelOutput: (options) => {
               conversion.push(options)
               return sample.output
@@ -128,7 +130,7 @@ for (const sample of supported)
         {},
         { models: [{ id: 'faux-1', input: ['text', 'image'] }] },
       )
-      const opened = await fixture.open()
+      const opened = yield* fixture.open()
       opened.faux.setResponses([
         call('project', { amount: 3 }, 'projection'),
         (request) => {
@@ -136,12 +138,15 @@ for (const sample of supported)
           return fauxAssistantMessage('Done.')
         },
       ])
-      const result = await consume(
-        await streamRun(
-          opened.harness,
-          { conversationId: opened.root.id, content: 'Project', requestId: sample.name },
-          context,
+      const result = yield* consume(
+        yield* Effect.promise(() =>
+          streamRun(
+            opened.harness,
+            { conversationId: opened.root.id, content: 'Project', requestId: sample.name },
+            context,
+          ),
         ),
+        Option.none(),
       )
       expect(model.at(-1)).toMatchObject({ role: 'toolResult', content: sample.content })
       const final = model.at(-1)
@@ -154,7 +159,9 @@ for (const sample of supported)
         state: 'output-available',
         output: { private: 'retained JSON' },
       })
-      const stored = await history(opened.harness, opened.root.id, { limit: 20 }, context)
+      const stored = yield* Effect.promise(() =>
+        history(opened.harness, opened.root.id, { limit: 20 }, context),
+      )
       expect(
         stored.messages
           .flatMap((message) => message.parts)
@@ -316,13 +323,13 @@ const unsupported: { name: string; output: ModelOutput }[] = [
 /** Include a valid part before the unsupported one to prove conversion never silently drops a part. */
 for (const sample of unsupported)
   it.live(`reports ${sample.name} as a tool output error`, () =>
-    Effect.promise(async () => {
+    Effect.gen(function* () {
       let model: readonly Message[] = []
-      const fixture = await host(
+      const fixture = yield* host(
         {
           project: tool({
             inputSchema: z.object({}),
-            execute: async () => ({ kept: true }),
+            execute: () => Promise.resolve({ kept: true }),
             toModelOutput: () =>
               sample.output.type === 'content'
                 ? {
@@ -334,7 +341,7 @@ for (const sample of unsupported)
         },
         {},
       )
-      const opened = await fixture.open()
+      const opened = yield* fixture.open()
       opened.faux.setResponses([
         call('project', {}, 'unsupported'),
         (request) => {
@@ -342,12 +349,15 @@ for (const sample of unsupported)
           return fauxAssistantMessage('Recovered.')
         },
       ])
-      const result = await consume(
-        await streamRun(
-          opened.harness,
-          { conversationId: opened.root.id, content: 'Project', requestId: sample.name },
-          context,
+      const result = yield* consume(
+        yield* Effect.promise(() =>
+          streamRun(
+            opened.harness,
+            { conversationId: opened.root.id, content: 'Project', requestId: sample.name },
+            context,
+          ),
         ),
+        Option.none(),
       )
       expect(result.message.parts.find((part) => part.type === 'tool-project')).toMatchObject({
         state: 'output-error',
@@ -359,9 +369,9 @@ for (const sample of unsupported)
 
 /** Person-supplied output uses the same model projection as execute, preserving the original answer. */
 it.live('projects a person-supplied answer through SDK Chat', () =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     let model: readonly Message[] = []
-    const fixture = await host(
+    const fixture = yield* host(
       {
         ask: tool({
           inputSchema: z.object({}),
@@ -371,7 +381,7 @@ it.live('projects a person-supplied answer through SDK Chat', () =>
       },
       {},
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([
       call('ask', {}, 'answer'),
       (request) => {
@@ -379,17 +389,22 @@ it.live('projects a person-supplied answer through SDK Chat', () =>
         return fauxAssistantMessage('Done.')
       },
     ])
-    let completion = signal()
+    let completion = yield* Deferred.make<void, FixtureFailed>()
     const chat = new PlainChat({
       transport: opened.transport,
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-      onFinish: () => completion.resolve(),
-      onError: (error) => completion.reject(error),
+      onFinish: () => Deferred.doneUnsafe(completion, Effect.void),
+      onError: (error) =>
+        Deferred.doneUnsafe(completion, Effect.fail(new FixtureFailed({ cause: error }))),
     })
-    await chat.sendMessage({ text: 'Ask' })
-    completion = signal()
-    await chat.addToolOutput({ tool: 'ask', toolCallId: 'answer', output: { answer: 'savings' } })
-    await completion.promise
+    yield* Effect.promise(() => chat.sendMessage({ text: 'Ask' }))
+    completion = yield* Deferred.make<void, FixtureFailed>()
+    yield* Effect.promise(() =>
+      Promise.resolve(
+        chat.addToolOutput({ tool: 'ask', toolCallId: 'answer', output: { answer: 'savings' } }),
+      ),
+    )
+    yield* Deferred.await(completion)
     expect(model.at(-1)).toMatchObject({ content: [{ type: 'text', text: 'Answer: savings' }] })
     if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
     expect(chat.lastMessage.parts.find((part) => part.type === 'tool-ask')).toMatchObject({
@@ -400,11 +415,11 @@ it.live('projects a person-supplied answer through SDK Chat', () =>
 
 /** The bridge's acknowledgement is not the tool author's output; a late answer is separate user input. */
 it.live('keeps later acknowledgements out of toModelOutput and admits the later answer', () =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     const converted: { answer: string }[] = []
     let model: readonly Message[] = []
-    const received = signal()
-    const fixture = await host(
+    const received = yield* Deferred.make<void>()
+    const fixture = yield* host(
       {
         ask: tool({
           inputSchema: z.object({}),
@@ -417,7 +432,7 @@ it.live('keeps later acknowledgements out of toModelOutput and admits the later 
       },
       { answers: { ask: 'later' } },
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([
       call('ask', {}, 'later'),
       (request) => {
@@ -425,12 +440,15 @@ it.live('keeps later acknowledgements out of toModelOutput and admits the later 
         return fauxAssistantMessage('Waiting for the answer.')
       },
     ])
-    const result = await consume(
-      await streamRun(
-        opened.harness,
-        { conversationId: opened.root.id, content: 'Ask', requestId: 'later' },
-        context,
+    const result = yield* consume(
+      yield* Effect.promise(() =>
+        streamRun(
+          opened.harness,
+          { conversationId: opened.root.id, content: 'Ask', requestId: 'later' },
+          context,
+        ),
       ),
+      Option.none(),
     )
     expect(result.message.parts.find((part) => part.type === 'tool-ask')).toMatchObject({
       state: 'output-available',
@@ -441,24 +459,26 @@ it.live('keeps later acknowledgements out of toModelOutput and admits the later 
       content: [{ type: 'text', text: expect.stringContaining('"status":"asked"') }],
     })
     expect(converted).toEqual([])
-    const rows = await waiting(opened.harness, opened.root.id, context)
+    const rows = yield* Effect.promise(() => waiting(opened.harness, opened.root.id, context))
     expect(rows).toHaveLength(1)
     const row = rows[0]
     if (row === undefined) throw new Error('Expected later question')
     opened.faux.setResponses([
       (request) => {
         model = request.messages
-        received.resolve()
+        Deferred.doneUnsafe(received, Effect.void)
         return fauxAssistantMessage('Answer received.')
       },
     ])
-    await answer(
-      opened.harness,
-      opened.root.id,
-      { holdId: row.holdId, output: { answer: 'yes' } },
-      context,
+    yield* Effect.promise(() =>
+      answer(
+        opened.harness,
+        opened.root.id,
+        { holdId: row.holdId, output: { answer: 'yes' } },
+        context,
+      ),
     )
-    await received.promise
+    yield* Deferred.await(received)
     expect(model.at(-1)).toMatchObject({
       role: 'user',
       content: [
@@ -467,19 +487,21 @@ it.live('keeps later acknowledgements out of toModelOutput and admits the later 
       ],
     })
     expect(converted).toEqual([{ answer: 'yes' }])
-    expect(await waiting(opened.harness, opened.root.id, context)).toEqual([])
+    expect(yield* Effect.promise(() => waiting(opened.harness, opened.root.id, context))).toEqual(
+      [],
+    )
   }),
 )
 
 /** Late projections reconstruct parsed input after reopen, retain original JSON receipts and admit pictures. */
 it.live('projects a real later answer after reopening the host', () =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     const converted: {
       toolCallId: string
       input: { question: string }
       output: { answer: string }
     }[] = []
-    const fixture = await host(
+    const fixture = yield* host(
       {
         ask: tool({
           inputSchema: z.object({ question: z.string().transform((value) => value.toUpperCase()) }),
@@ -498,35 +520,37 @@ it.live('projects a real later answer after reopening the host', () =>
       },
       { answers: { ask: 'later' } },
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([
       call('ask', { question: 'which?' }, 'later'),
       fauxAssistantMessage('Continue.'),
     ])
     const chat = new PlainChat({ transport: opened.transport })
-    await chat.sendMessage({ text: 'Ask' })
-    await opened.root.waitForIdle(context)
+    yield* Effect.promise(() => chat.sendMessage({ text: 'Ask' }))
+    yield* Effect.promise(() => opened.root.waitForIdle(context))
     expect(converted).toEqual([])
-    const rows = await waiting(opened.harness, opened.root.id, context)
+    const rows = yield* Effect.promise(() => waiting(opened.harness, opened.root.id, context))
     const row = rows[0]
     if (row === undefined) throw new Error('Expected later question')
-    await fixture.close(opened.harness)
-    const reopened = await fixture.open()
-    const received = signal()
+    yield* fixture.close(opened.harness)
+    const reopened = yield* fixture.open()
+    const received = yield* Deferred.make<void>()
     let model: readonly Message[] = []
     reopened.faux.setResponses([
       (request) => {
         model = request.messages
-        received.resolve()
+        Deferred.doneUnsafe(received, Effect.void)
         return fauxAssistantMessage('Picture received.')
       },
     ])
     const given = { holdId: row.holdId, output: { answer: 'Savings' } }
-    expect(await answer(reopened.harness, reopened.root.id, given, context)).toEqual({
+    expect(
+      yield* Effect.promise(() => answer(reopened.harness, reopened.root.id, given, context)),
+    ).toEqual({
       kind: 'answered',
       output: given.output,
     })
-    await received.promise
+    yield* Deferred.await(received)
     expect(converted).toEqual([
       { toolCallId: 'later', input: { question: 'WHICH?' }, output: { answer: 'Savings' } },
     ])
@@ -538,13 +562,17 @@ it.live('projects a real later answer after reopening the host', () =>
         image,
       ],
     })
-    await reopened.root.waitForIdle(context)
-    expect(await answer(reopened.harness, reopened.root.id, given, context)).toEqual({
+    yield* Effect.promise(() => reopened.root.waitForIdle(context))
+    expect(
+      yield* Effect.promise(() => answer(reopened.harness, reopened.root.id, given, context)),
+    ).toEqual({
       kind: 'answered',
       output: given.output,
     })
     expect(converted).toHaveLength(1)
-    const saved = await history(reopened.harness, reopened.root.id, { limit: 10 }, context)
+    const saved = yield* Effect.promise(() =>
+      history(reopened.harness, reopened.root.id, { limit: 10 }, context),
+    )
     expect(saved.messages.flatMap((message) => message.parts)).toContainEqual({
       type: 'file',
       mediaType: 'image/png',

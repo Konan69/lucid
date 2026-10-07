@@ -1,3 +1,5 @@
+import { runForPi } from '../pi.ts'
+import { FixtureFailed } from '../fixtures/harness.ts'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from '@effect/vitest'
 import {
@@ -8,12 +10,11 @@ import {
   lastAssistantMessageIsCompleteWithApprovalResponses,
   tool,
 } from 'ai'
-import { Effect, Option, Predicate, Schema } from 'effect'
-import { onTestFinished } from 'vitest'
+import { Effect, Option, Predicate, Schema, Deferred } from 'effect'
 import { z } from 'zod'
 import { PlainChat } from '../fixtures/chat.ts'
 import { providerFamilies, waitForFrame } from '../fixtures/provider.ts'
-import { host, signal } from './fixtures/host.ts'
+import { host } from './fixtures/host.ts'
 
 const partialInput = Schema.decodeUnknownOption(Schema.Struct({ input: Schema.String }))
 
@@ -24,14 +25,19 @@ function recording(
 ): ChatTransport<UIMessage> {
   return {
     reconnectToStream: (request) => transport.reconnectToStream(request),
-    sendMessages: async (request) =>
-      (await transport.sendMessages(request)).pipeThrough(
-        new TransformStream({
-          transform(chunk, controller) {
-            chunks.push(chunk)
-            controller.enqueue(chunk)
-          },
+    sendMessages: (request) =>
+      runForPi(
+        Effect.gen(function* () {
+          return (yield* Effect.promise(() => transport.sendMessages(request))).pipeThrough(
+            new TransformStream({
+              transform(chunk, controller) {
+                chunks.push(chunk)
+                controller.enqueue(chunk)
+              },
+            }),
+          )
         }),
+        undefined,
       ),
   }
 }
@@ -40,22 +46,22 @@ function recording(
 it.live.each([...providerFamilies, 'parsed', 'custom'] as const)(
   'streams %s input through stock Chat before final approval',
   (partialFamily) =>
-    Effect.promise(async () => {
+    Effect.gen(function* () {
       const raw = partialFamily !== 'parsed' && partialFamily !== 'custom'
-      const first = signal()
-      const second = signal()
-      const releaseFirst = signal()
-      const releaseSecond = signal()
+      const first = yield* Deferred.make<void>()
+      const second = yield* Deferred.make<void>()
+      const releaseFirst = yield* Deferred.make<void>()
+      const releaseSecond = yield* Deferred.make<void>()
       const input = { input: 'abcdefghijklmnopqrstuvwxyz' }
       const paid: (typeof input)[] = []
       let gated = 0
-      const fixture = await host(
+      const fixture = yield* host(
         {
           pay: tool({
             inputSchema: z.object({ input: z.string() }),
-            execute: async (args) => {
+            execute: (args) => {
               paid.push(args)
-              return args
+              return Promise.resolve(args)
             },
           }),
         },
@@ -72,27 +78,24 @@ it.live.each([...providerFamilies, 'parsed', 'custom'] as const)(
             if (!Predicate.isString(text)) return Effect.void
             if (gated === 0 && (!raw || text.length >= 5)) {
               gated = 1
-              return waitForFrame(
-                Effect.promise(() => releaseFirst.promise),
-                abortSignal,
-              )
+              return waitForFrame(Deferred.await(releaseFirst), abortSignal)
             }
             if (raw && gated === 1 && text.length >= 15) {
               gated = 2
-              return waitForFrame(
-                Effect.promise(() => releaseSecond.promise),
-                abortSignal,
-              )
+              return waitForFrame(Deferred.await(releaseSecond), abortSignal)
             }
             return Effect.void
           },
         },
       )
-      onTestFinished(() => {
-        releaseFirst.resolve()
-        releaseSecond.resolve()
-      })
-      const opened = await fixture.open()
+      const opened = yield* fixture.open()
+      // Release provider gates before the scoped harness waits for its running work.
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          Deferred.doneUnsafe(releaseFirst, Effect.void)
+          Deferred.doneUnsafe(releaseSecond, Effect.void)
+        }),
+      )
       opened.faux.setResponses([
         fauxAssistantMessage([fauxToolCall('pay', input, { id: 'streamed' })], {
           stopReason: 'toolUse',
@@ -100,27 +103,28 @@ it.live.each([...providerFamilies, 'parsed', 'custom'] as const)(
         fauxAssistantMessage('Done.'),
       ])
       const chunks: UIMessageChunk[] = []
-      let done = signal()
+      let done = yield* Deferred.make<void, FixtureFailed>()
       const chat = new PlainChat({
         transport: recording(opened.transport, chunks),
         sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-        onFinish: () => done.resolve(),
-        onError: (error) => done.reject(error),
+        onFinish: () => Deferred.doneUnsafe(done, Effect.void),
+        onError: (error) =>
+          Deferred.doneUnsafe(done, Effect.fail(new FixtureFailed({ cause: error }))),
         onMessage: (message) => {
           const part = message.parts.find(isToolUIPart)
           if (part === undefined || part.state !== 'input-streaming') return
           if (!raw) {
-            first.resolve()
+            Deferred.doneUnsafe(first, Effect.void)
             return
           }
           const value = partialInput(part.input)
           if (Option.isNone(value)) return
-          if (value.value.input.length >= 5) first.resolve()
-          if (value.value.input.length >= 15) second.resolve()
+          if (value.value.input.length >= 5) Deferred.doneUnsafe(first, Effect.void)
+          if (value.value.input.length >= 15) Deferred.doneUnsafe(second, Effect.void)
         },
       })
       const sent = chat.sendMessage({ text: 'Pay' })
-      await first.promise
+      yield* Deferred.await(first)
       expect(
         chunks.some(
           (chunk) =>
@@ -128,16 +132,16 @@ it.live.each([...providerFamilies, 'parsed', 'custom'] as const)(
         ),
       ).toBe(false)
       expect(paid).toEqual([])
-      releaseFirst.resolve()
+      yield* Deferred.succeed(releaseFirst, undefined)
       if (raw) {
-        await second.promise
+        yield* Deferred.await(second)
         expect(chunks.filter((chunk) => chunk.type === 'tool-input-delta').length).toBeGreaterThan(
           1,
         )
         expect(chunks.some((chunk) => chunk.type === 'tool-input-available')).toBe(false)
       }
-      releaseSecond.resolve()
-      await sent
+      yield* Deferred.succeed(releaseSecond, undefined)
+      yield* Effect.promise(() => sent)
       if (chat.lastMessage === undefined) throw new Error('Expected message')
       const part = chat.lastMessage.parts.find(isToolUIPart)
       if (part === undefined || part.state !== 'approval-requested')
@@ -150,9 +154,11 @@ it.live.each([...providerFamilies, 'parsed', 'custom'] as const)(
       expect(JSON.stringify(input).startsWith(deltas.join(''))).toBe(true)
       expect(chunks.filter((chunk) => chunk.type === 'tool-input-start')).toHaveLength(1)
       expect(chunks.filter((chunk) => chunk.type === 'tool-input-available')).toHaveLength(1)
-      done = signal()
-      await chat.addToolApprovalResponse({ id: part.approval.id, approved: true })
-      await done.promise
+      done = yield* Deferred.make<void, FixtureFailed>()
+      yield* Effect.promise(() =>
+        Promise.resolve(chat.addToolApprovalResponse({ id: part.approval.id, approved: true })),
+      )
+      yield* Deferred.await(done)
       expect(paid).toEqual([input])
       expect(chat.status).toBe('ready')
     }),
