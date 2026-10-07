@@ -14,8 +14,8 @@ export const computerWindow = Effect.fn('Computer.window')(function* (
   request: UseWindowRequest,
 ) {
   const origin = yield* actionOrigin(actor).pipe(
-    Effect.map(Option.some),
-    Effect.catchTag('NotFound', () => Effect.succeed(Option.none())),
+    Effect.asSome,
+    Effect.catchTag('NotFound', () => Effect.succeedNone),
   )
   if (Option.isNone(origin) || !ActionOrigin.guards.Run(origin.value))
     return WindowOutcome.cases.RunRequired.make({})

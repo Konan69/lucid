@@ -357,11 +357,15 @@ const startMachine = Effect.fn('ComputerStore.boot')(function* (
     current.value.since !== before.since
   )
     return Option.none<MachineNoCapacity>()
-  const started = yield* machine.ensure(before.machine).pipe(
-    Effect.timeout('90 seconds'),
-    Effect.catchTag('TimeoutError', () => Effect.fail(new ComputerWakeTimedOut({ person }))),
-    Effect.result,
-  )
+  const started = yield* machine
+    .ensure(before.machine)
+    .pipe(
+      Effect.timeoutOrElse({
+        duration: '90 seconds',
+        orElse: () => Effect.fail(new ComputerWakeTimedOut({ person })),
+      }),
+      Effect.result,
+    )
   const state = Result.match(started, {
     onFailure: (failure): MachineState => {
       if (failure instanceof ComputerWakeTimedOut)
@@ -693,8 +697,10 @@ const prepare = Effect.fn('ComputerStore.prepare')(
   },
   (effect, _state, person) =>
     effect.pipe(
-      Effect.timeout('90 seconds'),
-      Effect.catchTag('TimeoutError', () => Effect.fail(new ComputerWakeTimedOut({ person }))),
+      Effect.timeoutOrElse({
+        duration: '90 seconds',
+        orElse: () => Effect.fail(new ComputerWakeTimedOut({ person })),
+      }),
     ),
 )
 
@@ -1200,7 +1206,7 @@ const personAvailability = Effect.fn('Computer.personAvailability')(function* (p
   return yield* (yield* DeviceRegistry).requireConnected(personId).pipe(
     Effect.as(Option.none<BrowseOutcome>()),
     Effect.catchTag('NoDeviceConnected', () =>
-      Effect.succeed(Option.some(BrowseOutcome.cases.NotConnected.make({}))),
+      Effect.succeedSome(BrowseOutcome.cases.NotConnected.make({})),
     ),
   )
 })
@@ -1224,13 +1230,11 @@ const personBrowse = Effect.fn('Computer.personBrowse')(function* (input: {
       authority: input.authority,
     })
     .pipe(
-      Effect.catchTag('NoDeviceConnected', () =>
-        Effect.succeed(BrowseOutcome.cases.NotConnected.make({})),
-      ),
-      Effect.catchTag('DeviceBusy', () => Effect.succeed(BrowseOutcome.cases.Busy.make({}))),
-      Effect.catchTag('NoActingRun', () =>
-        Effect.succeed(BrowseOutcome.cases.RunRequired.make({})),
-      ),
+      Effect.catchTags({
+        NoDeviceConnected: () => Effect.succeed(BrowseOutcome.cases.NotConnected.make({})),
+        DeviceBusy: () => Effect.succeed(BrowseOutcome.cases.Busy.make({})),
+        NoActingRun: () => Effect.succeed(BrowseOutcome.cases.RunRequired.make({})),
+      }),
     )
 })
 

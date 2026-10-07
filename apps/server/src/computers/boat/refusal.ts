@@ -41,7 +41,7 @@ export const decodeTool = <A>(tool: string, schema: Schema.ConstraintDecoder<A>)
       return yield* new ComputerToolRefused({ operation: tool, code: response.refusal.code })
     if (isActionRefused(response))
       return yield* new ComputerActionRefused({ operation: tool, route: response.route })
-    return yield* Schema.decodeUnknownEffect(schema)(response).pipe(
+    return yield* Schema.decodeEffect(schema)(response).pipe(
       Effect.mapError(() => new MachineResponseInvalid({ operation: 'computer-tool' })),
     )
   })
