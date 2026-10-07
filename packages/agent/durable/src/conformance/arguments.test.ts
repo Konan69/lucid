@@ -1,20 +1,19 @@
+import { Deferred, Effect, Option } from 'effect'
+import { FixtureFailed } from '../fixtures/harness.ts'
+import { consumeReadable } from '../fixtures/reading.ts'
 import { createModels } from '@earendil-works/pi-ai/models'
 import { fauxAssistantMessage, fauxText, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { watchEvents, type AgentEvent } from '@earendil-works/pi-durable'
 import { expect, it } from '@effect/vitest'
 import { tool } from 'ai'
-import { Effect } from 'effect'
-import { onTestFinished } from 'vitest'
 import { z } from 'zod'
-
 import { continueRun, decide, holdId, streamRun } from '../main.ts'
 import { streamingProvider, providerFamilies } from '../fixtures/provider.ts'
 import { runForPi } from '../pi.ts'
-import { consume, context, host, signal, texts } from './fixtures/host.ts'
-
+import { context, host, texts } from './fixtures/host.ts'
 /** The source-derived wrapper retains provider JSON scratch buffers alongside growing parsed arguments. */
 it.live('receives raw argument JSON from the provider before the durable boundary', () =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     const input = { account: 'savings', amount: 100 }
     const faux = streamingProvider({ tokenSize: { min: 1, max: 1 } })
     faux.setResponses([
@@ -26,15 +25,33 @@ it.live('receives raw argument JSON from the provider before the durable boundar
     models.setProvider(faux.provider)
     const stream = models.streamSimple(faux.getModel(), { messages: [] })
     const deltas: string[] = []
-    for await (const event of stream) if (event.type === 'toolcall_delta') deltas.push(event.delta)
+    {
+      const iterator1 = stream[Symbol.asyncIterator]()
+      let completed = false
+      // Preserve for-await's early-exit cleanup; the host must never close before this reader.
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() => {
+          if (completed || iterator1.return === undefined) return Promise.resolve()
+          return iterator1.return().then(() => {})
+        }),
+      )
+      for (;;) {
+        const next1 = yield* Effect.promise(() => iterator1.next())
+        if (next1.done) {
+          completed = true
+          break
+        }
+        const event = next1.value
+        if (event.type === 'toolcall_delta') deltas.push(event.delta)
+      }
+    }
     expect(deltas.length).toBeGreaterThan(1)
     expect(deltas.join('')).toBe(JSON.stringify(input))
-    expect((await stream.result()).content).toEqual([
+    expect((yield* Effect.promise(() => stream.result())).content).toEqual([
       { type: 'toolCall', id: 'wire', name: 'pay', arguments: input },
     ])
   }),
 )
-
 /**
  * Real Anthropic/OpenAI/Bedrock/Mistral partial families pass through SQLite and Pi's public watch.
  * Non-append scratch/signature edits produce block updates, never terminal client input. Drain
@@ -45,24 +62,28 @@ for (const partialFamily of families)
   it.live(
     `approves final arguments after growing ${partialFamily} blocks and Google text signatures`,
     () =>
-      Effect.promise(async () => {
+      Effect.gen(function* () {
         const input = { account: 'savings '.repeat(20), amount: 12345 }
         const paid: (typeof input)[] = []
-        const fixture = await host(
+        const fixture = yield* host(
           {
             pay: tool({
               inputSchema: z.object({ account: z.string(), amount: z.number() }),
-              execute: async (arguments_) => {
-                paid.push(arguments_)
-                return arguments_
-              },
+              execute: (arguments_) =>
+                runForPi(
+                  Effect.sync(() => {
+                    paid.push(arguments_)
+                    return arguments_
+                  }),
+                  undefined,
+                ),
             }),
           },
           { approval: { pay: true } },
           { progress: { partialIntervalMs: 0 } },
           { partialFamily, commitFrames: true, tokenSize: { min: 1, max: 1 } },
         )
-        const opened = await fixture.open()
+        const opened = yield* fixture.open()
         opened.faux.setResponses([
           fauxAssistantMessage(
             [
@@ -74,12 +95,12 @@ for (const partialFamily of families)
           ),
           fauxAssistantMessage('Done.'),
         ])
-        const events = await watchEvents(opened.harness, opened.root.id, context)
-        onTestFinished(async () => {
-          await events.stop()
-        })
+        const events = yield* Effect.promise(() =>
+          watchEvents(opened.harness, opened.root.id, context),
+        )
+        yield* Effect.addFinalizer(() => Effect.promise(() => events.stop()))
         const delivered: AgentEvent[] = []
-        const receipt = signal()
+        const receipt = yield* Deferred.make<void, FixtureFailed>()
         events.start((batch) =>
           runForPi(
             Effect.sync(() => {
@@ -90,23 +111,28 @@ for (const partialFamily of families)
                     event.type === 'entry_appended' && event.entry.kind === 'arguments.receipt',
                 )
               )
-                receipt.resolve()
+                Deferred.doneUnsafe(receipt, Effect.void)
             }),
             context.abortSignal,
           ),
         )
-        const result = await consume(
-          await streamRun(
-            opened.harness,
-            { conversationId: opened.root.id, content: 'Pay', requestId: 'arguments' },
+        const result = yield* consumeReadable(
+          yield* Effect.promise(() =>
+            streamRun(
+              opened.harness,
+              { conversationId: opened.root.id, content: 'Pay', requestId: 'arguments' },
+              context,
+            ),
+          ),
+          Option.none(),
+        )
+        yield* Effect.promise(() =>
+          opened.root.commit(
+            (tx) => tx.appendEntry(opened.root.id, { kind: 'arguments.receipt' }),
             context,
           ),
         )
-        await opened.root.commit(
-          (tx) => tx.appendEntry(opened.root.id, { kind: 'arguments.receipt' }),
-          context,
-        )
-        await receipt.promise
+        yield* Deferred.await(receipt)
         const changes = delivered.flatMap((event) =>
           event.type === 'message_update' ? event.changes : [],
         )
@@ -161,20 +187,24 @@ for (const partialFamily of families)
         if (approval === undefined) throw new Error('Expected approval')
         expect(result.chunks.indexOf(approval)).toBeGreaterThan(available)
         expect(paid).toEqual([])
-        await decide(
-          opened.harness,
-          opened.root.id,
-          { holdId: holdId(approval.approvalId), approved: true },
-          context,
-        )
-        await consume(
-          await continueRun(
+        yield* Effect.promise(() =>
+          decide(
             opened.harness,
             opened.root.id,
-            { messageId: result.message.id, known: new Set(['wire']) },
+            { holdId: holdId(approval.approvalId), approved: true },
             context,
           ),
-          result.message,
+        )
+        yield* consumeReadable(
+          yield* Effect.promise(() =>
+            continueRun(
+              opened.harness,
+              opened.root.id,
+              { messageId: result.message.id, known: new Set(['wire']) },
+              context,
+            ),
+          ),
+          Option.some(result.message),
         )
         expect(paid).toEqual([input])
       }),

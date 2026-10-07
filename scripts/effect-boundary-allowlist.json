@@ -140,7 +140,7 @@
   {
     "file": "packages/agent/durable/src/reading.ts",
     "classification": "third-party-adapter",
-    "symbols": ["readMessage", "readForSdk"]
+    "symbols": ["readMessage"]
   },
   {
     "file": "packages/agent/durable/src/fixtures/answer.ts",

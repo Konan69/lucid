@@ -93,7 +93,7 @@ export class PartUnsupported extends Schema.TaggedError<PartUnsupported>()(
 /** A decoded image exceeds the host's explicit per-part byte budget; no default is imposed. */
 export class PartTooLarge extends Schema.TaggedError<PartTooLarge>()(
   'PartTooLarge',
-  { bytes: Schema.Number, limit: Schema.Number },
+  { bytes: Schema.Natural, limit: Schema.Natural },
   { title: 'PartTooLarge' },
 ) {
   /** Report byte units, never the submitted image or URL. */

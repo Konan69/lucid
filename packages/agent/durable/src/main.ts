@@ -53,9 +53,7 @@ export const toolsExtension = <ContextValue = ToolContext>(
   if (context === undefined) return Effect.runPromise(Core.toolsExtension(name, tools, settings))
   // Keep the unsafe callback in this classified Promise entry; core wraps its original failure once.
   const resolve = Effect.fn('Durable.resolvePromiseToolContext')(function* (scope: ToolScope) {
-    return yield* Effect.tryPromise(async () => context(scope)).pipe(
-      Effect.mapError((error) => error.cause),
-    )
+    return yield* Effect.promise(() => Promise.resolve(context(scope)))
   })
   const resolved: EffectToolsOptions = { ...settings, context: resolve }
   return Effect.runPromise(Core.toolsExtension(name, tools, resolved))
@@ -161,75 +159,64 @@ function turnResponse(program: ReturnType<typeof Core.respond>) {
   return program.pipe(
     Effect.flatMap((stream) => Stream.toReadableStreamEffect(httpStream(stream))),
     Effect.map((stream) => createUIMessageStreamResponse({ stream })),
-    Effect.catchTag('TurnWithdrawn', (error) =>
-      Effect.succeed(new Response(error.message, { status: 409 })),
-    ),
-    Effect.catchTag('TurnConflict', (error) =>
-      Effect.succeed(new Response(error.message, { status: 409 })),
-    ),
-    Effect.catchTag('TurnWaiting', (error) =>
-      Effect.succeed(new Response(error.message, { status: 409 })),
-    ),
-    Effect.catchTag('TurnBusy', (error) =>
-      Effect.succeed(new Response(error.message, { status: 409 })),
-    ),
-    Effect.catchTag('RunMissing', () =>
-      Effect.succeed(new Response('No run made these tool calls', { status: 409 })),
-    ),
-    Effect.catchTag('ConversationMissing', () =>
-      Effect.succeed(new Response('Conversation not found', { status: 404 })),
-    ),
-    Effect.catchTag('PartUnsupported', () =>
-      Effect.succeed(new Response('Unsupported file; use an inline base64 image', { status: 400 })),
-    ),
-    Effect.catchTag('PartTooLarge', () =>
-      Effect.succeed(new Response('File part too large', { status: 413 })),
-    ),
+    Effect.catchTags({
+      TurnWithdrawn: (error) => Effect.succeed(new Response(error.message, { status: 409 })),
+      TurnConflict: (error) => Effect.succeed(new Response(error.message, { status: 409 })),
+      TurnWaiting: (error) => Effect.succeed(new Response(error.message, { status: 409 })),
+      TurnBusy: (error) => Effect.succeed(new Response(error.message, { status: 409 })),
+      RunMissing: () =>
+        Effect.succeed(new Response('No run made these tool calls', { status: 409 })),
+      ConversationMissing: () =>
+        Effect.succeed(new Response('Conversation not found', { status: 404 })),
+      PartUnsupported: () =>
+        Effect.succeed(
+          new Response('Unsupported file; use an inline base64 image', { status: 400 }),
+        ),
+      PartTooLarge: () => Effect.succeed(new Response('File part too large', { status: 413 })),
+    }),
   )
 }
 
 /** Read JSON text once; failed reads/decodes are invalid turns. Resumes must name the current run
  * message to settle anything. Outputs require call-id uniqueness within that run; approvals do not. */
-export async function respond(
+export function respond(
   harness: Harness,
   conversationId: ConversationId,
   input: RequestInput,
   context: Context,
 ): Promise<Response> {
-  const { request, options } = 'request' in input ? input : { request: input, options: {} }
-  const policy = await Effect.runPromise(inputPolicy(options))
-  // AI SDK HttpChatTransport.reconnectToStream sends a bodyless GET and treats 204 as idle.
-  if (request.method === 'GET') {
-    return Effect.runPromise(
-      Core.attachRun(harness, conversationId, context).pipe(
-        Effect.flatMap((attached) =>
-          Option.match(attached, {
-            onNone: () => Effect.succeed(new Response(null, { status: 204 })),
-            onSome: (stream) =>
-              Stream.toReadableStreamEffect(httpStream(stream)).pipe(
-                Effect.map((readable) => createUIMessageStreamResponse({ stream: readable })),
-              ),
-          }),
-        ),
-        Effect.catchTag('ConversationMissing', () =>
-          Effect.succeed(new Response('Conversation not found', { status: 404 })),
-        ),
-      ),
-    )
-  }
-  if (request.method !== 'POST')
-    return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, POST' } })
-  const turn = await Effect.runPromise(
-    Effect.tryPromise({
-      try: () => request.text(),
-      catch: () => new TurnInvalid({}),
-    }).pipe(Effect.flatMap(decodeRequest), Effect.mapError(turnFailure), Effect.result),
-  )
-  if (Result.isFailure(turn)) return new Response(turn.failure.message, { status: 400 })
   return Effect.runPromise(
-    turnResponse(
-      respondWithPolicy(harness, conversationId, { turn: turn.success, policy }, context),
-    ),
+    Effect.gen(function* () {
+      const { request, options } = 'request' in input ? input : { request: input, options: {} }
+      const policy = yield* inputPolicy(options)
+      // AI SDK HttpChatTransport.reconnectToStream sends a bodyless GET and treats 204 as idle.
+      if (request.method === 'GET') {
+        return yield* Core.attachRun(harness, conversationId, context).pipe(
+          Effect.flatMap((attached) =>
+            Option.match(attached, {
+              onNone: () => Effect.succeed(new Response(null, { status: 204 })),
+              onSome: (stream) =>
+                Stream.toReadableStreamEffect(httpStream(stream)).pipe(
+                  Effect.map((readable) => createUIMessageStreamResponse({ stream: readable })),
+                ),
+            }),
+          ),
+          Effect.catchTag('ConversationMissing', () =>
+            Effect.succeed(new Response('Conversation not found', { status: 404 })),
+          ),
+        )
+      }
+      if (request.method !== 'POST')
+        return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, POST' } })
+      const turn = yield* Effect.tryPromise({
+        try: () => request.text(),
+        catch: () => new TurnInvalid({}),
+      }).pipe(Effect.flatMap(decodeRequest), Effect.mapError(turnFailure), Effect.result)
+      if (Result.isFailure(turn)) return new Response(turn.failure.message, { status: 400 })
+      return yield* turnResponse(
+        respondWithPolicy(harness, conversationId, { turn: turn.success, policy }, context),
+      )
+    }),
   )
 }
 

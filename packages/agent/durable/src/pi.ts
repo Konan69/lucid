@@ -351,15 +351,13 @@ export const inputStatus: (
     try: () => input.status(context),
     catch: (cause) => new PiFailed({ operation: 'status', cause }),
   }).pipe(
-    Effect.flatMap((record) =>
-      record.type === 'input'
-        ? Effect.succeed(record)
-        : Effect.fail(
-            new PiFailed({
-              operation: 'status',
-              cause: new Error('Input admission returned a write receipt'),
-            }),
-          ),
+    Effect.filterOrFail(
+      (record): record is Extract<SubmissionRecord, { type: 'input' }> => record.type === 'input',
+      () =>
+        new PiFailed({
+          operation: 'status',
+          cause: new Error('Input admission returned a write receipt'),
+        }),
     ),
   )
 
