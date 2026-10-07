@@ -483,7 +483,6 @@ async function main() {
   // oxlint-disable-next-line vivid/no-runpromise-in-library -- Executable CLI entry point.
   const options = await Effect.runPromise(configured())
   const host = await start(options)
-  console.log(`Durable example listening at ${host.address} (data: ${host.dataDirectory})`)
   const close = () => {
     process.removeListener('SIGINT', close)
     process.removeListener('SIGTERM', close)
@@ -494,6 +493,8 @@ async function main() {
   }
   process.once('SIGINT', close)
   process.once('SIGTERM', close)
+  // Publish readiness only after shutdown is safe; a caller may signal immediately on this receipt.
+  console.log(`Durable example listening at ${host.address} (data: ${host.dataDirectory})`)
 }
 
 const executable = process.argv[1]

@@ -505,3 +505,27 @@ it.live.each(['slow', 'approve'] as const)(
       }),
     ),
 )
+
+// The CLI bind receipt promises safe shutdown even when a signal arrives immediately afterwards.
+it.live.each(['SIGINT', 'SIGTERM'] as const)('closes the executable host on %s', (stop) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const dataDirectory = yield* Effect.acquireRelease(
+        Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'durable-example-signal-')),
+        ),
+        (directory) =>
+          Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),
+      )
+      const host = yield* processHost(dataDirectory)
+      yield* Effect.promise(() => boundAddress(host))
+      yield* Effect.promise(async () => {
+        const exited = NodeEvents.EventEmitter.once(host.child, 'exit')
+        process.kill(host.pid, stop)
+        const [code, signal] = await exited
+        expect(code).toBe(0)
+        expect(signal).toBeNull()
+      })
+    }),
+  ),
+)
