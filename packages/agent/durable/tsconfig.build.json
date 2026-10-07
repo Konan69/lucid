@@ -10,6 +10,13 @@
     "rewriteRelativeImportExtensions": true,
     "tsBuildInfoFile": ".cache/typescript/build.tsbuildinfo"
   },
-  "include": ["src/*.ts"],
-  "exclude": ["src/**/*.test.ts", "src/fixtures", "src/examples", "src/react", "src/conformance"]
+  "include": ["src/*.ts", "src/postgres/*.ts"],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/fixtures",
+    "src/examples",
+    "src/react",
+    "src/conformance",
+    "src/postgres/testing.ts"
+  ]
 }

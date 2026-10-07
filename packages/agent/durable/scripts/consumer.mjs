@@ -60,13 +60,13 @@ async function pack(temporary) {
   const files = run('tar', ['-tzf', archive], directory).trim().split('\n')
   NodeAssert.ok(
     files.every((file) =>
-      /^(?:package\/dist\/[^/]+\.(?:js|d\.ts|d\.ts\.map)|package\/(?:README\.md|package\.json))$/u.test(
+      /^(?:package\/dist\/(?:postgres\/)?[^/]+\.(?:js|d\.ts|d\.ts\.map)|package\/(?:README\.md|package\.json))$/u.test(
         file,
       ),
     ),
     'Tarball contains a file outside the published surface',
   )
-  for (const entry of ['main', 'core', 'client']) {
+  for (const entry of ['main', 'core', 'client', 'postgres/main']) {
     for (const suffix of ['js', 'd.ts', 'd.ts.map']) {
       NodeAssert.ok(files.includes(`package/dist/${entry}.${suffix}`))
     }

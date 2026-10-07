@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/main.ts",
     "./core": "./src/core.ts",
-    "./client": "./src/client.ts"
+    "./client": "./src/client.ts",
+    "./postgres": "./src/postgres/main.ts"
   },
   "publishConfig": {
     "exports": {
@@ -21,6 +22,10 @@
       "./client": {
         "types": "./dist/client.d.ts",
         "default": "./dist/client.js"
+      },
+      "./postgres": {
+        "types": "./dist/postgres/main.d.ts",
+        "default": "./dist/postgres/main.js"
       }
     }
   },
@@ -45,7 +50,8 @@
     "@earendil-works/pi-ai": "1.0.4",
     "@earendil-works/pi-durable": "1.0.4",
     "ai": "7.0.127",
-    "effect": "4.0.0-rc.116"
+    "effect": "4.0.0-rc.116",
+    "pg": "8.23.0"
   },
   "devDependencies": {
     "@ai-sdk/react": "4.0.130",
@@ -65,6 +71,13 @@
     "react-dom": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
-    "zod": "4.5.4"
+    "zod": "4.5.4",
+    "@types/pg": "catalog:",
+    "pg": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "pg": {
+      "optional": true
+    }
   }
 }

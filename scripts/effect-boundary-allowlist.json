@@ -178,5 +178,109 @@
     "file": "packages/agent/durable/src/conformance/fixtures/upstream.ts",
     "classification": "test-fixture-entrypoint",
     "symbols": ["interrupt"]
+  },
+  {
+    "file": "packages/agent/durable/src/postgres/bench/main.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["readNumbers", "writeNumbers", "withPostgres", "withSqlite", "main", "<module>"]
+  },
+  {
+    "file": "packages/agent/durable/src/postgres/database.ts",
+    "classification": "third-party-adapter",
+    "symbols": [
+      "exec",
+      "run",
+      "get",
+      "all",
+      "transaction",
+      "close",
+      "runBatch",
+      "transactionWithReads"
+    ]
+  },
+  {
+    "file": "packages/agent/durable/src/postgres/migrations.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["applyPostgresMigrations"]
+  },
+  {
+    "file": "packages/agent/durable/src/postgres/pg.ts",
+    "classification": "third-party-adapter",
+    "symbols": [
+      "run",
+      "exec",
+      "get",
+      "all",
+      "runOperation",
+      "query",
+      "transaction",
+      "runTransaction",
+      "close",
+      "rollback",
+      "openPgDatabase",
+      "openPgStorage",
+      "runBatch",
+      "transactionWithReads",
+      "commitResult",
+      "commitBatch",
+      "claimOwnership"
+    ]
+  },
+  {
+    "file": "packages/agent/durable/src/postgres/storage.ts",
+    "classification": "third-party-adapter",
+    "symbols": [
+      "open",
+      "commit",
+      "mintId",
+      "conversation",
+      "scanConversations",
+      "scanEntries",
+      "readEntry",
+      "readLatestHeadMarker",
+      "readEntries",
+      "task",
+      "scanTasks",
+      "submission",
+      "scanSubmissions",
+      "submissionByRequest",
+      "findDocument",
+      "document",
+      "scanDocuments",
+      "close",
+      "closeDatabase",
+      "admitRead",
+      "readConversation",
+      "materializeDocument",
+      "checkDocumentActions",
+      "checkDelta",
+      "currentDocumentId",
+      "applyDocumentActions",
+      "readScopedEntry"
+    ]
+  },
+  {
+    "file": "packages/agent/durable/src/postgres/testing.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["postgresFixture", "open"]
+  },
+  {
+    "file": "packages/agent/durable/src/postgres/bench/database.ts",
+    "classification": "third-party-adapter",
+    "symbols": [
+      "exec",
+      "run",
+      "get",
+      "all",
+      "runBatch",
+      "transaction",
+      "transactionWithReads",
+      "close"
+    ]
+  },
+  {
+    "file": "packages/agent/durable/src/postgres/bench/stream.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["streamingWrites"]
   }
 ]

@@ -25,3 +25,6 @@ export const identity: HoldId = Schema.decodeUnknownSync(Core.HoldId)('hold:1')
 /** Browser/React Native entry resolves the SDK transport without importing the core. */
 export const transport: ChatTransport<UIMessage> = resumable(new DefaultChatTransport())
 export const interruption: Error = new ConnectionLost({ cause: connectionLostInput })
+
+/** The optional storage entry stays resolvable when its pg peer is installed by the host. */
+export { openPgStorage } from '@vivid/durable/postgres'
