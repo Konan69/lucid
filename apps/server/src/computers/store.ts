@@ -1,5 +1,5 @@
 import * as NodeCrypto from 'node:crypto'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import {
   Clock,
   Context,
@@ -279,12 +279,26 @@ const persistence = Effect.fn('ComputerStore.persistence')(function* (
       Stopped: ({ since }) => ({ status: 'stopped', since, reason: null }),
       Failed: ({ since, reason }) => ({ status: 'failed', since, reason }),
     })
+    // A machine that was not running and now is begins its idle period now, whoever started it:
+    // Vivid's own start, another caller over SSH, the provider. Counted from the record's old
+    // activity it is overdue at once, and Vivid stops the machine the moment it notices it: on
+    // 6 October 2026 one status read stopped the production machine under work another caller had
+    // started on it. It is set in the same write that records the state, so only the read that
+    // records it sets it; a second write here would let a concurrent read move the activity
+    // after the first had armed its timer, and that timer would then stand down for good.
+    const began = MachineState.guards.Running(state) && !Stored.guards.running(before)
+    const now = yield* Clock.currentTimeMillis
     yield* commitState(
       person,
       database.run(
         database
           .update(computers)
-          .set(values)
+          .set({
+            status: values.status,
+            since: values.since,
+            reason: values.reason,
+            lastActivityAt: began ? now : sql`${computers.lastActivityAt}`,
+          })
           .where(
             and(
               eq(computers.personId, person),
@@ -349,9 +363,9 @@ type Persistence = Effect.Success<ReturnType<typeof persistence>>
  * production machine that day Boat took 51 to 58 seconds from the resume to calling the machine
  * running, and 37 more before a command reached it. So a start that was about to succeed was
  * ended and recorded as failed. Three minutes covers that with the wait `boat/holder.ts` allows
- * the first command (75 seconds). It stays under five minutes on purpose: the runtime's HTTP
- * client gives up on a call that is silent for 300 seconds (undici's default), and a wake is
- * followed by the action that asked for it.
+ * the first command (75 seconds). It is bounded for the Person who is waiting, not for the
+ * transport: the runtime's HTTP client waits an hour for an answer (Effect's `NodeHttpClient`
+ * sets undici's `headersTimeout` to an hour and no `bodyTimeout`).
  */
 const START_DEADLINE = Duration.minutes(3)
 /**
@@ -569,13 +583,6 @@ const observations = (
       : reported
     const current = wire(row, actual)
     if (sameState(row, actual)) return current
-    // A machine found running that this record did not have running was started by someone else
-    // (another caller over SSH, the provider itself). Its idle period counts from now, when Vivid
-    // first saw it run. Counted from the record's old activity it is overdue at once, and Vivid
-    // stops the machine the moment it notices it: on 6 October 2026 one status read stopped the
-    // production machine under work another caller had started on it.
-    if (MachineState.guards.Running(actual) && !Stored.guards.running(row))
-      yield* rows.touch(person)
     const updated = yield* rows.update(person, row, actual)
     return Option.match(updated, {
       onNone: () => withoutRow(ComputerState.cases.Absent.make({})),
@@ -699,9 +706,13 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
   })
   /** Start returns the persisted starting receipt before its scope-owned worker acquires the lifecycle permit. */
   const begin = Effect.fn('ComputerStore.begin')(
-    function* (person: PersonId) {
+    function* (person: PersonId, asker: 'person' | 'action') {
       const current = yield* inspect(person)
       if (MachineState.guards.Running(current.state)) return current
+      // Asked here, under the Person's permit, which a start holds until it has ended and said
+      // how: an action that was waiting behind a start that failed for a standing reason must
+      // not begin another one.
+      if (asker === 'action' && (yield* resting(person))) return current
       pending.add(person)
       const claim = MachineState.guards.Starting(current.state)
         ? rows.load(person)
@@ -733,13 +744,19 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
   )
   /**
    * An idempotent request during startup returns its receipt immediately, without waiting for
-   * ensure. A start is always tried: this is also what a Person's Start runs, and a Person who
-   * presses it has changed something or wants to know, so it ends any rest (`resting`).
+   * ensure. This is what a Person's Start runs, and it is always tried: a Person who presses it
+   * has changed something or wants to know, so it ends any rest (`resting`). Vivid's own actions
+   * go through `wake`.
    */
   const start = Effect.fn('ComputerStore.start')(function* (person: PersonId) {
     standing.delete(person)
     if (pending.has(person)) return yield* inspect(person)
-    return yield* begin(person)
+    return yield* begin(person, 'person')
+  })
+  /** What an action runs for a Computer that is not running: a start, unless it is resting. */
+  const wake = Effect.fn('ComputerStore.wake')(function* (person: PersonId) {
+    if (pending.has(person)) return yield* inspect(person)
+    return yield* begin(person, 'action')
   })
   /** Stop is ordered after startup and records a provider failure rather than claiming the machine stopped. An outage is told and not recorded. */
   const halt = Effect.fn('ComputerStore.halt')(
@@ -778,7 +795,7 @@ const lifecycle = Effect.fn('ComputerStore.lifecycle')(function* () {
     yield* rows.hold(person, held)
     return yield* get(person)
   })
-  return { get, inspect, observe, start, stop, hold, lock, rows, machine, workers, resting }
+  return { get, inspect, observe, start, wake, stop, hold, lock, rows, machine, workers }
 })
 
 /**
@@ -803,8 +820,7 @@ const prepare = Effect.fn('ComputerStore.prepare')(
     // A start already under way is held here, before anything else is awaited: it forgets itself
     // when it ends, and an action that joined it must still hear how it ended.
     const joined = state.workers.get(person)
-    if (!MachineState.guards.Running(current.state) && !(yield* state.resting(person)))
-      yield* state.start(person)
+    if (!MachineState.guards.Running(current.state)) yield* state.wake(person)
     const worker = state.workers.get(person) ?? joined
     if (worker === undefined) return
     const ended = yield* Fiber.await(worker)
