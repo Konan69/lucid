@@ -12,7 +12,7 @@ import { expect, it } from '@effect/vitest'
 import { Effect, Option } from 'effect'
 import { z } from 'zod'
 
-import { streamRun, toolsExtension, ToolSchemaFailed } from './core.ts'
+import { streamRun, toolsExtension, ToolSchemaFailed, type Replay } from './core.ts'
 import { memory } from './fixtures/harness.ts'
 import { consume } from './fixtures/reading.ts'
 import { PlainChat } from './fixtures/chat.ts'
@@ -345,10 +345,13 @@ for (const strict of [true, false, undefined])
       const opened = await fixture.open()
       opened.faux.setResponses([
         (request) => {
-          expect(
-            getCurrentTools(request.messages).find((entry) => entry.name === 'sampling')
-              ?.constrainedSampling,
-          ).toEqual(strict === true ? { type: 'json_schema', strict: 'prefer' } : strict)
+          const offered = getCurrentTools(request.messages).find(
+            (entry) => entry.name === 'sampling',
+          )
+          if (offered === undefined) throw new Error('Expected model tool declaration')
+          expect(offered.constrainedSampling).toEqual(
+            strict === true ? { type: 'json_schema', strict: 'prefer' } : strict,
+          )
           return call('sampling', {}, 'sampling')
         },
         fauxAssistantMessage('Done.'),
@@ -383,32 +386,38 @@ for (const rule of [true, () => false])
     }),
   )
 
-/** Reserved JavaScript names must not inherit replay functions or prototype objects as domain values. */
+/** Reserved names must respect own replay entries while ignoring builtin and custom prototypes. */
 for (const name of ['constructor', '__proto__'])
-  it.live(`uses own per-tool options for server tool ${name}`, () =>
-    Effect.promise(async () => {
-      const fixture = await host(
-        { [name]: tool({ inputSchema: z.object({}), execute: async () => 'done' }) },
-        {},
-      )
-      const opened = await fixture.open()
-      const registered = (await opened.root.agent(context)).tools.find(
-        (entry) => entry.name === name,
-      )
-      expect(registered?.replay).toBe('unsafe')
-      opened.faux.setResponses([call(name, {}, name), fauxAssistantMessage('Done.')])
-      const result = await consumeSdk(
-        await streamSdk(
-          opened.harness,
-          { conversationId: opened.root.id, content: 'Run', requestId: name },
-          context,
-        ),
-      )
-      expect(result.message.parts.find((part) => part.type === `tool-${name}`)).toMatchObject({
-        output: 'done',
-      })
-    }),
-  )
+  for (const policy of ['absent', 'inherited', 'own'] as const)
+    it.live(`uses own per-tool options for server tool ${name} (${policy})`, () =>
+      Effect.promise(async () => {
+        const replay: Record<string, Replay> = {}
+        if (policy === 'inherited') Object.setPrototypeOf(replay, { [name]: 'safe' })
+        if (policy === 'own')
+          Object.defineProperty(replay, name, { value: 'safe', enumerable: true })
+        const fixture = await host(
+          { [name]: tool({ inputSchema: z.object({}), execute: async () => 'done' }) },
+          { replay },
+        )
+        const opened = await fixture.open()
+        const registered = (await opened.root.agent(context)).tools.find(
+          (entry) => entry.name === name,
+        )
+        if (registered === undefined) throw new Error('Expected registered tool')
+        expect(registered.replay).toBe(policy === 'own' ? 'safe' : 'unsafe')
+        opened.faux.setResponses([call(name, {}, name), fauxAssistantMessage('Done.')])
+        const result = await consumeSdk(
+          await streamSdk(
+            opened.harness,
+            { conversationId: opened.root.id, content: 'Run', requestId: name },
+            context,
+          ),
+        )
+        expect(result.message.parts.find((part) => part.type === `tool-${name}`)).toMatchObject({
+          output: 'done',
+        })
+      }),
+    )
 
 /** Inherited answer/approval declarations have no authority; a named own false still overrides SDK approval. */
 for (const name of ['constructor', '__proto__'])
@@ -440,7 +449,8 @@ for (const name of ['constructor', '__proto__'])
       completed = signal()
       await chat.addToolOutput({ tool: name, toolCallId: name, output: 'yes' })
       await completed.promise
-      expect(chat.lastMessage?.parts.find((part) => part.type === `tool-${name}`)).toMatchObject({
+      if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
+      expect(chat.lastMessage.parts.find((part) => part.type === `tool-${name}`)).toMatchObject({
         output: 'yes',
       })
 

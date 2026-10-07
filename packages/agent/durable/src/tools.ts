@@ -62,14 +62,14 @@ export type ToolsOptions = {
   readonly execution?: 'parallel' | 'sequential'
   /** These tools force a sequential round even in a parallel host; Pi sequences the whole round. */
   readonly sequential?: readonly string[]
-  /** Only explicitly named server tools may rerun after a crash; the default protects side effects. */
+  /** Own entries opt server tools into crash replay; inherited keys are ignored, default unsafe. */
   readonly replay?: Readonly<Record<string, Replay>>
   /**
-   * Pure predicates see Pi-validated JSON arguments before SDK transformations.
-   * A named host option wins over the tool's needsApproval, including explicit false.
+   * An own host option wins over the tool's needsApproval, including explicit false.
+   * Answer-only tools refuse true or a predicate: Pi cannot hold for both approval and an answer.
    */
   readonly approval?: Readonly<Record<string, boolean | ((input: JsonValue) => boolean)>>
-  /** Tools without execute wait inside the call by default; later delivers an answer as new input. */
+  /** Own entries select wait/later for answer-only tools; default wait. Later answers are new input. */
   readonly answers?: Readonly<Record<string, 'wait' | 'later'>>
 }
 
@@ -594,7 +594,11 @@ function unsupportedApproval(name: string, tool: Tool, lookups: Lookups): Option
   return Option.some('approval before person-supplied output')
 }
 
-/** JSON Schema generation is lazy in the SDK; rejection is a registration failure naming the tool. */
+/**
+ * JSON Schema generation is lazy in the SDK; rejection is a registration failure naming the tool.
+ * title, inputExamples and metadata have no projection in Pi's native declaration. outputSchema is
+ * not used to validate local execute results by SDK execute-tool.ts either; persistence validates JSON.
+ */
 const registration = Effect.fn('Durable.registerTool')(function* (
   name: string,
   tool: Tool,
