@@ -190,7 +190,8 @@
       "runBatch",
       "transactionWithReads",
       "commitResult",
-      "commitBatch"
+      "commitBatch",
+      "claimOwnership"
     ]
   },
   {

@@ -28,3 +28,16 @@ export class RawNul extends Schema.TaggedError<RawNul>()(
     return `Durable PostgreSQL ${this.recordKind} value contains a raw NUL character`
   }
 }
+
+/** Pi README.md:Storage requires one owner. PostgreSQL enforces this at open,
+ * before migrations, because separate Harness states must never interleave on
+ * one schema even when their individual commits do not overlap. */
+export class StorageOwned extends Schema.TaggedError<StorageOwned>()(
+  'StorageOwned',
+  { schema: Schema.String },
+  { title: 'StorageOwned' },
+) {
+  override get message() {
+    return `Durable PostgreSQL schema ${this.schema} is already owned by another connection`
+  }
+}

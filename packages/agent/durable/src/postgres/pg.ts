@@ -1,4 +1,5 @@
 import * as NodeBuffer from 'node:buffer'
+import * as NodeCrypto from 'node:crypto'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { escapeLiteral, types, type Pool, type PoolClient, type QueryResultRow } from 'pg'
@@ -13,7 +14,7 @@ import {
 } from './database.ts'
 export { validateSchema } from './database.ts'
 import { PostgresStorage } from './storage.ts'
-import { ConnectionSettingInvalid, RawNul } from './errors.ts'
+import { ConnectionSettingInvalid, RawNul, StorageOwned } from './errors.ts'
 
 /** pg/lib/query.js:_checkForMultirow returns one result per simple-protocol
  * statement. Decode scalar metadata/ownership rows once at the SDK ingress.
@@ -53,6 +54,29 @@ const decodeConnectionSettings = Schema.decodeUnknownSync(
     standard_conforming_strings: Schema.String,
   }),
 )
+const decodeOwnership = Schema.decodeUnknownSync(Schema.Struct({ owned: Schema.Boolean }))
+
+/** PostgreSQL advisory keys are database-scoped signed BIGINTs. Derive the first
+ * eight SHA256 bytes of UTF8 "@vivid/durable/postgres:" plus the exact validated
+ * schema name, interpreted as signed big-endian 64 bits. This stable namespace
+ * survives code upgrades and never crosses a lossy JavaScript number. A hash
+ * collision conservatively refuses the second owner rather than risking data. */
+function ownershipKey(schema: string): string {
+  return NodeCrypto.createHash('sha256')
+    .update(`@vivid/durable/postgres:${schema}`, 'utf8')
+    .digest()
+    .readBigInt64BE()
+    .toString()
+}
+
+/** Intentional addition to Pi openNodeSqliteDatabase: nonblocking session-level
+ * ownership precedes all schema SQL. PostgreSQL releases it on connection death;
+ * normal close explicitly unlocks before returning the lease to the host Pool. */
+function claimOwnership(client: PoolClient, schema: string, key: string): Promise<void> {
+  return client.query('SELECT pg_try_advisory_lock($1::bigint) AS owned', [key]).then((result) => {
+    if (!decodeOwnership(result.rows[0]).owned) throw new StorageOwned({ schema })
+  })
+}
 
 /** Bind owned statements safely for PostgreSQL simple-protocol batches. */
 function statementText(statement: PostgresStatement): string {
@@ -185,6 +209,7 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
   constructor(
     client: PoolClient,
     private readonly previousSearchPath: string,
+    private readonly schemaOwnershipKey: string,
   ) {
     super(client)
     client.on('error', this.connectionFailed)
@@ -279,7 +304,9 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
     return this.client.query(text).then(() => prepared.value)
   }
 
-  /** Restore the host connection's original search_path before releasing it.
+  /** Restore the host connection's original search_path and release the session
+   * ownership lock before returning it to the pool. An idle pooled connection
+   * stays alive, so merely releasing its lease would retain the advisory lock.
    * Pi closes its owned database; a supplied pool belongs to the host and stays open.
    * If restoration fails, discard only our leased connection. */
   close(): Promise<void> {
@@ -293,6 +320,9 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
       }
       return this.client
         .query('SELECT set_config($1, $2, false)', ['search_path', this.previousSearchPath])
+        .then(() =>
+          this.client.query('SELECT pg_advisory_unlock($1::bigint)', [this.schemaOwnershipKey]),
+        )
         .then(
           () => {
             this.client.removeListener('error', this.connectionFailed)
@@ -342,12 +372,16 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
 /** Pi src/storage/sqlite/node.ts:openNodeSqliteDatabase. Lease one host connection
  * and constrain its search_path to the required schema, with no public fallback.
  * PostgreSQL permits a search_path naming a schema before it is created.
- * Initialization failure releases our lease; no pool is constructed or ended.
+ * Read encoding/string settings once and refuse non-UTF8 before literal SQL.
+ * Acquire nonblocking schema ownership before changing search_path or migrating.
+ * Initialization failure destroys our lease (releasing any acquired lock);
+ * no pool is constructed or ended.
  * SQLite file creation, WAL/checkpoint and busy-timeout options do not apply to
  * PostgreSQL; connection/durability settings remain with the supplied host pool. */
 export async function openPgDatabase(pool: Pool, schema: string): Promise<PgDatabase> {
   validateSchema(schema)
   const client = await pool.connect()
+  const key = ownershipKey(schema)
   // pg emits the connection failure as well as rejecting active query promises.
   const initializingError = (_cause: Error) => {}
   client.on('error', initializingError)
@@ -367,11 +401,13 @@ export async function openPgDatabase(pool: Pool, schema: string): Promise<PgData
           setting: 'standard_conforming_strings',
           value: row.standard_conforming_strings,
         })
-      return client.query(`SET search_path TO "${schema}"`).then(() => {
-        const database = new PgDatabase(client, row.search_path)
-        client.removeListener('error', initializingError)
-        return database
-      })
+      return claimOwnership(client, schema, key)
+        .then(() => client.query(`SET search_path TO "${schema}"`))
+        .then(() => {
+          const database = new PgDatabase(client, row.search_path, key)
+          client.removeListener('error', initializingError)
+          return database
+        })
     })
     .catch((cause: unknown) => {
       client.removeListener('error', initializingError)
@@ -382,8 +418,14 @@ export async function openPgDatabase(pool: Pool, schema: string): Promise<PgData
 
 /** Pi src/storage/sqlite/node.ts:openNodeSqliteStorage and README.md:Storage:
  * "One process owns a storage at a time; there is no cross-process locking."
- * Host supplies the pool and a required schema. close releases the connection,
- * restores search_path, and never ends the host pool. Migrations create the schema
+ * Deliberate PostgreSQL difference: enforce that single-owner rule with a
+ * nonblocking session advisory lock before migrations. Without enforcement,
+ * nonoverlapping commits from two Harness states could silently interleave.
+ * A competing opener receives StorageOwned; no wait or automatic retry occurs.
+ * Host supplies the pool and a required schema. close releases the advisory lock
+ * and connection, restores search_path, and never ends the host pool. PostgreSQL
+ * also releases the lock when the connection or owning process dies.
+ * Migrations create the schema
  * transactionally; PostgreSQL SQL/JSON predicates require PostgreSQL 16 or newer. */
 export async function openPgStorage(pool: Pool, schema: string): Promise<PostgresStorage> {
   return PostgresStorage.open(await openPgDatabase(pool, schema), schema)
