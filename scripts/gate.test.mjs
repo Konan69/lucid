@@ -8,7 +8,7 @@ import * as NodeTest from 'node:test'
 import * as NodeURL from 'node:url'
 import * as Schema from 'effect/Schema'
 import { parse, report, selectStages, withoutRepositoryEnvironment } from './gate.mjs'
-import { shellWord, snapshot, treeName } from './gate/cloud.mjs'
+import { refusedHost, shellWord, snapshot, treeName } from './gate/cloud.mjs'
 import { checkRatchets, countFindings, ratchets } from './gate/ratchets.mjs'
 import { slotCount, takeLock } from './gate/slots.mjs'
 import { stageNames, stageOfTask, stages } from './gate/stages.mjs'
@@ -296,4 +296,29 @@ NodeFS.rmSync(scratch, { recursive: true, force: true })
   assert.equal(seen.top, seen.scratch)
   assert.equal(git(linked, ['status', '--porcelain'], env), '')
   assert.equal(git(linked, ['ls-files'], env), 'kept.txt')
+})
+
+test('the gate refuses the Vivid Computer under any name, and no other machine', () => {
+  // What `ssh -G` printed for each name on 7 October 2026: `vivid-boat` had pointed at the
+  // production Vivid Computer for four days, and the gates sent there filled its disk.
+  const vivid = [
+    'host vivid-boat',
+    'hostname cloudbox-vivid',
+    "proxycommand sh -c 'cd /home/user/cloudbox-vivid && exec node cli.mjs boat proxy vivid %p'",
+  ].join('\n')
+  const renamed = [
+    'host builder',
+    'hostname builder.internal',
+    "proxycommand sh -c 'exec node cli.mjs boat proxy vivid %p'",
+  ].join('\n')
+  const ci = [
+    'host vivid-boat',
+    'hostname cloudbox-konan',
+    "proxycommand sh -c 'exec node cli.mjs boat proxy konan %p'",
+  ].join('\n')
+  assert.match(refusedHost(vivid), /production Vivid Computer/u)
+  // The machine is refused, not the alias: another name for it does not get through.
+  assert.match(refusedHost(renamed), /production Vivid Computer/u)
+  assert.equal(refusedHost(ci), undefined)
+  assert.equal(refusedHost('host plain\nhostname 10.0.0.7'), undefined)
 })
