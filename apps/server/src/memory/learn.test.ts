@@ -135,21 +135,21 @@ const learn = Effect.fn('MemoryTest.learn')(function* (
     }),
   })
   yield* Effect.gen(function* () {
-    yield* (yield* Learning).afterRun(delivery)
-  }).pipe(
-    Effect.provide(
-      yield* Layer.build(
-        learningLayer.pipe(
-          Layer.provide([
-            access,
-            extraction,
-            runtime,
-            silentChangesLayer,
-            Layer.mock(Audit, { record: Effect.fn('MemoryTest.audit')(() => Effect.void) }),
-          ]),
-        ),
+    const services = yield* Layer.build(
+      learningLayer.pipe(
+        Layer.provide([
+          access,
+          extraction,
+          runtime,
+          silentChangesLayer,
+          Layer.mock(Audit, { record: Effect.fn('MemoryTest.audit')(() => Effect.void) }),
+        ]),
       ),
-    ),
+    )
+    yield* Effect.gen(function* () {
+      yield* (yield* Learning).afterRun(delivery)
+    }).pipe(Effect.provide(services))
+  }).pipe(
     Effect.provideService(
       Logger.CurrentLoggers,
       new Set([Logger.make(({ message: logged }) => warnings.push(JSON.stringify(logged)))]),
