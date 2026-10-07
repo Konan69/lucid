@@ -44,6 +44,8 @@ const Reported = Data.taggedEnum<Reported>()
 export type RunState = {
   /** Retry entries share the same generation task and therefore the same SDK step. */
   readonly generation: Option.Option<TaskId>
+  /** A recovered aborted attempt is replaced inside this step, not followed by another step. */
+  readonly interrupted: boolean
   /** Durable result entries reported by this reader, across step changes and snapshot/live overlap. */
   readonly results: ReadonlySet<EntryId>
   /** Turns started in this run. */
@@ -70,6 +72,7 @@ export type RunState = {
 
 export const initialRunState: RunState = {
   generation: Option.none(),
+  interrupted: false,
   turn: 0,
   response: 0,
   blocks: new Map(),
@@ -183,6 +186,7 @@ const startTurn = (state: RunState): Step => ({
   state: {
     ...state,
     turn: state.turn + 1,
+    interrupted: false,
     blocks: new Map(),
     content: new Map(),
     arguments: new Map(),
@@ -520,7 +524,10 @@ function assistantEnd(state: RunState, message: AssistantMessage): Step {
     return { state: { ...finished.state, failure }, chunks: finished.chunks }
   }
   const ending: readonly Chunk[] = message.stopReason === 'aborted' ? [{ type: 'abort' }] : []
-  return { state: finished.state, chunks: [...finished.chunks, ...ending] }
+  return {
+    state: { ...finished.state, interrupted: message.stopReason === 'aborted' },
+    chunks: [...finished.chunks, ...ending],
+  }
 }
 
 /**
@@ -619,7 +626,11 @@ export function replayEntry(state: RunState, entry: EntryRecord): Step {
 
 /** The partial response of the generation in flight: a turn, then each block with its text so far. */
 function replayPartial(state: RunState, message: AssistantMessage): Step {
-  const turn = state.failure.length > 0 ? { state, chunks: [] } : startTurn(state)
+  // generation.js:93–97/245–254 converts a crashed attempt to an aborted entry, then replaces
+  // it on the same task. Only a genuine turn boundary opens another SDK step. Error retries and
+  // interrupted attempts both reset their old response when the new partial starts.
+  const turn =
+    state.failure.length > 0 || state.interrupted ? { state, chunks: [] } : startTurn(state)
   return join(turn, startResponse(turn.state, message))
 }
 
@@ -651,7 +662,9 @@ export function replay(snapshot: SnapshotEvent): Option.Option<Rebuilt> {
   )
   const step = Option.match(partial, {
     onNone: () =>
-      snapshot.generation === undefined || stored.state.failure.length > 0
+      snapshot.generation === undefined ||
+      stored.state.failure.length > 0 ||
+      stored.state.interrupted
         ? stored
         : join(stored, startTurn(stored.state)),
     onSome: (message) => join(stored, replayPartial(stored.state, message)),
@@ -722,7 +735,12 @@ export function replayAfter(
     : Option.none()
   const step = Option.match(partial, {
     onNone: () =>
-      !live || snapshot.generation === undefined ? stored : join(stored, startTurn(stored.state)),
+      !live ||
+      snapshot.generation === undefined ||
+      stored.state.interrupted ||
+      stored.state.failure.length > 0
+        ? stored
+        : join(stored, startTurn(stored.state)),
     onSome: (message) => join(stored, replayPartial(stored.state, message)),
   })
   return Option.some({

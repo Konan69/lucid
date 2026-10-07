@@ -54,3 +54,9 @@ closed steer/followUp/reject policy (default followUp, Pi submissions.js:149); b
 ConversationBusy to TurnBusy before any admission write. FollowRun resolves requestId through
 public Tx.submissionByRequest in a read-only commit and uses the same snapshot/live observer for
 host-admitted inputs. It is one-shot; cancellation only closes observation.
+
+Crash regeneration remains in its original SDK step: Pi generation.js:93–97/245–254 converts a
+committed interrupted partial into an aborted entry and replaces it on the same generation task.
+Replay records that interrupted attempt and resets its content when the replacement starts, instead
+of retaining its text in an earlier step. conformance/crashing.test.ts proves same-instance stock
+and resumable TCP reconnect with a captured SIGKILL, provider frame gates and harness.resume().
