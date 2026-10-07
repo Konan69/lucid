@@ -1,3 +1,5 @@
+import { runForPi } from '../pi.ts'
+import { consumeReadable } from '../fixtures/reading.ts'
 import type { Message } from '@earendil-works/pi-ai'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import {
@@ -7,21 +9,23 @@ import {
   lastAssistantMessageIsCompleteWithApprovalResponses,
 } from 'ai'
 import { expect, it } from '@effect/vitest'
-import { Effect } from 'effect'
-import { onTestFinished } from 'vitest'
+import { Effect, Deferred, Fiber, Option } from 'effect'
+import { FixtureFailed } from '../fixtures/harness.ts'
+
 import { z } from 'zod'
 import { PlainChat } from '../fixtures/chat.ts'
 import { abort, attachRun, history, streamRun } from '../main.ts'
-import { call, consume, context, host, signal, texts } from './fixtures/host.ts'
+import { call, context, host, texts } from './fixtures/host.ts'
 
 /** SDK provider-utils/types/execute-tool.ts:44–50 chooses the last yield, not the generator return. */
 it.live('stores and streams only the last yielded result', () =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     let model: readonly Message[] = []
-    const fixture = await host(
+    const fixture = yield* host(
       {
         generate: tool({
           inputSchema: z.object({}),
+          // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
           async *execute() {
             yield { phase: 'preliminary' }
             yield { phase: 'final' }
@@ -31,7 +35,7 @@ it.live('stores and streams only the last yielded result', () =>
       },
       {},
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([
       call('generate', {}, 'generator'),
       (request) => {
@@ -39,12 +43,17 @@ it.live('stores and streams only the last yielded result', () =>
         return fauxAssistantMessage('Done.')
       },
     ])
-    const result = await consume(
-      await streamRun(
-        opened.harness,
-        { conversationId: opened.root.id, content: 'Generate', requestId: 'final' },
-        context,
+    const result = yield* consumeReadable(
+      yield* Effect.promise(() =>
+        Promise.resolve(
+          streamRun(
+            opened.harness,
+            { conversationId: opened.root.id, content: 'Generate', requestId: 'final' },
+            context,
+          ),
+        ),
       ),
+      Option.none(),
     )
     expect(result.chunks.filter((chunk) => chunk.type === 'tool-output-available')).toEqual([
       { type: 'tool-output-available', toolCallId: 'generator', output: { phase: 'final' } },
@@ -53,7 +62,9 @@ it.live('stores and streams only the last yielded result', () =>
       output: { phase: 'final' },
     })
     expect(model.at(-1)).toMatchObject({ content: [{ type: 'text', text: '{"phase":"final"}' }] })
-    const stored = await history(opened.harness, opened.root.id, { limit: 20 }, context)
+    const stored = yield* Effect.promise(() =>
+      Promise.resolve(history(opened.harness, opened.root.id, { limit: 20 }, context)),
+    )
     expect(
       stored.messages
         .flatMap((message) => message.parts)
@@ -64,11 +75,12 @@ it.live('stores and streams only the last yielded result', () =>
 
 /** A preliminary yield cannot hide a subsequent generator rejection. */
 it.live('reports a throw after a yield as a tool error and continues', () =>
-  Effect.promise(async () => {
-    const fixture = await host(
+  Effect.gen(function* () {
+    const fixture = yield* host(
       {
         generate: tool({
           inputSchema: z.object({}),
+          // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
           async *execute() {
             yield 'preliminary'
             throw new Error('generation failed after yield')
@@ -77,17 +89,22 @@ it.live('reports a throw after a yield as a tool error and continues', () =>
       },
       {},
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([
       call('generate', {}, 'generator'),
       fauxAssistantMessage('Recovered.'),
     ])
-    const result = await consume(
-      await streamRun(
-        opened.harness,
-        { conversationId: opened.root.id, content: 'Generate', requestId: 'throw' },
-        context,
+    const result = yield* consumeReadable(
+      yield* Effect.promise(() =>
+        Promise.resolve(
+          streamRun(
+            opened.harness,
+            { conversationId: opened.root.id, content: 'Generate', requestId: 'throw' },
+            context,
+          ),
+        ),
       ),
+      Option.none(),
     )
     expect(result.message.parts.find((part) => part.type === 'tool-generate')).toMatchObject({
       state: 'output-error',
@@ -99,32 +116,38 @@ it.live('reports a throw after a yield as a tool error and continues', () =>
 
 /** Abort releases an in-flight next; the iterator return closes finally without another pull. */
 it.live('calls iterator return and resolves generator finally on run cancellation', () =>
-  Effect.promise(async () => {
-    const entered = signal()
-    const finished = signal()
+  Effect.gen(function* () {
+    const entered = Deferred.makeUnsafe<void>()
+    const finished = Deferred.makeUnsafe<void, FixtureFailed>()
     let returned = 0
     let pulls = 0
-    const fixture = await host(
+    const fixture = yield* host(
       {
         generate: tool({
           inputSchema: z.object({}),
           execute(_input, options) {
-            const generator = (async function* () {
-              try {
-                yield 'preliminary'
-                entered.resolve()
-                const abortSignal = options.abortSignal
-                if (abortSignal === undefined) throw new Error('Expected tool abort signal')
-                if (!abortSignal.aborted) {
-                  const cancelled = signal()
-                  abortSignal.addEventListener('abort', cancelled.resolve, { once: true })
-                  await cancelled.promise
+            const generator =
+              // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
+              (async function* () {
+                try {
+                  yield 'preliminary'
+                  Deferred.doneUnsafe(entered, Effect.void)
+                  const abortSignal = options.abortSignal
+                  if (abortSignal === undefined) throw new Error('Expected tool abort signal')
+                  if (!abortSignal.aborted) {
+                    const cancelled = Deferred.makeUnsafe<void>()
+                    abortSignal.addEventListener(
+                      'abort',
+                      () => Deferred.doneUnsafe(cancelled, Effect.void),
+                      { once: true },
+                    )
+                    await runForPi(Deferred.await(cancelled), undefined)
+                  }
+                  yield 'cancelled in-flight value'
+                } finally {
+                  Deferred.doneUnsafe(finished, Effect.void)
                 }
-                yield 'cancelled in-flight value'
-              } finally {
-                finished.resolve()
-              }
-            })()
+              })()
             return {
               [Symbol.asyncIterator]() {
                 return this
@@ -143,23 +166,28 @@ it.live('calls iterator return and resolves generator finally on run cancellatio
       },
       {},
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([call('generate', {}, 'generator'), fauxAssistantMessage('Done.')])
-    const stream = await streamRun(
-      opened.harness,
-      { conversationId: opened.root.id, content: 'Generate', requestId: 'abort' },
-      context,
+    const stream = yield* Effect.promise(() =>
+      Promise.resolve(
+        streamRun(
+          opened.harness,
+          { conversationId: opened.root.id, content: 'Generate', requestId: 'abort' },
+          context,
+        ),
+      ),
     )
-    const reading = consume(stream)
-    await Promise.race([
-      entered.promise,
-      reading.then(() => {
-        throw new Error('Tool settled without iterating')
-      }),
-    ])
-    await abort(opened.harness, opened.root.id, context)
-    await finished.promise
-    const result = await reading
+    const reading = yield* Effect.forkScoped(consumeReadable(stream, Option.none()))
+    // Race the join, not the consumer fiber: observing entry must keep the reader alive.
+    yield* Effect.raceFirst(
+      Deferred.await(entered),
+      Fiber.join(reading).pipe(
+        Effect.andThen(new FixtureFailed({ cause: new Error('Tool settled without iterating') })),
+      ),
+    )
+    yield* Effect.promise(() => Promise.resolve(abort(opened.harness, opened.root.id, context)))
+    yield* Deferred.await(finished)
+    const result = yield* Fiber.join(reading)
     expect(returned).toBe(1)
     expect(pulls).toBe(2)
     expect(result.chunks.filter((chunk) => chunk.type === 'tool-output-available')).toEqual([])
@@ -168,68 +196,86 @@ it.live('calls iterator return and resolves generator finally on run cancellatio
 
 /** A pending native generator await queues return; cancellation must release Pi without waiting for it. */
 it.live('aborts a suspended generator and runs the next turn before generator cleanup', () =>
-  Effect.promise(async () => {
-    const entered = signal()
-    const release = signal()
-    const finished = signal()
+  Effect.gen(function* () {
+    const entered = Deferred.makeUnsafe<void>()
+    const release = Deferred.makeUnsafe<void>()
+    const finished = Deferred.makeUnsafe<void, FixtureFailed>()
     let closed = false
-    const fixture = await host(
+    const fixture = yield* host(
       {
         generate: tool({
           inputSchema: z.object({}),
+          // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
           async *execute() {
             try {
               yield 'preliminary'
-              entered.resolve()
-              await release.promise
+              Deferred.doneUnsafe(entered, Effect.void)
+              await runForPi(Deferred.await(release), undefined)
               yield 'too late'
             } finally {
               closed = true
-              finished.resolve()
+              Deferred.doneUnsafe(finished, Effect.void)
             }
           },
         }),
       },
       {},
     )
-    onTestFinished(() => release.resolve())
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
+    // A queued generator return must not delay Pi abort; release it only during outer cleanup.
+    yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined))
     opened.faux.setResponses([call('generate', {}, 'stuck')])
-    const reading = consume(
-      await streamRun(
-        opened.harness,
-        { conversationId: opened.root.id, content: 'Generate', requestId: 'suspended' },
-        context,
+    const reading = yield* Effect.forkScoped(
+      consumeReadable(
+        yield* Effect.promise(() =>
+          Promise.resolve(
+            streamRun(
+              opened.harness,
+              { conversationId: opened.root.id, content: 'Generate', requestId: 'suspended' },
+              context,
+            ),
+          ),
+        ),
+        Option.none(),
       ),
     )
-    await entered.promise
-    await abort(opened.harness, opened.root.id, context)
-    const first = await reading
+    yield* Deferred.await(entered)
+    yield* Effect.promise(() => Promise.resolve(abort(opened.harness, opened.root.id, context)))
+    const first = yield* Fiber.join(reading)
     expect(first.message.parts.find((part) => part.type === 'tool-generate')).toMatchObject({
       state: 'output-error',
     })
-    expect((await attachRun(opened.harness, opened.root.id, context)).status).toBe('idle')
+    expect(
+      (yield* Effect.promise(() =>
+        Promise.resolve(attachRun(opened.harness, opened.root.id, context)),
+      )).status,
+    ).toBe('idle')
     opened.faux.setResponses([fauxAssistantMessage('Next turn.')])
-    const next = await consume(
-      await streamRun(
-        opened.harness,
-        { conversationId: opened.root.id, content: 'Continue', requestId: 'next' },
-        context,
+    const next = yield* consumeReadable(
+      yield* Effect.promise(() =>
+        Promise.resolve(
+          streamRun(
+            opened.harness,
+            { conversationId: opened.root.id, content: 'Continue', requestId: 'next' },
+            context,
+          ),
+        ),
       ),
+      Option.none(),
     )
     expect(texts(next.message)).toEqual(['Next turn.'])
     expect(closed).toBe(false)
-    release.resolve()
-    await finished.promise
+    Deferred.doneUnsafe(release, Effect.void)
+    yield* Deferred.await(finished)
   }),
 )
 
 /** SDK for-await does not invoke return on normal exhaustion. */
 it.live('does not call iterator return after normal exhaustion', () =>
-  Effect.promise(async () => {
+  Effect.gen(function* () {
     let returned = 0
     let pulls = 0
-    const fixture = await host(
+    const fixture = yield* host(
       {
         generate: tool({
           inputSchema: z.object({}),
@@ -237,12 +283,14 @@ it.live('does not call iterator return after normal exhaustion', () =>
             [Symbol.asyncIterator]() {
               return this
             },
+            // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
             async next() {
               pulls++
               return pulls === 1
                 ? { done: false as const, value: 'final' }
                 : { done: true as const, value: undefined }
             },
+            // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
             async return() {
               returned++
               return { done: true as const, value: undefined }
@@ -252,14 +300,19 @@ it.live('does not call iterator return after normal exhaustion', () =>
       },
       {},
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([call('generate', {}, 'exhaustion'), fauxAssistantMessage('Done.')])
-    const result = await consume(
-      await streamRun(
-        opened.harness,
-        { conversationId: opened.root.id, content: 'Generate', requestId: 'exhaustion' },
-        context,
+    const result = yield* consumeReadable(
+      yield* Effect.promise(() =>
+        Promise.resolve(
+          streamRun(
+            opened.harness,
+            { conversationId: opened.root.id, content: 'Generate', requestId: 'exhaustion' },
+            context,
+          ),
+        ),
       ),
+      Option.none(),
     )
     expect(result.message.parts.find((part) => part.type === 'tool-generate')).toMatchObject({
       output: 'final',
@@ -270,11 +323,11 @@ it.live('does not call iterator return after normal exhaustion', () =>
 
 /** Rejected return promises are observed without blocking cancellation or causing an unhandled rejection. */
 it.live('observes a rejecting iterator return during abort', () =>
-  Effect.promise(async () => {
-    const entered = signal()
-    const suspended = signal()
+  Effect.gen(function* () {
+    const entered = Deferred.makeUnsafe<void>()
+    const suspended = Deferred.makeUnsafe<void>()
     let returned = 0
-    const fixture = await host(
+    const fixture = yield* host(
       {
         generate: tool({
           inputSchema: z.object({}),
@@ -283,9 +336,13 @@ it.live('observes a rejecting iterator return during abort', () =>
               return this
             },
             next() {
-              entered.resolve()
-              return suspended.promise.then(() => ({ done: true as const, value: undefined }))
+              Deferred.doneUnsafe(entered, Effect.void)
+              return runForPi(Deferred.await(suspended), undefined).then(() => ({
+                done: true as const,
+                value: undefined,
+              }))
             },
+            // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
             async return(): Promise<IteratorResult<string>> {
               returned++
               throw new Error('cleanup rejection')
@@ -295,35 +352,42 @@ it.live('observes a rejecting iterator return during abort', () =>
       },
       {},
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([call('generate', {}, 'rejection')])
-    const reading = consume(
-      await streamRun(
-        opened.harness,
-        { conversationId: opened.root.id, content: 'Generate', requestId: 'rejection' },
-        context,
+    const reading = yield* Effect.forkScoped(
+      consumeReadable(
+        yield* Effect.promise(() =>
+          Promise.resolve(
+            streamRun(
+              opened.harness,
+              { conversationId: opened.root.id, content: 'Generate', requestId: 'rejection' },
+              context,
+            ),
+          ),
+        ),
+        Option.none(),
       ),
     )
-    await entered.promise
-    await abort(opened.harness, opened.root.id, context)
-    await reading
+    yield* Deferred.await(entered)
+    yield* Effect.promise(() => Promise.resolve(abort(opened.harness, opened.root.id, context)))
+    yield* Fiber.join(reading)
     expect(returned).toBe(1)
   }),
 )
 
 // AI SDK process-ui-message-stream.test.ts:7521/9422; upstream-aisdk.test.ts on the suites branch
 // requests all four static/dynamic and approval/no-approval final-result combinations.
-it.each([
+it.live.each([
   { dynamic: false, approval: false },
   { dynamic: false, approval: true },
   { dynamic: true, approval: false },
   { dynamic: true, approval: true },
-])(
-  'keeps the final SDK generator value with dynamic=$dynamic and approval=$approval',
-  async (sample) => {
+])('keeps the final SDK generator value with dynamic=$dynamic and approval=$approval', (sample) =>
+  Effect.gen(function* () {
     let executions = 0
     const registration = {
       inputSchema: z.object({}),
+      // @effect-diagnostics-next-line asyncFunction:off -- subject: native AI SDK generator or iterator final values and cancellation
       execute: async function* () {
         executions++
         yield { status: 'loading' }
@@ -331,8 +395,8 @@ it.each([
       },
     }
     const progress = sample.dynamic ? dynamicTool(registration) : tool(registration)
-    const fixture = await host({ progress }, { approval: { progress: sample.approval } })
-    const opened = await fixture.open()
+    const fixture = yield* host({ progress }, { approval: { progress: sample.approval } })
+    const opened = yield* fixture.open()
     opened.faux.setResponses([
       call('progress', {}, 'progress'),
       (request) => {
@@ -343,23 +407,26 @@ it.each([
         return fauxAssistantMessage('Done.')
       },
     ])
-    let finished = signal()
+    let finished = Deferred.makeUnsafe<void, FixtureFailed>()
     const chat = new PlainChat({
       transport: opened.transport,
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-      onFinish: () => finished.resolve(),
-      onError: (error) => finished.reject(error),
+      onFinish: () => Deferred.doneUnsafe(finished, Effect.void),
+      onError: (error) =>
+        Deferred.doneUnsafe(finished, Effect.fail(new FixtureFailed({ cause: error }))),
     })
-    await chat.sendMessage({ text: 'Run' })
+    yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ text: 'Run' })))
     if (chat.lastMessage === undefined) throw new Error('Expected assistant')
     if (sample.approval) {
       expect(executions).toBe(0)
       const part = chat.lastMessage.parts.find(isToolUIPart)
       if (part === undefined || part.state !== 'approval-requested')
         throw new Error('Expected approval')
-      finished = signal()
-      await chat.addToolApprovalResponse({ id: part.approval.id, approved: true })
-      await finished.promise
+      finished = Deferred.makeUnsafe<void, FixtureFailed>()
+      yield* Effect.promise(() =>
+        Promise.resolve(chat.addToolApprovalResponse({ id: part.approval.id, approved: true })),
+      )
+      yield* Deferred.await(finished)
     }
     expect(executions).toBe(1)
     expect(chat.lastMessage.parts.find(isToolUIPart)).toMatchObject({
@@ -369,10 +436,12 @@ it.each([
     })
     expect(chat.lastMessage.parts.find(isToolUIPart)).not.toMatchObject({ preliminary: true })
     expect(texts(chat.lastMessage)).toEqual(['Done.'])
-    await opened.root.waitForIdle(context)
-    const saved = await history(opened.harness, opened.root.id, { limit: 10 }, context)
+    yield* Effect.promise(() => Promise.resolve(opened.root.waitForIdle(context)))
+    const saved = yield* Effect.promise(() =>
+      Promise.resolve(history(opened.harness, opened.root.id, { limit: 10 }, context)),
+    )
     const stored = saved.messages.at(-1)
     if (stored === undefined) throw new Error('Expected stored assistant')
     expect(stored.parts.find(isToolUIPart)).toEqual(chat.lastMessage.parts.find(isToolUIPart))
-  },
+  }),
 )
