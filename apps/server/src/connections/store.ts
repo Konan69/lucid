@@ -493,16 +493,22 @@ function listCatalogLifetime(
  * still interrupts it. Starting immediately keeps overlapping zero-TTL readers together.
  * Success refresh and unavailability backoff retain their TTL policy.
  */
-const rememberListCatalog = Effect.fn('Connections.rememberListCatalog')(function* (
-  catalog: Effect.Effect<ReadonlyArray<Service>, ReturnType<typeof executorFailure>>,
-) {
-  const scope = yield* Effect.scope
-  const cached = yield* Effect.cachedWithTTL(catalog, listCatalogLifetime)
-  // Return the reusable read program without starting a catalogue lookup during acquisition.
-  return yield* Effect.succeed(
-    cached.pipe(Effect.forkIn(scope, { startImmediately: true }), Effect.flatMap(Fiber.join)),
-  )
-})
+const rememberListCatalog = Effect.fn('Connections.rememberListCatalog')(
+  (catalog: Effect.Effect<ReadonlyArray<Service>, ReturnType<typeof executorFailure>>) =>
+    Effect.scope.pipe(
+      Effect.flatMap((scope) =>
+        Effect.cachedWithTTL(catalog, listCatalogLifetime).pipe(
+          // Produce the reusable read program without starting a lookup during acquisition.
+          Effect.map((cached) =>
+            cached.pipe(
+              Effect.forkIn(scope, { startImmediately: true }),
+              Effect.flatMap(Fiber.join),
+            ),
+          ),
+        ),
+      ),
+    ),
+)
 
 /** Capture authority once; the adapter owns discovery and catalog cache lifetimes. */
 const makeStore = Effect.fn('Connections.makeStore')(function* () {
