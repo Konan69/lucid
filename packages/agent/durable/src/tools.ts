@@ -282,36 +282,27 @@ const stopIterator = Effect.fn('Durable.stopToolIterator')(
     }),
 )
 
-/** Like SDK execute-tool.ts:44–50, retain the last yield and ignore the done result's value. */
-const pullOutput = Effect.fn('Durable.pullToolOutput')(function* (
-  iterator: AsyncIterator<SdkValue, SdkValue, void>,
+/** Serialize the SDK ingress once before storing JSON; void remains the bridge's explicit null output. */
+const serializedOutput = Effect.fn('Durable.serializeToolOutput')(function* (
+  output: SdkValue,
   name: string,
 ) {
-  let last: SdkValue = undefined
-  while (true) {
-    const next = yield* Effect.tryPromise({
-      try: () => iterator.next(),
-      catch: (cause) => new ToolFailed({ toolName: name, cause }),
-    })
-    if (next.done) return last
-    last = next.value
-  }
-})
-
-/**
- * Pulls remain interruptible even when a native generator is suspended in an uncooperative await.
- * return() queues behind next() in native generators: request it but never wait during interruption.
- * Normal exhaustion does not call return(), matching SDK execute-tool.ts.
- */
-const lastOutput = Effect.fn('Durable.lastToolOutput')(function* (
-  output: AsyncIterable<SdkValue>,
-  name: string,
-) {
-  const iterator = yield* Effect.try({
-    try: () => output[Symbol.asyncIterator](),
-    catch: (cause) => new ToolFailed({ toolName: name, cause }),
+  const serialized = yield* Effect.try({
+    try: () => ({
+      text: Predicate.isString(output) ? output : JSON.stringify(output),
+      json: JSON.stringify(output),
+    }),
+    catch: (cause) => new ToolOutputFailed({ toolName: name, cause }),
   })
-  return yield* pullOutput(iterator, name).pipe(Effect.onInterrupt(() => stopIterator(iterator)))
+  const json =
+    serialized.json === undefined
+      ? null
+      : yield* decodeJsonText(serialized.json).pipe(
+          Effect.mapError((cause) => new ToolOutputFailed({ toolName: name, cause })),
+        )
+  // Void tools have no JSON value; expose explicit null in both the durable result and model text.
+  const text = serialized.text === undefined ? 'null' : serialized.text
+  return { text, output: json }
 })
 
 /**
@@ -369,27 +360,30 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
     Wait: () => answered(server.name, api, context),
     Later: () => asked(server.name, api, context),
   })
-  const output = yield* isAsyncOutput(executed)
-    ? lastOutput(executed, server.name)
-    : Effect.succeed(executed)
-  const serialized = yield* Effect.try({
-    try: () => ({
-      text: Predicate.isString(output) ? output : JSON.stringify(output),
-      json: JSON.stringify(output),
-    }),
-    catch: (cause) => new ToolOutputFailed({ toolName: server.name, cause }),
+  // Execute, iterator pulls and model conversion share the classified SDK ingress. Each pending
+  // pull owns cancellation cleanup, with no awaited operation between pulls or after exhaustion.
+  const iterate = Effect.fn('Durable.iterateToolOutput')(function* (
+    iterable: AsyncIterable<SdkValue>,
+  ) {
+    const iterator = yield* Effect.try({
+      try: () => iterable[Symbol.asyncIterator](),
+      catch: (cause) => new ToolFailed({ toolName: server.name, cause }),
+    })
+    let last: SdkValue = undefined
+    while (true) {
+      const next = yield* Effect.tryPromise({
+        try: () => iterator.next(),
+        catch: (cause) => new ToolFailed({ toolName: server.name, cause }),
+      }).pipe(Effect.onInterrupt(() => stopIterator(iterator)))
+      if (next.done) return last
+      last = next.value
+    }
   })
-  const json =
-    serialized.json === undefined
-      ? null
-      : yield* decodeJsonText(serialized.json).pipe(
-          Effect.mapError((cause) => new ToolOutputFailed({ toolName: server.name, cause })),
-        )
-  // Void tools have no JSON value; expose explicit null in both the durable result and model text.
-  const text = serialized.text === undefined ? 'null' : serialized.text
+  const output = yield* isAsyncOutput(executed) ? iterate(executed) : Effect.succeed(executed)
+  const encoded = yield* serializedOutput(output, server.name)
   // Later acknowledges an open question; answers.ts admits its real answer as separate user input.
   if (Execution.$is('Later')(server.execution) || Option.isNone(server.toModelOutput))
-    return result({ text, output: json })
+    return result(encoded)
   // ai/src/prompt/create-tool-model-output.ts:32–33 passes the validated input and original output.
   const convert = server.toModelOutput.value
   const model = yield* Effect.tryPromise({
@@ -410,7 +404,7 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
     ),
   )
   const content = yield* modelContent(projected, server.name)
-  return { content, details: { output: json } }
+  return { content, details: { output: encoded.output } }
 })
 
 /** A wait hook has already received the durable answer before this tool begins. */
