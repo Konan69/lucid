@@ -11,7 +11,7 @@ import {
   ToolTask,
 } from '@earendil-works/pi-durable'
 import { asSchema, type Tool, type ToolSet } from 'ai'
-import { Data, Effect, Option, Predicate, Schema, Stream } from 'effect'
+import { Data, Effect, Option, Predicate, Schema } from 'effect'
 
 import {
   ToolApprovalUnsupported,
@@ -210,10 +210,52 @@ const validate = (schema: ReturnType<typeof asSchema>, args: SdkValue, name: str
 }
 
 /**
+ * Pulls remain interruptible even when a native generator is suspended in an uncooperative await.
+ * return() queues behind next() in native generators: observe its rejection, but never await it
+ * during interruption. Normal exhaustion does not call return(), matching SDK execute-tool.ts.
+ */
+const lastOutput = Effect.fn('Durable.lastToolOutput')(function* (
+  output: AsyncIterable<SdkValue>,
+  name: string,
+) {
+  const iterator = yield* Effect.try({
+    try: () => output[Symbol.asyncIterator](),
+    catch: (cause) => new ToolFailed({ toolName: name, cause }),
+  })
+  const pull = Effect.gen(function* () {
+    let last: SdkValue = undefined
+    while (true) {
+      const next = yield* Effect.tryPromise({
+        try: () => iterator.next(),
+        catch: (cause) => new ToolFailed({ toolName: name, cause }),
+      })
+      if (next.done) return last
+      last = next.value
+    }
+  })
+  return yield* pull.pipe(
+    Effect.onInterrupt(() =>
+      Effect.sync(() => {
+        // This narrow SDK cleanup boundary deliberately detaches only the external return promise.
+        void Promise.resolve()
+          .then(() => {
+            if (iterator.return !== undefined) return iterator.return()
+            return undefined
+          })
+          .then(
+            () => {},
+            () => {},
+          )
+      }),
+    ),
+  )
+})
+
+/**
  * The SDK's execute result is untyped at this third-party ingress. Serialize here, then decode the
  * actual persisted JSON once. SDK provider-utils/types/execute-tool.ts:44–50 selects the last yielded
  * result, ignoring the iterator return value. Earlier preliminary values are not streamed here.
- * Effect Channel.fromAsyncIterable owns return() on cancellation and closes the iterator scope.
+ * Cancellation requests iterator return without waiting for uncooperative generator cleanup.
  */
 const invoke = Effect.fn('Durable.invokeTool')(function* (
   server: Server,
@@ -272,12 +314,7 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
     Later: () => asked(server.name, api, context),
   })
   const output = yield* isAsyncOutput(executed)
-    ? Stream.runLast(
-        Stream.fromAsyncIterable(
-          executed,
-          (cause) => new ToolFailed({ toolName: server.name, cause }),
-        ),
-      ).pipe(Effect.map(Option.getOrUndefined))
+    ? lastOutput(executed, server.name)
     : Effect.succeed(executed)
   const serialized = yield* Effect.try({
     try: () => ({
