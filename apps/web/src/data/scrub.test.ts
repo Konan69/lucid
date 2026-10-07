@@ -327,7 +327,7 @@ describe('what reaches the transport', () => {
     for (const envelope of others) expect(Option.isNone(outbound(envelope))).toBe(true)
   })
 
-  it('hands the inner transport only what is allowed, and answers the rest as sent', async () => {
+  it('hands the inner transport only what is allowed, and answers the rest as sent', () => {
     const seen: Array<Envelope> = []
     const inner: Transport = {
       send: (envelope) => {
@@ -337,16 +337,22 @@ describe('what reaches the transport', () => {
       flush: () => Promise.resolve(true),
     }
     const transport = guarded(inner)
-    expect(
-      await transport.send([
+    // A transport answers with a Promise, so the test is that chain, handed to the runner.
+    return transport
+      .send([
         { sent_at: sentAt },
         [[{ type: 'client_report' }, { timestamp: 1, discarded_events: [] }]],
-      ]),
-    ).toEqual({})
-    expect(seen).toEqual([])
-    expect(await transport.send(withAttachment)).toEqual({ statusCode: 200 })
-    expect(seen).toHaveLength(1)
-    expect(JSON.stringify(seen)).not.toContain(SECRET)
-    expect(JSON.stringify(seen)).not.toContain('screenshot.png')
+      ])
+      .then((withheld) => {
+        expect(withheld).toEqual({})
+        expect(seen).toEqual([])
+        return transport.send(withAttachment)
+      })
+      .then((sent) => {
+        expect(sent).toEqual({ statusCode: 200 })
+        expect(seen).toHaveLength(1)
+        expect(JSON.stringify(seen)).not.toContain(SECRET)
+        expect(JSON.stringify(seen)).not.toContain('screenshot.png')
+      })
   })
 })

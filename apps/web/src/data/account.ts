@@ -60,7 +60,7 @@ const post = Effect.fn('Account.post')(function* (path: string, body: AccountReq
     const said = Option.flatMap(decodeRefusalText(text), (refusal) =>
       Option.fromUndefinedOr(refusal.message),
     )
-    yield* new AccountRefused({ message: reasonFor(response.status, said) })
+    return yield* new AccountRefused({ message: reasonFor(response.status, said) })
   }
 })
 
@@ -82,10 +82,12 @@ const oneShot = VividRpcClient.layer({ url: '/api/rpc' }).pipe(Layer.provide(Fet
  * the server's default, and Settings shows it and lets the Person change it, so a failure here is
  * deliberately not a reason to refuse the sign-up.
  */
-const adoptTimeZone = Effect.gen(function* () {
+const tellTimeZone = Effect.gen(function* () {
   const client = yield* VividRpcClient
   yield* client.PatchSettings({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone })
-}).pipe(Effect.provide(oneShot), Effect.ignore)
+}).pipe(Effect.withSpan('Account.tellTimeZone'))
+// @effect-diagnostics-next-line strictEffectProvide:off -- this one call must not use the app's client (its live socket was opened before the session existed), so it is given its own one-shot HTTP client here, the only place that client is used and the whole of its lifetime
+const adoptTimeZone = Effect.ignore(Effect.provide(tellTimeZone, oneShot))
 
 /** Makes an account and gives it the time zone of the browser it was made in. */
 export const createAccount = (input: {
@@ -133,7 +135,7 @@ export const continueWithGoogle = Effect.fn('Account.continueWithGoogle')(functi
   const code = Option.flatMap(decodeGoogleRefusal(answer.error), (refusal) =>
     Option.fromUndefinedOr(refusal.code),
   )
-  yield* new GoogleRefused({
+  return yield* new GoogleRefused({
     outcome: Option.match(code, { onNone: () => 'Failed', onSome: outcomeOf }),
   })
 })
@@ -188,7 +190,8 @@ const justJoined = Effect.suspend(() =>
   ),
 )
 
-export const signOut = () => post('sign-out', {})
+/** Ends this browser's session. Described once; each sign-out starts it afresh. */
+export const signOut = post('sign-out', {})
 
 /** The part of Better Auth's session answer that says when the session ends. */
 const Ending = Schema.Struct({ session: Schema.Struct({ expiresAt: Schema.String }) })
@@ -234,7 +237,7 @@ const read = <Value, Encoded>(path: string, schema: Schema.Codec<Value, Encoded>
       try: () => response.text(),
       catch: () => new AccountRefused({ message: UNREACHABLE }),
     })
-    return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(body).pipe(
+    return yield* Schema.decodeEffect(Schema.fromJsonString(schema))(body).pipe(
       Effect.mapError(() => new AccountRefused({ message: UNREACHABLE })),
     )
   })
@@ -254,33 +257,32 @@ export interface SignedInDevice {
  * the most recently used. It is what lets a lost phone or an old shared computer be signed out
  * without changing a password.
  */
-export const signedInDevices = () =>
-  Effect.gen(function* () {
-    const [sessions, here] = yield* Effect.all([
-      read('list-sessions', Sessions),
-      read('get-session', Here),
-    ])
-    return Arr.sort(
-      sessions.map((session): SignedInDevice => ({
-        id: session.id,
-        name: deviceName(Option.fromNullOr(session.userAgent)),
-        lastUsedAt: Date.parse(session.updatedAt),
-        here: session.id === here.session.id,
-        token: session.token,
-      })),
-      Order.combine(
-        Order.mapInput(Order.flip(Order.Boolean), (device: SignedInDevice) => device.here),
-        Order.mapInput(Order.flip(Order.Number), (device: SignedInDevice) => device.lastUsedAt),
-      ),
-    )
-  })
+export const signedInDevices = Effect.gen(function* () {
+  const [sessions, here] = yield* Effect.all([
+    read('list-sessions', Sessions),
+    read('get-session', Here),
+  ])
+  return Arr.sort(
+    sessions.map((session): SignedInDevice => ({
+      id: session.id,
+      name: deviceName(Option.fromNullOr(session.userAgent)),
+      lastUsedAt: Date.parse(session.updatedAt),
+      here: session.id === here.session.id,
+      token: session.token,
+    })),
+    Order.combine(
+      Order.mapInput(Order.flip(Order.Boolean), (device: SignedInDevice) => device.here),
+      Order.mapInput(Order.flip(Order.Number), (device: SignedInDevice) => device.lastUsedAt),
+    ),
+  )
+}).pipe(Effect.withSpan('Account.signedInDevices'))
 
 /** Signs one other device out. It has to sign in again. */
 export const signOutDevice = (device: SignedInDevice) =>
   post('revoke-session', { token: Redacted.value(device.token) })
 
 /** Signs out everywhere except here. */
-export const signOutElsewhere = () => post('revoke-other-sessions', {})
+export const signOutElsewhere = post('revoke-other-sessions', {})
 
 /**
  * The session lives in a cookie the live socket read when it opened, so a change of session means

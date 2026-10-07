@@ -85,7 +85,7 @@ const ask = (act: (pages: VividAppBridge['pages']) => Promise<void | Tab>, refus
 }
 
 /** Whether the desktop app refused because the limit on open pages was reached. */
-const tooMany = Schema.is(Schema.Struct({ _tag: Schema.Literal('PageLimitReached') }))
+const tooMany = Schema.is(Schema.TaggedStruct('PageLimitReached', {}))
 
 /** The page that is showing, when there is one. */
 const showing = (browser: BrowserState): Option.Option<Page> =>

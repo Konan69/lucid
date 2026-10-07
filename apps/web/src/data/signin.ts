@@ -283,7 +283,7 @@ export const handOff = (way: Handoff): Effect.Effect<void> =>
 export const reopening = (
   reopen: Effect.Effect<SignInBrowser, ShellUnreadable>,
 ): Effect.Effect<SignInBrowser> =>
-  reopen.pipe(Effect.catch(() => Effect.succeed<SignInBrowser>('unopened')))
+  reopen.pipe(Effect.orElseSucceed((): SignInBrowser => 'unopened'))
 
 /**
  * What is on the screen, and which attempt put it there. No state means the form is showing.
