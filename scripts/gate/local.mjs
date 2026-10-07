@@ -220,12 +220,33 @@ export async function runLocal(root, selection, environment) {
   }
 }
 
+/**
+ * Lint stays one package at a time, but that one process may use several cores: up to four of
+ * each kind of worker, never more than half the machine. docs/checks.md measured one worker of
+ * each as the safe default for a developer's own run; a second Go worker cost 0.3 GiB and the
+ * whole-workspace run with eight threads was 1.7 times faster than with one. A value already
+ * in the environment wins.
+ */
+function lintWorkers(environment) {
+  const workers = String(Math.max(1, Math.min(4, Math.floor(NodeOS.availableParallelism() / 2))))
+  return {
+    GOMAXPROCS: environment.GOMAXPROCS === undefined ? workers : environment.GOMAXPROCS,
+    VIVID_LINT_THREADS:
+      environment.VIVID_LINT_THREADS === undefined ? workers : environment.VIVID_LINT_THREADS,
+  }
+}
+
 async function runStages(root, selection, environment, { runId, directory }) {
   const selected = stages.filter((stage) => selection.stages.includes(stage.name))
-  const needsDatabase = selected.some((stage) => stage.lane === 'tests')
+  const needsDatabase = selected.some((stage) => stage.name === 'test')
   const database = needsDatabase ? await openRunDatabase(root, environment, runId) : undefined
   stopChildrenOnSignal(() => (database === undefined ? Promise.resolve() : database.close()))
-  const env = { ...environment, CI: '1', TURBO_TELEMETRY_DISABLED: '1' }
+  const env = {
+    ...environment,
+    CI: '1',
+    TURBO_TELEMETRY_DISABLED: '1',
+    ...lintWorkers(environment),
+  }
   delete env.VIVID_TEST_DATABASE_URL
   if (database !== undefined) {
     env.VIVID_TEST_DATABASE_URL = database.url

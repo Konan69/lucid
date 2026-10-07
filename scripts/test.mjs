@@ -88,15 +88,18 @@ function widthOf(file, raw, text, transformed) {
   return undefined
 }
 
-function graphOf(project) {
+function graphOf(project, read) {
   const nodes = new Map()
+  const remembered = moduleMemory(project, read)
   const expand = async (file) => {
     const existing = nodes.get(file)
     if (existing !== undefined) return existing
     const pending = (async () => {
+      const known = remembered.recall(file)
+      if (known !== undefined) return known
       const { files, raw, code: transformed } = await moduleImports(project, file)
       const text = NodeFS.readFileSync(file, 'utf8')
-      return { files, wide: widthOf(file, raw, text, transformed), file }
+      return remembered.keep({ files, wide: widthOf(file, raw, text, transformed), file })
     })()
     nodes.set(file, pending)
     return pending
@@ -117,6 +120,62 @@ function graphOf(project) {
       }
     }
     return { files: [...reached].toSorted((a, b) => a.localeCompare(b)), wide }
+  }
+}
+
+/** One module's remembered imports: repository paths, and why it is wide when it is. */
+const Remembered = Schema.Struct({
+  files: Schema.Array(Schema.String),
+  wide: Schema.optionalKey(Schema.String),
+})
+const decodeRemembered = Schema.decodeUnknownSync(Schema.fromJsonString(Remembered))
+
+/**
+ * What a module imports is a function of its own text and of how imports resolve. Transforming
+ * the server's whole graph took about 20 seconds on every run that had to choose tests; so each
+ * module's imports are remembered under its content and the resolution inputs (lockfile,
+ * compiler configuration, the package's manifest and runner configuration), and a module that
+ * did not change is not transformed again. A remembered import that no longer exists means the
+ * layout moved under an unchanged importer, and that module is transformed afresh.
+ */
+function moduleMemory(project, read) {
+  const root = project.config.root
+  const resolution = digest(
+    [
+      NodePath.join(repositoryRoot, 'pnpm-lock.yaml'),
+      NodePath.join(repositoryRoot, 'tsconfig.base.json'),
+      NodePath.join(repositoryRoot, 'scripts/test.mjs'),
+      ...NodeFS.readdirSync(root)
+        .filter((name) =>
+          /^(tsconfig.*\.json|package\.json|(vitest|vite)\.config\..*)$/u.test(name),
+        )
+        .map((name) => NodePath.join(root, name)),
+    ].map((file) => read(file)),
+  )
+  const directory = NodePath.join(NodePath.dirname(storeDirectory()), 'graph')
+  NodeFS.mkdirSync(directory, { recursive: true })
+  const place = (file) =>
+    NodePath.join(
+      directory,
+      `${digest([resolution, NodePath.relative(repositoryRoot, file), read(file)])}.json`,
+    )
+  return {
+    recall: (file) => {
+      const stored = place(file)
+      if (!NodeFS.existsSync(stored)) return undefined
+      const known = decodeRemembered(NodeFS.readFileSync(stored, 'utf8'))
+      const files = known.files.map((relative) => NodePath.join(repositoryRoot, relative))
+      if (files.some((path) => !NodeFS.existsSync(path))) return undefined
+      return { files, wide: known.wide, file }
+    },
+    keep: (node) => {
+      const files = node.files.map((path) => NodePath.relative(repositoryRoot, path))
+      NodeFS.writeFileSync(
+        place(node.file),
+        JSON.stringify(node.wide === undefined ? { files } : { files, wide: node.wide }),
+      )
+      return node
+    },
   }
 }
 
@@ -233,7 +292,7 @@ async function plan(packageRoot) {
     for (const specification of specifications) {
       const project = specification.project
       if (!closures.has(project)) {
-        closures.set(project, graphOf(project))
+        closures.set(project, graphOf(project, read))
         inputs.set(project, await packageInputs(project, closures.get(project), read))
       }
       const reached = await closures.get(project)(specification.moduleId)
