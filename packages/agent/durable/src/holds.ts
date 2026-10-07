@@ -486,7 +486,9 @@ export const decision = Effect.fn('Durable.toolDecision')(function* (
     Effect.try({
       try: () => plan.approval(parsed.success),
       catch: (cause) =>
-        cause instanceof ToolApprovalUnsupported || cause instanceof ToolApprovalContextUnavailable
+        cause instanceof ToolApprovalUnsupported ||
+        cause instanceof ToolApprovalFailed ||
+        cause instanceof ToolApprovalContextUnavailable
           ? cause
           : new ToolApprovalFailed({ toolName: call.name, cause }),
     }),

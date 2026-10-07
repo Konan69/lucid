@@ -18,6 +18,7 @@ import { Cause, Data, Effect, Match, Option, Predicate, Schema } from 'effect'
 
 import {
   ToolApprovalUnsupported,
+  ToolApprovalFailed,
   ToolNameDuplicated,
   ToolApprovalContextUnavailable,
   ToolContextFailed,
@@ -545,12 +546,17 @@ function approvalForTool(
     const answer = rule(input, approvalOptions(name))
     if (Predicate.isBoolean(answer)) return answer
     // A rejected unsupported Promise must not escape as an unhandled rejection.
-    if (Predicate.isPromiseLike(answer))
+    if (Predicate.isPromiseLike(answer)) {
       answer.then(
         () => {},
         () => {},
       )
-    throw new ToolApprovalUnsupported({ toolName: name })
+      throw new ToolApprovalUnsupported({ toolName: name })
+    }
+    throw new ToolApprovalFailed({
+      toolName: name,
+      cause: new Error('Approval function must return a boolean'),
+    })
   }
 }
 
