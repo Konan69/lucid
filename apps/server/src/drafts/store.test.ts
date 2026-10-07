@@ -37,23 +37,25 @@ const save = (caller: Caller, place: DraftPlace, text: string) =>
 
 describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
   layer(testLayer)((it) => {
-    it.effect('draft changes announce only their Person and never wake a Company peer', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        const peer = yield* observing(test.foreign)
-        const notices = yield* (yield* PgClient).listen(CHANNEL)
-        yield* save(test.member, newThread, 'private Company draft')
-        // The ordered SQL marker fails if Company was included, even though unchanged draft
-        // responses would normally be deduplicated and conceal the unnecessary peer reload.
-        yield* payload(notices, [Topic.person(test.member.actor.person.id)])
-        yield* save(test.foreign, newThread, 'peer change is the deterministic barrier')
-        yield* payload(notices, [Topic.person(test.foreign.actor.person.id)])
-        expect((yield* nextValue(peer)).drafts).toMatchObject([
-          { text: 'peer change is the deterministic barrier' },
-        ])
-        expect(yield* Queue.size(peer.values)).toBe(0)
-      }).pipe(Effect.scoped),
-    )
+    layer(testLayer)('Watch debounce clock', (it) => {
+      it.effect('draft changes announce only their Person and never wake a Company peer', () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const peer = yield* observing(test.foreign)
+          const notices = yield* (yield* PgClient).listen(CHANNEL)
+          yield* save(test.member, newThread, 'private Company draft')
+          // The ordered SQL marker fails if Company was included, even though unchanged draft
+          // responses would normally be deduplicated and conceal the unnecessary peer reload.
+          yield* payload(notices, [Topic.person(test.member.actor.person.id)])
+          yield* save(test.foreign, newThread, 'peer change is the deterministic barrier')
+          yield* payload(notices, [Topic.person(test.foreign.actor.person.id)])
+          expect((yield* nextValue(peer)).drafts).toMatchObject([
+            { text: 'peer change is the deterministic barrier' },
+          ])
+          expect(yield* Queue.size(peer.values)).toBe(0)
+        }).pipe(Effect.scoped),
+      )
+    })
 
     it.effect('two People drafting in one shared Thread keep separate words and revisions', () =>
       Effect.gen(function* () {
@@ -76,85 +78,93 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
       }).pipe(Effect.scoped),
     )
 
-    it.effect(
-      'the just-saved place survives fifty equal-clock drafts and archived rows survive',
-      () =>
-        Effect.gen(function* () {
-          const test = yield* fixture()
-          const database = yield* Database
-          const archived = yield* thread(test.personal)
-          yield* save(
-            test.personal,
-            DraftPlace.cases.InThread.make({ thread: archived }),
-            'archived',
-          )
-          yield* (yield* ThreadStore).patch(test.personal.actor.person.id, archived, {
-            archived: true,
-          })
-          yield* TestClock.setTime(at)
-          for (let i = 0; i < 50; i++) {
-            const id = yield* thread(test.personal)
-            yield* save(test.personal, DraftPlace.cases.InThread.make({ thread: id }), `kept ${i}`)
-          }
-          // This sorts behind all existing UUID places: old offset(50) trimmed the written row.
-          const last = ThreadId.make(`!${crypto.randomUUID()}`)
-          yield* database.run(
-            database.insert(threads).values({
-              id: last,
-              personId: test.personal.actor.person.id,
-              title: 'Frozen-clock draft',
-              titleSource: 'Person',
-              updatedAt: at,
-            }),
-          )
-          const place = DraftPlace.cases.InThread.make({ thread: last })
-          yield* save(test.personal, place, 'just saved')
-          const listed = (yield* current(test.personal)).drafts
-          expect(listed).toHaveLength(50)
-          expect(listed.map((draft) => draft.revision)).toEqual(
-            Array.from({ length: 50 }, (_, i) => 52 - i),
-          )
-          expect(listed.every((draft) => draft.savedAt === at)).toBe(true)
-          expect(listed.find((draft) => draft.text === 'just saved')).toMatchObject({ place })
-          expect(listed.find((draft) => draft.text === 'archived')).toBeUndefined()
-          const stored = yield* database.run(
-            database
-              .select()
-              .from(drafts)
-              .where(eq(drafts.personId, test.personal.actor.person.id)),
-          )
-          expect(stored).toHaveLength(51)
-          expect(stored.find((draft) => draft.threadId === archived)).toMatchObject({
-            text: 'archived',
-          })
-        }).pipe(Effect.scoped),
-    )
+    layer(testLayer)('Clock case 1', (it) => {
+      it.effect(
+        'the just-saved place survives fifty equal-clock drafts and archived rows survive',
+        () =>
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const database = yield* Database
+            const archived = yield* thread(test.personal)
+            yield* save(
+              test.personal,
+              DraftPlace.cases.InThread.make({ thread: archived }),
+              'archived',
+            )
+            yield* (yield* ThreadStore).patch(test.personal.actor.person.id, archived, {
+              archived: true,
+            })
+            yield* TestClock.setTime(at)
+            for (let i = 0; i < 50; i++) {
+              const id = yield* thread(test.personal)
+              yield* save(
+                test.personal,
+                DraftPlace.cases.InThread.make({ thread: id }),
+                `kept ${i}`,
+              )
+            }
+            // This sorts behind all existing UUID places: old offset(50) trimmed the written row.
+            const last = ThreadId.make(`!${crypto.randomUUID()}`)
+            yield* database.run(
+              database.insert(threads).values({
+                id: last,
+                personId: test.personal.actor.person.id,
+                title: 'Frozen-clock draft',
+                titleSource: 'Person',
+                updatedAt: at,
+              }),
+            )
+            const place = DraftPlace.cases.InThread.make({ thread: last })
+            yield* save(test.personal, place, 'just saved')
+            const listed = (yield* current(test.personal)).drafts
+            expect(listed).toHaveLength(50)
+            expect(listed.map((draft) => draft.revision)).toEqual(
+              Array.from({ length: 50 }, (_, i) => 52 - i),
+            )
+            expect(listed.every((draft) => draft.savedAt === at)).toBe(true)
+            expect(listed.find((draft) => draft.text === 'just saved')).toMatchObject({ place })
+            expect(listed.find((draft) => draft.text === 'archived')).toBeUndefined()
+            const stored = yield* database.run(
+              database
+                .select()
+                .from(drafts)
+                .where(eq(drafts.personId, test.personal.actor.person.id)),
+            )
+            expect(stored).toHaveLength(51)
+            expect(stored.find((draft) => draft.threadId === archived)).toMatchObject({
+              text: 'archived',
+            })
+          }).pipe(Effect.scoped),
+      )
+    })
 
-    it.effect(
-      'archiving hides a draft; archived saves are allowed and unarchiving restores it',
-      () =>
-        Effect.gen(function* () {
-          const test = yield* fixture()
-          const id = yield* thread(test.personal)
-          const place = DraftPlace.cases.InThread.make({ thread: id })
-          yield* save(test.personal, place, 'before archive')
-          const watch = yield* observing(test.personal)
-          const store = yield* ThreadStore
-          yield* store.patch(test.personal.actor.person.id, id, { archived: true })
-          expect((yield* nextValue(watch)).drafts).toEqual([])
-          const saved = yield* save(test.personal, place, 'written while archived')
-          expect(DraftSaved.guards.Kept(saved)).toBe(true)
-          expect((yield* current(test.personal)).drafts).toEqual([])
-          // Hidden words still advance the Person's counter, so the live list must emit that
-          // generation even though its visible rows remain empty.
-          expect(yield* nextValue(watch)).toMatchObject({ generation: 2, drafts: [] })
-          expect(yield* Queue.size(watch.values)).toBe(0)
-          yield* store.patch(test.personal.actor.person.id, id, { archived: false })
-          expect((yield* nextValue(watch)).drafts).toMatchObject([
-            { place, text: 'written while archived', revision: 2 },
-          ])
-        }).pipe(Effect.scoped),
-    )
+    layer(testLayer)('Watch debounce clock', (it) => {
+      it.effect(
+        'archiving hides a draft; archived saves are allowed and unarchiving restores it',
+        () =>
+          Effect.gen(function* () {
+            const test = yield* fixture()
+            const id = yield* thread(test.personal)
+            const place = DraftPlace.cases.InThread.make({ thread: id })
+            yield* save(test.personal, place, 'before archive')
+            const watch = yield* observing(test.personal)
+            const store = yield* ThreadStore
+            yield* store.patch(test.personal.actor.person.id, id, { archived: true })
+            expect((yield* nextValue(watch)).drafts).toEqual([])
+            const saved = yield* save(test.personal, place, 'written while archived')
+            expect(DraftSaved.guards.Kept(saved)).toBe(true)
+            expect((yield* current(test.personal)).drafts).toEqual([])
+            // Hidden words still advance the Person's counter, so the live list must emit that
+            // generation even though its visible rows remain empty.
+            expect(yield* nextValue(watch)).toMatchObject({ generation: 2, drafts: [] })
+            expect(yield* Queue.size(watch.values)).toBe(0)
+            yield* store.patch(test.personal.actor.person.id, id, { archived: false })
+            expect((yield* nextValue(watch)).drafts).toMatchObject([
+              { place, text: 'written while archived', revision: 2 },
+            ])
+          }).pipe(Effect.scoped),
+      )
+    })
 
     it.effect(
       'a Thread deleted at the former pre-transaction check gap is NotFound at the store',
@@ -177,13 +187,10 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
             text: 'the Thread was deleted',
             device: 'laptop',
           })
-          const saving = yield* Effect.gen(function* () {
-            // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
-            const context = yield* Layer.build(controlled)
-            return yield* Effect.flatMap(DraftStore, (store) =>
-              store.save(test.personal.actor, request),
-            ).pipe(Effect.result, Effect.forkScoped, Effect.provide(context))
-          })
+          const context = yield* Layer.build(controlled)
+          const saving = yield* Effect.flatMap(DraftStore, (store) =>
+            store.save(test.personal.actor, request),
+          ).pipe(Effect.result, Effect.forkScoped, Effect.provide(context))
           yield* Deferred.await(entered)
           yield* (yield* ThreadStore).remove(test.personal.actor.person.id, id)
           yield* Deferred.succeed(resume, undefined)
@@ -192,71 +199,77 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
         }).pipe(Effect.scoped),
     )
 
-    it.effect('save is emitted by an open watch with server time and revision one', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        yield* TestClock.setTime(at)
-        const watch = yield* observing(test.personal)
-        expect(watch.initial.drafts).toEqual([])
-        const saved = yield* save(test.personal, newThread, '  unfinished words  ')
-        expect(saved).toEqual(
-          DraftSaved.cases.Kept.make({
-            generation: 1,
-            draft: {
-              place: newThread,
-              text: '  unfinished words  ',
-              revision: 1,
-              savedAt: at,
-              device: 'laptop',
-            },
-          }),
-        )
-        const emitted = yield* nextValue(watch)
-        DraftSaved.match(saved, {
-          Kept: ({ draft }) => expect(emitted.drafts).toEqual([draft]),
-          Cleared: () => expect.fail('Save cleared non-empty words'),
-        })
-      }).pipe(Effect.scoped),
-    )
-
-    it.effect('a second save increments revision and replaces words and device', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        yield* save(test.personal, newThread, 'first')
-        yield* TestClock.setTime(at)
-        const saved = yield* draftHandlers
-          .SaveDraft(SaveDraftRequest.make({ place: newThread, text: 'second', device: 'phone' }))
-          .pipe(signedIn(test.personal))
-        DraftSaved.match(saved, {
-          Kept: ({ draft }) =>
-            expect(draft).toMatchObject({
-              text: 'second',
-              revision: 2,
-              savedAt: at,
-              device: 'phone',
+    layer(testLayer)('Clock case 2', (it) => {
+      it.effect('save is emitted by an open watch with server time and revision one', () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          yield* TestClock.setTime(at)
+          const watch = yield* observing(test.personal)
+          expect(watch.initial.drafts).toEqual([])
+          const saved = yield* save(test.personal, newThread, '  unfinished words  ')
+          expect(saved).toEqual(
+            DraftSaved.cases.Kept.make({
+              generation: 1,
+              draft: {
+                place: newThread,
+                text: '  unfinished words  ',
+                revision: 1,
+                savedAt: at,
+                device: 'laptop',
+              },
             }),
-          Cleared: () => expect.fail('Save cleared non-empty words'),
-        })
-        expect((yield* current(test.personal)).drafts).toHaveLength(1)
-        expect((yield* current(test.personal)).drafts[0]).toMatchObject({
-          text: 'second',
-          revision: 2,
-        })
-      }).pipe(Effect.scoped),
-    )
+          )
+          const emitted = yield* nextValue(watch)
+          DraftSaved.match(saved, {
+            Kept: ({ draft }) => expect(emitted.drafts).toEqual([draft]),
+            Cleared: () => expect.fail('Save cleared non-empty words'),
+          })
+        }).pipe(Effect.scoped),
+      )
+    })
 
-    it.effect('whitespace clears the place and emits an empty list', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        yield* save(test.personal, newThread, 'first')
-        const watch = yield* observing(test.personal)
-        expect(watch.initial.drafts).toHaveLength(1)
-        expect(yield* save(test.personal, newThread, ' \t\n ')).toEqual(
-          DraftSaved.cases.Cleared.make({ place: newThread, generation: 2 }),
-        )
-        expect((yield* nextValue(watch)).drafts).toEqual([])
-      }).pipe(Effect.scoped),
-    )
+    layer(testLayer)('Clock case 3', (it) => {
+      it.effect('a second save increments revision and replaces words and device', () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          yield* save(test.personal, newThread, 'first')
+          yield* TestClock.setTime(at)
+          const saved = yield* draftHandlers
+            .SaveDraft(SaveDraftRequest.make({ place: newThread, text: 'second', device: 'phone' }))
+            .pipe(signedIn(test.personal))
+          DraftSaved.match(saved, {
+            Kept: ({ draft }) =>
+              expect(draft).toMatchObject({
+                text: 'second',
+                revision: 2,
+                savedAt: at,
+                device: 'phone',
+              }),
+            Cleared: () => expect.fail('Save cleared non-empty words'),
+          })
+          expect((yield* current(test.personal)).drafts).toHaveLength(1)
+          expect((yield* current(test.personal)).drafts[0]).toMatchObject({
+            text: 'second',
+            revision: 2,
+          })
+        }).pipe(Effect.scoped),
+      )
+    })
+
+    layer(testLayer)('Watch debounce clock', (it) => {
+      it.effect('whitespace clears the place and emits an empty list', () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          yield* save(test.personal, newThread, 'first')
+          const watch = yield* observing(test.personal)
+          expect(watch.initial.drafts).toHaveLength(1)
+          expect(yield* save(test.personal, newThread, ' \t\n ')).toEqual(
+            DraftSaved.cases.Cleared.make({ place: newThread, generation: 2 }),
+          )
+          expect((yield* nextValue(watch)).drafts).toEqual([])
+        }).pipe(Effect.scoped),
+      )
+    })
 
     it.effect('another Person never receives unsent words in the same Company', () =>
       Effect.gen(function* () {
@@ -312,42 +325,46 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
       }).pipe(Effect.scoped),
     )
 
-    it.effect('fifty cap drops the oldest only in the saved workspace, newest first', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        yield* save(test.member, newThread, 'Company keeps its draft')
-        yield* TestClock.setTime(at)
-        yield* save(test.personal, newThread, 'oldest')
-        for (let i = 1; i <= 50; i++) {
-          yield* TestClock.setTime(at - i)
-          const id = yield* thread(test.personal)
-          yield* save(test.personal, DraftPlace.cases.InThread.make({ thread: id }), `words ${i}`)
-        }
-        const listed = (yield* current(test.personal)).drafts
-        expect(listed).toHaveLength(50)
-        expect(listed.map((draft) => draft.text)).toEqual(
-          Array.from({ length: 50 }, (_, i) => `words ${50 - i}`),
-        )
-        expect((yield* current(test.member)).drafts).toMatchObject([
-          { text: 'Company keeps its draft' },
-        ])
-      }).pipe(Effect.scoped),
-    )
+    layer(testLayer)('Clock case 4', (it) => {
+      it.effect('fifty cap drops the oldest only in the saved workspace, newest first', () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          yield* save(test.member, newThread, 'Company keeps its draft')
+          yield* TestClock.setTime(at)
+          yield* save(test.personal, newThread, 'oldest')
+          for (let i = 1; i <= 50; i++) {
+            yield* TestClock.setTime(at - i)
+            const id = yield* thread(test.personal)
+            yield* save(test.personal, DraftPlace.cases.InThread.make({ thread: id }), `words ${i}`)
+          }
+          const listed = (yield* current(test.personal)).drafts
+          expect(listed).toHaveLength(50)
+          expect(listed.map((draft) => draft.text)).toEqual(
+            Array.from({ length: 50 }, (_, i) => `words ${50 - i}`),
+          )
+          expect((yield* current(test.member)).drafts).toMatchObject([
+            { text: 'Company keeps its draft' },
+          ])
+        }).pipe(Effect.scoped),
+      )
+    })
 
-    it.effect('Thread deletion cascades its draft and refreshes the owner watch', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        const id = yield* thread(test.personal)
-        yield* save(test.personal, DraftPlace.cases.InThread.make({ thread: id }), 'words')
-        const watch = yield* observing(test.personal)
-        yield* (yield* ThreadStore).remove(test.personal.actor.person.id, id)
-        expect((yield* nextValue(watch)).drafts).toEqual([])
-        const database = yield* Database
-        expect(
-          yield* database.run(database.select().from(drafts).where(eq(drafts.threadId, id))),
-        ).toEqual([])
-      }).pipe(Effect.scoped),
-    )
+    layer(testLayer)('Watch debounce clock', (it) => {
+      it.effect('Thread deletion cascades its draft and refreshes the owner watch', () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const id = yield* thread(test.personal)
+          yield* save(test.personal, DraftPlace.cases.InThread.make({ thread: id }), 'words')
+          const watch = yield* observing(test.personal)
+          yield* (yield* ThreadStore).remove(test.personal.actor.person.id, id)
+          expect((yield* nextValue(watch)).drafts).toEqual([])
+          const database = yield* Database
+          expect(
+            yield* database.run(database.select().from(drafts).where(eq(drafts.threadId, id))),
+          ).toEqual([])
+        }).pipe(Effect.scoped),
+      )
+    })
 
     it.effect('a Thread no longer visible is excluded before the draft list limit', () =>
       Effect.gen(function* () {
@@ -366,19 +383,21 @@ describe.skipIf(!testDatabaseConfigured)('cross-device drafts', () => {
       }).pipe(Effect.scoped),
     )
 
-    it.effect('one device save reaches both subscriptions of the same Person', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        const laptop = yield* observing(test.personal)
-        const phone = yield* observing(test.second)
-        yield* save(test.personal, newThread, 'both devices')
-        const [onLaptop, onPhone] = yield* Effect.all([nextValue(laptop), nextValue(phone)], {
-          concurrency: 2,
-        })
-        expect(onLaptop).toEqual(onPhone)
-        expect(onPhone.drafts).toMatchObject([{ text: 'both devices', revision: 1 }])
-      }).pipe(Effect.scoped),
-    )
+    layer(testLayer)('Watch debounce clock', (it) => {
+      it.effect('one device save reaches both subscriptions of the same Person', () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          const laptop = yield* observing(test.personal)
+          const phone = yield* observing(test.second)
+          yield* save(test.personal, newThread, 'both devices')
+          const [onLaptop, onPhone] = yield* Effect.all([nextValue(laptop), nextValue(phone)], {
+            concurrency: 2,
+          })
+          expect(onLaptop).toEqual(onPhone)
+          expect(onPhone.drafts).toMatchObject([{ text: 'both devices', revision: 1 }])
+        }).pipe(Effect.scoped),
+      )
+    })
 
     it.effect('concurrent device saves retain every revision and enforce the workspace cap', () =>
       Effect.gen(function* () {

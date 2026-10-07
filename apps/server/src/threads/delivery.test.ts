@@ -291,13 +291,10 @@ type Harness = Effect.Success<ReturnType<typeof harness>>
 const gateway = Effect.fn('Gateway.test.request')(function* (test: Harness, request: Request) {
   const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
   return yield* handle.pipe(
-      Effect.provideService(Conversation, test.conversation),
-      Effect.provideService(Runtime, test.runtime),
-      Effect.provideService(
-        HttpServerRequest.HttpServerRequest,
-        HttpServerRequest.fromWeb(request),
-      )
-    )
+    Effect.provideService(Conversation, test.conversation),
+    Effect.provideService(Runtime, test.runtime),
+    Effect.provideService(HttpServerRequest.HttpServerRequest, HttpServerRequest.fromWeb(request)),
+  )
 })
 
 /** Only Ben can see this private Thread; Ada stays a Company Member to test the narrower audience. */
@@ -352,7 +349,9 @@ const signals = [
   { type: 'answer', origin: StoredRunOrigin.cases.Decision.make({}) },
 ] as const
 
-layer(databaseLayer.pipe(Layer.provideMerge(silentChangesLayer), Layer.provideMerge(testConfigLayer)))((it) => {
+layer(
+  databaseLayer.pipe(Layer.provideMerge(silentChangesLayer), Layer.provideMerge(testConfigLayer)),
+)((it) => {
   describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
     it.effect(
       'a standing finding opens one private Thread and Run through normal admission; a child cannot fan out',
@@ -382,7 +381,6 @@ layer(databaseLayer.pipe(Layer.provideMerge(silentChangesLayer), Layer.provideMe
               },
             }
             const open = Effect.gen(function* () {
-
               const context = yield* Layer.build(test.services)
               return yield* openAttentionThread(input).pipe(
                 Effect.provideService(Conversation, test.conversation),
@@ -409,7 +407,6 @@ layer(databaseLayer.pipe(Layer.provideMerge(silentChangesLayer), Layer.provideMe
             expect(yield* automaticallyNotifies(source.runId)).toBe(false)
             expect(yield* automaticallyNotifies(childRun.id)).toBe(false)
             const refused = yield* Effect.gen(function* () {
-
               const context = yield* Layer.build(test.services)
               return yield* openAttentionThread({ ...input, threadId: child.id }).pipe(
                 Effect.provideService(Conversation, test.conversation),
@@ -435,27 +432,34 @@ layer(databaseLayer.pipe(Layer.provideMerge(silentChangesLayer), Layer.provideMe
       },
     ]
     for (const failure of admissionFailures) {
-      it.effect(
-        `${failure.name} Flue admission ends the Run with Delivery and does not block Ben`,
-        () =>
-          Effect.gen(function* () {
-            const test = yield* harness()
-            // The error names the Run its request would have started, as the real client's does.
-            const message = said(test.threadId, test.ada)
-            const runId = submissionId(test.threadId, message.idempotencyKey)
-            yield* Ref.set(test.failure, Option.some(failure.make(test.threadId, runId)))
-            const rejected = yield* Effect.result(test.conversation.admit(message))
-            expect(Result.isFailure(rejected) && rejected.failure).toBeInstanceOf(
-              RuntimeUnavailable,
-            )
-            const recorded = yield* (yield* RunStore).list(test.threadId)
-            expect(recorded.map((run) => run.state)).toEqual([
-              RunState.cases.Failed.make({ finishedAt: 0, reason: 'Delivery' }),
-            ])
-            yield* test.conversation.admit(said(test.threadId, test.ben))
-            expect(yield* Ref.get(test.admitted)).toHaveLength(1)
-          }).pipe(Effect.scoped),
-      )
+      layer(
+        databaseLayer.pipe(
+          Layer.provideMerge(silentChangesLayer),
+          Layer.provideMerge(testConfigLayer),
+        ),
+      )('Clock case 1', (it) => {
+        it.effect(
+          `${failure.name} Flue admission ends the Run with Delivery and does not block Ben`,
+          () =>
+            Effect.gen(function* () {
+              const test = yield* harness()
+              // The error names the Run its request would have started, as the real client's does.
+              const message = said(test.threadId, test.ada)
+              const runId = submissionId(test.threadId, message.idempotencyKey)
+              yield* Ref.set(test.failure, Option.some(failure.make(test.threadId, runId)))
+              const rejected = yield* Effect.result(test.conversation.admit(message))
+              expect(Result.isFailure(rejected) && rejected.failure).toBeInstanceOf(
+                RuntimeUnavailable,
+              )
+              const recorded = yield* (yield* RunStore).list(test.threadId)
+              expect(recorded.map((run) => run.state)).toEqual([
+                RunState.cases.Failed.make({ finishedAt: 0, reason: 'Delivery' }),
+              ])
+              yield* test.conversation.admit(said(test.threadId, test.ben))
+              expect(yield* Ref.get(test.admitted)).toHaveLength(1)
+            }).pipe(Effect.scoped),
+        )
+      })
     }
 
     it.effect('refuses Ben with Ada’s name, then admits him after Ada settles', () =>
@@ -563,84 +567,99 @@ layer(databaseLayer.pipe(Layer.provideMerge(silentChangesLayer), Layer.provideMe
       }).pipe(Effect.scoped),
     )
 
-    it.effect('a Busy Routine keeps its tick while another due Routine runs in the same pass', () =>
-      Effect.gen(function* () {
-        const test = yield* harness()
-        const database = yield* Database
-        const person = yield* findPerson(test.ben)
-        if (Option.isNone(person)) expect.fail('Missing Ben')
-        const actor = {
-          person: person.value,
-          workspace: Workspace.cases.Company.make({
-            company: new Company({
-              id: test.companyId,
-              name: 'Delivery test',
-              slug: test.companyId,
-            }),
-            role: 'member',
-          }),
-          by: 'person' as const,
-          threadId: Option.none<ThreadId>(),
-        }
-        const foundation = Layer.mergeAll(
-          test.services,
-          testConfigLayer,
-          Layer.succeed(Conversation, test.conversation),
-        )
-        const schedulerContext = yield* Layer.build(
-          routineSchedulerServiceLayer.pipe(
-            // These Routines run on the clock. Nothing here watches an Integration, so the store
-            // gets a stand-in with no methods; the production Layer would build a real Executor
-            // client from settings this suite does not have.
-            Layer.provideMerge(
-              routineStoreServiceLayer.pipe(Layer.provide(Layer.mock(IntegrationWatch, {}))),
-            ),
-            Layer.provide(foundation),
-          ),
-        )
-        const store = yield* RoutineStore.pipe(Effect.provideContext(schedulerContext))
-        const scheduler = yield* RoutineScheduler.pipe(Effect.provideContext(schedulerContext))
-        const trigger = RoutineTrigger.cases.Schedule.make({ cron: '* * * * *', timezone: 'UTC' })
-        const busy = yield* store.create(actor, { name: 'Busy', prompt: 'Review', trigger })
-        const healthy = yield* store.create(actor, { name: 'Healthy', prompt: 'Review', trigger })
-        const threadStore = yield* Effect.gen(function* () {
-
-          const context = yield* Layer.build(test.services)
-          return yield* ThreadStore.pipe(Effect.provide(context))
-        })
-        const busyThread = yield* threadStore.ensure({
-          id: ThreadId.make(`routine-${busy.id}`),
-          title: 'Busy',
-          titleSource: 'Person',
-          personId: test.ben,
-          companyId: test.companyId,
-        })
-        yield* database.run(
-          database
-            .update(threads)
-            .set({ audience: 'company' })
-            .where(eq(threads.id, busyThread.id)),
-        )
-        const ada = yield* test.conversation.admit(said(busyThread.id, test.ada))
-        yield* TestClock.setTime(60_000)
-        const pass = yield* Effect.result(scheduler.runDue)
-        expect(Result.isFailure(pass) && pass.failure).toBeInstanceOf(Conflict)
-        const waiting = (yield* store.list(actor)).find((routine) => routine.id === busy.id)
-        if (waiting === undefined) expect.fail('Missing Busy Routine')
-        expect(waiting.runs).toMatchObject([
-          { submissionId: null, error: 'Delivery was not admitted (Conflict)' },
-        ])
-        const running = (yield* store.list(actor)).find((routine) => routine.id === healthy.id)
-        if (running === undefined) expect.fail('Missing Healthy Routine')
-        expect(running.runs).toMatchObject([{ status: 'running' }])
-        yield* test.finish(ada.runId)
-        yield* scheduler.runDue
-        const replayed = (yield* store.list(actor)).find((routine) => routine.id === busy.id)
-        if (replayed === undefined) expect.fail('Missing replayed Routine')
-        expect(replayed.runs.map((run) => run.id)).toEqual(waiting.runs.map((run) => run.id))
-        expect(replayed.runs).toMatchObject([{ status: 'running', error: null }])
-      }).pipe(Effect.scoped),
-    )
+    layer(
+      databaseLayer.pipe(
+        Layer.provideMerge(silentChangesLayer),
+        Layer.provideMerge(testConfigLayer),
+      ),
+    )('Clock case 2', (it) => {
+      it.effect(
+        'a Busy Routine keeps its tick while another due Routine runs in the same pass',
+        () =>
+          Effect.gen(function* () {
+            const test = yield* harness()
+            const database = yield* Database
+            const person = yield* findPerson(test.ben)
+            if (Option.isNone(person)) expect.fail('Missing Ben')
+            const actor = {
+              person: person.value,
+              workspace: Workspace.cases.Company.make({
+                company: new Company({
+                  id: test.companyId,
+                  name: 'Delivery test',
+                  slug: test.companyId,
+                }),
+                role: 'member',
+              }),
+              by: 'person' as const,
+              threadId: Option.none<ThreadId>(),
+            }
+            const foundation = Layer.mergeAll(
+              test.services,
+              testConfigLayer,
+              Layer.succeed(Conversation, test.conversation),
+            )
+            const schedulerContext = yield* Layer.build(
+              routineSchedulerServiceLayer.pipe(
+                // These Routines run on the clock. Nothing here watches an Integration, so the store
+                // gets a stand-in with no methods; the production Layer would build a real Executor
+                // client from settings this suite does not have.
+                Layer.provideMerge(
+                  routineStoreServiceLayer.pipe(Layer.provide(Layer.mock(IntegrationWatch, {}))),
+                ),
+                Layer.provide(foundation),
+              ),
+            )
+            const store = yield* RoutineStore.pipe(Effect.provideContext(schedulerContext))
+            const scheduler = yield* RoutineScheduler.pipe(Effect.provideContext(schedulerContext))
+            const trigger = RoutineTrigger.cases.Schedule.make({
+              cron: '* * * * *',
+              timezone: 'UTC',
+            })
+            const busy = yield* store.create(actor, { name: 'Busy', prompt: 'Review', trigger })
+            const healthy = yield* store.create(actor, {
+              name: 'Healthy',
+              prompt: 'Review',
+              trigger,
+            })
+            const threadStore = yield* Effect.gen(function* () {
+              const context = yield* Layer.build(test.services)
+              return yield* ThreadStore.pipe(Effect.provide(context))
+            })
+            const busyThread = yield* threadStore.ensure({
+              id: ThreadId.make(`routine-${busy.id}`),
+              title: 'Busy',
+              titleSource: 'Person',
+              personId: test.ben,
+              companyId: test.companyId,
+            })
+            yield* database.run(
+              database
+                .update(threads)
+                .set({ audience: 'company' })
+                .where(eq(threads.id, busyThread.id)),
+            )
+            const ada = yield* test.conversation.admit(said(busyThread.id, test.ada))
+            yield* TestClock.setTime(60_000)
+            const pass = yield* Effect.result(scheduler.runDue)
+            expect(Result.isFailure(pass) && pass.failure).toBeInstanceOf(Conflict)
+            const waiting = (yield* store.list(actor)).find((routine) => routine.id === busy.id)
+            if (waiting === undefined) expect.fail('Missing Busy Routine')
+            expect(waiting.runs).toMatchObject([
+              { submissionId: null, error: 'Delivery was not admitted (Conflict)' },
+            ])
+            const running = (yield* store.list(actor)).find((routine) => routine.id === healthy.id)
+            if (running === undefined) expect.fail('Missing Healthy Routine')
+            expect(running.runs).toMatchObject([{ status: 'running' }])
+            yield* test.finish(ada.runId)
+            yield* scheduler.runDue
+            const replayed = (yield* store.list(actor)).find((routine) => routine.id === busy.id)
+            if (replayed === undefined) expect.fail('Missing replayed Routine')
+            expect(replayed.runs.map((run) => run.id)).toEqual(waiting.runs.map((run) => run.id))
+            expect(replayed.runs).toMatchObject([{ status: 'running', error: null }])
+          }).pipe(Effect.scoped),
+      )
+    })
 
     for (const { type, origin } of signals) {
       it.effect(
@@ -693,27 +712,27 @@ layer(databaseLayer.pipe(Layer.provideMerge(silentChangesLayer), Layer.provideMe
           const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
           const send = Effect.fn('Gateway.test.send')(function* () {
             return yield* handle.pipe(
-                Effect.provideService(Conversation, test.conversation),
-                Effect.provideService(Runtime, test.runtime),
-                Effect.provideService(
-                  HttpServerRequest.HttpServerRequest,
-                  HttpServerRequest.fromWeb(
-                    new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
-                      method: 'POST',
-                      headers: {
-                        authorization: `Bearer ${test.token}`,
-                        host: 'gateway.test',
-                        'content-type': 'application/json',
-                      },
-                      body: JSON.stringify({
-                        kind: 'user',
-                        body: 'Please help',
-                        idempotencyKey: 'lost-http-response',
-                      }),
+              Effect.provideService(Conversation, test.conversation),
+              Effect.provideService(Runtime, test.runtime),
+              Effect.provideService(
+                HttpServerRequest.HttpServerRequest,
+                HttpServerRequest.fromWeb(
+                  new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
+                    method: 'POST',
+                    headers: {
+                      authorization: `Bearer ${test.token}`,
+                      host: 'gateway.test',
+                      'content-type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                      kind: 'user',
+                      body: 'Please help',
+                      idempotencyKey: 'lost-http-response',
                     }),
-                  ),
-                )
-              )
+                  }),
+                ),
+              ),
+            )
           })
           const first = yield* send()
           // Discarding the first response represents admission succeeding before HTTP delivery fails.
@@ -736,23 +755,23 @@ layer(databaseLayer.pipe(Layer.provideMerge(silentChangesLayer), Layer.provideMe
         yield* test.conversation.admit(said(test.threadId, test.ada))
         const handle = yield* HttpRouter.toHttpEffect(gatewayRoutes)
         const response = yield* handle.pipe(
-            Effect.provideService(Conversation, test.conversation),
-            Effect.provideService(Runtime, test.runtime),
-            Effect.provideService(
-              HttpServerRequest.HttpServerRequest,
-              HttpServerRequest.fromWeb(
-                new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
-                  method: 'POST',
-                  headers: {
-                    authorization: `Bearer ${test.token}`,
-                    host: 'gateway.test',
-                    'content-type': 'application/json',
-                  },
-                  body: JSON.stringify({ kind: 'user', body: 'Please help' }),
-                }),
-              ),
-            )
-          )
+          Effect.provideService(Conversation, test.conversation),
+          Effect.provideService(Runtime, test.runtime),
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(
+              new Request(`http://gateway.test/api/vivid/${test.threadId}`, {
+                method: 'POST',
+                headers: {
+                  authorization: `Bearer ${test.token}`,
+                  host: 'gateway.test',
+                  'content-type': 'application/json',
+                },
+                body: JSON.stringify({ kind: 'user', body: 'Please help' }),
+              }),
+            ),
+          ),
+        )
         expect(response.status).toBe(409)
         expect(response.body).toHaveProperty(
           'text',
@@ -840,9 +859,9 @@ layer(databaseLayer.pipe(Layer.provideMerge(silentChangesLayer), Layer.provideMe
           yield* server
             .serve(
               handle.pipe(
-                  Effect.provideService(Conversation, test.conversation),
-                  Effect.provideService(Runtime, test.runtime)
-                ),
+                Effect.provideService(Conversation, test.conversation),
+                Effect.provideService(Runtime, test.runtime),
+              ),
             )
             .pipe(Effect.provideContext(serverContext))
           const url = new URL(HttpServer.formatAddress(server.address))

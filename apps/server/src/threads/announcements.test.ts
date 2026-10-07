@@ -266,29 +266,31 @@ describe.skipIf(!testDatabaseConfigured)('Thread transaction announcements', () 
         yield* silent(notifications)
       }),
     )
-    it.effect('case4 patch reloads a named participant with the committed title', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        yield* seed(test, 'people', [test.ben.id])
-        const store = yield* ThreadStore
-        const observation = yield* observing(
-          [Topic.person(test.ben.id), Topic.company(test.company.id)],
-          store.list(test.actor(test.ben)),
-        )
-        expect(observation.initial).toHaveLength(1)
-        const notifications = yield* (yield* PgClient).listen(CHANNEL)
-        yield* store.patch(test.creator.id, test.id, { title: 'Renamed' })
-        yield* payload(notifications, [
-          Topic.thread(test.id),
-          Topic.person(test.creator.id),
-          Topic.company(test.company.id),
-          Topic.person(test.ben.id),
-        ])
-        expect(yield* nextValue(observation)).toEqual([
-          expect.objectContaining({ title: 'Renamed' }),
-        ])
-      }),
-    )
+    layer(testLayer)('Clock case 1', (it) => {
+      it.effect('case4 patch reloads a named participant with the committed title', () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          yield* seed(test, 'people', [test.ben.id])
+          const store = yield* ThreadStore
+          const observation = yield* observing(
+            [Topic.person(test.ben.id), Topic.company(test.company.id)],
+            store.list(test.actor(test.ben)),
+          )
+          expect(observation.initial).toHaveLength(1)
+          const notifications = yield* (yield* PgClient).listen(CHANNEL)
+          yield* store.patch(test.creator.id, test.id, { title: 'Renamed' })
+          yield* payload(notifications, [
+            Topic.thread(test.id),
+            Topic.person(test.creator.id),
+            Topic.company(test.company.id),
+            Topic.person(test.ben.id),
+          ])
+          expect(yield* nextValue(observation)).toEqual([
+            expect.objectContaining({ title: 'Renamed' }),
+          ])
+        }),
+      )
+    })
     it.effect('case5 patch conceals an inaccessible Thread and writes nothing', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
@@ -305,26 +307,28 @@ describe.skipIf(!testDatabaseConfigured)('Thread transaction announcements', () 
         yield* silent(notifications)
       }),
     )
-    it.effect('case6 narrowing Company to Private reloads people who lose access', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        yield* seed(test, 'company', [])
-        const store = yield* ThreadStore
-        const observation = yield* observing(
-          [Topic.person(test.ben.id), Topic.company(test.company.id)],
-          store.list(test.actor(test.ben)),
-        )
-        expect(observation.initial).toHaveLength(1)
-        const notifications = yield* (yield* PgClient).listen(CHANNEL)
-        yield* store.share(test.creator.id, test.id, ShareThreadRequest.cases.Private.make({}))
-        yield* payload(notifications, [
-          Topic.thread(test.id),
-          Topic.person(test.creator.id),
-          Topic.company(test.company.id),
-        ])
-        expect(yield* nextValue(observation)).toEqual([])
-      }),
-    )
+    layer(testLayer)('Clock case 2', (it) => {
+      it.effect('case6 narrowing Company to Private reloads people who lose access', () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          yield* seed(test, 'company', [])
+          const store = yield* ThreadStore
+          const observation = yield* observing(
+            [Topic.person(test.ben.id), Topic.company(test.company.id)],
+            store.list(test.actor(test.ben)),
+          )
+          expect(observation.initial).toHaveLength(1)
+          const notifications = yield* (yield* PgClient).listen(CHANNEL)
+          yield* store.share(test.creator.id, test.id, ShareThreadRequest.cases.Private.make({}))
+          yield* payload(notifications, [
+            Topic.thread(test.id),
+            Topic.person(test.creator.id),
+            Topic.company(test.company.id),
+          ])
+          expect(yield* nextValue(observation)).toEqual([])
+        }),
+      )
+    })
     it.effect(
       'case7 replacing named people announces both audiences and audits the Thread Company',
       () =>
@@ -408,49 +412,53 @@ describe.skipIf(!testDatabaseConfigured)('Thread transaction announcements', () 
       }),
     )
     /** A named Person who loses the last share must receive the invalidation that removes it. */
-    it.effect('case8c People to Private reloads the removed named Person', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        yield* seed(test, 'people', [test.ben.id])
-        const store = yield* ThreadStore
-        const observation = yield* observing(
-          [Topic.person(test.ben.id), Topic.company(test.company.id)],
-          store.list(test.actor(test.ben)),
-        )
-        expect(observation.initial).toHaveLength(1)
-        const notifications = yield* (yield* PgClient).listen(CHANNEL)
-        yield* store.share(test.creator.id, test.id, ShareThreadRequest.cases.Private.make({}))
-        yield* payload(notifications, [
-          Topic.thread(test.id),
-          Topic.person(test.creator.id),
-          Topic.company(test.company.id),
-          Topic.person(test.ben.id),
-        ])
-        expect(yield* nextValue(observation)).toEqual([])
-      }),
-    )
-    it.effect('case9 remove announces the deleted audience and reloads its lists', () =>
-      Effect.gen(function* () {
-        const test = yield* fixture()
-        yield* seed(test, 'people', [test.ben.id])
-        const store = yield* ThreadStore
-        const observation = yield* observing(
-          [Topic.person(test.ben.id), Topic.company(test.company.id)],
-          store.list(test.actor(test.ben)),
-        )
-        expect(observation.initial).toHaveLength(1)
-        const notifications = yield* (yield* PgClient).listen(CHANNEL)
-        yield* store.remove(test.creator.id, test.id)
-        expect((yield* stored(test)).rows).toEqual([])
-        yield* payload(notifications, [
-          Topic.thread(test.id),
-          Topic.person(test.creator.id),
-          Topic.company(test.company.id),
-          Topic.person(test.ben.id),
-        ])
-        expect(yield* nextValue(observation)).toEqual([])
-      }),
-    )
+    layer(testLayer)('Clock case 3', (it) => {
+      it.effect('case8c People to Private reloads the removed named Person', () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          yield* seed(test, 'people', [test.ben.id])
+          const store = yield* ThreadStore
+          const observation = yield* observing(
+            [Topic.person(test.ben.id), Topic.company(test.company.id)],
+            store.list(test.actor(test.ben)),
+          )
+          expect(observation.initial).toHaveLength(1)
+          const notifications = yield* (yield* PgClient).listen(CHANNEL)
+          yield* store.share(test.creator.id, test.id, ShareThreadRequest.cases.Private.make({}))
+          yield* payload(notifications, [
+            Topic.thread(test.id),
+            Topic.person(test.creator.id),
+            Topic.company(test.company.id),
+            Topic.person(test.ben.id),
+          ])
+          expect(yield* nextValue(observation)).toEqual([])
+        }),
+      )
+    })
+    layer(testLayer)('Clock case 4', (it) => {
+      it.effect('case9 remove announces the deleted audience and reloads its lists', () =>
+        Effect.gen(function* () {
+          const test = yield* fixture()
+          yield* seed(test, 'people', [test.ben.id])
+          const store = yield* ThreadStore
+          const observation = yield* observing(
+            [Topic.person(test.ben.id), Topic.company(test.company.id)],
+            store.list(test.actor(test.ben)),
+          )
+          expect(observation.initial).toHaveLength(1)
+          const notifications = yield* (yield* PgClient).listen(CHANNEL)
+          yield* store.remove(test.creator.id, test.id)
+          expect((yield* stored(test)).rows).toEqual([])
+          yield* payload(notifications, [
+            Topic.thread(test.id),
+            Topic.person(test.creator.id),
+            Topic.company(test.company.id),
+            Topic.person(test.ben.id),
+          ])
+          expect(yield* nextValue(observation)).toEqual([])
+        }),
+      )
+    })
     it.effect('case10 only the creator may remove a visible Thread', () =>
       Effect.gen(function* () {
         const test = yield* fixture()

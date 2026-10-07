@@ -221,43 +221,47 @@ const marker = Effect.fn('ThreadTitles.test.marker')(function* (
 /** Exercise production observation, SQL source guards and publication with a deliberate model Layer. */
 layer(databaseLayer)((it) => {
   describe.skipIf(!testDatabaseConfigured)('Thread title generation', () => {
-    it.effect('settles a Run before a blocked title model, then replaces Seed and publishes', () =>
-      Effect.gen(function* () {
-        const test = yield* harness('Please plan a holiday', 'Seed')
-        const admitted = yield* test.start('title')
-        yield* Deferred.succeed(
-          test.settlement,
-          Settlement.cases.Completed.make({
-            reply: 'Florence could work.',
-            responseId: RunId.make('title-test-response'),
-          }),
-        )
-        const input = yield* Queue.take(test.requests)
-        expect(input.content).toEqual({
-          conversation:
-            'Thread contents:\nUSER:\nPlease plan a holiday in Italy\n\nASSISTANT:\nWe can explore Florence.',
-          previousTitle: null,
-        })
-        expect(input.prompt).not.toContain('Please plan a holiday in Italy')
-        expect((yield* (yield* RunStore).list(test.threadId))[0]).toMatchObject({
-          id: admitted.runId,
-          state: RunState.cases.Completed.make({ finishedAt: 0 }),
-        })
-        const notifications = yield* (yield* PgClient).listen(CHANNEL)
-        yield* Deferred.succeed(
-          test.completion,
-          Completion.cases.Finished.make({ text: '{"title":"Plan an Italian holiday"}' }),
-        )
-        yield* Deferred.await(test.finished)
-        expect(yield* test.stored).toMatchObject({
-          title: 'Plan an Italian holiday',
-          titleSource: 'Generated',
-        })
-        expect(new Set(yield* decodeTopics((yield* Queue.take(notifications)).payload))).toEqual(
-          new Set([Topic.thread(test.threadId), Topic.person(test.personId)]),
-        )
-      }).pipe(Effect.scoped),
-    )
+    layer(databaseLayer)('Clock case 1', (it) => {
+      it.effect(
+        'settles a Run before a blocked title model, then replaces Seed and publishes',
+        () =>
+          Effect.gen(function* () {
+            const test = yield* harness('Please plan a holiday', 'Seed')
+            const admitted = yield* test.start('title')
+            yield* Deferred.succeed(
+              test.settlement,
+              Settlement.cases.Completed.make({
+                reply: 'Florence could work.',
+                responseId: RunId.make('title-test-response'),
+              }),
+            )
+            const input = yield* Queue.take(test.requests)
+            expect(input.content).toEqual({
+              conversation:
+                'Thread contents:\nUSER:\nPlease plan a holiday in Italy\n\nASSISTANT:\nWe can explore Florence.',
+              previousTitle: null,
+            })
+            expect(input.prompt).not.toContain('Please plan a holiday in Italy')
+            expect((yield* (yield* RunStore).list(test.threadId))[0]).toMatchObject({
+              id: admitted.runId,
+              state: RunState.cases.Completed.make({ finishedAt: 0 }),
+            })
+            const notifications = yield* (yield* PgClient).listen(CHANNEL)
+            yield* Deferred.succeed(
+              test.completion,
+              Completion.cases.Finished.make({ text: '{"title":"Plan an Italian holiday"}' }),
+            )
+            yield* Deferred.await(test.finished)
+            expect(yield* test.stored).toMatchObject({
+              title: 'Plan an Italian holiday',
+              titleSource: 'Generated',
+            })
+            expect(
+              new Set(yield* decodeTopics((yield* Queue.take(notifications)).payload)),
+            ).toEqual(new Set([Topic.thread(test.threadId), Topic.person(test.personId)]))
+          }).pipe(Effect.scoped),
+      )
+    })
 
     it.effect.each(['', '  ', '`"\'`', 'New thread'])(
       'keeps Seed retryable after unusable model title %j',
@@ -344,54 +348,58 @@ layer(databaseLayer)((it) => {
       }).pipe(Effect.scoped),
     )
 
-    it.effect('bounds regeneration with a typed model timeout and interrupts the provider', () =>
-      Effect.gen(function* () {
-        const test = yield* harness('Please plan a holiday', 'Seed')
-        const fiber = yield* test.titles
-          .regenerate(yield* test.stored, test.personId)
-          .pipe(Effect.result, Effect.forkScoped)
-        yield* Queue.take(test.requests)
-        yield* TestClock.adjust(TITLE_MODEL_TIMEOUT)
-        yield* Deferred.await(test.modelFinished)
-        expect(yield* Fiber.join(fiber)).toEqual(
-          Result.fail(ThreadTitleModelUnavailable.make({ thread: test.threadId })),
-        )
-        expect(yield* test.stored).toMatchObject({
-          title: 'Please plan a holiday',
-          titleSource: 'Seed',
-        })
-      }).pipe(Effect.scoped),
-    )
-
-    it.effect(
-      'bounds background generation while leaving the settled Run complete and Seed retryable',
-      () =>
+    layer(databaseLayer)('Clock case 2', (it) => {
+      it.effect('bounds regeneration with a typed model timeout and interrupts the provider', () =>
         Effect.gen(function* () {
           const test = yield* harness('Please plan a holiday', 'Seed')
-          yield* test.start('title')
-          yield* Deferred.succeed(
-            test.settlement,
-            Settlement.cases.Completed.make({
-              reply: 'Done',
-              responseId: RunId.make('title-test-response'),
-            }),
-          )
+          const fiber = yield* test.titles
+            .regenerate(yield* test.stored, test.personId)
+            .pipe(Effect.result, Effect.forkScoped)
           yield* Queue.take(test.requests)
           yield* TestClock.adjust(TITLE_MODEL_TIMEOUT)
           yield* Deferred.await(test.modelFinished)
-          yield* Deferred.await(test.finished)
+          expect(yield* Fiber.join(fiber)).toEqual(
+            Result.fail(ThreadTitleModelUnavailable.make({ thread: test.threadId })),
+          )
           expect(yield* test.stored).toMatchObject({
             title: 'Please plan a holiday',
             titleSource: 'Seed',
           })
-          expect(
-            (yield* (yield* RunStore).list(test.threadId)).every((run) =>
-              RunState.guards.Completed(run.state),
-            ),
-          ).toBe(true)
-          expect(yield* Ref.get(test.generatedWrites)).toBe(0)
         }).pipe(Effect.scoped),
-    )
+      )
+    })
+
+    layer(databaseLayer)('Clock case 3', (it) => {
+      it.effect(
+        'bounds background generation while leaving the settled Run complete and Seed retryable',
+        () =>
+          Effect.gen(function* () {
+            const test = yield* harness('Please plan a holiday', 'Seed')
+            yield* test.start('title')
+            yield* Deferred.succeed(
+              test.settlement,
+              Settlement.cases.Completed.make({
+                reply: 'Done',
+                responseId: RunId.make('title-test-response'),
+              }),
+            )
+            yield* Queue.take(test.requests)
+            yield* TestClock.adjust(TITLE_MODEL_TIMEOUT)
+            yield* Deferred.await(test.modelFinished)
+            yield* Deferred.await(test.finished)
+            expect(yield* test.stored).toMatchObject({
+              title: 'Please plan a holiday',
+              titleSource: 'Seed',
+            })
+            expect(
+              (yield* (yield* RunStore).list(test.threadId)).every((run) =>
+                RunState.guards.Completed(run.state),
+              ),
+            ).toBe(true)
+            expect(yield* Ref.get(test.generatedWrites)).toBe(0)
+          }).pipe(Effect.scoped),
+      )
+    })
 
     it.effect('logs a model defect with Thread context without failing the settled Run', () => {
       const logs: unknown[] = []
@@ -399,33 +407,29 @@ layer(databaseLayer)((it) => {
         logs.push(event.message)
       })
       return Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
-        const context = yield* Layer.build(Logger.layer([logger]))
-        return yield* Effect.gen(function* () {
-          const test = yield* harness('Please plan a holiday', 'Seed')
-          yield* test.start('title')
-          yield* Deferred.succeed(
-            test.settlement,
-            Settlement.cases.Completed.make({
-              reply: 'Done',
-              responseId: RunId.make('title-test-response'),
-            }),
-          )
-          yield* Queue.take(test.requests)
-          yield* Deferred.failCause(test.completion, Cause.die(new Error('Title provider defect')))
-          yield* Deferred.await(test.finished)
-          expect(logs).toContainEqual([
-            'Thread title generation failed',
-            { thread: test.threadId, cause: expect.stringContaining('Title provider defect') },
-          ])
-          expect((yield* test.stored).titleSource).toBe('Seed')
-          expect(
-            (yield* (yield* RunStore).list(test.threadId)).every((run) =>
-              RunState.guards.Completed(run.state),
-            ),
-          ).toBe(true)
-        }).pipe(Effect.scoped, Effect.provide(context))
-      })
+        const test = yield* harness('Please plan a holiday', 'Seed')
+        yield* test.start('title')
+        yield* Deferred.succeed(
+          test.settlement,
+          Settlement.cases.Completed.make({
+            reply: 'Done',
+            responseId: RunId.make('title-test-response'),
+          }),
+        )
+        yield* Queue.take(test.requests)
+        yield* Deferred.failCause(test.completion, Cause.die(new Error('Title provider defect')))
+        yield* Deferred.await(test.finished)
+        expect(logs).toContainEqual([
+          'Thread title generation failed',
+          { thread: test.threadId, cause: expect.stringContaining('Title provider defect') },
+        ])
+        expect((yield* test.stored).titleSource).toBe('Seed')
+        expect(
+          (yield* (yield* RunStore).list(test.threadId)).every((run) =>
+            RunState.guards.Completed(run.state),
+          ),
+        ).toBe(true)
+      }).pipe(Effect.scoped, Effect.provideService(Logger.CurrentLoggers, new Set([logger])))
     })
 
     it.effect('leaves a Person title alone after a finished Run', () =>

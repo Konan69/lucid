@@ -195,8 +195,7 @@ const listening = Effect.fn('GatewayTest.listening')(function* () {
   yield* Queue.take(bus.watching)
 })
 
-const foundation = Layer.mergeAll(testDatabaseLayer, testConfigLayer)
-const silent = silentChangesLayer
+const foundation = Layer.mergeAll(testDatabaseLayer, testConfigLayer, silentChangesLayer)
 const audible = busLayer
 
 /** The database is shared; each read owns a fresh bus so subscriptions cannot leak between cases. */
@@ -205,28 +204,20 @@ layer(foundation, { excludeTestServices: true })((it) => {
     /** No change is ever announced here: only asking again after subscribing can end the read. */
     it.effect('refuses when the Person lost the Thread while the runtime was opening it', () =>
       Effect.gen(function* () {
-        // Each scoped read owns its mock ports and bus subscriptions.
-        const context = yield* Layer.build(silent)
-        return yield* Effect.gen(function* () {
-          const test = yield* fixture()
-          const response = yield* requestRead(test, removeMembership(test))
-          expect(response.status).toBe(404)
-          expect(Predicate.isTagged(response.body, 'Stream')).toBe(false)
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
+        const test = yield* fixture()
+        const response = yield* requestRead(test, removeMembership(test))
+        expect(response.status).toBe(404)
+        expect(Predicate.isTagged(response.body, 'Stream')).toBe(false)
+      }).pipe(Effect.scoped),
     )
 
     it.effect('refuses when the session was removed while the runtime was opening it', () =>
       Effect.gen(function* () {
-        // Each scoped read owns its mock ports and bus subscriptions.
-        const context = yield* Layer.build(silent)
-        return yield* Effect.gen(function* () {
-          const test = yield* fixture()
-          const response = yield* requestRead(test, removeSession(test))
-          expect(response.status).toBe(401)
-          expect(Predicate.isTagged(response.body, 'Stream')).toBe(false)
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
+        const test = yield* fixture()
+        const response = yield* requestRead(test, removeSession(test))
+        expect(response.status).toBe(401)
+        expect(Predicate.isTagged(response.body, 'Stream')).toBe(false)
+      }).pipe(Effect.scoped),
     )
 
     for (const removal of [removeMembership, removeSession]) {
@@ -234,17 +225,13 @@ layer(foundation, { excludeTestServices: true })((it) => {
         `withholds buffered bytes when ${removal === removeSession ? 'session' : 'membership'} ends before body consumption`,
         () =>
           Effect.gen(function* () {
-            // Each scoped read owns its mock ports and bus subscriptions.
-            const context = yield* Layer.build(silent)
-            return yield* Effect.gen(function* () {
-              const test = yield* fixture()
-              const response = yield* requestRead(test, Effect.void)
-              yield* removal(test)
-              const read = yield* consumeRead(response)
-              expect(Exit.isSuccess(yield* Fiber.await(read.ended))).toBe(true)
-              expect(yield* Queue.size(read.received)).toBe(0)
-            }).pipe(Effect.scoped, Effect.provide(context))
-          }),
+            const test = yield* fixture()
+            const response = yield* requestRead(test, Effect.void)
+            yield* removal(test)
+            const read = yield* consumeRead(response)
+            expect(Exit.isSuccess(yield* Fiber.await(read.ended))).toBe(true)
+            expect(yield* Queue.size(read.received)).toBe(0)
+          }).pipe(Effect.scoped),
       )
     }
 
@@ -284,7 +271,7 @@ layer(foundation, { excludeTestServices: true })((it) => {
 })
 
 layer(foundation)((it) => {
-  describe.skipIf(!testDatabaseConfigured)('An open conversation read', () => {
+  describe.skipIf(!testDatabaseConfigured)('Conversation session expiry', () => {
     /** Nothing is written and nothing is published when a session runs out; only the clock moves. */
     it.effect('ends when its session runs out, with no write and no announcement', () =>
       Effect.gen(function* () {

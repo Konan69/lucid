@@ -18,8 +18,7 @@ const isDatabaseFailure = Schema.is(DatabaseFailure)
 
 const deny = ApprovalDecision.cases.Deny.make({})
 
-/** PostgreSQL owns debts and leases; abrupt defects represent a lost process without undoing SQL. */
-/** Share only PostgreSQL; each case builds its own recording ports and captured stores. */
+/** PostgreSQL persists debt across crashes; recording ports and captured stores remain per case. */
 layer(testDatabaseLayer)((it) => {
   describe.skipIf(!testDatabaseConfigured)('Durable Approval signals', () => {
     for (const failure of [
@@ -27,53 +26,54 @@ layer(testDatabaseLayer)((it) => {
       new RuntimeUnavailable({ message: 'Unavailable' }),
       new DatabaseFailure({ message: 'Private diagnostic must not enter logs' }),
     ]) {
-      it.effect(`replay retains debt and logs only unexpected ${failure._tag} once`, () => {
-        const logged: string[] = []
-        const refusals = refusalLogs()
-        // Every line at every level counts, so a new diagnostic on replay still fails this test.
-        // Only the refusal receipt is left out: it is asserted on its own below.
-        const logger = Logger.make(({ message }) => {
-          const line = JSON.stringify(message)
-          if (!line.includes(Message.refusal)) logged.push(line)
-        })
-        return Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
-          const context = yield* Layer.build(
-            trustTestServices.pipe(
-              Layer.provideMerge(refusals.layer),
-              Layer.provideMerge(Logger.layer([logger])),
-            ),
-          )
-          return yield* Effect.gen(function* () {
-            const test = yield* fixture()
-            const store = yield* ApprovalStore
-            const observed = yield* Observation
-            yield* Ref.set(observed.deliveryFailure, Option.some(failure))
-            const approval = yield* store.raise(test.vivid, desktopAction)
-            yield* store.decide(test.personal, {
-              id: approval.id,
-              digest: approval.digest,
-              decision: deny,
-            })
-            expect(logged).toHaveLength(isDatabaseFailure(failure) ? 1 : 0)
-            if (isDatabaseFailure(failure)) {
-              expect(JSON.stringify(logged)).toContain('DatabaseFailure')
-              expect(JSON.stringify(logged)).not.toContain(failure.message)
-            }
-            yield* Ref.set(observed.deliveryFailure, Option.none())
-            yield* TestClock.adjust('2 minutes')
-            yield* store.replay
-            yield* store.replay
-            const deliveries = yield* Ref.get(observed.deliveries)
-            expect(deliveries).toHaveLength(2)
-            expect(deliveries.map((delivery) => delivery.idempotencyKey)).toEqual([
-              (yield* returned(deliveries, 'Delivery')).idempotencyKey,
-              (yield* returned(deliveries, 'Delivery')).idempotencyKey,
-            ])
-            expect(logged).toHaveLength(isDatabaseFailure(failure) ? 1 : 0)
-            expect(refusals.recorded()).toHaveLength(1)
-            expect(refusals.recorded()[0]).toContain('vivid.refusal.kind=ApprovalDenied')
-          }).pipe(Effect.scoped, Effect.provide(context))
+      layer(testDatabaseLayer)('Clock case 1', (it) => {
+        it.effect(`replay retains debt and logs only unexpected ${failure._tag} once`, () => {
+          const logged: string[] = []
+          const refusals = refusalLogs()
+          // Every line at every level counts, so a new diagnostic on replay still fails this test.
+          // Only the refusal receipt is left out: it is asserted on its own below.
+          const logger = Logger.make(({ message }) => {
+            const line = JSON.stringify(message)
+            if (!line.includes(Message.refusal)) logged.push(line)
+          })
+          return Effect.gen(function* () {
+            const context = yield* Layer.build(
+              trustTestServices.pipe(
+                Layer.provideMerge(refusals.layer),
+                Layer.provideMerge(Logger.layer([logger])),
+              ),
+            )
+            return yield* Effect.gen(function* () {
+              const test = yield* fixture()
+              const store = yield* ApprovalStore
+              const observed = yield* Observation
+              yield* Ref.set(observed.deliveryFailure, Option.some(failure))
+              const approval = yield* store.raise(test.vivid, desktopAction)
+              yield* store.decide(test.personal, {
+                id: approval.id,
+                digest: approval.digest,
+                decision: deny,
+              })
+              expect(logged).toHaveLength(isDatabaseFailure(failure) ? 1 : 0)
+              if (isDatabaseFailure(failure)) {
+                expect(JSON.stringify(logged)).toContain('DatabaseFailure')
+                expect(JSON.stringify(logged)).not.toContain(failure.message)
+              }
+              yield* Ref.set(observed.deliveryFailure, Option.none())
+              yield* TestClock.adjust('2 minutes')
+              yield* store.replay
+              yield* store.replay
+              const deliveries = yield* Ref.get(observed.deliveries)
+              expect(deliveries).toHaveLength(2)
+              expect(deliveries.map((delivery) => delivery.idempotencyKey)).toEqual([
+                (yield* returned(deliveries, 'Delivery')).idempotencyKey,
+                (yield* returned(deliveries, 'Delivery')).idempotencyKey,
+              ])
+              expect(logged).toHaveLength(isDatabaseFailure(failure) ? 1 : 0)
+              expect(refusals.recorded()).toHaveLength(1)
+              expect(refusals.recorded()[0]).toContain('vivid.refusal.kind=ApprovalDenied')
+            }).pipe(Effect.scoped, Effect.provide(context))
+          })
         })
       })
     }
@@ -82,7 +82,6 @@ layer(testDatabaseLayer)((it) => {
       'a shared Thread decision carries its decider while continuing the asked Person authority',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
@@ -115,46 +114,45 @@ layer(testDatabaseLayer)((it) => {
         }),
     )
 
-    it.effect('crash after decision and before admission is replayed by a fresh store', () =>
-      Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
-        const context = yield* Layer.build(trustTestServices)
-        return yield* Effect.gen(function* () {
-          const test = yield* fixture()
-          const store = yield* ApprovalStore
-          const observed = yield* Observation
-          const approval = yield* store.raise(test.vivid, desktopAction)
-          yield* Ref.set(observed.changesDefect, true)
-          const crash = yield* Effect.exit(
-            store.decide(test.personal, {
-              id: approval.id,
-              digest: approval.digest,
-              decision: deny,
-            }),
-          )
-          expect(Exit.isFailure(crash)).toBe(true)
-          expect(yield* Ref.get(observed.deliveries)).toEqual([])
-          yield* Ref.set(observed.changesDefect, false)
-          yield* TestClock.adjust('30 seconds')
-          yield* Effect.gen(function* () {
-            // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
-            const context = yield* Layer.build(approvalStoreLayer)
-            return yield* Effect.gen(function* () {
-              yield* (yield* ApprovalStore).replay
-            }).pipe(Effect.provide(context))
-          })
-          expect(yield* Ref.get(observed.deliveries)).toEqual([
-            expect.objectContaining({ idempotencyKey: `approval-${approval.id}` }),
-          ])
-          yield* store.replay
-          expect(yield* Ref.get(observed.deliveries)).toHaveLength(1)
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
-    )
+    layer(testDatabaseLayer)('Clock case 2', (it) => {
+      it.effect('crash after decision and before admission is replayed by a fresh store', () =>
+        Effect.gen(function* () {
+          const context = yield* Layer.build(trustTestServices)
+          return yield* Effect.gen(function* () {
+            const test = yield* fixture()
+            const store = yield* ApprovalStore
+            const observed = yield* Observation
+            const approval = yield* store.raise(test.vivid, desktopAction)
+            yield* Ref.set(observed.changesDefect, true)
+            const crash = yield* Effect.exit(
+              store.decide(test.personal, {
+                id: approval.id,
+                digest: approval.digest,
+                decision: deny,
+              }),
+            )
+            expect(Exit.isFailure(crash)).toBe(true)
+            expect(yield* Ref.get(observed.deliveries)).toEqual([])
+            yield* Ref.set(observed.changesDefect, false)
+            yield* TestClock.adjust('30 seconds')
+            yield* Effect.gen(function* () {
+              const context = yield* Layer.build(Layer.fresh(approvalStoreLayer))
+              return yield* Effect.gen(function* () {
+                yield* (yield* ApprovalStore).replay
+              }).pipe(Effect.provide(context))
+            })
+            expect(yield* Ref.get(observed.deliveries)).toEqual([
+              expect.objectContaining({ idempotencyKey: `approval-${approval.id}` }),
+            ])
+            yield* store.replay
+            expect(yield* Ref.get(observed.deliveries)).toHaveLength(1)
+          }).pipe(Effect.scoped, Effect.provide(context))
+        }),
+      )
+    })
 
     it.effect('the scoped startup worker admits debt without waiting for its first interval', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -179,42 +177,42 @@ layer(testDatabaseLayer)((it) => {
       }),
     )
 
-    it.effect('a failed admission retries with its original key and then stops', () =>
-      Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
-        const context = yield* Layer.build(trustTestServices)
-        return yield* Effect.gen(function* () {
-          const test = yield* fixture()
-          const store = yield* ApprovalStore
-          const observed = yield* Observation
-          const approval = yield* store.raise(test.vivid, desktopAction)
-          yield* Ref.set(
-            observed.deliveryFailure,
-            Option.some(new RuntimeUnavailable({ message: 'Unavailable' })),
-          )
-          yield* store.decide(test.personal, {
-            id: approval.id,
-            digest: approval.digest,
-            decision: deny,
-          })
-          yield* Ref.set(observed.deliveryFailure, Option.none())
-          yield* store.replay
-          expect(yield* Ref.get(observed.deliveries)).toHaveLength(1)
-          yield* TestClock.adjust('30 seconds')
-          yield* store.replay
-          yield* store.replay
-          expect(
-            (yield* Ref.get(observed.deliveries)).map((delivery) => delivery.idempotencyKey),
-          ).toEqual([`approval-${approval.id}`, `approval-${approval.id}`])
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
-    )
+    layer(testDatabaseLayer)('Clock case 3', (it) => {
+      it.effect('a failed admission retries with its original key and then stops', () =>
+        Effect.gen(function* () {
+          const context = yield* Layer.build(trustTestServices)
+          return yield* Effect.gen(function* () {
+            const test = yield* fixture()
+            const store = yield* ApprovalStore
+            const observed = yield* Observation
+            const approval = yield* store.raise(test.vivid, desktopAction)
+            yield* Ref.set(
+              observed.deliveryFailure,
+              Option.some(new RuntimeUnavailable({ message: 'Unavailable' })),
+            )
+            yield* store.decide(test.personal, {
+              id: approval.id,
+              digest: approval.digest,
+              decision: deny,
+            })
+            yield* Ref.set(observed.deliveryFailure, Option.none())
+            yield* store.replay
+            expect(yield* Ref.get(observed.deliveries)).toHaveLength(1)
+            yield* TestClock.adjust('30 seconds')
+            yield* store.replay
+            yield* store.replay
+            expect(
+              (yield* Ref.get(observed.deliveries)).map((delivery) => delivery.idempotencyKey),
+            ).toEqual([`approval-${approval.id}`, `approval-${approval.id}`])
+          }).pipe(Effect.scoped, Effect.provide(context))
+        }),
+      )
+    })
 
     it.effect(
       'Thread deletion cascades pending and owed Approvals and never replays tombstones',
       () =>
         Effect.gen(function* () {
-          // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
             const test = yield* fixture()
@@ -248,7 +246,6 @@ layer(testDatabaseLayer)((it) => {
 
     it.effect('two workers cannot admit the same claimed debt concurrently', () =>
       Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
         const context = yield* Layer.build(trustTestServices)
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
@@ -269,8 +266,7 @@ layer(testDatabaseLayer)((it) => {
           const first = yield* store.replay.pipe(Effect.forkScoped)
           yield* Queue.take(observed.admissionStarted)
           yield* Effect.gen(function* () {
-            // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
-            const context = yield* Layer.build(approvalStoreLayer)
+            const context = yield* Layer.build(Layer.fresh(approvalStoreLayer))
             return yield* Effect.gen(function* () {
               yield* (yield* ApprovalStore).replay
             }).pipe(Effect.provide(context))
@@ -286,35 +282,36 @@ layer(testDatabaseLayer)((it) => {
       }),
     )
 
-    it.effect('a crash after SQL claim is reclaimable when the lease expires', () =>
-      Effect.gen(function* () {
-        // This scoped acquisition keeps mutable test ports and their captured stores fresh per case.
-        const context = yield* Layer.build(trustTestServices)
-        return yield* Effect.gen(function* () {
-          const test = yield* fixture()
-          const store = yield* ApprovalStore
-          const observed = yield* Observation
-          const approval = yield* store.raise(test.vivid, desktopAction)
-          yield* Ref.set(observed.deliveryDefect, true)
-          expect(
-            Exit.isFailure(
-              yield* Effect.exit(
-                store.decide(test.personal, {
-                  id: approval.id,
-                  digest: approval.digest,
-                  decision: deny,
-                }),
+    layer(testDatabaseLayer)('Clock case 4', (it) => {
+      it.effect('a crash after SQL claim is reclaimable when the lease expires', () =>
+        Effect.gen(function* () {
+          const context = yield* Layer.build(trustTestServices)
+          return yield* Effect.gen(function* () {
+            const test = yield* fixture()
+            const store = yield* ApprovalStore
+            const observed = yield* Observation
+            const approval = yield* store.raise(test.vivid, desktopAction)
+            yield* Ref.set(observed.deliveryDefect, true)
+            expect(
+              Exit.isFailure(
+                yield* Effect.exit(
+                  store.decide(test.personal, {
+                    id: approval.id,
+                    digest: approval.digest,
+                    decision: deny,
+                  }),
+                ),
               ),
-            ),
-          ).toBe(true)
-          yield* Ref.set(observed.deliveryDefect, false)
-          yield* store.replay
-          expect(yield* Ref.get(observed.deliveries)).toEqual([])
-          yield* TestClock.adjust('2 minutes')
-          yield* store.replay
-          expect(yield* Ref.get(observed.deliveries)).toHaveLength(1)
-        }).pipe(Effect.scoped, Effect.provide(context))
-      }),
-    )
+            ).toBe(true)
+            yield* Ref.set(observed.deliveryDefect, false)
+            yield* store.replay
+            expect(yield* Ref.get(observed.deliveries)).toEqual([])
+            yield* TestClock.adjust('2 minutes')
+            yield* store.replay
+            expect(yield* Ref.get(observed.deliveries)).toHaveLength(1)
+          }).pipe(Effect.scoped, Effect.provide(context))
+        }),
+      )
+    })
   })
 })
