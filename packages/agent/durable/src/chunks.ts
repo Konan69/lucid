@@ -980,7 +980,7 @@ export function rebuild(entries: readonly EntryRecord[]): Rebuilt {
   return { ...step, origins: originsFor(entries, step.chunks) }
 }
 
-/** Generated, host-written and empty stored answers have distinct, honest identity sources. */
+/** Generated, unattributed and empty stored answers have distinct, honest identity sources. */
 export type AssistantIdentity = Data.TaggedEnum<{
   Generated: { readonly taskId: TaskId }
   Written: { readonly entryId: EntryId }
@@ -988,7 +988,8 @@ export type AssistantIdentity = Data.TaggedEnum<{
 }>
 export const AssistantIdentity = Data.taggedEnum<AssistantIdentity>()
 
-/** Hosts can append assistants without a generation task; preserve that distinct identity source. */
+/** Host writes and scheduler-converted fault partials have no byTaskId (Pi live.ts
+ * settleSchedulerOutcome). Preserve their entry identity instead of claiming a generation task. */
 export function entryIdentity(entry: EntryRecord): AssistantIdentity {
   return entry.byTaskId === undefined
     ? AssistantIdentity.Written({ entryId: entry.id })
