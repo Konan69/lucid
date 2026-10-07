@@ -34,12 +34,12 @@ const isPostgresFailure = Schema.is(PostgresFailure)
 /** A failed migration cannot publish an incomplete schema template. */
 class TemplateMigrationFailed extends Schema.TaggedError<TemplateMigrationFailed>()(
   'TemplateMigrationFailed',
-  { config: Schema.String },
+  { config: Schema.String, message: Schema.String },
 ) {}
 /** Only duplicate_database is recoverable when two runs race to publish the template. */
 class TemplateRenameFailed extends Schema.TaggedError<TemplateRenameFailed>()(
   'TemplateRenameFailed',
-  { cause: Schema.Unknown },
+  { cause: Schema.Unknown, message: Schema.String },
 ) {}
 
 /**
@@ -87,11 +87,18 @@ const buildTemplate = Effect.fn('TestDatabase.buildTemplate')(function* (
       { cwd: serverRoot, env: { ...NodeProcess.env, DATABASE_URL: target.href }, stdio: 'pipe' },
     )
     if (migration.error !== undefined || migration.status !== 0)
-      return yield* new TemplateMigrationFailed({ config: owner.config })
+      return yield* new TemplateMigrationFailed({
+        config: owner.config,
+        message: `Test template migration failed for ${owner.config}`,
+      })
   }
   yield* Effect.tryPromise({
     try: () => admin.query(`ALTER DATABASE "${scratch}" RENAME TO "${template}"`),
-    catch: (cause) => new TemplateRenameFailed({ cause }),
+    catch: (cause) =>
+      new TemplateRenameFailed({
+        cause,
+        message: cause instanceof Error ? cause.message : String(cause),
+      }),
   }).pipe(
     Effect.catchTag('TemplateRenameFailed', (failure) => {
       if (!isPostgresFailure(failure.cause) || failure.cause.code !== duplicateDatabase)
@@ -113,7 +120,9 @@ const migratedTemplate = Effect.fn('TestDatabase.migratedTemplate')(function* (
   prefix: string,
 ) {
   const template = templateName()
-  // The connection owns the lock while choosing, marking and removing templates.
+  // One run at a time decides about templates on this server: building, marking one as used
+  // and dropping unused ones. Without it a run could drop a template another had just chosen.
+  // The lock belongs to this connection and ends with it.
   yield* Effect.promise(() =>
     admin.query('SELECT pg_advisory_lock(hashtext($1))', ['vivid_template']),
   )
@@ -160,39 +169,37 @@ const chooseTemplate = Effect.fn('TestDatabase.chooseTemplate')(function* (
  * fixture or migration writes to it. The prefix starts with the supplied database's own name, so
  * whoever owns that database (a gate run) can also find everything made under it.
  */
-// @effect-diagnostics-next-line asyncFunction:off -- Vitest global setup requires a Promise of its teardown callback.
-export default async function setup(project: TestProject) {
+export default function setup(project: TestProject) {
   const supplied = NodeProcess.env.VIVID_TEST_DATABASE_URL
-  if (supplied === undefined) return () => {}
+  if (supplied === undefined) return Effect.runPromise(Effect.succeed(() => {}))
   const owner = new URL(supplied).pathname.slice(1).slice(0, 24)
   const prefix = `${owner}_${NodeCrypto.randomBytes(4).toString('hex')}`
   const admin = new Pg.Client({ connectionString: supplied })
-  await admin.connect()
   // Define cleanup before creating any database, including failures during migration/setup.
-  // @effect-diagnostics-next-line asyncFunction:off -- Vitest invokes this Promise-returning global teardown callback.
-  const cleanup = async () => {
-    try {
-      // Vitest does not run afterAll for entirely skipped files or failed collection. Only this
-      // invocation's captured prefix grants teardown authority over their leftover databases.
-      const suites = await admin.query(
+  const cleanupProgram = Effect.gen(function* () {
+    // Vitest does not run afterAll for entirely skipped files or failed collection. Only this
+    // invocation's captured prefix grants teardown authority over their leftover databases.
+    const suites = yield* Effect.promise(() =>
+      admin.query(
         'SELECT quote_ident(datname) AS name FROM pg_database WHERE starts_with(datname, $1)',
         [`${prefix}_`],
-      )
-      for (const suite of decodeNames(suites.rows))
-        await admin.query(`DROP DATABASE ${suite.name} WITH (FORCE)`)
-    } finally {
-      await admin.end()
-    }
-  }
-  try {
-    project.provide(
-      'serverDatabaseTemplate',
-      await Effect.runPromise(migratedTemplate(admin, supplied, prefix)),
+      ),
     )
-    project.provide('serverDatabasePrefix', prefix)
-    return cleanup
-  } catch (error) {
-    await cleanup()
-    throw error
-  }
+    for (const suite of decodeNames(suites.rows))
+      yield* Effect.promise(() => admin.query(`DROP DATABASE ${suite.name} WITH (FORCE)`))
+  }).pipe(Effect.ensuring(Effect.promise(() => admin.end())))
+  const cleanup = () => Effect.runPromise(cleanupProgram)
+  const program = Effect.gen(function* () {
+    yield* Effect.promise(() => admin.connect())
+    return yield* Effect.gen(function* () {
+      const template = yield* migratedTemplate(admin, supplied, prefix)
+      project.provide('serverDatabaseTemplate', template)
+      project.provide('serverDatabasePrefix', prefix)
+      return cleanup
+    }).pipe(
+      // Preserve the rethrow after cleanup for typed failures, defects and interruption alike.
+      Effect.onError(() => cleanupProgram),
+    )
+  })
+  return Effect.runPromise(program)
 }

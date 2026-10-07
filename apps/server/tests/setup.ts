@@ -1,6 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import * as NodeProcess from 'node:process'
 import * as Pg from 'pg'
+import { Effect } from 'effect'
 import { afterAll, inject } from 'vitest'
 
 /**
@@ -16,23 +17,27 @@ if (supplied !== undefined) {
   const name = `${inject('serverDatabasePrefix')}_${NodeCrypto.randomBytes(8).toString('hex')}`
   const admin = new Pg.Client({ connectionString: supplied })
   await admin.connect()
-  // @effect-diagnostics-next-line asyncFunction:off -- Vitest afterAll requires a Promise-returning teardown callback.
-  afterAll(async () => {
-    const cleanup = new Pg.Client({ connectionString: supplied })
-    await cleanup.connect()
-    try {
-      await cleanup.query(`DROP DATABASE IF EXISTS "${name}"`)
-    } finally {
-      await cleanup.end()
-      NodeProcess.env.VIVID_TEST_DATABASE_URL = supplied
-    }
+  afterAll(() => {
+    const program = Effect.gen(function* () {
+      const cleanup = new Pg.Client({ connectionString: supplied })
+      yield* Effect.promise(() => cleanup.connect())
+      yield* Effect.promise(() => cleanup.query(`DROP DATABASE IF EXISTS "${name}"`)).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            yield* Effect.promise(() => cleanup.end())
+            NodeProcess.env.VIVID_TEST_DATABASE_URL = supplied
+          }),
+        ),
+      )
+    })
+    return Effect.runPromise(program)
   })
-  try {
-    await admin.query(`CREATE DATABASE "${name}" TEMPLATE "${template}"`)
-    const target = new URL(supplied)
-    target.pathname = `/${name}`
-    NodeProcess.env.VIVID_TEST_DATABASE_URL = target.href
-  } finally {
-    await admin.end()
-  }
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* Effect.promise(() => admin.query(`CREATE DATABASE "${name}" TEMPLATE "${template}"`))
+      const target = new URL(supplied)
+      target.pathname = `/${name}`
+      NodeProcess.env.VIVID_TEST_DATABASE_URL = target.href
+    }).pipe(Effect.ensuring(Effect.promise(() => admin.end()))),
+  )
 }
