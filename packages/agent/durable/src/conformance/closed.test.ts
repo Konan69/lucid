@@ -117,7 +117,11 @@ for (const predicate of [
         },
         { type: 'start-step' },
         { type: 'finish-step' },
-        { type: 'start', messageId: chat.lastMessage.id },
+        {
+          type: 'start',
+          messageId: chat.lastMessage.id,
+          messageMetadata: chat.lastMessage.metadata,
+        },
         { type: 'finish' },
       ])
       const missing = await respond(

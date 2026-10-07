@@ -1,7 +1,12 @@
 import { Chat } from '@ai-sdk/react'
 import { expect, it } from '@effect/vitest'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
-import { DefaultChatTransport, tool, type UIMessage } from 'ai'
+import {
+  DefaultChatTransport,
+  lastAssistantMessageIsCompleteWithToolCalls,
+  tool,
+  type UIMessage,
+} from 'ai'
 import { Deferred, Effect, Schema } from 'effect'
 import { z } from 'zod'
 
@@ -124,6 +129,44 @@ it.live('sums all tool-round usage and names each recorded model once', () =>
       release.resolve()
       await sending
     }
+  }),
+)
+
+/** POST continuation must retain usage from rounds before the client's newest answered call. */
+it.live('retains earlier response usage after a stock client tool answer', () =>
+  Effect.promise(async () => {
+    const fixture = await host(
+      {
+        work: tool({ inputSchema: z.object({}), execute: async () => 'worked' }),
+        ask: tool({ inputSchema: z.object({ question: z.string() }) }),
+      },
+      {},
+    )
+    const opened = await fixture.open()
+    opened.faux.setResponses([
+      call('work', {}, 'worked'),
+      call('ask', { question: 'Which?' }, 'asked'),
+      fauxAssistantMessage('Answered.'),
+    ])
+    const completed = signal()
+    const chat = new Chat<UIMessage<Metadata>>({
+      transport: new DefaultChatTransport({
+        api: 'http://durable.test/chat',
+        fetch: (url, init) =>
+          respond(opened.harness, opened.root.id, new Request(url, init), context),
+      }),
+      messageMetadataSchema: Schema.toStandardSchemaV1(Core.Metadata),
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+      onFinish: ({ message }) => {
+        if (message.parts.some((part) => part.type === 'text' && part.text === 'Answered.'))
+          completed.resolve()
+      },
+      onError: (error) => completed.reject(error),
+    })
+    await chat.sendMessage({ text: 'Work then ask me' })
+    await chat.addToolOutput({ tool: 'ask', toolCallId: 'asked', output: 'savings' })
+    await completed.promise
+    expect(modelIds(await parity(opened, chat, 3))).toEqual(['faux/faux-1'])
   }),
 )
 

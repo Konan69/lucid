@@ -628,6 +628,15 @@ function runEntries(entries: readonly EntryRecord[]): readonly EntryRecord[] {
   return entries.slice(start + 1)
 }
 
+/** A reconnect starts with every already-recorded response and the model of its captured partial. */
+function capturedMetadata(snapshot: SnapshotEvent): MetadataState {
+  const recorded = runEntries(snapshot.entries).reduce(recordMetadata, emptyMetadata)
+  const generation = snapshot.generation
+  return generation === undefined || generation.message === undefined
+    ? recorded
+    : startMetadata(recorded, generation.message)
+}
+
 /** One stored entry of the run in progress, as the chunks its live events would have produced. */
 export function replayEntry(state: RunState, entry: EntryRecord): Step {
   const found = Option.fromNullishOr(entry.model).pipe(Option.flatMap(Arr.head))
@@ -671,12 +680,7 @@ function replayPartial(state: RunState, message: AssistantMessage): Step {
  */
 export function replay(snapshot: SnapshotEvent): Option.Option<Rebuilt> {
   if (snapshot.run === undefined) return Option.none()
-  const recorded = runEntries(snapshot.entries).reduce(recordMetadata, emptyMetadata)
-  const capturedGeneration = snapshot.generation
-  const metadata =
-    capturedGeneration === undefined || capturedGeneration.message === undefined
-      ? recorded
-      : startMetadata(recorded, capturedGeneration.message)
+  const metadata = capturedMetadata(snapshot)
   const started: Step = {
     state: initialRunState,
     // SDK chat.ts retains the streaming state after a network error. Its start chunk only
@@ -744,7 +748,10 @@ export function replayAfter(
   const rest = snapshot.entries.slice(at + 1)
   const live = snapshot.run !== undefined
   const called = replayEntry(
-    initialRunState,
+    {
+      ...initialRunState,
+      metadata: snapshot.entries.slice(0, at).reduce(recordMetadata, emptyMetadata),
+    },
     Option.getOrThrow(Option.fromNullishOr(snapshot.entries[at])),
   )
   const stored = rest.reduce<Step>(
@@ -753,7 +760,7 @@ export function replayAfter(
     {
       state: called.state,
       chunks: [
-        { type: 'start' },
+        { type: 'start', messageMetadata: messageMetadata(capturedMetadata(snapshot)) },
         ...called.chunks.filter(
           (chunk) =>
             chunk.type === 'tool-input-start' ||
@@ -921,12 +928,16 @@ export function runMessageId(inputs: readonly SubmissionId[]) {
 /** A closed run never ends in a step containing tool parts: an empty closing step makes both
  * stock automatic predicates false, identically in live, history and terminal replay. SDK
  * process-ui-message-stream.ts:926-975 does not publish step chunks; the identity-only start
- * publishes the closing boundary without fabricating metadata or another content part. */
+ * publishes the closing boundary and recorded metadata without adding another content part. */
 export function closeRun(state: RunState, messageId: string): Step {
   if (state.calls.size === 0) return { state, chunks: [] }
   const closed = startTurn(state)
   return {
     state: closed.state,
-    chunks: [...closed.chunks, { type: 'finish-step' }, { type: 'start', messageId }],
+    chunks: [
+      ...closed.chunks,
+      { type: 'finish-step' },
+      { type: 'start', messageId, messageMetadata: messageMetadata(closed.state.metadata) },
+    ],
   }
 }
