@@ -1,6 +1,13 @@
-import { type ChatTransport, type UIMessage, type UIMessageChunk, uiMessageChunkSchema } from 'ai'
+import { Option } from 'effect'
+import {
+  type ChatTransport,
+  type UIMessage,
+  type UIMessageChunk,
+  uiMessageChunkSchema,
+  readUIMessageStream,
+} from 'ai'
 import { expect, it } from 'vitest'
-import { ConnectionLost, connectionLostInput, resumable } from './client.ts'
+import { ConnectionLost, connectionLostInput, resumable, closeInputs } from './client.ts'
 
 /** A transport fixture owns chunk delivery and cancellation, never Response or SDK state. */
 function transport(source: ReadableStream<UIMessageChunk>): ChatTransport<UIMessage> {
@@ -132,3 +139,87 @@ it('forwards cancellation and guards acquisition failures', async () => {
     }),
   ).rejects.toMatchObject({ name: 'ConnectionLost', cause })
 })
+
+/** A terminal tool output ends the ledger even if an adapter omitted input-available. */
+it.each(['tool-output-available', 'tool-output-error', 'tool-output-denied'] as const)(
+  'closes the ledger on %s',
+  async (type) => {
+    let terminal: UIMessageChunk
+    switch (type) {
+      case 'tool-output-available':
+        terminal = { type, toolCallId: 'a', output: 1 }
+        break
+      case 'tool-output-error':
+        terminal = { type, toolCallId: 'a', errorText: 'tool failed' }
+        break
+      case 'tool-output-denied':
+        terminal = { type, toolCallId: 'a' }
+        break
+    }
+    const stream = await resumable(
+      transport(
+        broken(
+          [{ type: 'tool-input-start', toolCallId: 'a', toolName: 'pay' }, terminal],
+          new TypeError('network failed'),
+        ),
+      ),
+    ).reconnectToStream({ chatId: 'chat' })
+    if (stream === null) throw new Error('Expected stream')
+    const reader = stream.getReader()
+    await reader.read()
+    await reader.read()
+    await expect(reader.read()).rejects.toBeInstanceOf(ConnectionLost)
+  },
+)
+
+/** Feed a finite protocol sequence through the public SDK reader on this DOM typing baseline. */
+function finite(chunks: readonly UIMessageChunk[]): ReadableStream<UIMessageChunk> {
+  return new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk)
+      controller.close()
+    },
+  })
+}
+
+/** Compare the pure saved-message operation with the SDK's actual synthetic input-error fold. */
+it.each([false, true])(
+  'closes saved partial inputs exactly like the SDK (dynamic=%s)',
+  async (dynamic) => {
+    const start: UIMessageChunk = {
+      type: 'tool-input-start',
+      toolCallId: 'a',
+      toolName: 'pay',
+      dynamic,
+      title: 'Invoice',
+    }
+    const chunks: UIMessageChunk[] = [
+      { type: 'start', messageId: 'message' },
+      { type: 'start-step' },
+      start,
+      { type: 'tool-input-delta', toolCallId: 'a', inputTextDelta: '{"amount":5' },
+    ]
+    let partial = Option.none<UIMessage>()
+    const source = finite(chunks)
+    for await (const message of readUIMessageStream({ stream: source }))
+      partial = Option.some(structuredClone(message))
+    if (Option.isNone(partial)) throw new Error('Expected partial message')
+    let closed = Option.none<UIMessage>()
+    for await (const message of readUIMessageStream({
+      stream: finite([
+        ...chunks,
+        {
+          type: 'tool-input-error',
+          toolCallId: 'a',
+          toolName: 'pay',
+          dynamic,
+          input: undefined,
+          errorText: connectionLostInput,
+        },
+      ]),
+    }))
+      closed = Option.some(message)
+    expect(closeInputs([partial.value])).toEqual(Option.toArray(closed))
+    expect(partial.value.parts[1]).toMatchObject({ state: 'input-streaming' })
+  },
+)

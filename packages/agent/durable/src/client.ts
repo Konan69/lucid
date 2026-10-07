@@ -1,4 +1,4 @@
-import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai'
+import { isToolUIPart, type ChatTransport, type UIMessage, type UIMessageChunk } from 'ai'
 
 /** Reserved protocol marker: this local interruption is never a person-supplied tool result. */
 export const connectionLostInput =
@@ -6,8 +6,8 @@ export const connectionLostInput =
 
 /** A plain Error deliberately avoids chat.ts:1008–1018's TypeError network-state retention. */
 export class ConnectionLost extends Error {
-  constructor(options: ErrorOptions) {
-    super('The connection was lost; resume the stream to reconnect.', options)
+  constructor(cause: ErrorOptions['cause']) {
+    super('The connection was lost; resume the stream to reconnect.', { cause })
     this.name = 'ConnectionLost'
   }
 }
@@ -18,28 +18,26 @@ type Interrupted = Extract<UIMessageChunk, { type: 'tool-input-error' }>
 
 /** Abort signals preserve cancellation even when its exception comes from another realm.
  * Without a signal, standard Error and DOMException names identify transport-thrown AbortError exceptions. */
-function aborted(options: ErrorOptions, signal: Signal): boolean {
+function aborted(cause: ErrorOptions['cause'], signal: Signal): boolean {
   if (signal !== undefined && signal.aborted) return true
-  const cause = options.cause
   const exception =
     cause instanceof Error || ('DOMException' in globalThis && cause instanceof DOMException)
   return exception && cause.name === 'AbortError'
 }
 
 /** Preserve the original cancellation object; every other acquisition failure becomes recoverable. */
-function lost(options: ErrorOptions, signal: Signal): never {
-  if (aborted(options, signal)) throw options.cause
-  throw new ConnectionLost(options)
+function lost(cause: ErrorOptions['cause'], signal: Signal): never {
+  if (aborted(cause, signal)) throw cause
+  throw new ConnectionLost(cause)
 }
 
 /** At acquisition an HTTP refusal is the SDK's plain Error, not a dropped connection.
  * Fetch rejects with TypeError; TimeoutError names timeout exceptions across realms. Only those
  * are resumable before a stream exists (chat.ts:1008–1018); typed status text passes through. */
-function acquisitionLost(options: ErrorOptions, signal: Signal): never {
-  if (aborted(options, signal)) throw options.cause
-  const cause = options.cause
+function acquisitionLost(cause: ErrorOptions['cause'], signal: Signal): never {
+  if (aborted(cause, signal)) throw cause
   if (cause instanceof TypeError || (cause instanceof Error && cause.name === 'TimeoutError'))
-    return lost(options, signal)
+    return lost(cause, signal)
   throw cause
 }
 
@@ -47,6 +45,37 @@ function acquisitionLost(options: ErrorOptions, signal: Signal): never {
 function interrupted(start: Started): Interrupted {
   const { type: _type, ...identity } = start
   return { ...identity, type: 'tool-input-error', input: undefined, errorText: connectionLostInput }
+}
+
+const terminalInputs = new Set<string>([
+  'tool-input-available',
+  'tool-input-error',
+  'tool-output-available',
+  'tool-output-error',
+  'tool-output-denied',
+])
+
+/** SDK process-ui-message-stream.ts:742–779 closes input-error in place, clearing partial input,
+ * raw input, output and preliminary state, while preserving identity, title and provider metadata.
+ * stop() does not notify a transport ledger, and saved client messages may hold the same partials.
+ * Close them before resume so chat.ts:852–858 cannot seed its next reader from an unfinished input.
+ * This pure copy does not mutate the host's saved list and imports no runtime beyond plain ai helpers. */
+export function closeInputs<M extends UIMessage>(messages: readonly M[]): M[] {
+  return messages.map((message) => ({
+    ...message,
+    parts: message.parts.map((part) => {
+      if (!isToolUIPart(part) || part.state !== 'input-streaming') return part
+      return {
+        ...part,
+        state: 'output-error',
+        input: undefined,
+        output: undefined,
+        rawInput: undefined,
+        preliminary: undefined,
+        errorText: connectionLostInput,
+      }
+    }),
+  }))
 }
 
 /** A source error bypasses transforms. Read explicitly and deliver each synthetic terminal input
@@ -88,15 +117,15 @@ function guarded(
               return
             }
             if (value.type === 'tool-input-start') open.set(value.toolCallId, value)
-            if (value.type === 'tool-input-available' || value.type === 'tool-input-error')
+            if ('toolCallId' in value && terminalInputs.has(value.type))
               open.delete(value.toolCallId)
             if (value.type === 'reset-step') open.clear()
             controller.enqueue(value)
           },
           function failedForSdk(cause) {
             release()
-            if (aborted({ cause }, signal)) return controller.error(cause)
-            const error = new ConnectionLost({ cause })
+            if (aborted(cause, signal)) return controller.error(cause)
+            const error = new ConnectionLost(cause)
             reading = { status: 'Failed', error }
             pending.push(...Array.from(open.values(), interrupted))
             open.clear()
@@ -123,13 +152,13 @@ export function resumable<M extends UIMessage>(transport: ChatTransport<M>): Cha
       return Promise.resolve()
         .then(() => transport.sendMessages(input))
         .then((stream) => guarded(stream, input.abortSignal))
-        .catch((cause) => acquisitionLost({ cause }, input.abortSignal))
+        .catch((cause) => acquisitionLost(cause, input.abortSignal))
     },
     reconnectToStream: function reconnectForSdk(input) {
       return Promise.resolve()
         .then(() => transport.reconnectToStream(input))
         .then((stream) => (stream === null ? null : guarded(stream, input.abortSignal)))
-        .catch((cause) => acquisitionLost({ cause }, input.abortSignal))
+        .catch((cause) => acquisitionLost(cause, input.abortSignal))
     },
   }
 }

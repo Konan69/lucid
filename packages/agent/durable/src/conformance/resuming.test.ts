@@ -14,7 +14,7 @@ import { z } from 'zod'
 import { Effect, Predicate, Match } from 'effect'
 import { waitForFrame } from '../fixtures/provider.ts'
 
-import { resumable, ConnectionLost, connectionLostInput } from '../client.ts'
+import { resumable, ConnectionLost, connectionLostInput, closeInputs } from '../client.ts'
 import { ChatTurn } from '../core.ts'
 import { PlainChat } from '../fixtures/chat.ts'
 import { respond, waiting, decodeTurn, attachRun, streamRun, TurnWaiting } from '../main.ts'
@@ -834,3 +834,114 @@ it.each(['pay', 'work'] as const)(
     ).toEqual(second === 'pay' ? ['pay'] : [])
   },
 )
+
+/** S-stop: the SDK does not notify the transport when stop discards its private reader. Close
+ * client-held streaming inputs before bodyless replay; no step or earlier result is seeded twice. */
+it('closes stopped step-2 inputs before resuming the same Chat', async () => {
+  const release = signal()
+  const streaming = signal()
+  const attached = signal()
+  onTestFinished(() => release.resolve())
+  let gated = false
+  const fixture = await host(
+    {
+      one: tool({ inputSchema: z.object({}), execute: async () => 'r1' }),
+      two: tool({ inputSchema: z.object({ input: z.string() }), execute: async () => 'r2' }),
+    },
+    {},
+    { progress: { partialIntervalMs: 1 } },
+    {
+      partialFamily: 'anthropic',
+      commitFrames: true,
+      tokenSize: { min: 1, max: 1 },
+      onFrame: (event, abortSignal) => {
+        if (event.type !== 'toolcall_delta' || gated) return Effect.void
+        const block = event.partial.content[event.contentIndex]
+        if (block === undefined || block.type !== 'toolCall' || block.name !== 'two')
+          return Effect.void
+        if (!Predicate.isString(block.arguments.input) || block.arguments.input.length < 8)
+          return Effect.void
+        gated = true
+        return waitForFrame(
+          Effect.promise(() => release.promise),
+          abortSignal,
+        )
+      },
+    },
+  )
+  const opened = await fixture.open()
+  opened.faux.setResponses([
+    fauxAssistantMessage([{ type: 'text', text: 'S1.' }, fauxToolCall('one', {}, { id: 'one' })], {
+      stopReason: 'toolUse',
+    }),
+    fauxAssistantMessage(
+      [
+        { type: 'text', text: 'S2.' },
+        fauxToolCall('two', { input: 'abcdefghijklmnopqrstuvwxyz' }, { id: 'two' }),
+      ],
+      { stopReason: 'toolUse' },
+    ),
+    fauxAssistantMessage('Done.'),
+  ])
+  const base = new DefaultChatTransport<UIMessage>({
+    api: 'http://durable.test/chat',
+    fetch: async (url, init) => {
+      const request = new Request(url, init)
+      const response = await respond(opened.harness, opened.root.id, request, context)
+      if (response.body === null) return response
+      return new Response(
+        response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>(), {
+          signal: request.signal,
+        }),
+        { headers: response.headers, status: response.status },
+      )
+    },
+  })
+  const finishes: boolean[] = []
+  const chat = new PlainChat({
+    transport: resumable({
+      sendMessages: (input) => base.sendMessages(input),
+      reconnectToStream: async (input) => {
+        const stream = await base.reconnectToStream(input)
+        attached.resolve()
+        return stream
+      },
+    }),
+    onFinish: ({ isAbort }) => {
+      finishes.push(isAbort)
+    },
+    onMessage: (message) => {
+      if (
+        message.parts.some(
+          (part) =>
+            isToolUIPart(part) && part.toolCallId === 'two' && part.state === 'input-streaming',
+        )
+      )
+        streaming.resolve()
+    },
+  })
+  const sending = chat.sendMessage({ text: 'Start' })
+  await streaming.promise
+  await chat.stop()
+  await sending
+  expect(finishes).toEqual([true])
+  chat.messages = closeInputs(chat.messages)
+  const resuming = chat.resumeStream()
+  await attached.promise
+  release.resolve()
+  await resuming
+  expect(chat.status).toBe('ready')
+  expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
+  if (chat.lastMessage === undefined) throw new Error('Expected resumed assistant')
+  expect(texts(chat.lastMessage)).toEqual(['S1.', 'S2.', 'Done.'])
+  expect(chat.lastMessage.parts.map((part) => part.type)).toEqual([
+    'step-start',
+    'text',
+    'tool-one',
+    'step-start',
+    'text',
+    'tool-two',
+    'step-start',
+    'text',
+  ])
+})
