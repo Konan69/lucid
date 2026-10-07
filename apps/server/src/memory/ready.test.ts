@@ -64,15 +64,14 @@ const memory = helixMemoryLayer.pipe(
 )
 
 describe('Memory readiness', () => {
-  // Configuration refusals acquire fresh composed services so no stand-in state crosses cases.
-  for (const address of [
-    undefined,
-    'helix',
-    'vivid-helix.railway.internal:8080',
-    'ftp://helix.invalid',
-    ' ',
-  ]) {
-    layer(helixClient.pipe(Layer.provideMerge(standInLayer)))((it) => {
+  layer(helixClient.pipe(Layer.provideMerge(standInLayer)))((it) => {
+    for (const address of [
+      undefined,
+      'helix',
+      'vivid-helix.railway.internal:8080',
+      'ftp://helix.invalid',
+      ' ',
+    ]) {
       const values = address === undefined ? {} : { VIVID_HELIX_URL: address }
       const name =
         address === undefined
@@ -92,8 +91,8 @@ describe('Memory readiness', () => {
           expect(failure).toHaveProperty('variable', 'VIVID_HELIX_URL')
         }),
       )
-    })
-  }
+    }
+  })
 
   layer(memory)((it) => {
     it.effect(
