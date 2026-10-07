@@ -1299,6 +1299,9 @@ describe.skipIf(!testDatabaseConfigured)('Computer ownership and trust', () => {
       expect((yield* store.get(first.id)).state._tag).toBe('Running')
       yield* TestClock.adjust('19 minutes')
       expect(Option.isNone(yield* Queue.poll(evidence.stopped))).toBe(true)
+      // Only the read that first saw it run starts the idle period. A later read moves nothing:
+      // were it to, a Person looking at the Computer would keep it running for good.
+      expect((yield* store.get(first.id)).state._tag).toBe('Running')
       yield* TestClock.adjust('1 minute')
       expect(yield* Queue.take(evidence.stopped)).toBe(key)
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
