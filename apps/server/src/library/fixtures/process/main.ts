@@ -26,6 +26,6 @@ const program = Effect.fn('LibraryExtractionFixture.main')(function* () {
 
 /** NodeRuntime.ts:58-65 lets success exit naturally; an unreleased thread would keep E8 running. */
 NodeRuntime.runMain(
-  // @effect-diagnostics-next-line strictEffectProvide:off -- This extraction-worker process entry point owns its platform Layer lifetime.
+  // @effect-diagnostics-next-line strictEffectProvide:off -- This fixture process's entry point owns its platform Layers for the whole process, so no narrower lifetime exists to hold them.
   program().pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))),
 )
