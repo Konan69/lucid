@@ -2,6 +2,7 @@ import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/provid
 import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithApprovalResponses,
+  lastAssistantMessageIsCompleteWithToolCalls,
   isToolUIPart,
   tool,
   type UIMessage,
@@ -484,19 +485,34 @@ it('closes a dropped raw input and resumes its real call without repeating argum
     fauxAssistantMessage('Finished.'),
   ])
   const get = signal()
+  const chunks: UIMessageChunk[] = []
+  let posts = 0
   const base: ChatTransport<UIMessage> = {
-    sendMessages: async (options) =>
-      disconnect(await opened.transport.sendMessages(options), {
+    sendMessages: async (options) => {
+      posts += 1
+      return disconnect(await opened.transport.sendMessages(options), {
         step: 1,
         marker: 'tool-input-delta',
-      }),
+      })
+    },
     reconnectToStream: async (options) => {
       const stream = await opened.transport.reconnectToStream(options)
       get.resolve()
-      return stream
+      if (stream === null) return null
+      return stream.pipeThrough(
+        new TransformStream<UIMessageChunk, UIMessageChunk>({
+          transform(chunk, controller) {
+            chunks.push(chunk)
+            controller.enqueue(chunk)
+          },
+        }),
+      )
     },
   }
-  const chat = new PlainChat({ transport: resumable(base) })
+  const chat = new PlainChat({
+    transport: resumable(base),
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+  })
   await chat.sendMessage({ text: 'Work' })
   expect(chat.error).toBeInstanceOf(ConnectionLost)
   if (chat.lastMessage === undefined) throw new Error('Expected interrupted message')
@@ -510,6 +526,12 @@ it('closes a dropped raw input and resumes its real call without repeating argum
   release.resolve()
   await resumed
   expect(chat.status).toBe('ready')
+  expect(posts).toBe(1)
+  const deltas = chunks.flatMap((chunk) =>
+    chunk.type === 'tool-input-delta' ? [chunk.inputTextDelta] : [],
+  )
+  expect(JSON.stringify(input).startsWith(deltas.join(''))).toBe(true)
+  expect(chunks.filter((chunk) => chunk.type === 'tool-input-start')).toHaveLength(1)
   expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
   if (chat.lastMessage === undefined) throw new Error('Expected completed message')
   expect(chat.lastMessage.parts.filter(isToolUIPart)).toEqual([
