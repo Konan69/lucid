@@ -137,6 +137,38 @@ const decodeTask = Schema.decodeUnknownSync(
 )
 
 for (const backend of backends) {
+  /** Idle admission appends the Person entry, receipt and generation on one serialized commit.
+   * Concurrent conversations may interleave commits, never the identities within that commit. */
+  it.live(
+    `${backend}: idle receipts immediately precede generation tasks under concurrent admission`,
+    () =>
+      Effect.promise(async () => {
+        const store = await storageFor(backend)
+        const { harness, root, faux } = await opened(await store.open(), [])
+        const other = await harness.createConversation(
+          {
+            ownership: { kind: 'ownerless' },
+            agent: { model: { provider: 'faux', modelId: 'faux-1' } },
+          },
+          context,
+        )
+        const first = await starts(harness, root)
+        const second = await starts(harness, other)
+        faux.setResponses([fauxAssistantMessage('First.'), fauxAssistantMessage('Second.')])
+        const admissions = await Promise.all([
+          root.submit({ type: 'input', content: 'First', requestId: 'first' }, context),
+          other.submit({ type: 'input', content: 'Second', requestId: 'second' }, context),
+        ])
+        const [one, two] = admissions
+        if (one === undefined || two === undefined) throw new Error('Expected both admissions')
+        await Promise.all([first.wait(one.id), second.wait(two.id)])
+        expect(first.tasks.get(one.id)).toBe(one.id + 1)
+        expect(second.tasks.get(two.id)).toBe(two.id + 1)
+        await harness.waitForIdle(context)
+        expect(taskAt(await assistants(root), 0)).toBe(one.id + 1)
+        expect(taskAt(await assistants(other), 0)).toBe(two.id + 1)
+      }),
+  )
   /** generation.abort commits an aborted outcome WITHOUT GenerationResult, although the
    * tools checkpoint and attributed assistant already exist. Closed-resume design must
    * account for this before replacing the current terminal correction contract. */
