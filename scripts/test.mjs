@@ -62,13 +62,12 @@ async function moduleImports(project, file) {
     ...(transformed.deps === undefined ? [] : transformed.deps),
     ...(transformed.dynamicDeps === undefined ? [] : transformed.dynamicDeps),
   ]
-  const files = raw
-    .map((dependency) =>
-      dependency.startsWith('/@fs/')
-        ? dependency.slice(4)
-        : NodePath.join(project.config.root, dependency),
-    )
-    .filter((path) => !path.includes('node_modules') && NodeFS.existsSync(path))
+  const files = raw.flatMap((dependency) => {
+    const path = dependency.startsWith('/@fs/')
+      ? dependency.slice(4)
+      : NodePath.join(project.config.root, dependency)
+    return !path.includes('node_modules') && NodeFS.existsSync(path) ? [path] : []
+  })
   return { files, raw, code: transformed.code }
 }
 
@@ -79,12 +78,12 @@ async function moduleImports(project, file) {
  * its own means. What such a module depends on is not in any import graph, so a test that
  * reaches one is keyed on the whole package instead.
  */
-function widthOf(file, raw, text, code) {
+function widthOf(file, raw, text, transformed) {
   if (raw.some((dependency) => startsPrograms.test(dependency))) return 'starts a program'
   const files = raw.some((dependency) => usesFiles.test(dependency))
   if (files && readsByPlace.test(text)) return 'reads files by place'
   if (files && testCode.test(file)) return 'test code using the file system'
-  if (computedImport.test(code)) return 'computed import'
+  if (computedImport.test(transformed)) return 'computed import'
   if (ownLoader.test(text)) return 'own module loader'
   return undefined
 }
@@ -108,14 +107,13 @@ function graphOf(project) {
     let wide
     while (queue.length > 0) {
       const batch = await Promise.all(queue.splice(0).map((file) => expand(file)))
-      for (const node of batch) {
-        if (wide === undefined && node.wide !== undefined)
-          wide = `${NodePath.relative(repositoryRoot, node.file)} ${node.wide}`
-        for (const file of node.files)
-          if (!reached.has(file)) {
-            reached.add(file)
-            queue.push(file)
-          }
+      const widest = batch.find((node) => node.wide !== undefined)
+      if (wide === undefined && widest !== undefined)
+        wide = `${NodePath.relative(repositoryRoot, widest.file)} ${widest.wide}`
+      const fresh = batch.flatMap((node) => node.files).filter((file) => !reached.has(file))
+      for (const file of new Set(fresh)) {
+        reached.add(file)
+        queue.push(file)
       }
     }
     return { files: [...reached].toSorted((a, b) => a.localeCompare(b)), wide }
@@ -155,7 +153,9 @@ async function packageInputs(project, closure, read) {
   )
   const settings = Object.entries(process.env)
     .filter(([name]) => /^(VIVID_TEST_|VIVID_LIVE_|EXPLABS_API_KEY$)/u.test(name))
-    .filter(([name]) => name !== 'VIVID_TEST_DATABASE_URL')
+    // Neither changes what a test does: the address differs per run, and "run everything"
+    // must write the same records a selective run reads.
+    .filter(([name]) => name !== 'VIVID_TEST_DATABASE_URL' && name !== 'VIVID_TEST_ALL')
     .map(([name, value]) => `${name}=${value}`)
     .toSorted((a, b) => a.localeCompare(b))
   const files = [...new Set([...shared, ...data, ...setupFiles])].toSorted((a, b) =>
@@ -280,6 +280,38 @@ function run(packageRoot, files, forwarded) {
 const skippedStates = new Set(['pending', 'skipped', 'todo'])
 
 /**
+ * Add what just ran to the counts, and record each file that passed under its key so the next
+ * run with the same inputs replays it. A failed file is never recorded.
+ */
+function record(results, due, store) {
+  const counts = { tests: 0, skipped: 0 }
+  for (const result of results) {
+    const tests = result.assertionResults.length
+    const skipped = result.assertionResults.filter((a) => skippedStates.has(a.status)).length
+    counts.tests += tests
+    counts.skipped += skipped
+    const entry = due.find((candidate) => candidate.file === result.name)
+    if (result.status === 'passed' && entry !== undefined && entry.key !== undefined)
+      NodeFS.writeFileSync(
+        NodePath.join(store, `${entry.key}.json`),
+        JSON.stringify({ file: NodePath.relative(repositoryRoot, result.name), tests, skipped }),
+      )
+  }
+  return counts
+}
+
+/** The files whose key already passed, with the counts they had; none when trusting nothing. */
+function unchanged(planned, store, everything) {
+  if (everything) return []
+  return planned.flatMap((entry) => {
+    const passed = recalled(store, entry.key)
+    return passed === undefined
+      ? []
+      : [{ file: entry.file, tests: passed.tests, skipped: passed.skipped }]
+  })
+}
+
+/**
  * Run only the test files whose result can have changed. A file's result is a function of what
  * it loads; when every byte of that is what it was the last time the file passed, the result is
  * replayed with its counts and the file does not run. `--all` runs everything and trusts
@@ -292,12 +324,7 @@ async function main(argv) {
   const forwarded = argv.filter((argument) => argument !== '--all' && argument !== '--plan')
   const store = storeDirectory()
   const planned = await plan(packageRoot)
-  const replayed = everything
-    ? []
-    : planned.flatMap((entry) => {
-        const passed = recalled(store, entry.key)
-        return passed === undefined ? [] : [{ ...passed, file: entry.file }]
-      })
+  const replayed = unchanged(planned, store, everything)
   const replayedFiles = new Set(replayed.map((entry) => entry.file))
   const due = planned.filter((entry) => !replayedFiles.has(entry.file))
   process.stdout.write(
@@ -318,26 +345,10 @@ async function main(argv) {
           due.map((entry) => entry.file),
           forwarded,
         )
-  const counts = { tests: 0, skipped: 0 }
+  const counts = record(ran.results, due, store)
   for (const entry of replayed) {
     counts.tests += entry.tests
     counts.skipped += entry.skipped
-  }
-  for (const result of ran.results) {
-    const tests = result.assertionResults.length
-    const skipped = result.assertionResults.filter((a) => skippedStates.has(a.status)).length
-    counts.tests += tests
-    counts.skipped += skipped
-    const entry = due.find((candidate) => candidate.file === result.name)
-    if (result.status === 'passed' && entry !== undefined && entry.key !== undefined)
-      NodeFS.writeFileSync(
-        NodePath.join(store, `${entry.key}.json`),
-        JSON.stringify({
-          file: NodePath.relative(repositoryRoot, result.name),
-          tests,
-          skipped,
-        }),
-      )
   }
   // A run that ended before its report, or without one of its files, is a failure, never a pass.
   // (A base narrows the run on purpose, so files Vitest left out are expected then.)
