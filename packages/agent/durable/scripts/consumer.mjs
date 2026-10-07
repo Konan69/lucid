@@ -132,7 +132,11 @@ async function project(temporary, archive) {
   return consumer
 }
 
-/** Check consumer declarations without inheriting workspace paths, source conditions, or config. */
+/**
+ * Check consumer declarations without workspace paths or source conditions. TypeScript 6.0.3's
+ * declaration transformer preserves relative specifiers (rewriteModuleSpecifier2); its resolver
+ * must find the shipped .d.ts siblings even though rewriteRelativeImportExtensions rewrites JS only.
+ */
 async function types(consumer, resolution, compiler) {
   const config = {
     compilerOptions: {
@@ -161,6 +165,7 @@ const temporary = await NodeFSP.mkdtemp(NodePath.join(cache, 'durable-consumer-'
 process.stdout.write(`Packaging proof directory: ${temporary}\n`)
 const consumer = await project(temporary, await pack(temporary))
 for (const compiler of compilers) {
+  run(process.execPath, [compiler.file, '--version'], consumer)
   await types(consumer, 'bundler', compiler)
   await types(consumer, 'nodenext', compiler)
 }
