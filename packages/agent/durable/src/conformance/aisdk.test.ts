@@ -1,3 +1,7 @@
+import { Deferred, Effect, Option } from 'effect'
+import { FixtureFailed } from '../fixtures/harness.ts'
+import { consumeReadable, hold } from '../fixtures/reading.ts'
+import { runForPi } from '../pi.ts'
 import {
   fauxAssistantMessage,
   fauxThinking,
@@ -13,24 +17,12 @@ import {
   type ChatInit,
   type UIMessage,
 } from 'ai'
-import { expect, it } from 'vitest'
+import { expect, it } from '@effect/vitest'
 import { z } from 'zod'
-
 import { resumable } from '../client.ts'
 import { PlainChat } from '../fixtures/chat.ts'
 import { answer, attachRun, continueRun, decide, respond, streamRun, waiting } from '../main.ts'
-import {
-  hold,
-  call,
-  consume,
-  context,
-  host,
-  modelText,
-  shop,
-  signal,
-  texts,
-} from './fixtures/host.ts'
-
+import { call, context, host, modelText, shop, texts } from './fixtures/host.ts'
 /**
  * As in src/chat.test.ts and upstream chat.test.ts, drive AbstractChat rather than a mock client.
  * Arm the completion before each SDK action: onFinish is the observable end of an automatic POST.
@@ -39,21 +31,21 @@ function client(
   transport: DefaultChatTransport<UIMessage>,
   predicate: ChatInit<UIMessage>['sendAutomaticallyWhen'],
 ) {
-  let completion = signal()
+  let completion = Deferred.makeUnsafe<void, FixtureFailed>()
   const chat = new PlainChat({
     transport,
     sendAutomaticallyWhen: predicate,
-    onFinish: () => completion.resolve(),
-    onError: (error) => completion.reject(error),
+    onFinish: () => Deferred.doneUnsafe(completion, Effect.void),
+    onError: (error) =>
+      Deferred.doneUnsafe(completion, Effect.fail(new FixtureFailed({ cause: error }))),
   })
   /** Await the next response without relying on stream timing or status polling. */
   const next = () => {
-    completion = signal()
-    return completion.promise
+    completion = Deferred.makeUnsafe<void, FixtureFailed>()
+    return Deferred.await(completion)
   }
   return { chat, next }
 }
-
 /** The stock app echoes the approval identity supplied in its actual SDK message part. */
 function approvalId(chat: PlainChat, callId: string) {
   if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
@@ -64,307 +56,362 @@ function approvalId(chat: PlainChat, callId: string) {
     throw new Error('Expected approval request')
   return part.approval.id
 }
-
 // AI SDK packages/ai/src/ui-message-stream/ui-message-chunks.test.ts: returns UI message chunks; accepts reset-step chunks.
 // consume validates all chunks with uiMessageChunkSchema before folding; exercise each bridge lifecycle.
-it.each(['text', 'reasoning', 'approval', 'answer', 'denial', 'retry'] as const)(
+it.live.each(['text', 'reasoning', 'approval', 'answer', 'denial', 'retry'] as const)(
   'emits a valid SDK UI stream for %s',
-  async (kind) => {
-    const fixture = await shop()
-    const opened = await fixture.open()
-    switch (kind) {
-      case 'text':
-        opened.faux.setResponses([fauxAssistantMessage('Done.')])
-        break
-      case 'reasoning':
-        opened.faux.setResponses([
-          fauxAssistantMessage([fauxThinking('Checking.'), { type: 'text', text: 'Done.' }]),
-        ])
-        break
-      case 'approval':
-      case 'denial':
-        opened.faux.setResponses([
-          call('pay', { amount: 500 }, 'held'),
-          fauxAssistantMessage('Done.'),
-        ])
-        break
-      case 'answer':
-        opened.faux.setResponses([
-          call('ask', { question: 'Which?' }, 'held'),
-          fauxAssistantMessage('Done.'),
-        ])
-        break
-      case 'retry':
-        opened.faux.setResponses([
-          fauxAssistantMessage('Partial.', {
-            stopReason: 'error',
-            errorMessage: '503 Service Unavailable',
-          }),
-          fauxAssistantMessage('Done.'),
-        ])
-        break
-    }
-    const first = await consume(
-      await streamRun(
-        opened.harness,
-        { conversationId: opened.root.id, content: 'Do it', requestId: kind },
-        context,
+  (kind) =>
+    Effect.gen(function* () {
+      const fixture = yield* shop()
+      const opened = yield* fixture.open()
+      switch (kind) {
+        case 'text':
+          opened.faux.setResponses([fauxAssistantMessage('Done.')])
+          break
+        case 'reasoning':
+          opened.faux.setResponses([
+            fauxAssistantMessage([fauxThinking('Checking.'), { type: 'text', text: 'Done.' }]),
+          ])
+          break
+        case 'approval':
+        case 'denial':
+          opened.faux.setResponses([
+            call('pay', { amount: 500 }, 'held'),
+            fauxAssistantMessage('Done.'),
+          ])
+          break
+        case 'answer':
+          opened.faux.setResponses([
+            call('ask', { question: 'Which?' }, 'held'),
+            fauxAssistantMessage('Done.'),
+          ])
+          break
+        case 'retry':
+          opened.faux.setResponses([
+            fauxAssistantMessage('Partial.', {
+              stopReason: 'error',
+              errorMessage: '503 Service Unavailable',
+            }),
+            fauxAssistantMessage('Done.'),
+          ])
+          break
+      }
+      const first = yield* consumeReadable(
+        yield* Effect.promise(() =>
+          streamRun(
+            opened.harness,
+            { conversationId: opened.root.id, content: 'Do it', requestId: kind },
+            context,
+          ),
+        ),
+        Option.none(),
+      )
+      if (kind === 'approval' || kind === 'denial' || kind === 'answer') {
+        const resolved1 = yield* hold(opened.harness, opened.root.id, 'held', context)
+        const resolved2 = yield* hold(opened.harness, opened.root.id, 'held', context)
+        if (kind === 'answer')
+          yield* Effect.promise(() =>
+            answer(
+              opened.harness,
+              opened.root.id,
+              { holdId: resolved1, output: 'savings' },
+              context,
+            ),
+          )
+        else
+          yield* Effect.promise(() =>
+            decide(
+              opened.harness,
+              opened.root.id,
+              {
+                holdId: resolved2,
+                approved: kind === 'approval',
+                reason: 'No budget',
+              },
+              context,
+            ),
+          )
+        const stream = yield* Effect.promise(() =>
+          continueRun(
+            opened.harness,
+            opened.root.id,
+            { messageId: first.message.id, known: new Set(['held']) },
+            context,
+          ),
+        )
+        if (stream === undefined) throw new Error('Expected a continuation')
+        const result = yield* consumeReadable(stream, Option.some(first.message))
+        expect(texts(result.message)).toEqual(['Done.'])
+        if (kind === 'answer')
+          expect(
+            result.chunks.filter(
+              (chunk) => chunk.type === 'tool-output-available' && chunk.toolCallId === 'held',
+            ),
+          ).toHaveLength(1)
+      } else expect(texts(first.message)).toEqual(['Done.'])
+      expect(first.chunks.at(0)).toMatchObject({ type: 'start' })
+      expect(first.chunks.at(-1)).toMatchObject({ type: 'finish' })
+    }),
+)
+// AI SDK packages/ai/src/ui/chat.test.ts: addToolApprovalResponse > approved with automatic sending > should update tool invocation to show the approval response.
+it.live('addToolApprovalResponse automatically resumes one assistant message', () =>
+  Effect.gen(function* () {
+    const fixture = yield* shop()
+    const opened = yield* fixture.open()
+    opened.faux.setResponses([
+      fauxAssistantMessage(
+        [{ type: 'text', text: 'Checking.' }, fauxToolCall('pay', { amount: 500 }, { id: 'pay' })],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('Paid.'),
+    ])
+    const { chat, next } = client(
+      opened.transport,
+      lastAssistantMessageIsCompleteWithApprovalResponses,
+    )
+    yield* Effect.promise(() => chat.sendMessage({ text: 'Pay' }))
+    expect(chat.status).toBe('ready')
+    const parked = chat.lastMessage
+    if (parked === undefined) throw new Error('Expected the held message')
+    const id = parked.id
+    expect(fixture.paid).toEqual([])
+    const finished = next()
+    yield* Effect.promise(() =>
+      Promise.resolve(
+        chat.addToolApprovalResponse({
+          id: approvalId(chat, 'pay'),
+          approved: true,
+        }),
       ),
     )
-    if (kind === 'approval' || kind === 'denial' || kind === 'answer') {
-      if (kind === 'answer')
-        await answer(
-          opened.harness,
-          opened.root.id,
-          { holdId: await hold(opened.harness, opened.root.id, 'held'), output: 'savings' },
-          context,
-        )
-      else
-        await decide(
-          opened.harness,
-          opened.root.id,
-          {
-            holdId: await hold(opened.harness, opened.root.id, 'held'),
-            approved: kind === 'approval',
-            reason: 'No budget',
-          },
-          context,
-        )
-      const stream = await continueRun(
-        opened.harness,
-        opened.root.id,
-        { messageId: first.message.id, known: new Set(['held']) },
-        context,
-      )
-      if (stream === undefined) throw new Error('Expected a continuation')
-      const result = await consume(stream, first.message)
-      expect(texts(result.message)).toEqual(['Done.'])
-      if (kind === 'answer')
-        expect(
-          result.chunks.filter(
-            (chunk) => chunk.type === 'tool-output-available' && chunk.toolCallId === 'held',
-          ),
-        ).toHaveLength(1)
-    } else expect(texts(first.message)).toEqual(['Done.'])
-    expect(first.chunks.at(0)).toMatchObject({ type: 'start' })
-    expect(first.chunks.at(-1)).toMatchObject({ type: 'finish' })
-  },
+    yield* finished
+    expect(chat.status).toBe('ready')
+    expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
+    if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')
+    expect(chat.lastMessage.id).toBe(id)
+    expect(texts(chat.lastMessage)).toEqual(['Checking.', 'Paid.'])
+    expect(chat.lastMessage.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
+      state: 'output-available',
+      output: { receipt: 500 },
+    })
+    expect(fixture.paid).toEqual([500])
+  }),
 )
-
-// AI SDK packages/ai/src/ui/chat.test.ts: addToolApprovalResponse > approved with automatic sending > should update tool invocation to show the approval response.
-it('addToolApprovalResponse automatically resumes one assistant message', async () => {
-  const fixture = await shop()
-  const opened = await fixture.open()
-  opened.faux.setResponses([
-    fauxAssistantMessage(
-      [{ type: 'text', text: 'Checking.' }, fauxToolCall('pay', { amount: 500 }, { id: 'pay' })],
-      { stopReason: 'toolUse' },
-    ),
-    fauxAssistantMessage('Paid.'),
-  ])
-  const { chat, next } = client(
-    opened.transport,
-    lastAssistantMessageIsCompleteWithApprovalResponses,
-  )
-  await chat.sendMessage({ text: 'Pay' })
-  expect(chat.status).toBe('ready')
-  const parked = chat.lastMessage
-  if (parked === undefined) throw new Error('Expected the held message')
-  const id = parked.id
-  expect(fixture.paid).toEqual([])
-  const finished = next()
-  await chat.addToolApprovalResponse({
-    id: approvalId(chat, 'pay'),
-    approved: true,
-  })
-  await finished
-  expect(chat.status).toBe('ready')
-  expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
-  if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')
-  expect(chat.lastMessage.id).toBe(id)
-  expect(texts(chat.lastMessage)).toEqual(['Checking.', 'Paid.'])
-  expect(chat.lastMessage.parts.find((part) => part.type === 'tool-pay')).toMatchObject({
-    state: 'output-available',
-    output: { receipt: 500 },
-  })
-  expect(fixture.paid).toEqual([500])
-})
-
 // AI SDK packages/ai/src/ui/chat.test.ts: sendAutomaticallyWhen > should send message when a tool output is submitted.
-it('addToolOutput automatically resumes one assistant message', async () => {
-  const fixture = await shop()
-  const opened = await fixture.open()
-  opened.faux.setResponses([
-    call('ask', { question: 'Which account?' }, 'ask'),
-    (request) => fauxAssistantMessage(`Using ${modelText(request.messages).split('\n').at(-1)}.`),
-  ])
-  const { chat, next } = client(opened.transport, lastAssistantMessageIsCompleteWithToolCalls)
-  await chat.sendMessage({ text: 'Ask' })
-  const parked = chat.lastMessage
-  if (parked === undefined) throw new Error('Expected the held message')
-  expect(parked.parts.find((part) => part.type === 'tool-ask')).toMatchObject({
-    state: 'input-available',
-    input: { question: 'Which account?' },
-  })
-  const id = parked.id
-  const finished = next()
-  await chat.addToolOutput({ tool: 'ask', toolCallId: 'ask', output: 'savings' })
-  await finished
-  expect(chat.status).toBe('ready')
-  expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
-  if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')
-  expect(chat.lastMessage.id).toBe(id)
-  expect(texts(chat.lastMessage)).toEqual(['Using savings.'])
-  expect(chat.lastMessage.parts.find((part) => part.type === 'tool-ask')).toMatchObject({
-    state: 'output-available',
-    output: 'savings',
-  })
-})
-
+it.live('addToolOutput automatically resumes one assistant message', () =>
+  Effect.gen(function* () {
+    const fixture = yield* shop()
+    const opened = yield* fixture.open()
+    opened.faux.setResponses([
+      call('ask', { question: 'Which account?' }, 'ask'),
+      (request) => fauxAssistantMessage(`Using ${modelText(request.messages).split('\n').at(-1)}.`),
+    ])
+    const { chat, next } = client(opened.transport, lastAssistantMessageIsCompleteWithToolCalls)
+    yield* Effect.promise(() => chat.sendMessage({ text: 'Ask' }))
+    const parked = chat.lastMessage
+    if (parked === undefined) throw new Error('Expected the held message')
+    expect(parked.parts.find((part) => part.type === 'tool-ask')).toMatchObject({
+      state: 'input-available',
+      input: { question: 'Which account?' },
+    })
+    const id = parked.id
+    const finished = next()
+    yield* Effect.promise(() =>
+      Promise.resolve(chat.addToolOutput({ tool: 'ask', toolCallId: 'ask', output: 'savings' })),
+    )
+    yield* finished
+    expect(chat.status).toBe('ready')
+    expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
+    if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')
+    expect(chat.lastMessage.id).toBe(id)
+    expect(texts(chat.lastMessage)).toEqual(['Using savings.'])
+    expect(chat.lastMessage.parts.find((part) => part.type === 'tool-ask')).toMatchObject({
+      state: 'output-available',
+      output: 'savings',
+    })
+  }),
+)
 // AI SDK packages/ai/src/ui/last-assistant-message-is-complete-with-approval-responses.test.ts: should return false if some tools still have approval-requested state.
-it('the stock approval predicate waits for both decisions before posting', async () => {
-  const fixture = await shop()
-  const opened = await fixture.open()
-  opened.faux.setResponses([
-    fauxAssistantMessage(
-      [
-        fauxToolCall('pay', { amount: 100 }, { id: 'one' }),
-        fauxToolCall('pay', { amount: 200 }, { id: 'two' }),
-      ],
-      { stopReason: 'toolUse' },
-    ),
-    fauxAssistantMessage('Resolved.'),
-  ])
-  const { chat, next } = client(
-    opened.transport,
-    lastAssistantMessageIsCompleteWithApprovalResponses,
-  )
-  await chat.sendMessage({ text: 'Pay both' })
-  await chat.addToolApprovalResponse({
-    id: approvalId(chat, 'one'),
-    approved: true,
-  })
-  expect(chat.status).toBe('ready')
-  expect(fixture.paid).toEqual([])
-  expect(await waiting(opened.harness, opened.root.id, context)).toHaveLength(2)
-  const finished = next()
-  await chat.addToolApprovalResponse({
-    id: approvalId(chat, 'two'),
-    approved: false,
-    reason: 'Budget',
-  })
-  await finished
-  expect(fixture.paid).toEqual([100])
-  if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')
-  expect(
-    chat.lastMessage.parts.find((part) => 'toolCallId' in part && part.toolCallId === 'two'),
-  ).toMatchObject({ state: 'output-denied' })
-  expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
-})
-
+it.live('the stock approval predicate waits for both decisions before posting', () =>
+  Effect.gen(function* () {
+    const fixture = yield* shop()
+    const opened = yield* fixture.open()
+    opened.faux.setResponses([
+      fauxAssistantMessage(
+        [
+          fauxToolCall('pay', { amount: 100 }, { id: 'one' }),
+          fauxToolCall('pay', { amount: 200 }, { id: 'two' }),
+        ],
+        { stopReason: 'toolUse' },
+      ),
+      fauxAssistantMessage('Resolved.'),
+    ])
+    const { chat, next } = client(
+      opened.transport,
+      lastAssistantMessageIsCompleteWithApprovalResponses,
+    )
+    yield* Effect.promise(() => chat.sendMessage({ text: 'Pay both' }))
+    yield* Effect.promise(() =>
+      Promise.resolve(
+        chat.addToolApprovalResponse({
+          id: approvalId(chat, 'one'),
+          approved: true,
+        }),
+      ),
+    )
+    expect(chat.status).toBe('ready')
+    expect(fixture.paid).toEqual([])
+    expect(
+      yield* Effect.promise(() => waiting(opened.harness, opened.root.id, context)),
+    ).toHaveLength(2)
+    const finished = next()
+    yield* Effect.promise(() =>
+      Promise.resolve(
+        chat.addToolApprovalResponse({
+          id: approvalId(chat, 'two'),
+          approved: false,
+          reason: 'Budget',
+        }),
+      ),
+    )
+    yield* finished
+    expect(fixture.paid).toEqual([100])
+    if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')
+    expect(
+      chat.lastMessage.parts.find((part) => 'toolCallId' in part && part.toolCallId === 'two'),
+    ).toMatchObject({ state: 'output-denied' })
+    expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
+  }),
+)
 // Installed ai/src/ui/last-assistant-message-is-complete-with-approval-responses.ts:35–40
 // requires all presented tools to have responses. Withholding unstarted calls lets c1 authorize
 // the next request, then the live document watch presents c2 when its task is allocated.
-it('the stock approval predicate advances after withholding an unstarted sequential call', async () => {
-  const paid: number[] = []
-  const fixture = await host(
-    {
-      pay: tool({
-        inputSchema: z.object({ amount: z.number() }),
-        execute: async ({ amount }) => {
-          paid.push(amount)
-          return amount
+it.live(
+  'the stock approval predicate advances after withholding an unstarted sequential call',
+  () =>
+    Effect.gen(function* () {
+      const paid: number[] = []
+      const fixture = yield* host(
+        {
+          pay: tool({
+            inputSchema: z.object({ amount: z.number() }),
+            execute: ({ amount }) =>
+              runForPi(
+                Effect.sync(() => {
+                  paid.push(amount)
+                  return amount
+                }),
+                undefined,
+              ),
+          }),
         },
-      }),
-    },
-    { execution: 'sequential', approval: { pay: true } },
-    { toolExecution: 'sequential' },
-  )
-  const opened = await fixture.open()
-  opened.faux.setResponses([
-    fauxAssistantMessage(
-      [
-        fauxToolCall('pay', { amount: 1 }, { id: 'c1' }),
-        fauxToolCall('pay', { amount: 2 }, { id: 'c2' }),
-      ],
-      { stopReason: 'toolUse' },
-    ),
-    fauxAssistantMessage('Done.'),
-  ])
-  const { chat, next } = client(
-    opened.transport,
-    lastAssistantMessageIsCompleteWithApprovalResponses,
-  )
-  await chat.sendMessage({ text: 'Pay both' })
-  expect(await waiting(opened.harness, opened.root.id, context)).toMatchObject([{ callId: 'c1' }])
-  if (chat.lastMessage === undefined) throw new Error('Expected the sequential message')
-  expect(
-    chat.lastMessage.parts.find((part) => 'toolCallId' in part && part.toolCallId === 'c2'),
-  ).toBeUndefined()
-  const completed = next()
-  await chat.addToolApprovalResponse({
-    id: approvalId(chat, 'c1'),
-    approved: true,
-  })
-  await completed
-  expect(paid).toEqual([1])
-  expect(
-    chat.lastMessage.parts.find((part) => 'toolCallId' in part && part.toolCallId === 'c2'),
-  ).toMatchObject({ state: 'approval-requested' })
-  const finished = next()
-  await chat.addToolApprovalResponse({
-    id: approvalId(chat, 'c2'),
-    approved: true,
-  })
-  await finished
-  expect(paid).toEqual([1, 2])
-  expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
-})
-
+        { execution: 'sequential', approval: { pay: true } },
+        { toolExecution: 'sequential' },
+      )
+      const opened = yield* fixture.open()
+      opened.faux.setResponses([
+        fauxAssistantMessage(
+          [
+            fauxToolCall('pay', { amount: 1 }, { id: 'c1' }),
+            fauxToolCall('pay', { amount: 2 }, { id: 'c2' }),
+          ],
+          { stopReason: 'toolUse' },
+        ),
+        fauxAssistantMessage('Done.'),
+      ])
+      const { chat, next } = client(
+        opened.transport,
+        lastAssistantMessageIsCompleteWithApprovalResponses,
+      )
+      yield* Effect.promise(() => chat.sendMessage({ text: 'Pay both' }))
+      expect(
+        yield* Effect.promise(() => waiting(opened.harness, opened.root.id, context)),
+      ).toMatchObject([{ callId: 'c1' }])
+      if (chat.lastMessage === undefined) throw new Error('Expected the sequential message')
+      expect(
+        chat.lastMessage.parts.find((part) => 'toolCallId' in part && part.toolCallId === 'c2'),
+      ).toBeUndefined()
+      const completed = next()
+      yield* Effect.promise(() =>
+        Promise.resolve(
+          chat.addToolApprovalResponse({
+            id: approvalId(chat, 'c1'),
+            approved: true,
+          }),
+        ),
+      )
+      yield* completed
+      expect(paid).toEqual([1])
+      expect(
+        chat.lastMessage.parts.find((part) => 'toolCallId' in part && part.toolCallId === 'c2'),
+      ).toMatchObject({ state: 'approval-requested' })
+      const finished = next()
+      yield* Effect.promise(() =>
+        Promise.resolve(
+          chat.addToolApprovalResponse({
+            id: approvalId(chat, 'c2'),
+            approved: true,
+          }),
+        ),
+      )
+      yield* finished
+      expect(paid).toEqual([1, 2])
+      expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
+    }),
+)
 // AI SDK packages/ai/src/ui/chat.test.ts: sendAutomaticallyWhen > should submit a client tool output when completed text follows the tool call.
-it('the stock tool predicate submits an output even when completed text follows the call', async () => {
-  const fixture = await shop()
-  const opened = await fixture.open()
-  opened.faux.setResponses([
-    fauxAssistantMessage(
-      [
-        fauxToolCall('ask', { question: 'Which account?' }, { id: 'ask' }),
-        { type: 'text', text: 'Waiting for your answer.' },
-      ],
-      { stopReason: 'toolUse' },
-    ),
-    fauxAssistantMessage('Answered.'),
-  ])
-  const { chat, next } = client(opened.transport, lastAssistantMessageIsCompleteWithToolCalls)
-  await chat.sendMessage({ text: 'Ask' })
-  const finished = next()
-  await chat.addToolOutput({ tool: 'ask', toolCallId: 'ask', output: 'savings' })
-  await finished
-  expect(chat.status).toBe('ready')
-  expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
-  if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')
-  expect(texts(chat.lastMessage)).toEqual(['Waiting for your answer.', 'Answered.'])
-})
-
+it.live(
+  'the stock tool predicate submits an output even when completed text follows the call',
+  () =>
+    Effect.gen(function* () {
+      const fixture = yield* shop()
+      const opened = yield* fixture.open()
+      opened.faux.setResponses([
+        fauxAssistantMessage(
+          [
+            fauxToolCall('ask', { question: 'Which account?' }, { id: 'ask' }),
+            { type: 'text', text: 'Waiting for your answer.' },
+          ],
+          { stopReason: 'toolUse' },
+        ),
+        fauxAssistantMessage('Answered.'),
+      ])
+      const { chat, next } = client(opened.transport, lastAssistantMessageIsCompleteWithToolCalls)
+      yield* Effect.promise(() => chat.sendMessage({ text: 'Ask' }))
+      const finished = next()
+      yield* Effect.promise(() =>
+        Promise.resolve(chat.addToolOutput({ tool: 'ask', toolCallId: 'ask', output: 'savings' })),
+      )
+      yield* finished
+      expect(chat.status).toBe('ready')
+      expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
+      if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')
+      expect(texts(chat.lastMessage)).toEqual(['Waiting for your answer.', 'Answered.'])
+    }),
+)
 /** Keep a real tool running while reconnect attaches; release is a tool completion, not a clock. */
-async function running() {
-  const entered = signal()
-  const release = signal()
-  const fixture = await host(
+const running = Effect.fn('Test.running')(function* () {
+  const entered = yield* Deferred.make<void, FixtureFailed>()
+  const release = yield* Deferred.make<void, FixtureFailed>()
+  const fixture = yield* host(
     {
       work: tool({
         description: 'Build a report',
         inputSchema: z.object({}),
-        execute: async () => {
-          entered.resolve()
-          await release.promise
-          return '12 pages'
-        },
+        execute: () =>
+          runForPi(
+            Effect.gen(function* () {
+              Deferred.doneUnsafe(entered, Effect.void)
+              yield* Deferred.await(release)
+              return '12 pages'
+            }),
+            undefined,
+          ),
       }),
     },
     {},
   )
-  const opened = await fixture.open()
+  const opened = yield* fixture.open()
   opened.faux.setResponses([
     fauxAssistantMessage(
       [{ type: 'text', text: 'Starting.' }, fauxToolCall('work', {}, { id: 'work' })],
@@ -372,276 +419,320 @@ async function running() {
     ),
     fauxAssistantMessage('Finished.'),
   ])
-  const original = await streamRun(
-    opened.harness,
-    { conversationId: opened.root.id, content: 'Build', requestId: 'build' },
-    context,
+  const original = yield* Effect.promise(() =>
+    streamRun(
+      opened.harness,
+      { conversationId: opened.root.id, content: 'Build', requestId: 'build' },
+      context,
+    ),
   )
-  await entered.promise
-  await original.cancel()
+  yield* Deferred.await(entered)
+  yield* Effect.promise(() => original.cancel())
   return { ...opened, release }
-}
-
+})
 // AI SDK packages/ai/src/ui/chat.test.ts: should not copy the previous assistant message when resuming a stream.
 // The host maps GET to public attachRun; the separate tests below exercise respond's GET support.
-it('a host reconnect route streams the active run through the stock transport', async () => {
-  const opened = await running()
-  const attached = signal()
-  const transport = new DefaultChatTransport<UIMessage>({
-    api: 'http://durable.test/chat',
-    fetch: async (url, init) => {
-      const request = new Request(url, init)
-      if (request.method !== 'GET') return respond(opened.harness, opened.root.id, request, context)
-      const attachedRun = await attachRun(opened.harness, opened.root.id, context)
-      if (attachedRun.status === 'idle') return new Response(null, { status: 204 })
-      attached.resolve()
-      return createUIMessageStreamResponse({ stream: attachedRun.stream })
-    },
-  })
-  const chat = new PlainChat({ transport })
-  // PlainChat's existing state starts empty; hydrate through AbstractChat's public setter.
-  chat.messages = [{ id: 'user', role: 'user', parts: [{ type: 'text', text: 'Build' }] }]
-  const resumed = chat.resumeStream()
-  await attached.promise
-  opened.release.resolve()
-  await resumed
-  expect(chat.status).toBe('ready')
-  expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
-  if (chat.lastMessage === undefined) throw new Error('Expected the resumed message')
-  expect(texts(chat.lastMessage)).toEqual(['Starting.', 'Finished.'])
-  expect(chat.lastMessage.parts.find((part) => part.type === 'tool-work')).toMatchObject({
-    state: 'output-available',
-    output: '12 pages',
-  })
-})
-
-// AI SDK packages/ai/src/ui/chat.test.ts: should continue an active text part when resuming after a disconnect.
-// Replaying a snapshot resets the SDK's retained current step before emitting its durable contents.
-it('step 1 snapshot reconnect after a network interruption does not duplicate text', async () => {
-  const entered = signal()
-  const release = signal()
-  const fixture = await host(
-    {
-      work: tool({
-        description: 'Build a report',
-        inputSchema: z.object({}),
-        execute: async () => {
-          entered.resolve()
-          await release.promise
-          return '12 pages'
-        },
-      }),
-    },
-    {},
-  )
-  const opened = await fixture.open()
-  opened.faux.setResponses([
-    fauxAssistantMessage(
-      [{ type: 'text', text: 'Starting.' }, fauxToolCall('work', {}, { id: 'work' })],
-      { stopReason: 'toolUse' },
-    ),
-    fauxAssistantMessage('Finished.'),
-  ])
-  const attached = signal()
-  const transport = new DefaultChatTransport<UIMessage>({
-    api: 'http://durable.test/chat',
-    fetch: async (url, init) => {
-      const request = new Request(url, init)
-      if (request.method === 'GET') {
-        const response = await respond(opened.harness, opened.root.id, request, context)
-        attached.resolve()
-        return response
-      }
-      const response = await respond(opened.harness, opened.root.id, request, context)
-      if (response.body === null) throw new Error('Expected an SSE body')
-      const decoder = new TextDecoder()
-      // Fault the transport after receiving real text, leaving Pi and its stream translator intact.
-      const dropped = response.body.pipeThrough(
-        new TransformStream<Uint8Array, Uint8Array>({
-          transform(chunk, controller) {
-            if (decoder.decode(chunk).includes('tool-input-available')) {
-              controller.error(new TypeError('network connection lost'))
-              return
-            }
-            controller.enqueue(chunk)
-          },
-        }),
-      )
-      return new Response(dropped, { headers: response.headers })
-    },
-  })
-  const chat = new PlainChat({ transport: resumable(transport) })
-  try {
-    await chat.sendMessage({ text: 'Build' })
-    await entered.promise
-    expect(chat.status).toBe('error')
-    if (chat.lastMessage === undefined) throw new Error('Expected the disconnected message')
-    expect(texts(chat.lastMessage)).toEqual(['Starting.'])
-    chat.clearError()
+it.live('a host reconnect route streams the active run through the stock transport', () =>
+  Effect.gen(function* () {
+    const opened = yield* running()
+    const attached = yield* Deferred.make<void, FixtureFailed>()
+    const transport = new DefaultChatTransport<UIMessage>({
+      api: 'http://durable.test/chat',
+      fetch: (url, init) =>
+        runForPi(
+          Effect.gen(function* () {
+            const request = new Request(url, init)
+            if (request.method !== 'GET')
+              return yield* Effect.promise(() =>
+                respond(opened.harness, opened.root.id, request, context),
+              )
+            const attachedRun = yield* Effect.promise(() =>
+              attachRun(opened.harness, opened.root.id, context),
+            )
+            if (attachedRun.status === 'idle') return new Response(null, { status: 204 })
+            Deferred.doneUnsafe(attached, Effect.void)
+            return createUIMessageStreamResponse({ stream: attachedRun.stream })
+          }),
+          undefined,
+        ),
+    })
+    const chat = new PlainChat({ transport })
+    // PlainChat's existing state starts empty; hydrate through AbstractChat's public setter.
+    chat.messages = [{ id: 'user', role: 'user', parts: [{ type: 'text', text: 'Build' }] }]
     const resumed = chat.resumeStream()
-    await attached.promise
-    release.resolve()
-    await resumed
+    yield* Deferred.await(attached)
+    Deferred.doneUnsafe(opened.release, Effect.void)
+    yield* Effect.promise(() => resumed)
     expect(chat.status).toBe('ready')
     expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
     if (chat.lastMessage === undefined) throw new Error('Expected the resumed message')
     expect(texts(chat.lastMessage)).toEqual(['Starting.', 'Finished.'])
-    expect(chat.lastMessage.parts.filter((part) => part.type === 'step-start')).toHaveLength(2)
-  } finally {
-    release.resolve()
-    await opened.root.waitForIdle(context)
-  }
-})
-
-// AI SDK packages/ai/src/ui/chat.test.ts: should continue an active text part when resuming after a disconnect.
-// The GET receipt opens observation before the held tool is released.
-it('resumeStream reconnects to an in-progress run through respond', async () => {
-  const opened = await running()
-  const attached = signal()
-  const transport = new DefaultChatTransport<UIMessage>({
-    api: 'http://durable.test/chat',
-    fetch: async (url, init) => {
-      const response = await respond(
-        opened.harness,
-        opened.root.id,
-        new Request(url, init),
-        context,
-      )
-      attached.resolve()
-      return response
-    },
-  })
-  const chat = new PlainChat({ transport })
-  try {
-    const resumed = chat.resumeStream()
-    await attached.promise
-    opened.release.resolve()
-    await resumed
-  } finally {
-    opened.release.resolve()
-    await opened.root.waitForIdle(context)
-  }
-  expect(chat.status).toBe('ready')
-  expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
-  if (chat.lastMessage === undefined) throw new Error('Expected the resumed message')
-  expect(texts(chat.lastMessage)).toEqual(['Starting.', 'Finished.'])
-})
-
-// AI SDK packages/ai/src/ui/chat.test.ts: should not copy the previous assistant message when resuming a stream (reconnectToStream transport seam).
-// The Promise handler serves the bodyless GET through the public attachment seam.
-it('reconnectToStream returns the in-progress run through respond', async () => {
-  const opened = await running()
-  try {
-    const stream = await opened.transport.reconnectToStream({
-      chatId: 'chat',
-      abortSignal: undefined,
+    expect(chat.lastMessage.parts.find((part) => part.type === 'tool-work')).toMatchObject({
+      state: 'output-available',
+      output: '12 pages',
     })
-    opened.release.resolve()
-    if (stream === null) throw new Error('Expected the in-progress stream')
-    const result = await consume(stream)
-    expect(texts(result.message)).toEqual(['Starting.', 'Finished.'])
-  } finally {
-    opened.release.resolve()
-    await opened.root.waitForIdle(context)
-  }
-})
-
-// A retained step 2 needs a step-scoped prefix: reset-step cannot remove earlier SDK steps.
-it.each(['text-end', 'tool-input-start', 'tool-input-available'])(
-  'step 2 retained-state reconnect cut at %s preserves earlier text and tools exactly once',
-  async (cut) => {
-    const entered = signal()
-    const release = signal()
-    const fixture = await host(
+  }),
+)
+// AI SDK packages/ai/src/ui/chat.test.ts: should continue an active text part when resuming after a disconnect.
+// Replaying a snapshot resets the SDK's retained current step before emitting its durable contents.
+it.live('step 1 snapshot reconnect after a network interruption does not duplicate text', () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void, FixtureFailed>()
+    const release = yield* Deferred.make<void, FixtureFailed>()
+    const fixture = yield* host(
       {
-        work: tool({ inputSchema: z.object({}), execute: async () => '12 pages' }),
-        pause: tool({
+        work: tool({
+          description: 'Build a report',
           inputSchema: z.object({}),
-          execute: async () => {
-            entered.resolve()
-            await release.promise
-            return 'continued'
-          },
+          execute: () =>
+            runForPi(
+              Effect.gen(function* () {
+                Deferred.doneUnsafe(entered, Effect.void)
+                yield* Deferred.await(release)
+                return '12 pages'
+              }),
+              undefined,
+            ),
         }),
       },
       {},
     )
-    const opened = await fixture.open()
+    const opened = yield* fixture.open()
     opened.faux.setResponses([
       fauxAssistantMessage(
         [{ type: 'text', text: 'Starting.' }, fauxToolCall('work', {}, { id: 'work' })],
         { stopReason: 'toolUse' },
       ),
-      fauxAssistantMessage(
-        [{ type: 'text', text: 'Fin' }, fauxToolCall('pause', {}, { id: 'pause' })],
-        { stopReason: 'toolUse' },
-      ),
       fauxAssistantMessage('Finished.'),
     ])
-    const attached = signal()
+    const attached = yield* Deferred.make<void, FixtureFailed>()
     const transport = new DefaultChatTransport<UIMessage>({
       api: 'http://durable.test/chat',
-      fetch: async (url, init) => {
-        const request = new Request(url, init)
-        const response = await respond(opened.harness, opened.root.id, request, context)
-        if (request.method === 'GET') {
-          attached.resolve()
-          return response
-        }
-        if (response.body === null) throw new Error('Expected an SSE body')
-        const decoder = new TextDecoder()
-        // Fault before closing step 2's text, retaining step 1 and the second partial text.
-        let secondText = false
-        const dropped = response.body.pipeThrough(
-          new TransformStream<Uint8Array, Uint8Array>({
-            transform(chunk, controller) {
-              const text = decoder.decode(chunk)
-              if (secondText && text.includes(cut)) {
-                controller.error(new TypeError('network connection lost'))
-                return
-              }
-              if (text.includes('text-delta') && text.includes('"delta":"Fin"')) secondText = true
-              controller.enqueue(chunk)
-            },
+      fetch: (url, init) =>
+        runForPi(
+          Effect.gen(function* () {
+            const request = new Request(url, init)
+            if (request.method === 'GET') {
+              const response = yield* Effect.promise(() =>
+                respond(opened.harness, opened.root.id, request, context),
+              )
+              Deferred.doneUnsafe(attached, Effect.void)
+              return response
+            }
+            const response = yield* Effect.promise(() =>
+              respond(opened.harness, opened.root.id, request, context),
+            )
+            if (response.body === null) throw new Error('Expected an SSE body')
+            const decoder = new TextDecoder()
+            // Fault the transport after receiving real text, leaving Pi and its stream translator intact.
+            const dropped = response.body.pipeThrough(
+              new TransformStream<Uint8Array, Uint8Array>({
+                transform(chunk, controller) {
+                  if (decoder.decode(chunk).includes('tool-input-available')) {
+                    controller.error(new TypeError('network connection lost'))
+                    return
+                  }
+                  controller.enqueue(chunk)
+                },
+              }),
+            )
+            return new Response(dropped, { headers: response.headers })
           }),
-        )
-        return new Response(dropped, { headers: response.headers })
-      },
+          undefined,
+        ),
     })
     const chat = new PlainChat({ transport: resumable(transport) })
     try {
-      await chat.sendMessage({ text: 'Build in steps' })
-      await entered.promise
+      yield* Effect.promise(() => chat.sendMessage({ text: 'Build' }))
+      yield* Deferred.await(entered)
       expect(chat.status).toBe('error')
-      if (chat.lastMessage === undefined) throw new Error('Expected the retained message')
-      expect(texts(chat.lastMessage)).toEqual(['Starting.', 'Fin'])
-      expect(chat.lastMessage.parts.filter((part) => part.type === 'tool-work')).toHaveLength(1)
-      const id = chat.lastMessage.id
+      if (chat.lastMessage === undefined) throw new Error('Expected the disconnected message')
+      expect(texts(chat.lastMessage)).toEqual(['Starting.'])
       chat.clearError()
       const resumed = chat.resumeStream()
-      await attached.promise
-      release.resolve()
-      await resumed
+      yield* Deferred.await(attached)
+      Deferred.doneUnsafe(release, Effect.void)
+      yield* Effect.promise(() => resumed)
       expect(chat.status).toBe('ready')
-      expect(chat.lastMessage.parts.map((part) => part.type)).toEqual([
-        'step-start',
-        'text',
-        'tool-work',
-        'step-start',
-        'text',
-        'tool-pause',
-        'step-start',
-        'text',
-      ])
-      expect(chat.lastMessage.id).toBe(id)
-      expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
-      expect({
-        text: texts(chat.lastMessage),
-        tools: chat.lastMessage.parts.filter((part) => part.type === 'tool-work').length,
-      }).toEqual({ text: ['Starting.', 'Fin', 'Finished.'], tools: 1 })
+      expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
+      if (chat.lastMessage === undefined) throw new Error('Expected the resumed message')
+      expect(texts(chat.lastMessage)).toEqual(['Starting.', 'Finished.'])
+      expect(chat.lastMessage.parts.filter((part) => part.type === 'step-start')).toHaveLength(2)
     } finally {
-      release.resolve()
-      await opened.root.waitForIdle(context)
+      Deferred.doneUnsafe(release, Effect.void)
+      yield* Effect.promise(() => opened.root.waitForIdle(context))
     }
-  },
+  }),
+)
+// AI SDK packages/ai/src/ui/chat.test.ts: should continue an active text part when resuming after a disconnect.
+// The GET receipt opens observation before the held tool is released.
+it.live('resumeStream reconnects to an in-progress run through respond', () =>
+  Effect.gen(function* () {
+    const opened = yield* running()
+    const attached = yield* Deferred.make<void, FixtureFailed>()
+    const transport = new DefaultChatTransport<UIMessage>({
+      api: 'http://durable.test/chat',
+      fetch: (url, init) =>
+        runForPi(
+          Effect.gen(function* () {
+            const response = yield* Effect.promise(() =>
+              respond(opened.harness, opened.root.id, new Request(url, init), context),
+            )
+            Deferred.doneUnsafe(attached, Effect.void)
+            return response
+          }),
+          undefined,
+        ),
+    })
+    const chat = new PlainChat({ transport })
+    try {
+      const resumed = chat.resumeStream()
+      yield* Deferred.await(attached)
+      Deferred.doneUnsafe(opened.release, Effect.void)
+      yield* Effect.promise(() => resumed)
+    } finally {
+      Deferred.doneUnsafe(opened.release, Effect.void)
+      yield* Effect.promise(() => opened.root.waitForIdle(context))
+    }
+    expect(chat.status).toBe('ready')
+    expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
+    if (chat.lastMessage === undefined) throw new Error('Expected the resumed message')
+    expect(texts(chat.lastMessage)).toEqual(['Starting.', 'Finished.'])
+  }),
+)
+// AI SDK packages/ai/src/ui/chat.test.ts: should not copy the previous assistant message when resuming a stream (reconnectToStream transport seam).
+// The Promise handler serves the bodyless GET through the public attachment seam.
+it.live('reconnectToStream returns the in-progress run through respond', () =>
+  Effect.gen(function* () {
+    const opened = yield* running()
+    try {
+      const stream = yield* Effect.promise(() =>
+        opened.transport.reconnectToStream({
+          chatId: 'chat',
+          abortSignal: undefined,
+        }),
+      )
+      Deferred.doneUnsafe(opened.release, Effect.void)
+      if (stream === null) throw new Error('Expected the in-progress stream')
+      const result = yield* consumeReadable(stream, Option.none())
+      expect(texts(result.message)).toEqual(['Starting.', 'Finished.'])
+    } finally {
+      Deferred.doneUnsafe(opened.release, Effect.void)
+      yield* Effect.promise(() => opened.root.waitForIdle(context))
+    }
+  }),
+)
+// A retained step 2 needs a step-scoped prefix: reset-step cannot remove earlier SDK steps.
+it.live.each(['text-end', 'tool-input-start', 'tool-input-available'])(
+  'step 2 retained-state reconnect cut at %s preserves earlier text and tools exactly once',
+  (cut) =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void, FixtureFailed>()
+      const release = yield* Deferred.make<void, FixtureFailed>()
+      const fixture = yield* host(
+        {
+          work: tool({
+            inputSchema: z.object({}),
+            execute: () => runForPi(Effect.succeed('12 pages'), undefined),
+          }),
+          pause: tool({
+            inputSchema: z.object({}),
+            execute: () =>
+              runForPi(
+                Effect.gen(function* () {
+                  Deferred.doneUnsafe(entered, Effect.void)
+                  yield* Deferred.await(release)
+                  return 'continued'
+                }),
+                undefined,
+              ),
+          }),
+        },
+        {},
+      )
+      const opened = yield* fixture.open()
+      opened.faux.setResponses([
+        fauxAssistantMessage(
+          [{ type: 'text', text: 'Starting.' }, fauxToolCall('work', {}, { id: 'work' })],
+          { stopReason: 'toolUse' },
+        ),
+        fauxAssistantMessage(
+          [{ type: 'text', text: 'Fin' }, fauxToolCall('pause', {}, { id: 'pause' })],
+          { stopReason: 'toolUse' },
+        ),
+        fauxAssistantMessage('Finished.'),
+      ])
+      const attached = yield* Deferred.make<void, FixtureFailed>()
+      const transport = new DefaultChatTransport<UIMessage>({
+        api: 'http://durable.test/chat',
+        fetch: (url, init) =>
+          runForPi(
+            Effect.gen(function* () {
+              const request = new Request(url, init)
+              const response = yield* Effect.promise(() =>
+                respond(opened.harness, opened.root.id, request, context),
+              )
+              if (request.method === 'GET') {
+                Deferred.doneUnsafe(attached, Effect.void)
+                return response
+              }
+              if (response.body === null) throw new Error('Expected an SSE body')
+              const decoder = new TextDecoder()
+              // Fault before closing step 2's text, retaining step 1 and the second partial text.
+              let secondText = false
+              const dropped = response.body.pipeThrough(
+                new TransformStream<Uint8Array, Uint8Array>({
+                  transform(chunk, controller) {
+                    const text = decoder.decode(chunk)
+                    if (secondText && text.includes(cut)) {
+                      controller.error(new TypeError('network connection lost'))
+                      return
+                    }
+                    if (text.includes('text-delta') && text.includes('"delta":"Fin"'))
+                      secondText = true
+                    controller.enqueue(chunk)
+                  },
+                }),
+              )
+              return new Response(dropped, { headers: response.headers })
+            }),
+            undefined,
+          ),
+      })
+      const chat = new PlainChat({ transport: resumable(transport) })
+      try {
+        yield* Effect.promise(() => chat.sendMessage({ text: 'Build in steps' }))
+        yield* Deferred.await(entered)
+        expect(chat.status).toBe('error')
+        if (chat.lastMessage === undefined) throw new Error('Expected the retained message')
+        expect(texts(chat.lastMessage)).toEqual(['Starting.', 'Fin'])
+        expect(chat.lastMessage.parts.filter((part) => part.type === 'tool-work')).toHaveLength(1)
+        const id = chat.lastMessage.id
+        chat.clearError()
+        const resumed = chat.resumeStream()
+        yield* Deferred.await(attached)
+        Deferred.doneUnsafe(release, Effect.void)
+        yield* Effect.promise(() => resumed)
+        expect(chat.status).toBe('ready')
+        expect(chat.lastMessage.parts.map((part) => part.type)).toEqual([
+          'step-start',
+          'text',
+          'tool-work',
+          'step-start',
+          'text',
+          'tool-pause',
+          'step-start',
+          'text',
+        ])
+        expect(chat.lastMessage.id).toBe(id)
+        expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
+        expect({
+          text: texts(chat.lastMessage),
+          tools: chat.lastMessage.parts.filter((part) => part.type === 'tool-work').length,
+        }).toEqual({ text: ['Starting.', 'Fin', 'Finished.'], tools: 1 })
+      } finally {
+        Deferred.doneUnsafe(release, Effect.void)
+        yield* Effect.promise(() => opened.root.waitForIdle(context))
+      }
+    }),
 )
