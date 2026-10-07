@@ -53,20 +53,22 @@ it.effect.each([
     }),
   )
   return Effect.gen(function* () {
-    expect((yield* decide(definition, 'question')).answers.applies.probability).toBe(0.7)
-    expect(yield* decisionConfigured).toBe(true)
-    expect(yield* decisionWouldAttempt).toBe(true)
-    expect(urls).toEqual([`${GATEWAY_URL}/systemone`])
-    expect(bodies).toHaveLength(1)
-    expect(bodies[0]).toContain(model)
-  }).pipe(
-    Effect.provide(
+    // Each case owns fresh mutable services and their resource scope.
+    const caseContext = yield* Layer.build(
       decisionModelLayer.pipe(
         Layer.provide(transport),
         Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(config))),
       ),
-    ),
-  )
+    )
+    return yield* Effect.gen(function* () {
+      expect((yield* decide(definition, 'question')).answers.applies.probability).toBe(0.7)
+      expect(yield* decisionConfigured).toBe(true)
+      expect(yield* decisionWouldAttempt).toBe(true)
+      expect(urls).toEqual([`${GATEWAY_URL}/systemone`])
+      expect(bodies).toHaveLength(1)
+      expect(bodies[0]).toContain(model)
+    }).pipe(Effect.provide(caseContext))
+  }).pipe(Effect.scoped)
 })
 
 /** Off is the default and wins over a present key; on without a key is a different fact. Neither
@@ -85,17 +87,8 @@ it.effect.each([
     lines.push(message)
   })
   return Effect.gen(function* () {
-    const first = yield* Effect.flip(decide(definition, 'one'))
-    const second = yield* Effect.flip(decideWithin(definition, 'two', '1 second'))
-    expect(first).toBeInstanceOf(DecisionUnavailable)
-    expect(first.reason).toBe(reason)
-    expect(second.reason).toBe(reason)
-    expect(yield* decisionConfigured).toBe(false)
-    expect(yield* decisionWouldAttempt).toBe(false)
-    // One line at start says the state; a decision that was never asked is not an event.
-    expect(lines).toHaveLength(1)
-  }).pipe(
-    Effect.provide(
+    // Each case owns fresh mutable services and their resource scope.
+    const caseContext = yield* Layer.build(
       decisionModelLayer.pipe(
         Layer.provide(
           Layer.succeed(
@@ -105,9 +98,19 @@ it.effect.each([
         ),
         Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(config))),
       ),
-    ),
-    Effect.provide(Logger.layer([logger])),
-  )
+    )
+    return yield* Effect.gen(function* () {
+      const first = yield* Effect.flip(decide(definition, 'one'))
+      const second = yield* Effect.flip(decideWithin(definition, 'two', '1 second'))
+      expect(first).toBeInstanceOf(DecisionUnavailable)
+      expect(first.reason).toBe(reason)
+      expect(second.reason).toBe(reason)
+      expect(yield* decisionConfigured).toBe(false)
+      expect(yield* decisionWouldAttempt).toBe(false)
+      // One line at start says the state; a decision that was never asked is not an event.
+      expect(lines).toHaveLength(1)
+    }).pipe(Effect.provide(caseContext))
+  }).pipe(Effect.scoped, Effect.provideService(Logger.CurrentLoggers, new Set([logger])))
 })
 
 /** A fault inside the provider call is an unavailable decision, never a dead caller. */
@@ -117,11 +120,9 @@ it.effect('a defect in the provider call is a typed Provider failure', () =>
     expect(error).toBeInstanceOf(DecisionUnavailable)
     expect(error.reason).toBe('Provider')
   }).pipe(
-    Effect.provide(
-      Layer.effect(
-        DecisionModel.DecisionModel,
-        DecisionModel.make({ decide: () => Effect.die('library fault') }),
-      ),
+    Effect.provideServiceEffect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({ decide: () => Effect.die('library fault') }),
     ),
   ),
 )
@@ -134,20 +135,18 @@ it.effect('provider failure exposes only a typed unavailable reason', () =>
     expect(error.reason).toBe('Provider')
     expect(JSON.stringify(error)).not.toContain('private')
   }).pipe(
-    Effect.provide(
-      Layer.effect(
-        DecisionModel.DecisionModel,
-        DecisionModel.make({
-          decide: () =>
-            Effect.fail(
-              AiError.make({
-                module: 'Test',
-                method: 'decide',
-                reason: new AiError.InvalidOutputError({ description: 'private provider payload' }),
-              }),
-            ),
-        }),
-      ),
+    Effect.provideServiceEffect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({
+        decide: () =>
+          Effect.fail(
+            AiError.make({
+              module: 'Test',
+              method: 'decide',
+              reason: new AiError.InvalidOutputError({ description: 'private provider payload' }),
+            }),
+          ),
+      }),
     ),
   ),
 )
@@ -165,8 +164,9 @@ it.effect.each(['10 seconds', '1200 millis'] as const)('bounds a stalled request
     expect(error).toBeInstanceOf(DecisionUnavailable)
     expect(error.reason).toBe('TimedOut')
   }).pipe(
-    Effect.provide(
-      Layer.effect(DecisionModel.DecisionModel, DecisionModel.make({ decide: () => Effect.never })),
+    Effect.provideServiceEffect(
+      DecisionModel.DecisionModel,
+      DecisionModel.make({ decide: () => Effect.never }),
     ),
   ),
 )
@@ -218,50 +218,55 @@ it.effect('shares provider backoff and admits only one successful recovery probe
       ),
     )
     yield* Effect.gen(function* () {
-      // Preflight observes admission without transport or a lease. Repeated
-      // observations after cooling below must still leave the real probe free.
-      expect(yield* decisionWouldAttempt).toBe(true)
-      expect(requests).toBe(0)
-      expect((yield* Effect.flip(decide(definition, 'first'))).reason).toBe('Provider')
-      expect(
-        (yield* Effect.flip(decideWithin(definition, 'other caller', '1 second'))).reason,
-      ).toBe('Backoff')
-      expect(yield* decisionWouldAttempt).toBe(false)
-      yield* TestClock.adjust('29 seconds')
-      expect((yield* Effect.flip(decide(definition, 'still cooling'))).reason).toBe('Backoff')
-      expect(requests).toBe(1)
-      yield* TestClock.adjust('1 second')
-      for (const inspection of [1, 2, 3]) {
-        void inspection
+      // Each case owns fresh mutable services and their resource scope.
+      const caseContext = yield* Layer.build(configuredGateway(transport))
+      return yield* Effect.gen(function* () {
+        // Preflight observes admission without transport or a lease. Repeated
+        // observations after cooling below must still leave the real probe free.
         expect(yield* decisionWouldAttempt).toBe(true)
-      }
-      expect(requests).toBe(1)
-      const probe = yield* decide(definition, 'probe').pipe(Effect.forkChild)
-      yield* Deferred.await(started)
-      expect(yield* decisionWouldAttempt).toBe(false)
-      const siblings = yield* Effect.forEach(
-        [1, 2, 3],
-        () => Effect.flip(decide(definition, 'sibling')),
-        { concurrency: 3 },
-      )
-      expect(siblings.map((error) => error.reason)).toEqual(['Backoff', 'Backoff', 'Backoff'])
-      expect(requests).toBe(2)
-      yield* Deferred.succeed(release, undefined)
-      expect((yield* Fiber.join(probe)).answers.applies.probability).toBe(0.7)
-      expect(yield* decisionWouldAttempt).toBe(true)
-      expect((yield* decide(definition, 'recovered')).answers.applies.probability).toBe(0.7)
-      const transitions = lines.filter((line) =>
-        JSON.stringify(line).includes('Decision availability backoff'),
-      )
-      expect(transitions).toHaveLength(2)
-      expect(JSON.stringify(transitions)).toContain('Opened')
-      expect(JSON.stringify(transitions)).toContain('Closed')
-      // Configuration, three actual attempts and two transitions; gated calls log nothing.
-      expect(lines).toHaveLength(6)
+        expect(requests).toBe(0)
+        expect((yield* Effect.flip(decide(definition, 'first'))).reason).toBe('Provider')
+        expect(
+          (yield* Effect.flip(decideWithin(definition, 'other caller', '1 second'))).reason,
+        ).toBe('Backoff')
+        expect(yield* decisionWouldAttempt).toBe(false)
+        yield* TestClock.adjust('29 seconds')
+        expect((yield* Effect.flip(decide(definition, 'still cooling'))).reason).toBe('Backoff')
+        expect(requests).toBe(1)
+        yield* TestClock.adjust('1 second')
+        for (const inspection of [1, 2, 3]) {
+          void inspection
+          expect(yield* decisionWouldAttempt).toBe(true)
+        }
+        expect(requests).toBe(1)
+        const probe = yield* decide(definition, 'probe').pipe(Effect.forkChild)
+        yield* Deferred.await(started)
+        expect(yield* decisionWouldAttempt).toBe(false)
+        const siblings = yield* Effect.forEach(
+          [1, 2, 3],
+          () => Effect.flip(decide(definition, 'sibling')),
+          { concurrency: 3 },
+        )
+        expect(siblings.map((error) => error.reason)).toEqual(['Backoff', 'Backoff', 'Backoff'])
+        expect(requests).toBe(2)
+        yield* Deferred.succeed(release, undefined)
+        expect((yield* Fiber.join(probe)).answers.applies.probability).toBe(0.7)
+        expect(yield* decisionWouldAttempt).toBe(true)
+        expect((yield* decide(definition, 'recovered')).answers.applies.probability).toBe(0.7)
+        const transitions = lines.filter((line) =>
+          JSON.stringify(line).includes('Decision availability backoff'),
+        )
+        expect(transitions).toHaveLength(2)
+        expect(JSON.stringify(transitions)).toContain('Opened')
+        expect(JSON.stringify(transitions)).toContain('Closed')
+        // Configuration, three actual attempts and two transitions; gated calls log nothing.
+        expect(lines).toHaveLength(6)
+      }).pipe(Effect.provide(caseContext))
     }).pipe(
-      Effect.provide(configuredGateway(transport)),
-      Effect.provide(
-        Logger.layer([
+      Effect.scoped,
+      Effect.provideService(
+        Logger.CurrentLoggers,
+        new Set([
           Logger.make(({ message }) => {
             lines.push(message)
           }),
@@ -283,26 +288,32 @@ it.effect('requires calibrated timeouts and gives a recovery probe its own budge
     }),
   )
   return Effect.gen(function* () {
-    for (const attempt of [1, 2]) {
-      const pending = yield* decideWithin(definition, 'stall', DECISION_OUTAGE_MINIMUM_MILLIS).pipe(
+    // Each case owns fresh mutable services and their resource scope.
+    const caseContext = yield* Layer.build(configuredGateway(transport))
+    return yield* Effect.gen(function* () {
+      for (const attempt of [1, 2]) {
+        const pending = yield* decideWithin(
+          definition,
+          'stall',
+          DECISION_OUTAGE_MINIMUM_MILLIS,
+        ).pipe(Effect.forkChild)
+        yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
+        expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
+        expect(requests).toBe(attempt)
+      }
+      expect((yield* Effect.flip(decide(definition, 'blocked'))).reason).toBe('Backoff')
+      yield* TestClock.adjust('30 seconds')
+      const probe = yield* decideWithin(definition, 'short caller', '100 millis').pipe(
         Effect.forkChild,
       )
-      yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
-      expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
-      expect(requests).toBe(attempt)
-    }
-    expect((yield* Effect.flip(decide(definition, 'blocked'))).reason).toBe('Backoff')
-    yield* TestClock.adjust('30 seconds')
-    const probe = yield* decideWithin(definition, 'short caller', '100 millis').pipe(
-      Effect.forkChild,
-    )
-    yield* TestClock.adjust('100 millis')
-    expect((yield* Effect.flip(Fiber.join(probe))).reason).toBe('TimedOut')
-    expect(requests).toBe(3)
-    expect(yield* decisionWouldAttempt).toBe(false)
-    yield* TestClock.adjust('2400 millis')
-    expect((yield* Effect.flip(decide(definition, 'fresh window'))).reason).toBe('Backoff')
-  }).pipe(Effect.provide(configuredGateway(transport)))
+      yield* TestClock.adjust('100 millis')
+      expect((yield* Effect.flip(Fiber.join(probe))).reason).toBe('TimedOut')
+      expect(requests).toBe(3)
+      expect(yield* decisionWouldAttempt).toBe(false)
+      yield* TestClock.adjust('2400 millis')
+      expect((yield* Effect.flip(decide(definition, 'fresh window'))).reason).toBe('Backoff')
+    }).pipe(Effect.provide(caseContext))
+  }).pipe(Effect.scoped)
 })
 
 /** HTTP status is classified before library errors are flattened. Invalid requests affect
@@ -323,23 +334,24 @@ it.effect.each([
     }),
   )
   return Effect.gen(function* () {
-    expect((yield* Effect.flip(decide(definition, 'first'))).reason).toBe(
-      status === 401 ? 'Authentication' : 'Provider',
-    )
-    expect((yield* Effect.flip(decide(definition, 'second'))).reason).toBe(next)
-    expect(calls).toBe(requests)
-  }).pipe(Effect.provide(configuredGateway(transport)))
+    // Each case owns fresh mutable services and their resource scope.
+    const caseContext = yield* Layer.build(configuredGateway(transport))
+    return yield* Effect.gen(function* () {
+      expect((yield* Effect.flip(decide(definition, 'first'))).reason).toBe(
+        status === 401 ? 'Authentication' : 'Provider',
+      )
+      expect((yield* Effect.flip(decide(definition, 'second'))).reason).toBe(next)
+      expect(calls).toBe(requests)
+    }).pipe(Effect.provide(caseContext))
+  }).pipe(Effect.scoped)
 })
 
 /** Malformed successful responses demonstrate reachability, not a global outage. */
 it.effect('malformed answers do not open the process gate', () => {
   let calls = 0
   return Effect.gen(function* () {
-    for (const input of ['first', 'second'])
-      expect((yield* Effect.flip(decide(definition, input))).reason).toBe('Provider')
-    expect(calls).toBe(2)
-  }).pipe(
-    Effect.provide(
+    // Each case owns fresh mutable services and their resource scope.
+    const caseContext = yield* Layer.build(
       configuredGateway(
         Layer.succeed(
           HttpClient.HttpClient,
@@ -349,8 +361,13 @@ it.effect('malformed answers do not open the process gate', () => {
           }),
         ),
       ),
-    ),
-  )
+    )
+    return yield* Effect.gen(function* () {
+      for (const input of ['first', 'second'])
+        expect((yield* Effect.flip(decide(definition, input))).reason).toBe('Provider')
+      expect(calls).toBe(2)
+    }).pipe(Effect.provide(caseContext))
+  }).pipe(Effect.scoped)
 })
 
 /** Caller interruption abandons only its wait. The bounded Layer-owned probe
@@ -371,17 +388,21 @@ it.effect('an interrupted recovery probe cannot leave availability stuck', () =>
       }),
     )
     yield* Effect.gen(function* () {
-      yield* Effect.flip(decide(definition, 'first'))
-      yield* TestClock.adjust('30 seconds')
-      const probe = yield* decide(definition, 'interrupted probe').pipe(Effect.forkChild)
-      yield* Deferred.await(started)
-      yield* Fiber.interrupt(probe)
-      expect((yield* Effect.flip(decide(definition, 'cooling'))).reason).toBe('Backoff')
-      yield* TestClock.adjust('2500 millis')
-      yield* TestClock.adjust('30 seconds')
-      expect((yield* Effect.flip(decide(definition, 'new probe'))).reason).toBe('Provider')
-      expect(requests).toBe(3)
-    }).pipe(Effect.provide(configuredGateway(transport)))
+      // Each case owns fresh mutable services and their resource scope.
+      const caseContext = yield* Layer.build(configuredGateway(transport))
+      return yield* Effect.gen(function* () {
+        yield* Effect.flip(decide(definition, 'first'))
+        yield* TestClock.adjust('30 seconds')
+        const probe = yield* decide(definition, 'interrupted probe').pipe(Effect.forkChild)
+        yield* Deferred.await(started)
+        yield* Fiber.interrupt(probe)
+        expect((yield* Effect.flip(decide(definition, 'cooling'))).reason).toBe('Backoff')
+        yield* TestClock.adjust('2500 millis')
+        yield* TestClock.adjust('30 seconds')
+        expect((yield* Effect.flip(decide(definition, 'new probe'))).reason).toBe('Provider')
+        expect(requests).toBe(3)
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped)
   }),
 )
 
@@ -415,14 +436,18 @@ it.effect('an older in-flight success cannot close newly opened backoff', () =>
       ),
     )
     yield* Effect.gen(function* () {
-      const older = yield* decide(definition, 'older').pipe(Effect.forkChild)
-      yield* Deferred.await(started)
-      expect((yield* Effect.flip(decide(definition, 'outage'))).reason).toBe('Provider')
-      yield* Deferred.succeed(release, undefined)
-      expect((yield* Fiber.join(older)).answers.applies.probability).toBe(0.7)
-      expect((yield* Effect.flip(decide(definition, 'still cooling'))).reason).toBe('Backoff')
-      expect(requests).toBe(2)
-    }).pipe(Effect.provide(configuredGateway(transport)))
+      // Each case owns fresh mutable services and their resource scope.
+      const caseContext = yield* Layer.build(configuredGateway(transport))
+      return yield* Effect.gen(function* () {
+        const older = yield* decide(definition, 'older').pipe(Effect.forkChild)
+        yield* Deferred.await(started)
+        expect((yield* Effect.flip(decide(definition, 'outage'))).reason).toBe('Provider')
+        yield* Deferred.succeed(release, undefined)
+        expect((yield* Fiber.join(older)).answers.applies.probability).toBe(0.7)
+        expect((yield* Effect.flip(decide(definition, 'still cooling'))).reason).toBe('Backoff')
+        expect(requests).toBe(2)
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped)
   }),
 )
 
@@ -445,12 +470,16 @@ it.effect.each(['TransportError', 'EncodeError', 'Defect'] as const)(
       }),
     )
     return Effect.gen(function* () {
-      expect((yield* Effect.flip(decide(definition, 'first'))).reason).toBe('Provider')
-      expect((yield* Effect.flip(decide(definition, 'second'))).reason).toBe(
-        failure === 'TransportError' ? 'Backoff' : 'Provider',
-      )
-      expect(calls).toBe(failure === 'TransportError' ? 1 : 2)
-    }).pipe(Effect.provide(configuredGateway(transport)))
+      // Each case owns fresh mutable services and their resource scope.
+      const caseContext = yield* Layer.build(configuredGateway(transport))
+      return yield* Effect.gen(function* () {
+        expect((yield* Effect.flip(decide(definition, 'first'))).reason).toBe('Provider')
+        expect((yield* Effect.flip(decide(definition, 'second'))).reason).toBe(
+          failure === 'TransportError' ? 'Backoff' : 'Provider',
+        )
+        expect(calls).toBe(failure === 'TransportError' ? 1 : 2)
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped)
   },
 )
 
@@ -470,25 +499,29 @@ it.effect('concurrent timeouts do not open admission without a later attempt', (
       }),
     )
     yield* Effect.gen(function* () {
-      const burst = yield* Effect.forEach(
-        [1, 2],
-        () => Effect.flip(decideWithin(definition, 'burst', DECISION_OUTAGE_MINIMUM_MILLIS)),
-        { concurrency: 'unbounded' },
-      ).pipe(Effect.forkChild)
-      yield* Deferred.await(started)
-      yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
-      expect((yield* Fiber.join(burst)).map((error) => error.reason)).toEqual([
-        'TimedOut',
-        'TimedOut',
-      ])
-      const later = yield* decideWithin(definition, 'later', DECISION_OUTAGE_MINIMUM_MILLIS).pipe(
-        Effect.forkChild,
-      )
-      yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
-      expect((yield* Effect.flip(Fiber.join(later))).reason).toBe('TimedOut')
-      expect(calls).toBe(3)
-      expect((yield* Effect.flip(decide(definition, 'gated'))).reason).toBe('Backoff')
-    }).pipe(Effect.provide(configuredGateway(transport)))
+      // Each case owns fresh mutable services and their resource scope.
+      const caseContext = yield* Layer.build(configuredGateway(transport))
+      return yield* Effect.gen(function* () {
+        const burst = yield* Effect.forEach(
+          [1, 2],
+          () => Effect.flip(decideWithin(definition, 'burst', DECISION_OUTAGE_MINIMUM_MILLIS)),
+          { concurrency: 'unbounded' },
+        ).pipe(Effect.forkChild)
+        yield* Deferred.await(started)
+        yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
+        expect((yield* Fiber.join(burst)).map((error) => error.reason)).toEqual([
+          'TimedOut',
+          'TimedOut',
+        ])
+        const later = yield* decideWithin(definition, 'later', DECISION_OUTAGE_MINIMUM_MILLIS).pipe(
+          Effect.forkChild,
+        )
+        yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
+        expect((yield* Effect.flip(Fiber.join(later))).reason).toBe('TimedOut')
+        expect(calls).toBe(3)
+        expect((yield* Effect.flip(decide(definition, 'gated'))).reason).toBe('Backoff')
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped)
   }),
 )
 
@@ -514,19 +547,23 @@ it.effect('expired suspicion cannot corroborate a later isolated timeout', () =>
     }),
   )
   return Effect.gen(function* () {
-    for (const attempt of [1, 2]) {
-      if (attempt === 2) yield* TestClock.adjust('30 seconds')
-      const pending = yield* decideWithin(
-        definition,
-        'isolated stall',
-        DECISION_OUTAGE_MINIMUM_MILLIS,
-      ).pipe(Effect.forkChild)
-      yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
-      expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
-    }
-    expect((yield* decide(definition, 'reachable')).answers.applies.probability).toBe(0.7)
-    expect(calls).toBe(3)
-  }).pipe(Effect.provide(configuredGateway(transport)))
+    // Each case owns fresh mutable services and their resource scope.
+    const caseContext = yield* Layer.build(configuredGateway(transport))
+    return yield* Effect.gen(function* () {
+      for (const attempt of [1, 2]) {
+        if (attempt === 2) yield* TestClock.adjust('30 seconds')
+        const pending = yield* decideWithin(
+          definition,
+          'isolated stall',
+          DECISION_OUTAGE_MINIMUM_MILLIS,
+        ).pipe(Effect.forkChild)
+        yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
+        expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
+      }
+      expect((yield* decide(definition, 'reachable')).answers.applies.probability).toBe(0.7)
+      expect(calls).toBe(3)
+    }).pipe(Effect.provide(caseContext))
+  }).pipe(Effect.scoped)
 })
 
 /** A success between two timeouts breaks the streak through the public decision API. */
@@ -551,17 +588,23 @@ it.effect('a success between timeouts resets the evidence', () => {
     }),
   )
   return Effect.gen(function* () {
-    for (const attempt of [1, 2]) {
-      void attempt
-      const pending = yield* decideWithin(definition, 'stall', DECISION_OUTAGE_MINIMUM_MILLIS).pipe(
-        Effect.forkChild,
-      )
-      yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
-      expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
-      expect((yield* decide(definition, 'success')).answers.applies.probability).toBe(0.7)
-    }
-    expect(calls).toBe(4)
-  }).pipe(Effect.provide(configuredGateway(transport)))
+    // Each case owns fresh mutable services and their resource scope.
+    const caseContext = yield* Layer.build(configuredGateway(transport))
+    return yield* Effect.gen(function* () {
+      for (const attempt of [1, 2]) {
+        void attempt
+        const pending = yield* decideWithin(
+          definition,
+          'stall',
+          DECISION_OUTAGE_MINIMUM_MILLIS,
+        ).pipe(Effect.forkChild)
+        yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
+        expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
+        expect((yield* decide(definition, 'success')).answers.applies.probability).toBe(0.7)
+      }
+      expect(calls).toBe(4)
+    }).pipe(Effect.provide(caseContext))
+  }).pipe(Effect.scoped)
 })
 
 /** A revoked key produces one actionable error per credential window, with no per-action
@@ -578,24 +621,31 @@ it.effect.each([401])('HTTP %s closes credentials for five minutes with one erro
     }),
   )
   return Effect.gen(function* () {
-    expect((yield* Effect.flip(decide(definition, 'rejected'))).reason).toBe('Authentication')
-    for (let index = 0; index < 20; index += 1)
-      expect((yield* Effect.flip(decide(definition, 'gated'))).reason).toBe('Backoff')
-    yield* TestClock.adjust('4 minutes')
-    expect((yield* Effect.flip(decide(definition, 'still gated'))).reason).toBe('Backoff')
-    expect(calls).toBe(1)
-    const errors = lines.filter((line) => line.level === 'Error')
-    expect(errors).toHaveLength(1)
-    expect(errors.map((line) => line.message).join()).toContain('Decision authentication rejected')
-    expect(lines.filter((line) => line.level === 'Warn')).toHaveLength(0)
-    yield* TestClock.adjust('1 minute')
-    expect((yield* Effect.flip(decide(definition, 'new window'))).reason).toBe('Authentication')
-    expect(calls).toBe(2)
-    expect(lines.filter((line) => line.level === 'Error')).toHaveLength(2)
+    // Each case owns fresh mutable services and their resource scope.
+    const caseContext = yield* Layer.build(configuredGateway(transport))
+    return yield* Effect.gen(function* () {
+      expect((yield* Effect.flip(decide(definition, 'rejected'))).reason).toBe('Authentication')
+      for (let index = 0; index < 20; index += 1)
+        expect((yield* Effect.flip(decide(definition, 'gated'))).reason).toBe('Backoff')
+      yield* TestClock.adjust('4 minutes')
+      expect((yield* Effect.flip(decide(definition, 'still gated'))).reason).toBe('Backoff')
+      expect(calls).toBe(1)
+      const errors = lines.filter((line) => line.level === 'Error')
+      expect(errors).toHaveLength(1)
+      expect(errors.map((line) => line.message).join()).toContain(
+        'Decision authentication rejected',
+      )
+      expect(lines.filter((line) => line.level === 'Warn')).toHaveLength(0)
+      yield* TestClock.adjust('1 minute')
+      expect((yield* Effect.flip(decide(definition, 'new window'))).reason).toBe('Authentication')
+      expect(calls).toBe(2)
+      expect(lines.filter((line) => line.level === 'Error')).toHaveLength(2)
+    }).pipe(Effect.provide(caseContext))
   }).pipe(
-    Effect.provide(configuredGateway(transport)),
-    Effect.provide(
-      Logger.layer([
+    Effect.scoped,
+    Effect.provideService(
+      Logger.CurrentLoggers,
+      new Set([
         Logger.make(({ logLevel, message }) => {
           lines.push({ level: logLevel, message: JSON.stringify(message) })
         }),
@@ -627,17 +677,21 @@ it.effect('short-budget timeouts do not corroborate process-wide outage', () => 
     }),
   )
   return Effect.gen(function* () {
-    for (const attempt of [1, 2, 3]) {
-      const pending = yield* decideWithin(definition, 'short remainder', '850 millis').pipe(
-        Effect.forkChild,
-      )
-      yield* TestClock.adjust('850 millis')
-      expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
-      expect(calls).toBe(attempt)
-    }
-    expect((yield* decide(definition, 'healthy')).answers.applies.probability).toBe(0.7)
-    expect(calls).toBe(4)
-  }).pipe(Effect.provide(configuredGateway(transport)))
+    // Each case owns fresh mutable services and their resource scope.
+    const caseContext = yield* Layer.build(configuredGateway(transport))
+    return yield* Effect.gen(function* () {
+      for (const attempt of [1, 2, 3]) {
+        const pending = yield* decideWithin(definition, 'short remainder', '850 millis').pipe(
+          Effect.forkChild,
+        )
+        yield* TestClock.adjust('850 millis')
+        expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
+        expect(calls).toBe(attempt)
+      }
+      expect((yield* decide(definition, 'healthy')).answers.applies.probability).toBe(0.7)
+      expect(calls).toBe(4)
+    }).pipe(Effect.provide(caseContext))
+  }).pipe(Effect.scoped)
 })
 
 /** A recovery request admitted by a short-budget caller must have enough time to
@@ -670,23 +724,28 @@ it.effect.each([100, 1800, 2000])('a healthy probe outlives a %sms caller budget
       ),
     )
     yield* Effect.gen(function* () {
-      yield* Effect.flip(decide(definition, 'outage'))
-      yield* TestClock.adjust('30 seconds')
-      const pending = yield* decideWithin(definition, 'probe', budget).pipe(Effect.forkChild)
-      yield* Deferred.await(started)
-      yield* TestClock.adjust(budget)
-      expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
-      expect(yield* decisionWouldAttempt).toBe(false)
-      yield* TestClock.adjust('400 millis')
-      yield* Deferred.succeed(release, undefined)
-      yield* Deferred.await(settled)
-      expect(yield* decisionWouldAttempt).toBe(true)
-      expect((yield* decide(definition, 'recovered')).answers.applies.probability).toBe(0.7)
-      expect(calls).toBe(3)
+      // Each case owns fresh mutable services and their resource scope.
+      const caseContext = yield* Layer.build(configuredGateway(transport))
+      return yield* Effect.gen(function* () {
+        yield* Effect.flip(decide(definition, 'outage'))
+        yield* TestClock.adjust('30 seconds')
+        const pending = yield* decideWithin(definition, 'probe', budget).pipe(Effect.forkChild)
+        yield* Deferred.await(started)
+        yield* TestClock.adjust(budget)
+        expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
+        expect(yield* decisionWouldAttempt).toBe(false)
+        yield* TestClock.adjust('400 millis')
+        yield* Deferred.succeed(release, undefined)
+        yield* Deferred.await(settled)
+        expect(yield* decisionWouldAttempt).toBe(true)
+        expect((yield* decide(definition, 'recovered')).answers.applies.probability).toBe(0.7)
+        expect(calls).toBe(3)
+      }).pipe(Effect.provide(caseContext))
     }).pipe(
-      Effect.provide(configuredGateway(transport)),
-      Effect.provide(
-        Logger.layer([
+      Effect.scoped,
+      Effect.provideService(
+        Logger.CurrentLoggers,
+        new Set([
           Logger.make(({ message }) => {
             if (JSON.stringify(message).includes('Closed'))
               Deferred.doneUnsafe(settled, Effect.void)
@@ -719,12 +778,16 @@ it.effect('a forbidden recovery payload releases the outage gate for other calle
     }),
   )
   return Effect.gen(function* () {
-    expect((yield* Effect.flip(decide(definition, 'outage'))).reason).toBe('Provider')
-    yield* TestClock.adjust('30 seconds')
-    expect((yield* Effect.flip(decide(definition, 'forbidden payload'))).reason).toBe('Provider')
-    expect((yield* decide(definition, 'different payload')).answers.applies.probability).toBe(0.7)
-    expect(calls).toBe(3)
-  }).pipe(Effect.provide(configuredGateway(transport)))
+    // Each case owns fresh mutable services and their resource scope.
+    const caseContext = yield* Layer.build(configuredGateway(transport))
+    return yield* Effect.gen(function* () {
+      expect((yield* Effect.flip(decide(definition, 'outage'))).reason).toBe('Provider')
+      yield* TestClock.adjust('30 seconds')
+      expect((yield* Effect.flip(decide(definition, 'forbidden payload'))).reason).toBe('Provider')
+      expect((yield* decide(definition, 'different payload')).answers.applies.probability).toBe(0.7)
+      expect(calls).toBe(3)
+    }).pipe(Effect.provide(caseContext))
+  }).pipe(Effect.scoped)
 })
 
 /** Recovery is background work, but never process-root work. Closing the model
@@ -749,13 +812,19 @@ it.effect('Layer shutdown interrupts a detached recovery probe', () =>
       }),
     )
     yield* Effect.gen(function* () {
-      yield* Effect.flip(decide(definition, 'outage'))
-      yield* TestClock.adjust('30 seconds')
-      const pending = yield* decideWithin(definition, 'probe', '100 millis').pipe(Effect.forkChild)
-      yield* Deferred.await(started)
-      yield* TestClock.adjust('100 millis')
-      expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
-    }).pipe(Effect.provide(configuredGateway(transport)))
+      // Each case owns fresh mutable services and their resource scope.
+      const caseContext = yield* Layer.build(configuredGateway(transport))
+      return yield* Effect.gen(function* () {
+        yield* Effect.flip(decide(definition, 'outage'))
+        yield* TestClock.adjust('30 seconds')
+        const pending = yield* decideWithin(definition, 'probe', '100 millis').pipe(
+          Effect.forkChild,
+        )
+        yield* Deferred.await(started)
+        yield* TestClock.adjust('100 millis')
+        expect((yield* Effect.flip(Fiber.join(pending))).reason).toBe('TimedOut')
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped)
     yield* Deferred.await(stopped)
     expect(calls).toBe(2)
   }),
@@ -776,27 +845,32 @@ it.effect('persistent 403 responses warn once per minute without closing admissi
     }),
   )
   return Effect.gen(function* () {
-    for (const attempt of [1, 2, 3]) {
-      void attempt
-      const error = yield* Effect.flip(decide(definition, 'forbidden'))
-      expect(error.reason).toBe('Provider')
-      expect(isDecisionNonEvent(error)).toBe(true)
-      expect(yield* decisionWouldAttempt).toBe(true)
-    }
-    expect(calls).toBe(3)
-    expect(warnings).toHaveLength(1)
-    yield* TestClock.adjust('59 seconds')
-    yield* Effect.flip(decide(definition, 'same interval'))
-    expect(warnings).toHaveLength(1)
-    yield* TestClock.adjust('1 second')
-    yield* Effect.flip(decide(definition, 'next interval'))
-    expect(warnings).toHaveLength(2)
-    expect(warnings.every((line) => line.includes('Decision permission rejected'))).toBe(true)
-    expect(calls).toBe(5)
+    // Each case owns fresh mutable services and their resource scope.
+    const caseContext = yield* Layer.build(configuredGateway(transport))
+    return yield* Effect.gen(function* () {
+      for (const attempt of [1, 2, 3]) {
+        void attempt
+        const error = yield* Effect.flip(decide(definition, 'forbidden'))
+        expect(error.reason).toBe('Provider')
+        expect(isDecisionNonEvent(error)).toBe(true)
+        expect(yield* decisionWouldAttempt).toBe(true)
+      }
+      expect(calls).toBe(3)
+      expect(warnings).toHaveLength(1)
+      yield* TestClock.adjust('59 seconds')
+      yield* Effect.flip(decide(definition, 'same interval'))
+      expect(warnings).toHaveLength(1)
+      yield* TestClock.adjust('1 second')
+      yield* Effect.flip(decide(definition, 'next interval'))
+      expect(warnings).toHaveLength(2)
+      expect(warnings.every((line) => line.includes('Decision permission rejected'))).toBe(true)
+      expect(calls).toBe(5)
+    }).pipe(Effect.provide(caseContext))
   }).pipe(
-    Effect.provide(configuredGateway(transport)),
-    Effect.provide(
-      Logger.layer([
+    Effect.scoped,
+    Effect.provideService(
+      Logger.CurrentLoggers,
+      new Set([
         Logger.make(({ logLevel, message }) => {
           if (logLevel === 'Warn') warnings.push(JSON.stringify(message))
         }),
@@ -840,28 +914,32 @@ it.effect.each([
       }),
     )
     yield* Effect.gen(function* () {
-      const pending = yield* decide(definition, 'caller interrupted').pipe(Effect.forkChild)
-      yield* Deferred.await(started)
-      yield* TestClock.adjust(elapsed)
-      yield* Fiber.interrupt(pending)
-      expect(yield* decisionWouldAttempt).toBe(true)
-      const later = yield* decideWithin(
-        definition,
-        'independent stall',
-        DECISION_OUTAGE_MINIMUM_MILLIS,
-      ).pipe(Effect.forkChild)
-      yield* Deferred.await(laterStarted)
-      yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
-      expect((yield* Effect.flip(Fiber.join(later))).reason).toBe('TimedOut')
-      if (suspected) {
-        expect(yield* decisionWouldAttempt).toBe(false)
-        expect((yield* Effect.flip(decide(definition, 'gated'))).reason).toBe('Backoff')
-        expect(calls).toBe(2)
-      } else {
+      // Each case owns fresh mutable services and their resource scope.
+      const caseContext = yield* Layer.build(configuredGateway(transport))
+      return yield* Effect.gen(function* () {
+        const pending = yield* decide(definition, 'caller interrupted').pipe(Effect.forkChild)
+        yield* Deferred.await(started)
+        yield* TestClock.adjust(elapsed)
+        yield* Fiber.interrupt(pending)
         expect(yield* decisionWouldAttempt).toBe(true)
-        expect((yield* decide(definition, 'healthy')).answers.applies.probability).toBe(0.7)
-        expect(calls).toBe(3)
-      }
-    }).pipe(Effect.provide(configuredGateway(transport)))
+        const later = yield* decideWithin(
+          definition,
+          'independent stall',
+          DECISION_OUTAGE_MINIMUM_MILLIS,
+        ).pipe(Effect.forkChild)
+        yield* Deferred.await(laterStarted)
+        yield* TestClock.adjust(DECISION_OUTAGE_MINIMUM_MILLIS)
+        expect((yield* Effect.flip(Fiber.join(later))).reason).toBe('TimedOut')
+        if (suspected) {
+          expect(yield* decisionWouldAttempt).toBe(false)
+          expect((yield* Effect.flip(decide(definition, 'gated'))).reason).toBe('Backoff')
+          expect(calls).toBe(2)
+        } else {
+          expect(yield* decisionWouldAttempt).toBe(true)
+          expect((yield* decide(definition, 'healthy')).answers.applies.probability).toBe(0.7)
+          expect(calls).toBe(3)
+        }
+      }).pipe(Effect.provide(caseContext))
+    }).pipe(Effect.scoped)
   }),
 )

@@ -419,7 +419,7 @@ const Configuration = Schema.TaggedUnion({
  * `VIVID_DECISIONS` is `on` or `off` and defaults to `off`: decisions stay switched off until
  * someone turns them on. When off, no key is read. Config decodes the secret once.
  */
-const configuration = Effect.fn('Decisions.configuration')(function* () {
+const configuration = Effect.gen(function* () {
   const flag = yield* Config.schema(
     Schema.Literals(['on', 'off'] as const),
     'VIVID_DECISIONS',
@@ -433,7 +433,7 @@ const configuration = Effect.fn('Decisions.configuration')(function* () {
     Config.withDefault(DECISION_MODEL),
   )
   return Configuration.cases.Gateway.make({ key: key.value, model })
-})()
+}).pipe(Effect.withSpan('Decisions.configuration'))
 
 /**
  * The model provided when there is no provider, registered with its reason. `decideWithin` never
