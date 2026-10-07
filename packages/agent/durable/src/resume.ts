@@ -107,16 +107,22 @@ export const captureRun: (
 )
 
 /**
- * Each generation owns one turn, never the whole run (generation.js:516,535). An aborted run may
- * contain several such tasks and task-attributed steer entries. The next idle host input is a
- * non-task-attributed pi.user (submissions.js:165–173); abort withdraws all queued inputs rather than
- * handing them to another generation (inbox.js:85–93). A reset marker also ends this stored range.
+ * The done receipt's answer is the final boundary of its run. Pi generation.js:408–421 places
+ * queued users in that same commit under the predecessor task, so byTaskId cannot distinguish
+ * those successor inputs from earlier steers. Steers precede this answer; the first pi.user after
+ * it begins the next run. Keep intervening tool results (terminateRun settles against the earlier
+ * calling assistant), and keep task-attributed steers inside an unanswered/active run as before.
  */
-function closedEntries(entries: readonly EntryRecord[]) {
+function closedEntries(
+  entries: readonly EntryRecord[],
+  receipt: Extract<SubmissionRecord, { type: 'input' }>,
+) {
   const next = entries.findIndex(
     (entry, index) =>
       index > 0 &&
-      ((entry.kind === 'pi.user' && entry.byTaskId === undefined) || entry.kind === 'pi.reset'),
+      (entry.kind === 'pi.reset' ||
+        (entry.kind === 'pi.user' &&
+          (receipt.status === 'done' ? entry.id > receipt.answer : entry.byTaskId === undefined))),
   )
   return next === -1 ? entries : entries.slice(0, next)
 }
@@ -138,7 +144,7 @@ export const inputReplay: (
   const { run: _run, generation: _generation, ...base } = snapshot
   if (receipt.entry === undefined) return yield* new TurnWithdrawn({ messageId })
   const placed = yield* entriesOf(reader, { first: receipt.entry, last: Option.none() })
-  const entries = closedEntries(placed)
+  const entries = closedEntries(placed, receipt)
   const found = replay({ ...base, entries, run: { inputs: [receipt.id] } })
   if (Option.isNone(found)) return yield* new RunMissing({ conversationId: reader.conversation.id })
   const prefix = found.value
@@ -203,7 +209,7 @@ export const selectRun: (
     first: receipt.entry,
     last: Option.none(),
   })
-  const entries = closedEntries(placed)
+  const entries = closedEntries(placed, receipt)
   // A completed run must not borrow the newer run's generation or live continuation.
   const { run: _run, generation: _generation, ...stored } = snapshot
   const captured = active ? { ...snapshot, entries } : { ...stored, entries }

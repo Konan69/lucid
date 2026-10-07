@@ -8,6 +8,7 @@ import { requestBudget } from '../fixtures/budget.mjs'
 import { PlainChat } from '../fixtures/chat.ts'
 import {
   abort,
+  decide,
   followRun,
   decodeTurn,
   respond,
@@ -19,7 +20,7 @@ import {
   TurnRegenerate,
   RunMissing,
 } from '../main.ts'
-import { call, consume, context, host, shop, signal, texts } from './fixtures/host.ts'
+import { call, consume, context, host, shop, signal, texts, hold } from './fixtures/host.ts'
 
 /** A lost HTTP response can be retried with the same user identity after its run has settled. */
 it.each(['done', 'aborted', 'failed', 'active'] as const)(
@@ -320,3 +321,55 @@ it('rejects regeneration with its own class through both body decoder and Reques
   expect(await response.text()).toBe(new TurnRegenerate({}).message)
   expect(opened.faux.state.callCount).toBe(0)
 })
+
+/** A final boundary places a queued successor under the predecessor generation task (Pi
+ * generation.js:408–421). Task attribution is not a run boundary; replay must stop before B. */
+it.each(['running', 'ended'] as const)(
+  'bounds a completed predecessor while its queued successor is %s',
+  async (state) => {
+    const opened = await (await shop()).open()
+    const entered = signal()
+    const release = signal()
+    onTestFinished(() => release.resolve())
+    opened.faux.setResponses([
+      async () => {
+        entered.resolve()
+        await release.promise
+        return fauxAssistantMessage('Recovered initial.')
+      },
+      call('pay', { amount: 2 }, 'successor'),
+      fauxAssistantMessage('Queued final.'),
+    ])
+    await opened.root.submit(
+      { type: 'input', content: 'First', requestId: 'bounded-first' },
+      context,
+    )
+    await entered.promise
+    const successorInput = await opened.root.submit(
+      { type: 'input', content: 'Second', requestId: 'bounded-second' },
+      context,
+    )
+    expect((await successorInput.status(context)).status).toBe('queued')
+    const original = consume(
+      await followRun(opened.harness, opened.root.id, 'bounded-first', context),
+    )
+    release.resolve()
+    const first = await original
+    await consume(await followRun(opened.harness, opened.root.id, 'bounded-second', context))
+    if (state === 'ended') {
+      await decide(
+        opened.harness,
+        opened.root.id,
+        { holdId: await hold(opened.harness, opened.root.id, 'successor'), approved: true },
+        context,
+      )
+      await opened.root.waitForIdle(context)
+    }
+    const replayed = await consume(
+      await followRun(opened.harness, opened.root.id, 'bounded-first', context),
+    )
+    expect(texts(replayed.message)).toEqual(['Recovered initial.'])
+    expect(replayed.message).toEqual(first.message)
+    expect(replayed.chunks.at(-1)).toEqual({ type: 'finish' })
+  },
+)
