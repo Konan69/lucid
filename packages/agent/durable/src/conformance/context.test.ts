@@ -15,6 +15,7 @@ import {
   type ToolsOptions as CoreToolsOptions,
 } from '../core.ts'
 import { call, context, host, texts } from './fixtures/host.ts'
+/** Child IPC carries durable numeric identities; NaN and infinities are invalid scope ids. */
 const decodeScope = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Struct({
