@@ -35,6 +35,7 @@ import {
 } from './holds.ts'
 import * as Pi from './pi.ts'
 import { Delivery } from './delivery.ts'
+import { inputContent } from './input.ts'
 
 /** Whether an interrupted call may run again after a crash. Pi's own default is unsafe. */
 export type Replay = 'safe' | 'unsafe'
@@ -103,7 +104,7 @@ const isAsyncOutput = Schema.is(
 )
 
 /** Decode only representations Pi can carry; unsupported parts fail the entire conversion. */
-const ImageMedia = Schema.String.check(Schema.isPattern(/^image\/[a-z0-9.+-]+$/iu))
+const ImageMedia = Schema.String
 const ImageData = Schema.Union([
   Schema.String,
   Schema.instanceOf(Uint8Array),
@@ -126,30 +127,56 @@ const ModelOutput = Schema.Union([
 ]).pipe(Schema.toTaggedUnion('type'))
 const decodeModelOutput = Schema.decodeUnknownEffect(ModelOutput)
 
-/** AI SDK convert-to-language-model-prompt.ts preserves base64 strings and encodes byte payloads. */
-function modelPart(
-  value: typeof ModelPart.Type,
-): NonNullable<ToolExecutionResult['content']>[number] {
+/**
+ * Reuse user-picture admission: canonical base64 and PNG/JPEG/GIF/WebP matching signatures.
+ * Tool output has no size policy option: decoded image size remains unbounded, as with user input
+ * when maxPartBytes is absent. This adapter never fetches remote content.
+ */
+const modelImage = Effect.fn('Durable.toolImage')(function* (
+  data: string,
+  mediaType: string,
+  name: string,
+) {
+  const content = yield* inputContent(
+    [{ type: 'file', mediaType, url: `data:${mediaType};base64,${data}` }],
+    {},
+  ).pipe(Effect.mapError((cause) => new ToolOutputFailed({ toolName: name, cause })))
+  // An array input must produce native blocks; a future admission change cannot silently emit text.
+  if (Predicate.isString(content))
+    return yield* new ToolOutputFailed({
+      toolName: name,
+      cause: new Error('Expected image blocks'),
+    })
+  return content
+})
+
+/** Preserve SDK base64 strings and encode byte payloads before the shared image admission. */
+function modelPart(value: typeof ModelPart.Type, name: string) {
   return ModelPart.match(value, {
-    text: (part) => ({ type: 'text' as const, text: part.text }),
-    'image-data': (part) => ({ type: 'image' as const, data: part.data, mimeType: part.mediaType }),
-    'file-data': (part) => ({ type: 'image' as const, data: part.data, mimeType: part.mediaType }),
-    file: (part) => ({
-      type: 'image' as const,
-      data: Predicate.isString(part.data.data)
-        ? part.data.data
-        : Buffer.from(new Uint8Array(part.data.data)).toString('base64'),
-      mimeType: part.mediaType,
-    }),
+    text: (part) => Effect.succeed([{ type: 'text' as const, text: part.text }]),
+    'image-data': (part) => modelImage(part.data, part.mediaType, name),
+    'file-data': (part) => modelImage(part.data, part.mediaType, name),
+    file: (part) =>
+      modelImage(
+        Predicate.isString(part.data.data)
+          ? part.data.data
+          : Buffer.from(new Uint8Array(part.data.data)).toString('base64'),
+        part.mediaType,
+        name,
+      ),
   })
 }
 
-/** Pi has text/image blocks; JSON output variants use the SDK providers' JSON.stringify representation. */
-function modelContent(value: typeof ModelOutput.Type): NonNullable<ToolExecutionResult['content']> {
+/** Validate every projected part before returning anything; JSON uses SDK JSON.stringify semantics. */
+function modelContent(value: typeof ModelOutput.Type, name: string) {
   return ModelOutput.match(value, {
-    text: (output) => [{ type: 'text' as const, text: output.value }],
-    json: (output) => [{ type: 'text' as const, text: JSON.stringify(output.value) }],
-    content: (output) => output.value.map(modelPart),
+    text: (output) => Effect.succeed([{ type: 'text' as const, text: output.value }]),
+    json: (output) =>
+      Effect.succeed([{ type: 'text' as const, text: JSON.stringify(output.value) }]),
+    content: (output) =>
+      Effect.forEach(output.value, (part) => modelPart(part, name)).pipe(
+        Effect.map((parts) => parts.flat()),
+      ),
   })
 }
 
@@ -348,12 +375,13 @@ const invoke = Effect.fn('Durable.invokeTool')(function* (
         new ToolOutputFailed({
           toolName: server.name,
           cause: new Error(
-            `Tool ${server.name} model output is unsupported; use text, JSON or inline image data with a full image media type`,
+            `Tool ${server.name} model output is unsupported; use text, JSON or inline PNG, JPEG, GIF or WebP data`,
           ),
         }),
     ),
   )
-  return { content: modelContent(projected), details: { output: json } }
+  const content = yield* modelContent(projected, server.name)
+  return { content, details: { output: json } }
 })
 
 /** A wait hook has already received the durable answer before this tool begins. */

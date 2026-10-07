@@ -86,6 +86,21 @@ const supported: {
     },
     content: [image],
   },
+  ...[
+    { mediaType: 'image/jpeg', bytes: [255, 216, 255, 0] },
+    { mediaType: 'image/gif', bytes: [71, 73, 70, 56, 57, 97] },
+    { mediaType: 'image/webp', bytes: [82, 73, 70, 70, 0, 0, 0, 0, 87, 69, 66, 80] },
+  ].map((sample) => {
+    const encoded = Buffer.from(sample.bytes).toString('base64')
+    return {
+      name: sample.mediaType,
+      output: {
+        type: 'content' as const,
+        value: [{ type: 'image-data' as const, data: encoded, mediaType: sample.mediaType }],
+      },
+      content: [{ type: 'image' as const, data: encoded, mimeType: sample.mediaType }],
+    }
+  }),
 ]
 
 /** Observe the next actual Pi model request, the stock SDK reader and public persisted history. */
@@ -149,6 +164,63 @@ for (const sample of supported)
   )
 
 const unsupported: { name: string; output: ModelOutput }[] = [
+  {
+    name: 'SVG image',
+    output: {
+      type: 'content',
+      value: [
+        {
+          type: 'image-data',
+          mediaType: 'image/svg+xml',
+          data: Buffer.from('<svg/>').toString('base64'),
+        },
+      ],
+    },
+  },
+  {
+    name: 'malformed image base64',
+    output: {
+      type: 'content',
+      value: [{ type: 'image-data', mediaType: 'image/png', data: 'not base64 !!!' }],
+    },
+  },
+  {
+    name: 'mismatched image signature',
+    output: { type: 'content', value: [{ type: 'image-data', mediaType: 'image/jpeg', data }] },
+  },
+  {
+    name: 'invalid image padding',
+    output: {
+      type: 'content',
+      value: [{ type: 'file-data', mediaType: 'image/png', data: data + '=' }],
+    },
+  },
+  {
+    name: 'noncanonical image pad bits',
+    output: {
+      type: 'content',
+      value: [{ type: 'file-data', mediaType: 'image/png', data: 'iVBORw0KGgp=' }],
+    },
+  },
+  {
+    name: 'empty image data',
+    output: { type: 'content', value: [{ type: 'image-data', mediaType: 'image/png', data: '' }] },
+  },
+  {
+    name: 'truncated image signature',
+    output: {
+      type: 'content',
+      value: [{ type: 'image-data', mediaType: 'image/png', data: 'iVBO' }],
+    },
+  },
+  {
+    name: 'mismatched image bytes',
+    output: {
+      type: 'content',
+      value: [{ type: 'file', mediaType: 'image/webp', data: { type: 'data', data: bytes } }],
+    },
+  },
+
   { name: 'model error text', output: { type: 'error-text', value: 'model-only failure' } },
   {
     name: 'model error JSON',
