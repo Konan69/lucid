@@ -42,14 +42,27 @@ function largePicture(megabytes: number, malformed: boolean): Core.InputPart {
   }
 }
 
+// Build and flatten each large payload once per file. Reusing these immutable wire values keeps
+// allocation/flattening out of the measured public admission while retaining full persistence.
+const largePictures = [8, 32].map((megabytes) => ({
+  megabytes,
+  valid: largePicture(megabytes, false),
+  malformed: largePicture(megabytes, true),
+}))
+for (const { valid, malformed } of largePictures) {
+  if (valid.type !== 'file' || malformed.type !== 'file') throw new Error('Expected image parts')
+  valid.url.charCodeAt(valid.url.length - 1)
+  malformed.url.charCodeAt(malformed.url.length - 1)
+}
+
 /** Exercise public admission and HTTP rejection at sizes that overflowed Schema.isBase64. */
-for (const megabytes of [8, 32]) {
+for (const { megabytes, valid, malformed } of largePictures) {
   it.live(`admits ${megabytes} MB base64 without a regex stack overflow`, () =>
     Effect.promise(async () => {
       const fixture = await host({}, {}, {}, images)
       const opened = await fixture.open()
       opened.faux.setResponses([fauxAssistantMessage('Accepted.')])
-      const part = largePicture(megabytes, false)
+      const part = valid
       const stream = await streamRun(
         opened.harness,
         { conversationId: opened.root.id, content: [part], requestId: 'large-image' },
@@ -68,7 +81,7 @@ for (const megabytes of [8, 32]) {
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(() => host({}, {}, {}, images))
       const opened = yield* Effect.promise(() => fixture.open())
-      const parts = [largePicture(megabytes, true)]
+      const parts = [malformed]
       const result = yield* Core.prepareRun(
         opened.harness,
         { conversationId: opened.root.id, content: parts, requestId: 'invalid-large-image' },

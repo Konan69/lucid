@@ -59,8 +59,8 @@ for (const partialFamily of families)
             }),
           },
           { approval: { pay: true } },
-          { progress: { partialIntervalMs: 1 } },
-          { partialFamily, tokensPerSecond: 1500, tokenSize: { min: 1, max: 1 } },
+          { progress: { partialIntervalMs: 0 } },
+          { partialFamily, commitFrames: true, tokenSize: { min: 1, max: 1 } },
         )
         const opened = await fixture.open()
         opened.faux.setResponses([

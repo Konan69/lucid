@@ -30,8 +30,8 @@ it.live('approves customInput without exposing its partial grammar input', () =>
         }),
       },
       { approval: { pay: true } },
-      { progress: { partialIntervalMs: 1 } },
-      { partialFamily: 'custom', tokensPerSecond: 1500, tokenSize: { min: 1, max: 1 } },
+      { progress: { partialIntervalMs: 0 } },
+      { partialFamily: 'custom', commitFrames: true, tokenSize: { min: 1, max: 1 } },
     )
     const opened = await fixture.open()
     opened.faux.setResponses([
@@ -70,7 +70,7 @@ it.live('reconciles a committed shorter Responses replacement in live, attach an
     const fixture = await host(
       {},
       {},
-      { progress: { partialIntervalMs: 1 } },
+      { progress: { partialIntervalMs: 0 } },
       {
         partialFamily: 'responses',
         tokenSize: { min: 1, max: 1 },
@@ -156,7 +156,7 @@ it.live(
           }),
         },
         { approval: { pay: true } },
-        { progress: { partialIntervalMs: 1 } },
+        { progress: { partialIntervalMs: 0 } },
         {
           partialFamily: 'anthropic',
           tokenSize: { min: 1, max: 1 },

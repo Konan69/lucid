@@ -4,7 +4,7 @@ import * as NodeOS from 'node:os'
 import * as NodePath from 'node:path'
 
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
-import type { Message } from '@earendil-works/pi-ai'
+import type { Message, AssistantMessageEvent } from '@earendil-works/pi-ai'
 import { createModels } from '@earendil-works/pi-ai/models'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import {
@@ -24,6 +24,9 @@ import {
   type UIMessageChunk,
 } from 'ai'
 import { onTestFinished } from 'vitest'
+import { Effect, Option, Stream } from 'effect'
+import { runForPi, watchLive } from '../../pi.ts'
+import { waitForFrame } from '../../fixtures/provider.ts'
 import { z } from 'zod'
 
 import { respond, toolsExtension, waiting, type ToolsOptions } from '../../main.ts'
@@ -101,7 +104,7 @@ export async function host(
   tools: ToolSet,
   options: ToolsOptions,
   settings: Partial<HarnessSettings> = {},
-  fauxOptions: ProviderOptions = {},
+  fauxOptions: ProviderOptions & { readonly commitFrames?: boolean } = {},
 ) {
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), 'vivid-conformance-'))
   const file = NodePath.join(directory, 'session.sqlite')
@@ -115,7 +118,48 @@ export async function host(
   })
   /** Open a fresh process-equivalent host on the same durable transcript. */
   async function open(observers: readonly Extension[] = []) {
-    const faux = streamingProvider(fauxOptions)
+    const { commitFrames = false, onFrame = () => Effect.void, ...providerOptions } = fauxOptions
+    let owner: Option.Option<{ harness: Harness; id: Parameters<typeof respond>[1] }> =
+      Option.none()
+    let frames = 0
+    /** A bounded number of meaningful prefixes cross the real SQLite commit before generation
+     * advances. No token-rate clock: progress is released by the public LiveDoc receipt. */
+    const committed = (event: AssistantMessageEvent, abortSignal: Option.Option<AbortSignal>) => {
+      if (!commitFrames || event.type === 'done' || event.type === 'error') return Effect.void
+      frames++
+      if (event.partial.content.length === 0 || (frames % 16 !== 0 && event.type !== 'text_delta'))
+        return Effect.void
+      if (Option.isNone(owner)) throw new Error('Provider invoked before its host opened')
+      const { harness, id } = owner.value
+      const expected = JSON.stringify(event.partial)
+      return Effect.promise(() =>
+        runForPi(
+          waitForFrame(
+            Effect.scoped(
+              Effect.gen(function* () {
+                const states = yield* watchLive(harness, id, context)
+                yield* Stream.runHead(
+                  states.pipe(
+                    Stream.filter(
+                      (live) =>
+                        live.generation !== undefined &&
+                        JSON.stringify(live.generation.message) === expected,
+                    ),
+                  ),
+                )
+              }),
+            ),
+            abortSignal,
+          ),
+          undefined,
+        ),
+      )
+    }
+    const faux = streamingProvider({
+      ...providerOptions,
+      onFrame: (event, abortSignal) =>
+        committed(event, abortSignal).pipe(Effect.andThen(onFrame(event, abortSignal))),
+    })
     const models = createModels()
     models.setProvider(faux.provider)
     const registry = createRegistry()
@@ -132,6 +176,7 @@ export async function host(
     const root = await harness.root(context, {
       agent: { model: { provider: 'faux', modelId: 'faux-1' } },
     })
+    owner = Option.some({ harness, id: root.id })
     const transport = new DefaultChatTransport<UIMessage>({
       api: 'http://durable.test/chat',
       fetch: async (url, init) => respond(harness, root.id, new Request(url, init), context),

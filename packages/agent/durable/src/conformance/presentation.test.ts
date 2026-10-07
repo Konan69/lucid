@@ -23,8 +23,8 @@ it('keeps slow parallel content order identical in live Chat, attachment and his
       }),
     },
     { approval: { pay: true } },
-    {},
-    { tokensPerSecond: 1500, tokenSize: { min: 1, max: 1 } },
+    { progress: { partialIntervalMs: 0 } },
+    { commitFrames: true, tokenSize: { min: 1, max: 1 } },
   )
   const opened = await fixture.open()
   opened.faux.setResponses([

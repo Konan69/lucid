@@ -12,7 +12,8 @@ import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite
 import { tool } from 'ai'
 import { z } from 'zod'
 
-import { streamRun, toolsExtension } from '../../main.ts'
+import { toolsExtension } from '../../tools.ts'
+import { runForPi } from '../../pi.ts'
 
 /**
  * Pi harness-tools-recovery.test.ts: interruption after intent, adapted to a real process death.
@@ -32,20 +33,23 @@ faux.setResponses([
 ])
 const registry = createRegistry()
 registry.install(
-  await toolsExtension(
-    'conformance',
-    {
-      work: tool({
-        description: 'Build a report',
-        inputSchema: z.object({}),
-        execute: () => {
-          process.stdout.write('executing\n')
-          // SIGKILL bypasses signal handlers; this real process wait stays in flight at the crash.
-          return NodeEvents.EventEmitter.once(process, 'SIGTERM')
-        },
-      }),
-    },
-    { replay: { work: policy } },
+  await runForPi(
+    toolsExtension(
+      'conformance',
+      {
+        work: tool({
+          description: 'Build a report',
+          inputSchema: z.object({}),
+          execute: () => {
+            process.stdout.write('executing\n')
+            // SIGKILL bypasses signal handlers; this real process wait stays in flight at the crash.
+            return NodeEvents.EventEmitter.once(process, 'SIGTERM')
+          },
+        }),
+      },
+      { replay: { work: policy } },
+    ),
+    BACKGROUND_CONTEXT.abortSignal,
   ),
 )
 const harness = await Harness.open(
@@ -56,8 +60,9 @@ const harness = await Harness.open(
 const root = await harness.root(BACKGROUND_CONTEXT, {
   agent: { model: { provider: 'faux', modelId: 'faux-1' } },
 })
-await streamRun(
-  harness,
-  { conversationId: root.id, content: 'Build a report', requestId: 'crash' },
+// The crashed host admits natively: loading respond/history/stream modules adds startup work but
+// cannot change this replay-policy proof. The bridged registration and durable intent are retained.
+await root.submit(
+  { type: 'input', content: 'Build a report', requestId: 'crash' },
   BACKGROUND_CONTEXT,
 )

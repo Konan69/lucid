@@ -135,8 +135,8 @@ it.live('records the ordering limit for a parallel round of a sequential-capable
     const fixture = await host(
       { pay: payment, slow: payment },
       { execution: 'parallel', sequential: ['slow'], approval: { pay: true } },
-      { toolExecution: 'parallel', progress: { partialIntervalMs: 1 } },
-      { tokensPerSecond: 1500, tokenSize: { min: 1, max: 1 } },
+      { toolExecution: 'parallel', progress: { partialIntervalMs: 0 } },
+      { commitFrames: true, tokenSize: { min: 1, max: 1 } },
     )
     const opened = await fixture.open()
     const before = 'Before '.repeat(20)
@@ -235,7 +235,7 @@ for (const prefix of [false, true])
             }),
           },
           { approval: { pay: true } },
-          { progress: { partialIntervalMs: 1 } },
+          { progress: { partialIntervalMs: 0 } },
           {
             partialFamily: 'interleaved',
             tokenSize: { min: 1, max: 1 },

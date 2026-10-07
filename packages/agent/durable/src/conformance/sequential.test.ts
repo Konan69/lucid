@@ -305,8 +305,8 @@ for (const partialFamily of families)
       const fixture = await host(
         { pay: payment, plain: payment },
         { execution, sequential: override ? ['pay'] : [], approval: { pay: true } },
-        { toolExecution: execution, progress: { partialIntervalMs: 1 } },
-        { partialFamily, tokensPerSecond: 1500, tokenSize: { min: 1, max: 1 } },
+        { toolExecution: execution, progress: { partialIntervalMs: 0 } },
+        { partialFamily, commitFrames: true, tokenSize: { min: 1, max: 1 } },
       )
       const opened = await fixture.open()
       expect((await opened.root.agent(context)).tools.map((entry) => entry.executionMode)).toEqual([

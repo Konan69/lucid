@@ -53,8 +53,8 @@ it.live('shows the unobservable-mode gap during slow sequential generation', () 
         }),
       },
       { approval: { pay: true } },
-      { toolExecution: 'sequential', progress: { partialIntervalMs: 1 } },
-      { tokensPerSecond: 1500, tokenSize: { min: 1, max: 1 } },
+      { toolExecution: 'sequential', progress: { partialIntervalMs: 0 } },
+      { commitFrames: true, tokenSize: { min: 1, max: 1 } },
     )
     const opened = await fixture.open()
     const ended = signal()

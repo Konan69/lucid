@@ -44,6 +44,8 @@ const decodeArguments = Schema.decodeUnknownSync(Schema.Record(Schema.String, Sc
 type PartialState = {
   readonly family: ProviderFamily
   readonly arguments: Map<number, string>
+  readonly bodies: Map<number, string>
+  lastIndex: number
   readonly ended: Set<number>
   firstTool: number
   revealed: boolean
@@ -53,7 +55,10 @@ type PartialState = {
 
 /** A test frame stays gated until its receipt is inspected or Pi cancels the provider invocation.
  * A non-cancellable gate would deadlock Conversation.abort waiting for the provider to return. */
-export function waitForFrame(released: Effect.Effect<void>, signal: Option.Option<AbortSignal>) {
+export function waitForFrame<E>(
+  released: Effect.Effect<void, E>,
+  signal: Option.Option<AbortSignal>,
+): Effect.Effect<void, E> {
   if (Option.isNone(signal)) return released
   const abortSignal = signal.value
   if (abortSignal.aborted) return Effect.void
@@ -80,24 +85,61 @@ export function waitForFrame(released: Effect.Effect<void>, signal: Option.Optio
 function partial(message: AssistantMessage, state: PartialState): AssistantMessage {
   return {
     ...message,
-    content: message.content.map((block, index) => {
-      if (state.family === 'responses' && !state.ended.has(index)) {
-        if (block.type === 'text') return { ...block, text: block.text.slice(0, -1) }
-        if (block.type === 'thinking') return { ...block, thinking: block.thinking.slice(0, -1) }
-      }
-      if (state.family === 'responses' && state.ended.has(index)) {
-        if (block.type === 'text') return { ...block, textSignature: 'responses-whole-text' }
-        if (block.type === 'thinking')
-          return { ...block, thinkingSignature: 'responses-whole-thinking' }
-      }
-      if (block.type === 'text')
-        return block.text.length < 32
-          ? block
-          : { ...block, textSignature: 'retained-google-signature' }
-      if (block.type !== 'toolCall') return block
-      return toolPartial(block, index, state)
-    }),
+    content: message.content
+      .slice(0, state.lastIndex + 1)
+      .map((block, index) => decoratedBlock(streamedBody(block, index, state), index, state)),
   }
+}
+
+/** Signatures and authoritative whole replacements modify a captured body, never faux's shared one. */
+function decoratedBlock(
+  block: AssistantMessage['content'][number],
+  index: number,
+  state: PartialState,
+) {
+  if (state.family === 'responses' && !state.ended.has(index)) {
+    if (block.type === 'text') return { ...block, text: block.text.slice(0, -1) }
+    if (block.type === 'thinking') return { ...block, thinking: block.thinking.slice(0, -1) }
+  }
+  if (state.family === 'responses' && state.ended.has(index)) {
+    if (block.type === 'text') return { ...block, textSignature: 'responses-whole-text' }
+    if (block.type === 'thinking')
+      return { ...block, thinkingSignature: 'responses-whole-thinking' }
+  }
+  if (block.type === 'text')
+    return block.text.length < 32 ? block : { ...block, textSignature: 'retained-google-signature' }
+  if (block.type !== 'toolCall') return block
+  return toolPartial(block, index, state)
+}
+
+/** Faux schedules mutate their shared partial before a relay can read queued frames when no token
+ * clock slows them down. Capture text/thinking from their actual deltas, just as raw tools already
+ * are captured here, and expose only indexes that have started. These are owned provider copies. */
+function streamedBody(
+  block: AssistantMessage['content'][number],
+  index: number,
+  state: PartialState,
+) {
+  const body = state.bodies.get(index)
+  if (body === undefined) return block
+  if (block.type === 'text') return { ...block, text: body }
+  if (block.type === 'thinking') return { ...block, thinking: body }
+  return block
+}
+
+/** An event's end supplies the authoritative body; preceding deltas retain their captured prefix. */
+function observeBody(event: AssistantMessageEvent, state: PartialState) {
+  if (!('contentIndex' in event)) return
+  state.lastIndex = Math.max(state.lastIndex, event.contentIndex)
+  if (event.type === 'text_start' || event.type === 'thinking_start')
+    state.bodies.set(event.contentIndex, '')
+  if (event.type === 'text_delta' || event.type === 'thinking_delta') {
+    const body = state.bodies.get(event.contentIndex)
+    if (body === undefined) throw new Error('Faux body delta before its start')
+    state.bodies.set(event.contentIndex, body + event.delta)
+  }
+  if (event.type === 'text_end' || event.type === 'thinking_end')
+    state.bodies.set(event.contentIndex, event.content)
 }
 
 /** Family-specific scratch fields follow the installed provider rather than faux's empty arguments. */
@@ -180,6 +222,7 @@ function replacedFrame(
 function adapt(event: AssistantMessageEvent, state: PartialState): AssistantMessageEvent {
   if (event.type === 'done') return event
   if (event.type === 'error') return { ...event, error: terminal(event.error, state) }
+  observeBody(event, state)
   const replacement = replacedFrame(event, state)
   if (Option.isSome(replacement)) return replacement.value
   observeIdentity(event, state)
@@ -251,6 +294,8 @@ const relay = Effect.fn('Test.providerRelay')(function* (
   const state: PartialState = {
     family,
     arguments: new Map(),
+    bodies: new Map(),
+    lastIndex: -1,
     ended: new Set(),
     firstTool: -1,
     revealed: false,

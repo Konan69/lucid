@@ -119,7 +119,7 @@
   {
     "file": "packages/agent/durable/src/conformance/fixtures/host.ts",
     "classification": "test-fixture-entrypoint",
-    "symbols": ["consume", "host", "open", "fetch", "close", "shop", "execute", "hold"]
+    "symbols": ["consume", "host", "open", "fetch", "close", "shop", "execute", "hold", "committed"]
   },
   {
     "file": "packages/agent/durable/src/fixtures/task.ts",

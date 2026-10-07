@@ -36,10 +36,10 @@ for (const given of cases)
           }),
         },
         { approval: { pay: true } },
-        { progress: { partialIntervalMs: 1 } },
+        { progress: { partialIntervalMs: 0 } },
         {
           partialFamily: given.family,
-          tokensPerSecond: 1500,
+          commitFrames: true,
           tokenSize: { min: 1, max: 1 },
         },
       )

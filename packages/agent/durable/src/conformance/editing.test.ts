@@ -64,10 +64,10 @@ it.live.each(['changed', 'shortened', 'removed'] as const)(
           }),
         },
         {},
-        { progress: { partialIntervalMs: 1 } },
+        { progress: { partialIntervalMs: 0 } },
         {
           partialFamily: 'anthropic',
-          tokensPerSecond: 1500,
+          commitFrames: true,
           tokenSize: { min: 1, max: 1 },
           rewriteFrame: (event) => (replacing ? editFrame(event, edit) : event),
           onFrame: (event, abortSignal) => {
