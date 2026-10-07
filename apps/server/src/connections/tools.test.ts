@@ -938,7 +938,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
     },
   )
 
-  layer(connectionTestLayer)('clock: preserves lexical order on %s relevance', (it) => {
+  layer(connectionTestLayer)('clock: preserves lexical order on low relevance or timeout', (it) => {
     /** Low scores cannot hide lexical candidates; time exhaustion cannot reorder them. */
     it.effect.each(['below', 'timeout'] as const)(
       'preserves lexical order on %s relevance',
