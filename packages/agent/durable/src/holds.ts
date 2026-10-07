@@ -391,17 +391,20 @@ export const CallDecision = Schema.TaggedUnion({
 export type CallDecision = typeof CallDecision.Type
 export const decisionMemo = 'durable.tool.decision'
 
-const decodeDecision = Schema.decodeUnknownEffect(CallDecision)
+/** Task memos are shared across hooks; an extension may only trust its own first-writer pin. */
+const DecisionPin = Schema.Struct({ owner: Schema.String, decision: CallDecision })
+export type DecisionPin = typeof DecisionPin.Type
+const decodeDecision = Schema.decodeUnknownEffect(DecisionPin)
 /** Memo reads are public Pi I/O; an absent memo means hooks have not pinned this attempt yet. */
 export const readPinnedDecision = Effect.fn('Durable.readPinnedDecision')(function* (
   api: HookApi,
   context: Context,
-): Effect.fn.Return<Option.Option<CallDecision>, PiFailed> {
+): Effect.fn.Return<Option.Option<DecisionPin>, PiFailed> {
   const stored = yield* Effect.tryPromise({
     try: () => api.memo(decisionMemo, context),
     catch: (cause) => new PiFailed({ operation: 'snapshot', cause }),
   })
-  if (stored === undefined) return Option.none<CallDecision>()
+  if (stored === undefined) return Option.none<DecisionPin>()
   return Option.some(
     yield* decodeDecision(stored).pipe(
       Effect.mapError((cause) => new PiFailed({ operation: 'snapshot', cause })),
@@ -411,9 +414,9 @@ export const readPinnedDecision = Effect.fn('Durable.readPinnedDecision')(functi
 /** Pin before waiting; after process death Pi returns the durable first writer without rerunning policy. */
 export const pinDecision = Effect.fn('Durable.pinDecision')(function* (
   api: HookApi,
-  chosen: CallDecision,
+  chosen: DecisionPin,
   context: Context,
-): Effect.fn.Return<CallDecision, PiFailed> {
+): Effect.fn.Return<DecisionPin, PiFailed> {
   const stored = yield* Effect.tryPromise({
     try: () => api.memo(decisionMemo, chosen, context),
     catch: (cause) => new PiFailed({ operation: 'commit', cause }),
@@ -445,7 +448,7 @@ export const taskDecision: (
       onNone: () => Effect.succeed(Option.none<CallDecision>()),
       onSome: (value) =>
         decodeDecision(value).pipe(
-          Effect.map(Option.some),
+          Effect.map((pin) => Option.some(pin.decision)),
           Effect.mapError((cause) => new PiFailed({ operation: 'snapshot', cause })),
         ),
     })
