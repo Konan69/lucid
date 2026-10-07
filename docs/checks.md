@@ -62,6 +62,23 @@ Measured on the eight-core Cloudbox on 6 October 2026, same repository state, ot
 
 A tree with a deliberate lint finding, type error, format error and failing test fails in exactly those four stages. The old hook's serial sequence, run against the new tree, also passes.
 
+## Effect language service
+
+Typecheck runs the native TypeScript 7 compiler. `effect-language-service patch` patches the JavaScript `typescript` package, which typecheck does not run, so from the move to TypeScript 7 until 7 October 2026 no Effect diagnostic reached the gate: a floating Effect and a `new Promise` in a contracts file passed typecheck. `@effect/tsgo` is the service for the native compiler (its README: "If you are using TypeScript 7.0 or newer, use `@effect/tsgo`"); `prepare` now runs `effect-tsgo patch --typescript` as well, and the plugin block in `tsconfig.base.json` is read by both.
+
+The first patched run reported 1,677 findings that had gathered meanwhile, none of them a plain TypeScript error: 741 `strictEffectProvide` (most are tests that give a Layer to each case with `Effect.provide` where `layer(...)` builds it once for the file), 406 `unnecessaryFailYieldableError`, 188 `schemaNumber`, 84 `asyncFunction`, 52 `multipleEffectProvide`, and 29 smaller rules. The compiler prints every finding and exits 0 (`ignoreEffect...InTscExitCode`); the gate counts them per rule from the typecheck logs, once per position, against `effectCeilings` in `scripts/gate/ratchets.mjs`. A rule with no ceiling may not appear, and a ceiling only goes down.
+
+## ts-rust, evaluated
+
+`tsc-rs` 0.1.0 (pingdotgg/ts-rust, a Rust port of the native compiler with the Effect rules built in) was run over the gate's whole typecheck graph on 7 October 2026, in dependency order, declarations included, on the PC at load 15:
+
+| Compiler                                                   |   Cold | Warm (build info kept) | Diagnostics                                                                                               |
+| ---------------------------------------------------------- | -----: | ---------------------: | --------------------------------------------------------------------------------------------------------- |
+| native `tsc` 7.0.2 with `@effect/tsgo` 0.51.0, one checker | 40.8 s |                  8.8 s | 1,677 Effect findings, 0 errors                                                                           |
+| `tsc-rs` 0.1.0                                             | 19.7 s |                  4.1 s | the same 1,677 with one message worded in another order, and 3 errors the native compiler does not report |
+
+It takes the same flags, writes declarations and build info, honours the Effect plugin options, and is twice as fast cold and warm. It is not the gate's compiler yet for one reason: on `packages/agent/runtime/src/tools/sandbox.ts` it reports TS7031 (implicit any) for a destructured parameter with a default, `(path, { recursive } = {}) =>`, whose type comes from the interface the object implements. The code is valid and the native compiler accepts it, so a tree the gate passes today would fail. With the per-package cache and build info, typecheck is 0 to 16 seconds of a gate run; halving it is worth taking when that error is fixed upstream, by pointing `scripts/types.mjs` at the other binary.
+
 ## Reference and limits
 
 The VCOS reference (`apps/web/TYPECHECK.md` and its shared/server/agent configs) splits a combined program into declaration-producing projects and checks consumers against those outputs. Separate Vivid workspace configs are not equivalent boundaries: source exports pull shared implementation into consumers, and tests import implementation across server/runtime/skills packages. The first cache/concurrency change repairs repeat runs but does not complete this graph optimization.
