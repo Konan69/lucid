@@ -27,6 +27,7 @@ const testLayer = Layer.mergeAll(
   testDatabaseLayer,
   testConfigLayer,
   changesLayer.pipe(Layer.provide(testDatabaseLayer)),
+  localAuthRuntimeLayer,
 )
 
 const origin = 'http://127.0.0.1:8787'
@@ -47,19 +48,26 @@ const call = (auth: AuthInstance, path: string, init: RequestInit) =>
       HttpServerRequest.HttpServerRequest,
       HttpServerRequest.fromWeb(new Request(`${origin}/api/auth/${path}`, init)),
     ),
-    Effect.provide(localAuthRuntimeLayer),
   )
 
 /** Better Auth's own context: the official adapter, reached through the public `$context`. */
 const adapterOf = Effect.fn('DialectTest.adapterOf')(function* (auth: AuthInstance) {
-  const instance = yield* auth.auth.pipe(Effect.provide(localAuthRuntimeLayer))
+  const instance = yield* auth.auth
   const context = yield* Effect.promise(() => instance.$context)
   return context.adapter
 })
 
+/** Preserve the original adapter rejection as the success value without an unknown error channel. */
+class AdapterRejected extends Schema.TaggedError<AdapterRejected>()('AdapterRejected', {
+  cause: Schema.Unknown,
+}) {}
+
 /** A Promise of the official adapter, with its rejection as the value under test. */
 const rejection = <A>(run: () => PromiseLike<A>) =>
-  Effect.tryPromise({ try: run, catch: (cause) => cause }).pipe(Effect.flip)
+  Effect.tryPromise({ try: run, catch: (cause) => new AdapterRejected({ cause }) }).pipe(
+    Effect.flip,
+    Effect.map((failure) => failure.cause),
+  )
 
 /** Removes a fixture Person and, by cascade, their sessions. Registered before the first write. */
 const forgetting = Effect.fn('DialectTest.forgetting')(function* (ids: ReadonlyArray<string>) {
@@ -169,8 +177,11 @@ const dialectKysely = Effect.fn('DialectTest.dialectKysely')(function* () {
   const input = yield* Effect.gen(function* () {
     return yield* (yield* AuthDatabase).runtime
   }).pipe(
-    Effect.provide(authDatabaseLayer(config.DATABASE_URL)),
-    Effect.provide(localAuthRuntimeLayer),
+    Effect.provide(
+      yield* Layer.build(
+        authDatabaseLayer(config.DATABASE_URL).pipe(Layer.provide(localAuthRuntimeLayer)),
+      ),
+    ),
   )
   if (!('dialect' in input)) return expect.fail('The auth database must be the dialect form')
   return new Kysely<{ session: typeof sessionTable.$inferSelect }>({ dialect: input.dialect })

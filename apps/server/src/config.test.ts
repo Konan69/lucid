@@ -14,7 +14,10 @@ const base = {
 
 const load = (environment: Record<string, string>) =>
   loadServerConfig.pipe(
-    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...environment }))),
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromUnknown({ ...base, ...environment }),
+    ),
   )
 
 /**
@@ -44,7 +47,10 @@ for (const [name, environment, variable] of [
   it.effect(`does not load when ${name}`, () =>
     Effect.gen(function* () {
       const failure = yield* loadServerConfig.pipe(
-        Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromUnknown(environment),
+        ),
         Effect.flip,
       )
       expect(failure).toBeInstanceOf(ConfigurationError)

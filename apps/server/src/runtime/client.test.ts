@@ -53,6 +53,7 @@ const admitInputWith = Effect.fn('Runtime.test.admitInputWith')(function* (
 const admitWith = (http: HttpClient.HttpClient) => admitInputWith(http, admissionInput)
 
 /** Classification is observed through the real Runtime Layer; only the remote HTTP transport varies. */
+/** Each case builds its own log capture and transport so recorded refusals cannot leak. */
 describe.skipIf(!testDatabaseConfigured)('Runtime admission classification', () => {
   const statuses = [
     { status: 400, tag: 'AdmissionRefused', reason: 'Rejected' },
@@ -83,7 +84,7 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission classification', () 
             }),
           )
           const logs = refusalLogs()
-          const result = yield* admitWith(http).pipe(Effect.provide(logs.layer))
+          const result = yield* admitWith(http).pipe(Effect.provide(yield* Layer.build(logs.layer)))
           if (Result.isSuccess(result)) expect.fail('Non-202 response was admitted')
           expect(result.failure).toMatchObject({
             _tag: tag,
@@ -117,7 +118,7 @@ describe.skipIf(!testDatabaseConfigured)('Runtime admission classification', () 
           ),
         )
         const logs = refusalLogs()
-        const result = yield* admitWith(http).pipe(Effect.provide(logs.layer))
+        const result = yield* admitWith(http).pipe(Effect.provide(yield* Layer.build(logs.layer)))
         if (Result.isSuccess(result)) expect.fail('Failed request was admitted')
         expect(result.failure).toMatchObject({
           _tag: failure.tag,
@@ -492,7 +493,9 @@ describe.skipIf(!testDatabaseConfigured)('Runtime delivery wire boundary', () =>
         expect(yield* Deferred.isDone(cancelled)).toBe(false)
       }).pipe(
         Effect.scoped,
-        Effect.provide(runtimeLayer.pipe(Layer.provide(Layer.merge(testConfigLayer, http)))),
+        Effect.provide(
+          yield* Layer.build(runtimeLayer.pipe(Layer.provide(Layer.merge(testConfigLayer, http)))),
+        ),
       )
       // Abort dispatch is synchronous at scope close; regression must fail immediately, not hang.
       expect(yield* Deferred.isDone(cancelled)).toBe(true)
@@ -519,8 +522,10 @@ describe.skipIf(!testDatabaseConfigured)('Runtime delivery wire boundary', () =>
               })
             }).pipe(
               Effect.provide(
-                runtimeLayer.pipe(
-                  Layer.provide(Layer.merge(testConfigLayer, transport(receiptId, message))),
+                yield* Layer.build(
+                  runtimeLayer.pipe(
+                    Layer.provide(Layer.merge(testConfigLayer, transport(receiptId, message))),
+                  ),
                 ),
               ),
             ),

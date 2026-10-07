@@ -300,10 +300,9 @@ describe.skipIf(!testDatabaseConfigured)('Thread documents', () => {
               person: { id: person.id, name: person.name, image: null },
             }),
           )
-          yield* Effect.all(
-            [1, 2, 3].map(() =>
-              store.write(person.id, threadId, { title: 'plan', body: detail.body }),
-            ),
+          yield* Effect.forEach(
+            [1, 2, 3],
+            () => store.write(person.id, threadId, { title: 'plan', body: detail.body }),
             { concurrency: 3 },
           )
           expect((yield* store.get(person.id, { id: artifact.id })).versions).toHaveLength(3)

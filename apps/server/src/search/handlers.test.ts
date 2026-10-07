@@ -181,6 +181,7 @@ const resultId = SearchResult.match({
   LibraryItem: ({ item: value }): string => value.id,
 })
 
+/** Each case builds the composed mock stores from its own visible records and workspace. */
 describe('Search', () => {
   it.effect(
     'searches authorized store results across domains, all terms, title hits before bodies, then newest',
@@ -201,11 +202,11 @@ describe('Search', () => {
         }
         const { results } = yield* searchHandlers
           .Search({ query: '  ANNUAL\tReport  ' })
-          .pipe(Effect.provide(visibleLayer(data)))
+          .pipe(Effect.provide(yield* Layer.build(visibleLayer(data))))
         expect(results.map(resultId)).toEqual(['mine', 'shared', 'title', 'body', 'routine'])
         const privateText = yield* searchHandlers
           .Search({ query: 'unsearchable' })
-          .pipe(Effect.provide(visibleLayer(data)))
+          .pipe(Effect.provide(yield* Layer.build(visibleLayer(data))))
         expect(privateText.results).toEqual([])
       }),
   )
@@ -217,7 +218,7 @@ describe('Search', () => {
       )
       const { results } = yield* searchHandlers
         .Search({ query: 'annual report' })
-        .pipe(Effect.provide(visibleLayer({ ...empty, threads })))
+        .pipe(Effect.provide(yield* Layer.build(visibleLayer({ ...empty, threads }))))
       expect(results).toHaveLength(20)
       expect(results.map(resultId)).toEqual(
         Array.from({ length: 20 }, (_, index) => `thread-${24 - index}`),
@@ -248,7 +249,7 @@ describe('Search', () => {
       )
       const { results } = yield* searchHandlers
         .Search({ query: ' \n ' })
-        .pipe(Effect.provide(onlyThreads))
+        .pipe(Effect.provide(yield* Layer.build(onlyThreads)))
       expect(results.map(resultId)).toEqual(
         Array.from({ length: 8 }, (_, index) => `thread-${11 - index}`),
       )
@@ -260,7 +261,7 @@ describe('Search', () => {
       const items = [item('mine', 'Report', now, 'Mine'), item('shared', 'Report', now, 'Company')]
       const { results } = yield* searchHandlers
         .Search({ query: 'report' })
-        .pipe(Effect.provide(visibleLayer({ ...empty, items })))
+        .pipe(Effect.provide(yield* Layer.build(visibleLayer({ ...empty, items }))))
       expect(results.map(resultId)).toEqual(['mine'])
     }),
   )
@@ -285,7 +286,7 @@ describe('Suggestions', () => {
       }
       const { suggestions } = yield* searchHandlers
         .ListSuggestions()
-        .pipe(Effect.provide(visibleLayer(data)))
+        .pipe(Effect.provide(yield* Layer.build(visibleLayer(data))))
       expect(suggestions).toEqual([
         { text: 'Summarise Your notes', reason: 'Added in the last day' },
         { text: 'Look at why Morning brief failed', reason: 'Your last run failed' },
@@ -308,7 +309,7 @@ describe('Suggestions', () => {
       }
       const { suggestions } = yield* searchHandlers
         .ListSuggestions()
-        .pipe(Effect.provide(visibleLayer(data)))
+        .pipe(Effect.provide(yield* Layer.build(visibleLayer(data))))
       expect(suggestions.map((suggestion) => suggestion.text)).toEqual([
         'Connect a service',
         'Watch a useful signal',
@@ -325,7 +326,7 @@ describe('Suggestions', () => {
       )
       const { suggestions } = yield* searchHandlers
         .ListSuggestions()
-        .pipe(Effect.provide(visibleLayer({ ...empty, items })))
+        .pipe(Effect.provide(yield* Layer.build(visibleLayer({ ...empty, items }))))
       expect(suggestions.map((suggestion) => suggestion.text)).toEqual([
         'Summarise Notes 0',
         'Summarise Notes 1',

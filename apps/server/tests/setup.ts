@@ -16,6 +16,7 @@ if (supplied !== undefined) {
   const name = `${inject('serverDatabasePrefix')}_${NodeCrypto.randomBytes(8).toString('hex')}`
   const admin = new Pg.Client({ connectionString: supplied })
   await admin.connect()
+  // @effect-diagnostics-next-line asyncFunction:off -- Vitest afterAll requires a Promise-returning teardown callback.
   afterAll(async () => {
     const cleanup = new Pg.Client({ connectionString: supplied })
     await cleanup.connect()
