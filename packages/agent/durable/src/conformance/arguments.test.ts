@@ -27,9 +27,20 @@ it.live('receives raw argument JSON from the provider before the durable boundar
     const deltas: string[] = []
     {
       const iterator1 = stream[Symbol.asyncIterator]()
+      let completed = false
+      // Preserve for-await's early-exit cleanup; the host must never close before this reader.
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() => {
+          if (completed || iterator1.return === undefined) return Promise.resolve()
+          return iterator1.return().then(() => {})
+        }),
+      )
       for (;;) {
         const next1 = yield* Effect.promise(() => iterator1.next())
-        if (next1.done) break
+        if (next1.done) {
+          completed = true
+          break
+        }
         const event = next1.value
         if (event.type === 'toolcall_delta') deltas.push(event.delta)
       }

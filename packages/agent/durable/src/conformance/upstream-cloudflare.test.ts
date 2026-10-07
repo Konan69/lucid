@@ -603,9 +603,20 @@ it.live('streams text and reasoning before closing their parts', () =>
     const snapshots: UIMessage[] = []
     {
       const iterator1 = readUIMessageStream({ stream })[Symbol.asyncIterator]()
+      let completed = false
+      // Preserve for-await's early-exit cleanup; the host must never close before this reader.
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() => {
+          if (completed || iterator1.return === undefined) return Promise.resolve()
+          return iterator1.return().then(() => {})
+        }),
+      )
       for (;;) {
         const next1 = yield* Effect.promise(() => iterator1.next())
-        if (next1.done) break
+        if (next1.done) {
+          completed = true
+          break
+        }
         const message = next1.value
         snapshots.push(structuredClone(message))
       }

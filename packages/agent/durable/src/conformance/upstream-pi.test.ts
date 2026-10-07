@@ -62,9 +62,20 @@ it.live.each([
     )
     {
       const iterator1 = stream[Symbol.asyncIterator]()
+      let completed = false
+      // Preserve for-await's early-exit cleanup; the host must never close before this reader.
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() => {
+          if (completed || iterator1.return === undefined) return Promise.resolve()
+          return iterator1.return().then(() => {})
+        }),
+      )
       for (;;) {
         const next1 = yield* Effect.promise(() => iterator1.next())
-        if (next1.done) break
+        if (next1.done) {
+          completed = true
+          break
+        }
         const chunk = next1.value
         chunks.push(chunk)
       }
@@ -106,9 +117,20 @@ it.live('fails with no_model when no model is configured or the model is unknown
     )
     {
       const iterator2 = unsetStream[Symbol.asyncIterator]()
+      let completed = false
+      // Preserve for-await's early-exit cleanup; the host must never close before this reader.
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() => {
+          if (completed || iterator2.return === undefined) return Promise.resolve()
+          return iterator2.return().then(() => {})
+        }),
+      )
       for (;;) {
         const next2 = yield* Effect.promise(() => iterator2.next())
-        if (next2.done) break
+        if (next2.done) {
+          completed = true
+          break
+        }
         const chunk = next2.value
         expect(chunk.type).not.toBe('error')
       }
@@ -135,9 +157,20 @@ it.live('fails with no_model when no model is configured or the model is unknown
           abortSignal: undefined,
         }),
       ))[Symbol.asyncIterator]()
+      let completed = false
+      // Preserve for-await's early-exit cleanup; the host must never close before this reader.
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() => {
+          if (completed || iterator3.return === undefined) return Promise.resolve()
+          return iterator3.return().then(() => {})
+        }),
+      )
       for (;;) {
         const next3 = yield* Effect.promise(() => iterator3.next())
-        if (next3.done) break
+        if (next3.done) {
+          completed = true
+          break
+        }
         const chunk = next3.value
         chunks.push(chunk)
       }
