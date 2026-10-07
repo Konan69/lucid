@@ -52,7 +52,7 @@ async function main() {
     await NodeTimersPromises.setImmediate()
     const started = performance.now()
     await storage.commit(
-      [{ type: 'entry', value: { id, conversationId, kind: 'large', payload } }],
+      [{ type: 'entry', value: { id, conversationId, kind: 'large', data: payload } }],
       BACKGROUND_CONTEXT,
     )
     const committed = performance.now()
@@ -63,7 +63,7 @@ async function main() {
     console.log(
       JSON.stringify({
         megabytes,
-        equal: Option.getOrThrow(Option.fromNullishOr(back)).entry['payload'] === payload,
+        equal: Option.getOrThrow(Option.fromNullishOr(back)).entry.data === payload,
         commitMs: committed - started,
         readMs: read - committed,
         commitMsPerMB: (committed - started) / megabytes,
@@ -72,7 +72,7 @@ async function main() {
         longestCallbackMs,
       }),
     )
-    if (Option.getOrThrow(Option.fromNullishOr(back)).entry['payload'] !== payload)
+    if (Option.getOrThrow(Option.fromNullishOr(back)).entry.data !== payload)
       throw new Error('Large entry round trip differed')
   } finally {
     await storage.close(BACKGROUND_CONTEXT).finally(() => pool.end())

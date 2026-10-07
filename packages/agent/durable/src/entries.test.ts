@@ -24,7 +24,7 @@ it('loads every source entry with plain Node', async () => {
   child.stderr.setEncoding('utf8').on('data', (text: string) => {
     stderr += text
   })
-  const [exitCode, signal] = await NodeEvents.once(child, 'exit')
+  const [exitCode, signal] = await NodeEvents.EventEmitter.once(child, 'exit')
   expect({ exitCode, signal, stderr }).toMatchObject({ exitCode: 0, signal: null })
   expect(stdout).toContain('All four entries loaded')
 })

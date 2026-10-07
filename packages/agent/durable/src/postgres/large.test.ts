@@ -42,7 +42,7 @@ describe.skipIf(Option.isNone(testUrl))('PostgreSQL bounded-heap entries', () =>
     )
     onTestFinished(async () => {
       if (child.exitCode !== null || child.signalCode !== null) return
-      const closed = NodeEvents.once(child, 'close')
+      const closed = NodeEvents.EventEmitter.once(child, 'close')
       child.kill('SIGKILL')
       await closed
     })
@@ -54,7 +54,7 @@ describe.skipIf(Option.isNone(testUrl))('PostgreSQL bounded-heap entries', () =>
     child.stderr.setEncoding('utf8').on('data', (text: string) => {
       stderr += text
     })
-    const [exitCode, signal] = await NodeEvents.once(child, 'close')
+    const [exitCode, signal] = await NodeEvents.EventEmitter.once(child, 'close')
     expect({ exitCode, signal, stderr }).toMatchObject({ exitCode: 0, signal: null })
     const result = decodeResult(stdout.trim())
     expect(result.equal).toBe(true)

@@ -211,11 +211,13 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
       this.connectionError = Option.some(new StorageDisconnected({ schema: this.schema, cause }))
   }
 
-  /** Pi NodeSqliteDatabase.constructor, adapted for a host-owned lease. Attach
-   * the public client error listener before any asynchronous facade operation. */
   private readonly previousSearchPath: string
   private readonly schemaOwnershipKey: string
   private readonly schema: string
+
+  /** Pi NodeSqliteDatabase.constructor, adapted for a host-owned lease. Attach
+   * the public client error listener before any asynchronous facade operation.
+   * Explicit field assignments allow Node's native TypeScript type erasure. */
   constructor(
     client: PoolClient,
     previousSearchPath: string,

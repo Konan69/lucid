@@ -161,6 +161,11 @@
   },
   {
     "file": "packages/agent/durable/src/examples/serve.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["registry"]
+  },
+  {
+    "file": "packages/agent/durable/src/examples/serve.ts",
     "classification": "http-framework-entrypoint",
     "symbols": ["readBody", "requestRoute", "response", "writeResponse"]
   },
