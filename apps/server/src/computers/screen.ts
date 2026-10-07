@@ -78,6 +78,7 @@ export const screenLifetime = Effect.fn('Computer.screen.lifetime')(function* (i
     yield* sessionWorkspace(identity.personId, identity.sessionId)
     return Option.isNone(yield* store.screen(identity.personId))
   })
+  // @effect-diagnostics-next-line returnEffectInGen:off -- the subscription is acquired here, before dialing; the returned program is the lifetime the caller races beside the relay
   return Stream.concat(Stream.make(undefined), Stream.merge(moved, Stream.tick('5 seconds'))).pipe(
     Stream.mapEffect(() => check()),
     Stream.filter((ended) => ended),
