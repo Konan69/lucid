@@ -37,6 +37,19 @@ tests lane:  test per package                         beside the checks lane
 - At most one gate per four cores does work at once on a machine, across checkouts. Lint and typecheck stay serialized as designed above; the measured peak for one typed lint process is still about 3.6 GiB.
 - `affected` gives each package's Vitest the commit where the branch left the default branch (`--changed`), so only test files whose imports reach a changed file run. A file a test reads without importing is outside that graph; the full gate is the merge gate.
 
+### Which test files run
+
+"Run only the tests that changed" cannot mean the test files that were edited: a test's result changes when anything it loads changes. So each package's test script is `scripts/test.mjs`, and a test file runs only when its inputs differ from the last time it passed.
+
+- A file's key is the content of every module it loads, read from Vitest's own transform of each module (static and dynamic imports as Vite resolved them, so path aliases, package exports and Flue's Markdown imports are followed exactly as the run follows them), plus the package's inputs: the lockfile, the compiler and runner configuration, the setup files and what they load, the test settings in the environment, and every tracked file in the package that is not code (fixtures, migrations, Markdown read from disk).
+- A file whose key already passed is replayed with its counts, so the verdict still reports the whole suite. A failed file is never recorded.
+- An import graph cannot see everything. A module that starts another program, reads files by its own location or the working directory, imports a computed path, or loads modules by its own means makes every test that reaches it "wide": that test is keyed on Turbo's hash of the whole package task and runs whenever anything in the package or its dependencies changed. Test code that touches the file system at all is wide too. `node scripts/test.mjs --plan` in a package lists the wide files and the reason for each. In the server package 27 of 168 files are wide.
+- A type-only change runs no test: erased imports are not in the graph, and typecheck is the stage that owns types.
+- `--all` (or `VIVID_TEST_ALL=1`) runs every file and trusts no record. GitHub's job for the default branch does that, so a dependency the keys miss is caught there at the latest.
+- The records are small files named by key, shared by every checkout on a machine through the gate's cache directory.
+
+On a remote machine the gate keeps one warm tree per concurrent gate (one for every four cores) and takes the first free one, whatever the branch; it writes a `.boxignore` beside them so a Boat machine does not snapshot dependency trees or caches. One tree per branch, without that file, filled a machine's disk in a day.
+
 Measured on the eight-core Cloudbox on 6 October 2026, same repository state, other threads' gates running beside it:
 
 | Run                                               |                                               Before |                                                           After |
