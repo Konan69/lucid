@@ -11,7 +11,11 @@ import type {
  * successful transactions add BEGIN and COMMIT. No product instrumentation. */
 export class CountingDatabase implements PostgresDatabase {
   calls = 0
-  constructor(private readonly database: PostgresDatabase) {}
+  private readonly database: PostgresDatabase
+  /** Benchmarks load the same erasable source entry as a plain Node host. */
+  constructor(database: PostgresDatabase) {
+    this.database = database
+  }
   /** One unbound driver query. */
   exec(sql: string): Promise<void> {
     this.calls++

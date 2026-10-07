@@ -118,7 +118,12 @@ class SerialOperationQueue {
  * Per-query BIGINT parsing stays text even if the host changed pg's global parser
  * (pg/lib/defaults.js:parseInt8); the storage checks before numeric conversion. */
 abstract class PgExecutor implements PostgresExecutor {
-  constructor(protected readonly client: PoolClient) {}
+  protected readonly client: PoolClient
+  /** Declare fields explicitly: the workspace source entry must load in Node's
+   * strip-only mode, which cannot erase TypeScript parameter properties. */
+  constructor(client: PoolClient) {
+    this.client = client
+  }
 
   /** Pi NodeSqliteExecutor.exec: execute unbound schema statements in the same order as Pi's facade. */
   exec(sql: string): Promise<void> {
@@ -206,12 +211,12 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
 
   /** Pi NodeSqliteDatabase.constructor, adapted for a host-owned lease. Attach
    * the public client error listener before any asynchronous facade operation. */
-  constructor(
-    client: PoolClient,
-    private readonly previousSearchPath: string,
-    private readonly schemaOwnershipKey: string,
-  ) {
+  private readonly previousSearchPath: string
+  private readonly schemaOwnershipKey: string
+  constructor(client: PoolClient, previousSearchPath: string, schemaOwnershipKey: string) {
     super(client)
+    this.previousSearchPath = previousSearchPath
+    this.schemaOwnershipKey = schemaOwnershipKey
     client.on('error', this.connectionFailed)
   }
 
