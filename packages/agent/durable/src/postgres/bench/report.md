@@ -136,3 +136,16 @@ Additional focused commands and cleanup:
 | `docker exec durable-pg-lane psql -U vivid -d vivid_test` (catalog queries)                                                                                         | No lane schemas or advisory locks remain.                                                                         |
 | `docker rm -f durable-pg-lane`                                                                                                                                      | Removed only this lane's disposable container.                                                                    |
 | `git status --short` and explicit-path commits                                                                                                                      | Clean checkout; all revision changes are in the owned PostgreSQL paths and the exact owned async allowlist entry. |
+
+**Round 11: large-entry storage — 7 October 2026**
+
+The adapter now reproduces pg 8.23.0 `lib/utils.js:escapeLiteral` with a native replacement and flat join, rather than retaining one rope node per input character. Twelve cases prove exact formatter equality; the real PostgreSQL tests prove both standard_conforming_strings modes. UTF8 and raw-NUL guards still apply. No statement order or transaction boundary changes.
+
+One entry was measured per size in a child with `--max-old-space-size=1024`, against disposable PostgreSQL 18. Each child committed and read back equal, then closed its storage and Pool. Values are MiB (1024² bytes), RSS is MiB, and milliseconds per MB below use that same unit. A test-only async hook measures the longest synchronous callback; it imposes no timing assertion and uses no polling or sleeps.
+
+| Entry size | Commit ms | Commit ms/MB | Read ms | Read ms/MB | Peak RSS MB | Longest callback ms |
+| ---------- | --------: | -----------: | ------: | ---------: | ----------: | ------------------: |
+| 16 MB      |   365.388 |       22.837 | 174.278 |     10.892 |     279.711 |              37.365 |
+| 64 MB      |  1458.327 |       22.786 | 737.786 |     11.528 |     525.797 |             188.109 |
+
+The 64 MB callback stall was below about one second, so no large-value bound-parameter threshold was added. Commit wall time includes PostgreSQL and transport waits; it is not a synchronous event-loop stall. Multiple simultaneous large entries and V8's maximum joined-string size remain untested; these numbers are not a general size guarantee. The original formatter's linear heap amplification is removed.

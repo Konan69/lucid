@@ -2,7 +2,7 @@ import * as NodeBuffer from 'node:buffer'
 import * as NodeCrypto from 'node:crypto'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import { escapeLiteral, types, type Pool, type PoolClient, type QueryResultRow } from 'pg'
+import { types, type Pool, type PoolClient, type QueryResultRow } from 'pg'
 
 import {
   validateSchema,
@@ -14,6 +14,7 @@ import {
 } from './database.ts'
 export { validateSchema } from './database.ts'
 import { PostgresStorage } from './storage.ts'
+import { quoteLiteral } from './literal.ts'
 import { ConnectionSettingInvalid, RawNul, StorageOwned } from './errors.ts'
 
 /** pg/lib/query.js:_checkForMultirow returns one result per simple-protocol
@@ -39,14 +40,14 @@ function batchRows(result: import('pg').QueryResult) {
 }
 
 /** PostgreSQL's extended protocol forbids bound multi-statement queries.
- * pg's public escapeLiteral safely quotes each scalar, including quotes and
+ * Our linear formatter matches pg's public escapeLiteral for each scalar, including quotes and
  * backslashes; byte arrays use lossless hex. This changes transport only, never
  * statement order, durability settings, or the host connection's configuration. */
 const isBytes = Schema.is(Schema.Uint8Array)
 const int8Text = (value: string) => value
 
 /** pg emits settings as text. Decode once at the driver ingress; both string
- * modes are safe with pg.escapeLiteral's explicit E literals on UTF8. */
+ * modes are safe with the formatter's explicit E literals on UTF8. */
 const decodeConnectionSettings = Schema.decodeUnknownSync(
   Schema.Struct({
     search_path: Schema.String,
@@ -86,10 +87,10 @@ function statementText(statement: PostgresStatement): string {
     if (value === undefined) throw new Error('PostgreSQL batch binding is missing')
     if (value === null) return 'NULL'
     if (isBytes(value))
-      return `decode(${escapeLiteral(NodeBuffer.Buffer.from(value).toString('hex'))}, 'hex')`
+      return `decode(${quoteLiteral(NodeBuffer.Buffer.from(value).toString('hex'))}, 'hex')`
     const text = String(value)
     if (text.includes('\u0000')) throw new RawNul({ recordKind: statement.recordKind })
-    return escapeLiteral(text)
+    return quoteLiteral(text)
   })
 }
 

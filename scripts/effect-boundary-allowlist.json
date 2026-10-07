@@ -180,6 +180,11 @@
     "symbols": ["interrupt"]
   },
   {
+    "file": "packages/agent/durable/src/postgres/bench/entry/main.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["main", "<module>"]
+  },
+  {
     "file": "packages/agent/durable/src/postgres/bench/main.ts",
     "classification": "third-party-adapter",
     "symbols": ["readNumbers", "writeNumbers", "withPostgres", "withSqlite", "main", "<module>"]

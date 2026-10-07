@@ -1,4 +1,4 @@
-import * as NodeChild from 'node:child_process'
+import * as NodeChildProcess from 'node:child_process'
 import * as NodeEvents from 'node:events'
 import { expect, it, onTestFinished } from 'vitest'
 
@@ -12,7 +12,7 @@ it('loads every source entry with plain Node', async () => {
     if (modules.some(module => Object.keys(module).length === 0)) throw new Error('Empty entry')
     console.log('All four entries loaded')
   })`
-  const child = NodeChild.spawn(process.execPath, ['-e', code], { stdio: 'pipe' })
+  const child = NodeChildProcess.spawn(process.execPath, ['-e', code], { stdio: 'pipe' })
   onTestFinished(() => {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
   })
