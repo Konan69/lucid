@@ -317,6 +317,21 @@ it.live('bounds HTTP request bytes and handles CORS, malformed input and missing
         expect(preflight.headers.get('access-control-allow-origin')).toBe('*')
         const invalid = await fetch(`${host.address}/chat`, { method: 'POST', body: '{}' })
         expect(invalid.status).toBe(400)
+        for (const [id, messages] of [
+          ['ghost', 'nope'],
+          ['empty', []],
+          ['bad-role', [{ role: 'invented', parts: [] }]],
+        ] as const) {
+          const malformed = await fetch(`${host.address}/chat`, {
+            method: 'POST',
+            body: JSON.stringify({ id, messages }),
+          })
+          expect(malformed.status).toBe(400)
+          expect((await fetch(`${host.address}/chat/${id}/history`)).status).toBe(404)
+        }
+        const rootMethod = await fetch(`${host.address}/chat`, { method: 'PUT' })
+        expect(rootMethod.status).toBe(405)
+        expect(rootMethod.headers.get('allow')).toBe('POST')
         for (const id of ['.', '..']) {
           const inaccessible = await fetch(`${host.address}/chat`, {
             method: 'POST',
@@ -339,6 +354,7 @@ it.live('bounds HTTP request bytes and handles CORS, malformed input and missing
           body: '{}',
         })
         expect(wrongMethod.status).toBe(405)
+        expect(wrongMethod.headers.get('allow')).toBe('GET')
       })
       expect(yield* oversizedChunks(host.address)).toBe(413)
     }),

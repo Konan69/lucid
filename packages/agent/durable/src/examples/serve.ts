@@ -16,7 +16,13 @@ import {
 } from '@earendil-works/pi-ai/providers/faux'
 import { createRegistry, Harness } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
-import { ConversationMissing, toolsExtension } from '@vivid/durable'
+import {
+  ConversationMissing,
+  TurnInvalid,
+  TurnRegenerate,
+  decodeTurn,
+  toolsExtension,
+} from '@vivid/durable'
 import { tool } from 'ai'
 import {
   Config,
@@ -41,7 +47,8 @@ const ChatId = Schema.String.check(
   Schema.isMaxLength(200),
   Schema.isPattern(/^(?!\.{1,2}$)/u),
 )
-const ChatEnvelope = Schema.fromJsonString(Schema.Struct({ id: ChatId }))
+const ChatEnvelope = Schema.Struct({ id: ChatId })
+const decodeJson = Schema.decodeUnknownPromise(Schema.fromJsonString(Schema.MutableJson))
 const ChatPath = Schema.Struct({
   id: Schema.StringFromUriComponent.pipe(Schema.decodeTo(ChatId)),
   action: Schema.Literals(['stream', 'history', 'waiting', 'abort', 'decide', 'answer']),
@@ -301,8 +308,14 @@ async function readBody(request: NodeHttp.IncomingMessage) {
 async function requestRoute(host: Host, request: Request, body: string): Promise<Response> {
   const url = new URL(request.url)
   if (url.pathname === '/chat') {
-    if (request.method !== 'POST') return new Response(null, { status: 405 })
-    const envelope = await runForNode(decodeEnvelope(body))
+    if (request.method !== 'POST')
+      return new Response(null, { status: 405, headers: { Allow: 'POST' } })
+    // Decode the turn before allocating any Pi conversation or mapping row.
+    // Malformed new ids must remain absent; use the public codec, not a second
+    // hand-written chat validator. Route admission retains its normal checks.
+    const json = await decodeJson(body)
+    await decodeTurn(json)
+    const envelope = await runForNode(decodeEnvelope(json))
     const id = await runForNode(conversation(host, envelope.id, true))
     return route(host.harness, id, request, context)
   }
@@ -313,7 +326,8 @@ async function requestRoute(host: Host, request: Request, body: string): Promise
     path.action === 'stream' || path.action === 'history' || path.action === 'waiting'
       ? 'GET'
       : 'POST'
-  if (request.method !== method) return new Response(null, { status: 405 })
+  if (request.method !== method)
+    return new Response(null, { status: 405, headers: { Allow: method } })
   const id = await runForNode(conversation(host, path.id, false))
   url.pathname = path.action === 'stream' ? '/chat' : `/${path.action}`
   return route(host.harness, id, new Request(url, request), context)
@@ -342,7 +356,12 @@ function ingressFailure(error: Error): Response {
   if (error instanceof BodyTooLarge)
     return new Response('Request body exceeds 5 MB', { status: 413 })
   if (error instanceof BodyUnreadable) return new Response('Unreadable request', { status: 400 })
-  if (error instanceof Schema.SchemaError) return new Response('Invalid request', { status: 400 })
+  if (
+    error instanceof Schema.SchemaError ||
+    error instanceof TurnInvalid ||
+    error instanceof TurnRegenerate
+  )
+    return new Response('Invalid request', { status: 400 })
   if (error instanceof ChatMissing) return new Response('Chat not found', { status: 404 })
   throw error
 }
