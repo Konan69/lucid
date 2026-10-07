@@ -248,7 +248,7 @@ const credential = Schema.NonEmptyString.check(
  * for an enrolment, `ChannelRecipientMissing` or `ChannelSendUnknown` for a send, and
  * `ChannelDisconnected` for the inbound stream, which its reader opens again.
  */
-export const configurePhoton = Effect.gen(function* () {
+const configurePhoton = Effect.gen(function* () {
   const projectId = yield* requiredSetting(
     'VIVID_PHOTON_PROJECT_ID',
     credential,

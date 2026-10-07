@@ -3,7 +3,7 @@ import { describe, expect, it, layer } from '@effect/vitest'
 import { ConfigProvider, Effect, Layer, Result } from 'effect'
 import { ConfigurationError } from '../config.ts'
 import { normalizeChannelAddress } from './address.ts'
-import { photonLayer, configurePhoton } from './photon.ts'
+import { photonLayer } from './photon.ts'
 import { ChannelProvider } from './provider.ts'
 
 const settings = {
@@ -42,7 +42,7 @@ describe('Photon settings', () => {
     ] as const) {
       it.effect(`does not build when ${name}`, () =>
         Effect.gen(function* () {
-          const failure = yield* configurePhoton.pipe(
+          const failure = yield* Layer.build(photonLayer).pipe(
             Effect.provideService(
               ConfigProvider.ConfigProvider,
               ConfigProvider.fromUnknown(values),
@@ -57,11 +57,8 @@ describe('Photon settings', () => {
       )
     }
 
-    layer(
-      photonLayer.pipe(
-        Layer.provide(NodeHttpClient.layerUndici),
-        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(settings))),
-      ),
+    it.layer(
+      photonLayer.pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(settings)))),
     )((it) => {
       it.effect('builds with both credentials and texts on iMessage only', () =>
         Effect.gen(function* () {
