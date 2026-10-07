@@ -70,6 +70,16 @@ export const HELD = 73
 /** The exit status when the holder could not be settled: no lock, or a record that is damage. */
 export const UNSETTLED = 74
 
+/**
+ * The exit status of a wake whose holder was settled and whose desktop launcher then failed.
+ *
+ * The launcher only shows the application finder on the desktop (`infra/computer/desktop.py`,
+ * `start`); the shell, the files and the browser driver do not need it. On 7 October 2026 Boat's
+ * desktop was not ready on the production machine after a resume, the launcher failed, and the
+ * whole start was recorded as failed although the machine was running and its holder settled.
+ */
+export const UNOPENED = 75
+
 /** A UUID's groups of hexadecimal digits. */
 const GROUPS = [8, 4, 4, 4, 12] as const
 
@@ -180,7 +190,7 @@ export const snapshotRules = [
 /** One wake: the holder is settled first, then the snapshot rules, and only then is its own
  * desktop opened. */
 export const wakeCommand = (input: { readonly id: ProviderId; readonly intent: string }): string =>
-  `${holderClaim(input)}\n${snapshotRules}\n/opt/vivid/python/bin/python3 /opt/vivid/computer/desktop.py start`
+  `${holderClaim(input)}\n${snapshotRules}\n/opt/vivid/python/bin/python3 /opt/vivid/computer/desktop.py start || exit ${UNOPENED}`
 
 /** One command that settles the holder before anything else is done on the machine. */
 export interface HolderStep {
@@ -301,7 +311,11 @@ export const holding = (api: Transport, saved: Bindings, forget: (key: MachineKe
     // Damage, or no lock: nothing was learned about whose machine it is, so the binding stays.
     if (receipt.exitCode === UNSETTLED)
       return yield* Effect.fail(new MachineOperationFailed({ operation: 'holder' }))
-    if (receipt.exitCode !== 0 || receipt.timedOut)
+    // The holder is settled and only the desktop's launcher did not open: the machine is this
+    // binding's and is used. It is said in the log; the next wake tries the launcher again.
+    if (receipt.exitCode === UNOPENED && !receipt.timedOut)
+      yield* Effect.logWarning('Computer desktop launcher did not open')
+    else if (receipt.exitCode !== 0 || receipt.timedOut)
       return yield* Effect.fail(new MachineOperationFailed({ operation: step.operation }))
     admitted.set(key, intent)
     return identity

@@ -64,7 +64,7 @@ import { transport, type Transport } from './boat/transport.ts'
 import { guestCommand } from './boat/guest.ts'
 import { bindings } from './boat/bindings.ts'
 import { lifecycle } from './boat/lifecycle.ts'
-import { HELD, UNSETTLED, holding, wake } from './boat/holder.ts'
+import { HELD, UNOPENED, UNSETTLED, holding, wake } from './boat/holder.ts'
 import {
   ComputerStore,
   computerMachineKey,
@@ -101,6 +101,8 @@ interface EvidenceService {
   readonly restoreFails: Ref.Ref<boolean>
   /** While true the account has used up its starts for the hour. */
   readonly startsSpent: Ref.Ref<boolean>
+  /** While true the machine's desktop is not up, so the launcher in a wake fails. */
+  readonly desktopDown: Ref.Ref<boolean>
   readonly created: Ref.Ref<number>
   readonly intents: Ref.Ref<ReadonlyArray<string>>
   readonly commands: Ref.Ref<ReadonlyArray<string>>
@@ -149,6 +151,7 @@ const evidenceLayer = Layer.effect(
       unplanned: yield* Ref.make<ReadonlySet<Size>>(new Set()),
       restoreFails: yield* Ref.make(false),
       startsSpent: yield* Ref.make(false),
+      desktopDown: yield* Ref.make(false),
       created: yield* Ref.make(0),
       intents: yield* Ref.make<ReadonlyArray<string>>([]),
       commands: yield* Ref.make<ReadonlyArray<string>>([]),
@@ -332,7 +335,7 @@ const commandExit = (exitCode: number) =>
  * opened. A command that settles the holder and stops there opens no desktop either way.
  * The shell itself is run for real in `holder.test.ts`; here it is the machine's memory.
  */
-const launcher = '/opt/vivid/computer/desktop.py start'
+const launcher = `/opt/vivid/computer/desktop.py start || exit ${UNOPENED}`
 const settled = Effect.fn('BoatTest.holder')(function* (
   evidence: EvidenceService,
   command: string,
@@ -346,7 +349,11 @@ const settled = Effect.fn('BoatTest.holder')(function* (
   if (held !== undefined && held !== claim && held.startsWith(`${machine} `))
     return commandExit(HELD)
   yield* Ref.update(evidence.holders, (holders) => new Map(holders).set(machine, claim))
-  if (command.endsWith(launcher)) yield* Ref.update(evidence.launches, (count) => count + 1)
+  if (command.endsWith(launcher)) {
+    // The provider's desktop is not up: the launcher fails after the holder was settled.
+    if (yield* Ref.get(evidence.desktopDown)) return commandExit(UNOPENED)
+    yield* Ref.update(evidence.launches, (count) => count + 1)
+  }
   return commandReply('')
 })
 
@@ -1920,6 +1927,22 @@ describe.skipIf(!testDatabaseConfigured)('Boat native provider protocol', () => 
       // The plan now includes the larger size: the same start takes it.
       yield* Ref.set(evidence.unplanned, new Set<Size>())
       expect((yield* machine.ensure(key))._tag).toBe('Running')
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  )
+
+  it.effect('starts a Computer whose desktop launcher fails, and uses it', () =>
+    Effect.gen(function* () {
+      const key = yield* fixture()
+      const machine = yield* Machine
+      const evidence = yield* Evidence
+      // Production, 7 October 2026: the machine ran and its holder was settled, the provider's
+      // desktop was not ready, and the failed launcher made the whole start a failed Computer.
+      yield* Ref.set(evidence.desktopDown, true)
+      expect((yield* machine.ensure(key))._tag).toBe('Running')
+      expect(yield* Ref.get(evidence.launches)).toBe(0)
+      expect(
+        (yield* machine.exec({ key, command: 'echo receipt', timeoutSeconds: 10 })).exitCode,
+      ).toBe(0)
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   )
 
