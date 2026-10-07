@@ -105,7 +105,7 @@ const unannounceableRecipient = Effect.fn('NotificationAnnouncements.unannouncea
 )
 
 describe.skipIf(!testDatabaseConfigured)('notification read transaction announcements', () => {
-  layer(testLayer)((it) => {
+  layer(testLayer)('isolated clock 1', (it) => {
     it.effect('N1 a selected read returns its transaction count and refreshes the recipient', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
@@ -132,7 +132,8 @@ describe.skipIf(!testDatabaseConfigured)('notification read transaction announce
         })
       }).pipe(Effect.scoped),
     )
-
+  })
+  layer(testLayer)((it) => {
     it.effect(
       'N2 Company read-all announces only its recipient and preserves personal unread rows',
       () =>
@@ -205,7 +206,8 @@ describe.skipIf(!testDatabaseConfigured)('notification read transaction announce
         yield* payload(notices, [Topic.person(test.member.person.id)])
       }).pipe(Effect.scoped),
     )
-
+  })
+  layer(testLayer)('isolated clock 6', (it) => {
     it.effect('NF a real payload rejection rolls back readAt and stays silent', () =>
       Effect.gen(function* () {
         const { actor, id } = yield* unannounceableRecipient()

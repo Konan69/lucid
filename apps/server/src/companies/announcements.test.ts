@@ -188,7 +188,7 @@ const marker = Effect.fn('CompanyAnnouncements.marker')(function* (
 })
 
 describe.skipIf(!testDatabaseConfigured)('Company transaction announcements', () => {
-  layer(testLayer)((it) => {
+  layer(testLayer)('isolated clock 1', (it) => {
     it.effect('reloads the removed Person and Company and appends one removal audit', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
@@ -218,7 +218,8 @@ describe.skipIf(!testDatabaseConfigured)('Company transaction announcements', ()
         ])
       }).pipe(Effect.scoped),
     )
-
+  })
+  layer(testLayer)('isolated clock 2', (it) => {
     it.effect('reloads the Member and Company with the changed role', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
@@ -245,7 +246,8 @@ describe.skipIf(!testDatabaseConfigured)('Company transaction announcements', ()
         ])
       }).pipe(Effect.scoped),
     )
-
+  })
+  layer(testLayer)('isolated clock 3', (it) => {
     it.effect(
       'reloads Company and Person after accepting and records the explicit Person name',
       () =>
@@ -281,7 +283,8 @@ describe.skipIf(!testDatabaseConfigured)('Company transaction announcements', ()
           ])
         }).pipe(Effect.scoped),
     )
-
+  })
+  layer(testLayer)('isolated clock 4', (it) => {
     it.effect('reloads Company invitations after invite and revoke', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
@@ -306,7 +309,8 @@ describe.skipIf(!testDatabaseConfigured)('Company transaction announcements', ()
         ])
       }).pipe(Effect.scoped),
     )
-
+  })
+  layer(testLayer)((it) => {
     it.effect('rolls back an already-used acceptance before an ordered enter marker', () =>
       Effect.gen(function* () {
         const test = yield* fixture()
