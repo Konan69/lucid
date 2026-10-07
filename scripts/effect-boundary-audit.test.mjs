@@ -62,6 +62,21 @@ void test('inventories requested boundary syntax with enclosing symbols', () => 
   assert.equal(settled.symbol, 'settle')
 })
 
+/** A runner given its Context first starts an Effect like the plain runner and is inventoried as one. */
+void test('finds a runner that takes its Context first', () => {
+  const findings = scanSource(
+    fixtureFile,
+    'export const run = (program) => Effect.runPromiseWith(context)(program);\nexport const exit = (program) => Effect.runPromiseExitWith(context)(program);',
+  )
+  assert.deepEqual(
+    findings.map((finding) => [finding.kind, finding.symbol]),
+    [
+      ['effect-run-promise', 'run'],
+      ['effect-run-promise', 'exit'],
+    ],
+  )
+})
+
 /** A TS generic arrow must not be parsed as JSX and hide later runtime boundaries. */
 void test('finds boundaries inside and after a single-parameter generic arrow', () => {
   const findings = scanSource(

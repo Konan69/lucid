@@ -27,7 +27,7 @@
   {
     "file": "packages/agent/runtime/src/notes.ts",
     "classification": "third-party-adapter",
-    "symbols": ["openStore", "opened", "attempt", "noteIndex"]
+    "symbols": ["opened", "attempt", "noteIndex"]
   },
   {
     "file": "apps/server/src/auth/dialect.ts",
@@ -37,6 +37,6 @@
   {
     "file": "apps/server/src/channels/photon.ts",
     "classification": "third-party-adapter",
-    "symbols": ["openPhoton", "connectPhoton", "closePhoton", "makePhoton"]
+    "symbols": ["connectPhoton", "closePhoton", "makePhoton"]
   }
 ]

@@ -47,6 +47,16 @@ const cases = [
   ],
   ['no-runpromise-in-library', 'Effect.runPromise(program)', 'const programValue = program'],
   [
+    'no-runpromise-in-library',
+    'Effect.runPromiseWith(context)(program)',
+    'const programValue = program',
+  ],
+  [
+    'no-runpromise-nested',
+    'const value = Effect.gen(function* () { Effect.runForkWith(context)(program); yield* program })',
+    'const value = Effect.gen(function* () { return yield* program })',
+  ],
+  [
     'no-platform-runtime-runmain-in-library',
     'NodeRuntime.runMain(program)',
     'const programValue = program',
