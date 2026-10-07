@@ -4,7 +4,12 @@ import * as NodePath from 'node:path'
 import { openRunDatabase } from './database.mjs'
 import * as Schema from 'effect/Schema'
 import { logged, readTestCounts, runIdentifier, stopChildrenOnSignal } from './process.mjs'
-import { checkEffectRatchets, checkRatchets, effectRule } from './ratchets.mjs'
+import {
+  checkEffectRatchets,
+  checkRatchets,
+  effectFindingsExpected,
+  effectRule,
+} from './ratchets.mjs'
 import { holdSlot, takeLock, treeLockName } from './slots.mjs'
 import { stageOfTask, stages } from './stages.mjs'
 
@@ -187,6 +192,12 @@ function applyEffectRatchets(results) {
   const typecheck = results.find((result) => result.name === 'typecheck')
   if (typecheck === undefined || typecheck.findings === undefined) return
   typecheck.detail += `, ${typecheck.findings.size} Effect findings`
+  // An unpatched compiler prints no Effect finding at all, which every ceiling would accept:
+  // the very failure this replaces. While known findings remain, none at all means no patch.
+  if (typecheck.findings.size === 0 && effectFindingsExpected)
+    typecheck.failed.push(
+      'no Effect finding at all: the compiler is not patched (pnpm install runs effect-tsgo patch)',
+    )
   for (const rule of checkEffectRatchets(typecheck.findings).filter((entry) => !entry.held))
     typecheck.failed.push(`effect(${rule.rule}): ${rule.count} exceed ${rule.ceiling}`)
 }

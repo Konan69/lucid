@@ -254,6 +254,9 @@ export const effectCeilings = {
   unnecessaryEffectGen: 1,
 }
 
+/** Whether any ceiling is above zero, that is, whether a patched compiler must print something. */
+export const effectFindingsExpected = Object.values(effectCeilings).some((ceiling) => ceiling > 0)
+
 /**
  * The rule of one compiler output line, when the line is an Effect finding. The patched compiler
  * gives every Effect diagnostic a code in the 377000s and ends a one-line message with
