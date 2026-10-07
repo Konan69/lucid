@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord'
 import type { ConversationId, Harness, Extension } from '@earendil-works/pi-durable'
-import { createUIMessageStreamResponse, type UIMessageChunk } from 'ai'
+import { createUIMessageStreamResponse, type UIMessageChunk, type ToolExecutionOptions } from 'ai'
 import { Effect, Function, Option, Result, Schema, Stream } from 'effect'
 
 import * as Core from './core.ts'
@@ -19,16 +19,19 @@ const decodeRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(TurnBody)
 /** Compile the object ingress once; reject the original tagged class at the Promise boundary. */
 export const decodeTurn = Function.flow(Core.decodeTurn, (effect) => Effect.runPromise(effect))
 
+/** Preserve the SDK ingress type; contextSchema supplies the tool's concrete runtime contract. */
+export type ToolContext = ToolExecutionOptions<unknown>['context']
+
 /** Promise hosts resolve per-call authority with a value or Promise; core hosts return an Effect. */
-export type ToolsOptions = Omit<EffectToolsOptions, 'context'> & {
-  readonly context?: (scope: ToolScope) => unknown | PromiseLike<unknown>
+export type ToolsOptions<ContextValue = ToolContext> = Omit<EffectToolsOptions, 'context'> & {
+  readonly context?: (scope: ToolScope) => ContextValue | PromiseLike<ContextValue>
 }
 
 /** Convert the resolver once at this Promise facade, before registering the shared Effect bridge. */
-export const toolsExtension = (
+export const toolsExtension = <ContextValue = ToolContext>(
   name: string,
   tools: Parameters<typeof Core.toolsExtension>[1],
-  options: ToolsOptions = {},
+  options: ToolsOptions<ContextValue> = {},
 ): Promise<Extension> => {
   const { context, ...settings } = options
   if (context === undefined) return Effect.runPromise(Core.toolsExtension(name, tools, settings))

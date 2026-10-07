@@ -9,7 +9,7 @@ import {
 } from '@earendil-works/pi-durable'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { tool } from 'ai'
-import { Effect } from 'effect'
+import { Effect, Option, Predicate } from 'effect'
 import { z } from 'zod'
 import { PlainChat } from '../fixtures/chat.ts'
 import { abort, waiting } from '../main.ts'
@@ -36,13 +36,10 @@ it.live('reproduces B3 with the existing host approval option without using a ti
       {
         approval: {
           pay: (input) => {
-            const amount =
-              typeof input === 'object' && input !== null && 'amount' in input
-                ? input.amount
-                : undefined
+            const amount = Predicate.hasProperty(input, 'amount') ? input.amount : undefined
             observed.push(amount)
-            if (typeof amount === 'number') entered.resolve()
-            return typeof amount === 'number' && amount > 3
+            if (Predicate.isNumber(amount)) entered.resolve()
+            return Predicate.isNumber(amount) && amount > 3
           },
         },
       },
@@ -76,14 +73,14 @@ it.live('proves the public memo read and its notification and terminal limits', 
     const recorded = signal()
     const release = signal()
     onTestFinished(() => release.resolve())
-    let taskId: TaskId | undefined
-    let publication: CommitPublication | undefined
+    let taskId = Option.none<TaskId>()
+    let publication = Option.none<CommitPublication>()
     const observer = defineExtension({
       name: 'memo-probe',
       hooks: [
         hook(ToolTask, {
           beforeTool: async (_call, api, hookContext) => {
-            taskId = api.taskId
+            taskId = Option.some(api.taskId)
             await api.memo('review.approval', { held: true, kind: 'approval' }, hookContext)
             recorded.resolve()
             await release.promise
@@ -106,22 +103,22 @@ it.live('proves the public memo read and its notification and terminal limits', 
             Object.hasOwn(change.value.memos, 'review.approval'),
         )
       )
-        publication = commit
+        publication = Option.some(commit)
     })
     onTestFinished(unsubscribe)
     opened.faux.setResponses([call('pay', {}, 'pay'), fauxAssistantMessage('Probe complete.')])
     const chat = new PlainChat({ transport: opened.transport })
     const sending = chat.sendMessage({ text: 'Probe' })
     await recorded.promise
-    if (taskId === undefined || publication === undefined)
+    if (Option.isNone(taskId) || Option.isNone(publication))
       throw new Error('Expected committed memo')
-    const live = await opened.harness.getTask(taskId, context)
+    const live = await opened.harness.getTask(taskId.value, context)
     expect(live).toMatchObject({ memos: { 'review.approval': { held: true, kind: 'approval' } } })
-    expect(publication.changes.map((change) => change.type)).toEqual(['task'])
+    expect(publication.value.changes.map((change) => change.type)).toEqual(['task'])
     release.resolve()
     await sending
     await opened.root.waitForIdle(context)
-    const terminal = await opened.harness.getTask(taskId, context)
+    const terminal = await opened.harness.getTask(taskId.value, context)
     expect(terminal).toMatchObject({ state: { status: 'terminal' } })
     if (terminal === undefined) throw new Error('Expected terminal task')
     expect(Object.hasOwn(terminal, 'memos')).toBe(false)
