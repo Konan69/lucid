@@ -200,6 +200,106 @@ function disconnect(
     { highWaterMark: 0 },
   )
 }
+/** AI SDK 7.0.127 ui/chat.ts:1007–1015 retains private stream state only for network errors.
+ * Unlike resumable(), a bare transport must let replay clear the active step before rebuilding it. */
+it.live('bare stock Chat resumes a network error mid-step without duplicated parts', () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<string>()
+    const release = yield* Deferred.make<void>()
+    const attached = yield* Deferred.make<void>()
+    const fixture = yield* host(
+      {},
+      {},
+      { progress: { partialIntervalMs: 0 } },
+      {
+        commitFrames: true,
+        tokenSize: { min: 1, max: 1 },
+        onFrame: (event, abortSignal) => {
+          if (event.type !== 'text_delta') return Effect.void
+          Deferred.doneUnsafe(entered, Effect.succeed(event.delta))
+          return waitForFrame(Deferred.await(release), abortSignal)
+        },
+      },
+    )
+    const opened = yield* fixture.open()
+    yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined))
+    opened.faux.setResponses([fauxAssistantMessage('Partial reply.')])
+    const chat = new PlainChat({
+      transport: new DefaultChatTransport<UIMessage>({
+        api: 'http://durable.test/chat',
+        fetch: (url, init) =>
+          runForPi(
+            Effect.gen(function* () {
+              const request = new Request(url, init)
+              const response = yield* Effect.promise(() =>
+                respond(opened.harness, opened.root.id, request, context),
+              )
+              if (request.method === 'GET') {
+                Deferred.doneUnsafe(attached, Effect.void)
+                return response
+              }
+              if (response.body === null) throw new Error('Expected SSE body')
+              const reader = response.body.getReader()
+              const decoder = new TextDecoder()
+              let cut = false
+              // Fail the next pull after the first delta reached Chat, even while Pi is gated.
+              const body = new ReadableStream<Uint8Array>(
+                {
+                  pull: (controller) =>
+                    runForPi(
+                      Effect.gen(function* () {
+                        if (cut) {
+                          yield* Effect.promise(() => reader.cancel())
+                          controller.error(new TypeError('network connection lost'))
+                          return
+                        }
+                        const read = yield* Effect.promise(() => reader.read())
+                        if (read.done) {
+                          controller.close()
+                          return
+                        }
+                        controller.enqueue(read.value)
+                        cut = decoder.decode(read.value).includes('"type":"text-delta"')
+                      }),
+                      undefined,
+                    ),
+                  cancel: (reason) => reader.cancel(reason),
+                },
+                { highWaterMark: 0 },
+              )
+              return new Response(body, { headers: response.headers })
+            }),
+            undefined,
+          ),
+      }),
+    })
+    yield* Effect.promise(() => chat.sendMessage({ text: 'Start' }))
+    const prefix = yield* Deferred.await(entered)
+    expect(chat.status).toBe('error')
+    expect(chat.error).toBeInstanceOf(TypeError)
+    if (chat.lastMessage === undefined) throw new Error('Expected partial assistant')
+    const identity = chat.lastMessage.id
+    expect(prefix.length).toBeGreaterThan(0)
+    expect(prefix.length).toBeLessThan('Partial reply.'.length)
+    expect(texts(chat.lastMessage)).toEqual([prefix])
+    expect(chat.lastMessage.parts.find((part) => part.type === 'text')).toMatchObject({
+      state: 'streaming',
+    })
+    chat.clearError()
+    const resumed = chat.resumeStream()
+    yield* Deferred.await(attached)
+    yield* Deferred.succeed(release, undefined)
+    yield* Effect.promise(() => resumed)
+    expect(chat.status).toBe('ready')
+    expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
+    if (chat.lastMessage === undefined) throw new Error('Expected resumed assistant')
+    expect(chat.lastMessage.id).toBe(identity)
+    expect(texts(chat.lastMessage)).toEqual(['Partial reply.'])
+    expect(chat.lastMessage.parts.filter((part) => part.type !== 'step-start')).toEqual([
+      { type: 'text', text: 'Partial reply.', state: 'done' },
+    ])
+  }),
+)
 /** Three actual tool rounds keep the selected run attachable until the GET watch is open. */
 function reconnectFixture(
   step: number,
