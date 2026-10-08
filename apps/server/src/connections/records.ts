@@ -38,7 +38,7 @@ const rowSchema = createSelectSchema(connections, {
   status: Schema.Literals(['ready', 'needs-authorization', 'failed']),
 }).mapFields(({ label: _retired, ...fields }) => fields)
 export type ConnectionRecord = typeof rowSchema.Type
-const decodeConnectionId = Schema.decodeUnknownEffect(ConnectionId)
+const decodeTrip = Schema.decodeUnknownEffect(Schema.Struct({ id: ConnectionId, person: PersonId }))
 /** The one decoder for a stored Connection; every reader of the table goes through it. */
 export const decodeRow = decodeStored(rowSchema, 'Connection')
 export const encodeReferences = Schema.encodeSync(ExecutorReferences)
@@ -81,21 +81,29 @@ export const getRecord = Effect.fn('Connections.getRecord')(function* (
   return yield* decodeRow(row)
 })
 
-/** A fixed callback resolves only the initiating Person's exact pending hash. Unknown,
- * foreign, and consumed state are indistinguishable and never expose another Connection id.
+/**
+ * The pending sign-in a returning browser belongs to, and the Person who began it.
+ *
+ * The state on the return is the whole authority: 32 or more unguessable characters that only the
+ * browser handed the sign-in address ever held, kept here as a digest (`callbackHash`). So the
+ * row it names says whose Integration this is, and nothing about the browser does. It used to be
+ * matched against the browser's own Vivid session as well; a phone hands the address to a
+ * browser that was never signed in to Vivid, so that return was refused and the Integration never
+ * finished (8 October 2026). Better Auth links an account the same way: the Person is read from
+ * the stored state (`link.userId` in `parseGenericState`, better-auth 1.7.5 `dist/state.mjs`) and
+ * the session is not read at all. Its state cookie is not ported: that guards a callback that
+ * signs the visiting browser in, and this one changes nothing for the browser it arrives in.
+ *
+ * Unknown and consumed state are indistinguishable and never expose a Connection id.
  */
-export const callbackId = Effect.fn('Connections.callbackId')(function* (
-  actor: Actor,
-  stateHash: string,
-) {
+export const callbackTrip = Effect.fn('Connections.callbackTrip')(function* (stateHash: string) {
   const database = yield* Database
   const rows = yield* database.run(
     database
-      .select({ id: connections.id })
+      .select({ id: connections.id, person: connections.personId })
       .from(connections)
       .where(
         and(
-          eq(connections.personId, actor.person.id),
           eq(connections.status, 'needs-authorization'),
           sql`${connections.references}->>'_tag' = 'OAuthSigningIn'`,
           sql`${connections.references}->>'stateHash' = ${stateHash}`,
@@ -106,7 +114,7 @@ export const callbackId = Effect.fn('Connections.callbackId')(function* (
   const row = rows[0]
   if (rows.length !== 1 || row === undefined)
     return yield* new NotFound({ message: 'Integration sign-in not found' })
-  return yield* decodeConnectionId(row.id).pipe(
+  return yield* decodeTrip(row).pipe(
     Effect.mapError(() => new DatabaseFailure({ message: 'Invalid integration identity' })),
   )
 })

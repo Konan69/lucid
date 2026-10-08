@@ -2,8 +2,6 @@ import { describe, expect, layer } from '@effect/vitest'
 import { Layer, Effect, Logger, Option, Ref } from 'effect'
 import { HttpRouter, HttpServerRequest } from 'effect/unstable/http'
 import { ConnectionStep, NotFound, SignInSurface } from '@vivid/contracts'
-import { sessionTable } from '../auth/tables.ts'
-import { Database } from '../database/client.ts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { ServerConfig } from '../config.ts'
 import { ConnectionStore, connectionStoreLayer } from './store.ts'
@@ -47,7 +45,6 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
         () =>
           Effect.gen(function* () {
             const { ownerActor, memberActor } = yield* fixture()
-            const database = yield* Database
             const config = yield* ServerConfig
             const remote = yield* hostedExecutorFixture()
             yield* Ref.set(
@@ -57,24 +54,6 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
             yield* Ref.set(remote.accounts, {
               slot: { provider: 'provider', definition: { auth: { oauth: { type: 'oauth2' } } } },
             })
-            const ownerToken = crypto.randomUUID()
-            const memberToken = crypto.randomUUID()
-            yield* database.run(
-              database.insert(sessionTable).values([
-                {
-                  id: crypto.randomUUID(),
-                  token: ownerToken,
-                  userId: ownerActor.person.id,
-                  expiresAt: new Date(Date.UTC(2099, 0, 1)),
-                },
-                {
-                  id: crypto.randomUUID(),
-                  token: memberToken,
-                  userId: memberActor.person.id,
-                  expiresAt: new Date(Date.UTC(2099, 0, 1)),
-                },
-              ]),
-            )
             yield* Effect.gen(function* () {
               // The return fixture records real OAuth submissions and callback target selection.
               const context = yield* Layer.build(remote.configured)
@@ -106,9 +85,6 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
                   expect(JSON.stringify(row.references)).not.toContain(state)
                   const before = yield* Ref.get(remote.requests)
                   expect(
-                    yield* store.callbackId(memberActor, address).pipe(Effect.flip),
-                  ).toBeInstanceOf(NotFound)
-                  expect(
                     yield* store
                       .callback(memberActor, step.connection.id, address)
                       .pipe(Effect.flip),
@@ -116,20 +92,20 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
                   expect(yield* Ref.get(remote.requests)).toEqual(before)
                   expect(yield* store.get(ownerActor, step.connection.id)).toEqual(row)
                   const handle = yield* HttpRouter.toHttpEffect(connectionReturnRoutes)
-                  /** Route invocation passes the exact provider URL and authenticated session. */
-                  const send = Effect.fn('Connections.ReturnTest.send')(function* (token: string) {
+                  /**
+                   * The browser as it comes back from the service: the exact provider URL and no
+                   * Vivid session, which is what a browser opened by the phone app has.
+                   */
+                  const send = Effect.fn('Connections.ReturnTest.send')(function* () {
                     return yield* handle.pipe(
                       Effect.provideService(
                         HttpServerRequest.HttpServerRequest,
-                        HttpServerRequest.fromWeb(
-                          new Request(callback, { headers: { authorization: `Bearer ${token}` } }),
-                        ),
+                        HttpServerRequest.fromWeb(new Request(callback)),
                       ),
                     )
                   })
                   const generic = new URL('/settings/connections', config.PUBLIC_URL).href
-                  expect((yield* send(memberToken)).headers.location).toBe(generic)
-                  const response = yield* send(ownerToken)
+                  const response = yield* send()
                   expect(response.status).toBe(303)
                   expect(response.headers.location).toBe(
                     trip.returnsTo === 'Phone'
@@ -142,14 +118,11 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
                   const completed = yield* store.get(ownerActor, step.connection.id)
                   const after = yield* Ref.get(remote.requests)
                   expect(
-                    yield* store.callbackId(ownerActor, address).pipe(Effect.flip),
-                  ).toBeInstanceOf(NotFound)
-                  expect(
                     yield* store
                       .callback(ownerActor, step.connection.id, address)
                       .pipe(Effect.flip),
                   ).toBeInstanceOf(NotFound)
-                  expect((yield* send(ownerToken)).headers.location).toBe(generic)
+                  expect((yield* send()).headers.location).toBe(generic)
                   expect(yield* store.get(ownerActor, step.connection.id)).toEqual(completed)
                   expect(yield* Ref.get(remote.requests)).toEqual(after)
                   expect(
@@ -166,7 +139,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
       )
     }
 
-    test.effect('redirects missing sessions while logging only a failure tag', () =>
+    test.effect('redirects an unknown return while logging only a failure tag', () =>
       Effect.gen(function* () {
         const config = yield* ServerConfig
         const handle = yield* HttpRouter.toHttpEffect(connectionReturnRoutes)
@@ -180,7 +153,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
             HttpServerRequest.fromWeb(
               new Request(
                 new URL(
-                  '/api/connections/return?code=private-code&state=private-state',
+                  `/api/connections/return?code=private-code&state=${'private-state'.repeat(3)}`,
                   config.PUBLIC_URL,
                 ),
               ),
@@ -196,7 +169,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection provider return', () => {
         expect(lines).toHaveLength(1)
         expect(lines[0]).toMatchObject({
           message: 'Failure reached a boundary',
-          annotations: { 'error.type': 'Unauthenticated', 'vivid.boundary': 'http' },
+          annotations: { 'error.type': 'NotFound', 'vivid.boundary': 'http' },
         })
         const written = JSON.stringify(lines)
         expect(written).not.toContain('private-code')

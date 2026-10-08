@@ -35,7 +35,7 @@ import {
   ServiceUnavailable,
   Workspace,
 } from '@vivid/contracts'
-import { requireAdmin, type Actor } from '../auth/access.ts'
+import { findPerson, requireAdmin, type Actor } from '../auth/access.ts'
 import { workspaceIn } from '../auth/session.ts'
 import { Audit } from '../audit/record.ts'
 import { ServerConfig } from '../config.ts'
@@ -61,7 +61,7 @@ import {
   connectionOf,
   encodeReferences,
   getRecord,
-  callbackId,
+  callbackTrip,
   listRecords,
   publicConnection,
   recordChanged,
@@ -573,10 +573,6 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
 
   return {
     get,
-    /** A completed callback follows its initiating Person across workspace changes. */
-    returnSurface: Effect.fn('Connections.returnSurface')((actor: Actor, id: ConnectionId) =>
-      provide(getRecord(actor, id, true)).pipe(Effect.map((row) => row.returnsTo)),
-    ),
     catalog: catalogServices,
     service,
     /** Catalog search is independent of ownership and preserves the adapter's retained order. */
@@ -719,11 +715,29 @@ const makeCallbacks = (
     (effect, _actor, id) => withCallback(effect, id),
   )
   return {
-    callbackId: Effect.fn('Connections.resolveReturn')(function* (
-      actor: Actor,
-      address: Redacted.Redacted,
-    ) {
-      return yield* provide(callbackId(actor, yield* callbackHash(address)))
+    /**
+     * A browser coming back from a service's sign-in page: finishes the Integration its state
+     * names, for the Person who began it, and says which surface that Person began it on.
+     *
+     * No session is asked for (`callbackTrip`). The actor is the row's own Person, by their own
+     * hand; `callback` then takes the workspace from the row's Company and a fresh Membership, so
+     * the personal space given here is only where that reading starts.
+     */
+    returning: Effect.fn('Connections.returning')(function* (address: Redacted.Redacted) {
+      const trip = yield* provide(callbackTrip(yield* callbackHash(address)))
+      const person = yield* provide(findPerson(trip.person))
+      if (Option.isNone(person))
+        return yield* new NotFound({ message: 'Integration sign-in not found' })
+      const actor: Actor = {
+        person: person.value,
+        workspace: Workspace.cases.Personal.make({}),
+        by: 'person',
+        threadId: Option.none(),
+      }
+      const state = yield* callback(actor, trip.id, address)
+      // Read after completion so the latest persisted trip decides where the browser hands back.
+      const row = yield* provide(getRecord(actor, trip.id, true))
+      return { id: trip.id, state, surface: row.returnsTo }
     }),
     callback,
   }
