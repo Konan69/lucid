@@ -469,9 +469,7 @@ function Conversation({
         working={working}
         // Nothing more can be said in a Thread until its first words are with Vivid; what is
         // typed meanwhile stays in the composer.
-        // Nor while a send is on its way: one delivery is in doubt at a time (`useSend` keeps one),
-        // so a second waits for the first to be answered, which takes a moment.
-        disabled={!settled || sending.pending}
+        disabled={held(settled, sending.pending)}
         onChange={type}
         // Emptying the composer, which `speak` does, is also what removes this Thread's kept draft.
         onSend={() => void speak(typed.trim())}
@@ -488,6 +486,13 @@ function Conversation({
     </AboveKeyboardBelowBar>
   )
 }
+
+/**
+ * Whether words must wait in the composer: until the Thread's first words are with Vivid, and
+ * while a send is on its way. One delivery is in doubt at a time (`useSend` keeps one), so a
+ * second waits for the first to be answered, which takes a moment.
+ */
+const held = (settled: boolean, pending: boolean): boolean => !settled || pending
 
 /** No conversation to open yet. One value, so the hook is not handed a new one each render. */
 const UNOPENED: UseFlueAgentOptions = {}
