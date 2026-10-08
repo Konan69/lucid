@@ -1,12 +1,13 @@
-import { captureException, init, setTag, wrap } from '@sentry/react-native'
+import { captureException, getClient, init, setTag, wrap } from '@sentry/react-native'
 // The SDK's own transport, which hands an envelope to its native half. The package does not
 // export it from its entry, and `guarded` needs it to wrap: `init` uses this same function when
 // it is given none (`makeNativeTransportFactory` in the SDK's `sdk.js`).
 import { makeNativeTransport } from '@sentry/react-native/dist/js/transports/native'
-import { Option } from 'effect'
+import { Option, Schema } from 'effect'
 import * as Updates from 'expo-updates'
 import type { ComponentType } from 'react'
 import { Platform } from 'react-native'
+import { reportsFrom, type Reports } from './build'
 import { guarded, scrub, scrubBreadcrumb } from './scrub'
 
 /**
@@ -152,6 +153,31 @@ export const startTelemetry = (): void => {
   // SDK has taken over the scope (`enableSyncToNative` in the SDK's `init`).
   for (const [name, value] of updates()) if (value !== null) setTag(name, value)
 }
+
+/**
+ * The one option of a started client that Settings reads. `init` writes it itself: whether the
+ * SDK's native half is in this install (`enableNative`, set from `NATIVE.isNativeAvailable()` in
+ * the SDK's `sdk.js`), whatever it was asked for.
+ */
+const Started = Schema.Struct({ enableNative: Schema.Boolean })
+const decodeStarted = Schema.decodeUnknownOption(Started)
+
+/**
+ * What Settings says about reporting on this phone (`build.ts`).
+ *
+ * It is read when asked and not at load: `index.ts` imports the app, and so every screen, before
+ * it calls `startTelemetry`. No client is no start: a development build, the web build, or a
+ * start that threw.
+ */
+export const reports = (): Reports =>
+  reportsFrom(
+    Option.map(
+      Option.flatMap(Option.fromUndefinedOr(getClient()), (client) =>
+        decodeStarted(client.getOptions()),
+      ),
+      ({ enableNative }) => ({ native: enableNative }),
+    ),
+  )
 
 /**
  * The root component as the SDK wants it registered: inside its own wrapper, which is where it

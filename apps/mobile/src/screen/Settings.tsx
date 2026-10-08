@@ -13,13 +13,14 @@ import { Data, Option } from 'effect'
 import { useState, type ReactNode } from 'react'
 import { ScrollView, Switch, View } from 'react-native'
 import { followThemeAtom } from '../data/appearance'
-import { runningWords } from '../data/build'
+import { reportsWords, runningWords } from '../data/build'
 import { door } from '../data/door'
 import { warn } from '../data/haptics'
 import { refusalOf, useLive, useLiveData, useLiveValue, type LiveData } from '../data/live'
 import { running, version, writeMoment } from '../data/running'
 import { serverName } from '../data/server'
 import { leaveAtom } from '../data/signing'
+import { reports } from '../data/telemetry'
 import { useAppearance } from '../data/vivid'
 import { Avatar, pictureOf } from '../ui/Avatar'
 import { Face } from '../ui/Face'
@@ -157,12 +158,17 @@ export function Settings() {
  * It is here so that "the update is out" can be checked on the phone. An update is taken in the
  * background and starts the next time the app does, so until this line changes, what was sent has
  * not started here yet.
+ *
+ * The last line says whether this install can send its errors and crashes. That needs a part only
+ * an install carries (`data/telemetry.ts`), and two installs with and without it say the same
+ * version, so this line is the only place the difference shows.
  */
 function ThisApp() {
   return (
     <Section title="This app">
       {Option.isSome(version) && <Row title="Version" detail={version.value} />}
       <Row title="Update" detail={runningWords(running, writeMoment)} wrap />
+      <Row title="Error reports" detail={reportsWords(reports())} wrap />
     </Section>
   )
 }
