@@ -11,7 +11,9 @@ import { attachable, Attached, useAttachments, type Picture } from './Attach'
 
 /**
  * Where a Person writes to Vivid. Enter sends, Shift+Enter makes a new line, and while Vivid is
- * working the send button becomes the way to stop it. What is typed is kept for the place it was
+ * working with nothing written the send button is the way to stop it. Words written while Vivid
+ * works are sent to it, by Enter or by the button: they join the answer in progress at its next
+ * step (Flue's durability contract). What is typed is kept for the place it was
  * typed in (`place`), on this device and for the Person's other devices (`data/drafts.ts`), so it
  * is still here after leaving and coming back; the Thread the composer belongs to decides what
  * sending means.
@@ -146,7 +148,9 @@ export function Composer({
 }
 
 /**
- * The one round button of the composer. It sends; while Vivid works it is the way to stop it.
+ * The one round button of the composer. It sends; while Vivid works and nothing is written it is
+ * the way to stop it. It used to stop whenever Vivid worked, so words written meanwhile could be
+ * sent by Enter and not by the button (8 October 2026).
  * The two marks take turns in the one place: the one going shrinks away as the one coming grows
  * in (`motion-swap`), so the button is seen to change what it does instead of being swapped for
  * another.
@@ -163,20 +167,21 @@ function SendOrStop({
   onStop: () => void
   onSend: () => void
 }) {
+  const stops = working && empty
   return (
     <button
-      aria-label={working ? 'Stop' : 'Send'}
+      aria-label={stops ? 'Stop' : 'Send'}
       disabled={!working && empty}
-      onClick={() => (working ? onStop() : onSend())}
+      onClick={() => (stops ? onStop() : onSend())}
       className={cn(
         // With nothing to send it is a quiet disc, not a faded accent: an accent at 40%
         // reads as a broken button, a neutral one reads as "write something first".
         'relative inline-flex size-9 motion-press cursor-pointer items-center justify-center rounded-full text-primary-foreground disabled:cursor-not-allowed disabled:bg-wash-pressed disabled:text-ink-4',
-        working ? 'bg-ink text-surface-0 hover:bg-ink-2' : 'bg-primary hover:bg-primary-hover',
+        stops ? 'bg-ink text-surface-0 hover:bg-ink-2' : 'bg-primary hover:bg-primary-hover',
       )}
     >
-      <Square data-shown={working} className="absolute size-3.5 motion-swap fill-current" />
-      <ArrowUp data-shown={!working} className="absolute size-4 motion-swap" strokeWidth={2.25} />
+      <Square data-shown={stops} className="absolute size-3.5 motion-swap fill-current" />
+      <ArrowUp data-shown={!stops} className="absolute size-4 motion-swap" strokeWidth={2.25} />
     </button>
   )
 }

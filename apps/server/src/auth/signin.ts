@@ -1,3 +1,4 @@
+export { PHONE_SCHEME } from '@vivid/contracts/signin'
 import { PersonId } from '@vivid/contracts'
 import {
   LoopbackPort,

@@ -1,3 +1,4 @@
+import type { SignInSurface } from '@vivid/contracts'
 import { signInPage } from '@vivid/state'
 import { Data, Option } from 'effect'
 import { useMemo } from 'react'
@@ -30,6 +31,16 @@ export type Trip = Data.TaggedEnum<{
   Refused: { readonly message: string }
 }>
 export const Trip = Data.taggedEnum<Trip>()
+
+/**
+ * Where every sign-in trip in this app is made from. The server is told with the call that asks
+ * for the provider's page (`BeginConnection`, `ResumeConnection`), and when the provider is done
+ * it sends the browser back to the app on the app's own link instead of to the web's Integrations
+ * page, which is where a trip made on the phone used to end (the owner, 7 October 2026). Coming
+ * back to the front is what the app listens for (`Returning`); the link itself carries nothing
+ * the app reads.
+ */
+export const HERE: SignInSurface = 'Phone'
 
 /**
  * Hands the provider's page to the phone's browser. The app has no browser of its own (it signs

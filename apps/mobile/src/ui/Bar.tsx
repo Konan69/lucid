@@ -411,25 +411,26 @@ export function VividAtTop({ stand }: { stand: Stand }) {
  * the owner asked for Vivid in the centre, and the title is where the Person chose the Thread,
  * its row in the menu.
  *
- * `inverted` says the screen's scroller is a Thread's upside-down list and that it is on screen,
- * which the system's edge effect frosts whole (`NO_SCROLL_EDGES`); the greeting's scroller is the
- * right way up and keeps the effect. A Thread says it only once its list is laid out, because
- * the change is the one moment the list can be told. Both are named every time, because the two
- * share one route and `setOptions` merges.
+ * `conversation` says the screen's scroller is a Thread's conversation and that it is on screen.
+ * It is laid out under the bar and never behind it, so it is given no edge effect at all
+ * (`NO_SCROLL_EDGES`); the greeting's scroller runs behind the bar and keeps the effect. A Thread
+ * says it only once its scroller is laid out, because the change is the one moment the scroller
+ * can be told. Both are named every time, because the two share one route and `setOptions`
+ * merges.
  */
-export function VividBar({ inverted, present, actions }: BarEnd & { inverted: boolean }) {
+export function VividBar({ conversation, present, actions }: BarEnd & { conversation: boolean }) {
   const vivid = useAppearance()
   const end: BarEnd = { present, actions: [...actions, callAction(vivid.name)] }
   const people = present.map((person) => [person.id, person.name, person.image])
   // Part of what the bar looks like: the options are applied again when the mark is known to load.
   const own = useMenuMark()
   useBar(
-    JSON.stringify(['vivid', inverted, own, people, shownOf(end.actions)]),
+    JSON.stringify(['vivid', conversation, own, people, shownOf(end.actions)]),
     end.actions,
     (press) => ({
       title: '',
       ...PLAIN,
-      scrollEdgeEffects: edgesFor(inverted),
+      scrollEdgeEffects: edgesFor(conversation),
       ...menuOptions(own),
       ...endOptions(end, press),
     }),
@@ -438,9 +439,9 @@ export function VividBar({ inverted, present, actions }: BarEnd & { inverted: bo
 }
 
 /** The system's edge effect for the first screen's scroller, where the bar is glass. */
-const edgesFor = (inverted: boolean): NativeStackNavigationOptions['scrollEdgeEffects'] => {
+const edgesFor = (conversation: boolean): NativeStackNavigationOptions['scrollEdgeEffects'] => {
   if (!GLASS_SUPPORTED) return undefined
-  return inverted ? NO_SCROLL_EDGES : SCROLL_EDGES
+  return conversation ? NO_SCROLL_EDGES : SCROLL_EDGES
 }
 
 /** The title element of a solid bar. The header role stays on the title's words. */
@@ -463,9 +464,9 @@ function StandingTitle({ title, standing }: { title: string; standing: Standing 
  * The bar's height as empty room, for a screen whose content is not an ordinary scroller.
  *
  * Under a glass bar UIKit insets a scroll view by itself (`contentInsetAdjustmentBehavior`), and
- * that is what every ordinary screen uses. A Thread's list is inverted, so the system's top inset
- * would land at the foot of the conversation; the Thread puts this room above its list and its
- * outline instead, so neither is ever behind the bar (`Transcript`, `screen/Chat.tsx`). The height is the stack's own measurement, so it follows the device and
+ * that is what every ordinary screen uses. A Thread's conversation is kept clear of the bar and not
+ * under it, so the system has no edge of it to soften; the Thread puts this room above its
+ * conversation and its outline, so neither is ever behind the bar (`Transcript`, `screen/Chat.tsx`). The height is the stack's own measurement, so it follows the device and
  * the text size. Where the bar is solid the content already starts below it and no room is made.
  */
 export function BarRoom() {

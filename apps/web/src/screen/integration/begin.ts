@@ -72,7 +72,12 @@ export function begin(
 ): Effect.Effect<Began> {
   return Effect.gen(function* () {
     const result = yield* changing((client) =>
-      client.BeginConnection({ service: service.id, name: Option.getOrNull(name), shared }),
+      client.BeginConnection({
+        service: service.id,
+        name: Option.getOrNull(name),
+        shared,
+        from: 'Web',
+      }),
     )
     if (Result.isFailure(result)) {
       if (tab !== null) tab.close()

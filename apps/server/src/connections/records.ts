@@ -13,6 +13,7 @@ import {
   NotFound,
   PersonId,
   ServiceId,
+  SignInSurface,
   Workspace,
 } from '@vivid/contracts'
 import { inWorkspace, summaryOf, type Actor } from '../auth/access.ts'
@@ -33,6 +34,7 @@ const rowSchema = createSelectSchema(connections, {
   personId: PersonId,
   companyId: Schema.NullOr(CompanyId),
   references: ExecutorReferences,
+  returnsTo: SignInSurface,
   status: Schema.Literals(['ready', 'needs-authorization', 'failed']),
 }).mapFields(({ label: _retired, ...fields }) => fields)
 export type ConnectionRecord = typeof rowSchema.Type
@@ -282,27 +284,32 @@ export const saveName = Effect.fn('Connections.saveName')(function* (
   return yield* decodeRow(yield* returned(rows, 'Connection'))
 })
 
-/** Shared ownership is the Company; person_id attributes its current authorization attempt. Persist
- * the resuming admin before provider access so the returned grant cannot stay bound to its creator.
- * Compare the observed revision to refuse a concurrent change instead of transferring its authority.
+/** The latest client trip owns the return surface. A pending shared authorization also retains
+ * its resuming admin before provider access. A ready account opens no trip and is not written. Compare the observed
+ * revision to refuse concurrent changes rather than transfer another trip's authority.
  */
-export const retainResumer = Effect.fn('Connections.retainResumer')(function* (
+export const retainTrip = Effect.fn('Connections.retainTrip')(function* (
   actor: Actor,
   row: ConnectionRecord,
+  from: SignInSurface,
 ) {
-  if (row.companyId === null || row.personId === actor.person.id) return row
+  // A ready account has no new grant to attribute; only a pending trip transfers its initiator.
+  const personId = row.status === 'needs-authorization' ? actor.person.id : row.personId
   const database = yield* Database
   const rows = yield* database.run(
     database
       .update(connections)
       .set({
-        personId: actor.person.id,
+        personId,
+        returnsTo: from,
         updatedAt: yield* Clock.currentTimeMillis,
       })
       .where(
         and(
           eq(connections.id, row.id),
-          eq(connections.companyId, row.companyId),
+          row.companyId === null
+            ? isNull(connections.companyId)
+            : eq(connections.companyId, row.companyId),
           eq(connections.personId, row.personId),
           eq(connections.updatedAt, row.updatedAt),
           eq(connections.status, row.status),

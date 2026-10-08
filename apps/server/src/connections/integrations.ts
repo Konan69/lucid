@@ -183,7 +183,12 @@ const reuseAccount = Effect.fn('Connections.reuseAccount')(function* (
           return AddIntegrationOutcome.cases.AwaitingInitiator.make({
             name: existing.row.serviceName,
           })
-        const step = yield* (yield* ConnectionStore).resume(actor, existing.row.id)
+        // A Run has no new client surface; retain the destination of the last client trip.
+        const step = yield* (yield* ConnectionStore).resume(
+          actor,
+          existing.row.id,
+          existing.row.returnsTo,
+        )
         return AddIntegrationOutcome.cases.PendingAuthorization.make({
           account: existing.account,
           step,

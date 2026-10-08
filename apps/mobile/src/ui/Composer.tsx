@@ -19,10 +19,11 @@ import { Press, styles, TARGET } from './ui'
  * `src/components/ComposerToolbar.tsx`, `ComposerActionButton`): one line of text 36 points high
  * beside a 44-point target, with 2 points above and below.
  */
-const LINE = MOBILE_TYPOGRAPHY.reading.lineHeight
-/** The room above and below the text inside the editor: 6, which makes one line 36. */
-const INSET = 6
-const ONE_LINE = LINE + INSET * 2
+const LINE = MOBILE_TYPOGRAPHY.typing.lineHeight
+/** One line of text with its room: the reference's 36. */
+const ONE_LINE = 36
+/** The room above and below the text inside the editor, which is what makes one line 36. */
+const INSET = (ONE_LINE - LINE) / 2
 /** The most the text is given before it scrolls inside the composer: the reference's 160. */
 const TALLEST = 160
 /** What the dock keeps clear around the shape, and the shape keeps clear around what it holds. */
@@ -57,7 +58,8 @@ const ROUND = 30
  * over the page (`ui/elevation.ts`), and the shape has no border beside it.
  *
  * The button is always there, as the reference's is: dimmed when there is nothing to send, the
- * way to send when there is, and while Vivid is working the way to stop, in the same place, with
+ * way to send when there is, and while Vivid is working with nothing written the way to stop, in
+ * the same place. Words written while Vivid works are sent to it (`act`). While it works there is
  * a beam travelling its edge (`Act`). The beam used to travel the whole composer's edge; the
  * owner asked for it on the send button alone (6 October 2026). The
  * reference's attachment button, dictation, model control and command popover are things
@@ -86,7 +88,7 @@ export function Composer({
    * asks for it (`Front.Thread.writing`), so the keyboard a first message was typed on stays up.
    */
   autoFocus: boolean
-  /** Vivid is in the middle of a Run here, so the button stops instead of sending. */
+  /** Vivid is in the middle of a Run here, so with nothing written the button stops it. */
   working: boolean
   /** A send is already on its way, so another cannot start. */
   disabled: boolean
@@ -100,12 +102,21 @@ export function Composer({
   // What the editor says its text needs, inset included. One line is `ONE_LINE`.
   const [needed, setNeeded] = useState(ONE_LINE)
   const empty = value.trim().length === 0
-  const idle = !working && (disabled || empty)
+  // With words written, the button sends them, while Vivid is working too: they join the answer
+  // in progress at its next step (Flue's durability contract: a message that arrives while a
+  // response is running joins it at a turn boundary, or waits its turn and is never lost). With
+  // nothing written and Vivid working, it stops Vivid. Until 8 October 2026 it only stopped
+  // while Vivid worked, so nothing could be said until the answer ended.
+  // Words that cannot be sent yet (a send still on its way) leave the button dimmed, not a way to
+  // stop: it must not change what it does under words the Person means to send.
+  const sends = !empty && !disabled
+  const stops = working && empty
+  const idle = !sends && !stops
 
-  function send() {
+  function act() {
     if (idle) return
     commit()
-    if (working) onStop()
+    if (stops) onStop()
     else onSend()
   }
 
@@ -160,7 +171,7 @@ export function Composer({
               autoFocus={autoFocus}
               multiline
               onChangeText={onChange}
-              onSubmit={send}
+              onSubmit={act}
               // The text scrolls only once it has more lines than the composer will grow to.
               scrollEnabled={needed > TALLEST}
               // Android sets text from the top of its box, which leaves one line a few points
@@ -170,10 +181,10 @@ export function Composer({
               contentInsetVertical={INSET}
               onContentHeightChange={setNeeded}
               style={{ height: Math.min(TALLEST, Math.max(ONE_LINE, needed)) }}
-              textStyle={MOBILE_TYPOGRAPHY.reading}
+              textStyle={MOBILE_TYPOGRAPHY.typing}
             />
           </View>
-          <Act working={working} idle={idle} onPress={send} />
+          <Act working={working} stops={stops} idle={idle} onPress={act} />
         </View>
       </View>
     </View>
@@ -191,12 +202,24 @@ export function Composer({
  * at rest nothing repaints. The round under it is quiet while it stops, a neutral disc with the
  * square in ink, so the beam is the one colour on it and is read as "at work", not as an alarm.
  */
-function Act({ working, idle, onPress }: { working: boolean; idle: boolean; onPress: () => void }) {
+function Act({
+  working,
+  stops,
+  idle,
+  onPress,
+}: {
+  /** Vivid is in the middle of a Run: the beam travels the edge. */
+  working: boolean
+  /** A press stops Vivid; otherwise it sends what is written. */
+  stops: boolean
+  idle: boolean
+  onPress: () => void
+}) {
   const { colors: c, dark } = useTheme()
   return (
     <Press
       accessibilityRole="button"
-      accessibilityLabel={working ? 'Stop Vivid' : 'Send'}
+      accessibilityLabel={stops ? 'Stop Vivid' : 'Send'}
       accessibilityState={{ disabled: idle }}
       disabled={idle}
       onPress={onPress}
@@ -223,11 +246,11 @@ function Act({ working, idle, onPress }: { working: boolean; idle: boolean; onPr
             borderRadius: ROUND / 2,
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: working ? c['subtle-strong'] : c.primary,
+            backgroundColor: stops ? c['subtle-strong'] : c.primary,
             opacity: idle ? 0.4 : 1,
           }}
         >
-          {working ? (
+          {stops ? (
             <Square pointerEvents="none" size={11} color={c.foreground} fill={c.foreground} />
           ) : (
             <ArrowUp

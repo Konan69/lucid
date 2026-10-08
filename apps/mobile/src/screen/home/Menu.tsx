@@ -323,7 +323,10 @@ function Seek({
               autoCorrect={false}
               returnKeyType="search"
               onChangeText={(next) => onChange(Option.some(next))}
-              style={[{ flex: 1, paddingVertical: 0, color: c.foreground }, MOBILE_TYPOGRAPHY.body]}
+              style={[
+                { flex: 1, paddingVertical: 0, color: c.foreground },
+                MOBILE_TYPOGRAPHY.typing,
+              ]}
             />
             <IconButton icon={X} label="Stop searching" onPress={() => onChange(Option.none())} />
           </View>

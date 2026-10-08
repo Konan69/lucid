@@ -1,0 +1,1 @@
+ALTER TABLE "vivid_connections" ADD COLUMN "returns_to" text DEFAULT 'Web' NOT NULL;

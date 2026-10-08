@@ -71,7 +71,7 @@ function Fresh() {
   return (
     <AboveKeyboardBelowBar>
       {/* No avatar at the top here: it is in the middle of the page, over the greeting. */}
-      <VividBar inverted={false} present={NOBODY} actions={NO_ACTIONS} />
+      <VividBar conversation={false} present={NOBODY} actions={NO_ACTIONS} />
       <BarRoom />
       <Reconnecting />
       <Under

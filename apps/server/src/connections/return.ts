@@ -1,6 +1,7 @@
-import { Effect, Option, Redacted } from 'effect'
+import { Effect, Match, Option, Redacted } from 'effect'
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
 import { ConnectionState } from '@vivid/contracts'
+import { PHONE_SCHEME } from '../auth/signin.ts'
 import { authenticate } from '../auth/session.ts'
 import { ServerConfig } from '../config.ts'
 import { observeFailures } from '../observability/failure.ts'
@@ -25,7 +26,13 @@ const callback = Effect.fn('Http.Connections.return')(function* () {
     const store = yield* ConnectionStore
     const id = yield* store.callbackId(actor, address)
     const result = yield* store.callback(actor, id, address)
-    const target = new URL('/settings/connections', config.PUBLIC_URL)
+    // Read after completion so the latest persisted trip decides where the browser hands back.
+    const surface = yield* store.returnSurface(actor, id)
+    const target = Match.value(surface).pipe(
+      Match.when('Web', () => new URL('/settings/connections', config.PUBLIC_URL)),
+      Match.when('Phone', () => new URL(`${PHONE_SCHEME}://integrations`)),
+      Match.exhaustive,
+    )
     target.searchParams.set(ConnectionState.guards.Ready(result) ? 'connected' : 'failed', id)
     return target
   }).pipe(

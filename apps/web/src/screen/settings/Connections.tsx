@@ -181,7 +181,9 @@ export function Connections({ me }: { me: MeResponse }) {
   function resume(connection: Connection) {
     return Effect.gen(function* () {
       mark(connection.id, Option.some('starting'))
-      const result = yield* changing((client) => client.ResumeConnection({ id: connection.id }))
+      const result = yield* changing((client) =>
+        client.ResumeConnection({ id: connection.id, from: 'Web' }),
+      )
       settle(
         connection.id,
         Result.isFailure(result) ? Began.Refused() : follow(result.success, null),

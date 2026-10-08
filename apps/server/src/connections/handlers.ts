@@ -6,6 +6,7 @@ import type {
   BeginConnectionRequest,
   CompleteConnectionRequest,
   ConnectionId,
+  SignInSurface,
   FindServicesRequest,
   FindToolsRequest,
   OfferConnectionRequest,
@@ -57,11 +58,13 @@ export const connectionHandlers = {
   /** Reopening authorization uses the same management authority as removal. */
   ResumeConnection: Effect.fn('Rpc.ResumeConnection')(function* ({
     id,
+    from,
   }: {
     readonly id: ConnectionId
+    readonly from: SignInSurface
   }) {
     yield* requirePerson()
-    return yield* (yield* ConnectionStore).resume(yield* requireActor(), id)
+    return yield* (yield* ConnectionStore).resume(yield* requireActor(), id, from)
   }),
   /** Key entry stays on the Person-only boundary and never enters Thread context. */
   CompleteConnection: Effect.fn('Rpc.CompleteConnection')(function* (

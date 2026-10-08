@@ -444,7 +444,7 @@ const AFTER_PRESS = {
  */
 const pickUp = (id: Connection['id'], tab: Window | null) =>
   Effect.gen(function* () {
-    const step = yield* changing((client) => client.ResumeConnection({ id }))
+    const step = yield* changing((client) => client.ResumeConnection({ id, from: 'Web' }))
     if (Result.isSuccess(step)) return follow(step.success, tab)
     if (tab !== null) tab.close()
     return Began.Refused()

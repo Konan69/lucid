@@ -80,6 +80,7 @@ import {
   TestIntegrationRequest,
   TestIntegrationOutcome,
   BeginConnectionRequest,
+  SignInSurface,
   CompleteConnectionRequest,
   ConnectionListResponse,
   ConnectionOffer,
@@ -613,7 +614,7 @@ const CompleteConnection = Rpc.make('CompleteConnection', {
  */
 const ResumeConnection = Rpc.make('ResumeConnection', {
   ...call,
-  payload: { id: ConnectionId },
+  payload: { id: ConnectionId, from: SignInSurface },
   success: ConnectionStep,
 })
 const RemoveConnection = Rpc.make('RemoveConnection', { ...call, payload: { id: ConnectionId } })

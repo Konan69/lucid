@@ -41,35 +41,18 @@ export const SCROLL_EDGES = {
 } as const
 
 /**
- * No edge effect at all, for a screen whose scroller is upside down: a Thread's inverted list.
+ * No edge effect at all, for a Thread's conversation, which is laid out under the bar and never
+ * behind it, so there is no edge for the system to soften.
  *
- * The system gives the effect to the scroll view's own top edge. An inverted list is the same
- * scroll view turned over, so its own top is at the foot of the screen, beside the composer, and
- * the edge under the bar is its own bottom. The system then measures "from the top edge to the
- * bar" across the whole list, and frosts and dims all of it whenever the list is not resting at
- * its newest words: the owner's iPhone showed a Thread's whole conversation blurred between a
- * sharp bar and a sharp composer while Vivid was thinking (5 October 2026, iOS 26, app 0.2.0).
- * The reference has no such screen to copy from: T3 Code mobile's thread feed is not inverted.
- *
- * Not reproduced: there is no iOS 26 device or simulator to run it on from here. The reading is
- * from the screenshot and from where react-native-screens applies the effect
- * (`RNSScrollEdgeEffectApplicator`, to the first scroll view under the screen).
- *
- * This option alone did not hold on his phone (6 October 2026: the conversation was still drawn
- * at about a fifth of its strength). The library applies it when the option's value changes and
- * when the screen is put in its stack, to the scroll view on the screen's first-child chain at
- * that moment (`RNSScreen.mm`, `updateContentScrollViewEdgeEffectsIfExists`, from the props
- * update and from `willMoveToParentViewController`; `RNSScrollViewFinder`), and a
- * Thread's list is mounted after its outline, so it kept the system's default. The Thread's list
- * is therefore also laid out under the bar and not behind it (`Transcript`, `screen/Chat.tsx`).
- *
- * Under the bar was still not enough: with the keyboard up the conversation was blurred again
- * (7 October 2026). The list had never been given this at all. So a Thread now asks for it only
- * once its list has been laid out, and asks again for each list: until then the screen has the
- * ordinary `SCROLL_EDGES`, and the change from one to the other is what makes the library apply
- * it, to a scroller that is there to take it. The library finds that scroller only down the
- * first child of each view (`RNSScrollViewFinder`), which the Thread's layout is written for.
- * Not seen on an iPhone from here either.
+ * It was written for the conversation when that was an upside-down list. The system gives the
+ * effect to a scroll view's own top edge, and a list turned over has its top at the foot of the
+ * screen: the owner's iPhone showed the whole conversation blurred (5 to 8 October 2026, iOS 26,
+ * app 0.2.0). Asking for this through the screen did not stop it on his phone, though the
+ * library's code says it should have: it is applied when the option's value changes and when the
+ * screen is put in its stack, to the scroll view on the screen's first-child chain at that moment
+ * (`RNSScreen.mm`, `updateContentScrollViewEdgeEffectsIfExists`; `RNSScrollViewFinder`). So the
+ * conversation is no longer turned over (`Transcript`, `screen/Chat.tsx`), and this stays as what
+ * a scroller under the bar should have. Not seen on an iPhone from here.
  */
 export const NO_SCROLL_EDGES = {
   top: 'hidden',

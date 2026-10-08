@@ -1,3 +1,4 @@
+import { Platform } from 'react-native'
 import { nativeMetrics as m } from '@vivid/tokens/native'
 
 /**
@@ -17,6 +18,15 @@ export const MOBILE_TYPOGRAPHY = {
    * same size as `body` on a 24-point line, which is the line the composer's height is built on.
    */
   reading: { fontSize: 16, lineHeight: 24 },
+  /**
+   * What is typed into a field. On an iPhone it is the reading size on a 20-point line, not 24.
+   * UIKit puts a line's spare height above its letters, so 16-point text on a 24-point line is
+   * typed two and a half points below the middle of its field, and below the placeholder, which
+   * is centred: the owner's iPhone showed every field's text off-centre (7 October 2026). The
+   * system font's own line at 16 points is 19.1, so on 20 the text is under half a point from
+   * the middle. Android centres a line in its box and keeps the reading line.
+   */
+  typing: { fontSize: 16, lineHeight: Platform.OS === 'ios' ? 20 : 24 },
   headline: { fontWeight: m['weight-strong'], fontSize: 18, lineHeight: 23 },
   /** A screen's own name in its bar: the reference's heavy 18 (`GLASS_HEADER_OPTIONS`). */
   heading: { fontWeight: '800', fontSize: 18, lineHeight: 23 },

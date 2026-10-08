@@ -36,6 +36,8 @@ export const connections = pgTable(
     companyId: companyColumn(),
     references: jsonb('references').notNull(),
     status: text('status').notNull(),
+    // Existing trips returned to the web; each new client trip writes its own surface.
+    returnsTo: text('returns_to').notNull().default('Web'),
     reason: text('reason'),
     createdAt: epoch('created_at').notNull(),
     updatedAt: epoch('updated_at').notNull(),
