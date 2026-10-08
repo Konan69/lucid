@@ -261,7 +261,10 @@ export function Card({ children, style }: { children: ReactNode; style?: StylePr
   )
 }
 
-/** Somewhere to type. Its text is the reading size, which is also what keeps it legible. */
+/**
+ * Somewhere to type. Its text is the reading size, which is also what keeps it legible, on the
+ * line a field is given (`MOBILE_TYPOGRAPHY.typing`).
+ */
 export function Field({ ref, style, ...props }: TextInputProps & { ref?: Ref<TextInput> }) {
   const { colors: c } = useTheme()
   return (
@@ -282,7 +285,7 @@ export function Field({ ref, style, ...props }: TextInputProps & { ref?: Ref<Tex
           borderColor: c['input-border'],
           color: c.foreground,
         },
-        MOBILE_TYPOGRAPHY.reading,
+        MOBILE_TYPOGRAPHY.typing,
         style,
       ]}
     />

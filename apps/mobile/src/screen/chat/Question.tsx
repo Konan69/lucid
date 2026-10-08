@@ -74,7 +74,7 @@ const KEYCAP = 24
  * were not chosen are gone, the chosen one is where it now belongs, and only its check fades in.
  * The card used to fold down to its answer, each row gliding to its new place as the others faded
  * out (a layout transition on the card, its rows and its note, and an exit on every row). It is a
- * row of a Thread's list, which is upside down and moves under it: answering is the moment Vivid
+ * row of a Thread's conversation, which moves under it (and was then an upside-down list): answering is the moment Vivid
  * starts again, so new rows arrive and the card's own row shifts while it is folding. On the
  * owner's iPhone the card then came out jumbled and stayed that way (7 October 2026): rows that
  * were leaving were left on screen, and what stayed was drawn where the fold had been cut short.

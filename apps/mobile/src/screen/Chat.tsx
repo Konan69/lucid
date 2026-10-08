@@ -12,13 +12,7 @@ import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useMemo, useRef, useState } from 'react'
-import {
-  FlatList,
-  ScrollView,
-  View,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-} from 'react-native'
+import { ScrollView, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
@@ -138,7 +132,7 @@ function Gone() {
   const front = useFront()
   return (
     <Screen>
-      <VividBar inverted={false} present={NOBODY} actions={NO_ACTIONS} />
+      <VividBar conversation={false} present={NOBODY} actions={NO_ACTIONS} />
       <VividAtTop stand={Stand.Resting({ mood: 'happy' })} />
       {/* A scroller, so the system keeps these words clear of a glass bar as it does a list. */}
       <ScrollView
@@ -194,7 +188,7 @@ function Top({
   opening: boolean
   /** Vivid is answering on this phone right now, which the Thread's record may not say yet. */
   working: boolean
-  /** The Thread's upside-down list is on screen, for the system's edge effect (`VividBar`). */
+  /** The Thread's conversation is on screen, for the system's edge effect (`VividBar`). */
   listed: boolean
   onShare: () => void
 }) {
@@ -222,10 +216,10 @@ function Top({
   return (
     <>
       <VividBar
-        // A Thread's list is upside down, which the system's edge effect cannot be given. It is
-        // said only once the list is there, and so said again for every list: the system is
-        // told to leave a scroller alone only at the moment this changes (`NO_SCROLL_EDGES`).
-        inverted={listed}
+        // A Thread's conversation is under the bar, never behind it, so the system has no edge
+        // to soften. It is said only once the scroller is there, and so said again for each: the
+        // system is told to leave a scroller alone only at the moment this changes.
+        conversation={listed}
         present={others.map((seen) => seen.person)}
         actions={Option.match(sharing, {
           onNone: () => NO_ACTIONS,
@@ -638,48 +632,45 @@ function Messages(props: MessagesProps) {
 const FOLLOWING = 80
 
 /**
- * The list is inverted, newest at the bottom: the platform then keeps the view on the newest words
- * by itself as they stream in, and holds the Person's place when they have scrolled up to read.
- * Nothing runs per token.
+ * The conversation, oldest words first, in a scroller that is the right way up and is kept on its
+ * newest words by hand: each time its content grows or its viewport changes size while the Person
+ * is at the newest words, it is put back on them (`settle`). Nothing runs per token; the content's
+ * height changes when a line is added, and that is when it moves.
  *
- * The list sits in a box of its own that clips it, between the bar and the composer. Both are
- * siblings of the box, not overlays, so the list's viewport is exactly what is left under the bar
- * and above the composer and the keyboard; a
- * card taller than that scrolls inside it and can never be drawn behind the composer. When the
- * viewport changes size (the keyboard opening or closing, the composer growing a line) and the
- * Person is at the newest words, they are put back on them, so the newest card is not left half
- * above the edge.
+ * It was an upside-down list until 8 October 2026, which the platform keeps on its newest words by
+ * itself. On the owner's iPhone (iOS 26) the system drew its scroll edge effect across the whole
+ * of that list: the conversation was blurred whenever it was scrolled away from one end and sharp
+ * again when pulled past it. A list turned over with a transform has its own top at the foot of
+ * the screen, and the effect is measured from there. Three attempts to switch the effect off
+ * through the screen (`NO_SCROLL_EDGES`, `ui/stack.ts`) did not hold on his phone, and the one
+ * component that sets it on a scroller directly (react-native-screens' `ScrollViewMarker`) is not
+ * compiled into the installed app. A scroller that is not turned over gives the system nothing to
+ * get wrong, which is also how the reference is built (T3 Code mobile `ThreadFeed.tsx` is not
+ * inverted). Not seen on an iPhone from here: there is no iOS device or simulator to run it on.
  *
- * The box starts under the bar, not behind it. The list used to run up behind the glass bar with
- * the bar's room as its last row, and on the owner's iPhone that did two things (his screenshots
- * of 6 October 2026, iOS 26, dark): the words ran through Vivid's capsule and the bar's buttons,
- * and the whole conversation was drawn at about a fifth of its strength. The second is the
- * system's scroll edge effect, which takes an upside-down list behind a bar to be under that bar
- * from end to end (`NO_SCROLL_EDGES`, `ui/stack.ts`). Switching the effect off through the screen
- * did not hold: react-native-screens sets it when the option changes and when the screen is put
- * in its stack, on the scroll view that is there at that moment (`RNSScreen.mm`,
- * `updateContentScrollViewEdgeEffectsIfExists`, called from the props update and from
- * `willMoveToParentViewController`), and this list is mounted later, after the Thread's outline. A list that is never behind the
- * bar has nothing for the system to soften. Where it meets the bar it fades out over a few
- * points (`TopFade`), so words leave softly instead of being cut. Not seen on an iPhone from
- * here: there is no iOS device or simulator to run it on.
+ * Every message is drawn, none is recycled: the platform's recycling list cannot be opened at its
+ * end without knowing every row's height. The reference uses a list library made for that
+ * (`@legendapp/list`); moving to it is the way to make a very long Thread cheap to open.
  *
- * That was not all of it: with the keyboard up the conversation was still blurred (the owner,
- * 7 October 2026). A list that was never told otherwise keeps the system's effect on all four
- * of its edges, and the keyboard is one more thing for an edge to soften against. So the list is
- * also told, every time one is laid out (`onListed`, which is what makes the bar say `inverted`).
- * Two things here exist for that telling to reach it. The library looks for the screen's
- * scroller down the first child of each view and nowhere else (`RNSScrollViewFinder`,
- * `findScrollViewInFirstDescendantChainFrom`), so the list's box is the first child here and the
- * bar's room, which is above it on screen, is written after it (`column-reverse`). And the room
- * the thinking bubble needs is kept inside the list, not made between the list and the composer.
+ * The scroller is not shown until it has first been put on its newest words (`placed`), so a
+ * Thread never opens on its oldest words and jumps.
+ *
+ * It sits in a box of its own that clips it, between the bar and the composer. Both are siblings
+ * of the box, not overlays, so its viewport is exactly what is left under the bar and above the
+ * composer and the keyboard; a card taller than that scrolls inside it and can never be drawn
+ * behind the composer. The box starts under the bar, not behind it, and where the words meet the
+ * bar they fade out over a few points (`TopFade`). The box is written first and drawn second
+ * (`column-reverse`): react-native-screens looks for the screen's scroller down the first child
+ * of each view and nowhere else (`RNSScrollViewFinder`), and the bar still asks it to leave this
+ * one's edges alone once it is laid out (`onListed`). The room the thinking bubble needs is kept
+ * inside the scroller, not made between it and the composer.
  *
  * A message that has just arrived comes in with motion, and nothing else does (`Message`,
  * `fresh`). The reference decides that from the message's own time (T3 Code mobile
  * `ThreadFeed.tsx`, `isFreshTimestamp`, three seconds). The conversation's stream does not stamp
- * a Person's words, so the list keeps which messages it already had (`known`): those it was first
- * drawn with, less a Thread's first words while they are within that window of their send
- * (`rising`). Whatever comes after is new, until the list is next scrolled.
+ * a Person's words, so the scroller keeps which messages it already had (`known`): those it was
+ * first drawn with, less a Thread's first words while they are within that window of their send
+ * (`rising`). Whatever comes after is new, until the conversation is next scrolled.
  *
  * When the Person has scrolled away and words arrive, their place is held and a "Latest messages"
  * action with the real count of arrivals brings them back. Whether they are away is kept as the
@@ -687,7 +678,9 @@ const FOLLOWING = 80
  */
 function Transcript(props: MessagesProps) {
   const { messages, working, thinking, rising } = props
-  const list = useRef<FlatList<FlueConversationMessage>>(null)
+  const list = useRef<ScrollView>(null)
+  // Whether the scroller has been put on its newest words once, which is when it is shown.
+  const [placed, setPlaced] = useState(false)
   const [awayAt, setAwayAt] = useState<Option.Option<number>>(Option.none())
   const arrived = Option.match(awayAt, {
     onNone: () => 0,
@@ -704,7 +697,11 @@ function Transcript(props: MessagesProps) {
   })
 
   function follow(event: NativeSyntheticEvent<NativeScrollEvent>) {
-    const near = event.nativeEvent.contentOffset.y < FOLLOWING
+    // Before it is first put on its newest words it is at its oldest, which is not the Person
+    // having scrolled away.
+    if (!placed) return
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent
+    const near = contentSize.height - contentOffset.y - layoutMeasurement.height < FOLLOWING
     // A row is only ever drawn a second time after the list has moved, so moving it is when
     // everything in it stops being new: a message scrolled back to does not arrive again.
     setKnown((current) =>
@@ -718,15 +715,20 @@ function Transcript(props: MessagesProps) {
     })
   }
 
-  /** The viewport changed size: stay on the newest words when that is where the Person was. */
-  function resized() {
+  /**
+   * The content grew or the viewport changed size (a new line, the keyboard, the composer growing):
+   * stay on the newest words when that is where the Person was. Never animated, so words that
+   * stream in do not chase a moving target.
+   */
+  function settle() {
     if (Option.isSome(awayAt) || list.current === null) return
-    list.current.scrollToOffset({ offset: 0, animated: false })
+    list.current.scrollToEnd({ animated: false })
+    if (!placed) setPlaced(true)
   }
 
   function latest() {
     setAwayAt(Option.none())
-    if (list.current !== null) list.current.scrollToOffset({ offset: 0, animated: true })
+    if (list.current !== null) list.current.scrollToEnd({ animated: true })
   }
 
   // Vivid has been asked and has not begun: the newest thing in the Thread is not its reply.
@@ -735,51 +737,49 @@ function Transcript(props: MessagesProps) {
     thinking && Option.isNone(props.trouble) && newest !== undefined && newest.role !== 'assistant'
 
   return (
-    // The list's box is written first and drawn second: see the note above about the scroller.
+    // The scroller's box is written first and drawn second: see the note above.
     <View style={{ flex: 1, flexDirection: 'column-reverse' }}>
-      <View style={{ flex: 1, overflow: 'hidden' }} onLayout={resized}>
-        <FlatList
+      <View style={{ flex: 1, overflow: 'hidden' }} onLayout={settle}>
+        <ScrollView
           ref={list}
-          inverted
-          // Newest first is what an inverted list draws at the bottom.
-          data={messages.toReversed()}
-          keyExtractor={(message) => message.id}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
           onLayout={props.onListed}
+          onContentSizeChange={settle}
           onScroll={follow}
           scrollEventThrottle={32}
+          style={{ opacity: placed ? 1 : 0 }}
           contentContainerStyle={[
             styles.column,
             {
+              // A Thread with few words keeps them at the foot, beside the composer.
+              flexGrow: 1,
+              justifyContent: 'flex-end',
               paddingHorizontal: GUTTER - 4,
-              // The list is upside down, so its top is the foot of the conversation: the room
-              // the thinking bubble floats in, kept whether or not it is there.
-              paddingTop: THINKING_ROOM,
-              paddingBottom: 16,
+              paddingTop: 16,
+              // The room the thinking bubble floats in, kept whether or not it is there.
+              paddingBottom: THINKING_ROOM,
               gap: 22,
             },
           ]}
-          // The last thing in an inverted list is the first thing on screen: the room Vivid's
-          // avatar hangs into, so the oldest words rest under its name and not behind it.
-          ListFooterComponent={<View style={{ height: HANG }} />}
-          // The first thing in an inverted list is the last thing on screen.
-          ListHeaderComponent={
-            <Tail awaited={awaited} ended={props.ended} trouble={props.trouble} />
-          }
-          renderItem={({ item, index }) => (
+        >
+          {/* The room Vivid's avatar hangs into, so the oldest words rest under its name. */}
+          <View style={{ height: HANG }} />
+          {messages.map((item, index) => (
             <Message
+              key={item.id}
               message={item}
               around={props.around}
               detail={props.detail}
               working={working}
               fresh={!known.has(item.id)}
-              latest={index === 0}
+              latest={index === messages.length - 1}
               unsent={props.unsent}
               onContinue={props.onContinue}
             />
-          )}
-        />
+          ))}
+          <Tail awaited={awaited} ended={props.ended} trouble={props.trouble} />
+        </ScrollView>
         <TopFade />
         {/* Always there, so the bubble inside it can fade out when the work ends. */}
         <View
