@@ -53,7 +53,8 @@ and remaining limits.
 `src/providers/explabs.ts` registers the Experiential Labs gateway with one `setProvider` call.
 Models must be declared there before selecting `explabs/<id>` through `VIVID_MODEL`. Vivid has
 no model retry or fallback layer of its own: the gateway fails over upstreams and Flue handles
-transient retries. Whole responses have `maxAttempts: 1` to avoid replaying completed tools.
+transient retries. A Run that is interrupted (a deploy, a restart) is picked up again up to
+three times (`maxAttempts: 3`): Flue keeps recorded tool results and never re-runs those calls.
 
 `VIVID_MODEL=rehearsal/script` opts into the deterministic rehearsal provider. It calls real
 tools with fixed inputs and reports real receipts; it proves plumbing, not model judgement.
