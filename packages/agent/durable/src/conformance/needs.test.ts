@@ -1,10 +1,10 @@
-import { Deferred, Effect, Option, Predicate } from 'effect'
+import { Effect, Option, Predicate } from 'effect'
 import { FixtureFailed } from '../fixtures/harness.ts'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import { isToolUIPart, lastAssistantMessageIsCompleteWithApprovalResponses, tool } from 'ai'
 import { expect, it } from '@effect/vitest'
 import { z } from 'zod'
-import { PlainChat } from '../fixtures/chat.ts'
+import { PlainChat, client, Decision } from '../fixtures/chat.ts'
 import { ToolApprovalUnsupported, toolsExtension } from '../main.ts'
 import { call, context, host, texts } from './fixtures/host.ts'
 /** Stock Chat must park, echo the durable approval identity, and automatically post the decision. */
@@ -96,15 +96,13 @@ for (const sample of [
         call('pay', { amount: sample.amount }, 'pay'),
         fauxAssistantMessage('Resolved.'),
       ])
-      let completion = yield* Deferred.make<void, FixtureFailed>()
-      const chat = new PlainChat({
+      const { chat, next } = client({
         transport: opened.transport,
         sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-        onFinish: () => Deferred.doneUnsafe(completion, Effect.void),
-        onError: (error) =>
-          Deferred.doneUnsafe(completion, Effect.fail(new FixtureFailed({ cause: error }))),
       })
+      let completion = next()
       yield* Effect.promise(() => chat.sendMessage({ text: 'Pay' }))
+      expect(yield* completion).toEqual(Decision.cases.Settled.make({}))
       if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
       const held = chat.lastMessage.parts.find(
         (part) => isToolUIPart(part) && part.toolCallId === 'pay',
@@ -113,7 +111,7 @@ for (const sample of [
         expect(executions).toEqual([])
         if (held === undefined || !isToolUIPart(held) || held.state !== 'approval-requested')
           throw new Error('Expected approval request')
-        completion = yield* Deferred.make<void, FixtureFailed>()
+        completion = next()
         yield* Effect.promise(() =>
           Promise.resolve(
             chat.addToolApprovalResponse({
@@ -123,7 +121,7 @@ for (const sample of [
             }),
           ),
         )
-        yield* Deferred.await(completion)
+        expect(yield* completion).toEqual(Decision.cases.Settled.make({}))
       } else expect(held).toMatchObject({ state: 'output-available' })
       expect(chat.status).toBe('ready')
       expect(executions).toEqual(sample.approved ? [sample.amount * 2] : [])

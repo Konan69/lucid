@@ -14,38 +14,14 @@ import {
   lastAssistantMessageIsCompleteWithApprovalResponses,
   lastAssistantMessageIsCompleteWithToolCalls,
   tool,
-  type ChatInit,
   type UIMessage,
 } from 'ai'
 import { expect, it } from '@effect/vitest'
 import { z } from 'zod'
 import { resumable } from '../client.ts'
-import { PlainChat } from '../fixtures/chat.ts'
+import { PlainChat, client, Decision } from '../fixtures/chat.ts'
 import { answer, attachRun, continueRun, decide, respond, streamRun, waiting } from '../main.ts'
 import { call, context, host, modelText, shop, texts } from './fixtures/host.ts'
-/**
- * As in src/chat.test.ts and upstream chat.test.ts, drive AbstractChat rather than a mock client.
- * Arm the completion before each SDK action: onFinish is the observable end of an automatic POST.
- */
-function client(
-  transport: DefaultChatTransport<UIMessage>,
-  predicate: ChatInit<UIMessage>['sendAutomaticallyWhen'],
-) {
-  let completion = Deferred.makeUnsafe<void, FixtureFailed>()
-  const chat = new PlainChat({
-    transport,
-    sendAutomaticallyWhen: predicate,
-    onFinish: () => Deferred.doneUnsafe(completion, Effect.void),
-    onError: (error) =>
-      Deferred.doneUnsafe(completion, Effect.fail(new FixtureFailed({ cause: error }))),
-  })
-  /** Await the next response without relying on stream timing or status polling. */
-  const next = () => {
-    completion = Deferred.makeUnsafe<void, FixtureFailed>()
-    return Deferred.await(completion)
-  }
-  return { chat, next }
-}
 /** The stock app echoes the approval identity supplied in its actual SDK message part. */
 function approvalId(chat: PlainChat, callId: string) {
   if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
@@ -165,11 +141,14 @@ it.live('addToolApprovalResponse automatically resumes one assistant message', (
       ),
       fauxAssistantMessage('Paid.'),
     ])
-    const { chat, next } = client(
-      opened.transport,
-      lastAssistantMessageIsCompleteWithApprovalResponses,
-    )
+    const { chat, next } = client({
+      transport: opened.transport,
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+    })
+    const initial = next()
     yield* Effect.promise(() => chat.sendMessage({ text: 'Pay' }))
+
+    expect(yield* initial).toEqual(Decision.cases.Settled.make({}))
     expect(chat.status).toBe('ready')
     const parked = chat.lastMessage
     if (parked === undefined) throw new Error('Expected the held message')
@@ -184,7 +163,7 @@ it.live('addToolApprovalResponse automatically resumes one assistant message', (
         }),
       ),
     )
-    yield* finished
+    expect(yield* finished).toEqual(Decision.cases.Settled.make({}))
     expect(chat.status).toBe('ready')
     expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
     if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')
@@ -206,8 +185,14 @@ it.live('addToolOutput automatically resumes one assistant message', () =>
       call('ask', { question: 'Which account?' }, 'ask'),
       (request) => fauxAssistantMessage(`Using ${modelText(request.messages).split('\n').at(-1)}.`),
     ])
-    const { chat, next } = client(opened.transport, lastAssistantMessageIsCompleteWithToolCalls)
+    const { chat, next } = client({
+      transport: opened.transport,
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    })
+    const initial = next()
     yield* Effect.promise(() => chat.sendMessage({ text: 'Ask' }))
+
+    expect(yield* initial).toEqual(Decision.cases.Settled.make({}))
     const parked = chat.lastMessage
     if (parked === undefined) throw new Error('Expected the held message')
     expect(parked.parts.find((part) => part.type === 'tool-ask')).toMatchObject({
@@ -219,7 +204,7 @@ it.live('addToolOutput automatically resumes one assistant message', () =>
     yield* Effect.promise(() =>
       Promise.resolve(chat.addToolOutput({ tool: 'ask', toolCallId: 'ask', output: 'savings' })),
     )
-    yield* finished
+    expect(yield* finished).toEqual(Decision.cases.Settled.make({}))
     expect(chat.status).toBe('ready')
     expect(chat.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
     if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')
@@ -246,11 +231,14 @@ it.live('the stock approval predicate waits for both decisions before posting', 
       ),
       fauxAssistantMessage('Resolved.'),
     ])
-    const { chat, next } = client(
-      opened.transport,
-      lastAssistantMessageIsCompleteWithApprovalResponses,
-    )
+    const { chat, next } = client({
+      transport: opened.transport,
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+    })
+    const initial = next()
     yield* Effect.promise(() => chat.sendMessage({ text: 'Pay both' }))
+
+    expect(yield* initial).toEqual(Decision.cases.Settled.make({}))
     yield* Effect.promise(() =>
       Promise.resolve(
         chat.addToolApprovalResponse({
@@ -274,7 +262,7 @@ it.live('the stock approval predicate waits for both decisions before posting', 
         }),
       ),
     )
-    yield* finished
+    expect(yield* finished).toEqual(Decision.cases.Settled.make({}))
     expect(fixture.paid).toEqual([100])
     if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')
     expect(
@@ -319,11 +307,14 @@ it.live(
         ),
         fauxAssistantMessage('Done.'),
       ])
-      const { chat, next } = client(
-        opened.transport,
-        lastAssistantMessageIsCompleteWithApprovalResponses,
-      )
+      const { chat, next } = client({
+        transport: opened.transport,
+        sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+      })
+      const initial = next()
       yield* Effect.promise(() => chat.sendMessage({ text: 'Pay both' }))
+
+      expect(yield* initial).toEqual(Decision.cases.Settled.make({}))
       expect(
         yield* Effect.promise(() => waiting(opened.harness, opened.root.id, context)),
       ).toMatchObject([{ callId: 'c1' }])
@@ -340,7 +331,7 @@ it.live(
           }),
         ),
       )
-      yield* completed
+      expect(yield* completed).toEqual(Decision.cases.Settled.make({}))
       expect(paid).toEqual([1])
       expect(
         chat.lastMessage.parts.find((part) => 'toolCallId' in part && part.toolCallId === 'c2'),
@@ -354,7 +345,7 @@ it.live(
           }),
         ),
       )
-      yield* finished
+      expect(yield* finished).toEqual(Decision.cases.Settled.make({}))
       expect(paid).toEqual([1, 2])
       expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
     }),
@@ -376,13 +367,19 @@ it.live(
         ),
         fauxAssistantMessage('Answered.'),
       ])
-      const { chat, next } = client(opened.transport, lastAssistantMessageIsCompleteWithToolCalls)
+      const { chat, next } = client({
+        transport: opened.transport,
+        sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+      })
+      const initial = next()
       yield* Effect.promise(() => chat.sendMessage({ text: 'Ask' }))
+
+      expect(yield* initial).toEqual(Decision.cases.Settled.make({}))
       const finished = next()
       yield* Effect.promise(() =>
         Promise.resolve(chat.addToolOutput({ tool: 'ask', toolCallId: 'ask', output: 'savings' })),
       )
-      yield* finished
+      expect(yield* finished).toEqual(Decision.cases.Settled.make({}))
       expect(chat.status).toBe('ready')
       expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
       if (chat.lastMessage === undefined) throw new Error('Expected an assistant message')

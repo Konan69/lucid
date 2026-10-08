@@ -1,4 +1,3 @@
-import { FixtureFailed } from '../fixtures/harness.ts'
 import { consumeReadable as consume, hold } from '../fixtures/reading.ts'
 import { fauxAssistantMessage, fauxText, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import {
@@ -11,17 +10,11 @@ import {
   type CommitPublication,
   type TaskId,
 } from '@earendil-works/pi-durable'
-import {
-  isToolUIPart,
-  lastAssistantMessageIsCompleteWithApprovalResponses,
-  tool,
-  type DefaultChatTransport,
-  type UIMessage,
-} from 'ai'
+import { isToolUIPart, lastAssistantMessageIsCompleteWithApprovalResponses, tool } from 'ai'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeEvents from 'node:events'
 import * as NodeURL from 'node:url'
-import { PlainChat } from '../fixtures/chat.ts'
+import { PlainChat, client, Decision } from '../fixtures/chat.ts'
 import { expect, it } from '@effect/vitest'
 import { Effect, Option, Deferred } from 'effect'
 import * as Pi from '../pi.ts'
@@ -207,25 +200,6 @@ it.live('exposes sequential task allocation on document watches but not watchEve
   }),
 )
 
-/** Stock SDK automatic sending observes only admitted calls, never queued sequential inputs. */
-function chatClient(transport: DefaultChatTransport<UIMessage>) {
-  let completion = Deferred.makeUnsafe<void, FixtureFailed>()
-  const chat = new PlainChat({
-    transport,
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-    onFinish: () => Deferred.doneUnsafe(completion, Effect.void),
-    onError: (error) =>
-      Deferred.doneUnsafe(completion, Effect.fail(new FixtureFailed({ cause: error }))),
-  })
-  return {
-    chat,
-    next: () => {
-      completion = Deferred.makeUnsafe<void, FixtureFailed>()
-      return Deferred.await(completion)
-    },
-  }
-}
-
 /** The app copies the SDK part's opaque approval identity without consulting waiting(). */
 function approval(chat: PlainChat, callId: string) {
   if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
@@ -273,8 +247,13 @@ it.live.each(['held-held', 'held-plain', 'plain-held', 'denied-held'] as const)(
         ),
         fauxAssistantMessage('Done.'),
       ])
-      const { chat, next } = chatClient(opened.transport)
+      const { chat, next } = client({
+        transport: opened.transport,
+        sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+      })
+      const initial = next()
       yield* Effect.promise(() => chat.sendMessage({ text: 'Pay both' }))
+      expect(yield* initial).toEqual(Decision.cases.Settled.make({}))
       if (kind !== 'plain-held') {
         expect(callParts(chat).map((part) => part.toolCallId)).toEqual(['c1'])
         const first = next()
@@ -286,7 +265,7 @@ it.live.each(['held-held', 'held-plain', 'plain-held', 'denied-held'] as const)(
             }),
           ),
         )
-        yield* first
+        expect(yield* first).toEqual(Decision.cases.Settled.make({}))
       }
       if (kind !== 'held-plain') {
         expect(callParts(chat)).toMatchObject([
@@ -302,7 +281,7 @@ it.live.each(['held-held', 'held-plain', 'plain-held', 'denied-held'] as const)(
             chat.addToolApprovalResponse({ id: approval(chat, 'c2'), approved: true }),
           ),
         )
-        yield* second
+        expect(yield* second).toEqual(Decision.cases.Settled.make({}))
       }
       expect(paid).toEqual(kind === 'denied-held' ? [2] : [1, 2])
       expect(callParts(chat).map((part) => part.toolCallId)).toEqual(['c1', 'c2'])
@@ -360,8 +339,13 @@ for (const partialFamily of families)
           ),
           fauxAssistantMessage('Done.'),
         ])
-        const { chat, next } = chatClient(opened.transport)
+        const { chat, next } = client({
+          transport: opened.transport,
+          sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+        })
+        const initial = next()
         yield* Effect.promise(() => chat.sendMessage({ text: 'Pay both' }))
+        expect(yield* initial).toEqual(Decision.cases.Settled.make({}))
         if (round === 'parallel') {
           expect(callParts(chat).map((part) => part.toolCallId)).toEqual(['c1', 'c2'])
           const message = chat.lastMessage
@@ -384,7 +368,7 @@ for (const partialFamily of families)
               chat.addToolApprovalResponse({ id: approval(chat, 'c2'), approved: true }),
             ),
           )
-          yield* done
+          expect(yield* done).toEqual(Decision.cases.Settled.make({}))
         } else {
           if (kind !== 'plain-held') {
             expect(callParts(chat).map((part) => part.toolCallId)).toEqual(['c1'])
@@ -394,7 +378,7 @@ for (const partialFamily of families)
                 chat.addToolApprovalResponse({ id: approval(chat, 'c1'), approved: true }),
               ),
             )
-            yield* done
+            expect(yield* done).toEqual(Decision.cases.Settled.make({}))
           }
           if (kind !== 'held-plain') {
             expect(callParts(chat)).toMatchObject([
@@ -407,7 +391,7 @@ for (const partialFamily of families)
                 chat.addToolApprovalResponse({ id: approval(chat, 'c2'), approved: true }),
               ),
             )
-            yield* done
+            expect(yield* done).toEqual(Decision.cases.Settled.make({}))
           }
         }
         expect(paid).toEqual([1, 2])
@@ -443,19 +427,36 @@ it.live('GET reconnect withholds c2 while c1 waits and presents c1 result while 
       ),
       fauxAssistantMessage('Done.'),
     ])
-    const { chat, next } = chatClient(opened.transport)
+    const { chat, next } = client({
+      transport: opened.transport,
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+    })
+    const initial = next()
     yield* Effect.promise(() => chat.sendMessage({ text: 'Pay both' }))
-    const first = chatClient(opened.transport).chat
+    expect(yield* initial).toEqual(Decision.cases.Settled.make({}))
+    const firstClient = client({
+      transport: opened.transport,
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+    })
+    const first = firstClient.chat
+    const firstFinished = firstClient.next()
     yield* Effect.promise(() => first.resumeStream())
+    expect(yield* firstFinished).toEqual(Decision.cases.Settled.make({}))
     expect(callParts(first)).toMatchObject([{ toolCallId: 'c1', state: 'approval-requested' }])
     expect(callParts(first)).toHaveLength(1)
     const progress = next()
     yield* Effect.promise(() =>
       Promise.resolve(chat.addToolApprovalResponse({ id: approval(chat, 'c1'), approved: true })),
     )
-    yield* progress
-    const second = chatClient(opened.transport).chat
+    expect(yield* progress).toEqual(Decision.cases.Settled.make({}))
+    const secondClient = client({
+      transport: opened.transport,
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+    })
+    const second = secondClient.chat
+    const secondFinished = secondClient.next()
     yield* Effect.promise(() => second.resumeStream())
+    expect(yield* secondFinished).toEqual(Decision.cases.Settled.make({}))
     expect(callParts(second)).toMatchObject([
       { toolCallId: 'c1', state: 'output-available', output: 1 },
       { toolCallId: 'c2', state: 'approval-requested' },
@@ -464,7 +465,7 @@ it.live('GET reconnect withholds c2 while c1 waits and presents c1 result while 
     yield* Effect.promise(() =>
       Promise.resolve(chat.addToolApprovalResponse({ id: approval(chat, 'c2'), approved: true })),
     )
-    yield* done
+    expect(yield* done).toEqual(Decision.cases.Settled.make({}))
   }),
 )
 
@@ -511,7 +512,10 @@ it.live(
       yield* Effect.promise(() => exited)
       const opened = yield* fixture.open()
       opened.faux.setResponses([fauxAssistantMessage('Done.')])
-      const { chat, next } = chatClient(opened.transport)
+      const { chat, next } = client({
+        transport: opened.transport,
+        sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+      })
       yield* Effect.promise(() => chat.resumeStream())
       expect(callParts(chat)).toMatchObject([
         { toolCallId: 'c1', state: 'output-available', output: 1 },
@@ -521,7 +525,7 @@ it.live(
       yield* Effect.promise(() =>
         Promise.resolve(chat.addToolApprovalResponse({ id: approval(chat, 'c2'), approved: true })),
       )
-      yield* done
+      expect(yield* done).toEqual(Decision.cases.Settled.make({}))
       expect(paid).toEqual([2])
       expect(callParts(chat).map((part) => part.state)).toEqual([
         'output-available',

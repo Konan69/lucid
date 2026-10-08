@@ -1,5 +1,4 @@
-import { Deferred, Effect, Option } from 'effect'
-import { FixtureFailed } from '../fixtures/harness.ts'
+import { Effect, Option } from 'effect'
 import { consumeReadable } from '../fixtures/reading.ts'
 
 import { expect, it } from '@effect/vitest'
@@ -11,7 +10,7 @@ import {
   lastAssistantMessageIsCompleteWithApprovalResponses,
 } from 'ai'
 import { z } from 'zod'
-import { PlainChat } from '../fixtures/chat.ts'
+import { client, Decision } from '../fixtures/chat.ts'
 import { attachRun, history, waiting } from '../main.ts'
 import { call, context, host } from './fixtures/host.ts'
 // AI SDK chat.test.ts:2988–3192 and process-ui-message-stream.test.ts:6343–6609 retain dynamic identity.
@@ -33,17 +32,14 @@ it.live(
         call('ask', { question: 'Which?' }, 'ask'),
         fauxAssistantMessage('Answered.'),
       ])
-      const finished = yield* Deferred.make<void, FixtureFailed>()
-      const chat = new PlainChat({
+      const { chat, next } = client({
         transport: opened.transport,
         sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-        onFinish: () => {
-          if (opened.faux.state.callCount === 2) Deferred.doneUnsafe(finished, Effect.void)
-        },
-        onError: (error) =>
-          Deferred.doneUnsafe(finished, Effect.fail(new FixtureFailed({ cause: error }))),
       })
+      let finished = next()
       yield* Effect.promise(() => chat.sendMessage({ text: 'Ask' }))
+      expect(yield* finished).toEqual(Decision.cases.Settled.make({}))
+      finished = next()
       if (chat.lastMessage === undefined) throw new Error('Expected assistant')
       expect(chat.lastMessage.parts.find(isToolUIPart)).toMatchObject({
         type: 'dynamic-tool',
@@ -61,7 +57,7 @@ it.live(
       yield* Effect.promise(() =>
         Promise.resolve(chat.addToolOutput({ tool: 'ask', toolCallId: 'ask', output: 'Savings' })),
       )
-      yield* Deferred.await(finished)
+      expect(yield* finished).toEqual(Decision.cases.Settled.make({}))
       expect(chat.lastMessage.parts.find(isToolUIPart)).toMatchObject({
         type: 'dynamic-tool',
         state: 'output-available',
@@ -100,25 +96,23 @@ it.live.each([true, false])('keeps dynamic generator identity after approved=%s'
     )
     const opened = yield* fixture.open()
     opened.faux.setResponses([call('progress', {}, 'progress'), fauxAssistantMessage('Settled.')])
-    let finished = yield* Deferred.make<void, FixtureFailed>()
-    const chat = new PlainChat({
+    const { chat, next } = client({
       transport: opened.transport,
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-      onFinish: () => Deferred.doneUnsafe(finished, Effect.void),
-      onError: (error) =>
-        Deferred.doneUnsafe(finished, Effect.fail(new FixtureFailed({ cause: error }))),
     })
+    let finished = next()
     yield* Effect.promise(() => chat.sendMessage({ text: 'Pay' }))
+    expect(yield* finished).toEqual(Decision.cases.Settled.make({}))
     if (chat.lastMessage === undefined) throw new Error('Expected assistant')
     const held = chat.lastMessage.parts.find(isToolUIPart)
     if (held === undefined || held.state !== 'approval-requested')
       throw new Error('Expected approval')
     expect(held).toMatchObject({ type: 'dynamic-tool', title: 'Invoice payment' })
-    finished = yield* Deferred.make<void, FixtureFailed>()
+    finished = next()
     yield* Effect.promise(() =>
       Promise.resolve(chat.addToolApprovalResponse({ id: held.approval.id, approved })),
     )
-    yield* Deferred.await(finished)
+    expect(yield* finished).toEqual(Decision.cases.Settled.make({}))
     expect(chat.lastMessage.parts.find(isToolUIPart)).toMatchObject({
       type: 'dynamic-tool',
       title: 'Invoice payment',

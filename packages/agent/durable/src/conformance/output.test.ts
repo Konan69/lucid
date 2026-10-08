@@ -1,10 +1,9 @@
-import { FixtureFailed } from '../fixtures/harness.ts'
 import { consumeReadable as consume } from '../fixtures/reading.ts'
 import type { Message } from '@earendil-works/pi-ai'
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
 import type { Tool } from 'ai'
 import { lastAssistantMessageIsCompleteWithToolCalls, tool } from 'ai'
-import { PlainChat } from '../fixtures/chat.ts'
+import { PlainChat, client, Decision } from '../fixtures/chat.ts'
 import { expect, it } from '@effect/vitest'
 import { Effect, Deferred, Option } from 'effect'
 import { z } from 'zod'
@@ -389,22 +388,20 @@ it.live('projects a person-supplied answer through SDK Chat', () =>
         return fauxAssistantMessage('Done.')
       },
     ])
-    let completion = yield* Deferred.make<void, FixtureFailed>()
-    const chat = new PlainChat({
+    const { chat, next } = client({
       transport: opened.transport,
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-      onFinish: () => Deferred.doneUnsafe(completion, Effect.void),
-      onError: (error) =>
-        Deferred.doneUnsafe(completion, Effect.fail(new FixtureFailed({ cause: error }))),
     })
+    let completion = next()
     yield* Effect.promise(() => chat.sendMessage({ text: 'Ask' }))
-    completion = yield* Deferred.make<void, FixtureFailed>()
+    expect(yield* completion).toEqual(Decision.cases.Settled.make({}))
+    completion = next()
     yield* Effect.promise(() =>
       Promise.resolve(
         chat.addToolOutput({ tool: 'ask', toolCallId: 'answer', output: { answer: 'savings' } }),
       ),
     )
-    yield* Deferred.await(completion)
+    expect(yield* completion).toEqual(Decision.cases.Settled.make({}))
     expect(model.at(-1)).toMatchObject({ content: [{ type: 'text', text: 'Answer: savings' }] })
     if (chat.lastMessage === undefined) throw new Error('Expected assistant message')
     expect(chat.lastMessage.parts.find((part) => part.type === 'tool-ask')).toMatchObject({

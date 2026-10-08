@@ -18,7 +18,7 @@ import { z } from 'zod'
 import { waitForFrame } from '../fixtures/provider.ts'
 import { resumable, ConnectionLost, connectionLostInput, closeInputs } from '../client.ts'
 import { ChatTurn } from '../core.ts'
-import { PlainChat } from '../fixtures/chat.ts'
+import { PlainChat, client, Decision } from '../fixtures/chat.ts'
 import {
   respond,
   waiting,
@@ -476,25 +476,25 @@ it.live('resumes a parked approval and approves through the SDK part', () =>
         ),
       reconnectToStream: (input) => opened.transport.reconnectToStream(input),
     }
-    let completion = yield* Deferred.make<void, FixtureFailed>()
-    const chat = new PlainChat({
+    const { chat, next } = client({
       transport: resumable(transport),
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-      onFinish: () => Deferred.doneUnsafe(completion, Effect.void),
     })
     yield* Effect.promise(() => chat.sendMessage({ text: 'Pay' }))
     expect(chat.status).toBe('error')
     chat.clearError()
+    const resumed = next()
     yield* Effect.promise(() => chat.resumeStream())
+    expect(yield* resumed).toEqual(Decision.cases.Settled.make({}))
     if (chat.lastMessage === undefined) throw new Error('Expected approval message')
     const part = chat.lastMessage.parts.find(isToolUIPart)
     if (part === undefined || part.state !== 'approval-requested')
       throw new Error('Expected request')
-    completion = yield* Deferred.make<void, FixtureFailed>()
+    const completion = next()
     yield* Effect.promise(() =>
       Promise.resolve(chat.addToolApprovalResponse({ id: part.approval.id, approved: true })),
     )
-    yield* Deferred.await(completion)
+    expect(yield* completion).toEqual(Decision.cases.Settled.make({}))
     expect(chat.status).toBe('ready')
     expect(paid).toBe(1)
     if (chat.lastMessage === undefined) throw new Error('Expected completed message')

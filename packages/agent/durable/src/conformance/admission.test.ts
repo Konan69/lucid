@@ -15,7 +15,7 @@ import { z } from 'zod'
 import * as NodeEvents from 'node:events'
 import type { Harness } from '@earendil-works/pi-durable'
 import { requestBudget } from '../fixtures/budget.mjs'
-import { PlainChat } from '../fixtures/chat.ts'
+import { PlainChat, client, Decision } from '../fixtures/chat.ts'
 import {
   abort,
   decide,
@@ -665,11 +665,7 @@ it.live.each(
         : call('ask', { question: 'Account?' }, 'ask'),
       fauxAssistantMessage('Paid.'),
     ])
-    const finished = Deferred.makeUnsafe<void>()
-    const chat = new PlainChat({
-      onFinish: ({ message }) => {
-        if (texts(message).includes('Paid.')) Deferred.doneUnsafe(finished, Effect.void)
-      },
+    const { chat, next } = client({
       sendAutomaticallyWhen:
         kind === 'approval'
           ? lastAssistantMessageIsCompleteWithApprovalResponses
@@ -688,7 +684,9 @@ it.live.each(
         },
       }),
     })
+    const initial = next()
     yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ text: 'Pay' })))
+    expect(yield* initial).toEqual(Decision.cases.Settled.make({}))
     const held = chat.lastMessage
     if (held === undefined) throw new Error('Expected held assistant')
     const part = held.parts.find(isToolUIPart)
@@ -712,6 +710,7 @@ it.live.each(
     expect(lastAssistantMessageIsCompleteWithToolCalls({ messages: chat.messages })).toBe(false)
     chat.messages = chat.messages.slice(0, -1)
     chat.clearError()
+    const finished = next()
     if (kind === 'approval') {
       if (part.state !== 'approval-requested') throw new Error('Expected approval')
       yield* Effect.promise(() =>
@@ -723,7 +722,7 @@ it.live.each(
           chat.addToolOutput({ tool: 'ask', toolCallId: part.toolCallId, output: 'yes' }),
         ),
       )
-    yield* Deferred.await(finished)
+    expect(yield* finished).toEqual(Decision.cases.Settled.make({}))
     expect(chat.status).toBe('ready')
     expect(fixture.paid).toEqual(kind === 'approval' ? [3] : [])
     if (chat.lastMessage === undefined) throw new Error('Expected final message')

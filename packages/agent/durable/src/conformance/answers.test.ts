@@ -1,4 +1,4 @@
-import { Deferred, Effect, Option } from 'effect'
+import { Effect, Option } from 'effect'
 import { FixtureFailed } from '../fixtures/harness.ts'
 import { consumeReadable } from '../fixtures/reading.ts'
 import { runForPi } from '../pi.ts'
@@ -13,7 +13,7 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
 } from 'ai'
 import { z } from 'zod'
-import { PlainChat } from '../fixtures/chat.ts'
+import { PlainChat, client, Decision } from '../fixtures/chat.ts'
 import { abort, history, waiting } from '../main.ts'
 import { PiFailed } from '../errors.ts'
 import { Delivery } from '../delivery.ts'
@@ -223,17 +223,14 @@ it.live('automatically resumes stock Chat after a client tool error', () =>
     const fixture = yield* host({ ask: tool({ inputSchema: z.object({}) }) }, {})
     const opened = yield* fixture.open()
     opened.faux.setResponses([call('ask', {}, 'ask'), fauxAssistantMessage('Handled.')])
-    const finished = yield* Deferred.make<void, FixtureFailed>()
-    const chat = new PlainChat({
+    const { chat, next } = client({
       transport: opened.transport,
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-      onFinish: () => {
-        if (opened.faux.state.callCount === 2) Deferred.doneUnsafe(finished, Effect.void)
-      },
-      onError: (error) =>
-        Deferred.doneUnsafe(finished, Effect.fail(new FixtureFailed({ cause: error }))),
     })
+    const initial = next()
     yield* Effect.promise(() => chat.sendMessage({ text: 'Ask' }))
+    expect(yield* initial).toEqual(Decision.cases.Settled.make({}))
+    const finished = next()
     yield* Effect.promise(() =>
       Promise.resolve(
         chat.addToolOutput({
@@ -244,7 +241,7 @@ it.live('automatically resumes stock Chat after a client tool error', () =>
         }),
       ),
     )
-    yield* Deferred.await(finished)
+    expect(yield* finished).toEqual(Decision.cases.Settled.make({}))
     expect(chat.status).toBe('ready')
     if (chat.lastMessage === undefined) throw new Error('Expected final SDK message')
     expect(texts(chat.lastMessage)).toEqual(['Handled.'])

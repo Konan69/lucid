@@ -14,7 +14,7 @@ import {
 import { expect, it } from '@effect/vitest'
 import { z } from 'zod'
 import * as Core from '../core.ts'
-import { PlainChat } from '../fixtures/chat.ts'
+import { PlainChat, client, Decision } from '../fixtures/chat.ts'
 import {
   answer,
   attachRun,
@@ -68,20 +68,18 @@ it.live.each(['text', 'approved', 'denied', 'answer', 'retry'] as const)(
           ])
           break
       }
-      let completion = yield* Deferred.make<void, FixtureFailed>()
-      const chat = new PlainChat({
+      const { chat, next } = client({
         transport: opened.transport,
         sendAutomaticallyWhen:
           kind === 'answer'
             ? lastAssistantMessageIsCompleteWithToolCalls
             : lastAssistantMessageIsCompleteWithApprovalResponses,
-        onFinish: () => Deferred.doneUnsafe(completion, Effect.void),
-        onError: (error) =>
-          Deferred.doneUnsafe(completion, Effect.fail(new FixtureFailed({ cause: error }))),
       })
+      let completion = next()
       yield* Effect.promise(() => chat.sendMessage({ text: 'Go' }))
+      expect(yield* completion).toEqual(Decision.cases.Settled.make({}))
       if (kind === 'approved' || kind === 'denied' || kind === 'answer') {
-        completion = yield* Deferred.make<void, FixtureFailed>()
+        completion = next()
         switch (kind) {
           case 'answer':
             yield* Effect.promise(() =>
@@ -103,7 +101,7 @@ it.live.each(['text', 'approved', 'denied', 'answer', 'retry'] as const)(
             )
             break
         }
-        yield* Deferred.await(completion)
+        expect(yield* completion).toEqual(Decision.cases.Settled.make({}))
       }
       const page = yield* Effect.promise(() =>
         history(opened.harness, opened.root.id, { limit: 10 }, context),

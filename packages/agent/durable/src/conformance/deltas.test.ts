@@ -1,5 +1,4 @@
 import { runForPi } from '../pi.ts'
-import { FixtureFailed } from '../fixtures/harness.ts'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from '@effect/vitest'
 import {
@@ -12,7 +11,7 @@ import {
 } from 'ai'
 import { Effect, Option, Predicate, Schema, Deferred } from 'effect'
 import { z } from 'zod'
-import { PlainChat } from '../fixtures/chat.ts'
+import { client, Decision } from '../fixtures/chat.ts'
 import { providerFamilies, waitForFrame } from '../fixtures/provider.ts'
 import { host } from './fixtures/host.ts'
 
@@ -103,13 +102,9 @@ it.live.each([...providerFamilies, 'parsed', 'custom'] as const)(
         fauxAssistantMessage('Done.'),
       ])
       const chunks: UIMessageChunk[] = []
-      let done = yield* Deferred.make<void, FixtureFailed>()
-      const chat = new PlainChat({
+      const { chat, next } = client({
         transport: recording(opened.transport, chunks),
         sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-        onFinish: () => Deferred.doneUnsafe(done, Effect.void),
-        onError: (error) =>
-          Deferred.doneUnsafe(done, Effect.fail(new FixtureFailed({ cause: error }))),
         onMessage: (message) => {
           const part = message.parts.find(isToolUIPart)
           if (part === undefined || part.state !== 'input-streaming') return
@@ -123,6 +118,7 @@ it.live.each([...providerFamilies, 'parsed', 'custom'] as const)(
           if (value.value.input.length >= 15) Deferred.doneUnsafe(second, Effect.void)
         },
       })
+      let done = next()
       const sent = chat.sendMessage({ text: 'Pay' })
       yield* Deferred.await(first)
       expect(
@@ -142,6 +138,7 @@ it.live.each([...providerFamilies, 'parsed', 'custom'] as const)(
       }
       yield* Deferred.succeed(releaseSecond, undefined)
       yield* Effect.promise(() => sent)
+      expect(yield* done).toEqual(Decision.cases.Settled.make({}))
       if (chat.lastMessage === undefined) throw new Error('Expected message')
       const part = chat.lastMessage.parts.find(isToolUIPart)
       if (part === undefined || part.state !== 'approval-requested')
@@ -154,11 +151,11 @@ it.live.each([...providerFamilies, 'parsed', 'custom'] as const)(
       expect(JSON.stringify(input).startsWith(deltas.join(''))).toBe(true)
       expect(chunks.filter((chunk) => chunk.type === 'tool-input-start')).toHaveLength(1)
       expect(chunks.filter((chunk) => chunk.type === 'tool-input-available')).toHaveLength(1)
-      done = yield* Deferred.make<void, FixtureFailed>()
+      done = next()
       yield* Effect.promise(() =>
         Promise.resolve(chat.addToolApprovalResponse({ id: part.approval.id, approved: true })),
       )
-      yield* Deferred.await(done)
+      expect(yield* done).toEqual(Decision.cases.Settled.make({}))
       expect(paid).toEqual([input])
       expect(chat.status).toBe('ready')
     }),

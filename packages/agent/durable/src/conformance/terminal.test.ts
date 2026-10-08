@@ -1,5 +1,4 @@
-import { Deferred, Effect, Option } from 'effect'
-import { FixtureFailed } from '../fixtures/harness.ts'
+import { Effect, Option } from 'effect'
 import { expect, it } from '@effect/vitest'
 import { LiveDoc, defineExtension, defineTool } from '@earendil-works/pi-durable'
 import { Type } from '@earendil-works/pi-ai'
@@ -11,7 +10,7 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
   type UIMessage,
 } from 'ai'
-import { PlainChat } from '../fixtures/chat.ts'
+import { PlainChat, client, Decision } from '../fixtures/chat.ts'
 import { abort, history, respond } from '../main.ts'
 import { call, context, shop, host } from './fixtures/host.ts'
 /** Both stock predicates must be false at the same terminal boundary, including stale settlements. */
@@ -38,21 +37,19 @@ for (const kind of ['approval', 'output'] as const)
           return respond(opened.harness, opened.root.id, new Request(url, init), context)
         },
       })
-      let done = yield* Deferred.make<void, FixtureFailed>()
-      const chat = new PlainChat({
+      const { chat, next } = client({
         transport,
         sendAutomaticallyWhen: automatic,
-        onFinish: () => Deferred.doneUnsafe(done, Effect.void),
-        onError: (error) =>
-          Deferred.doneUnsafe(done, Effect.fail(new FixtureFailed({ cause: error }))),
       })
+      let done = next()
       yield* Effect.promise(() => chat.sendMessage({ text: 'Go' }))
+      expect(yield* done).toEqual(Decision.cases.Settled.make({}))
       const message = chat.lastMessage
       if (message === undefined) throw new Error('Expected parked message')
       const part = message.parts.find(isToolUIPart)
       if (part === undefined) throw new Error('Expected held call')
       yield* Effect.promise(() => abort(opened.harness, opened.root.id, context))
-      done = yield* Deferred.make<void, FixtureFailed>()
+      done = next()
       if (kind === 'approval') {
         if (part.state !== 'approval-requested') throw new Error('Expected approval')
         yield* Effect.promise(() =>
@@ -64,7 +61,7 @@ for (const kind of ['approval', 'output'] as const)
             chat.addToolOutput({ tool: 'ask', toolCallId: 'old', output: 'savings' }),
           ),
         )
-      yield* Deferred.await(done)
+      expect(yield* done).toEqual(Decision.cases.Settled.make({}))
       const page = yield* Effect.promise(() =>
         history(opened.harness, opened.root.id, { limit: 10 }, context),
       )
@@ -131,19 +128,16 @@ it.live.each([
           return respond(opened.harness, opened.root.id, new Request(url, init), context)
         },
       })
-      const done = yield* Deferred.make<void, FixtureFailed>()
-      const stale = new PlainChat({
+      const { chat: stale, next } = client({
         transport,
         sendAutomaticallyWhen: automatic,
-        onFinish: () => Deferred.doneUnsafe(done, Effect.void),
-        onError: (error) =>
-          Deferred.doneUnsafe(done, Effect.fail(new FixtureFailed({ cause: error }))),
       })
+      let done = next()
       stale.messages = [message]
       yield* Effect.promise(() =>
         Promise.resolve(stale.addToolApprovalResponse({ id: part.approval.id, approved: true })),
       )
-      yield* Deferred.await(done)
+      expect(yield* done).toEqual(Decision.cases.Settled.make({}))
       expect(stale.status).toBe('ready')
       expect(posts).toBe(1)
       const page = yield* Effect.promise(() =>

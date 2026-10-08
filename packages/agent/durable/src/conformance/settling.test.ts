@@ -1,5 +1,4 @@
 import { Deferred, Effect, Option, Predicate, Schema } from 'effect'
-import { FixtureFailed } from '../fixtures/harness.ts'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from '@effect/vitest'
 import {
@@ -9,7 +8,7 @@ import {
   tool,
 } from 'ai'
 import { z } from 'zod'
-import { PlainChat } from '../fixtures/chat.ts'
+import { client, Decision } from '../fixtures/chat.ts'
 import { waitForFrame } from '../fixtures/provider.ts'
 import { host } from './fixtures/host.ts'
 const partial = Schema.decodeUnknownOption(Schema.Struct({ input: Schema.String }))
@@ -68,16 +67,12 @@ for (const execution of ['parallel', 'sequential'] as const)
           ),
           fauxAssistantMessage('Done.'),
         ])
-        let finished = yield* Deferred.make<void, FixtureFailed>()
-        const chat = new PlainChat({
+        const { chat, next } = client({
           transport: opened.transport,
           sendAutomaticallyWhen:
             settlement === 'output'
               ? lastAssistantMessageIsCompleteWithToolCalls
               : lastAssistantMessageIsCompleteWithApprovalResponses,
-          onFinish: () => Deferred.doneUnsafe(finished, Effect.void),
-          onError: (error) =>
-            Deferred.doneUnsafe(finished, Effect.fail(new FixtureFailed({ cause: error }))),
           onMessage: (message) => {
             const first = message.parts.find(isToolUIPart)
             if (first === undefined || first.state !== 'input-streaming') return
@@ -86,18 +81,20 @@ for (const execution of ['parallel', 'sequential'] as const)
               Deferred.doneUnsafe(visible, Effect.void)
           },
         })
+        let finished = next()
         const sent = chat.sendMessage({ text: 'Work twice' })
         yield* Deferred.await(visible)
         expect(ran).toEqual([])
         Deferred.doneUnsafe(release, Effect.void)
         yield* Effect.promise(() => sent)
+        expect(yield* finished).toEqual(Decision.cases.Settled.make({}))
         for (const id of ['c1', 'c2']) {
           if (chat.lastMessage === undefined) throw new Error('Expected assistant')
           const part = chat.lastMessage.parts.find(
             (candidate) => isToolUIPart(candidate) && candidate.toolCallId === id,
           )
           if (part === undefined || !isToolUIPart(part)) throw new Error('Expected presented call')
-          finished = yield* Deferred.make<void, FixtureFailed>()
+          finished = next()
           if (settlement === 'output') {
             expect(part.state).toBe('input-available')
             yield* Effect.promise(() =>
@@ -116,7 +113,8 @@ for (const execution of ['parallel', 'sequential'] as const)
               ),
             )
           }
-          if (execution === 'sequential' || id === 'c2') yield* Deferred.await(finished)
+          if (execution === 'sequential' || id === 'c2')
+            expect(yield* finished).toEqual(Decision.cases.Settled.make({}))
         }
         expect(chat.status).toBe('ready')
         expect(chat.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)

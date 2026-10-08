@@ -1,5 +1,4 @@
-import { Deferred, Effect, Option } from 'effect'
-import { FixtureFailed } from '../fixtures/harness.ts'
+import { Effect, Option } from 'effect'
 import { consumeReadable, hold } from '../fixtures/reading.ts'
 
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux'
@@ -11,7 +10,7 @@ import * as NodeURL from 'node:url'
 import { Holds } from '../holds.ts'
 import { Delivery } from '../delivery.ts'
 import { Predicate } from 'effect'
-import { PlainChat } from '../fixtures/chat.ts'
+import { client, Decision } from '../fixtures/chat.ts'
 import { abort, answer, attachRun, decide, history, respond, streamRun, waiting } from '../main.ts'
 import { call, context, modelText, shop } from './fixtures/host.ts'
 /** Reserve a durable late question before parking this same run on its payment approval. */
@@ -206,15 +205,13 @@ it.live('keeps the run message id stable after a steer adds an input', () =>
       call('pay', { amount: 200 }, 'c2'),
       fauxAssistantMessage('Done.'),
     ])
-    let completion = yield* Deferred.make<void, FixtureFailed>()
-    const chat = new PlainChat({
+    const { chat, next } = client({
       transport: opened.transport,
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-      onFinish: () => Deferred.doneUnsafe(completion, Effect.void),
-      onError: (error) =>
-        Deferred.doneUnsafe(completion, Effect.fail(new FixtureFailed({ cause: error }))),
     })
+    let completion = next()
     yield* Effect.promise(() => chat.sendMessage({ text: 'Pay' }))
+    expect(yield* completion).toEqual(Decision.cases.Settled.make({}))
     if (chat.lastMessage === undefined) throw new Error('Expected assistant')
     const messageId = chat.lastMessage.id
     const part = chat.lastMessage.parts.find(isToolUIPart)
@@ -226,11 +223,11 @@ it.live('keeps the run message id stable after a steer adds an input', () =>
         context,
       ),
     )
-    completion = yield* Deferred.make<void, FixtureFailed>()
+    completion = next()
     yield* Effect.promise(() =>
       Promise.resolve(chat.addToolApprovalResponse({ id: part.approval.id, approved: true })),
     )
-    yield* Deferred.await(completion)
+    expect(yield* completion).toEqual(Decision.cases.Settled.make({}))
     expect(chat.lastMessage.id).toBe(messageId)
     const attached = yield* Effect.promise(() => attachRun(opened.harness, opened.root.id, context))
     if (attached.status !== 'running') throw new Error('Expected c2 run')
@@ -240,11 +237,11 @@ it.live('keeps the run message id stable after a steer adds an input', () =>
     )
     if (second === undefined || !isToolUIPart(second) || second.state !== 'approval-requested')
       throw new Error('Expected second approval')
-    completion = yield* Deferred.make<void, FixtureFailed>()
+    completion = next()
     yield* Effect.promise(() =>
       Promise.resolve(chat.addToolApprovalResponse({ id: second.approval.id, approved: true })),
     )
-    yield* Deferred.await(completion)
+    expect(yield* completion).toEqual(Decision.cases.Settled.make({}))
     expect(fixture.paid).toEqual([100, 200])
   }),
 )

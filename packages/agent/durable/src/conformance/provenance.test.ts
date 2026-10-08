@@ -40,7 +40,7 @@ import {
   lastAssistantMessageIsCompleteWithApprovalResponses,
   tool,
 } from 'ai'
-import { PlainChat } from '../fixtures/chat.ts'
+import { PlainChat, client, Decision } from '../fixtures/chat.ts'
 import { z } from 'zod'
 import { postgresFixture } from '../postgres/testing.ts'
 import {
@@ -614,19 +614,16 @@ for (const backend of backends) {
           )
           yield* Deferred.succeed(release, undefined)
           yield* Effect.promise(() => root.waitForIdle(context))
-          let completed = yield* Deferred.make<void, FixtureFailed>()
-          const chat = new PlainChat({
+          const { chat, next } = client({
             transport: new DefaultChatTransport({
               api: 'http://durable.test/chat',
               fetch: (url, init) => respond(harness, root.id, new Request(url, init), context),
             }),
             sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-            onFinish: () => Deferred.doneUnsafe(completed, Effect.void),
-            onError: (cause) =>
-              Deferred.doneUnsafe(completed, Effect.fail(new FixtureFailed({ cause }))),
           })
+          let completed = next()
           yield* Effect.promise(() => chat.sendMessage({ text: 'Next' }))
-          yield* Deferred.await(completed)
+          expect(yield* completed).toEqual(Decision.cases.Settled.make({}))
           const liveMessage = chat.lastMessage
           if (liveMessage === undefined) throw new Error('Expected parked message')
           const entries = yield* assistants(root)
@@ -638,7 +635,7 @@ for (const backend of backends) {
           expect((yield* consumeReadable(attached.stream, Option.none())).message.id).toBe(
             liveMessage.id,
           )
-          completed = yield* Deferred.make<void, FixtureFailed>()
+          completed = next()
           yield* Effect.promise(() =>
             Promise.resolve(
               chat.addToolApprovalResponse({
@@ -647,18 +644,18 @@ for (const backend of backends) {
               }),
             ),
           )
-          yield* Deferred.await(completed)
+          expect(yield* completed).toEqual(Decision.cases.Settled.make({}))
           expect(paid).toEqual([100])
           const continued = chat.lastMessage
           if (continued === undefined) throw new Error('Expected continued assistant')
           expect(continued.id).toBe(liveMessage.id)
           const second = approvalId(chat, 'c2')
           if (ending === 'approve') {
-            completed = yield* Deferred.make<void, FixtureFailed>()
+            completed = next()
             yield* Effect.promise(() =>
               Promise.resolve(chat.addToolApprovalResponse({ id: second, approved: true })),
             )
-            yield* Deferred.await(completed)
+            expect(yield* completed).toEqual(Decision.cases.Settled.make({}))
             expect(paid).toEqual([100, 200])
           } else yield* Effect.promise(() => root.abort(context))
           yield* Effect.promise(() => root.waitForIdle(context))

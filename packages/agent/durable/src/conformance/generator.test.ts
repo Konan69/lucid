@@ -13,7 +13,7 @@ import { Effect, Deferred, Fiber, Option } from 'effect'
 import { FixtureFailed } from '../fixtures/harness.ts'
 
 import { z } from 'zod'
-import { PlainChat } from '../fixtures/chat.ts'
+import { client, Decision } from '../fixtures/chat.ts'
 import { abort, attachRun, history, streamRun } from '../main.ts'
 import { call, context, host, texts } from './fixtures/host.ts'
 
@@ -407,26 +407,24 @@ it.live.each([
         return fauxAssistantMessage('Done.')
       },
     ])
-    let finished = Deferred.makeUnsafe<void, FixtureFailed>()
-    const chat = new PlainChat({
+    const { chat, next } = client({
       transport: opened.transport,
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-      onFinish: () => Deferred.doneUnsafe(finished, Effect.void),
-      onError: (error) =>
-        Deferred.doneUnsafe(finished, Effect.fail(new FixtureFailed({ cause: error }))),
     })
+    let finished = next()
     yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ text: 'Run' })))
+    expect(yield* finished).toEqual(Decision.cases.Settled.make({}))
     if (chat.lastMessage === undefined) throw new Error('Expected assistant')
     if (sample.approval) {
       expect(executions).toBe(0)
       const part = chat.lastMessage.parts.find(isToolUIPart)
       if (part === undefined || part.state !== 'approval-requested')
         throw new Error('Expected approval')
-      finished = Deferred.makeUnsafe<void, FixtureFailed>()
+      finished = next()
       yield* Effect.promise(() =>
         Promise.resolve(chat.addToolApprovalResponse({ id: part.approval.id, approved: true })),
       )
-      yield* Deferred.await(finished)
+      expect(yield* finished).toEqual(Decision.cases.Settled.make({}))
     }
     expect(executions).toBe(1)
     expect(chat.lastMessage.parts.find(isToolUIPart)).toMatchObject({

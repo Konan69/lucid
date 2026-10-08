@@ -1,18 +1,15 @@
-import { FixtureFailed } from '../fixtures/harness.ts'
-import { Effect, Deferred, Option } from 'effect'
+import { Effect, Option } from 'effect'
 import { consumeReadable, hold } from '../fixtures/reading.ts'
 import { fauxAssistantMessage, fauxText, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from '@effect/vitest'
 import {
-  DefaultChatTransport,
   isToolUIPart,
   lastAssistantMessageIsCompleteWithApprovalResponses,
   lastAssistantMessageIsCompleteWithToolCalls,
   tool,
-  type UIMessage,
 } from 'ai'
 import { z } from 'zod'
-import { PlainChat } from '../fixtures/chat.ts'
+import { client, Decision } from '../fixtures/chat.ts'
 import { answer, attachRun, history, respond, streamRun, waiting } from '../main.ts'
 import { call, context, host, shop, texts } from './fixtures/host.ts'
 
@@ -44,15 +41,13 @@ it.live('keeps slow parallel content order identical in live Chat, attachment an
       ),
       fauxAssistantMessage('Done.'),
     ])
-    let completion = Deferred.makeUnsafe<void, FixtureFailed>()
-    const chat = new PlainChat({
+    const { chat, next } = client({
       transport: opened.transport,
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-      onFinish: () => Deferred.doneUnsafe(completion, Effect.void),
-      onError: (error) =>
-        Deferred.doneUnsafe(completion, Effect.fail(new FixtureFailed({ cause: error }))),
     })
+    let completion = next()
     yield* Effect.promise(() => Promise.resolve(chat.sendMessage({ text: 'Pay' })))
+    expect(yield* completion).toEqual(Decision.cases.Settled.make({}))
     if (chat.lastMessage === undefined) throw new Error('Expected assistant')
     expect(chat.lastMessage.parts.map((part) => part.type)).toEqual([
       'step-start',
@@ -72,11 +67,11 @@ it.live('keeps slow parallel content order identical in live Chat, attachment an
     const part = chat.lastMessage.parts.find(isToolUIPart)
     if (part === undefined || part.state !== 'approval-requested')
       throw new Error('Expected approval')
-    completion = Deferred.makeUnsafe<void, FixtureFailed>()
+    completion = next()
     yield* Effect.promise(() =>
       Promise.resolve(chat.addToolApprovalResponse({ id: part.approval.id, approved: true })),
     )
-    yield* Deferred.await(completion)
+    expect(yield* completion).toEqual(Decision.cases.Settled.make({}))
     yield* Effect.promise(() => Promise.resolve(opened.root.waitForIdle(context)))
     const page = yield* Effect.promise(() =>
       Promise.resolve(history(opened.harness, opened.root.id, { limit: 10 }, context)),
@@ -99,24 +94,17 @@ it.live(
         fauxAssistantMessage('First finished.'),
         call('ask', { question: 'Second?' }, 'x'),
       ])
-      let posts = 0
-      let completed = Deferred.makeUnsafe<void, FixtureFailed>()
-      const tab = new PlainChat({
-        transport: new DefaultChatTransport<UIMessage>({
-          api: 'http://durable.test/chat',
-          fetch: (url, init) => {
-            const request = new Request(url, init)
-            if (request.method === 'POST') posts++
-            if (posts > 2) throw new Error('Stale resume posted more than once')
-            return Promise.resolve(respond(opened.harness, opened.root.id, request, context))
-          },
-        }),
+      const observed = client({
+        fetch: (url, init) => {
+          const request = new Request(url, init)
+          return Promise.resolve(respond(opened.harness, opened.root.id, request, context))
+        },
         sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-        onFinish: () => Deferred.doneUnsafe(completed, Effect.void),
-        onError: (error) =>
-          Deferred.doneUnsafe(completed, Effect.fail(new FixtureFailed({ cause: error }))),
       })
+      const { chat: tab, next } = observed
+      let completed = next()
       yield* Effect.promise(() => Promise.resolve(tab.sendMessage({ text: 'First' })))
+      expect(yield* completed).toEqual(Decision.cases.Settled.make({}))
       yield* Effect.gen(function* () {
         const awaited1 = yield* hold(opened.harness, opened.root.id, 'x', context)
         return yield* Effect.promise(() =>
@@ -146,12 +134,12 @@ it.live(
       const held = yield* Effect.promise(() =>
         Promise.resolve(waiting(opened.harness, opened.root.id, context)),
       )
-      completed = Deferred.makeUnsafe<void, FixtureFailed>()
+      completed = next()
       yield* Effect.promise(() =>
         Promise.resolve(tab.addToolOutput({ tool: 'ask', toolCallId: 'x', output: 'Stale' })),
       )
-      yield* Deferred.await(completed)
-      expect(posts).toBe(2)
+      expect(yield* completed).toEqual(Decision.cases.Settled.make({}))
+      expect(observed.posts).toBe(2)
       expect(tab.status).toBe('ready')
       if (tab.lastMessage === undefined) throw new Error('Expected finished first run')
       expect(texts(tab.lastMessage)).toEqual(['First finished.'])
@@ -174,25 +162,17 @@ it.live('continues past a steer without repeatedly posting an already answered c
       call('ask', { question: 'After steer?' }, 'y'),
       fauxAssistantMessage('Finished after steer.'),
     ])
-    let posts = 0
-    let allowedPosts = 2
-    let completed = Deferred.makeUnsafe<void, FixtureFailed>()
-    const tab = new PlainChat({
-      transport: new DefaultChatTransport<UIMessage>({
-        api: 'http://durable.test/chat',
-        fetch: (url, init) => {
-          const request = new Request(url, init)
-          if (request.method === 'POST') posts++
-          if (posts > allowedPosts) throw new Error('Steer resume posted more than once')
-          return Promise.resolve(respond(opened.harness, opened.root.id, request, context))
-        },
-      }),
+    const observed = client({
+      fetch: (url, init) => {
+        const request = new Request(url, init)
+        return Promise.resolve(respond(opened.harness, opened.root.id, request, context))
+      },
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-      onFinish: () => Deferred.doneUnsafe(completed, Effect.void),
-      onError: (error) =>
-        Deferred.doneUnsafe(completed, Effect.fail(new FixtureFailed({ cause: error }))),
     })
+    const { chat: tab, next } = observed
+    let completed = next()
     yield* Effect.promise(() => Promise.resolve(tab.sendMessage({ text: 'First' })))
+    expect(yield* completed).toEqual(Decision.cases.Settled.make({}))
     yield* Effect.promise(() =>
       Promise.resolve(
         opened.root.submit(
@@ -228,12 +208,12 @@ it.live('continues past a steer without repeatedly posting an already answered c
       Promise.resolve(waiting(opened.harness, opened.root.id, context)),
     )
     expect(held.map((row) => row.callId)).toEqual(['y'])
-    completed = Deferred.makeUnsafe<void, FixtureFailed>()
+    completed = next()
     yield* Effect.promise(() =>
       Promise.resolve(tab.addToolOutput({ tool: 'ask', toolCallId: 'x', output: 'Stale' })),
     )
-    yield* Deferred.await(completed)
-    expect(posts).toBe(2)
+    expect(yield* completed).toEqual(Decision.cases.Settled.make({}))
+    expect(observed.posts).toBe(2)
     expect(tab.status).toBe('ready')
     expect(tab.messages.filter((message) => message.role === 'assistant')).toHaveLength(1)
     if (tab.lastMessage === undefined) throw new Error('Expected extended assistant')
@@ -246,13 +226,12 @@ it.live('continues past a steer without repeatedly posting an already answered c
         Promise.resolve(waiting(opened.harness, opened.root.id, context)),
       ),
     ).toEqual(held)
-    allowedPosts = 3
-    completed = Deferred.makeUnsafe<void, FixtureFailed>()
+    completed = next()
     yield* Effect.promise(() =>
       Promise.resolve(tab.addToolOutput({ tool: 'ask', toolCallId: 'y', output: 'Now' })),
     )
-    yield* Deferred.await(completed)
-    expect(posts).toBe(3)
+    expect(yield* completed).toEqual(Decision.cases.Settled.make({}))
+    expect(observed.posts).toBe(3)
     expect(tab.status).toBe('ready')
     expect(texts(tab.lastMessage)).toEqual(['Finished after steer.'])
     expect(

@@ -15,7 +15,7 @@ import {
 import { z } from 'zod'
 import { abort, continueRun, respond, RunMissing, streamRun } from '../main.ts'
 import { waitForFrame } from '../fixtures/provider.ts'
-import { PlainChat } from '../fixtures/chat.ts'
+import { PlainChat, client, Decision } from '../fixtures/chat.ts'
 import { call, context, host, shop } from './fixtures/host.ts'
 /** A provider frame gate holds the input open until the real SDK has received its start. */
 for (const predicate of [
@@ -50,7 +50,6 @@ for (const predicate of [
         }),
       ])
       const started = yield* Deferred.make<void>()
-      const done = yield* Deferred.make<void, FixtureFailed>()
       let posts = 0
       const transport = new DefaultChatTransport<UIMessage>({
         api: 'http://durable.test/chat',
@@ -68,7 +67,7 @@ for (const predicate of [
           ),
       })
       // Decode through the real transport, observing only its public chunk stream before the SDK.
-      const chat = new PlainChat({
+      const { chat, next } = client({
         transport: {
           reconnectToStream: (input) => transport.reconnectToStream(input),
           sendMessages: (input) =>
@@ -89,16 +88,14 @@ for (const predicate of [
             ),
         },
         sendAutomaticallyWhen: predicate,
-        onFinish: () => Deferred.doneUnsafe(done, Effect.void),
-        onError: (error) =>
-          Deferred.doneUnsafe(done, Effect.fail(new FixtureFailed({ cause: error }))),
       })
+      let done = next()
       const sending = chat.sendMessage({ text: 'Pay' })
       yield* Deferred.await(started)
       yield* Effect.promise(() => abort(opened.harness, opened.root.id, context))
       Deferred.doneUnsafe(release, Effect.void)
       yield* Effect.promise(() => sending)
-      yield* Deferred.await(done)
+      expect(yield* done).toEqual(Decision.cases.Settled.make({}))
       expect(chat.status).toBe('ready')
       expect(posts).toBe(1)
       if (chat.lastMessage === undefined) throw new Error('Expected aborted assistant')

@@ -1,5 +1,4 @@
 import { Deferred, Effect, Fiber, Option, Stream } from 'effect'
-import { FixtureFailed } from '../fixtures/harness.ts'
 import { consumeReadable, ReadFailed } from '../fixtures/reading.ts'
 import {
   fauxAssistantMessage,
@@ -11,7 +10,7 @@ import { expect, it } from '@effect/vitest'
 import { isToolUIPart, lastAssistantMessageIsCompleteWithApprovalResponses, tool } from 'ai'
 import { z } from 'zod'
 import { waitForFrame } from '../fixtures/provider.ts'
-import { PlainChat } from '../fixtures/chat.ts'
+import { client, Decision } from '../fixtures/chat.ts'
 import { abort, attachRun, history, streamRun } from '../main.ts'
 import { context, host, texts } from './fixtures/host.ts'
 /** openai-completions.js customInput stores a growing grammar string, not JSON argument scratch. */
@@ -40,26 +39,24 @@ it.live('approves customInput without exposing its partial grammar input', () =>
       }),
       fauxAssistantMessage('Done.'),
     ])
-    let done = yield* Deferred.make<void, FixtureFailed>()
-    const chat = new PlainChat({
+    const { chat, next } = client({
       transport: opened.transport,
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-      onFinish: () => Deferred.doneUnsafe(done, Effect.void),
-      onError: (error) =>
-        Deferred.doneUnsafe(done, Effect.fail(new FixtureFailed({ cause: error }))),
     })
+    let done = next()
     yield* Effect.promise(() => chat.sendMessage({ text: 'Pay' }))
+    expect(yield* done).toEqual(Decision.cases.Settled.make({}))
     if (chat.lastMessage === undefined) throw new Error('Expected assistant')
     const part = chat.lastMessage.parts.find(isToolUIPart)
     if (part === undefined || part.state !== 'approval-requested')
       throw new Error('Expected approval')
     expect(part.input).toEqual({ input })
     expect(paid).toEqual([])
-    done = yield* Deferred.make<void, FixtureFailed>()
+    done = next()
     yield* Effect.promise(() =>
       Promise.resolve(chat.addToolApprovalResponse({ id: part.approval.id, approved: true })),
     )
-    yield* Deferred.await(done)
+    expect(yield* done).toEqual(Decision.cases.Settled.make({}))
     expect(paid).toEqual([input])
     expect(chat.status).toBe('ready')
   }),

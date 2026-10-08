@@ -1,10 +1,9 @@
-import { Deferred, Effect } from 'effect'
-import { FixtureFailed } from '../fixtures/harness.ts'
+import { Effect } from 'effect'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
 import { expect, it } from '@effect/vitest'
 import { isToolUIPart, lastAssistantMessageIsCompleteWithApprovalResponses, tool } from 'ai'
 import { z } from 'zod'
-import { PlainChat } from '../fixtures/chat.ts'
+import { client, Decision } from '../fixtures/chat.ts'
 import type { ProviderFamily } from '../fixtures/provider.ts'
 import { history } from '../main.ts'
 import { context, host } from './fixtures/host.ts'
@@ -49,15 +48,13 @@ for (const given of cases)
         }),
         fauxAssistantMessage('Done.'),
       ])
-      let done = yield* Deferred.make<void, FixtureFailed>()
-      const chat = new PlainChat({
+      const { chat, next } = client({
         transport: opened.transport,
         sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-        onFinish: () => Deferred.doneUnsafe(done, Effect.void),
-        onError: (error) =>
-          Deferred.doneUnsafe(done, Effect.fail(new FixtureFailed({ cause: error }))),
       })
+      let done = next()
       yield* Effect.promise(() => chat.sendMessage({ text: 'Pay' }))
+      expect(yield* done).toEqual(Decision.cases.Settled.make({}))
       if (chat.lastMessage === undefined) throw new Error('Expected assistant')
       if (given.executes) {
         const part = chat.lastMessage.parts.find(isToolUIPart)
@@ -65,11 +62,11 @@ for (const given of cases)
           throw new Error('Expected approval')
         expect(part.toolCallId).toBe(given.id)
         expect(part.input).toEqual({ amount: 1 })
-        done = yield* Deferred.make<void, FixtureFailed>()
+        done = next()
         yield* Effect.promise(() =>
           Promise.resolve(chat.addToolApprovalResponse({ id: part.approval.id, approved: true })),
         )
-        yield* Deferred.await(done)
+        expect(yield* done).toEqual(Decision.cases.Settled.make({}))
       }
       expect(chat.status).toBe('ready')
       expect(paid).toEqual(given.executes ? [1] : [])
