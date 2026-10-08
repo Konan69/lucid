@@ -15,10 +15,10 @@ import { createRegistry, Harness } from '@earendil-works/pi-durable'
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node'
 import { tool } from 'ai'
 import { z } from 'zod'
-import { answer, streamRun, toolsExtension, waiting } from '../core.ts'
+import { answer, streamRun, toolsExtension, waiting } from '../main.ts'
 
 const context = BACKGROUND_CONTEXT
-/** Own the disposable child process's async setup, interactions and readiness receipt. */
+/** Drive the Promise consumer entry, as before conversion, then die at the committed crash boundary. */
 const main = Effect.fn('Test.main')(function* () {
   // A pending Effect has no Node handle. Keep this owned child alive until the parent's SIGKILL,
   // rather than letting an unsettled top-level await exit before the crash boundary is observed.
@@ -50,16 +50,18 @@ const main = Effect.fn('Test.main')(function* () {
   ])
   const registry = createRegistry()
   registry.install(
-    yield* toolsExtension(
-      'conformance',
-      {
-        later: tool({ inputSchema: z.object({ question: z.string() }) }),
-        pay: tool({
-          inputSchema: z.object({ amount: z.number() }),
-          execute: ({ amount }) => Promise.resolve({ receipt: amount }),
-        }),
-      },
-      { approval: { pay: true }, answers: { later: 'later' } },
+    yield* Effect.promise(() =>
+      toolsExtension(
+        'conformance',
+        {
+          later: tool({ inputSchema: z.object({ question: z.string() }) }),
+          pay: tool({
+            inputSchema: z.object({ amount: z.number() }),
+            execute: ({ amount }) => Promise.resolve({ receipt: amount }),
+          }),
+        },
+        { approval: { pay: true }, answers: { later: 'later' } },
+      ),
     ),
   )
   const storage = yield* Effect.acquireRelease(
@@ -81,14 +83,20 @@ const main = Effect.fn('Test.main')(function* () {
       agent: { model: { provider: 'faux', modelId: 'faux-1' } },
     }),
   )
-  yield* Stream.runDrain(
+  const stream = yield* Effect.promise(() =>
     streamRun(
       harness,
       { conversationId: root.id, content: 'Ask then pay', requestId: 'crash-answer' },
       context,
     ),
   )
-  const questions = yield* waiting(harness, root.id, context)
+  yield* Stream.runDrain(
+    Stream.fromReadableStream({
+      evaluate: () => stream,
+      onError: (cause) => new FixtureFailed({ cause }),
+    }),
+  )
+  const questions = yield* Effect.promise(() => waiting(harness, root.id, context))
   const question = questions.find((row) => row.kind === 'later')
   if (question === undefined)
     return yield* new FixtureFailed({ cause: new Error('Expected late question') })
@@ -101,7 +109,9 @@ const main = Effect.fn('Test.main')(function* () {
     )
       process.kill(process.pid, 'SIGKILL')
   })
-  yield* answer(harness, root.id, { holdId: question.holdId, output: 'savings' }, context)
+  yield* Effect.promise(() =>
+    answer(harness, root.id, { holdId: question.holdId, output: 'savings' }, context),
+  )
   return yield* new FixtureFailed({
     cause: new Error('Expected death before answer receipt commit'),
   })

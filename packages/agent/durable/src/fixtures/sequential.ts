@@ -14,10 +14,10 @@ import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite
 import { tool } from 'ai'
 import { z } from 'zod'
 import { Effect, Option, Stream } from 'effect'
-import { continueRun, decide, streamRun, toolsExtension, waiting } from '../core.ts'
+import { continueRun, decide, streamRun, toolsExtension, waiting } from '../main.ts'
 
 const context = BACKGROUND_CONTEXT
-/** Own the disposable child process's async setup, interactions and readiness receipt. */
+/** Drive the Promise consumer entry, as before conversion, then die at the committed crash boundary. */
 const main = Effect.fn('Test.main')(function* () {
   // A pending Effect has no Node handle. Keep this owned child alive until the parent's SIGKILL,
   // rather than letting an unsettled top-level await exit before the crash boundary is observed.
@@ -50,15 +50,17 @@ const main = Effect.fn('Test.main')(function* () {
   ])
   const registry = createRegistry()
   registry.install(
-    yield* toolsExtension(
-      'conformance',
-      {
-        pay: tool({
-          inputSchema: z.object({ amount: z.number() }),
-          execute: ({ amount }) => Promise.resolve(amount),
-        }),
-      },
-      { execution: 'sequential', approval: { pay: true } },
+    yield* Effect.promise(() =>
+      toolsExtension(
+        'conformance',
+        {
+          pay: tool({
+            inputSchema: z.object({ amount: z.number() }),
+            execute: ({ amount }) => Promise.resolve(amount),
+          }),
+        },
+        { execution: 'sequential', approval: { pay: true } },
+      ),
     ),
   )
   const storage = yield* Effect.acquireRelease(
@@ -85,24 +87,44 @@ const main = Effect.fn('Test.main')(function* () {
       agent: { model: { provider: 'faux', modelId: 'faux-1' } },
     }),
   )
-  const chunks = yield* Stream.runCollect(
+  const stream = yield* Effect.promise(() =>
     streamRun(
       harness,
       { conversationId: root.id, content: 'Pay both', requestId: 'crash-sequential' },
       context,
     ),
   )
+  const chunks = yield* Stream.runCollect(
+    Stream.fromReadableStream({
+      evaluate: () => stream,
+      onError: (cause) => new FixtureFailed({ cause }),
+    }),
+  )
   const start = chunks.find((chunk) => chunk.type === 'start')
   if (start === undefined)
     return yield* new FixtureFailed({ cause: new Error('Expected message start') })
   const messageId = Option.getOrThrow(Option.fromNullishOr(start.messageId))
-  const first = (yield* waiting(harness, root.id, context)).find((row) => row.callId === 'c1')
-  if (first === undefined) return yield* new FixtureFailed({ cause: new Error('Expected c1 hold') })
-  yield* decide(harness, root.id, { holdId: first.holdId, approved: true }, context)
-  yield* Stream.runDrain(
-    yield* continueRun(harness, root.id, { messageId, known: new Set(['c1']) }, context),
+  const first = (yield* Effect.promise(() => waiting(harness, root.id, context))).find(
+    (row) => row.callId === 'c1',
   )
-  if (!(yield* waiting(harness, root.id, context)).some((row) => row.callId === 'c2'))
+  if (first === undefined) return yield* new FixtureFailed({ cause: new Error('Expected c1 hold') })
+  yield* Effect.promise(() =>
+    decide(harness, root.id, { holdId: first.holdId, approved: true }, context),
+  )
+  const continued = yield* Effect.promise(() =>
+    continueRun(harness, root.id, { messageId, known: new Set(['c1']) }, context),
+  )
+  yield* Stream.runDrain(
+    Stream.fromReadableStream({
+      evaluate: () => continued,
+      onError: (cause) => new FixtureFailed({ cause }),
+    }),
+  )
+  if (
+    !(yield* Effect.promise(() => waiting(harness, root.id, context))).some(
+      (row) => row.callId === 'c2',
+    )
+  )
     return yield* new FixtureFailed({ cause: new Error('Expected c2 hold') })
   process.stdout.write('c2-waiting\n')
   return yield* Effect.never
