@@ -49,6 +49,7 @@ describe.skipIf(process.env['VIVID_LIVE_ANOTHER_ACCOUNT'] !== '1')(
               ),
             )
             const work = yield* fixture.rpc.BeginConnection({
+              from: 'Web',
               service: wiki.id,
               name: 'Work',
               shared: false,
@@ -85,6 +86,7 @@ describe.skipIf(process.env['VIVID_LIVE_ANOTHER_ACCOUNT'] !== '1')(
 
             // The Person presses the card: one more account, begun after Vivid asked.
             const personal = yield* fixture.rpc.BeginConnection({
+              from: 'Web',
               service: wiki.id,
               name: 'Personal',
               shared: false,

@@ -19,7 +19,7 @@ import { ServiceMark } from '../../ui/Mark'
 import { Button, EDGE, Label, Notice, radius } from '../../ui/ui'
 import { useGo } from '../../workspace'
 import { useFlow } from './flow'
-import { Returning, showSignIn, Trip } from './Trip'
+import { HERE, Returning, showSignIn, Trip } from './Trip'
 
 /**
  * Vivid needs a service to go on. The card says why in Vivid's own words and finishes the job
@@ -333,7 +333,7 @@ function SignIn({
 
   /** Asks where the Integration stands. A refusal is said on the card and answers with nothing. */
   async function ask(): Promise<Option.Option<ConnectionStep>> {
-    const result = await data.change((client) => client.ResumeConnection({ id }))
+    const result = await data.change((client) => client.ResumeConnection({ id, from: HERE }))
     if (Result.isSuccess(result)) return Option.some(result.success)
     setTrip(Trip.Refused({ message: result.failure.message }))
     return Option.none()

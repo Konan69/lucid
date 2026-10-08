@@ -29,7 +29,7 @@ import {
 } from '../../data/wish'
 import { confirmDestructive } from '../../ui/ui'
 import type { Routes } from '../../workspace'
-import { showSignIn } from './Trip'
+import { HERE, showSignIn } from './Trip'
 
 /** The sign-in the Person left the app for: whose row says so, and which Integration to ask about. */
 interface Away {
@@ -212,7 +212,8 @@ export function useFlowHeld(showKey: ShowKey) {
   ) =>
     void press(
       service,
-      (client) => client.BeginConnection({ service, name: Option.getOrNull(name), shared }),
+      (client) =>
+        client.BeginConnection({ service, name: Option.getOrNull(name), shared, from: HERE }),
       card,
     )
 
@@ -254,7 +255,7 @@ export function useFlowHeld(showKey: ShowKey) {
      * entered, or the sign-in lapsed. It is the same Integration afterwards, not a second one.
      */
     resume: (id: ConnectionId, card: Option.Option<string>) =>
-      void press(id, (client) => client.ResumeConnection({ id }), card),
+      void press(id, (client) => client.ResumeConnection({ id, from: HERE }), card),
 
     /**
      * Leaves a card's wish: `go` is called once, with the account, when a press that carries
@@ -291,7 +292,7 @@ export function useFlowHeld(showKey: ShowKey) {
       const { key, id } = away.value
       setAway(Option.none())
       mark(key, Option.some('checking'))
-      const result = await data.change((client) => client.ResumeConnection({ id }))
+      const result = await data.change((client) => client.ResumeConnection({ id, from: HERE }))
       if (Result.isFailure(result) || ConnectionStep.guards.OpenSignIn(result.success)) {
         mark(key, Option.none())
         return

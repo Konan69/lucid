@@ -67,7 +67,12 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
                   Effect.provideService(AuthContext, auth),
                   Effect.provideService(ConnectionAddress, address),
                 )
-            yield* store.begin(ownerActor, { service: serviceId, name: 'Catalogue', shared: false })
+            yield* store.begin(ownerActor, {
+              from: 'Web',
+              service: serviceId,
+              name: 'Catalogue',
+              shared: false,
+            })
             expect(
               AddIntegrationOutcome.guards.Added(
                 yield* add('https://server.example/mcp', 'Records', false),
@@ -435,11 +440,13 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
           const { ownerActor, memberActor, threadId } = yield* fixture()
           const store = yield* ConnectionStore
           yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Shared Records',
             shared: true,
           })
           yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Private Records',
             shared: false,
@@ -489,6 +496,7 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             const store = yield* ConnectionStore
             for (let index = 0; index < 25; index++) {
               yield* store.begin(ownerActor, {
+                from: 'Web',
                 service: serviceId,
                 name: `Account ${index}`,
                 shared: false,
@@ -552,7 +560,12 @@ describe.skipIf(!testDatabaseConfigured)('integration public handlers', () => {
             workspace: personalActor.workspace,
             threadId,
           })
-          yield* store.begin(ownerActor, { service: serviceId, name: 'Read test', shared: false })
+          yield* store.begin(ownerActor, {
+            from: 'Web',
+            service: serviceId,
+            name: 'Read test',
+            shared: false,
+          })
           yield* Ref.set(probe.tools, [
             ExecutorTool.make({
               name: 'delete',

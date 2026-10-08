@@ -46,6 +46,7 @@ describe.skipIf(!enabled)('GitHub personal ownership acceptance', () => {
             return yield* Effect.gen(function* () {
               const store = yield* ConnectionStore
               const step = yield* store.begin(ownerActor, {
+                from: 'Web',
                 service: ServiceId.make('curated/github-com-mcp'),
                 name: 'Personal GitHub',
                 shared: false,

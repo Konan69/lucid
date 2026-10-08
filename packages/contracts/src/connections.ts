@@ -182,11 +182,16 @@ export const ServiceCatalog = Schema.TaggedUnion({
 })
 export type ServiceCatalog = typeof ServiceCatalog.Type
 
+/** Where a sign-in trip is made from, which is where the browser hands back to. */
+export const SignInSurface = Schema.Literals(['Phone', 'Web'])
+export type SignInSurface = typeof SignInSurface.Type
+
 /**
  * Starting a Connection. Sharing one with the Company takes an admin. A service may be begun any
  * number of times; each is one more account.
  */
 export const BeginConnectionRequest = Schema.Struct({
+  from: SignInSurface,
   service: ServiceId,
   /**
    * What the Person calls the account being added, when they said: the way to tell it apart on a

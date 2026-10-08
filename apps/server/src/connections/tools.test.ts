@@ -55,6 +55,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             Ref.set(probe.outcome, previous).pipe(Effect.andThen(Ref.set(probe.checked, checked))),
           )
           const step = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Private account',
             shared: reason === 'SharedReadOnly',
@@ -100,6 +101,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           const checked = yield* Ref.get(probe.checked)
           yield* Effect.addFinalizer(() => Ref.set(probe.checked, checked))
           const step = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Work',
             shared: false,
@@ -147,6 +149,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             const { ownerActor } = yield* fixture()
             const store = yield* ConnectionStore
             const step = yield* store.begin(ownerActor, {
+              from: 'Web',
               service: serviceId,
               name: 'Work',
               shared: false,
@@ -223,6 +226,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           const probe = yield* ConnectionProbe
           const calls = yield* Ref.get(probe.calls)
           const step = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Work',
             shared: reason === 'SharedReadOnly',
@@ -276,6 +280,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           const { ownerActor } = yield* fixture()
           const store = yield* ConnectionStore
           const step = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Work',
             shared: false,
@@ -326,6 +331,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           const { ownerActor } = yield* fixture()
           const store = yield* ConnectionStore
           const step = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Work',
             shared: false,
@@ -377,6 +383,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           const { ownerActor } = yield* fixture()
           const store = yield* ConnectionStore
           const step = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Work',
             shared: false,
@@ -419,6 +426,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           const { ownerActor } = yield* fixture()
           const store = yield* ConnectionStore
           const step = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Work',
             shared: false,
@@ -464,6 +472,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               ),
             )
             const step = yield* store.begin(ownerActor, {
+              from: 'Web',
               service: serviceId,
               name: 'Private account',
               shared: false,
@@ -514,9 +523,19 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               input: {},
             }),
           ])
-          yield* store.begin(ownerActor, { service: serviceId, name: 'Work', shared: false })
+          yield* store.begin(ownerActor, {
+            from: 'Web',
+            service: serviceId,
+            name: 'Work',
+            shared: false,
+          })
           yield* TestClock.adjust(1)
-          yield* store.begin(ownerActor, { service: serviceId, name: 'Team', shared: true })
+          yield* store.begin(ownerActor, {
+            from: 'Web',
+            service: serviceId,
+            name: 'Team',
+            shared: true,
+          })
           const service = yield* findTools(ownerActor, { query: 'Records' })
           expect(service.tools.map((tool) => [tool.account, tool.name])).toEqual([
             ['Records (Work)', 'write'],
@@ -546,9 +565,15 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           const probe = yield* ConnectionProbe
           const previous = yield* Ref.get(probe.tools)
           yield* Effect.addFinalizer(() => Ref.set(probe.tools, previous))
-          yield* store.begin(ownerActor, { service: serviceId, name: 'Work', shared: false })
+          yield* store.begin(ownerActor, {
+            from: 'Web',
+            service: serviceId,
+            name: 'Work',
+            shared: false,
+          })
           yield* TestClock.adjust(1)
           const target = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Other',
             shared: false,
@@ -608,6 +633,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             ExecutorTool.make({ name: '---', description: '', effect: 'read', input: {} }),
           ])
           const connected = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: null,
             shared: false,
@@ -636,18 +662,21 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           const { ownerActor, memberActor } = yield* fixture()
           const store = yield* ConnectionStore
           const first = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Gmail (Gmail)',
             shared: false,
           })
           yield* TestClock.adjust(1)
           const second = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Gmail (Gmail)',
             shared: true,
           })
           yield* TestClock.adjust(1)
           yield* store.begin(memberActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Gmail (Gmail)',
             shared: false,
@@ -707,6 +736,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             again.tools.filter((tool) => tool.name === 'read').map((tool) => tool.account),
           ).toEqual(labels.map((tool) => tool.account))
           const mine = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Owner only',
             shared: false,
@@ -740,6 +770,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           ),
         )
         yield* (yield* ConnectionStore).begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Work',
           shared: false,
@@ -801,6 +832,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             ),
           ])
           yield* (yield* ConnectionStore).begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Work',
             shared: false,
@@ -845,6 +877,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           }),
         ])
         yield* (yield* ConnectionStore).begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Work',
           shared: false,
@@ -874,7 +907,12 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
         Effect.gen(function* () {
           const { ownerActor } = yield* fixture()
           const store = yield* ConnectionStore
-          yield* store.begin(ownerActor, { service: serviceId, name: 'Work', shared: false })
+          yield* store.begin(ownerActor, {
+            from: 'Web',
+            service: serviceId,
+            name: 'Work',
+            shared: false,
+          })
           const recordsStarted = yield* Deferred.make<void>()
           const releaseRecords = yield* Deferred.make<void>()
           const toolsStarted = yield* Deferred.make<void>()
@@ -969,6 +1007,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
             }),
           ])
           yield* (yield* ConnectionStore).begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Work',
             shared: false,
@@ -1024,6 +1063,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           }),
         ])
         const connection = yield* (yield* ConnectionStore).begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Wiki',
           shared: false,
@@ -1107,6 +1147,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
               ),
             )
             yield* (yield* ConnectionStore).begin(ownerActor, {
+              from: 'Web',
               service: serviceId,
               name: 'Work',
               shared: false,
@@ -1190,6 +1231,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           const store = yield* ConnectionStore
           for (let index = 0; index < 9; index += 1)
             yield* store.begin(ownerActor, {
+              from: 'Web',
               service: serviceId,
               name: `Account ${index}`,
               shared: false,
@@ -1353,6 +1395,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection account names', () => {
           ),
         )
         const connection = yield* (yield* ConnectionStore).begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Work',
           shared: false,

@@ -183,11 +183,13 @@ describe.skipIf(!testDatabaseConfigured)('Google fixed callback', () => {
           const run = Effect.fn('GoogleTest.verifyReturns')(function* () {
             const store = yield* ConnectionStore
             const first = yield* store.begin(ownerActor, {
+              from: 'Web',
               service: serviceId,
               name: 'First',
               shared: false,
             })
             const second = yield* store.begin(ownerActor, {
+              from: 'Web',
               service: serviceId,
               name: 'Second',
               shared: false,

@@ -67,6 +67,7 @@ describe.skipIf(process.env['VIVID_LIVE_THREAD_CONNECTION'] !== '1')(
               ),
             )
             yield* fixture.rpc.BeginConnection({
+              from: 'Web',
               service: mail.id,
               name: null,
               shared: false,

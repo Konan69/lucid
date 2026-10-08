@@ -82,7 +82,12 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           database.delete(personTable).where(eq(personTable.id, ownerActor.person.id)),
         )
         const failure = yield* (yield* ConnectionStore)
-          .begin(ownerActor, { service: serviceId, name: 'Rejected insert', shared: false })
+          .begin(ownerActor, {
+            from: 'Web',
+            service: serviceId,
+            name: 'Rejected insert',
+            shared: false,
+          })
           .pipe(Effect.flip)
         expect(failure._tag).toBe('DatabaseConstraintViolation')
         expect(yield* Ref.get(probe.removals)).toBe(removals + 1)
@@ -145,6 +150,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* Effect.gen(function* () {
             return yield* (yield* ConnectionStore).begin(ownerActor, {
+              from: 'Web',
               service: serviceId,
               name: 'Rejected',
               shared: false,
@@ -180,6 +186,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         }
         yield* Ref.set(probe.step, 'OpenSignIn')
         const begun = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Shared',
           shared: true,
@@ -198,7 +205,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* Effect.gen(function* () {
             const resumedStore = yield* ConnectionStore
-            const resumed = yield* resumedStore.resume(admin, begun.connection.id)
+            const resumed = yield* resumedStore.resume(admin, begun.connection.id, 'Web')
             expect(resumed._tag).toBe('OpenSignIn')
             const retained = yield* resumedStore.get(admin, begun.connection.id)
             expect(retained).toMatchObject({
@@ -259,11 +266,12 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         }
         yield* Ref.set(probe.step, 'OpenSignIn')
         const step = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Shared',
           shared: true,
         })
-        yield* store.resume(admin, step.connection.id)
+        yield* store.resume(admin, step.connection.id, 'Web')
         const before = yield* Ref.get(probe.signIns)
         yield* database.run(
           database.delete(membershipTable).where(eq(membershipTable.userId, admin.person.id)),
@@ -289,11 +297,13 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const probe = yield* ConnectionProbe
         yield* Ref.set(probe.step, 'OpenSignIn')
         const first = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'First',
           shared: false,
         })
         const second = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Second',
           shared: false,
@@ -319,13 +329,15 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           return yield* Effect.gen(function* () {
             const scoped = yield* ConnectionStore
             const slow = yield* scoped
-              .resume(ownerActor, first.connection.id)
+              .resume(ownerActor, first.connection.id, 'Web')
               .pipe(Effect.forkChild)
             yield* Deferred.await(entered)
             const repeated = yield* scoped
-              .resume(ownerActor, first.connection.id)
+              .resume(ownerActor, first.connection.id, 'Web')
               .pipe(Effect.forkChild)
-            expect((yield* scoped.resume(ownerActor, second.connection.id))._tag).toBe('OpenSignIn')
+            expect((yield* scoped.resume(ownerActor, second.connection.id, 'Web'))._tag).toBe(
+              'OpenSignIn',
+            )
             expect(yield* Ref.get(calls)).toBe(1)
             yield* Deferred.succeed(release, undefined)
             yield* Fiber.join(slow)
@@ -343,6 +355,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           const { ownerActor, memberActor, personalActor } = yield* fixture()
           const store = yield* ConnectionStore
           const step = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Personal account',
             shared: false,
@@ -369,11 +382,17 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const before = yield* Ref.get(probe.begins)
         expect(
           yield* store
-            .begin(memberActor, { service: serviceId, name: 'Shared account', shared: true })
+            .begin(memberActor, {
+              from: 'Web',
+              service: serviceId,
+              name: 'Shared account',
+              shared: true,
+            })
             .pipe(Effect.flip),
         ).toBeInstanceOf(Forbidden)
         expect(yield* Ref.get(probe.begins)).toBe(before)
         const step = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Shared account',
           shared: true,
@@ -397,6 +416,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const { ownerActor } = yield* fixture()
         const store = yield* ConnectionStore
         const step = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Offline catalog',
           shared: false,
@@ -434,6 +454,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
       Effect.gen(function* () {
         const { ownerActor } = yield* fixture()
         const step = yield* (yield* ConnectionStore).begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Shared catalog',
           shared: false,
@@ -496,6 +517,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           Effect.gen(function* () {
             const { ownerActor } = yield* fixture()
             const step = yield* (yield* ConnectionStore).begin(ownerActor, {
+              from: 'Web',
               service: serviceId,
               name: 'Catalog recovery',
               shared: false,
@@ -627,6 +649,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
               expect(
                 yield* store
                   .begin(ownerActor, {
+                    from: 'Web',
                     service: serviceId,
                     name: 'Setup unavailable',
                     shared: false,
@@ -692,6 +715,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           const probe = yield* ConnectionProbe
           yield* Ref.set(probe.step, 'OpenSignIn')
           const step = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Company sign-in',
             shared: true,
@@ -726,6 +750,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const probe = yield* ConnectionProbe
         yield* Ref.set(probe.step, 'OpenSignIn')
         const step = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Shared sign-in',
           shared: true,
@@ -771,11 +796,13 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
             const probe = yield* ConnectionProbe
             yield* Ref.set(probe.step, 'OpenSignIn')
             const shared = yield* store.begin(ownerActor, {
+              from: 'Web',
               service: serviceId,
               name: 'Shared sign-in',
               shared: true,
             })
             const personal = yield* store.begin(ownerActor, {
+              from: 'Web',
               service: serviceId,
               name: 'Personal sign-in',
               shared: false,
@@ -837,6 +864,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* Effect.gen(function* () {
             return yield* (yield* ConnectionStore).begin(ownerActor, {
+              from: 'Web',
               service: serviceId,
               name: 'Unavailable sign-in',
               shared: false,
@@ -877,6 +905,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
           const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
           return yield* Effect.gen(function* () {
             return yield* (yield* ConnectionStore).begin(ownerActor, {
+              from: 'Web',
               service: serviceId,
               name: 'Unavailable sign-in',
               shared: false,
@@ -896,6 +925,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection ownership', () => {
         const probe = yield* ConnectionProbe
         yield* Ref.set(probe.step, 'EnterKey')
         const step = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Key account',
           shared: false,

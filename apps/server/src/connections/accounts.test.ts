@@ -64,7 +64,7 @@ const connect = Effect.fn('AccountsTest.connect')(function* (
   yield* Ref.set(probe.step, 'EnterKey')
   yield* Ref.set(probe.identity, identity)
   const begun = yield* connectionHandlers
-    .BeginConnection({ service: serviceId, name: null, shared: false })
+    .BeginConnection({ from: 'Web', service: serviceId, name: null, shared: false })
     .pipe(Effect.provideService(AuthContext, person(actor)))
   if (!ConnectionStep.guards.EnterKey(begun)) return expect.fail('Key step required')
   const { connection } = yield* connectionHandlers
@@ -301,7 +301,7 @@ describe.skipIf(!testDatabaseConfigured)('several accounts on one Integration', 
           const begins = yield* Ref.get(probe.begins)
           expect(
             (yield* connectionHandlers
-              .BeginConnection({ service: serviceId, name: 'Work', shared: false })
+              .BeginConnection({ from: 'Web', service: serviceId, name: 'Work', shared: false })
               .pipe(Effect.provideService(AuthContext, person(ownerActor)), Effect.flip))._tag,
           ).toBe('Conflict')
           expect(yield* Ref.get(probe.begins)).toBe(begins)
@@ -339,7 +339,7 @@ describe.skipIf(!testDatabaseConfigured)('several accounts on one Integration', 
         const probe = yield* ConnectionProbe
         yield* Ref.set(probe.step, 'Done')
         const step = yield* connectionHandlers
-          .BeginConnection({ service: serviceId, name: 'Personal', shared: false })
+          .BeginConnection({ from: 'Web', service: serviceId, name: 'Personal', shared: false })
           .pipe(Effect.provideService(AuthContext, person(ownerActor)))
         expect(step.connection).toMatchObject({
           name: 'Personal',
@@ -512,6 +512,7 @@ describe('the name an account has among a Person’s accounts', () => {
       appOwnership: 'Shared',
     }),
     status: 'ready',
+    returnsTo: 'Web',
     reason: null,
     createdAt,
     updatedAt: createdAt,

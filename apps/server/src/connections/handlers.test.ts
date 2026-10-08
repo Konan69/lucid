@@ -131,13 +131,13 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
             sessionId: SessionId.make('resume-session'),
           })
           const begun = yield* connectionHandlers
-            .BeginConnection({ service: serviceId, name: null, shared: false })
+            .BeginConnection({ from: 'Web', service: serviceId, name: null, shared: false })
             .pipe(Effect.provideService(AuthContext, auth))
           const store = yield* ConnectionStore
           const before = yield* store.get(ownerActor, begun.connection.id)
           const begins = yield* Ref.get(probe.begins)
           const resumed = yield* connectionHandlers
-            .ResumeConnection({ id: begun.connection.id })
+            .ResumeConnection({ from: 'Web', id: begun.connection.id })
             .pipe(Effect.provideService(AuthContext, auth))
           expect(resumed._tag).toBe(expected)
           expect(resumed.connection.id).toBe(begun.connection.id)
@@ -162,6 +162,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
           const probe = yield* ConnectionProbe
           yield* Ref.set(probe.step, 'OpenSignIn')
           const begun = yield* (yield* ConnectionStore).begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Setup required',
             shared: false,
@@ -191,7 +192,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
               // Bind resume to the authority that records whether setup is renewed.
               const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
               return yield* connectionHandlers
-                .ResumeConnection({ id: begun.connection.id })
+                .ResumeConnection({ from: 'Web', id: begun.connection.id })
                 .pipe(Effect.provide(context))
             }).pipe(
               Effect.scoped,
@@ -212,6 +213,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
           yield* Ref.set(probe.step, 'OpenSignIn')
           const store = yield* ConnectionStore
           const begun = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Lost renewal',
             shared: false,
@@ -249,7 +251,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
             // Capture the lost-response adapter before checking persisted replacement authorization.
             const context = yield* Layer.build(Layer.fresh(connectionStoreLayer))
             return yield* connectionHandlers
-              .ResumeConnection({ id: begun.connection.id })
+              .ResumeConnection({ from: 'Web', id: begun.connection.id })
               .pipe(Effect.provide(context))
           }).pipe(
             Effect.scoped,
@@ -272,11 +274,13 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
         const probe = yield* ConnectionProbe
         yield* Ref.set(probe.step, 'OpenSignIn')
         const personal = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Private',
           shared: false,
         })
         const shared = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Shared',
           shared: true,
@@ -287,12 +291,12 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
           sessionId: SessionId.make('member-session'),
         })
         const refusal = yield* connectionHandlers
-          .ResumeConnection({ id: personal.connection.id })
+          .ResumeConnection({ from: 'Web', id: personal.connection.id })
           .pipe(Effect.provideService(AuthContext, auth), Effect.flip)
         expect(refusal).toBeInstanceOf(NotFound)
         expect(
           yield* connectionHandlers
-            .ResumeConnection({ id: shared.connection.id })
+            .ResumeConnection({ from: 'Web', id: shared.connection.id })
             .pipe(Effect.provideService(AuthContext, auth), Effect.flip),
         ).toBeInstanceOf(Forbidden)
         yield* Ref.set(probe.step, 'Done')
@@ -305,6 +309,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
         yield* Ref.set(probe.step, 'OpenSignIn')
         const store = yield* ConnectionStore
         const begun = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Completed',
           shared: false,
@@ -316,7 +321,7 @@ describe.skipIf(!testDatabaseConfigured)('ResumeConnection', () => {
           sessionId: SessionId.make('completed-session'),
         })
         const resumed = yield* connectionHandlers
-          .ResumeConnection({ id: begun.connection.id })
+          .ResumeConnection({ from: 'Web', id: begun.connection.id })
           .pipe(Effect.provideService(AuthContext, auth))
         expect(ConnectionStep.guards.Done(resumed)).toBe(true)
         expect(resumed.connection.id).toBe(begun.connection.id)
@@ -333,6 +338,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         const { ownerActor, threadId } = yield* fixture()
         const store = yield* ConnectionStore
         const step = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Failed',
           shared: false,
@@ -361,6 +367,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         const store = yield* ConnectionStore
         const probe = yield* ConnectionProbe
         const begun = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Unavailable discovery',
           shared: false,
@@ -399,6 +406,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         const store = yield* ConnectionStore
         const probe = yield* ConnectionProbe
         const step = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Private',
           shared: false,
@@ -429,6 +437,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         const probe = yield* ConnectionProbe
         yield* Ref.set(probe.decision, 'Allowed')
         const step = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Shared',
           shared: true,
@@ -462,6 +471,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         const store = yield* ConnectionStore
         const probe = yield* ConnectionProbe
         const step = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Personal',
           shared: false,
@@ -501,6 +511,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         yield* Ref.set(probe.decision, 'Allowed')
         yield* Ref.set(probe.outcome, ExecutorCallOutcome.cases.NotReady.make({}))
         const step = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Revoked',
           shared: false,
@@ -547,6 +558,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
           const probe = yield* ConnectionProbe
           yield* Ref.set(probe.decision, 'Allowed')
           const step = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Deleted resource',
             shared: false,
@@ -594,6 +606,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
           expect(approved).toMatchObject({ reason: 'The saved app no longer exists.' })
 
           const ready = yield* store.begin(ownerActor, {
+            from: 'Web',
             service: serviceId,
             name: 'Misconfigured installation',
             shared: false,
@@ -621,6 +634,7 @@ describe.skipIf(!testDatabaseConfigured)('Connection tools through real inventor
         const store = yield* ConnectionStore
         const probe = yield* ConnectionProbe
         const step = yield* store.begin(ownerActor, {
+          from: 'Web',
           service: serviceId,
           name: 'Approved account',
           shared: false,

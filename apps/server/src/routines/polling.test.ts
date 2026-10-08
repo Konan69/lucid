@@ -50,6 +50,7 @@ const setup = Effect.fn('PollingTest.setup')(function* () {
     }),
   ])
   const connected = yield* store.begin(ownerActor, {
+    from: 'Web',
     service: serviceId,
     name: 'Work',
     shared: false,
@@ -262,7 +263,12 @@ describe.skipIf(!testDatabaseConfigured)('Integration polling adapter', () => {
           const watch = yield* watcher.prepare(ownerActor, trigger)
           const store = yield* ConnectionStore
           // A second account on the service, then the watched one is renamed.
-          yield* store.begin(ownerActor, { service: serviceId, name: 'Personal', shared: false })
+          yield* store.begin(ownerActor, {
+            from: 'Web',
+            service: serviceId,
+            name: 'Personal',
+            shared: false,
+          })
           yield* store.rename(ownerActor, { id: connected.connection.id, name: 'Office' })
           // The name the trigger was made under is nobody's now: it cannot be resolved again.
           expect(yield* watcher.prepare(ownerActor, trigger).pipe(Effect.flip)).toBeInstanceOf(

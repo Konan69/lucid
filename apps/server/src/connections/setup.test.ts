@@ -230,6 +230,7 @@ describe.skipIf(!testDatabaseConfigured)('catalogue Begin without auth hints', (
                   'KnownAfterInstall',
                 )
                 const step = yield* store.begin(ownerActor, {
+                  from: 'Web',
                   service: hostedService,
                   name: 'Work',
                   shared: false,

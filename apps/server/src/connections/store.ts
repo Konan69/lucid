@@ -16,6 +16,7 @@ import {
 import {
   AddIntegrationRequest,
   ServiceId,
+  SignInSurface,
   AuditEvent,
   BeginConnectionRequest,
   CompanyId,
@@ -64,7 +65,7 @@ import {
   listRecords,
   publicConnection,
   recordChanged,
-  retainResumer,
+  retainTrip,
   saveIdentity,
   saveName,
   saveState,
@@ -308,6 +309,7 @@ const begin = Effect.fn('Connections.begin')(function* (
           companyId,
           references: encodeReferences(step.references),
           status,
+          returnsTo: request.from,
           reason: null,
           createdAt: now,
           updatedAt: now,
@@ -571,6 +573,10 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
 
   return {
     get,
+    /** A completed callback follows its initiating Person across workspace changes. */
+    returnSurface: Effect.fn('Connections.returnSurface')((actor: Actor, id: ConnectionId) =>
+      provide(getRecord(actor, id, true)).pipe(Effect.map((row) => row.returnsTo)),
+    ),
     catalog: catalogServices,
     service,
     /** Catalog search is independent of ownership and preserves the adapter's retained order. */
@@ -642,8 +648,9 @@ const makeStore = Effect.fn('Connections.makeStore')(function* () {
         begin(
           actor,
           // The name Vivid gave is the server's own, kept as the service's name. Nobody has
-          // called the account anything yet.
-          { service: importedService.id, name: null, shared: request.shared },
+          // called the account anything yet. A Run importing an address has no client trip;
+          // its initial browser return keeps the existing web destination.
+          { service: importedService.id, name: null, shared: request.shared, from: 'Web' },
           importedService,
           start,
         ),
@@ -727,12 +734,16 @@ const resumeExisting = Effect.fn('Connections.resumeExistingState')(function* (
   input: Parameters<typeof makeManagement>[0],
   actor: Actor,
   id: ConnectionId,
+  from: SignInSurface,
 ) {
   const { executor, provide, get } = input
   const row = yield* get(actor, id)
   yield* mayManage(actor, row)
   return yield* Match.value(row.status).pipe(
     Match.when('ready', () =>
+      // No trip is opened for an account that is already ready, so nothing is written: this is
+      // also how a client asks whether a sign-in went through, and a question must not change
+      // the row or be refused because the row has just changed.
       provide(publicConnection(actor, row)).pipe(
         Effect.map((connection) => ConnectionStep.cases.Done.make({ connection })),
       ),
@@ -754,7 +765,7 @@ const resumeExisting = Effect.fn('Connections.resumeExistingState')(function* (
         )
           return yield* new InvalidRequest({ message: connectionSetupMessage })
         const managing = yield* provide(rowActor(actor, row))
-        const retained = yield* provide(retainResumer(managing, row))
+        const retained = yield* provide(retainTrip(managing, row, from))
         return yield* provide(resume(managing, retained))
       }),
     ),
@@ -783,7 +794,8 @@ const makeManagement = (input: {
   return {
     /** Resume has exactly removal's scoped lookup and admin check, before provider access. */
     resume: Effect.fn('Connections.resumeExisting')(
-      (actor: Actor, id: ConnectionId) => resumeExisting(input, actor, id),
+      (actor: Actor, id: ConnectionId, from: SignInSurface) =>
+        resumeExisting(input, actor, id, from),
       (effect, _actor, id) => withResume(effect, id),
     ),
     /** Only a managing Person submits keys; the store retains identifiers alone. */

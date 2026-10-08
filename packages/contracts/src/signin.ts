@@ -212,11 +212,13 @@ export const PHONE_SIGN_IN_PLACES = {
 } as const
 
 /**
- * The link the server sends the browser to when Google is done. Its scheme is the one the
- * phone app registers (`scheme` in `apps/mobile/app.json`); the server never sends a browser to a
- * link an app supplied.
+ * The scheme the phone app registers (`scheme` in `apps/mobile/app.json`). Server-built account
+ * and Integration return links use it so the browser hands back to the installed phone app.
  */
-export const PHONE_SIGN_IN_RETURN = 'vivid://signin'
+export const PHONE_SCHEME = 'vivid'
+
+/** Account sign-in and Integration sign-in share the phone's registered scheme. */
+export const PHONE_SIGN_IN_RETURN = `${PHONE_SCHEME}://signin`
 
 /** What the phone puts on the address it opens the browser on. */
 export const PhoneSignInStart = Schema.Struct({
