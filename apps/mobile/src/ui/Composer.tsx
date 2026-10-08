@@ -107,8 +107,10 @@ export function Composer({
   // response is running joins it at a turn boundary, or waits its turn and is never lost). With
   // nothing written and Vivid working, it stops Vivid. Until 8 October 2026 it only stopped
   // while Vivid worked, so nothing could be said until the answer ended.
+  // Words that cannot be sent yet (a send still on its way) leave the button dimmed, not a way to
+  // stop: it must not change what it does under words the Person means to send.
   const sends = !empty && !disabled
-  const stops = working && !sends
+  const stops = working && empty
   const idle = !sends && !stops
 
   function act() {

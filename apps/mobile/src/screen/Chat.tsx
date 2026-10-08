@@ -469,7 +469,9 @@ function Conversation({
         working={working}
         // Nothing more can be said in a Thread until its first words are with Vivid; what is
         // typed meanwhile stays in the composer.
-        disabled={!settled}
+        // Nor while a send is on its way: one delivery is in doubt at a time (`useSend` keeps one),
+        // so a second waits for the first to be answered, which takes a moment.
+        disabled={!settled || sending.pending}
         onChange={type}
         // Emptying the composer, which `speak` does, is also what removes this Thread's kept draft.
         onSend={() => void speak(typed.trim())}
@@ -681,6 +683,9 @@ function Transcript(props: MessagesProps) {
   const list = useRef<ScrollView>(null)
   // Whether the scroller has been put on its newest words once, which is when it is shown.
   const [placed, setPlaced] = useState(false)
+  // The Person asked to be taken back to the newest words and is on the way there. Until they
+  // arrive, passing through older words is not having scrolled away.
+  const returning = useRef(false)
   const [awayAt, setAwayAt] = useState<Option.Option<number>>(Option.none())
   const arrived = Option.match(awayAt, {
     onNone: () => 0,
@@ -709,6 +714,8 @@ function Transcript(props: MessagesProps) {
         ? current
         : new Set(messages.map((message) => message.id)),
     )
+    if (near) returning.current = false
+    if (returning.current) return
     setAwayAt((current) => {
       if (near) return Option.isNone(current) ? current : Option.none()
       return Option.isSome(current) ? current : Option.some(messages.length)
@@ -727,6 +734,7 @@ function Transcript(props: MessagesProps) {
   }
 
   function latest() {
+    returning.current = true
     setAwayAt(Option.none())
     if (list.current !== null) list.current.scrollToEnd({ animated: true })
   }
@@ -747,6 +755,10 @@ function Transcript(props: MessagesProps) {
           onLayout={props.onListed}
           onContentSizeChange={settle}
           onScroll={follow}
+          // A finger on the conversation takes over from a return that was under way.
+          onScrollBeginDrag={() => {
+            returning.current = false
+          }}
           scrollEventThrottle={32}
           style={{ opacity: placed ? 1 : 0 }}
           contentContainerStyle={[
