@@ -24,29 +24,43 @@ type Chat = ChatState<UIMessage>
  * Node's `Request` does not accept. A real browser has one implementation of both.
  */
 function transport(harness: Harness, conversationId: ConversationId) {
-  return new DefaultChatTransport<UIMessage>({
+  let posts = 0
+  const chat = new DefaultChatTransport<UIMessage>({
     api: 'http://durable.test/chat',
-    fetch: (url, init) =>
-      respond(harness, conversationId, new Request(url, { ...init, signal: null }), context),
+    fetch: (url, init) => {
+      const request = new Request(url, { ...init, signal: null })
+      if (request.method === 'POST') posts++
+      return respond(harness, conversationId, request, context)
+    },
   })
+  /** How many turns the hook really posted: an endless automatic resend shows up here. */
+  return { chat, posts: () => posts }
 }
+/**
+ * What stock Chat decided after a response finished. AI SDK 7.0.127 `ui/chat.ts:1034-1063` calls
+ * `onFinish` first and only then asks `sendAutomaticallyWhen`; a wait on `onFinish` alone returns
+ * before a wrong automatic resend starts, so the cases below wait for this decision instead.
+ */
+type Decision = 'Settled' | 'Resending'
 type Mounted = {
   /** The chat the hook is subscribed to. */
   readonly chat: () => Chat
-  /** Do `action` and wait until the response stream it causes has finished: the hook's `onFinish`. */
-  readonly until: (action: (chat: Chat) => void | PromiseLike<void>) => Effect.Effect<void>
+  /** Do `action` and wait until the response it causes has finished and the hook has decided. */
+  readonly until: (action: (chat: Chat) => void | PromiseLike<void>) => Effect.Effect<Decision>
   /** Wait for the stream the mount itself opened (`resume`). */
-  readonly resumed: () => Effect.Effect<void>
+  readonly resumed: () => Effect.Effect<Decision>
   /** What the component rendered. */
   readonly text: () => string
 }
 /**
  * Mount a component that uses the stock `useChat` hook and renders its text parts.
  *
- * The test waits on `onFinish`, the hook's own signal that a stream ended, never on a clock.
- * React's `act` takes a callback that returns a thenable and flushes updates until it settles, so
- * the wait must be a native Promise made inside that callback: `events.once` on an emitter that
- * `onFinish` fires gives one for the next finish, with no hand-built Promise and no second runtime.
+ * The test waits on the hook's own decision after a stream ended, never on a clock: `onFinish`
+ * arms the wait and the wrapped `sendAutomaticallyWhen` reports what the stock predicate answered.
+ * The predicate is also asked before a request (`addToolApprovalResponse`); those calls pass
+ * through unreported because no response has finished. React's `act` takes a callback that returns
+ * a thenable and flushes updates until it settles, so the wait must be a native Promise made inside
+ * that callback: `events.once` on an emitter gives one, with no hand-built Promise.
  *
  * The unmount is a finalizer of the case's scope. The fixture's harness is acquired earlier in the
  * same scope and scopes release in reverse order, so the hook is gone before its harness closes.
@@ -59,17 +73,27 @@ function mount(options: {
   readonly resume: boolean
 }): Effect.Effect<Mounted, never, Scope.Scope> {
   return Effect.gen(function* () {
-    const finished = new NodeEvents.EventEmitter()
-    /** Settles at the next `onFinish` after this call; register it before causing the stream. */
-    const nextFinish = () => NodeEvents.EventEmitter.once(finished, 'finish').then(() => {})
+    const decisions = new NodeEvents.EventEmitter()
+    let finished = false
+    /** Settles at the next decision after this call; register it before causing the stream. */
+    const nextDecision = () =>
+      NodeEvents.EventEmitter.once(decisions, 'decision').then(([decision]): Decision =>
+        decision === 'Resending' ? 'Resending' : 'Settled',
+      )
     // The chat state lives outside the component, as in an app that shares one chat between
     // components; the hook subscribes to it and owns the reconnect on mount.
     const state = new ChatState<UIMessage>({
       id: 'thread',
       transport: options.transport,
-      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+      sendAutomaticallyWhen: (input) => {
+        const resend = lastAssistantMessageIsCompleteWithApprovalResponses(input)
+        if (!finished) return resend
+        finished = false
+        decisions.emit('decision', resend ? 'Resending' : 'Settled')
+        return resend
+      },
       onFinish: () => {
-        finished.emit('finish')
+        finished = true
       },
       messages: options.messages,
     })
@@ -100,7 +124,7 @@ function mount(options: {
           ),
         ).pipe(Effect.andThen(Effect.sync(() => mounted.container.remove()))),
     )
-    const opening = nextFinish()
+    const opening = nextDecision()
     yield* Effect.promise(() =>
       Promise.resolve(
         act(() => {
@@ -115,7 +139,7 @@ function mount(options: {
         Effect.promise(() =>
           Promise.resolve(
             act(() => {
-              const pending = nextFinish()
+              const pending = nextDecision()
               return Promise.resolve(action(state)).then(() => pending)
             }),
           ),
@@ -142,12 +166,14 @@ it.live('useChat streams a durable run into one rendered assistant message', () 
     const fixture = yield* shop()
     const opened = yield* fixture.open()
     opened.faux.setResponses([fauxAssistantMessage('Hello from Pi.')])
+    const wire = transport(opened.harness, opened.root.id)
     const mounted = yield* mount({
-      transport: transport(opened.harness, opened.root.id),
+      transport: wire.chat,
       messages: [],
       resume: false,
     })
-    yield* mounted.until((chat) => chat.sendMessage({ text: 'Hi' }))
+    expect(yield* mounted.until((chat) => chat.sendMessage({ text: 'Hi' }))).toBe('Settled')
+    expect(wire.posts()).toBe(1)
     expect(mounted.chat().status).toBe('ready')
     expect(mounted.text()).toBe('user: Hi\nassistant: Hello from Pi.')
   }),
@@ -163,19 +189,25 @@ it.live('useChat approves a held tool from the message part and the run continue
       ),
       fauxAssistantMessage('Paid.'),
     ])
+    const wire = transport(opened.harness, opened.root.id)
     const mounted = yield* mount({
-      transport: transport(opened.harness, opened.root.id),
+      transport: wire.chat,
       messages: [],
       resume: false,
     })
-    yield* mounted.until((chat) => chat.sendMessage({ text: 'Pay the invoice' }))
+    expect(yield* mounted.until((chat) => chat.sendMessage({ text: 'Pay the invoice' }))).toBe(
+      'Settled',
+    )
     // The stream finished because the run waits for a person; the tool has not run.
     expect(fixture.paid).toEqual([])
     const held = heldPay(mounted.chat())
     // An app does exactly this: the id comes from the part, and the hook resubmits on its own.
-    yield* mounted.until((chat) =>
+    const approved = yield* mounted.until((chat) =>
       chat.addToolApprovalResponse({ id: held.approval.id, approved: true }),
     )
+    // One post for the message and one for the approval: the hook did not send a third.
+    expect(approved).toBe('Settled')
+    expect(wire.posts()).toBe(2)
     expect(fixture.paid).toEqual([500])
     expect(mounted.chat().status).toBe('ready')
     expect(mounted.text()).toBe('user: Pay the invoice\nassistant: Checking. | Paid.')
@@ -192,27 +224,31 @@ it.live('a reloaded page shows history and resumes the run that waits for approv
       ),
       fauxAssistantMessage('Paid.'),
     ])
+    const wire = transport(opened.harness, opened.root.id)
     const first = yield* mount({
-      transport: transport(opened.harness, opened.root.id),
+      transport: wire.chat,
       messages: [],
       resume: false,
     })
-    yield* first.until((chat) => chat.sendMessage({ text: 'Pay 70' }))
+    expect(yield* first.until((chat) => chat.sendMessage({ text: 'Pay 70' }))).toBe('Settled')
     // The reload: a new page loads the settled transcript, then `resume` reconnects to the run.
     const page = yield* Effect.promise(() =>
       history(opened.harness, opened.root.id, { limit: 50 }, context),
     )
+    const again = transport(opened.harness, opened.root.id)
     const reloaded = yield* mount({
-      transport: transport(opened.harness, opened.root.id),
+      transport: again.chat,
       messages: [...page.messages],
       resume: true,
     })
-    yield* reloaded.resumed()
+    expect(yield* reloaded.resumed()).toBe('Settled')
     expect(reloaded.text()).toBe('user: Pay 70\nassistant: Checking.')
     const held = heldPay(reloaded.chat())
-    yield* reloaded.until((chat) =>
+    const approved = yield* reloaded.until((chat) =>
       chat.addToolApprovalResponse({ id: held.approval.id, approved: true }),
     )
+    expect(approved).toBe('Settled')
+    expect(again.posts()).toBe(1)
     expect(fixture.paid).toEqual([70])
     expect(reloaded.text()).toBe('user: Pay 70\nassistant: Checking. | Paid.')
   }),
