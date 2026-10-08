@@ -160,7 +160,7 @@ Storage holds one pool connection for its entire lifetime. Size the pool for tha
 
 One connection owns a schema at a time, enforced by a nonblocking session advisory lock acquired before migrations. A competing opener receives StorageOwned. Use direct connections or session pooling only: transaction-mode poolers cannot preserve the session lock or search_path (transaction-mode pooling has not been run here). Ownership is released on close or backend/process death; reopen after the previous owner closes. Initialization failure destroys the lease. Migrations are transactional and reject newer unsupported schema versions.
 
-A lost connection fences all storage operations, including id minting, with StorageDisconnected carrying the schema and original cause. The storage does not reconnect: close it, then reopen the storage and the Harness.
+A lost connection fences all storage operations, including id minting, with StorageDisconnected carrying the schema and original cause. `storage.disconnected` never rejects and resolves once with that same StorageDisconnected when its leased connection is lost; after a clean close it stays pending. Await this signal to detect an idle failure, then close it and reopen the storage and the Harness; the storage does not reconnect.
 
 The [round-trip report](src/postgres/bench/report.md) counts actual driver calls on local PostgreSQL 18; these are not throughput guarantees:
 

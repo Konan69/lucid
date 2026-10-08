@@ -1,5 +1,5 @@
 import type * as Option from 'effect/Option'
-import type { RecordKind } from './errors.ts'
+import type { RecordKind, StorageDisconnected } from './errors.ts'
 
 /**
  * Port of Pi Durable `src/storage/sqlite/database.ts:SqliteValue`.
@@ -62,6 +62,10 @@ export interface PostgresExecutor {
  * so the caller cannot mistake it for a guaranteed rollback.
  */
 export interface PostgresDatabase extends PostgresExecutor {
+  /** PostgreSQL-only lifetime signal, absent from Pi SqliteDatabase: resolves
+   * with the cached tagged failure on unexpected connection loss, never rejects,
+   * and stays pending after clean close. No SQL or connection recovery is added. */
+  readonly disconnected: Promise<StorageDisconnected>
   /** Cached driver health, without SQL: losing a lease fences volatile mintId
    * as well as persistence. This PostgreSQL addition never reconnects. */
   assertConnected(): void

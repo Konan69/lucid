@@ -1,5 +1,7 @@
 import * as NodeBuffer from 'node:buffer'
 import * as NodeCrypto from 'node:crypto'
+import * as Deferred from 'effect/Deferred'
+import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { types, type Pool, type PoolClient, type QueryResultRow } from 'pg'
@@ -14,6 +16,7 @@ import {
 } from './database.ts'
 export { validateSchema } from './database.ts'
 import { PostgresStorage } from './storage.ts'
+import { runForPi } from '../pi.ts'
 import { quoteLiteral } from './literal.ts'
 import { ConnectionSettingInvalid, RawNul, StorageOwned, StorageDisconnected } from './errors.ts'
 
@@ -203,13 +206,34 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
   private readonly access = new SerialOperationQueue()
   private closed = false
   private connectionError = Option.none<StorageDisconnected>()
-  /** pg Pool removes its idle-client error listener while a connection is leased.
-   * pg/lib/client.js:_handleErrorEvent rejects outstanding queries and emits error;
-   * retain that cause so idle connection failure cannot become an uncaught event.
-   * This is a public driver listener, not reconnect or cross-process coordination. */
+  private readonly disconnectSignal = Deferred.makeUnsafe<StorageDisconnected>()
+  /** Addition to Pi's Promise Storage adapter: Deferred is plain event settlement,
+   * with no timer or resource handle. Reuse the existing Promise ingress to expose
+   * one never-rejecting Promise; a clean close leaves the Deferred uncompleted. */
+  readonly disconnected: Promise<StorageDisconnected>
+
+  /** pg/lib/client.js:_handleErrorEvent emits error before end on socket loss.
+   * Preserve the first cause and settle once, including idle failures. The cause
+   * guard keeps the first cause. Listener removal exempts intentional lease
+   * release; connection loss during failing close cleanup still signals death. */
   private readonly connectionFailed = (cause: Error) => {
-    if (Option.isNone(this.connectionError))
-      this.connectionError = Option.some(new StorageDisconnected({ schema: this.schema, cause }))
+    if (Option.isSome(this.connectionError)) return
+    const failure = new StorageDisconnected({ schema: this.schema, cause })
+    this.connectionError = Option.some(failure)
+    Deferred.doneUnsafe(this.disconnectSignal, Effect.succeed(failure))
+  }
+
+  /** pg/lib/client.js:_connect emits end even when a host calls Client.end,
+   * which supplies no error event. Synthesize a cause only for that end-only
+   * path; error followed by end retains the actual driver's original failure. */
+  private readonly connectionEnded = () => {
+    this.connectionFailed(new Error('PostgreSQL connection ended'))
+  }
+
+  /** Neither callback may outlive our lease or observe the host's later reuse. */
+  private removeConnectionListeners(): void {
+    this.client.removeListener('error', this.connectionFailed)
+    this.client.removeListener('end', this.connectionEnded)
   }
 
   private readonly previousSearchPath: string
@@ -217,7 +241,7 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
   private readonly schema: string
 
   /** Pi NodeSqliteDatabase.constructor, adapted for a host-owned lease. Attach
-   * the public client error listener before any asynchronous facade operation.
+   * the public client error/end listeners before any asynchronous facade operation.
    * Explicit field assignments allow Node's native TypeScript type erasure. */
   constructor(
     client: PoolClient,
@@ -229,7 +253,9 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
     this.previousSearchPath = previousSearchPath
     this.schemaOwnershipKey = schemaOwnershipKey
     this.schema = schema
+    this.disconnected = runForPi(Deferred.await(this.disconnectSignal), undefined)
     client.on('error', this.connectionFailed)
+    client.on('end', this.connectionEnded)
   }
 
   /** Pi transaction: settle only after COMMIT/ROLLBACK, invalidate the handle,
@@ -331,7 +357,7 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
       if (this.closed) return Promise.resolve()
       this.closed = true
       if (Option.isSome(this.connectionError)) {
-        this.client.removeListener('error', this.connectionFailed)
+        this.removeConnectionListeners()
         this.client.release(true)
         return Promise.resolve()
       }
@@ -342,11 +368,11 @@ export class PgDatabase extends PgExecutor implements PostgresDatabase {
         )
         .then(
           () => {
-            this.client.removeListener('error', this.connectionFailed)
+            this.removeConnectionListeners()
             this.client.release()
           },
           (cause: unknown) => {
-            this.client.removeListener('error', this.connectionFailed)
+            this.removeConnectionListeners()
             this.client.release(true)
             throw cause
           },

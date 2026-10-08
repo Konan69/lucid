@@ -16,6 +16,10 @@ export class CountingDatabase implements PostgresDatabase {
   constructor(database: PostgresDatabase) {
     this.database = database
   }
+  /** Forward the same lifetime signal without instrumenting product events. */
+  get disconnected() {
+    return this.database.disconnected
+  }
   /** Cached health checks introduce no driver round trip. */
   assertConnected(): void {
     this.database.assertConnected()
