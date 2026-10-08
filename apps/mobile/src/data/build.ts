@@ -66,3 +66,40 @@ export const runningWords = (running: Running, write: (moment: Date) => string):
     Updated: ({ published, id }) => `Published ${write(published)} · ${shortId(id)}`,
     Unnamed: () => 'An update is running, but this phone cannot say which.',
   })
+
+/**
+ * Whether this phone sends its errors and crashes (`telemetry.ts`), for the same reader as
+ * `Running`: someone told "reporting is in the new install" who wants to see that it is.
+ *
+ * Reporting has a native half, and only an install carries that; an update never does. An app
+ * installed before the half existed runs the same JavaScript as a newer install and starts
+ * reporting the same way, but has nothing to send through. Nothing on the phone said which of
+ * the two an install was: both say the same version.
+ */
+export type Reports = Data.TaggedEnum<{
+  /** Reporting was not started: a development build, the web build, or a start that failed. */
+  Unstarted: {}
+  /** Started in an install without the native half, so no report can leave this phone. */
+  Unsendable: {}
+  /** Started with its native half. */
+  Sending: {}
+}>
+export const Reports = Data.taggedEnum<Reports>()
+
+/**
+ * Reads what was started. None is no start at all; `native` is whether the install has the half
+ * that sends.
+ */
+export const reportsFrom = (started: Option.Option<{ readonly native: boolean }>): Reports =>
+  Option.match(started, {
+    onNone: () => Reports.Unstarted(),
+    onSome: ({ native }) => (native ? Reports.Sending() : Reports.Unsendable()),
+  })
+
+/** The line Settings shows for error reports. */
+export const reportsWords = (reports: Reports): string =>
+  Reports.$match(reports, {
+    Unstarted: () => 'Off in this build.',
+    Unsendable: () => 'Off. This install is older than error reports. A new install turns them on.',
+    Sending: () => 'On',
+  })
