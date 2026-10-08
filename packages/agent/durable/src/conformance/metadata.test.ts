@@ -207,6 +207,12 @@ it.live('sums all tool-round usage and names each recorded model once', () =>
       { models: [{ id: 'faux-1' }, { id: 'faux-2' }] },
     )
     const opened = yield* fixture.open()
+    // Release the model boundary before harness cleanup on failure, defect or interruption.
+    yield* Effect.addFinalizer(() =>
+      Deferred.succeed(release, undefined).pipe(
+        Effect.andThen(Effect.promise(() => opened.root.waitForIdle(context))),
+      ),
+    )
     opened.faux.setResponses([
       call('work', {}, 'first'),
       call('work', {}, 'second'),
@@ -214,21 +220,16 @@ it.live('sums all tool-round usage and names each recorded model once', () =>
     ])
     const chat = client(opened)
     const sending = chat.sendMessage({ text: 'Use both models' })
-    try {
-      yield* Deferred.await(entered)
-      yield* Effect.promise(() =>
-        Promise.resolve(
-          opened.root.configure({ model: { provider: 'faux', modelId: 'faux-2' } }, context),
-        ),
-      )
-      Deferred.doneUnsafe(release, Effect.void)
-      yield* Effect.promise(() => Promise.resolve(sending))
-      expect(chat.error).toBeUndefined()
-      expect(modelIds(yield* parity(opened, chat, 3))).toEqual(['faux/faux-1', 'faux/faux-2'])
-    } finally {
-      Deferred.doneUnsafe(release, Effect.void)
-      yield* Effect.promise(() => Promise.resolve(sending))
-    }
+    yield* Deferred.await(entered)
+    yield* Effect.promise(() =>
+      Promise.resolve(
+        opened.root.configure({ model: { provider: 'faux', modelId: 'faux-2' } }, context),
+      ),
+    )
+    Deferred.doneUnsafe(release, Effect.void)
+    yield* Effect.promise(() => Promise.resolve(sending))
+    expect(chat.error).toBeUndefined()
+    expect(modelIds(yield* parity(opened, chat, 3))).toEqual(['faux/faux-1', 'faux/faux-2'])
   }),
 )
 

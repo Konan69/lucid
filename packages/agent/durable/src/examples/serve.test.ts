@@ -566,9 +566,16 @@ function killHost(host: ProcessHost) {
 }
 /** Wait for the CLI's actual bind receipt, and verify its warning is emitted once per startup. */
 function boundAddress(host: ProcessHost) {
-  return Effect.gen(function* () {
-    const lines = NodeReadline.createInterface({ input: host.child.stdout })
-    try {
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const lines = yield* Effect.acquireRelease(
+        Effect.sync(() => NodeReadline.createInterface({ input: host.child.stdout })),
+        (reader) =>
+          Effect.sync(() => {
+            reader.close()
+            host.child.stdout.resume()
+          }),
+      )
       const iterator = lines[Symbol.asyncIterator]()
       while (true) {
         const next = yield* Effect.promise(() => iterator.next())
@@ -585,11 +592,8 @@ function boundAddress(host: ProcessHost) {
         }
       }
       throw new Error('Example process exited before listening')
-    } finally {
-      lines.close()
-      host.child.stdout.resume()
-    }
-  })
+    }),
+  )
 }
 // Pi 1.0.4 README "Persist and Resume"; a read-only GET must finish recovered work without another POST.
 function crash(kind: 'slow' | 'approve') {

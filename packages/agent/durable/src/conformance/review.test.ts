@@ -264,9 +264,11 @@ it.live(
 it.live('requires a fresh decision when a later round of the same run reuses an id', () =>
   Effect.gen(function* () {
     const fixture = yield* shop()
-    const opened = yield* fixture.open()
     const entered = yield* Deferred.make<void>()
     const release = yield* Deferred.make<void>()
+    const opened = yield* fixture.open()
+    // A failed yielded operation must release the provider before the harness joins it.
+    yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined))
     opened.faux.setResponses([
       call('pay', { amount: 100 }, 'reused'),
       () =>
@@ -298,34 +300,30 @@ it.live('requires a fresh decision when a later round of the same run reuses an 
     yield* Effect.promise(() =>
       decide(opened.harness, opened.root.id, { holdId: resolved9, approved: true }, context),
     )
-    try {
-      yield* Deferred.await(entered)
-      const stream = yield* Effect.promise(() =>
-        continueRun(
-          opened.harness,
-          opened.root.id,
-          { messageId: first.message.id, known: new Set(['reused']) },
-          context,
-        ),
-      )
-      yield* Deferred.succeed(release, undefined)
-      const result = yield* consume(stream, Option.some(first.message))
-      expect(result.chunks.filter((chunk) => chunk.type === 'tool-approval-request')).toMatchObject(
-        [{ toolCallId: 'reused' }],
-      )
-      expect(
-        yield* Effect.promise(() => waiting(opened.harness, opened.root.id, context)),
-      ).toMatchObject([{ callId: 'reused', input: { amount: 200 } }])
-      expect(fixture.paid).toEqual([100])
-      const resolved10 = yield* hold(opened.harness, opened.root.id, 'reused', context)
-      yield* Effect.promise(() =>
-        decide(opened.harness, opened.root.id, { holdId: resolved10, approved: false }, context),
-      )
-      yield* Effect.promise(() => opened.root.waitForIdle(context))
-      expect(fixture.paid).toEqual([100])
-    } finally {
-      yield* Deferred.succeed(release, undefined)
-    }
+    yield* Deferred.await(entered)
+    const stream = yield* Effect.promise(() =>
+      continueRun(
+        opened.harness,
+        opened.root.id,
+        { messageId: first.message.id, known: new Set(['reused']) },
+        context,
+      ),
+    )
+    yield* Deferred.succeed(release, undefined)
+    const result = yield* consume(stream, Option.some(first.message))
+    expect(result.chunks.filter((chunk) => chunk.type === 'tool-approval-request')).toMatchObject([
+      { toolCallId: 'reused' },
+    ])
+    expect(
+      yield* Effect.promise(() => waiting(opened.harness, opened.root.id, context)),
+    ).toMatchObject([{ callId: 'reused', input: { amount: 200 } }])
+    expect(fixture.paid).toEqual([100])
+    const resolved10 = yield* hold(opened.harness, opened.root.id, 'reused', context)
+    yield* Effect.promise(() =>
+      decide(opened.harness, opened.root.id, { holdId: resolved10, approved: false }, context),
+    )
+    yield* Effect.promise(() => opened.root.waitForIdle(context))
+    expect(fixture.paid).toEqual([100])
   }),
 )
 

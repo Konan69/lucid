@@ -72,9 +72,10 @@ it.live('replays a dropped step 2 when the run has reached step 3', () =>
     const opened = yield* fixture.open()
     // Release provider gates before closing the harness even if a yielded operation fails.
     yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        Deferred.doneUnsafe(releaseSecond, Effect.void)
-        Deferred.doneUnsafe(releaseThird, Effect.void)
+      Effect.gen(function* () {
+        yield* Deferred.succeed(releaseSecond, undefined)
+        yield* Deferred.succeed(releaseThird, undefined)
+        yield* Effect.promise(() => opened.root.waitForIdle(context))
       }),
     )
     opened.faux.setResponses([
@@ -133,38 +134,32 @@ it.live('replays a dropped step 2 when the run has reached step 3', () =>
         }),
       ),
     })
-    try {
-      yield* Effect.promise(() => chat.sendMessage({ text: 'Start' }))
-      yield* Deferred.await(second)
-      expect(chat.status).toBe('error')
-      Deferred.doneUnsafe(releaseSecond, Effect.void)
-      yield* Deferred.await(third)
-      chat.clearError()
-      const resumed = chat.resumeStream()
-      yield* Deferred.await(attached)
-      Deferred.doneUnsafe(releaseThird, Effect.void)
-      yield* Effect.promise(() => resumed)
-      expect(chat.status).toBe('ready')
-      if (chat.lastMessage === undefined) throw new Error('Expected assistant')
-      expect(texts(chat.lastMessage)).toEqual(['Starting.', 'Fin', 'Finished.', 'Done.'])
-      expect(chat.lastMessage.parts.map((part) => part.type)).toEqual([
-        'step-start',
-        'text',
-        'tool-work',
-        'step-start',
-        'text',
-        'tool-pause',
-        'step-start',
-        'text',
-        'tool-final',
-        'step-start',
-        'text',
-      ])
-    } finally {
-      Deferred.doneUnsafe(releaseSecond, Effect.void)
-      Deferred.doneUnsafe(releaseThird, Effect.void)
-      yield* Effect.promise(() => opened.root.waitForIdle(context))
-    }
+    yield* Effect.promise(() => chat.sendMessage({ text: 'Start' }))
+    yield* Deferred.await(second)
+    expect(chat.status).toBe('error')
+    Deferred.doneUnsafe(releaseSecond, Effect.void)
+    yield* Deferred.await(third)
+    chat.clearError()
+    const resumed = chat.resumeStream()
+    yield* Deferred.await(attached)
+    Deferred.doneUnsafe(releaseThird, Effect.void)
+    yield* Effect.promise(() => resumed)
+    expect(chat.status).toBe('ready')
+    if (chat.lastMessage === undefined) throw new Error('Expected assistant')
+    expect(texts(chat.lastMessage)).toEqual(['Starting.', 'Fin', 'Finished.', 'Done.'])
+    expect(chat.lastMessage.parts.map((part) => part.type)).toEqual([
+      'step-start',
+      'text',
+      'tool-work',
+      'step-start',
+      'text',
+      'tool-pause',
+      'step-start',
+      'text',
+      'tool-final',
+      'step-start',
+      'text',
+    ])
   }),
 )
 /** Chunk faults exercise the public transport protocol, independent of SSE packet boundaries. */
@@ -783,45 +778,41 @@ it.live.each(['parallel', 'sequential', 'retry', 'steer'] as const)(
       )
       opened.faux.setResponses([...preceding, parked])
       yield* Effect.addFinalizer(() => Effect.sync(() => Deferred.doneUnsafe(release, Effect.void)))
-      try {
-        const live = yield* Effect.forkScoped(
-          consumeReadable(
-            yield* Effect.promise(() =>
-              streamRun(
-                opened.harness,
-                { conversationId: opened.root.id, content: 'Start', requestId: runKind },
-                context,
-              ),
-            ),
-            Option.none(),
-          ),
-        )
-        if (runKind === 'steer') {
-          yield* Deferred.await(entered)
+      const live = yield* Effect.forkScoped(
+        consumeReadable(
           yield* Effect.promise(() =>
-            opened.root.submit(
-              { type: 'input', content: 'Steer', requestId: 'steer', whenBusy: 'steer' },
+            streamRun(
+              opened.harness,
+              { conversationId: opened.root.id, content: 'Start', requestId: runKind },
               context,
             ),
-          )
-          Deferred.doneUnsafe(release, Effect.void)
-        }
-        const result = yield* Fiber.join(live)
-        const steps = result.chunks.filter((chunk) => chunk.type === 'start-step').length
-        expect(steps).toBe(runKind === 'steer' ? 2 : 1)
-        const attached = yield* Effect.promise(() =>
-          attachRun(opened.harness, opened.root.id, context),
+          ),
+          Option.none(),
+        ),
+      )
+      if (runKind === 'steer') {
+        yield* Deferred.await(entered)
+        yield* Effect.promise(() =>
+          opened.root.submit(
+            { type: 'input', content: 'Steer', requestId: 'steer', whenBusy: 'steer' },
+            context,
+          ),
         )
-        if (attached.status === 'idle') throw new Error('Expected parked run')
-        const whole = yield* consumeReadable(attached.stream, Option.none())
-        expect(whole.chunks.filter((chunk) => chunk.type === 'start-step')).toHaveLength(steps)
-        expect(texts(whole.message)).toEqual(texts(result.message))
-        expect(whole.message.parts.map((part) => part.type)).toEqual(
-          result.message.parts.map((part) => part.type),
-        )
-      } finally {
         Deferred.doneUnsafe(release, Effect.void)
       }
+      const result = yield* Fiber.join(live)
+      const steps = result.chunks.filter((chunk) => chunk.type === 'start-step').length
+      expect(steps).toBe(runKind === 'steer' ? 2 : 1)
+      const attached = yield* Effect.promise(() =>
+        attachRun(opened.harness, opened.root.id, context),
+      )
+      if (attached.status === 'idle') throw new Error('Expected parked run')
+      const whole = yield* consumeReadable(attached.stream, Option.none())
+      expect(whole.chunks.filter((chunk) => chunk.type === 'start-step')).toHaveLength(steps)
+      expect(texts(whole.message)).toEqual(texts(result.message))
+      expect(whole.message.parts.map((part) => part.type)).toEqual(
+        result.message.parts.map((part) => part.type),
+      )
     }),
 )
 /** A status refusal remains actionable typed text; it must not reconnect to another person's run. */
