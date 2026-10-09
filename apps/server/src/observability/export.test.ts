@@ -367,6 +367,33 @@ it.effect(
     ),
 )
 
+it.effect.each(['Delivery', 'Unexplained'] as const)(
+  'exports a %s Run failure without attributing it to the model provider',
+  (reason) =>
+    withReceiver(
+      Effect.gen(function* () {
+        const { lines, spans } = yield* exported(
+          recordRunFailure({
+            threadId: ThreadId.make('private-thread'),
+            runId: RunId.make('private-run'),
+            reason,
+            status: Option.none(),
+          }),
+        )
+        const expected = {
+          'error.type': 'RunFailed',
+          'vivid.failure.kind': 'expected',
+          'vivid.boundary': 'runtime',
+        }
+        const [span] = spanNamed(spans, 'Runtime.failedRun')
+        expect(span === undefined ? {} : valuesOf(span.attributes)).toEqual(expected)
+        const failures = lines.filter((entry) => entry.body.stringValue === Message.failure)
+        expect(failures).toHaveLength(1)
+        expect(failures.map((entry) => valuesOf(entry.attributes))).toEqual([expected])
+      }),
+    ),
+)
+
 it.effect('drops provider prose and invalid status values from both traces and logs', () =>
   withReceiver(
     Effect.gen(function* () {

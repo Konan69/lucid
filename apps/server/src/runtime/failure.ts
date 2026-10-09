@@ -34,13 +34,16 @@ const diagnosticOf = (evidence: typeof Evidence.Type): Option.Option<string> => 
   return Option.fromUndefinedOr(evidence.message)
 }
 
-/** Pi 0.87.1 formats status-only SDK errors as "520 status code (no body)" or "520: <body>".
- * Read only that leading numeric field; provider body and unrelated numbers are never exported. */
+/** Pi 0.87.1 preserves OpenAI's "520 <text>" and "520 status code (no body)", or formats
+ * JSON bodies as "520: <body>". Read only the leading field, never numbers inside the body. */
+const statusOf = (text: string): Option.Option<number> => {
+  const match = /^([45]\d{2})(?: |:)/u.exec(text)
+  return match === null ? Option.none() : Option.some(Number(match[1]))
+}
+
+/** Only the numeric status survives the SDK evidence ingress; its body stays in this process. */
 export const providerStatusOf = (decoded: Option.Option<typeof Evidence.Type>) =>
-  Option.flatMap(Option.flatMap(decoded, diagnosticOf), (text) => {
-    const match = /^([45]\d{2})(?: status code\b|:)/u.exec(text)
-    return match === null ? Option.none<number>() : Option.some(Number(match[1]))
-  })
+  Option.flatMap(Option.flatMap(decoded, diagnosticOf), statusOf)
 
 /** The provider's schema-encoded SDK diagnostic is read exactly, before legacy prose classification. */
 const decodeReason = Schema.decodeUnknownOption(
@@ -65,6 +68,9 @@ export const classifyFailure = (decoded: Option.Option<typeof Evidence.Type>): R
 
 /** Provider status and known failure phrases outrank generic SDK operation names. */
 const classifyText = (text: string): RunFailure => {
+  const status = statusOf(text)
+  // A gateway's HTML timeout page is still an HTTP 5xx, regardless of the prose in its body.
+  if (Option.isSome(status) && status.value >= 500) return 'ModelUnavailable'
   if (/\b429\b|rate.?limit|too many requests/iu.test(text)) return 'RateLimited'
   if (/idle timeout|request timed out|timedout|timed out|deadline|timeout/iu.test(text))
     return 'TimedOut'
@@ -109,13 +115,16 @@ const failRun = Effect.fn('Runtime.failedRun')(function* (input: {
   readonly reason: RunFailure
   readonly status: Option.Option<number>
 }) {
-  const attributes = Option.match(input.status, {
-    onNone: () => ({ [FailureAttribute.modelReason]: input.reason }),
-    onSome: (status) => ({
-      [FailureAttribute.modelReason]: input.reason,
-      [FailureAttribute.modelStatus]: status,
-    }),
-  })
+  // Delivery and unrecognized execution failures have their own tag, without model diagnostics.
+  const attributes = isModelFailure(input.reason)
+    ? Option.match(input.status, {
+        onNone: () => ({ [FailureAttribute.modelReason]: input.reason }),
+        onSome: (status) => ({
+          [FailureAttribute.modelReason]: input.reason,
+          [FailureAttribute.modelStatus]: status,
+        }),
+      })
+    : {}
   yield* Effect.annotateCurrentSpan(attributes)
   const failure = isModelFailure(input.reason)
     ? new ModelProviderFailed({ ...input, reason: input.reason })
