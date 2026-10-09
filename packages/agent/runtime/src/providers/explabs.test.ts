@@ -42,7 +42,7 @@ describe('production provider request retries', () => {
     )
   }
 
-  it.effect('bounds exhausted upstream requests to three, despite a larger caller budget', () =>
+  it.effect('bounds one Pi request to three HTTP attempts, despite a larger caller budget', () =>
     Effect.gen(function* () {
       const fetch = vi.fn(() => Promise.resolve(new Response(null, { status: 520 })))
       const result = provider

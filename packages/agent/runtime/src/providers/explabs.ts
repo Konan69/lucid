@@ -45,9 +45,12 @@ const completions = openAICompletionsApi()
 /**
  * Pi 0.87.1 openai-completions retries only create(...).withResponse(), before emitting start
  * or consuming the stream. Its public options cover 5xx (including 520–524) and connection
- * failures; defaults are zero retries. Keep two retries and cap server-requested waits at 2 s.
+ * failures, as well as 408/409/429 and provider retry headers; defaults are zero retries.
+ * Allow two retries per Pi request; a server-requested wait above 2 s fails immediately.
  * Flue 2.2.2 useModel has no request options, so supply these at its public Provider API seam.
- * No stream is replayed here: a failure after assistant content or a tool delta stays failed.
+ * This adapter never replays a stream after assistant content or a tool delta. Flue separately
+ * retries some failed turns up to three times, without a public content guard or retry option:
+ * those errors can therefore make up to twelve HTTP requests and replay partial output.
  */
 const requestBudget = { maxRetries: 2, maxRetryDelayMs: 2_000 }
 const requests: ProviderStreams = {
