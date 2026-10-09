@@ -18,7 +18,11 @@ import {
  */
 
 const decodeState = Schema.decodeUnknownOption(NoticeState)
-const encodeRequest = Schema.encodeSync(NoticeRequest)
+const encodeRequest = Schema.encodeOption(NoticeRequest)
+
+/** Asks main one thing. A request that will not encode is not sent: there is nothing to answer. */
+const ask = (request: NoticeRequest): Option.Option<Promise<unknown>> =>
+  Option.map(encodeRequest(request), (said) => ipcRenderer.invoke(NOTICE_INVOKE_CHANNEL, said))
 
 const bridge: VividNoticeBridge = {
   watch: (listener) => {
@@ -30,17 +34,17 @@ const bridge: VividNoticeBridge = {
       heard(payload)
     ipcRenderer.on(NOTICE_STATE_CHANNEL, pushed)
     // The page may finish loading after main sent the state, so it also asks once.
-    void ipcRenderer
-      .invoke(NOTICE_INVOKE_CHANNEL, encodeRequest(NoticeRequest.cases.State.make({})))
-      .then(heard, () => undefined)
+    Option.map(ask(NoticeRequest.cases.State.make({})), (answer) => {
+      void answer.then(heard, () => undefined)
+    })
     return () => {
       ipcRenderer.removeListener(NOTICE_STATE_CHANNEL, pushed)
     }
   },
   stop: () => {
-    void ipcRenderer
-      .invoke(NOTICE_INVOKE_CHANNEL, encodeRequest(NoticeRequest.cases.Stop.make({})))
-      .catch(() => undefined)
+    Option.map(ask(NoticeRequest.cases.Stop.make({})), (answer) => {
+      void answer.catch(() => undefined)
+    })
   },
 }
 contextBridge.exposeInMainWorld(NOTICE_NAMESPACE, bridge)

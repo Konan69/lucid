@@ -30,7 +30,7 @@ import '../styles/vivid.css'
 const KEY = 'vivid-appearance'
 const AppearanceJson = Schema.fromJsonString(Appearance)
 const decodeKept = Schema.decodeUnknownOption(AppearanceJson)
-const encodeKept = Schema.encodeSync(AppearanceJson)
+const encodeKept = Schema.encodeOption(AppearanceJson)
 
 /** What this browser last saw, when it kept something it still understands. */
 const remembered = (): Appearance =>
@@ -54,7 +54,8 @@ const adopt = (next: Appearance) => {
   )
     return
   shown = next
-  kept.write(KEY, encodeKept(next))
+  // What will not encode is not remembered; it is still shown, and the server still has it.
+  Option.map(encodeKept(next), (text) => kept.write(KEY, text))
   for (const listener of listeners) listener()
 }
 

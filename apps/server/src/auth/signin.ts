@@ -118,7 +118,7 @@ const Attempt = Schema.Struct({
   back: Back,
 })
 type Attempt = typeof Attempt.Type
-const encodeAttempt = Schema.encodeSync(Attempt)
+const encodeAttempt = Schema.encodeOption(Attempt)
 
 /**
  * The part of a sign-in's state the hook reads, when the sign-in is an app's attempt: the
@@ -145,12 +145,22 @@ const Granted = Schema.fromJsonString(
   }),
 )
 type Granted = typeof Granted.Type
-const encodeGranted = Schema.encodeSync(Granted)
+const encodeGranted = Schema.encodeOption(Granted)
 const decodeGranted = Schema.decodeUnknownOption(Granted)
 
 /** Each app's answer to a trade, as it goes out on the wire. */
-const encodeSignedIn = Schema.encodeSync(SignedIn)
-const encodePhoneSignedIn = Schema.encodeSync(PhoneSignedIn)
+const encodeSignedIn = Schema.encodeOption(SignedIn)
+const encodePhoneSignedIn = Schema.encodeOption(PhoneSignedIn)
+
+/**
+ * The answer for a value of this module's own that would not encode for the store or the wire.
+ * It is a fault of the server and not of the request, so it is said as one, and the step that
+ * needed the value does not run: nothing half-written is stored or sent.
+ */
+const unwritten = (ctx: GenericEndpointContext) =>
+  Promise.reject(
+    ctx.error('INTERNAL_SERVER_ERROR', { message: 'This sign-in could not be written' }),
+  )
 
 /**
  * Where Better Auth would land the browser if the hook below did not send it to the app. They
@@ -208,9 +218,13 @@ const leave = (ctx: GenericEndpointContext, origin: string, attempt: Attempt) =>
   const google = ctx.context.socialProviders.find((provider) => provider.id === 'google')
   if (google === undefined)
     return Promise.reject(ctx.error('NOT_FOUND', { message: 'No Google provider is registered' }))
-  return addOAuthServerContext({ [ATTEMPT]: encodeAttempt(attempt) })
-    .then(() => toGoogle(ctx, google, origin))
-    .then((address) => Promise.reject(ctx.redirect(address)))
+  return Option.match(encodeAttempt(attempt), {
+    onNone: () => unwritten(ctx),
+    onSome: (kept) =>
+      addOAuthServerContext({ [ATTEMPT]: kept })
+        .then(() => toGoogle(ctx, google, origin))
+        .then((address) => Promise.reject(ctx.redirect(address))),
+  })
 }
 
 /**
@@ -264,18 +278,24 @@ const grant = (
   arrival: SignInArrival,
 ) => {
   const code = SignInCode.make(generateRandomString(32, 'a-z', 'A-Z', '0-9'))
-  return ctx.context.internalAdapter
-    .createVerificationValue({
-      identifier: `${GRANTED[attempt.back._tag]}${code}`,
-      value: encodeGranted({
-        person,
-        challenge: attempt.challenge,
-        state: attempt.state,
-        arrival,
-      }),
-      expiresAt: new Date(Date.now() + GRANT_LASTS_MS),
-    })
-    .then(() => SignInReturn.cases.Granted.make({ code, state: attempt.state }))
+  const granted = encodeGranted({
+    person,
+    challenge: attempt.challenge,
+    state: attempt.state,
+    arrival,
+  })
+  // A grant that will not encode is a code that could not be stored, and `outcome` treats it so.
+  return Option.match(granted, {
+    onNone: () => unwritten(ctx),
+    onSome: (value) =>
+      ctx.context.internalAdapter
+        .createVerificationValue({
+          identifier: `${GRANTED[attempt.back._tag]}${code}`,
+          value,
+          expiresAt: new Date(Date.now() + GRANT_LASTS_MS),
+        })
+        .then(() => SignInReturn.cases.Granted.make({ code, state: attempt.state })),
+  })
 }
 
 /**
@@ -421,7 +441,12 @@ const traded = (origin: string) =>
           onSome: (granted) =>
             sessionFor(ctx, granted)
               .then((made) => setSessionCookie(ctx, made))
-              .then(() => ctx.json(encodeSignedIn({ arrival: granted.arrival }))),
+              .then(() =>
+                Option.match(encodeSignedIn({ arrival: granted.arrival }), {
+                  onNone: () => unwritten(ctx),
+                  onSome: (answer) => ctx.json(answer),
+                }),
+              ),
         }),
       ),
   )
@@ -451,7 +476,10 @@ const tradedOnPhone = createAuthEndpoint(
         onNone: () => refused(ctx),
         onSome: (granted) =>
           sessionFor(ctx, granted).then((made) =>
-            ctx.json(encodePhoneSignedIn({ token: Redacted.make(made.session.token) })),
+            Option.match(encodePhoneSignedIn({ token: Redacted.make(made.session.token) }), {
+              onNone: () => unwritten(ctx),
+              onSome: (answer) => ctx.json(answer),
+            }),
           ),
       }),
     ),

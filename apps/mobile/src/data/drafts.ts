@@ -95,6 +95,9 @@ const writes = (kept: Drafts, drafts: Stream.Stream<Option.Option<Drafts>>) =>
     ),
   ).pipe(
     Stream.map(writeDrafts),
+    // Drafts that will not encode are not written: the store keeps the last text it was given.
+    Stream.filter(Option.isSome),
+    Stream.map((written) => written.value),
     Stream.changes,
     Stream.drop(1),
     Stream.buffer({ capacity: 1, strategy: 'sliding' }),

@@ -35,7 +35,7 @@ const DeploymentTargetsSchema = Schema.Struct({
   preview: DeploymentTargetSchema,
   production: DeploymentTargetSchema,
 })
-const decodeDeploymentTargetsJson = Schema.decodeUnknownSync(
+const decodeDeploymentTargetsJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(DeploymentTargetsSchema),
 )
 const decodeDeployTargetName = Schema.decodeUnknownEffect(DeployTargetName)
@@ -103,7 +103,26 @@ export const deploymentTargetsJson = String.raw`{
   }
 }`
 
-export const deploymentTargets = decodeDeploymentTargetsJson(deploymentTargetsJson)
+/**
+ * The document above does not decode. It is checked in, so this is a broken build and not a wrong
+ * selector, and it is told apart from `InvalidDeployTarget` so nobody is sent to fix a variable
+ * that was right.
+ */
+export class DeploymentTargetsInvalid extends Schema.TaggedError<DeploymentTargetsInvalid>()(
+  'DeploymentTargetsInvalid',
+  { message: Schema.String },
+  { title: 'Deployment targets are invalid' },
+) {}
+
+/** Every target's metadata, decoded when a target is chosen: before any resource is registered. */
+const deploymentTargets = decodeDeploymentTargetsJson(deploymentTargetsJson).pipe(
+  Effect.mapError(
+    () =>
+      new DeploymentTargetsInvalid({
+        message: 'The deployment target document in infra/targets.ts does not decode',
+      }),
+  ),
+)
 
 export class InvalidDeployTarget extends Schema.TaggedError<InvalidDeployTarget>()(
   'InvalidDeployTarget',
@@ -138,7 +157,8 @@ export const parseDeployTarget = Effect.fn('parseDeployTarget')(function* (value
         }),
     ),
   )
-  return deploymentTargets[key]
+  const targets = yield* deploymentTargets
+  return targets[key]
 })
 
 /** Local is the safe default; remote targets must always be chosen explicitly. */

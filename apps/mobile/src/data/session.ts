@@ -44,13 +44,14 @@ export const Outside = Data.taggedEnum<Outside>()
  */
 const Kept = Schema.fromJsonString(Schema.Struct({ url: Schema.String, token: Schema.String }))
 const decodeKept = Schema.decodeUnknownOption(Kept)
-const encodeKept = Schema.encodeSync(Kept)
+const encodeKept = Schema.encodeOption(Kept)
 
 /**
  * A session as the text the store holds for it. `keepsToken` is whether this store may be handed
  * the token at all: a store that any script can read is given the address alone (`held.ts`).
+ * There is no text for a session that will not encode, and the store is then not written.
  */
-export const writeKept = (session: Session, keepsToken: boolean): string =>
+export const writeKept = (session: Session, keepsToken: boolean): Option.Option<string> =>
   encodeKept(
     Session.$match(session, {
       Unset: () => ({ url: '', token: '' }),

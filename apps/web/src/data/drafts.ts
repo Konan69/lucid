@@ -92,7 +92,7 @@ const sync = makeDraftSync({
 function put(next: Drafts) {
   drafts = next
   // A store that refuses is not said: this tab's memory has the words either way.
-  kept.write(KEY, writeDrafts(next))
+  Option.map(writeDrafts(next), (text) => kept.write(KEY, text))
   for (const listener of listeners) listener()
   sync.changed()
 }
@@ -130,7 +130,7 @@ engine.registry.subscribe(
 export const forgetDrafts = () => {
   sync.stop()
   drafts = forgotten(current())
-  kept.write(KEY, writeDrafts(drafts))
+  Option.map(writeDrafts(drafts), (text) => kept.write(KEY, text))
   for (const listener of listeners) listener()
 }
 

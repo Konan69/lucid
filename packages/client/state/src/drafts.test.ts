@@ -123,7 +123,7 @@ describe('a device keeping drafts', () => {
 
   it('survives being stored, and reads anything else as no drafts', () => {
     const typed = typedAndSaved('Ask Dami for the signed NDA', 4)
-    expect(readDrafts(Option.some(writeDrafts(typed)))).toEqual(typed)
+    expect(readDrafts(writeDrafts(typed))).toEqual(typed)
     expect(readDrafts(Option.none())).toEqual(noDrafts)
     expect(readDrafts(Option.some('{"version":3,"entries":[{"where":'))).toEqual(noDrafts)
     expect(readDrafts(Option.some('{"version":9,"entries":[]}'))).toEqual(noDrafts)
@@ -397,7 +397,7 @@ describe('drafts an earlier build kept', () => {
     expect(owing(here, ada(t1)).text).toBe('Ask Dami for the NDA')
     // The Thread that is not in this workspace's list goes on waiting, and survives the store.
     expect(here.pending.map((waiting) => waiting.text)).toEqual(['In another workspace'])
-    expect(readDrafts(Option.some(writeDrafts(here))).pending).toEqual(here.pending)
+    expect(readDrafts(writeDrafts(here)).pending).toEqual(here.pending)
     const own: DraftScope = { person: 'ada', workspace: personal }
     const there = resolved(here, own, new Set([ThreadId.make('t9')]))
     expect(draftIn(there, whereOf(own, inThread(ThreadId.make('t9'))))).toBe('In another workspace')

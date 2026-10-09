@@ -165,7 +165,7 @@ const decodeResponse = Schema.decodeUnknownEffect(BridgeResponse)
 const decodeEventResult = Schema.decodeUnknownResult(BridgeEvent)
 const encodeRequest = Schema.encodeEffect(BridgeRequest)
 const encodeResponse = Schema.encodeEffect(BridgeResponse)
-const encodeEvent = Schema.encodeSync(BridgeEvent)
+const encodeEvent = Schema.encodeOption(BridgeEvent)
 
 /** Decode one untrusted renderer request exactly once at the main-process ingress. */
 export const decodeBridgeRequest = (payload: typeof Schema.Unknown.Type) =>
@@ -194,7 +194,10 @@ export const encodeBridgeResponse = (response: BridgeResponse) =>
     Effect.mapError(() => new InvalidBridgeMessage({ direction: 'response' })),
   )
 
-/** Encode a trusted event before sending it to the isolated renderer. */
+/**
+ * Encode a trusted event before sending it to the isolated renderer. There is nothing to send for
+ * an event that will not encode, and the sender then sends nothing.
+ */
 export const encodeBridgeEvent = (event: BridgeEvent) => encodeEvent(event)
 
 /**

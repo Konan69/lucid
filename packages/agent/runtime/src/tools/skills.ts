@@ -23,8 +23,19 @@ export class BuiltinSkillActivationRequired extends Schema.TaggedError<BuiltinSk
   { runtimeName: RuntimeName, tool: Schema.Literal('activate_skill') },
   { title: 'Built-in skill requires native activation' },
 ) {}
-const encodeReserved = Schema.encodeSync(BuiltinSkillNameReserved)
-const encodeActivation = Schema.encodeSync(BuiltinSkillActivationRequired)
+const encodeReserved = Schema.encodeOption(BuiltinSkillNameReserved)
+const encodeActivation = Schema.encodeOption(BuiltinSkillActivationRequired)
+
+/**
+ * A built-in name's refusal as the model reads it: the sentence always, and the typed error beside
+ * it when it encodes. The sentence alone still says what to do next, so an error that will not
+ * encode costs the model the structured copy and not the answer.
+ */
+const refusal = <Encoded>(error: Option.Option<Encoded>, message: string) =>
+  Option.match(error, {
+    onNone: () => ({ ok: false, message }),
+    onSome: (encoded) => ({ ok: false, error: encoded, message }),
+  })
 
 /** Saved procedures resolve only within the acting Person's catalog; storage never schedules work. */
 export function skillTools(runTool: RunTool) {
@@ -55,11 +66,10 @@ export function skillTools(runTool: RunTool) {
           }).pipe(
             Effect.catchTag('BuiltinSkillActivationRequired', (error) =>
               Effect.succeed({
-                output: {
-                  ok: false,
-                  error: encodeActivation(error),
-                  message: `Use activate_skill with ${error.runtimeName}.`,
-                },
+                output: refusal(
+                  encodeActivation(error),
+                  `Use activate_skill with ${error.runtimeName}.`,
+                ),
               }),
             ),
           ),
@@ -114,9 +124,7 @@ export function skillTools(runTool: RunTool) {
             return { output: views.skillSummary(response.skill, entry.name) }
           }).pipe(
             Effect.catchTag('BuiltinSkillNameReserved', (error) =>
-              Effect.succeed({
-                output: { ok: false, error: encodeReserved(error), message: error.message },
-              }),
+              Effect.succeed({ output: refusal(encodeReserved(error), error.message) }),
             ),
           ),
           { signal, tool: 'save_skill' },

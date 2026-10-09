@@ -4,7 +4,7 @@ import * as Atom from 'effect/unstable/reactivity/Atom'
 import { Platform } from 'react-native'
 import { door } from './door'
 import { Forgetting, makeCustody, readKept, writeKept, type Session } from './session'
-import { keep, recall } from './storage'
+import { keep, recall, StorageUnavailable, UNWRITABLE } from './storage'
 
 /**
  * The session this device holds: read from its protected store at launch, shown to the app as
@@ -54,7 +54,13 @@ const forgetting = Atom.keepAlive(Atom.make<Forgetting>(Forgetting.Done()))
 export const forgettingAtom: Atom.Atom<Forgetting> = forgetting
 
 const custody = makeCustody({
-  write: (session) => keep(KEY, writeKept(session, keepsToken)),
+  // A session with no text to store was not kept, which is the store refusing it: custody then
+  // does not show it as signed in (`makeCustody`).
+  write: (session) =>
+    Option.match(writeKept(session, keepsToken), {
+      onNone: () => Effect.fail(new StorageUnavailable({ message: UNWRITABLE })),
+      onSome: (text) => keep(KEY, text),
+    }),
   show: (session) => door.set(adopted, Option.some(session)),
   owed: () => door.get(forgetting),
   owe: (next) => door.set(forgetting, next),

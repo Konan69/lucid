@@ -255,7 +255,10 @@ export const openGuest = Effect.fn('Code.openGuest')(function* (
       Reply: ({ id }) => `reply-${id}`,
       Cancel: () => 'cancel',
     })
-    const text = encodeParent(message)
+    // An order that will not encode is as unusable as one that will not decode: nothing is sent.
+    const text = yield* encodeParent(message).pipe(
+      Effect.mapError(() => new PipeFailure({ reason: 'invalid' })),
+    )
     if (bytes(text) > budgets.wire || !boundedNesting(text))
       return yield* new PipeFailure({ reason: 'size' })
     // The newline is how the runner knows the file is whole and not still being written.

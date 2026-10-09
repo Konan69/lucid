@@ -1,14 +1,15 @@
 import { describe, expect, it } from '@effect/vitest'
 import { CodeFailure } from '@vivid/contracts'
 import { CodeTiming } from '@vivid/contracts/code'
-import { Deferred, Effect, Fiber, Queue, Ref, Stream, type Cause } from 'effect'
+import { Deferred, Effect, Fiber, Queue, Ref, Schema, Stream, type Cause } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { MachineOperationFailed, MachineOutput, type MachineFailure } from '../computers/machine.ts'
 import type { ComputerAttachment } from '../computers/store.ts'
 import { openGuest, type Runner } from './computer.ts'
-import { encodeWorker, ParentMessage, WorkerMessage } from './protocol.ts'
+import { ParentMessage, WorkerMessage } from './protocol.ts'
 
 const runner: Runner = { path: 'runner.mjs', text: 'the runner' }
+const encodeWorker = Schema.encodeSync(Schema.fromJsonString(WorkerMessage))
 const done = `${encodeWorker(
   WorkerMessage.cases.Done.make({ result: 1, logs: [], logsTruncated: false }),
 )}\n`

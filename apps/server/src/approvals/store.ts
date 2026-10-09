@@ -281,7 +281,7 @@ const claim = Effect.fn('Approvals.claim')(function* (
         status: ApprovalDecision.guards.Deny(request.decision) ? 'denied' : 'executing',
         decidedBy: actor.person.id,
         decidedAt: now,
-        signal: encodeSignal(decisionSignal(row, request.decision, actor.person.id)),
+        signal: yield* encodeSignal(decisionSignal(row, request.decision, actor.person.id)),
         signalDueAt: now,
       })
       .where(
@@ -392,7 +392,7 @@ const finish = Effect.fn('Approvals.finish')(function* (
       .set({
         ...ending,
         finishedAt: now,
-        signal: encodeSignal(owed(row.id, row.action.summary, conclusion, row.decidedBy)),
+        signal: yield* encodeSignal(owed(row.id, row.action.summary, conclusion, row.decidedBy)),
         signalDueAt: now,
       })
       .where(
@@ -534,7 +534,7 @@ const recover = (
       .update(approvals)
       .set({
         ...ending,
-        signal: encodeSignal(owed(row.id, row.action.summary, conclusion, row.decidedBy)),
+        signal: yield* encodeSignal(owed(row.id, row.action.summary, conclusion, row.decidedBy)),
         signalDueAt: now,
       })
       .where(eq(approvals.id, row.id))

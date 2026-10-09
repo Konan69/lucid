@@ -17,7 +17,7 @@ import {
   Workspace,
 } from '@vivid/contracts'
 import { inWorkspace, summaryOf, type Actor } from '../auth/access.ts'
-import { Database, decodeStored, returned } from '../database/client.ts'
+import { Database, decodeStored, encodeStored, returned } from '../database/client.ts'
 import { changed, Topic } from '../live/changes.ts'
 import { AccountIdentity, ExecutorReferences } from './executor.ts'
 import { connectionLogo, IMPORTED } from './logo.ts'
@@ -41,7 +41,7 @@ export type ConnectionRecord = typeof rowSchema.Type
 const decodeTrip = Schema.decodeUnknownEffect(Schema.Struct({ id: ConnectionId, person: PersonId }))
 /** The one decoder for a stored Connection; every reader of the table goes through it. */
 export const decodeRow = decodeStored(rowSchema, 'Connection')
-export const encodeReferences = Schema.encodeSync(ExecutorReferences)
+export const encodeReferences = encodeStored(ExecutorReferences, 'Connection references')
 
 /** Personal accounts follow their Person across workspaces; Company accounts stay in their Company. */
 const usable = (actor: Actor) => {
@@ -205,7 +205,7 @@ export const saveState = Effect.fn('Connections.saveState')(function* (
     database
       .update(connections)
       .set({
-        references: encodeReferences(references),
+        references: yield* encodeReferences(references),
         status,
         reason,
         updatedAt: yield* Clock.currentTimeMillis,

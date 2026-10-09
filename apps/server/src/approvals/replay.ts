@@ -131,7 +131,7 @@ const replayOne = Effect.fn('Signals.replayOne')(function* (
   yield* database.run(
     database
       .update(table)
-      .set({ signal: encodeSignal(ending), signalDueAt: now + 30_000, signalClaim: null })
+      .set({ signal: yield* encodeSignal(ending), signalDueAt: now + 30_000, signalClaim: null })
       .where(and(eq(table.id, row.id), eq(table.signalClaim, token))),
   )
 })

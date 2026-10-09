@@ -1,4 +1,5 @@
 import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
 import type * as HttpClient from 'effect/unstable/http/HttpClient'
 import { ipcMain, type WebContents } from 'electron'
 import {
@@ -47,8 +48,7 @@ export function registerBridge(input: {
 
 /** Encode a trusted native scheme notification before copying it to the isolated renderer. */
 export function sendColorSchemeChanged(target: WebContents, value: ColorSchemeState): void {
-  target.send(
-    BRIDGE_EVENT_CHANNEL,
-    encodeBridgeEvent(BridgeEvent.cases.ColorSchemeChanged.make({ value })),
+  Option.map(encodeBridgeEvent(BridgeEvent.cases.ColorSchemeChanged.make({ value })), (event) =>
+    target.send(BRIDGE_EVENT_CHANNEL, event),
   )
 }

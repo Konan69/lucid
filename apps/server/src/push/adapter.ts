@@ -48,7 +48,7 @@ const ExpoMessage = Schema.Struct({
   data: PushPayload,
 })
 const ReceiptRequest = Schema.Struct({ ids: Schema.Array(Schema.String) })
-const encodePayload = Schema.encodeSync(Schema.fromJsonString(PushPayload))
+const encodePayload = Schema.encodeEffect(Schema.fromJsonString(PushPayload))
 
 /** 404/410 revoke Web Push authority; other refusals never authorize an uncertain retry. */
 const acceptedStatus = (status: number) => {
@@ -67,9 +67,11 @@ const sendBrowser = Effect.fn('PushAdapter.browser')(function* (
   payload: PushPayload,
 ) {
   const config = yield* PushConfig
+  // A payload that will not encode was never handed to the provider: refused, with no retry owed.
+  const body = yield* encodePayload(payload).pipe(Effect.mapError(() => new PushRejected({})))
   const details = yield* Effect.try({
     try: () =>
-      WebPush.generateRequestDetails(destination, encodePayload(payload), {
+      WebPush.generateRequestDetails(destination, body, {
         vapidDetails: {
           subject: config.subject,
           publicKey: config.publicKey,

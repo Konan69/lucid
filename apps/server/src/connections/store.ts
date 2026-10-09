@@ -307,7 +307,7 @@ const begin = Effect.fn('Connections.begin')(function* (
           label: service.name,
           personId: actor.person.id,
           companyId,
-          references: encodeReferences(step.references),
+          references: yield* encodeReferences(step.references),
           status,
           returnsTo: request.from,
           reason: null,

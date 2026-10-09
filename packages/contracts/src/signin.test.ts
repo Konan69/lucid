@@ -38,7 +38,9 @@ const arrivingAt = (address: string) => readSignInReturn(queryOf(address))
 
 describe('the desktop sign-in addresses', () => {
   it('starts on the server the shell saved, with exactly what the server reads back', () => {
-    const address = signInStartAddress('https://vivid.example', { challenge, state, port })
+    const address = Option.getOrThrow(
+      signInStartAddress('https://vivid.example', { challenge, state, port }),
+    )
     expect(address.startsWith('https://vivid.example/api/auth/desktop/google?')).toBe(true)
     expect(decodeStart(queryOf(address))).toEqual(Option.some({ challenge, state, port }))
   })

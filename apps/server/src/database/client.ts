@@ -145,6 +145,23 @@ export const decodeStored = <A>(schema: Schema.ConstraintDecoder<A>, subject: st
 }
 
 /**
+ * Builds the encoder for one kind of value on its way into a JSON column: `decodeStored`'s twin at
+ * egress. A typed value still has to fit its schema's checks to be written, and the throwing
+ * `Schema.encodeSync` this replaces turned one that did not into a defect. It is a database fault
+ * instead, in the channel every store already answers for, and nothing half-encoded is written.
+ */
+export const encodeStored = <S extends Schema.Constraint>(schema: S, subject: string) => {
+  const encode = Schema.encodeEffect(schema)
+  return (value: S['Type']) =>
+    encode(value).pipe(
+      Effect.mapError(
+        () =>
+          new DatabaseFailure({ message: `The ${subject} could not be written to the database` }),
+      ),
+    )
+}
+
+/**
  * A record assembled from database columns on its way into a wire schema. Columns are only ever
  * these scalars, so a decoder that takes this cannot be handed an arbitrary object.
  */

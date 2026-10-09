@@ -4,12 +4,13 @@ import * as NodeFS from 'node:fs'
 import * as NodeFSP from 'node:fs/promises'
 import * as NodeOS from 'node:os'
 import * as NodeProcess from 'node:process'
-import { Context, Effect, Layer, Schema, Option } from 'effect'
+import { Context, Effect, Layer, Result, Schema, Option } from 'effect'
 import * as Esbuild from 'esbuild'
 import electron from 'electron'
 
 // Electron's Node entry returns its executable path; its browser declaration describes the API.
-const electronExecutable = Schema.decodeUnknownSync(Schema.String)(electron)
+// A proof with no executable to launch cannot start: the schema's own error ends the script.
+const electronExecutable = Result.getOrThrow(Schema.decodeUnknownResult(Schema.String)(electron))
 
 class NativeProofFailed extends Schema.TaggedError<NativeProofFailed>()(
   'NativeProofFailed',

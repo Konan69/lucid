@@ -44,7 +44,12 @@ import {
   RunId,
 } from '@vivid/contracts'
 import { Refusal, recordRefusal } from '../observability/refusal.ts'
-import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
+import {
+  Database,
+  decodeStored,
+  encodeStored,
+  type DatabaseInfrastructureError,
+} from '../database/client.ts'
 import { NoActingRun, admittedRunState } from '../threads/runs.ts'
 import { stopPersonRun } from '../threads/stop.ts'
 import { Runtime } from '../runtime/client.ts'
@@ -216,7 +221,7 @@ const decodeStoredDevice = decodeStored(
   'Device',
 )
 const decodeReceipt = decodeStored(DeviceReceipt, 'Device receipt')
-const encodeReceipt = Schema.encodeSync(DeviceReceipt)
+const encodeReceipt = encodeStored(DeviceReceipt, 'Device receipt')
 
 /** The two columns an access state is stored in. The only place the union becomes columns. */
 const accessColumns = (access: DeviceAccess) => ({
@@ -521,7 +526,7 @@ const makeLedger = (database: DatabaseService, pending: Map<DeviceRequestId, Pen
         const written = yield* database.run(
           database
             .update(deviceRequests)
-            .set({ receipt: encodeReceipt(receipt) })
+            .set({ receipt: yield* encodeReceipt(receipt) })
             .where(
               and(
                 open(input.id),
@@ -571,7 +576,7 @@ const makeLedger = (database: DatabaseService, pending: Map<DeviceRequestId, Pen
     yield* database.run(
       database
         .update(deviceRequests)
-        .set({ receipt: encodeReceipt(DeviceReceipt.cases.OutcomeUnknown.make({})) })
+        .set({ receipt: yield* encodeReceipt(DeviceReceipt.cases.OutcomeUnknown.make({})) })
         .where(open(id)),
     )
     const [row] = yield* database.run(
@@ -598,7 +603,7 @@ const makeLedger = (database: DatabaseService, pending: Map<DeviceRequestId, Pen
     yield* database.run(
       database
         .update(deviceRequests)
-        .set({ receipt: encodeReceipt(DeviceReceipt.cases.OutcomeUnknown.make({})) })
+        .set({ receipt: yield* encodeReceipt(DeviceReceipt.cases.OutcomeUnknown.make({})) })
         .where(and(eq(deviceRequests.status, 'Dispatched'), lte(deviceRequests.expiresAt, now))),
     )
   })
@@ -672,7 +677,7 @@ const makeSend = (
         threadId: request.threadId,
         runId: request.runId,
         action: request.work.action._tag,
-        receipt: encodeReceipt(DeviceReceipt.cases.Dispatched.make({})),
+        receipt: yield* encodeReceipt(DeviceReceipt.cases.Dispatched.make({})),
         dispatchedAt: yield* Clock.currentTimeMillis,
         expiresAt: request.expiresAt,
       }),
