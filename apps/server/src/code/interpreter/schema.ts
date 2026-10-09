@@ -232,37 +232,6 @@ export type InputProperty = {
  * directly, resolving a trivial top-level `$ref` into `$defs`/`definitions` when present.
  * Anything unresolvable yields `[]` (search falls back to path + description).
  */
-export const inputProperties = <R>(definition: Definition<R>): Array<InputProperty> => {
-  try {
-    const document = isEffectSchema(definition.input)
-      ? (Schema.toJsonSchemaDocument(definition.input) as {
-          readonly schema: JsonSchema
-          readonly definitions?: Readonly<Record<string, JsonSchema>>
-        })
-      : {
-          schema: definition.input,
-          definitions: { ...(definition.input.definitions ?? {}), ...(definition.input.$defs ?? {}) },
-        }
-    const definitions = document.definitions ?? {}
-    let schema = document.schema
-    if (schema.$ref !== undefined) {
-      const segment = schema.$ref.match(/^#\/(?:\$defs|definitions)\/([^/]+)$/)?.[1]
-      const name = segment === undefined ? undefined : JsonPointer.unescapeToken(segment)
-      const resolved = name === undefined ? undefined : definitions[name]
-      if (resolved === undefined) return []
-      schema = resolved
-    }
-    const required = new Set(schema.required ?? [])
-    return Object.entries(schema.properties ?? {}).map(([name, value]) => ({
-      name,
-      description: typeof value.description === "string" ? value.description : undefined,
-      required: required.has(name),
-    }))
-  } catch {
-    return []
-  }
-}
-
 /**
  * The model-visible TypeScript type of a tool's input. `pretty` renders an indented
  * multiline block with schema descriptions and constraints as JSDoc comments on the

@@ -1,13 +1,9 @@
 /** Ported from opencode `packages/codemode/src/tool-runtime.ts` at 3884062 (MIT). */
-import { Cause, Effect, Schema } from "effect"
+import { Cause, Effect } from "effect"
 import { ToolRefusal, toolRefusal } from "./refusal.ts"
 import {
   decodeInput as decodeToolInput,
   decodeOutput as decodeToolOutput,
-  identifierSegment,
-  inputProperties,
-  inputTypeScript,
-  outputTypeScript,
 } from "./schema.ts"
 import { isDefinition as isToolDefinition, type Definition } from "./tool.ts"
 import {
@@ -20,7 +16,6 @@ import {
   SandboxURLSearchParams,
 } from "./values.ts"
 
-const estimateTokens = (input: string) => Math.max(0, Math.round(input.length / 4))
 
 export type HostTool<R = never> = (...args: Array<unknown>) => Effect.Effect<unknown, unknown, R>
 
@@ -74,42 +69,7 @@ export type ToolCallHooks<R = never> = {
   readonly onToolCallEnd?: ((call: ToolCallEnded) => Effect.Effect<void, never, R>) | undefined
 }
 
-/** Model-visible description of one schema-backed tool. */
-export type ToolDescription = {
-  readonly path: string
-  readonly description: string
-  readonly signature: string
-}
-
 export type SafeObject = Record<string, unknown>
-
-const reservedNamespace = "$program"
-const defaultCatalogBudget = 2_000
-const defaultSearchLimit = 10
-const PositiveInt = Schema.Int.check(Schema.isGreaterThan(0))
-const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
-const SearchInput = Schema.Struct({
-  query: Schema.optionalKey(Schema.String),
-  namespace: Schema.optionalKey(Schema.String),
-  limit: Schema.optionalKey(PositiveInt),
-  offset: Schema.optionalKey(NonNegativeInt),
-})
-const SearchItem = Schema.Struct({
-  path: Schema.String,
-  description: Schema.String,
-  signature: Schema.String,
-})
-const SearchOutput = Schema.Struct({
-  items: Schema.Array(SearchItem),
-  remaining: NonNegativeInt,
-  next: Schema.NullOr(Schema.Struct({ offset: NonNegativeInt })),
-})
-const toolExpression = (path: string) =>
-  "tools" +
-  path
-    .split(".")
-    .map((segment) => (identifierSegment.test(segment) ? `.${segment}` : `[${JSON.stringify(segment)}]`))
-    .join("")
 
 export class ToolReference {
   constructor(readonly path: ReadonlyArray<string>) {}
@@ -314,340 +274,6 @@ export const copyOut = (value: unknown, undefinedAsNull = false): unknown => {
   return value
 }
 
-const definitions = <R>(
-  tools: HostTools<R>,
-  path: ReadonlyArray<string> = [],
-): Array<{ path: string; definition: Definition<R> }> => {
-  const entries: Array<{ path: string; definition: Definition<R> }> = []
-  for (const [name, value] of Object.entries(tools)) {
-    const next = [...path, name]
-    if (isDefinition(value)) entries.push({ path: next.join("."), definition: value })
-    else if (typeof value !== "function") entries.push(...definitions(value, next))
-  }
-  return entries
-}
-
-const describeDefinition = <R>(path: string, definition: Definition<R>): ToolDescription => ({
-  path,
-  description: definition.description,
-  signature: `${toolExpression(path)}(input: ${inputTypeScript(definition, true)}): Promise<${outputTypeScript(definition, true)}>`,
-})
-
-const visibleDefinitions = <R>(tools: HostTools<R>) =>
-  definitions(tools).map(({ path, definition }) => ({
-    path,
-    definition,
-    description: describeDefinition(path, definition),
-  }))
-
-export const catalog = <R>(tools: HostTools<R>): ReadonlyArray<ToolDescription> =>
-  visibleDefinitions(tools).map(({ description }) => description)
-
-export type DiscoveryPlan = {
-  readonly catalog: ReadonlyArray<ToolDescription>
-  readonly instructions: string
-  readonly searchIndex: ReadonlyArray<SearchEntry>
-}
-
-export type SearchEntry = {
-  readonly description: ToolDescription
-  /** Top-level namespace (first path segment), matched by the search `namespace` option. */
-  readonly namespace: string
-  /** Lowercased path + description + input property names/descriptions, for substring matching. */
-  readonly searchText: string
-}
-
-/**
- * Split a query into lowercased search terms. camelCase boundaries are split
- * (`resolveLibrary` -> `resolve library`) and every non-alphanumeric character is a
- * separator, so `resolve-library-id`, `resolveLibraryId`, and `resolve library id` all
- * tokenize alike. Empties and the `*` wildcard are dropped.
- */
-const tokenize = (query: string): Array<string> =>
-  query
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((term) => term.length > 0 && term !== "*")
-
-/**
- * A term plus its naive singular variants (trailing "s"/"es" stripped), so a plural
- * query term ("issues") still matches indexed text that only carries the singular
- * ("issue"). Matching is one-directional substring containment, so the variants are
- * needed only on the query side; scoring weights are unchanged - each field check
- * passes when ANY form matches.
- */
-const termForms = (term: string): Array<string> => {
-  const forms = [term]
-  if (term.endsWith("es") && term.length > 3) forms.push(term.slice(0, -2))
-  if (term.endsWith("s") && term.length > 2) forms.push(term.slice(0, -1))
-  return forms
-}
-
-const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Definition => ({
-  _tag: "ProgramTool",
-  description: "Search available program tools",
-  input: SearchInput,
-  output: SearchOutput,
-  run: (input) =>
-    Effect.sync(() => {
-      const request = input as typeof SearchInput.Type
-      const query = request.query ?? ""
-      const offset = request.offset ?? 0
-      const scoped =
-        request.namespace === undefined
-          ? searchIndex
-          : searchIndex.filter((entry) => entry.namespace === request.namespace)
-      // A query that names one tool path exactly (canonical path or rendered JavaScript
-      // expression) is a lookup, not a search: return that tool alone.
-      const trimmed = query.trim()
-      const pathQuery = trimmed.startsWith("tools.") ? trimmed.slice("tools.".length) : trimmed
-      const exact =
-        pathQuery === ""
-          ? undefined
-          : scoped.find(
-              (entry) => entry.description.path === pathQuery || toolExpression(entry.description.path) === trimmed,
-            )
-      const terms = tokenize(query).map(termForms)
-      // Additive field-weighted scoring, summed across terms: exact path or path segment
-      // (20) > path substring (8) > description substring (4) > any searchable text,
-      // including input parameter names and descriptions (2).
-      const ranked =
-        exact !== undefined
-          ? [exact]
-          : scoped
-              .map((entry) => {
-                const path = entry.description.path.toLowerCase()
-                const description = entry.description.description.toLowerCase()
-                const score = terms.reduce(
-                  (total, forms) =>
-                    total +
-                    (forms.some((form) => path === form || path.endsWith(`.${form}`)) ? 20 : 0) +
-                    (forms.some((form) => path.includes(form)) ? 8 : 0) +
-                    (forms.some((form) => description.includes(form)) ? 4 : 0) +
-                    (forms.some((form) => entry.searchText.includes(form)) ? 2 : 0),
-                  0,
-                )
-                return { entry, score }
-              })
-              .filter(({ score }) => terms.length === 0 || score > 0)
-              .sort(
-                (left, right) =>
-                  right.score - left.score || left.entry.description.path.localeCompare(right.entry.description.path),
-              )
-              .map(({ entry }) => entry)
-      const items = ranked.slice(offset, offset + (request.limit ?? defaultSearchLimit)).map(({ description }) => ({
-        ...description,
-        path: toolExpression(description.path),
-      }))
-      const remaining = Math.max(0, ranked.length - offset - items.length)
-      return {
-        items,
-        remaining,
-        next: remaining > 0 ? { offset: offset + items.length } : null,
-      }
-    }),
-})
-
-const searchDescription = describeDefinition(`${reservedNamespace}.search`, makeSearchTool([]))
-
-const catalogLine = (tool: ToolDescription) => {
-  // Keep the tool description concise; the full schema documentation remains in the signature.
-  const line = tool.description.split("\n", 1)[0]!.trim()
-  const description = line.length > 120 ? line.slice(0, 119) + "..." : line
-  return description === "" ? `  - ${tool.signature}` : `  - ${tool.signature} // ${description}`
-}
-
-const toSearchEntry = <R>(path: string, definition: Definition<R>, description: ToolDescription): SearchEntry => ({
-  description,
-  namespace: path.split(".", 1)[0]!,
-  searchText: [
-    path,
-    definition.description,
-    ...inputProperties(definition).flatMap(({ name, description: property }) =>
-      property === undefined ? [name] : [name, property],
-    ),
-  ]
-    .join("\n")
-    .toLowerCase(),
-})
-
-/** The runtime search index over every described tool. Search is always registered. */
-export const searchIndex = <R>(tools: HostTools<R>): ReadonlyArray<SearchEntry> =>
-  visibleDefinitions(tools).map(({ path, definition, description }) => toSearchEntry(path, definition, description))
-
-export const assertValidTools = <R>(tools: HostTools<R>): void => {
-  if (Object.hasOwn(tools, reservedNamespace)) {
-    throw new Error(`Tool namespace '${reservedNamespace}' is reserved for Program discovery tools.`)
-  }
-}
-
-/**
- * Budgeted catalog: every namespace is always listed with its tool count; full call
- * signatures are inlined against the `catalogBudget` (estimated tokens,
- * chars/4) round-robin across namespaces - in each round (namespaces alphabetical), every
- * namespace still holding un-inlined tools attempts to place its next-cheapest line, and
- * a namespace whose next line does not fit is done while the others keep going - so every
- * namespace gets some representation before any namespace gets everything. The section
- * states exactly how comprehensive it is - overall (COMPLETE vs PARTIAL) and per
- * namespace. Namespace stub lines are never budgeted: every namespace appears with its
- * tool count even at budget 0.
- */
-export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBudget): DiscoveryPlan => {
-  if (!Number.isSafeInteger(catalogBudget) || catalogBudget < 0) {
-    throw new RangeError("discovery.catalogBudget must be a non-negative safe integer")
-  }
-  const visible = visibleDefinitions(tools)
-  const described = visible.map(({ description }) => description)
-
-  const namespaces = new Map<string, Array<ToolDescription>>()
-  for (const tool of described) {
-    const [namespace = tool.path] = tool.path.split(".")
-    const group = namespaces.get(namespace) ?? []
-    group.push(tool)
-    namespaces.set(namespace, group)
-  }
-  const ordered = [...namespaces].sort(([left], [right]) => left.localeCompare(right))
-
-  // Select which signatures fit the budget before emitting, so the list can state
-  // exactly how comprehensive it is. Round-robin fairness: in each round (namespaces
-  // alphabetical), every namespace still holding un-inlined tools tries to place its
-  // next-cheapest line against the shared budget; a namespace whose next line does not
-  // fit is done - the others keep going - so every namespace gets some representation
-  // before any namespace gets everything.
-  const selections = ordered.map(([namespace, group]) => ({
-    namespace,
-    picked: new Set<ToolDescription>(),
-    queue: [...group].sort(
-      (left, right) =>
-        estimateTokens(catalogLine(left)) - estimateTokens(catalogLine(right)) || left.path.localeCompare(right.path),
-    ),
-  }))
-  let used = 0
-  let active = selections.filter((selection) => selection.queue.length > 0)
-  while (active.length > 0) {
-    const stillActive: typeof active = []
-    for (const selection of active) {
-      const tool = selection.queue[0]!
-      const cost = estimateTokens(catalogLine(tool))
-      if (used + cost > catalogBudget) continue
-      selection.queue.shift()
-      selection.picked.add(tool)
-      used += cost
-      if (selection.queue.length > 0) stillActive.push(selection)
-    }
-    active = stillActive
-  }
-  const shown = new Map<string, ReadonlySet<ToolDescription>>(
-    selections.map(({ namespace, picked }) => [namespace, picked]),
-  )
-  const totalShown = selections.reduce((total, { picked }) => total + picked.size, 0)
-  const complete = totalShown === described.length
-
-  const empty = described.length === 0
-
-  // Section order is deliberate: workflow first (the top is the least likely part of a long
-  // description to be truncated or skimmed away), then rules, then syntax, with the budgeted
-  // catalog at the bottom. Example call forms use placeholders - never a real or fabricated
-  // tool name - and show both dot and bracket notation so non-identifier names are not normalized.
-  const intro = [
-    empty
-      ? "This is a restricted JavaScript language for calling tools, not a general-purpose runtime."
-      : complete
-        ? "This is a restricted JavaScript language for calling tools, not a general-purpose runtime. Inside the confined interpreter, `tools` contains the program tools listed below and internal runtime tools; surrounding agent tools are not available."
-        : "This is a restricted JavaScript language for calling tools, not a general-purpose runtime. Inside the confined interpreter, `tools` contains the program tools listed or searchable below and internal runtime tools; surrounding agent tools are not available.",
-    ...(empty
-      ? []
-      : ["Do not infer or normalize tool names; use only exact signatures shown below or returned by search."]),
-  ]
-
-  // The search step exists only when search is advertised (PARTIAL catalog); a COMPLETE
-  // catalog already shows every signature, so step 1 picks from the list instead.
-  const workflow = empty
-    ? []
-    : [
-        "",
-        "## Workflow",
-        "",
-        ...(complete
-          ? [
-              "1. Pick a tool from the list under `## Available tools` - each line is the exact call signature; use it as-is rather than guessing segments.",
-              "2. Call it using the exact signature shown: `const result = await tools.<namespace>.<tool>(input)`; bracket notation and quotes are part of the path.",
-              "3. Return only the fields you need from structured results; narrow unknown results before reading fields, and avoid returning large raw payloads.",
-            ]
-          : [
-              '1. If needed, discover tools: `return await tools.$program.search({ query: "<intent + key nouns>" })`.',
-              "2. In the next execution, copy a returned path exactly, call it, and return only the needed fields.",
-            ]),
-      ]
-
-  const rules = empty
-    ? []
-    : [
-        "",
-        "## Rules",
-        "",
-        complete
-          ? "- Only program tools listed here and internal runtime tools are available; surrounding agent tools are not implicitly exposed."
-          : "- Only program tools listed here or returned by `tools.$program.search` and internal runtime tools are available; surrounding agent tools are not implicitly exposed.",
-        "- Filter, aggregate, and transform collections in code - never return them raw or call a tool per item across messages.",
-        "- A result typed `Promise<unknown>` may be structured data or text. Before reading fields, check that it is a non-null object and not an array; otherwise handle the returned text or primitive directly.",
-        '- Run independent calls in parallel: `await Promise.all(items.map((item) => tools.<namespace>.<tool>(item)))`, or use `tools.<namespace>["tool-name"](item)` when the listed signature uses bracket notation.',
-        "- `Object.keys(tools)` lists namespaces; `Object.keys(tools.<namespace>)` lists its tools; `for...in` works on both.",
-        ...(complete
-          ? []
-          : [
-              '- Browse one namespace: `await tools.$program.search({ query: "", namespace: "<name>" })`.',
-              "- If search returns `next`, repeat the same search with `offset: next.offset`.",
-            ]),
-      ]
-
-  const language = [
-    "",
-    "## Language",
-    "",
-    "Use common JavaScript data operations, functions, control flow, selected standard-library methods, and awaited tool calls. Built-ins include Date, RegExp, Map, Set, URL, URLSearchParams, and URI encoding helpers.",
-    "Modules/imports, classes, generators, timers, fetch, eval, prototype access, unlisted methods, and promise chaining are unavailable. Use program tools for external operations. Use await with try/catch.",
-    "Dates and URLs serialize to strings at data boundaries; Map/Set/RegExp/URLSearchParams serialize to `{}`.",
-  ]
-
-  const toolSection: Array<string> = [""]
-  if (empty) {
-    toolSection.push("## Available tools", "", "No tools are currently available.")
-  } else {
-    toolSection.push(
-      complete
-        ? "## Available tools (COMPLETE list - every tool is shown below with its full call signature)"
-        : `## Available tools (PARTIAL - ${totalShown} of ${described.length} shown; find the rest with tools.$program.search)`,
-      "",
-    )
-    for (const [namespace, group] of ordered) {
-      const picked = shown.get(namespace)!
-      const count = `${group.length} tool${group.length === 1 ? "" : "s"}`
-      // Annotate only when a namespace is not fully shown, so a comprehensive
-      // namespace reads cleanly and a truncated one is unambiguous.
-      const label =
-        picked.size === group.length
-          ? count
-          : picked.size === 0
-            ? `${count}, none shown`
-            : `${count}, ${picked.size} shown`
-      toolSection.push(`- ${namespace} (${label})`)
-      for (const tool of group) if (picked.has(tool)) toolSection.push(catalogLine(tool))
-    }
-    if (!complete) {
-      toolSection.push("", "Search returns complete callable signatures:", `- ${searchDescription.signature}`)
-    }
-  }
-
-  const lines = [...intro, ...workflow, ...rules, ...language, ...toolSection]
-  return {
-    catalog: described,
-    instructions: lines.join("\n"),
-    searchIndex: visible.map(({ path, definition, description }) => toSearchEntry(path, definition, description)),
-  }
-}
-
 /**
  * The enumerable names at one node of the callable tool tree - namespace names at the root,
  * tool/namespace names below - powering `Object.keys(tools)` and `for...in` over tool
@@ -665,7 +291,7 @@ const namespaceKeys = <R>(tools: HostTools<R>, path: ReadonlyArray<string>): Rea
       !Object.hasOwn(value, segment)
     ) {
       throw new ToolRuntimeError("UnknownTool", `Unknown tool namespace '${path.join(".")}'.`, [
-        "Object.keys(tools) lists the available namespaces; tools.$program.search({ query }) finds described tools.",
+        "Object.keys(tools) lists the available namespaces; tools.find_tools({query}) finds described tools.",
       ])
     }
     value = value[segment] as HostTool<R> | Definition<R> | HostTools<R>
@@ -685,7 +311,7 @@ const resolve = <R>(tools: HostTools<R>, path: ReadonlyArray<string>): HostTool<
       !Object.hasOwn(value, segment)
     ) {
       throw new ToolRuntimeError("UnknownTool", `Unknown tool '${path.join(".")}'.`, [
-        "Use tools.$program.search({ query }) to find available described tools.",
+        "Use tools.find_tools({query}) to find available described tools.",
       ])
     }
     value = value[segment] as HostTool<R> | Definition<R> | HostTools<R>
@@ -710,15 +336,9 @@ export const make = <R>(
   tools: HostTools<R>,
   /** Undefined means unlimited tool calls. */
   maxToolCalls: number | undefined,
-  searchIndex: ReadonlyArray<SearchEntry>,
   hooks?: ToolCallHooks<R>,
 ): ToolRuntime<R> => {
   const calls: Array<ToolCall> = []
-  const callableTools = {
-    ...tools,
-    [reservedNamespace]: { search: makeSearchTool(searchIndex) },
-  }
-
   // Wraps the settling portion of a tool call so onToolCallEnd observes success and failure
   // symmetrically. Interruption (e.g. the execution timeout) fires neither outcome.
   const observeEnd = <A, E>(effect: Effect.Effect<A, E, R>, call: ToolCallStarted): Effect.Effect<A, E, R> => {
@@ -756,7 +376,7 @@ export const make = <R>(
   return {
     root: new ToolReference([]),
     calls,
-    keys: (path) => namespaceKeys(callableTools, path),
+    keys: (path) => namespaceKeys(tools, path),
     invoke: (path, args) =>
       Effect.gen(function* () {
         const name = path.join(".")
@@ -767,7 +387,7 @@ export const make = <R>(
             recordCall(call)
             return calls.length - 1
           }).pipe(Effect.tap((index) => hooks?.onToolCallStart?.({ index, name, input }) ?? Effect.void))
-        const tool = resolve(callableTools, path)
+        const tool = resolve(tools, path)
         let describedInput: unknown
         if (isDefinition(tool)) {
           if (externalArgs.length !== 1)

@@ -1,11 +1,11 @@
 /** Ported from opencode `packages/codemode/src/codemode.ts` at 3884062 (MIT). */
 import { Effect, Schema } from "effect"
 import { executeWithLimits } from "./evaluate.ts"
-import { type HostTools, type Services, type ToolDescription, ToolRuntime } from "./tools.ts"
+import { type Services, type ToolCallStarted, type ToolCallEnded } from "./tools.ts"
 import type { Definition } from "./tool.ts"
 
 /** A tool call admitted during an execution. */
-export type { ToolCall, ToolCallEnded, ToolCallHooks, ToolCallStarted, ToolDescription } from "./tools.ts"
+export type { ToolCall, ToolCallEnded, ToolCallHooks, ToolCallStarted } from "./tools.ts"
 
 /** Resource budgets enforced independently during each Program program execution. */
 export type ExecutionLimits = {
@@ -19,12 +19,6 @@ export type ExecutionLimits = {
   readonly maxSteps?: number
   /** Maximum characters and items of data the program may make. No default: absent means unlimited. */
   readonly maxGrowth?: number
-}
-
-/** Controls how much of the tool catalog is inlined in agent instructions. */
-export type DiscoveryOptions = {
-  /** Approximate token budget (chars/4, default 2000) for full catalog entries. */
-  readonly catalogBudget?: number
 }
 
 type ToolTree<R = never> = {
@@ -48,23 +42,13 @@ export type ExecuteOptions<Tools extends Record<string, unknown> = {}> = {
   /** Per-execution overrides for the default resource limits. */
   limits?: ExecutionLimits
   /** Observes decoded tool input immediately before tool execution. */
-  onToolCallStart?: (call: ToolRuntime.ToolCallStarted) => Effect.Effect<void, never, Services<Tools>>
+  onToolCallStart?: (call: ToolCallStarted) => Effect.Effect<void, never, Services<Tools>>
   /** Observes each admitted tool call as it settles, with outcome and duration. */
-  onToolCallEnd?: (call: ToolRuntime.ToolCallEnded) => Effect.Effect<void, never, Services<Tools>>
+  onToolCallEnd?: (call: ToolCallEnded) => Effect.Effect<void, never, Services<Tools>>
 }
 
 /** A JSON value that can cross the confined interpreter boundary. */
 export type DataValue = Schema.Json
-
-/** Configuration shared by `Program.make` and `Program.execute`. */
-export type Options<Tools extends Record<string, unknown> = {}> = Omit<ExecuteOptions<Tools>, "code"> & {
-  /** Progressive-disclosure configuration for the agent-facing tool catalog. */
-  readonly discovery?: DiscoveryOptions
-}
-
-/** Schema for a host tool input containing Program source. */
-export const Input = Schema.Struct({ code: Schema.String })
-export type Input = typeof Input.Type
 
 export const DiagnosticKind = Schema.Literals([
   "ParseError",
@@ -117,13 +101,6 @@ export const Result = Schema.Union([Success, Failure])
 /** Result of executing a Program program. Program failures are data, not Effect failures. */
 export type Result = typeof Result.Type
 
-/** Reusable confined runtime over one explicit tool tree. */
-export type Runtime<R = never> = {
-  readonly catalog: () => ReadonlyArray<ToolDescription>
-  readonly instructions: () => string
-  readonly execute: (code: string) => Effect.Effect<Result, never, R>
-}
-
 const validateLimit = <Value extends number | undefined>(
   name: keyof ExecutionLimits,
   value: Value,
@@ -147,23 +124,6 @@ const resolveExecutionLimits = (limits?: ExecutionLimits): ResolvedExecutionLimi
 export const execute = <const Tools extends Record<string, unknown>>(
   options: ExecuteOptions<Tools>,
 ): Effect.Effect<Result, never, Services<Tools>> => {
-  const tools = (options.tools ?? {}) as HostTools<Services<Tools>>
-  ToolRuntime.assertValidTools(tools)
-  return executeWithLimits(options, resolveExecutionLimits(options.limits), ToolRuntime.searchIndex(tools))
+  return executeWithLimits(options, resolveExecutionLimits(options.limits))
 }
 
-/** Creates an Effect-native runtime over explicit, schema-described tools. */
-export const make = <const Tools extends Record<string, unknown> = {}>(
-  options: Options<Tools> = {} as Options<Tools>,
-): Runtime<Services<Tools>> => {
-  const tools = (options.tools ?? {}) as HostTools<Services<Tools>>
-  ToolRuntime.assertValidTools(tools)
-  const limits = resolveExecutionLimits(options.limits)
-  const prepared = ToolRuntime.prepare(tools, options.discovery?.catalogBudget)
-
-  return {
-    catalog: () => prepared.catalog,
-    instructions: () => prepared.instructions,
-    execute: (code) => executeWithLimits<Tools>({ ...options, code }, limits, prepared.searchIndex),
-  }
-}

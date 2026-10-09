@@ -1969,7 +1969,7 @@ class Interpreter<R> {
       return boundedData(this.enumerableKeys(ref)!, "Object.keys result")
     }
     throw new InterpreterRuntimeError(
-      `Object.${name}(...) cannot read tool references: they are not plain data. Use Object.keys(tools) for names, or tools.$program.search({ query }) for signatures.`,
+      `Object.${name}(...) cannot read tool references: they are not plain data. Use Object.keys(tools) for names, or tools.find_tools({query}) for signatures.`,
       node,
       "InvalidDataValue",
     )
@@ -3361,7 +3361,6 @@ class Interpreter<R> {
 export const executeWithLimits = <const Tools extends Record<string, unknown>>(
   options: ExecuteOptions<Tools>,
   limits: ResolvedExecutionLimits,
-  searchIndex: ToolRuntime.DiscoveryPlan["searchIndex"],
 ): Effect.Effect<Result, never, Services<Tools>> => {
   const hooks = {
     ...(options.onToolCallStart === undefined ? {} : { onToolCallStart: options.onToolCallStart }),
@@ -3370,7 +3369,6 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
   const tools = ToolRuntime.make(
     (options.tools ?? {}) as HostTools<Services<Tools>>,
     limits.maxToolCalls,
-    searchIndex,
     hooks,
   )
   const logs: Array<string> = []
