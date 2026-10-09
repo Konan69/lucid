@@ -40,7 +40,13 @@ return all.filter((o) => o.status === "open").map((o) => o.id)`,
 
   it.live('has no ambient authority', () =>
     Effect.gen(function* () {
-      for (const code of ['return process.env', 'return await import("node:fs")', 'return fetch("http://x")', 'return globalThis', 'return (()=>{}).constructor("return process")()'])
+      for (const code of [
+        'return process.env',
+        'return await import("node:fs")',
+        'return fetch("http://x")',
+        'return globalThis',
+        'return (()=>{}).constructor("return process")()',
+      ])
         expect((yield* Program.execute({ tools, code })).ok).toBe(false)
     }),
   )
@@ -56,7 +62,13 @@ return all.filter((o) => o.status === "open").map((o) => o.id)`,
         limits,
         code: `const a = []; let s = "x".repeat(1000); while (true) { a.push(s + a.length) }`,
       })
-      console.log('GROWTH', Date.now() - started, 'ms', Math.round((process.memoryUsage().heapUsed - before) / 1048576), 'MB')
+      console.log(
+        'GROWTH',
+        Date.now() - started,
+        'ms',
+        Math.round((process.memoryUsage().heapUsed - before) / 1048576),
+        'MB',
+      )
       expect(result).toMatchObject({ ok: false, error: { kind: 'WorkLimitExceeded' } })
     }),
   )
@@ -76,8 +88,16 @@ return all.filter((o) => o.status === "open").map((o) => o.id)`,
 
   it.live('one built-in cannot make a huge value', () =>
     Effect.gen(function* () {
-      for (const code of ['return "x".repeat(2**29).length', 'return "".padStart(2**29).length', 'return Array.from({length: 2**30}).length', 'let s = "x".repeat(4000000); while (true) { s = s + s }'])
-        expect(yield* Program.execute({ tools, limits, code })).toMatchObject({ ok: false, error: { kind: 'WorkLimitExceeded' } })
+      for (const code of [
+        'return "x".repeat(2**29).length',
+        'return "".padStart(2**29).length',
+        'return Array.from({length: 2**30}).length',
+        'let s = "x".repeat(4000000); while (true) { s = s + s }',
+      ])
+        expect(yield* Program.execute({ tools, limits, code })).toMatchObject({
+          ok: false,
+          error: { kind: 'WorkLimitExceeded' },
+        })
     }),
   )
 

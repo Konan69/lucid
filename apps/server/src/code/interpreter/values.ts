@@ -1,6 +1,6 @@
 /** Ported from opencode `packages/codemode/src/values.ts` at 3884062 (MIT). */
-import type { Raised } from "./model.ts"
-import type { Effect, Fiber } from "effect"
+import type { Raised } from './model.ts'
+import type { Effect, Fiber } from 'effect'
 
 export class SandboxPromise {
   interrupted = false
@@ -42,7 +42,13 @@ export class SandboxURL {
 
 export const isSandboxValue = (
   value: unknown,
-): value is SandboxDate | SandboxRegExp | SandboxMap | SandboxSet | SandboxURL | SandboxURLSearchParams =>
+): value is
+  | SandboxDate
+  | SandboxRegExp
+  | SandboxMap
+  | SandboxSet
+  | SandboxURL
+  | SandboxURLSearchParams =>
   value instanceof SandboxDate ||
   value instanceof SandboxRegExp ||
   value instanceof SandboxMap ||

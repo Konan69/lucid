@@ -1,45 +1,63 @@
 /** Ported from opencode `packages/codemode/src/stdlib/regexp.ts` at 3884062 (MIT). */
-export const regexpMethods = new Set(["test", "exec", "toString"])
+import { Result } from 'effect'
+export const regexpMethods = new Set(['test', 'exec', 'toString'])
 
 export const regexpProperties = new Set([
-  "source",
-  "flags",
-  "lastIndex",
-  "global",
-  "ignoreCase",
-  "multiline",
-  "sticky",
-  "unicode",
-  "dotAll",
+  'source',
+  'flags',
+  'lastIndex',
+  'global',
+  'ignoreCase',
+  'multiline',
+  'sticky',
+  'unicode',
+  'dotAll',
 ])
 
 export const regexFailureReason = (error: unknown): string =>
-  (error instanceof Error ? error.message : String(error)).replace(/^Invalid regular expression:\s*/i, "")
+  (error instanceof Error ? error.message : String(error)).replace(
+    /^Invalid regular expression:\s*/i,
+    '',
+  )
 
 export const escapeRegexHint =
   'To match special characters like ( ) [ ] { } + * ? . literally, escape them with a backslash (e.g. "\\\\(") or test for them with String.includes instead.'
 
-export const toHostRegex = (arg: unknown, method: string, node: AstNode, extraFlags = ""): RegExp => {
+/** Keep native regex parsing errors actionable without exposing RegExp constructors to the program. */
+export const toHostRegex = (
+  arg: unknown,
+  method: string,
+  node: AstNode,
+  extraFlags = '',
+): RegExp => {
   if (arg instanceof SandboxRegExp) return arg.regex
-  if (typeof arg === "string") {
-    try {
-      return new RegExp(arg, extraFlags)
-    } catch (error) {
-      throw new InterpreterRuntimeError(
-        `String.${method} received the string ${JSON.stringify(arg)}, which is not a valid regular expression pattern (${regexFailureReason(error)}). ${escapeRegexHint}`,
-        node,
-      ).as("SyntaxError")
-    }
+  if (typeof arg === 'string') {
+    return Result.match(
+      Result.try(() => {
+        return new RegExp(arg, extraFlags)
+      }),
+      {
+        onSuccess: (value) => value,
+        onFailure: (error) => {
+          throw new InterpreterRuntimeError(
+            `String.${method} received the string ${JSON.stringify(arg)}, which is not a valid regular expression pattern (${regexFailureReason(error)}). ${escapeRegexHint}`,
+            node,
+          ).as('SyntaxError')
+        },
+      },
+    )
   }
   throw new InterpreterRuntimeError(
-    `String.${method} expects a regular expression (a /pattern/flags literal or new RegExp(...)) or a string pattern, not ${arg === null ? "null" : typeof arg}.`,
+    `String.${method} expects a regular expression (a /pattern/flags literal or new RegExp(...)) or a string pattern, not ${arg === null ? 'null' : typeof arg}.`,
     node,
   )
 }
 
+/** Retain captures, index, and named groups as own confined fields on a materialized match array. */
 export const matchToValue = (match: RegExpMatchArray): Array<unknown> => {
   const result: Array<unknown> = Array.from(match, (group) => group)
-  if (match.index !== undefined) (result as Record<string, unknown> & Array<unknown>).index = match.index
+  if (match.index !== undefined)
+    (result as Record<string, unknown> & Array<unknown>).index = match.index
   if (match.groups) {
     const groups: SafeObject = Object.create(null) as SafeObject
     for (const [key, group] of Object.entries(match.groups)) {
@@ -57,19 +75,22 @@ export const invokeRegExpMethod = (
   node: AstNode,
 ): unknown => {
   switch (name) {
-    case "test":
+    case 'test':
       return value.regex.test(coerceToString(args[0]))
-    case "exec": {
+    case 'exec': {
       const matched = value.regex.exec(coerceToString(args[0]))
       return matched === null ? null : matchToValue(matched)
     }
-    case "toString":
+    case 'toString':
       return coerceToString(value)
     default:
-      throw new InterpreterRuntimeError(`RegExp method '${name}' is not available in Program.`, node)
+      throw new InterpreterRuntimeError(
+        `RegExp method '${name}' is not available in a program.`,
+        node,
+      )
   }
 }
-import { type AstNode, InterpreterRuntimeError } from "../model.ts"
-import { isBlockedMember, type SafeObject } from "../tools.ts"
-import { SandboxRegExp } from "../values.ts"
-import { coerceToString } from "./value.ts"
+import { type AstNode, InterpreterRuntimeError } from '../model.ts'
+import { isBlockedMember, type SafeObject } from '../tools.ts'
+import { SandboxRegExp } from '../values.ts'
+import { coerceToString } from './value.ts'

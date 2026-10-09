@@ -1,13 +1,11 @@
 /** Ported from opencode `packages/codemode/src/codemode.ts` at 3884062 (MIT). */
-import { Effect, Schema } from "effect"
-import { executeWithLimits } from "./evaluate.ts"
-import { type Services, type ToolCallStarted, type ToolCallEnded } from "./tools.ts"
-import type { Definition } from "./tool.ts"
+import { Effect, Schema } from 'effect'
+import { executeWithLimits } from './evaluate.ts'
+import { type Services, type ToolCallStarted, type ToolCallEnded } from './tools.ts'
+import type { Definition } from './tool.ts'
+import type { ResolvedExecutionLimits } from './model.ts'
 
-/** A tool call admitted during an execution. */
-export type { ToolCall, ToolCallEnded, ToolCallHooks, ToolCallStarted } from "./tools.ts"
-
-/** Resource budgets enforced independently during each Program program execution. */
+/** Resource budgets enforced independently during each program execution. */
 export type ExecutionLimits = {
   /** Maximum wall-clock execution time in milliseconds. No default: absent means no timeout. */
   readonly timeoutMs?: number
@@ -25,21 +23,13 @@ type ToolTree<R = never> = {
   readonly [name: string]: Definition<R> | ToolTree<R>
 }
 
-export type ResolvedExecutionLimits = {
-  readonly timeoutMs: number | undefined
-  readonly maxToolCalls: number | undefined
-  readonly maxOutputBytes: number | undefined
-  readonly maxSteps: number | undefined
-  readonly maxGrowth: number | undefined
-}
-
 /** Options for one Program execution. */
 export type ExecuteOptions<Tools extends Record<string, unknown> = {}> = {
   /** Source for one program in the supported JavaScript subset. */
   code: string
   /** Explicit tool tree exposed to the program as `tools`. */
   tools?: Tools & ToolTree<Services<Tools>>
-  /** Per-execution overrides for the default resource limits. */
+  /** Explicit resource limits for this execution. */
   limits?: ExecutionLimits
   /** Observes decoded tool input immediately before tool execution. */
   onToolCallStart?: (call: ToolCallStarted) => Effect.Effect<void, never, Services<Tools>>
@@ -51,17 +41,17 @@ export type ExecuteOptions<Tools extends Record<string, unknown> = {}> = {
 export type DataValue = Schema.Json
 
 export const DiagnosticKind = Schema.Literals([
-  "ParseError",
-  "UnsupportedSyntax",
-  "UnknownTool",
-  "InvalidToolInput",
-  "InvalidToolOutput",
-  "InvalidDataValue",
-  "ToolCallLimitExceeded",
-  "TimeoutExceeded",
-  "WorkLimitExceeded",
-  "ToolFailure",
-  "ExecutionFailure",
+  'ParseError',
+  'UnsupportedSyntax',
+  'UnknownTool',
+  'InvalidToolInput',
+  'InvalidToolOutput',
+  'InvalidDataValue',
+  'ToolCallLimitExceeded',
+  'TimeoutExceeded',
+  'WorkLimitExceeded',
+  'ToolFailure',
+  'ExecutionFailure',
 ])
 /** Stable categories produced by program, schema, tool, and limit failures. */
 export type DiagnosticKind = typeof DiagnosticKind.Type
@@ -72,7 +62,7 @@ export const Diagnostic = Schema.Struct({
   location: Schema.optionalKey(Schema.Struct({ line: Schema.Finite, column: Schema.Finite })),
   suggestions: Schema.optionalKey(Schema.Array(Schema.String)),
 })
-/** A normalized program diagnostic safe to return across an agent tool boundary. */
+/** A normalized program diagnostic safe to return across a host tool boundary. */
 export type Diagnostic = typeof Diagnostic.Type
 
 const ToolCallSchema = Schema.Struct({ name: Schema.String })
@@ -98,9 +88,10 @@ export type Failure = typeof Failure.Type
 
 /** Schema for the structured success or diagnostic returned by Program execution. */
 export const Result = Schema.Union([Success, Failure])
-/** Result of executing a Program program. Program failures are data, not Effect failures. */
+/** Result of executing a program. Program failures are data, not Effect failures. */
 export type Result = typeof Result.Type
 
+/** Reject invalid host budgets before execution; absent budgets stay unlimited. */
 const validateLimit = <Value extends number | undefined>(
   name: keyof ExecutionLimits,
   value: Value,
@@ -113,17 +104,16 @@ const validateLimit = <Value extends number | undefined>(
 }
 
 const resolveExecutionLimits = (limits?: ExecutionLimits): ResolvedExecutionLimits => ({
-  timeoutMs: validateLimit("timeoutMs", limits?.timeoutMs, 1),
-  maxToolCalls: validateLimit("maxToolCalls", limits?.maxToolCalls, 0),
-  maxOutputBytes: validateLimit("maxOutputBytes", limits?.maxOutputBytes, 0),
-  maxSteps: validateLimit("maxSteps", limits?.maxSteps, 1),
-  maxGrowth: validateLimit("maxGrowth", limits?.maxGrowth, 1),
+  timeoutMs: validateLimit('timeoutMs', limits?.timeoutMs, 1),
+  maxToolCalls: validateLimit('maxToolCalls', limits?.maxToolCalls, 0),
+  maxOutputBytes: validateLimit('maxOutputBytes', limits?.maxOutputBytes, 0),
+  maxSteps: validateLimit('maxSteps', limits?.maxSteps, 1),
+  maxGrowth: validateLimit('maxGrowth', limits?.maxGrowth, 1),
 })
 
-/** Executes one Effect-native Program program without constructing a reusable runtime. */
+/** Executes one Effect-native program without constructing a reusable runtime. */
 export const execute = <const Tools extends Record<string, unknown>>(
   options: ExecuteOptions<Tools>,
 ): Effect.Effect<Result, never, Services<Tools>> => {
   return executeWithLimits(options, resolveExecutionLimits(options.limits))
 }
-

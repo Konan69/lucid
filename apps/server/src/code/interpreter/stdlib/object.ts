@@ -1,55 +1,67 @@
 /** Ported from opencode `packages/codemode/src/stdlib/object.ts` at 3884062 (MIT). */
-import { type AstNode, InterpreterRuntimeError } from "../model.ts"
-import { isBlockedMember } from "../tools.ts"
-import { isSandboxValue, SandboxMap, SandboxURLSearchParams } from "../values.ts"
-import { boundedData, coerceToString } from "./value.ts"
+import { type AstNode, InterpreterRuntimeError } from '../model.ts'
+import { isBlockedMember } from '../tools.ts'
+import { isSandboxValue, SandboxMap, SandboxURLSearchParams } from '../values.ts'
+import { boundedData, coerceToString } from './value.ts'
 
-export const objectStatics = new Set(["keys", "values", "entries", "hasOwn", "assign", "fromEntries"])
+export const objectStatics = new Set([
+  'keys',
+  'values',
+  'entries',
+  'hasOwn',
+  'assign',
+  'fromEntries',
+])
 
-export const invokeObjectMethod = (name: string, args: Array<unknown>, node: AstNode): unknown => {
-  if (!objectStatics.has(name)) throw new InterpreterRuntimeError(`Object.${name} is not available in Program.`, node)
+/** Expose own-data object operations while retaining blocked-key and plain-object guards. */
+export const invokeObjectMethod = (name: string, args: Array<unknown>, node: AstNode) => {
+  if (!objectStatics.has(name))
+    throw new InterpreterRuntimeError(`Object.${name} is not available in a program.`, node)
+  /** Require plain confined data before an Object helper can enumerate its fields. */
   const requireObject = (): Record<string, unknown> => {
     const value = boundedData(args[0], `Object.${name} input`)
     if (isSandboxValue(value)) return {}
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
       throw new InterpreterRuntimeError(`Object.${name} expects a data object.`, node)
     }
     return value as Record<string, unknown>
   }
+  /** Reject blocked keys before an object helper writes a field. */
   const guardedSet = (out: Record<string, unknown>, key: string, item: unknown): void => {
-    if (isBlockedMember(key)) throw new InterpreterRuntimeError(`Property '${key}' is not available in Program.`, node)
+    if (isBlockedMember(key))
+      throw new InterpreterRuntimeError(`Property '${key}' is not available in a program.`, node)
     out[key] = item
   }
   switch (name) {
-    case "keys": {
-      const value = boundedData(args[0], "Object.keys input")
+    case 'keys': {
+      const value = boundedData(args[0], 'Object.keys input')
       if (isSandboxValue(value)) return []
       if (Array.isArray(value)) return Object.keys(value)
-      if (value === null || typeof value !== "object") {
-        throw new InterpreterRuntimeError("Object.keys expects a data object or array.", node)
+      if (value === null || typeof value !== 'object') {
+        throw new InterpreterRuntimeError('Object.keys expects a data object or array.', node)
       }
       return Object.keys(value)
     }
-    case "values":
+    case 'values':
       return Object.values(requireObject())
-    case "entries":
+    case 'entries':
       return Object.entries(requireObject()).map(([key, item]) => [key, item])
-    case "hasOwn":
+    case 'hasOwn':
       return Object.hasOwn(requireObject(), String(args[1]))
-    case "assign": {
+    case 'assign': {
       const out: Record<string, unknown> = Object.create(null)
       for (const source of args) {
         if (source === null || source === undefined) continue
-        const value = boundedData(source, "Object.assign input")
+        const value = boundedData(source, 'Object.assign input')
         if (isSandboxValue(value)) continue
-        if (value === null || typeof value !== "object" || Array.isArray(value)) {
-          throw new InterpreterRuntimeError("Object.assign expects data objects.", node)
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+          throw new InterpreterRuntimeError('Object.assign expects data objects.', node)
         }
         for (const [key, item] of Object.entries(value)) guardedSet(out, key, item)
       }
       return out
     }
-    case "fromEntries": {
+    case 'fromEntries': {
       if (args[0] instanceof SandboxMap) {
         const out: Record<string, unknown> = Object.create(null)
         for (const [key, item] of args[0].map.entries()) guardedSet(out, coerceToString(key), item)
@@ -60,19 +72,22 @@ export const invokeObjectMethod = (name: string, args: Array<unknown>, node: Ast
         for (const [key, value] of args[0].params.entries()) guardedSet(out, key, value)
         return out
       }
-      const pairs = boundedData(args[0], "Object.fromEntries input")
+      const pairs = boundedData(args[0], 'Object.fromEntries input')
       if (!Array.isArray(pairs)) {
-        throw new InterpreterRuntimeError("Object.fromEntries expects an array of [key, value] pairs.", node)
+        throw new InterpreterRuntimeError(
+          'Object.fromEntries expects an array of [key, value] pairs.',
+          node,
+        )
       }
       const out: Record<string, unknown> = Object.create(null)
       for (const pair of pairs) {
         if (!Array.isArray(pair)) {
-          throw new InterpreterRuntimeError("Object.fromEntries expects [key, value] pairs.", node)
+          throw new InterpreterRuntimeError('Object.fromEntries expects [key, value] pairs.', node)
         }
         guardedSet(out, String(pair[0]), pair[1])
       }
       return out
     }
   }
-  throw new InterpreterRuntimeError(`Object.${name} is not available in Program.`, node)
+  throw new InterpreterRuntimeError(`Object.${name} is not available in a program.`, node)
 }

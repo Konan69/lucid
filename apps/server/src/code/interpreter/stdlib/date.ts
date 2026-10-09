@@ -1,95 +1,100 @@
 /** Ported from opencode `packages/codemode/src/stdlib/date.ts` at 3884062 (MIT). */
 export const dateMethods = new Set([
-  "getTime",
-  "valueOf",
-  "toISOString",
-  "toJSON",
-  "toString",
-  "getFullYear",
-  "getMonth",
-  "getDate",
-  "getDay",
-  "getHours",
-  "getMinutes",
-  "getSeconds",
-  "getMilliseconds",
-  "getUTCFullYear",
-  "getUTCMonth",
-  "getUTCDate",
-  "getUTCDay",
-  "getUTCHours",
-  "getUTCMinutes",
-  "getUTCSeconds",
-  "getUTCMilliseconds",
-  "getTimezoneOffset",
+  'getTime',
+  'valueOf',
+  'toISOString',
+  'toJSON',
+  'toString',
+  'getFullYear',
+  'getMonth',
+  'getDate',
+  'getDay',
+  'getHours',
+  'getMinutes',
+  'getSeconds',
+  'getMilliseconds',
+  'getUTCFullYear',
+  'getUTCMonth',
+  'getUTCDate',
+  'getUTCDay',
+  'getUTCHours',
+  'getUTCMinutes',
+  'getUTCSeconds',
+  'getUTCMilliseconds',
+  'getTimezoneOffset',
 ])
 
-export const dateStatics = new Set(["now", "parse", "UTC"])
+export const dateStatics = new Set(['now', 'parse', 'UTC'])
 
 export const invokeDateStatic = (name: string, args: Array<unknown>, node: AstNode): number => {
   switch (name) {
-    case "now":
+    case 'now':
       return Date.now()
-    case "parse":
+    case 'parse':
       return Date.parse(coerceToString(args[0]))
-    case "UTC":
+    case 'UTC':
       return Date.UTC(...(args.map((arg) => coerceToNumber(arg)) as Parameters<typeof Date.UTC>))
     default:
-      throw new InterpreterRuntimeError(`Date.${name} is not available in Program.`, node)
+      throw new InterpreterRuntimeError(`Date.${name} is not available in a program.`, node)
   }
 }
 
+/** Expose supported calendar and formatting operations through the confined epoch value. */
 export const invokeDateMethod = (value: SandboxDate, name: string, node: AstNode): unknown => {
   const hosted = new Date(value.time)
   switch (name) {
-    case "getTime":
-    case "valueOf":
+    case 'getTime':
+    case 'valueOf':
       return value.time
-    case "toISOString":
-      if (!Number.isFinite(value.time)) throw new InterpreterRuntimeError("Invalid time value.", node)
+    case 'toISOString':
+      if (!Number.isFinite(value.time))
+        throw new InterpreterRuntimeError('Invalid time value.', node)
       return hosted.toISOString()
-    case "toJSON":
+    case 'toJSON':
       return Number.isFinite(value.time) ? hosted.toISOString() : null
-    case "toString":
+    case 'toString':
       return coerceToString(value)
-    case "getFullYear":
+    case 'getFullYear':
       return hosted.getFullYear()
-    case "getMonth":
+    case 'getMonth':
       return hosted.getMonth()
-    case "getDate":
+    case 'getDate':
       return hosted.getDate()
-    case "getDay":
+    case 'getDay':
       return hosted.getDay()
-    case "getHours":
+    case 'getHours':
       return hosted.getHours()
-    case "getMinutes":
+    case 'getMinutes':
       return hosted.getMinutes()
-    case "getSeconds":
+    case 'getSeconds':
       return hosted.getSeconds()
-    case "getMilliseconds":
+    case 'getMilliseconds':
       return hosted.getMilliseconds()
-    case "getUTCFullYear":
+    case 'getUTCFullYear':
       return hosted.getUTCFullYear()
-    case "getUTCMonth":
+    case 'getUTCMonth':
       return hosted.getUTCMonth()
-    case "getUTCDate":
+    case 'getUTCDate':
       return hosted.getUTCDate()
-    case "getUTCDay":
+    case 'getUTCDay':
       return hosted.getUTCDay()
-    case "getUTCHours":
+    case 'getUTCHours':
       return hosted.getUTCHours()
-    case "getUTCMinutes":
+    case 'getUTCMinutes':
       return hosted.getUTCMinutes()
-    case "getUTCSeconds":
+    case 'getUTCSeconds':
       return hosted.getUTCSeconds()
-    case "getUTCMilliseconds":
+    case 'getUTCMilliseconds':
       return hosted.getUTCMilliseconds()
-    case "getTimezoneOffset":
+    case 'getTimezoneOffset':
       return hosted.getTimezoneOffset()
     default:
-      throw new InterpreterRuntimeError(`Date method '${name}' is not available in Program.`, node)
+      throw new InterpreterRuntimeError(
+        `Date method '${name}' is not available in a program.`,
+        node,
+      )
   }
 }
-import { type AstNode, InterpreterRuntimeError } from "../model.ts"
-import { SandboxDate } from "../values.ts"
-import { coerceToNumber, coerceToString } from "./value.ts"
+import { type AstNode, InterpreterRuntimeError } from '../model.ts'
+import { SandboxDate } from '../values.ts'
+import { coerceToNumber, coerceToString } from './value.ts'

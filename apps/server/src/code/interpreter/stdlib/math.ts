@@ -1,66 +1,78 @@
 /** Ported from opencode `packages/codemode/src/stdlib/math.ts` at 3884062 (MIT). */
-export const mathConstants = new Set(["PI", "E", "LN2", "LN10", "LOG2E", "LOG10E", "SQRT2", "SQRT1_2"])
-
-export const mathMethods = new Set([
-  "max",
-  "min",
-  "abs",
-  "floor",
-  "ceil",
-  "round",
-  "trunc",
-  "sign",
-  "sqrt",
-  "cbrt",
-  "pow",
-  "hypot",
-  "log",
-  "log2",
-  "log10",
-  "exp",
+export const mathConstants = new Set([
+  'PI',
+  'E',
+  'LN2',
+  'LN10',
+  'LOG2E',
+  'LOG10E',
+  'SQRT2',
+  'SQRT1_2',
 ])
 
+export const mathMethods = new Set([
+  'max',
+  'min',
+  'abs',
+  'floor',
+  'ceil',
+  'round',
+  'trunc',
+  'sign',
+  'sqrt',
+  'cbrt',
+  'pow',
+  'hypot',
+  'log',
+  'log2',
+  'log10',
+  'exp',
+])
+
+/** Apply only supported native math operations to confined numeric inputs. */
 export const invokeMathMethod = (name: string, args: Array<unknown>, node: AstNode): number => {
-  if (!mathMethods.has(name)) throw new InterpreterRuntimeError(`Math.${name} is not available in Program.`, node)
+  if (!mathMethods.has(name))
+    throw new InterpreterRuntimeError(`Math.${name} is not available in a program.`, node)
   const nums = args.map((arg) => {
-    if (typeof arg !== "number") throw new InterpreterRuntimeError(`Math.${name} expects number arguments.`, node)
+    if (typeof arg !== 'number')
+      throw new InterpreterRuntimeError(`Math.${name} expects number arguments.`, node)
     return arg
   })
   const [a = Number.NaN, b = Number.NaN] = nums
   switch (name) {
-    case "max":
+    case 'max':
       return Math.max(...nums)
-    case "min":
+    case 'min':
       return Math.min(...nums)
-    case "abs":
+    case 'abs':
       return Math.abs(a)
-    case "floor":
+    case 'floor':
       return Math.floor(a)
-    case "ceil":
+    case 'ceil':
       return Math.ceil(a)
-    case "round":
+    case 'round':
       return Math.round(a)
-    case "trunc":
+    case 'trunc':
       return Math.trunc(a)
-    case "sign":
+    case 'sign':
       return Math.sign(a)
-    case "sqrt":
+    case 'sqrt':
       return Math.sqrt(a)
-    case "cbrt":
+    case 'cbrt':
       return Math.cbrt(a)
-    case "pow":
+    case 'pow':
       return Math.pow(a, b)
-    case "hypot":
+    case 'hypot':
       return Math.hypot(...nums)
-    case "log":
+    case 'log':
       return Math.log(a)
-    case "log2":
+    case 'log2':
       return Math.log2(a)
-    case "log10":
+    case 'log10':
       return Math.log10(a)
-    case "exp":
+    case 'exp':
       return Math.exp(a)
   }
-  throw new InterpreterRuntimeError(`Math.${name} is not available in Program.`, node)
+  throw new InterpreterRuntimeError(`Math.${name} is not available in a program.`, node)
 }
-import { type AstNode, InterpreterRuntimeError } from "../model.ts"
+import { type AstNode, InterpreterRuntimeError } from '../model.ts'

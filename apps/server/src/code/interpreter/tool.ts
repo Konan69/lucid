@@ -1,6 +1,7 @@
 /** Ported from opencode `packages/codemode/src/tool.ts` at 3884062 (MIT). */
-import { Cause, Effect, Schema } from "effect"
-import { ToolRefusal, toolRefusal } from "./refusal.ts"
+import { Data, Effect, Schema } from 'effect'
+import type { ToolRefusal } from './refusal.ts'
+import { runHost } from './host.ts'
 
 /**
  * JSON Schema subset accepted for render-only tool schemas.
@@ -36,7 +37,7 @@ export type SchemaType = Schema.Decoder<unknown> | JsonSchema
 
 /** Schema-backed tool definition consumed by a Program tool tree. */
 export type Definition<R = never> = {
-  readonly _tag: "ProgramTool"
+  readonly _tag: 'ProgramTool'
   readonly description: string
   readonly input: SchemaType
   readonly output: SchemaType | undefined
@@ -44,24 +45,26 @@ export type Definition<R = never> = {
 }
 
 /** The value `run` receives: the decoded type for Effect Schemas, `unknown` for JSON Schemas. */
-type InputType<S> = S extends Schema.Decoder<unknown> ? S["Type"] : unknown
+type InputType<S> = S extends Schema.Decoder<unknown> ? S['Type'] : unknown
 
 /** The value `run` returns: the encoded type for Effect Schemas, `unknown` otherwise. */
-type ResultType<S> = S extends Schema.Decoder<unknown> ? S["Encoded"] : unknown
+type ResultType<S> = S extends Schema.Decoder<unknown> ? S['Encoded'] : unknown
 
 /** Options for defining one Program tool. */
-export type Options<I extends SchemaType, O extends SchemaType | undefined, R = never, E = never> = {
+export type Options<
+  I extends SchemaType,
+  O extends SchemaType | undefined,
+  R = never,
+  E = never,
+> = {
   readonly description: string
   readonly input: I
   readonly output?: O
   readonly run: (input: InputType<I>) => Effect.Effect<ResultType<O>, E, R>
 }
 
-export const isDefinition = <R = never>(value: unknown): value is Definition<R> =>
-  typeof value === "object" && value !== null && "_tag" in value && value._tag === "ProgramTool"
-
 /**
- * Defines one schema-described tool available to a Program program through `tools.*`.
+ * Defines one schema-described tool available to a program through `tools.*`.
  *
  * `input` and `output` each accept a validating Effect Schema or a render-only JSON Schema
  * document. Effect Schema input is decoded before `run` is invoked, and `run` returns the
@@ -87,18 +90,17 @@ export const isDefinition = <R = never>(value: unknown): value is Definition<R> 
  * })
  * ```
  */
-export const make = <I extends SchemaType, const O extends SchemaType | undefined = undefined, R = never, E = never>(
+export const make = <
+  I extends SchemaType,
+  const O extends SchemaType | undefined = undefined,
+  R = never,
+  E = never,
+>(
   options: Options<I, O, R, E>,
-): Definition<R> => ({
-  _tag: "ProgramTool",
-  description: options.description,
-  input: options.input,
-  output: options.output,
-  run: (input) => Effect.suspend(() => options.run(input as InputType<I>)).pipe(
-    Effect.catchCause((cause) => {
-      if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt
-      const error = Cause.squash(cause)
-      return Effect.fail(error instanceof ToolRefusal ? error : toolRefusal("Tool execution failed", error))
-    }),
-  ),
-})
+): Definition<R> =>
+  Data.taggedEnum<Definition<R>>().ProgramTool({
+    description: options.description,
+    input: options.input,
+    output: options.output,
+    run: (input) => runHost(Effect.suspend(() => options.run(input as InputType<I>))),
+  })

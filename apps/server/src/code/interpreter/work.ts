@@ -1,5 +1,5 @@
-import { type AstNode, InterpreterRuntimeError } from "./model.ts"
-import { SandboxMap, SandboxSet } from "./values.ts"
+import { type AstNode, InterpreterRuntimeError } from './model.ts'
+import { SandboxMap, SandboxSet } from './values.ts'
 
 /**
  * The most one built-in may make in a single step (characters of a string, elements of an
@@ -15,11 +15,11 @@ export const assertBuildable = (size: number, what: string, node: AstNode): void
     throw new InterpreterRuntimeError(
       `${what} would make a value of ${size} items; the most one step may make is ${MAX_BUILT}.`,
       node,
-      "WorkLimitExceeded",
+      'WorkLimitExceeded',
     )
 }
 
-/** How much one execution may compute. Absent means unlimited, as for opencode's own limits. */
+/** How much one execution may compute. Absent means unlimited, as for the execution limits. */
 export type WorkLimits = {
   /** Statements and expressions evaluated. */
   readonly maxSteps: number | undefined
@@ -28,8 +28,7 @@ export type WorkLimits = {
 }
 
 /**
- * The work one program has done. This is Vivid's addition to opencode's interpreter
- * (`packages/program`), which bounds a program only by wall-clock time: it was written to run
+ * The work one program has done. This is Vivid's addition to the reference interpreter, which bounds a program only by wall-clock time: it was written to run
  * for one person inside their own process. Vivid's server is one process for every Person, and
  * the interpreter runs in it. Measured 9 October 2026: a loop that appends a 1,000 character
  * string to an array grew the heap by 155 MB in three seconds, and a busy loop holds the
@@ -47,7 +46,7 @@ export class Work {
   constructor(private readonly limits: WorkLimits) {}
 
   private fail(node: AstNode): never {
-    throw new InterpreterRuntimeError(this.exceeded ?? "", node, "WorkLimitExceeded")
+    throw new InterpreterRuntimeError(this.exceeded ?? '', node, 'WorkLimitExceeded')
   }
 
   /** One statement or expression is about to be evaluated. */
@@ -66,7 +65,7 @@ export class Work {
    */
   grew(value: unknown, node: AstNode): void {
     const size =
-      typeof value === "string"
+      typeof value === 'string'
         ? value.length
         : Array.isArray(value)
           ? value.length
