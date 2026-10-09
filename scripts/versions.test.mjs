@@ -30,11 +30,11 @@ void test('workspace manifest discovery covers both apps and packages', () => {
   assert.ok(manifests.includes('packages/contracts/package.json'))
 })
 
-/** Only the durable manifest selects Pi 1.0.4; the Flue runtime and catalog retain 0.87.1. */
+/** Only the durable manifest selects Pi 1.1.0; the Flue runtime and catalog retain 0.87.1. */
 void test('the Pi Durable exception cannot loosen another package or dependency', () => {
   assert.equal(
     expectedDependencyVersion('packages/agent/durable/package.json', '@earendil-works/pi-ai'),
-    '1.0.4',
+    '1.1.0',
   )
   for (const manifest of ['package.json', ...workspaceManifestPaths(repositoryRoot)]) {
     if (manifest === 'packages/agent/durable/package.json') continue

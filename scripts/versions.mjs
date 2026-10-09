@@ -288,7 +288,7 @@ const manifestSections = (manifest) => [
 /** Flue's Pi line and Pi Durable's line coexist until Vivid leaves Flue; no other manifest is exempt. */
 export function expectedDependencyVersion(relativePath, name) {
   if (relativePath === 'packages/agent/durable/package.json' && name === '@earendil-works/pi-ai')
-    return '1.0.4'
+    return '1.1.0'
   return versions[name]
 }
 
