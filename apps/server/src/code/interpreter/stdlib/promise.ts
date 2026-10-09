@@ -1,3 +1,4 @@
+/** Ported from opencode `packages/codemode/src/stdlib/promise.ts` at 3884062 (MIT). */
 import type { PromiseMethodName } from "../model.ts"
 
 export const promiseStatics = new Set<PromiseMethodName>(["all", "allSettled", "race", "resolve", "reject"])

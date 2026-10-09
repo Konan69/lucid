@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
-import { CodeMode, Tool } from "./index.ts";
+import { Program, Tool } from "./index.ts";
 import { inputTypeScript, jsonSchemaToTypeScript, outputTypeScript } from "./schema.ts";
 // A raw JSON Schema tool in the shape an MCP adapter produces: render-only input schema
 // whose property descriptions and constraints must surface as JSDoc in pretty signatures.
@@ -269,9 +269,9 @@ describe("union schemas render every alternative", () => {
     });
 });
 describe("JSDoc signatures in catalogs and search results", () => {
-    const runtime = CodeMode.make({ tools: { github: { list_issues: listIssues }, orders: { lookup: lookupOrder } } });
+    const runtime = Program.make({ tools: { github: { list_issues: listIssues }, orders: { lookup: lookupOrder } } });
     const search = (query: string) => Effect.gen(function* () {
-        const result = (yield* runtime.execute(`return await tools.$codemode.search({ query: ${JSON.stringify(query)} })`));
+        const result = (yield* runtime.execute(`return await tools.$program.search({ query: ${JSON.stringify(query)} })`));
         expect(result.ok).toBe(true);
         if (!result.ok)
             throw new Error("search failed");
@@ -345,7 +345,7 @@ describe("non-identifier tool paths", () => {
         } as const,
         run: () => Effect.succeed("/reactjs/react.dev"),
     });
-    const runtime = CodeMode.make({ tools: { context7: { "resolve-library-id": resolveLibrary } } });
+    const runtime = Program.make({ tools: { context7: { "resolve-library-id": resolveLibrary } } });
     it("inline catalog uses bracket notation for dashed tool names", () => {
         const instructions = runtime.instructions();
         expect(instructions).toContain('tools.context7["resolve-library-id"](input: {\n  query: string,\n  libraryName: string,\n}): Promise<unknown>');
@@ -355,7 +355,7 @@ describe("non-identifier tool paths", () => {
         expect(instructions).not.toContain("tools.context7.resolve_library_id");
     });
     it.live("search results return callable bracket-notation paths and signatures", () => Effect.gen(function* () {
-        const result = (yield* runtime.execute(`return await tools.$codemode.search({ query: "resolve library" })`));
+        const result = (yield* runtime.execute(`return await tools.$program.search({ query: "resolve library" })`));
         expect(result.ok).toBe(true);
         if (!result.ok)
             throw new Error("search failed");

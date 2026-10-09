@@ -1,3 +1,4 @@
+/** Ported from opencode `packages/codemode/src/stdlib/number.ts` at 3884062 (MIT). */
 export const numberMethods = new Set(["toFixed", "toPrecision", "toExponential", "toString"])
 
 export const numberConstants = new Set(["MAX_SAFE_INTEGER", "MIN_SAFE_INTEGER", "MAX_VALUE", "MIN_VALUE", "EPSILON"])
@@ -33,7 +34,7 @@ export const invokeNumberMethod = (value: number, name: string, args: Array<unkn
       break
     }
     default:
-      throw new InterpreterRuntimeError(`Number method '${name}' is not available in CodeMode.`, node)
+      throw new InterpreterRuntimeError(`Number method '${name}' is not available in Program.`, node)
   }
   return boundedData(result, `Number.${name} result`)
 }
@@ -59,7 +60,7 @@ export const invokeNumberStatic = (name: string, args: Array<unknown>, node: Ast
     case "parseFloat":
       return parseFloat(coerceToString(value))
     default:
-      throw new InterpreterRuntimeError(`Number.${name} is not available in CodeMode.`, node)
+      throw new InterpreterRuntimeError(`Number.${name} is not available in Program.`, node)
   }
 }
 import { type AstNode, InterpreterRuntimeError } from "../model.ts"

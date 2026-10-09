@@ -1,3 +1,4 @@
+/** Ported from opencode `packages/codemode/src/stdlib/object.ts` at 3884062 (MIT). */
 import { type AstNode, InterpreterRuntimeError } from "../model.ts"
 import { isBlockedMember } from "../tools.ts"
 import { isSandboxValue, SandboxMap, SandboxURLSearchParams } from "../values.ts"
@@ -6,7 +7,7 @@ import { boundedData, coerceToString } from "./value.ts"
 export const objectStatics = new Set(["keys", "values", "entries", "hasOwn", "assign", "fromEntries"])
 
 export const invokeObjectMethod = (name: string, args: Array<unknown>, node: AstNode): unknown => {
-  if (!objectStatics.has(name)) throw new InterpreterRuntimeError(`Object.${name} is not available in CodeMode.`, node)
+  if (!objectStatics.has(name)) throw new InterpreterRuntimeError(`Object.${name} is not available in Program.`, node)
   const requireObject = (): Record<string, unknown> => {
     const value = boundedData(args[0], `Object.${name} input`)
     if (isSandboxValue(value)) return {}
@@ -16,7 +17,7 @@ export const invokeObjectMethod = (name: string, args: Array<unknown>, node: Ast
     return value as Record<string, unknown>
   }
   const guardedSet = (out: Record<string, unknown>, key: string, item: unknown): void => {
-    if (isBlockedMember(key)) throw new InterpreterRuntimeError(`Property '${key}' is not available in CodeMode.`, node)
+    if (isBlockedMember(key)) throw new InterpreterRuntimeError(`Property '${key}' is not available in Program.`, node)
     out[key] = item
   }
   switch (name) {
@@ -73,5 +74,5 @@ export const invokeObjectMethod = (name: string, args: Array<unknown>, node: Ast
       return out
     }
   }
-  throw new InterpreterRuntimeError(`Object.${name} is not available in CodeMode.`, node)
+  throw new InterpreterRuntimeError(`Object.${name} is not available in Program.`, node)
 }

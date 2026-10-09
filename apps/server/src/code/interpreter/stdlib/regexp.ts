@@ -1,3 +1,4 @@
+/** Ported from opencode `packages/codemode/src/stdlib/regexp.ts` at 3884062 (MIT). */
 export const regexpMethods = new Set(["test", "exec", "toString"])
 
 export const regexpProperties = new Set([
@@ -65,7 +66,7 @@ export const invokeRegExpMethod = (
     case "toString":
       return coerceToString(value)
     default:
-      throw new InterpreterRuntimeError(`RegExp method '${name}' is not available in CodeMode.`, node)
+      throw new InterpreterRuntimeError(`RegExp method '${name}' is not available in Program.`, node)
   }
 }
 import { type AstNode, InterpreterRuntimeError } from "../model.ts"

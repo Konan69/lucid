@@ -29,7 +29,7 @@ export type WorkLimits = {
 
 /**
  * The work one program has done. This is Vivid's addition to opencode's interpreter
- * (`packages/codemode`), which bounds a program only by wall-clock time: it was written to run
+ * (`packages/program`), which bounds a program only by wall-clock time: it was written to run
  * for one person inside their own process. Vivid's server is one process for every Person, and
  * the interpreter runs in it. Measured 9 October 2026: a loop that appends a 1,000 character
  * string to an array grew the heap by 155 MB in three seconds, and a busy loop holds the

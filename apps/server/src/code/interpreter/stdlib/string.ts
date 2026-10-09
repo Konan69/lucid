@@ -1,3 +1,4 @@
+/** Ported from opencode `packages/codemode/src/stdlib/string.ts` at 3884062 (MIT). */
 export const stringMethods = new Set([
   "toLowerCase",
   "toUpperCase",
@@ -46,7 +47,7 @@ export const invokeStringStatic = (name: string, args: Array<unknown>, node: Ast
     case "fromCodePoint":
       return String.fromCodePoint(...codes)
     default:
-      throw new InterpreterRuntimeError(`String.${name} is not available in CodeMode.`, node)
+      throw new InterpreterRuntimeError(`String.${name} is not available in Program.`, node)
   }
 }
 import { type AstNode, InterpreterRuntimeError } from "../model.ts"

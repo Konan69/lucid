@@ -1,10 +1,11 @@
+/** Ported from opencode `packages/codemode/src/tool.ts` at 3884062 (MIT). */
 import { Effect, Schema } from "effect"
 
 /**
  * JSON Schema subset accepted for render-only tool schemas.
  *
  * A JSON-Schema-described side of a tool is used to generate the model-visible TypeScript
- * signature only - CodeMode performs no validation against it. This is the natural shape for
+ * signature only - Program performs no validation against it. This is the natural shape for
  * adapter-provided tools (e.g. MCP definitions) whose schemas arrive as JSON Schema documents.
  */
 export type JsonSchema = {
@@ -32,9 +33,9 @@ export type JsonSchema = {
 /** Either a validating Effect Schema or a render-only JSON Schema document. */
 export type SchemaType = Schema.Decoder<unknown> | JsonSchema
 
-/** Schema-backed tool definition consumed by a CodeMode tool tree. */
+/** Schema-backed tool definition consumed by a Program tool tree. */
 export type Definition<R = never> = {
-  readonly _tag: "CodeModeTool"
+  readonly _tag: "ProgramTool"
   readonly description: string
   readonly input: SchemaType
   readonly output: SchemaType | undefined
@@ -47,7 +48,7 @@ type InputType<S> = S extends Schema.Decoder<unknown> ? S["Type"] : unknown
 /** The value `run` returns: the encoded type for Effect Schemas, `unknown` otherwise. */
 type ResultType<S> = S extends Schema.Decoder<unknown> ? S["Encoded"] : unknown
 
-/** Options for defining one CodeMode tool. */
+/** Options for defining one Program tool. */
 export type Options<I extends SchemaType, O extends SchemaType | undefined, R = never> = {
   readonly description: string
   readonly input: I
@@ -56,14 +57,14 @@ export type Options<I extends SchemaType, O extends SchemaType | undefined, R = 
 }
 
 export const isDefinition = <R = never>(value: unknown): value is Definition<R> =>
-  typeof value === "object" && value !== null && "_tag" in value && value._tag === "CodeModeTool"
+  typeof value === "object" && value !== null && "_tag" in value && value._tag === "ProgramTool"
 
 /**
- * Defines one schema-described tool available to a CodeMode program through `tools.*`.
+ * Defines one schema-described tool available to a Program program through `tools.*`.
  *
  * `input` and `output` each accept a validating Effect Schema or a render-only JSON Schema
  * document. Effect Schema input is decoded before `run` is invoked, and `run` returns the
- * encoded representation of an Effect Schema `output`, which CodeMode decodes before returning
+ * encoded representation of an Effect Schema `output`, which Program decodes before returning
  * it to the program. JSON Schemas only shape the model-visible signature; values pass through
  * unvalidated. `output` is optional - without it the signature advertises `unknown` and the
  * host result is exposed as-is. The host tool remains responsible for authorization and
@@ -88,7 +89,7 @@ export const isDefinition = <R = never>(value: unknown): value is Definition<R> 
 export const make = <I extends SchemaType, const O extends SchemaType | undefined = undefined, R = never>(
   options: Options<I, O, R>,
 ): Definition<R> => ({
-  _tag: "CodeModeTool",
+  _tag: "ProgramTool",
   description: options.description,
   input: options.input,
   output: options.output,

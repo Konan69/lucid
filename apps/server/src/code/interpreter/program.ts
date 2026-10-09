@@ -1,3 +1,4 @@
+/** Ported from opencode `packages/codemode/src/codemode.ts` at 3884062 (MIT). */
 import { Effect, Schema } from "effect"
 import { executeWithLimits } from "./evaluate.ts"
 import { type HostTools, type Services, type ToolDescription, ToolRuntime } from "./tools.ts"
@@ -6,7 +7,7 @@ import type { Definition } from "./tool.ts"
 /** A tool call admitted during an execution. */
 export type { ToolCall, ToolCallEnded, ToolCallHooks, ToolCallStarted, ToolDescription } from "./tools.ts"
 
-/** Resource budgets enforced independently during each CodeMode program execution. */
+/** Resource budgets enforced independently during each Program program execution. */
 export type ExecutionLimits = {
   /** Maximum wall-clock execution time in milliseconds. No default: absent means no timeout. */
   readonly timeoutMs?: number
@@ -38,7 +39,7 @@ export type ResolvedExecutionLimits = {
   readonly maxGrowth: number | undefined
 }
 
-/** Options for one CodeMode execution. */
+/** Options for one Program execution. */
 export type ExecuteOptions<Tools extends Record<string, unknown> = {}> = {
   /** Source for one program in the supported JavaScript subset. */
   code: string
@@ -55,13 +56,13 @@ export type ExecuteOptions<Tools extends Record<string, unknown> = {}> = {
 /** A JSON value that can cross the confined interpreter boundary. */
 export type DataValue = Schema.Json
 
-/** Configuration shared by `CodeMode.make` and `CodeMode.execute`. */
+/** Configuration shared by `Program.make` and `Program.execute`. */
 export type Options<Tools extends Record<string, unknown> = {}> = Omit<ExecuteOptions<Tools>, "code"> & {
   /** Progressive-disclosure configuration for the agent-facing tool catalog. */
   readonly discovery?: DiscoveryOptions
 }
 
-/** Schema for a host tool input containing CodeMode source. */
+/** Schema for a host tool input containing Program source. */
 export const Input = Schema.Struct({ code: Schema.String })
 export type Input = typeof Input.Type
 
@@ -111,9 +112,9 @@ export const Failure = Schema.Struct({
 /** Failed execution with calls admitted before the diagnostic was produced. */
 export type Failure = typeof Failure.Type
 
-/** Schema for the structured success or diagnostic returned by CodeMode execution. */
+/** Schema for the structured success or diagnostic returned by Program execution. */
 export const Result = Schema.Union([Success, Failure])
-/** Result of executing a CodeMode program. Program failures are data, not Effect failures. */
+/** Result of executing a Program program. Program failures are data, not Effect failures. */
 export type Result = typeof Result.Type
 
 /** Reusable confined runtime over one explicit tool tree. */
@@ -142,7 +143,7 @@ const resolveExecutionLimits = (limits?: ExecutionLimits): ResolvedExecutionLimi
   maxGrowth: validateLimit("maxGrowth", limits?.maxGrowth, 1),
 })
 
-/** Executes one Effect-native CodeMode program without constructing a reusable runtime. */
+/** Executes one Effect-native Program program without constructing a reusable runtime. */
 export const execute = <const Tools extends Record<string, unknown>>(
   options: ExecuteOptions<Tools>,
 ): Effect.Effect<Result, never, Services<Tools>> => {

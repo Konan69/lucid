@@ -1,6 +1,7 @@
+/** Ported from opencode `packages/codemode/src/stdlib/json.ts` at 3884062 (MIT). */
 import {
   type AstNode,
-  CodeModeFunction,
+  ProgramFunction,
   InterpreterRuntimeError,
   supportedSyntaxMessage,
 } from "../model.ts"
@@ -9,13 +10,13 @@ import { copyIn, copyOut } from "../tools.ts"
 export const jsonStatics = new Set(["stringify", "parse"])
 
 export const invokeJsonMethod = (name: string, args: Array<unknown>, node: AstNode): unknown => {
-  if (!jsonStatics.has(name)) throw new InterpreterRuntimeError(`JSON.${name} is not available in CodeMode.`, node)
+  if (!jsonStatics.has(name)) throw new InterpreterRuntimeError(`JSON.${name} is not available in Program.`, node)
   switch (name) {
     case "stringify": {
       const replacer = args[1]
-      if (Array.isArray(replacer) || replacer instanceof CodeModeFunction) {
+      if (Array.isArray(replacer) || replacer instanceof ProgramFunction) {
         throw new InterpreterRuntimeError(
-          "JSON.stringify replacers are not supported in CodeMode.",
+          "JSON.stringify replacers are not supported in Program.",
           node,
           "UnsupportedSyntax",
           [supportedSyntaxMessage],
@@ -38,5 +39,5 @@ export const invokeJsonMethod = (name: string, args: Array<unknown>, node: AstNo
       }
     }
   }
-  throw new InterpreterRuntimeError(`JSON.${name} is not available in CodeMode.`, node)
+  throw new InterpreterRuntimeError(`JSON.${name} is not available in Program.`, node)
 }

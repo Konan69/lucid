@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
-import { CodeMode, Tool, toolError } from "./index.ts";
+import { Program, Tool, toolRefusal } from "./index.ts";
 // Wave 5 acceptance suite: first-class promise values. Un-awaited tool calls start eagerly on
 // supervised fibers, `await` settles them, and Promise.all/allSettled/race/resolve/reject are
 // ordinary functions over arbitrary arrays mixing promises and plain values.
@@ -34,14 +34,14 @@ const failingTool = Tool.make({
     description: "Always refuse",
     input: Schema.Struct({}),
     output: Schema.String,
-    run: () => Effect.fail(toolError("Lookup refused")),
+    run: () => Effect.fail(toolRefusal("Lookup refused")),
 });
 const run = (code: string, options: {
     trace?: Trace;
-    limits?: CodeMode.ExecutionLimits;
-} = {}): Effect.Effect<CodeMode.Result> => {
+    limits?: Program.ExecutionLimits;
+} = {}): Effect.Effect<Program.Result> => {
     const trace = options.trace ?? makeTrace();
-    return CodeMode.execute({
+    return Program.execute({
         tools: { host: { sleepy: sleepyTool(trace), fail: failingTool } },
         code,
         ...(options.limits ? { limits: options.limits } : {}),
@@ -49,7 +49,7 @@ const run = (code: string, options: {
 };
 const value = (code: string, options: {
     trace?: Trace;
-    limits?: CodeMode.ExecutionLimits;
+    limits?: Program.ExecutionLimits;
 } = {}) => Effect.gen(function* () {
     const result = (yield* run(code, options));
     if (!result.ok)
@@ -58,7 +58,7 @@ const value = (code: string, options: {
 });
 const error = (code: string, options: {
     trace?: Trace;
-    limits?: CodeMode.ExecutionLimits;
+    limits?: Program.ExecutionLimits;
 } = {}) => Effect.gen(function* () {
     const result = (yield* run(code, options));
     if (result.ok)

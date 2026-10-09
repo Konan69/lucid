@@ -1,3 +1,4 @@
+/** Ported from opencode `packages/codemode/src/stdlib/url.ts` at 3884062 (MIT). */
 export const urlProperties = new Set([
   "href",
   "origin",
@@ -69,7 +70,7 @@ export const urlArgument = (value: unknown, label: string): string =>
   value instanceof SandboxURL ? value.url.href : uriArgument(value, label)
 
 export const invokeURLStatic = (name: string, args: Array<unknown>, node: AstNode): unknown => {
-  if (!urlStatics.has(name)) throw new InterpreterRuntimeError(`URL.${name} is not available in CodeMode.`, node)
+  if (!urlStatics.has(name)) throw new InterpreterRuntimeError(`URL.${name} is not available in Program.`, node)
   if (args.length === 0) throw new InterpreterRuntimeError(`URL.${name} requires a URL argument.`, node).as("TypeError")
   const input = urlArgument(args[0], `URL.${name} input`)
   const base = args[1] === undefined ? undefined : urlArgument(args[1], `URL.${name} base`)
@@ -83,7 +84,7 @@ export const invokeURLStatic = (name: string, args: Array<unknown>, node: AstNod
 
 export const invokeURLMethod = (value: SandboxURL, name: string, node: AstNode): string => {
   if (name === "toString" || name === "toJSON") return value.url.href
-  throw new InterpreterRuntimeError(`URL method '${name}' is not available in CodeMode.`, node)
+  throw new InterpreterRuntimeError(`URL method '${name}' is not available in Program.`, node)
 }
 import { type AstNode, InterpreterRuntimeError, UriFunction } from "../model.ts"
 import { SandboxURL } from "../values.ts"

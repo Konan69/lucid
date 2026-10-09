@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
-import { CodeMode, Tool } from "./index.ts";
+import { Program, Tool } from "./index.ts";
 // Key enumeration: Object.keys and for...in share one surface over plain objects, arrays
 // (index strings), and tool references (namespace/tool names from the host tool tree), so a
 // model can discover what it may call instead of guessing names from the instructions. The
@@ -17,7 +17,7 @@ const tools = {
     memory: { search: echo("Search memory") },
     playwright: { navigate: echo("Navigate somewhere") },
 };
-const run = (code: string) => CodeMode.execute({ tools, code });
+const run = (code: string) => Program.execute({ tools, code });
 const value = (code: string) => Effect.gen(function* () {
     const result = (yield* run(code));
     if (!result.ok)
@@ -35,7 +35,7 @@ describe("Object.keys over tool references", () => {
         expect((yield* value(`
       const namespaces = Object.keys(tools)
       return { namespaces, count: namespaces.length }
-    `))).toEqual({ namespaces: ["github", "memory", "playwright", "$codemode"], count: 4 });
+    `))).toEqual({ namespaces: ["github", "memory", "playwright", "$program"], count: 4 });
     }));
     it.live("enumerates tool names at a nested namespace", () => Effect.gen(function* () {
         expect((yield* value(`return Object.keys(tools.github)`))).toEqual(["list_issues", "get_issue"]);
@@ -44,7 +44,7 @@ describe("Object.keys over tool references", () => {
         expect((yield* value(`return Object.keys(tools.github.list_issues)`))).toEqual([]);
     }));
     it.live("the internal discovery namespace enumerates its callable surface", () => Effect.gen(function* () {
-        expect((yield* value(`return Object.keys(tools.$codemode)`))).toEqual(["search"]);
+        expect((yield* value(`return Object.keys(tools.$program)`))).toEqual(["search"]);
     }));
     it.live("an unknown namespace is an UnknownTool error pointing at the discovery idioms", () => Effect.gen(function* () {
         const failure = (yield* error(`return Object.keys(tools.nonexistent)`));
@@ -56,7 +56,7 @@ describe("Object.keys over tool references", () => {
         for (const method of ["values", "entries"] as const) {
             const failure = (yield* error(`return Object.${method}(tools)`));
             expect(failure.kind).toBe("InvalidDataValue");
-            expect(failure.message).toContain(`Object.${method}(...) cannot read tool references: they are not plain data. Use Object.keys(tools) for names, or tools.$codemode.search({ query }) for signatures.`);
+            expect(failure.message).toContain(`Object.${method}(...) cannot read tool references: they are not plain data. Use Object.keys(tools) for names, or tools.$program.search({ query }) for signatures.`);
         }
         const nested = (yield* error(`return Object.entries(tools.github)`));
         expect(nested.message).toContain("Use Object.keys(tools) for names");
@@ -116,7 +116,7 @@ describe("for...in", () => {
         for (const name in tools[ns]) names.push(ns + "." + name)
       }
       return names
-    `))).toEqual(["github.list_issues", "github.get_issue", "memory.search", "playwright.navigate", "$codemode.search"]);
+    `))).toEqual(["github.list_issues", "github.get_issue", "memory.search", "playwright.navigate", "$program.search"]);
     }));
     it.live("unsupported values fail with a hint at for...of and Object.keys", () => Effect.gen(function* () {
         for (const expression of [`"text"`, "new Map([[1, 2]])", "new Set([1])", "42", "null"]) {

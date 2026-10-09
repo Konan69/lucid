@@ -1,3 +1,4 @@
+/** Ported from opencode `packages/codemode/src/stdlib/math.ts` at 3884062 (MIT). */
 export const mathConstants = new Set(["PI", "E", "LN2", "LN10", "LOG2E", "LOG10E", "SQRT2", "SQRT1_2"])
 
 export const mathMethods = new Set([
@@ -20,7 +21,7 @@ export const mathMethods = new Set([
 ])
 
 export const invokeMathMethod = (name: string, args: Array<unknown>, node: AstNode): number => {
-  if (!mathMethods.has(name)) throw new InterpreterRuntimeError(`Math.${name} is not available in CodeMode.`, node)
+  if (!mathMethods.has(name)) throw new InterpreterRuntimeError(`Math.${name} is not available in Program.`, node)
   const nums = args.map((arg) => {
     if (typeof arg !== "number") throw new InterpreterRuntimeError(`Math.${name} expects number arguments.`, node)
     return arg
@@ -60,6 +61,6 @@ export const invokeMathMethod = (name: string, args: Array<unknown>, node: AstNo
     case "exp":
       return Math.exp(a)
   }
-  throw new InterpreterRuntimeError(`Math.${name} is not available in CodeMode.`, node)
+  throw new InterpreterRuntimeError(`Math.${name} is not available in Program.`, node)
 }
 import { type AstNode, InterpreterRuntimeError } from "../model.ts"

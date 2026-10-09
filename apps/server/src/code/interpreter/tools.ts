@@ -1,5 +1,6 @@
+/** Ported from opencode `packages/codemode/src/tool-runtime.ts` at 3884062 (MIT). */
 import { Cause, Effect, Schema } from "effect"
-import { ToolError, toolError } from "./refusal.ts"
+import { ToolRefusal, toolRefusal } from "./refusal.ts"
 import {
   decodeInput as decodeToolInput,
   decodeOutput as decodeToolOutput,
@@ -34,7 +35,7 @@ type ServicesOf<Tools, Depth extends ReadonlyArray<unknown>> = Depth["length"] e
   : Tools extends (...args: Array<unknown>) => Effect.Effect<unknown, unknown, infer R>
     ? R
     : Tools extends {
-          readonly _tag: "CodeModeTool"
+          readonly _tag: "ProgramTool"
           readonly run: (input: unknown) => Effect.Effect<unknown, unknown, infer R>
         }
       ? R
@@ -82,7 +83,7 @@ export type ToolDescription = {
 
 export type SafeObject = Record<string, unknown>
 
-const reservedNamespace = "$codemode"
+const reservedNamespace = "$program"
 const defaultCatalogBudget = 2_000
 const defaultSearchLimit = 10
 const PositiveInt = Schema.Int.check(Schema.isGreaterThan(0))
@@ -140,12 +141,12 @@ export class ToolRuntimeError extends Error {
 const isDefinition = <R>(value: HostTool<R> | Definition<R> | HostTools<R>): value is Definition<R> =>
   isToolDefinition<R>(value)
 
-const runHost = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, ToolError, R> =>
+const runHost = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, ToolRefusal, R> =>
   effect.pipe(
     Effect.catchCause((cause) => {
       if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt
       const error = Cause.squash(cause)
-      return Effect.fail(error instanceof ToolError ? error : toolError("Tool execution failed", error))
+      return Effect.fail(error instanceof ToolRefusal ? error : toolRefusal("Tool execution failed", error))
     }),
   )
 
@@ -162,7 +163,7 @@ export const isBlockedMember = (name: string): boolean => blockedMemberNames.has
  *   final results, tool-call arguments, `JSON.stringify`. Sandbox value types serialize
  *   exactly as JSON.stringify would: Date/URL -> strings, the remaining value types -> {}.
  * - **Intra-sandbox checkpoint** (`preserveSandboxValues` true; see `boundedData` in
- *   codemode.ts): standard-library value instances pass through untouched (treated as leaves,
+ *   program.ts): standard-library value instances pass through untouched (treated as leaves,
  *   contents not walked), so values flowing through `Object.*` helpers, coercion inputs, and
  *   other in-sandbox checkpoints stay fully usable (`.getTime()`, `.has()`, ...).
  *
@@ -384,8 +385,8 @@ const termForms = (term: string): Array<string> => {
 }
 
 const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Definition => ({
-  _tag: "CodeModeTool",
-  description: "Search available Code Mode tools",
+  _tag: "ProgramTool",
+  description: "Search available program tools",
   input: SearchInput,
   output: SearchOutput,
   run: (input) =>
@@ -477,7 +478,7 @@ export const searchIndex = <R>(tools: HostTools<R>): ReadonlyArray<SearchEntry> 
 
 export const assertValidTools = <R>(tools: HostTools<R>): void => {
   if (Object.hasOwn(tools, reservedNamespace)) {
-    throw new Error(`Tool namespace '${reservedNamespace}' is reserved for CodeMode discovery tools.`)
+    throw new Error(`Tool namespace '${reservedNamespace}' is reserved for Program discovery tools.`)
   }
 }
 
@@ -553,8 +554,8 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
     empty
       ? "This is a restricted JavaScript language for calling tools, not a general-purpose runtime."
       : complete
-        ? "This is a restricted JavaScript language for calling tools, not a general-purpose runtime. Inside the confined interpreter, `tools` contains the Code Mode tools listed below and internal runtime tools; surrounding agent tools are not available."
-        : "This is a restricted JavaScript language for calling tools, not a general-purpose runtime. Inside the confined interpreter, `tools` contains the Code Mode tools listed or searchable below and internal runtime tools; surrounding agent tools are not available.",
+        ? "This is a restricted JavaScript language for calling tools, not a general-purpose runtime. Inside the confined interpreter, `tools` contains the program tools listed below and internal runtime tools; surrounding agent tools are not available."
+        : "This is a restricted JavaScript language for calling tools, not a general-purpose runtime. Inside the confined interpreter, `tools` contains the program tools listed or searchable below and internal runtime tools; surrounding agent tools are not available.",
     ...(empty
       ? []
       : ["Do not infer or normalize tool names; use only exact signatures shown below or returned by search."]),
@@ -575,7 +576,7 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
               "3. Return only the fields you need from structured results; narrow unknown results before reading fields, and avoid returning large raw payloads.",
             ]
           : [
-              '1. If needed, discover tools: `return await tools.$codemode.search({ query: "<intent + key nouns>" })`.',
+              '1. If needed, discover tools: `return await tools.$program.search({ query: "<intent + key nouns>" })`.',
               "2. In the next execution, copy a returned path exactly, call it, and return only the needed fields.",
             ]),
       ]
@@ -587,8 +588,8 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
         "## Rules",
         "",
         complete
-          ? "- Only Code Mode tools listed here and internal runtime tools are available; surrounding agent tools are not implicitly exposed."
-          : "- Only Code Mode tools listed here or returned by `tools.$codemode.search` and internal runtime tools are available; surrounding agent tools are not implicitly exposed.",
+          ? "- Only program tools listed here and internal runtime tools are available; surrounding agent tools are not implicitly exposed."
+          : "- Only program tools listed here or returned by `tools.$program.search` and internal runtime tools are available; surrounding agent tools are not implicitly exposed.",
         "- Filter, aggregate, and transform collections in code - never return them raw or call a tool per item across messages.",
         "- A result typed `Promise<unknown>` may be structured data or text. Before reading fields, check that it is a non-null object and not an array; otherwise handle the returned text or primitive directly.",
         '- Run independent calls in parallel: `await Promise.all(items.map((item) => tools.<namespace>.<tool>(item)))`, or use `tools.<namespace>["tool-name"](item)` when the listed signature uses bracket notation.',
@@ -596,7 +597,7 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
         ...(complete
           ? []
           : [
-              '- Browse one namespace: `await tools.$codemode.search({ query: "", namespace: "<name>" })`.',
+              '- Browse one namespace: `await tools.$program.search({ query: "", namespace: "<name>" })`.',
               "- If search returns `next`, repeat the same search with `offset: next.offset`.",
             ]),
       ]
@@ -606,7 +607,7 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
     "## Language",
     "",
     "Use common JavaScript data operations, functions, control flow, selected standard-library methods, and awaited tool calls. Built-ins include Date, RegExp, Map, Set, URL, URLSearchParams, and URI encoding helpers.",
-    "Modules/imports, classes, generators, timers, fetch, eval, prototype access, unlisted methods, and promise chaining are unavailable. Use Code Mode tools for external operations. Use await with try/catch.",
+    "Modules/imports, classes, generators, timers, fetch, eval, prototype access, unlisted methods, and promise chaining are unavailable. Use program tools for external operations. Use await with try/catch.",
     "Dates and URLs serialize to strings at data boundaries; Map/Set/RegExp/URLSearchParams serialize to `{}`.",
   ]
 
@@ -617,7 +618,7 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
     toolSection.push(
       complete
         ? "## Available tools (COMPLETE list - every tool is shown below with its full call signature)"
-        : `## Available tools (PARTIAL - ${totalShown} of ${described.length} shown; find the rest with tools.$codemode.search)`,
+        : `## Available tools (PARTIAL - ${totalShown} of ${described.length} shown; find the rest with tools.$program.search)`,
       "",
     )
     for (const [namespace, group] of ordered) {
@@ -664,7 +665,7 @@ const namespaceKeys = <R>(tools: HostTools<R>, path: ReadonlyArray<string>): Rea
       !Object.hasOwn(value, segment)
     ) {
       throw new ToolRuntimeError("UnknownTool", `Unknown tool namespace '${path.join(".")}'.`, [
-        "Object.keys(tools) lists the available namespaces; tools.$codemode.search({ query }) finds described tools.",
+        "Object.keys(tools) lists the available namespaces; tools.$program.search({ query }) finds described tools.",
       ])
     }
     value = value[segment] as HostTool<R> | Definition<R> | HostTools<R>
@@ -684,7 +685,7 @@ const resolve = <R>(tools: HostTools<R>, path: ReadonlyArray<string>): HostTool<
       !Object.hasOwn(value, segment)
     ) {
       throw new ToolRuntimeError("UnknownTool", `Unknown tool '${path.join(".")}'.`, [
-        "Use tools.$codemode.search({ query }) to find available described tools.",
+        "Use tools.$program.search({ query }) to find available described tools.",
       ])
     }
     value = value[segment] as HostTool<R> | Definition<R> | HostTools<R>
@@ -728,7 +729,7 @@ export const make = <R>(
       Effect.tap(() => onEnd({ ...call, durationMs: Date.now() - startedAt, outcome: "success" })),
       Effect.tapError((error) => {
         const message =
-          error instanceof ToolError || error instanceof ToolRuntimeError ? error.message : "Tool execution failed"
+          error instanceof ToolRefusal || error instanceof ToolRuntimeError ? error.message : "Tool execution failed"
         return onEnd({
           ...call,
           durationMs: Date.now() - startedAt,

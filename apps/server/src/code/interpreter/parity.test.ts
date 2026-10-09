@@ -1,15 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
-import { CodeMode } from "./index.ts";
+import { Program } from "./index.ts";
 import { ToolRuntime } from "./tools.ts";
-// Runs a CodeMode program with no host tools and returns the CodeMode.Result. These tests pin the
+// Runs a Program program with no host tools and returns the Program.Result. These tests pin the
 // JS-parity behaviors for the "99% of ordinary defensive JavaScript just works" goal: cases where
 // a strict interpreter would throw but idiomatic JS yields undefined / succeeds.
 //
 // Note on the result boundary: this package normalizes a bare `undefined` result to `null` when
 // it crosses out of the sandbox (results are JSON data), so tests asserting an in-sandbox
 // `undefined` read check `=== undefined` inside the program and `null` at the boundary.
-const run = (code: string) => CodeMode.execute({ code, tools: {} });
+const run = (code: string) => Program.execute({ code, tools: {} });
 const value = (code: string) => Effect.gen(function* () {
     const result = (yield* run(code));
     if (!result.ok)
@@ -50,7 +50,7 @@ describe("H3: array property access reads as undefined (not a throw)", () => {
     it.live("optional chaining on an array does not throw", () => Effect.gen(function* () {
         expect((yield* value(`return [1,2,3]?.foo ?? "fb"`))).toBe("fb");
     }));
-    it.live("unknown property reads stay undefined for methods CodeMode does not implement", () => Effect.gen(function* () {
+    it.live("unknown property reads stay undefined for methods Program does not implement", () => Effect.gen(function* () {
         expect((yield* value(`return [1,2,3].toSpliced === undefined`))).toBe(true);
     }));
     it.live("supported array methods and indexing still work", () => Effect.gen(function* () {

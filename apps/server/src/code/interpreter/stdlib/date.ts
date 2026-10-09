@@ -1,3 +1,4 @@
+/** Ported from opencode `packages/codemode/src/stdlib/date.ts` at 3884062 (MIT). */
 export const dateMethods = new Set([
   "getTime",
   "valueOf",
@@ -34,7 +35,7 @@ export const invokeDateStatic = (name: string, args: Array<unknown>, node: AstNo
     case "UTC":
       return Date.UTC(...(args.map((arg) => coerceToNumber(arg)) as Parameters<typeof Date.UTC>))
     default:
-      throw new InterpreterRuntimeError(`Date.${name} is not available in CodeMode.`, node)
+      throw new InterpreterRuntimeError(`Date.${name} is not available in Program.`, node)
   }
 }
 
@@ -86,7 +87,7 @@ export const invokeDateMethod = (value: SandboxDate, name: string, node: AstNode
     case "getTimezoneOffset":
       return hosted.getTimezoneOffset()
     default:
-      throw new InterpreterRuntimeError(`Date method '${name}' is not available in CodeMode.`, node)
+      throw new InterpreterRuntimeError(`Date method '${name}' is not available in Program.`, node)
   }
 }
 import { type AstNode, InterpreterRuntimeError } from "../model.ts"

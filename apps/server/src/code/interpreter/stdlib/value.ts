@@ -1,3 +1,4 @@
+/** Ported from opencode `packages/codemode/src/stdlib/value.ts` at 3884062 (MIT). */
 export const errorConstructors = new Set([
   "Error",
   "TypeError",
@@ -12,7 +13,7 @@ export const valueConstructors = new Set(["Date", "RegExp", "Map", "Set", "URL",
 
 export const compoundOperators = new Set(["+=", "-=", "*=", "/=", "%=", "**=", "&=", "|=", "^=", "<<=", ">>=", ">>>="])
 
-const ErrorBrand: unique symbol = Symbol("codemode.error")
+const ErrorBrand: unique symbol = Symbol("program.error")
 
 export const createErrorValue = (name: string, message: string): SafeObject => {
   const value = Object.assign(Object.create(null) as SafeObject, { name, message })

@@ -1,12 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
-import { CodeMode, Tool } from "./index.ts";
+import { Program, Tool } from "./index.ts";
 // Standard-library value types: Date, RegExp, Map, Set. Programs use them as ordinary JS;
 // intra-sandbox checkpoints (Object.* helpers, spread, coercion inputs) preserve the live
 // values, while at the host boundary (final result, tool arguments, JSON.stringify) they
 // serialize exactly as JSON.stringify would: Date -> ISO string (invalid -> null),
 // URL -> href, and RegExp/Map/Set/URLSearchParams -> {}.
-const run = (code: string) => CodeMode.execute({ code, tools: {} });
+const run = (code: string) => Program.execute({ code, tools: {} });
 const value = (code: string) => Effect.gen(function* () {
     const result = (yield* run(code));
     if (!result.ok)
@@ -150,12 +150,12 @@ describe("RegExp", () => {
             output: Schema.String,
             run: (input) => Effect.succeed(`[${input}]`),
         });
-        const result = (yield* CodeMode.execute({
+        const result = (yield* Program.execute({
             tools: { host: { decorate } },
             code: `return "a1b22".replace(/\\d+/g, async (match) => await tools.host.decorate(match))`,
         }));
         expect(result.ok && result.value).toBe("a[1]b[22]");
-        const missingAwait = (yield* CodeMode.execute({
+        const missingAwait = (yield* Program.execute({
             tools: { host: { decorate } },
             code: `return "a1".replace(/\\d/, (match) => tools.host.decorate(match))`,
         }));
@@ -555,7 +555,7 @@ describe("sandbox values at intra-sandbox checkpoints", () => {
                 return "ok";
             }),
         });
-        const result = (yield* CodeMode.execute({
+        const result = (yield* Program.execute({
             tools: { host: { capture } },
             code: `return await tools.host.capture({ when: new Date(0), tags: new Map([["a", 1]]) })`,
         }));

@@ -1,3 +1,4 @@
+/** Ported from opencode `packages/codemode/src/values.ts` at 3884062 (MIT). */
 import type { Effect, Fiber } from "effect"
 
 export class SandboxPromise {

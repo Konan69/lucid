@@ -1,3 +1,4 @@
+/** Ported from opencode `packages/codemode/src/tool-schema.ts` at 3884062 (MIT). */
 import { JsonPointer, Schema } from "effect"
 import type { Definition, JsonSchema, SchemaType } from "./tool.ts"
 

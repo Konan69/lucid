@@ -1,3 +1,4 @@
+/** Ported from opencode `packages/codemode/src/interpreter/model.ts` at 3884062 (MIT). */
 import type { SafeObject } from "./tools.ts"
 import type { SandboxURL } from "./values.ts"
 
@@ -40,7 +41,7 @@ export type MemberReference = {
   key: string | number
 }
 
-export class CodeModeFunction {
+export class ProgramFunction {
   constructor(
     readonly parameters: ReadonlyArray<AstNode>,
     readonly body: AstNode,
@@ -120,7 +121,7 @@ export type DiagnosticKind =
   | "ToolFailure"
   | "ExecutionFailure"
 
-export const OptionalShortCircuit: unique symbol = Symbol("codemode.optional-short-circuit")
+export const OptionalShortCircuit: unique symbol = Symbol("program.optional-short-circuit")
 
 export const supportedSyntaxMessage =
   "Supported orchestration syntax: tools.* calls (they return promises - resolve them with await), data literals, destructuring, optional chaining, template literals, conditionals, switch, loops (incl. for...of and for...in over object/array/tools keys), arrow functions, spread, try/catch, array methods (map/filter/find/findIndex/some/every/reduce/flatMap/forEach/sort/slice/concat/indexOf/lastIndexOf/at/flat/reverse/includes/join), string methods (incl. match/matchAll/replace/split with regular expressions), Date/RegExp/Map/Set/URL/URLSearchParams, URI encoding helpers, Object/Math/JSON helpers, captured console.log/warn/error/dir/table, and Promise.all/allSettled/race/resolve/reject over arrays mixing promises and plain values for parallel tool calls (promise chaining with .then/.catch is not supported - use await with try/catch)."
@@ -148,7 +149,7 @@ export class InterpreterRuntimeError extends Error {
 
 export const unsupportedSyntax = (kind: string, node: AstNode): InterpreterRuntimeError =>
   new InterpreterRuntimeError(
-    `Syntax '${kind}' is not supported in CodeMode. ${supportedSyntaxMessage}`,
+    `Syntax '${kind}' is not supported in Program. ${supportedSyntaxMessage}`,
     node,
     "UnsupportedSyntax",
     [supportedSyntaxMessage],
