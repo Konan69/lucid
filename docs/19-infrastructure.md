@@ -308,12 +308,11 @@ notifications and Google sign-in are required, and it does not start without the
 settings keep their defaults. Apply the auth then product
 migrations before starting the server; Flue migrates its own runtime schema at startup.
 
-Programs (`run_code`) need nothing from the server's host. A program runs on the Person's
-Computer: the server starts its runner there through the Computer's provider, follows what it
-prints, and answers its calls. Until 5 October 2026 a program ran on the server's own host inside
+Programs (`run_code`) need nothing from the server's host and nothing from a Computer. The
+server interprets a program in its own process (`apps/server/src/code/README.md`): no isolation
+tools, no second process. Until 5 October 2026 a program ran on the server's host inside
 user-systemd, a cgroup and bubblewrap, which an ordinary container does not have, so production
-refused every program. The server image therefore carries no isolation tools, and the only
-requirement is the one every Vivid already has: a Computer provider.
+refused every program; from then until 9 October it ran on the Person's Computer.
 
 These recipes provide packaging, not deployment resources. Alchemy remains the resource owner;
 building an image neither calls Railway nor changes the local development graph.

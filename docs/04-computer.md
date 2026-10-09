@@ -259,7 +259,7 @@ the screen union belongs to its own lane. Runtime placement and external state s
 **Status: decided 5 October 2026. Built on `feat/native-computer`: the server holds the connection
 and Vivid has Flue's six file and shell tools on its Computer. Its connection code is proven on a real SSH server and on a Person's Computer, and the product path
 (a Thread and a model using the tools) ran on a Person's Computer in production on 6 October 2026.
-`run_command`, the earlier tool that asked for an Approval per command, is deleted: from the model, from programs (a program runs on the Computer and starts its own commands there), from the server and its contract, and with it the command kind of Approval.** This is the step between today and
+`run_command`, the earlier tool that asked for an Approval per command, is deleted: from the model, from programs (since 9 October 2026 a program is interpreted on the server and has only its four tools; see `apps/server/src/code/README.md`), from the server and its contract, and with it the command kind of Approval.** This is the step between today and
 "Runtime on the Computer" below. It is deliberately thin, because it is deleted when the runtime
 moves onto the machine.
 
@@ -271,7 +271,8 @@ checks the Approval rules, and the server calls the provider's "run one command"
 Flue gives a model for a machine (`useSandbox`) holds an empty stand-in whose file and shell
 operations all refuse; it is there only because Flue lets pictures reach the model through that
 slot, which `use_desktop` and `browse` need. Programs (`run_code`) exist for the same reason: a
-script on the Computer has no other way to an Integration.
+script on the Computer has no other way to an Integration. (A program has not run on the Computer
+since 9 October 2026; the server interprets it.)
 
 That is the opposite of the thesis at the top of this document. The Computer is one machine, and
 Vivid should use it as a person uses theirs.
@@ -541,8 +542,6 @@ not known; the file steps can only have been the new tools.
   that does not need it, confirm it stays stopped; ask for a file and confirm it wakes and answers.
 - `bash` in production now that `run_command` is deleted: ask for a command after the deploy
   that carries the removal.
-- A program starting a command of its own on the Computer in production (`node:child_process`),
-  now that programs have no command call to the server.
 - Whether the provider puts back, after a resume, a key it was given earlier. The removal at each
   opening takes it out either way.
 - Whether cancelling a tool call in the runtime interrupts the server's call. The server ends the

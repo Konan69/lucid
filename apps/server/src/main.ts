@@ -27,7 +27,6 @@ import { appearanceStoreLayer } from './appearance/store.ts'
 import { companyStoreLayer } from './companies/store.ts'
 import { codeAuthorityLayer } from './code/authority.ts'
 import { codeCallsLayer } from './code/calls.ts'
-import { codeComputerLayer } from './code/computer.ts'
 import { codeProcessLayer } from './code/process.ts'
 import { publicPageLayer } from './code/page.ts'
 import { boatMachineLayer } from './computers/boat.ts'
@@ -156,11 +155,11 @@ const serverProgram = Effect.gen(function* () {
     Layer.provideMerge(accounts),
   )
   const decisions = gateLayer.pipe(Layer.provideMerge(reviewerLayer), Layer.provideMerge(trust))
-  // A program runs on the Person's Computer, so its supervisor sits above the Computer store.
+  // A program is interpreted in this process; its calls go through the decisions below.
   const work = Layer.mergeAll(
     routineStoreLayer,
     codeCallsLayer,
-    codeProcessLayer.pipe(Layer.provide(codeComputerLayer)),
+    codeProcessLayer,
   ).pipe(Layer.provideMerge(decisions))
   const channelHandling = channelReceiverLayer.pipe(Layer.provideMerge(work))
   const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(channelHandling))

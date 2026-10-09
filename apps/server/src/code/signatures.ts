@@ -10,16 +10,18 @@ const schemaObject = (value: Schema.Json): value is Schema.JsonObject =>
   Predicate.isObject(value) && !Array.isArray(value)
 
 /**
- * One provider schema as a TypeScript type on one line. The renderer is the interpreter's own
- * (`interpreter/schema.ts`, `jsonSchemaToTypeScript`, from opencode's `tool-schema.ts`): its
- * compact form writes no descriptions, so no provider text can become a comment, it never throws,
- * and a schema it cannot follow (a broken `$ref`, too deep) is `unknown`. A type longer than its
- * share of the signature is `unknown` too, so a signature is never cut in the middle of a type.
+ * One provider schema as a TypeScript type, each described field under its description. The
+ * renderer is the interpreter's own (`interpreter/schema.ts`, `jsonSchemaToTypeScript`, from
+ * opencode's `tool-schema.ts`), in the form opencode shows its model. A description is written as
+ * a block comment in which every comment end is broken up, so provider text cannot leave the
+ * comment. The renderer never throws, and a schema it cannot follow (a broken `$ref`, too deep)
+ * is `unknown`. A type longer than its share of the signature is `unknown` too, so a signature
+ * is never cut in the middle of a type.
  */
 const schemaType = (schema: Schema.Json, maximum: number) => {
   if (schema === false) return 'never'
   if (!schemaObject(schema)) return 'unknown'
-  const rendered = jsonSchemaToTypeScript(schema)
+  const rendered = jsonSchemaToTypeScript(schema, true)
     .replaceAll('\u2028', '\\u2028')
     .replaceAll('\u2029', '\\u2029')
   return bytes(rendered) > maximum ? 'unknown' : rendered

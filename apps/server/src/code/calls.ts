@@ -23,8 +23,7 @@ import { Database } from '../database/client.ts'
 import { CodeAuthority, type CodeBoundary } from './authority.ts'
 import { PageReader } from './page.ts'
 import { readPage } from './pages.ts'
-import { CallOutcome, type Dispatch } from './process.ts'
-import type { WorkerMessage } from './protocol.ts'
+import { CallOutcome, type Dispatch, type ProgramCall } from './process.ts'
 
 const text = (maximum: number) =>
   Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(maximum))
@@ -57,7 +56,7 @@ function toolView(response: Awaited<Effect.Success<ReturnType<typeof findTools>>
   }
 }
 
-/** Recoverable provider refusals stay typed JSON data; approval/blocked/unknown never reach the guest. */
+/** Recoverable provider refusals stay typed JSON data; approval/blocked/unknown never reach the program. */
 const returned = (
   value: Schema.Json,
   summary: string,
@@ -208,7 +207,7 @@ const browse = Effect.fn('Code.browse')(function* (actor: Actor, input: Schema.J
 /** Only these four tools exist. Payload ownership fields are excess properties and rejected at ingress. */
 const dispatch = Effect.fn('Code.dispatch')(function* (
   boundary: CodeBoundary,
-  call: typeof WorkerMessage.cases.Call.Type,
+  call: ProgramCall,
 ) {
   const actor = yield* (yield* CodeAuthority).refresh(boundary)
   switch (call.kind) {
@@ -238,7 +237,7 @@ export interface CodeCallsService {
   readonly bind: (boundary: CodeBoundary) => Dispatch
 }
 
-/** Binding captures trusted services, not guest input. Refresh occurs inside dispatch, after queuing. */
+/** Binding captures trusted services, not program input. Refresh occurs inside dispatch, after queuing. */
 export class CodeCalls extends Context.Service<CodeCalls, CodeCallsService>()('vivid/CodeCalls') {}
 
 export const codeCallsLayer = Layer.effect(

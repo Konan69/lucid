@@ -40,9 +40,7 @@ import { CodeAuthority, CodeAuthorityRevoked, codeAuthorityLayer } from './autho
 import { CodeCalls, codeCallsLayer } from './calls.ts'
 import { codeHandlers } from './handlers.ts'
 import { publicPageLayer } from './page.ts'
-import { CallOutcome, codeProcessLayer } from './process.ts'
-import { WorkerMessage } from './protocol.ts'
-import { localCodeComputerLayer } from './testing.ts'
+import { CallOutcome, codeProcessLayer, ProgramCall } from './process.ts'
 
 const isRepositoryInput = Schema.is(Schema.Struct({ repoName: Schema.String }))
 
@@ -86,14 +84,13 @@ describe.skipIf(!testDatabaseConfigured)(
   'Programs under live authority',
   { timeout: 30_000 },
   () => {
-    // The program runs on a Computer that is this machine (`testing.ts`); each test still owns
-    // fresh tenancy, Gate and provider fixtures, and each program its own process. The ceiling is
-    // for those real processes on a loaded machine; nothing here waits on a clock.
+    // The program runs in the production interpreter; each test still owns fresh tenancy, Gate
+    // and provider fixtures. Nothing here waits on a clock.
     layer(
       Layer.mergeAll(
         testDatabaseLayer,
         silentChangesLayer,
-        codeProcessLayer.pipe(Layer.provide(localCodeComputerLayer)),
+        codeProcessLayer,
       ),
     )((it) => {
       it.effect(
@@ -445,7 +442,7 @@ describe.skipIf(!testDatabaseConfigured)(
         layer(
           Layer.merge(
             testDatabaseLayer,
-            codeProcessLayer.pipe(Layer.provide(localCodeComputerLayer)),
+            codeProcessLayer,
           ),
         )(`Clock for ${decision} program Approval`, (it) => {
           it.effect(`${decision} program Approvals execute nothing`, () =>
@@ -554,7 +551,7 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
                 return yield* (yield* CodeCalls).bind({
                   person: test.personal.person.id,
                   thread: test.personalId,
-                })(WorkerMessage.cases.Call.make({ id: 1, kind, input }))
+                })(ProgramCall.make({ kind, input }))
               }),
               Layer.fresh(codeCallsLayer),
             ).pipe(
@@ -593,9 +590,7 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
                 person: test.personal.person.id,
                 thread: test.personalId,
               })(
-                WorkerMessage.cases.Call.make({
-                  id: 1,
-                  kind: 'use_tool',
+                ProgramCall.make({ kind: 'use_tool',
                   input: {
                     account: 'Records',
                     tool: 'read',
@@ -642,9 +637,7 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
               person: test.personal.person.id,
               thread: test.personalId,
             })(
-              WorkerMessage.cases.Call.make({
-                id: 1,
-                kind: 'read_page',
+              ProgramCall.make({ kind: 'read_page',
                 input: { address: 'file:///private' },
               }),
             )
@@ -675,9 +668,7 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
                 person: test.personal.person.id,
                 thread: test.personalId,
               })(
-                WorkerMessage.cases.Call.make({
-                  id: 1,
-                  kind: 'find_tools',
+                ProgramCall.make({ kind: 'find_tools',
                   input: { query: 'read' },
                 }),
               )
@@ -720,7 +711,7 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
                 return yield* calls.bind({
                   person: test.personal.person.id,
                   thread: test.personalId,
-                })(WorkerMessage.cases.Call.make({ id: 1, kind, input: {} }))
+                })(ProgramCall.make({ kind, input: {} }))
               }),
               Layer.fresh(codeCallsLayer.pipe(Layer.provideMerge(codeAuthorityLayer))),
             ).pipe(
@@ -767,9 +758,7 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
                   person: test.personal.person.id,
                   thread: test.personalId,
                 })(
-                  WorkerMessage.cases.Call.make({
-                    id: 1,
-                    kind: 'find_tools',
+                  ProgramCall.make({ kind: 'find_tools',
                     input: { query: 'read' },
                   }),
                 )
