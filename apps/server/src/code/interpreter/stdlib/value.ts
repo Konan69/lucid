@@ -60,7 +60,11 @@ export const coerceToString = (value: unknown): string => {
           .join(',')
       : '[object Object]'
   }
-  return String(value)
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint')
+    return String(value)
+  // Nothing else is a value a program can hold; a host function or symbol is shown as an object.
+  return '[object Object]'
 }
 
 /** Use confined primitive coercion rather than exposing native valueOf or prototype hooks. */

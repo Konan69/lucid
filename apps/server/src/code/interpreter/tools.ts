@@ -463,7 +463,7 @@ export const make = <R>(
               (cause) =>
                 new ToolRuntimeError(
                   'InvalidToolInput',
-                  `Invalid input for tool '${name}': ${String(cause)}`,
+                  `Invalid input for tool '${name}': ${cause}`,
                 ),
             ),
           )

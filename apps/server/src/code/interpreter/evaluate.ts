@@ -11,7 +11,6 @@ import {
   ToolReference,
   ToolRuntime,
   ToolRuntimeError,
-  type HostTools,
   type SafeObject,
   type Services,
 } from './tools.ts'
@@ -309,6 +308,12 @@ const instanceofValue = (lhs: unknown, rhs: unknown, node: AstNode): boolean => 
         return Array.isArray(lhs)
       case 'Object':
         return lhs !== null && (typeof lhs === 'object' || typeofValue(lhs) === 'function')
+      // Namespaces, not constructors: nothing is an instance of them. They fail below like any
+      // other right-hand side that is not a constructor.
+      case 'JSON':
+      case 'Math':
+      case 'console':
+        break
     }
   }
   if (rhs instanceof PromiseNamespace) return lhs instanceof SandboxPromise
@@ -400,7 +405,7 @@ const invokeStringMethod = (value: string, name: string, args: Array<unknown>, n
         break
       }
       if (args[0] instanceof SandboxRegExp) {
-        result = value.split((args[0] as SandboxRegExp).regex, optNum(1))
+        result = value.split(args[0].regex, optNum(1))
         break
       }
       const requestedLimit = optNum(1)
@@ -428,7 +433,7 @@ const invokeStringMethod = (value: string, name: string, args: Array<unknown>, n
     case 'replace':
     case 'replaceAll': {
       if (args[0] instanceof SandboxRegExp) {
-        const pattern = (args[0] as SandboxRegExp).regex
+        const pattern = args[0].regex
         const replacement = str(1)
         if (name === 'replaceAll' && !pattern.global) {
           throw new InterpreterRuntimeError(
@@ -546,8 +551,8 @@ const invokeArrayStatic = (name: string, args: Array<unknown>, node: AstNode) =>
       }
       // Map/Set materialize directly (the data checkpoint would serialize them to {}).
       if (args[0] instanceof SandboxMap)
-        return Array.from((args[0] as SandboxMap).map.entries(), ([key, item]) => [key, item])
-      if (args[0] instanceof SandboxSet) return Array.from((args[0] as SandboxSet).set.values())
+        return Array.from(args[0].map.entries(), ([key, item]) => [key, item])
+      if (args[0] instanceof SandboxSet) return Array.from(args[0].set.values())
       if (args[0] instanceof SandboxURLSearchParams) {
         return Array.from(args[0].params.entries(), ([key, value]) => [key, value])
       }
@@ -778,7 +783,7 @@ class Interpreter<R> {
   // their work completes before the execution ends - mirroring a JS runtime waiting on
   // in-flight I/O at exit. A failure nobody could have handled becomes an unhandled-rejection
   // diagnostic (interrupted calls, e.g. Promise.race losers, are ignored).
-  private drainPendingSettlements(): Effect.Effect<void, Raised, never> {
+  private drainPendingSettlements(): Effect.Effect<void, Raised> {
     return Effect.gen({ self: this }, function* () {
       for (const promise of Array.from(this.pendingSettlements)) {
         const exit = yield* this.observePromise(promise)
@@ -831,10 +836,7 @@ class Interpreter<R> {
 
   // `await promise`: succeed with the fulfilled value or re-raise the failure so try/catch
   // observes it exactly like a synchronous throw at the await site.
-  private settlePromise(
-    promise: SandboxPromise,
-    node?: AstNode,
-  ): Effect.Effect<unknown, Raised, never> {
+  private settlePromise(promise: SandboxPromise, node?: AstNode): Effect.Effect<unknown, Raised> {
     return Effect.flatMap(this.observePromise(promise), (exit) =>
       this.unwrapPromiseExit(promise, exit, node),
     )
@@ -1968,7 +1970,7 @@ class Interpreter<R> {
           )
         }
         // Own properties only, so arrays don't leak the host Array.prototype (map/constructor/...).
-        return Object.hasOwn(rhs as object, coerceOperand(lhs) as PropertyKey)
+        return Object.hasOwn(rhs, coerceOperand(lhs) as PropertyKey)
       default:
         throw new InterpreterRuntimeError(`Unsupported binary operator '${operator}'.`, node)
     }
@@ -2028,7 +2030,8 @@ class Interpreter<R> {
       let result: number
       switch (operator) {
         case '+':
-          result = +(operand as number)
+          // `Number` is what unary plus does to a value that is not a BigInt; none exists here.
+          result = Number(operand)
           break
         case '-':
           result = -(operand as number)
@@ -2195,7 +2198,7 @@ class Interpreter<R> {
       if (callable instanceof GlobalMethodReference) {
         if (callable.namespace === 'console') return this.invokeConsole(callable.name, args, node)
         if (callable.namespace === 'Object' && args[0] instanceof ToolReference) {
-          return this.invokeObjectMethodOnTools(callable.name, args[0] as ToolReference, node)
+          return this.invokeObjectMethodOnTools(callable.name, args[0], node)
         }
         return boundedData(
           invokeGlobalMethod(callable, args, node),
@@ -2275,7 +2278,9 @@ class Interpreter<R> {
     if (typeof value === 'string') return JSON.stringify(value)
     // String(value) keeps NaN/Infinity/-Infinity readable; finite numbers match their JSON form.
     if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-    if (typeof value !== 'object') return String(value)
+    if (typeof value === 'bigint') return value.toString()
+    // Nothing else that is not an object is a value a program can hold; it is named by its kind.
+    if (typeof value !== 'object') return typeof value
     if (value instanceof SandboxPromise) return '[Promise (await it to get its value)]'
     if (value instanceof SandboxDate) return coerceToString(value)
     if (value instanceof SandboxRegExp) return coerceToString(value)
@@ -2546,6 +2551,9 @@ class Interpreter<R> {
           )
         })
       }
+      default:
+        // `resolve` and `reject` returned above; the three cases are every method left.
+        return ref.name satisfies never
     }
   }
 
@@ -3540,7 +3548,7 @@ class Interpreter<R> {
       if (objectValue instanceof SandboxPromise) {
         if (key === 'then' || key === 'catch' || key === 'finally') {
           throw new InterpreterRuntimeError(
-            `Promise.prototype.${String(key)} is not supported in a program; use await instead (with try/catch to handle failures) - e.g. \`const result = await tools.ns.tool(...)\`.`,
+            `Promise.prototype.${key} is not supported in a program; use await instead (with try/catch to handle failures) - e.g. \`const result = await tools.ns.tool(...)\`.`,
             propertyNode,
             'UnsupportedSyntax',
             [supportedSyntaxMessage],
@@ -3742,7 +3750,7 @@ class Interpreter<R> {
         },
       )
     }
-    const target = reference.target as SafeObject
+    const target = reference.target
     const objectKey = key as string
     this.rejectCircularInsertion(target, next, {
       label: 'Object assignment result',
@@ -3861,11 +3869,7 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
   limits: ResolvedExecutionLimits,
 ): Effect.Effect<Result, never, Services<Tools>> => {
   const hooks = { onToolCallStart: options.onToolCallStart, onToolCallEnd: options.onToolCallEnd }
-  const tools = ToolRuntime.make(
-    (options.tools ?? {}) as HostTools<Services<Tools>>,
-    limits.maxToolCalls,
-    hooks,
-  )
+  const tools = ToolRuntime.make(options.tools ?? {}, limits.maxToolCalls, hooks)
   // Vivid: the host may supply the list printed lines are kept in, so that it still has them
   // when it interrupts the program (an interrupted execution returns no result).
   const logs: Array<string> = options.logs === undefined ? [] : options.logs

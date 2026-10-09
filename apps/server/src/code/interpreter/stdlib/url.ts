@@ -47,6 +47,14 @@ export const urlSearchParamsMethods = new Set([
 export const uriArgument = (value: unknown, label: string): string =>
   coerceToString(boundedData(value, label))
 
+/** The host's own conversion for each URI function a program may call. */
+const uriFunctions: Record<UriFunction['name'], (value: string) => string> = {
+  encodeURI,
+  encodeURIComponent,
+  decodeURI,
+  decodeURIComponent,
+}
+
 /** Preserve native URI conversion while translating malformed input into a catchable URIError. */
 export const invokeUriFunction = (
   ref: UriFunction,
@@ -55,18 +63,7 @@ export const invokeUriFunction = (
 ): string => {
   const value = uriArgument(args[0], `${ref.name} input`)
   return Result.match(
-    Result.try(() => {
-      switch (ref.name) {
-        case 'encodeURI':
-          return encodeURI(value)
-        case 'encodeURIComponent':
-          return encodeURIComponent(value)
-        case 'decodeURI':
-          return decodeURI(value)
-        case 'decodeURIComponent':
-          return decodeURIComponent(value)
-      }
-    }),
+    Result.try(() => uriFunctions[ref.name](value)),
     {
       onSuccess: (result) => result,
       onFailure: (error) => {

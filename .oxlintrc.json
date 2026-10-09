@@ -349,6 +349,7 @@
         "vivid/no-undefined-in-union": "off",
         "vivid/no-optional-chaining": "off",
         "vivid/require-schema-decode-in-boundary": "off",
+        "typescript/no-unnecessary-type-parameters": "off",
         "complexity": "off",
         "max-lines-per-function": "off",
         "max-depth": "off"

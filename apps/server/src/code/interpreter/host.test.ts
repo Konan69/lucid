@@ -6,7 +6,7 @@ import type { ToolCallStarted, ToolCallEnded } from './tools.ts'
 const decodeResult = Schema.decodeUnknownEffect(Schema.fromJsonString(Program.Result))
 type InvalidHostOutput = { readonly safe: string }
 
-const run = (tool: Tool.Definition<never>) =>
+const run = (tool: Tool.Definition) =>
   Program.execute({
     tools: { host: { call: tool } },
     code: 'return await tools.host.call({})',
