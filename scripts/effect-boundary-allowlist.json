@@ -108,6 +108,21 @@
     "symbols": ["memory"]
   },
   {
+    "file": "packages/agent/durable/src/fixtures/paging.ts",
+    "classification": "test-fixture-entrypoint",
+    "symbols": [
+      "host",
+      "appendUser",
+      "appendAssistant",
+      "transcript",
+      "singleMessage",
+      "boundaryBudget",
+      "oversizedMessage",
+      "finalOversized",
+      "invalidBudget"
+    ]
+  },
+  {
     "file": "packages/agent/durable/src/conformance/fixtures/crash.ts",
     "classification": "test-process-entrypoint",
     "symbols": ["main", "<module>"]

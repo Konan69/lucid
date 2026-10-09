@@ -63,7 +63,13 @@ export type { ResumeInput } from './resume.ts'
 
 export { abort } from './abort.ts'
 
-export { HistoryCursor, type HistoryPage, type HistoryRequest, history } from './history.ts'
+export {
+  HistoryCursor,
+  HistoryOversized,
+  type HistoryPage,
+  type HistoryRequest,
+  history,
+} from './history.ts'
 export { BusyPolicy } from './busy.ts'
 export { type ToolScope } from './tools.ts'
 export {

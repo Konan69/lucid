@@ -1,5 +1,8 @@
 import { isToolUIPart, type ChatTransport, type UIMessage, type UIMessageChunk } from 'ai'
 
+/** Type-only wire contract: loading client transport imports no Pi or Effect runtime. */
+export type { Metadata } from './message.ts'
+
 /** Reserved protocol marker: this local interruption is never a person-supplied tool result. */
 export const connectionLostInput =
   '@vivid/durable: the connection was lost before this tool input arrived'

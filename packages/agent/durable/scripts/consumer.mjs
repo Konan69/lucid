@@ -47,14 +47,14 @@ const decodeInstalled = Schema.decodeUnknownSync(
 )
 
 /** Keep subprocess failures visible and never continue with a partial build, pack, or install. */
-function run(program, args, cwd) {
+function run(program, args, cwd, print = true) {
   const result = NodeChildProcess.spawnSync(program, args, {
     cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
   })
   if (result.error !== undefined) throw result.error
-  process.stdout.write(result.stdout)
+  if (print) process.stdout.write(result.stdout)
   NodeAssert.equal(result.status, 0, `${program} ${args.join(' ')} failed (${result.signal})`)
   return result.stdout
 }
@@ -119,7 +119,7 @@ async function project(temporary, archive) {
     NodePath.join(consumer, 'pnpm-workspace.yaml'),
     `packages:\n  - '.'\noverrides:\n${overrides}\n`,
   )
-  for (const file of ['stream.mjs', 'types.ts']) {
+  for (const file of ['stream.mjs', 'types.ts', 'clienttypes.ts']) {
     await NodeFSP.copyFile(new URL(file, import.meta.url), NodePath.join(consumer, file))
   }
   run('pnpm', ['install', '--ignore-scripts', '--strict-peer-dependencies'], consumer)
@@ -164,6 +164,29 @@ async function types(consumer, resolution, compiler) {
   await NodeFSP.writeFile(file, `${JSON.stringify(config, null, 2)}\n`)
   run(process.execPath, [compiler.file, '-p', file], consumer)
   process.stdout.write(`Type resolution (${compiler.name}, ${resolution}): passed\n`)
+  // Resolve the client as the sole root: merely compiling it alongside server
+  // imports would conceal an accidental Pi dependency in the exported Metadata.
+  const clientFile = NodePath.join(consumer, `tsconfig.client.${compiler.name}.${resolution}.json`)
+  await NodeFSP.writeFile(
+    clientFile,
+    `${JSON.stringify({ ...config, files: ['clienttypes.ts'] }, null, 2)}\n`,
+  )
+  const declarations = run(
+    process.execPath,
+    [compiler.file, '-p', clientFile, '--listFilesOnly'],
+    consumer,
+    false,
+  )
+  // pnpm embeds peer names in this package's virtual directory; only actual
+  // node_modules/@earendil-works files are Pi imports, not those directory names.
+  const piDeclarations = declarations
+    .split('\n')
+    .filter((declaration) => /[/\\]node_modules[/\\]@earendil-works[/\\]/u.test(declaration))
+  NodeAssert.deepEqual(piDeclarations, [], 'Client metadata resolved Pi declarations')
+  run(process.execPath, [compiler.file, '-p', clientFile], consumer)
+  process.stdout.write(
+    `Client-only metadata (${compiler.name}, ${resolution}): passed, no Pi declarations\n`,
+  )
 }
 
 // Build before creating the proof directory: a compiler failure cannot leave a misleading tarball.

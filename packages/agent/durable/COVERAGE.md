@@ -768,6 +768,8 @@ Counts: ported **7**; not applicable **14**; owned by durable-core **0**; gap **
 
 ## Verification and limits
 
+Bounded-history follow-up: **750 passed, 2 existing live-provider skips, 0 failed**, across **82 passing files and one skipped file**. The new public paging suite passed **9/9 on SQLite and 9/9 on disposable PostgreSQL**. A single-user page returns one raw row; a three-response assistant reads only those three rows plus its user boundary. Exact UTF-8 JSON budget boundaries, oversized messages (including EOF), tagged/Option versus optional facade parity, invalid budgets and lossless continuation are covered. Metadata wire contracts share one Pi-free schema; packed consumers assert exact client/Promise/core type equality and check a client-only declaration graph under both TypeScript compilers and resolution modes.
+
 Pi 1.1.0 upgrade verification (9 October 2026): **732 passed, 2 skipped, 0 failed**, across **80 passing files and one opt-in live-provider file**. The previous run was 726 passed / 2 skipped; the increase is one new published storage case on each backend plus four timing cases. No new skip was added. PostgreSQL ran on an isolated Docker `postgres:18-alpine` instance; no app database was used.
 
 Published storage conformance: **SQLite 24/24; PostgreSQL 24/24**. In each backend's runner, **2/2 dual-order cases passed for ascending and 2/2 for descending**: deep-fork entries and conversation/task/submission table scans. These are the same cases exercising both directions, not two separate 24-case suites. They also prove continuing without repeating `order` and rejecting a conflicting order. Counts come from the actual Vitest run.

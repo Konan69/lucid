@@ -235,7 +235,7 @@ it.live('admits file-only input through core prepareRun', () =>
     const page = yield* Core.history(
       opened.harness,
       opened.root.id,
-      { limit: 10, before: Option.none() },
+      { limit: 10, before: Option.none(), maxBytes: Option.none() },
       context,
     )
     expect(partsAt(page.messages, 0)).toEqual([picture])

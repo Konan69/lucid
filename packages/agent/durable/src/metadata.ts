@@ -1,48 +1,12 @@
 import type { AssistantMessage } from '@earendil-works/pi-ai'
 import type { EntryId, EntryRecord } from '@earendil-works/pi-durable'
 import { Option, Schema } from 'effect'
-
-const isEntryId = Schema.is(Schema.Int)
-const EntryIdentity = Schema.declare<EntryId>((value): value is EntryId => isEntryId(value))
-const ResponseDuration = Schema.Struct({ entryId: EntryIdentity, durationMs: Schema.Finite })
-const ToolDuration = Schema.Struct({
-  entryId: EntryIdentity,
-  toolCallId: Schema.String,
-  toolName: Schema.String,
-  durationMs: Schema.Finite,
-})
-
-const Model = Schema.Struct({
-  provider: Schema.String,
-  modelId: Schema.String,
-  responseModel: Schema.optionalKey(Schema.String),
-})
-/** Provider token counts are finite; JSON cannot retain NaN or infinities. */
-const Tokens = Schema.Struct({
-  input: Schema.Finite,
-  output: Schema.Finite,
-  cacheRead: Schema.Finite,
-  cacheWrite: Schema.Finite,
-  totalTokens: Schema.Finite,
-  cacheWrite1h: Schema.optionalKey(Schema.Finite),
-  reasoning: Schema.optionalKey(Schema.Finite),
-})
+import { Metadata, Model, ResponseDuration, ToolDuration, Tokens } from './message.ts'
+export { Metadata } from './message.ts'
 /** Provider counts are untrusted even though Pi types them as numbers. Reject the whole response's
  * accounting when one count is invalid: retaining a subset would mix incompatible totals. Costs
  * are monetary records; the token decoder projects only the count vocabulary. */
 const decodeTokens = Schema.decodeUnknownOption(Tokens)
-
-/** Pi 1.1.0 generation.ts records response duration; tool.ts:appendToolResult
- * records execute duration. Entry identity distinguishes retries and reused call ids.
- * These are monotonic attempt durations, never task wall-clock lifecycle spans. */
-export const Metadata = Schema.Struct({
-  models: Schema.Array(Model),
-  usage: Schema.optionalKey(Tokens),
-  failure: Schema.optionalKey(Schema.String),
-  responses: Schema.optionalKey(Schema.Array(ResponseDuration)),
-  tools: Schema.optionalKey(Schema.Array(ToolDuration)),
-})
-export type Metadata = typeof Metadata.Type
 
 /** Per-reader entry deduplication mirrors Pi's usage ledger without introducing another store. */
 export type MetadataState = {

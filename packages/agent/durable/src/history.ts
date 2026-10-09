@@ -40,10 +40,20 @@ export type HistoryCursor = typeof HistoryCursor.Type
 export type HistoryPage = {
   readonly messages: readonly UIMessage[]
   readonly next: Option.Option<HistoryCursor>
+  readonly oversized: Option.Option<HistoryOversized>
 }
+/** A complete message exceeds the host's UTF-8 JSON budget; return it alone so
+ * the host can handle it without losing history or retrying a non-advancing cursor. */
+export const HistoryOversized = Schema.TaggedStruct('HistoryOversized', {
+  messageId: Schema.String,
+  bytes: Schema.Int,
+  maxBytes: Schema.Int,
+})
+export type HistoryOversized = typeof HistoryOversized.Type
 export type HistoryRequest = {
   readonly limit: number
   readonly before: Option.Option<HistoryCursor>
+  readonly maxBytes: Option.Option<number>
 }
 const Limit = Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0))
 
@@ -145,7 +155,7 @@ const validateCursor = Effect.fn('Durable.historyCursor')(function* (
   for (;;) {
     const batch = yield* Pi.entries(
       reader.conversation,
-      { query, limit: 100, cursor },
+      { query, limit: 1, cursor },
       reader.context,
     )
     for (const entry of batch.items) state = checkCursor(state, entry, before.entry)
@@ -180,38 +190,87 @@ function historyEntries(entries: readonly EntryRecord[], active: Option.Option<E
   })
 }
 
-/** Read another raw page until enough complete messages exist; never split a multi-entry stretch. */
-const readGroups = Effect.fn('Durable.historyGroups')(function* (
+type Position = Data.TaggedEnum<{ Start: {}; More: { readonly cursor: Cursor }; End: {} }>
+const Position = Data.taggedEnum<Position>()
+type Scan = {
+  readonly position: Position
+  readonly active: Option.Option<EntryId>
+  readonly entries: readonly EntryRecord[]
+}
+
+/** Message boundaries use the first assistant, not a successor tool/response id.
+ * The same boundary owns projection identity and exclusive continuation. */
+function firstAssistant(entries: readonly EntryRecord[]) {
+  const first = entries.find((entry) => entry.kind === 'pi.assistant')
+  if (first === undefined) throw new Error('History assistant group lacks its first entry')
+  return first
+}
+
+/** Read only the requested message count in raw rows (one when byte-bounded).
+ * A stretch can need arbitrarily many rows, but only its pending rows accumulate.
+ * The storage's extra-row probe is not materialized as a returned entry. */
+const readBatch = Effect.fn('Durable.historyBatch')(function* (
   reader: Reader,
   page: HistoryRequest,
+  scan: Scan,
 ) {
-  const active = yield* boundary(reader)
-  if (Option.isSome(page.before)) yield* validateCursor(reader, page.before.value)
   const query = { ...queryFor(page.before), order: 'descending' as const }
-  let cursor = Option.none<Cursor>()
-  const entries: EntryRecord[] = []
-  for (;;) {
-    const batch = yield* Pi.entries(
-      reader.conversation,
-      { query, limit: 100, cursor },
-      reader.context,
-    )
-    entries.push(
+  const cursor = Position.$match(scan.position, {
+    Start: () => Option.none<Cursor>(),
+    More: ({ cursor: after }) => Option.some(after),
+    End: () => Option.none<Cursor>(),
+  })
+  const batch = yield* Pi.entries(
+    reader.conversation,
+    { query, limit: Option.isSome(page.maxBytes) ? 1 : page.limit, cursor },
+    reader.context,
+  )
+  return {
+    active: scan.active,
+    position: batch.next === undefined ? Position.End() : Position.More({ cursor: batch.next }),
+    entries: [
+      ...scan.entries,
       ...batch.items.filter(
         (entry) => query.maxEntryId === undefined || entry.id < query.maxEntryId,
       ),
-    )
-    cursor = Option.fromNullishOr(batch.next)
-    // Read the whole active prefix before counting messages, even if late steers fill a raw page.
-    // If the caller's cursor already hides the first assistant, all remaining active users precede it.
-    if (
-      Option.isSome(active) &&
-      Option.isSome(cursor) &&
-      entries.every((entry) => entry.id > active.value)
-    )
-      continue
-    const completed = groups(historyEntries(entries, active), Option.isNone(cursor))
-    if (completed.length > page.limit || Option.isNone(cursor)) return completed
+    ],
+  }
+})
+
+/** Assemble one newest complete message. The user boundary closes a multi-entry
+ * assistant and remains buffered for the next call. Read the whole active prefix
+ * before filtering steers; stop at the first completed group instead of probing
+ * an additional message merely to discover continuation. */
+const readGroup = Effect.fn('Durable.historyGroup')(function* (
+  reader: Reader,
+  page: HistoryRequest,
+  initial: Scan,
+) {
+  let scan = initial
+  for (;;) {
+    const ended = Position.$is('End')(scan.position)
+    const active = scan.active
+    const prefixReady =
+      Option.isNone(active) || ended || scan.entries.some((entry) => entry.id <= active.value)
+    if (prefixReady) {
+      const entries = historyEntries(scan.entries, active)
+      const group = groups(entries, ended)[0]
+      scan = { position: scan.position, entries, active: Option.none() }
+      if (group !== undefined) {
+        const first = Group.$match(group, {
+          User: ({ entry }) => entry.id,
+          Assistant: ({ entries: stretch }) => firstAssistant(stretch).id,
+        })
+        const remaining = entries.filter((entry) => entry.id < first)
+        return {
+          group: Option.some(group),
+          scan: { ...scan, entries: remaining },
+          more: remaining.length > 0 || !ended,
+        }
+      }
+    }
+    if (ended) return { group: Option.none<Group>(), scan, more: false }
+    scan = yield* readBatch(reader, page, scan)
   }
 })
 
@@ -299,8 +358,7 @@ function prepare(group: Group): Prepared {
   return Group.$match(group, {
     User: ({ entry }) => Prepared.User({ entry }),
     Assistant: ({ entries }) => {
-      const first = entries.find((entry) => entry.kind === 'pi.assistant')
-      if (first === undefined) throw new Error('History assistant group lacks its first entry')
+      const first = firstAssistant(entries)
       const step = rebuild(settledEntries(entries))
       // Pi bills discarded attempts too; content filtering must not discard their recorded usage.
       const metadata = entries.reduce(recordMetadata, emptyMetadata)
@@ -313,7 +371,8 @@ function prepare(group: Group): Prepared {
   })
 }
 
-/** One page observes plans, holds and any unresolved transcript provenance once for all assistant groups. */
+/** Observe only the selected group's provenance: byte budgets may stop before
+ * later groups, so their parts/tasks must not be prepared or loaded eagerly. */
 const pageDesk = Effect.fn('Durable.historyDesk')(function* (
   reader: Reader,
   selected: readonly Prepared[],
@@ -371,30 +430,71 @@ export const history: (
   yield* Limit.makeEffect(page.limit).pipe(
     Effect.mapError(() => new HistoryPageInvalid({ conversationId })),
   )
+  if (Option.isSome(page.maxBytes))
+    yield* Limit.makeEffect(page.maxBytes.value).pipe(
+      Effect.mapError(() => new HistoryPageInvalid({ conversationId })),
+    )
   const conversation = yield* Pi.conversation(harness, conversationId, context)
   const reader = { harness, conversation, context }
-  const all = yield* readGroups(reader, page)
-  const selected = all.slice(0, page.limit).toReversed().map(prepare)
-  const desk = yield* pageDesk(reader, selected)
-  const messages: UIMessage[] = []
-  for (const group of selected)
-    messages.push(
-      yield* Prepared.$match(group, {
-        User: ({ entry }) => Effect.succeed(userMessage(entry)),
-        Assistant: (prepared) => assistantMessage(prepared, desk),
+  return yield* readPage(reader, page)
+})
+
+const encoder = new TextEncoder()
+
+/** Select newest whole messages under both limits, then return them chronologically.
+ * Bytes are the sum of each message's JSON UTF-8 bytes, excluding the page envelope.
+ * A rejected candidate stays behind the oldest accepted boundary, so continuation
+ * rereads it losslessly. An oversized first candidate returns alone and advances. */
+const readPage = Effect.fn('Durable.historyPage')(function* (reader: Reader, page: HistoryRequest) {
+  if (Option.isSome(page.before)) yield* validateCursor(reader, page.before.value)
+  let scan: Scan = { position: Position.Start(), active: yield* boundary(reader), entries: [] }
+  const selected: { readonly message: UIMessage; readonly first: EntryId }[] = []
+  let bytes = 0
+  let more = false
+  let oversized = Option.none<HistoryOversized>()
+  while (selected.length < page.limit) {
+    const found = yield* readGroup(reader, page, scan)
+    if (Option.isNone(found.group)) {
+      more = false
+      break
+    }
+    const group = prepare(found.group.value)
+    const desk = yield* pageDesk(reader, [group])
+    const message = yield* Prepared.$match(group, {
+      User: ({ entry }) => Effect.succeed(userMessage(entry)),
+      Assistant: (prepared) => assistantMessage(prepared, desk),
+    })
+    const size = encoder.encode(JSON.stringify(message)).byteLength
+    const exceeds = Option.isSome(page.maxBytes) && bytes + size > page.maxBytes.value
+    if (exceeds && selected.length > 0) {
+      more = true
+      break
+    }
+    selected.push({
+      message,
+      first: Prepared.$match(group, {
+        User: ({ entry }) => entry.id,
+        Assistant: ({ first }) => first,
       }),
-    )
-  const oldest = selected[0]
+    })
+    bytes += size
+    more = found.more
+    scan = found.scan
+    if (Option.isSome(page.maxBytes) && exceeds) {
+      oversized = Option.some(
+        HistoryOversized.make({
+          messageId: message.id,
+          bytes: size,
+          maxBytes: page.maxBytes.value,
+        }),
+      )
+      break
+    }
+  }
+  const oldest = selected.at(-1)
   const next =
-    all.length <= page.limit || oldest === undefined
+    !more || oldest === undefined
       ? Option.none<HistoryCursor>()
-      : Option.some(
-          HistoryCursor.make({
-            entry: Prepared.$match(oldest, {
-              User: ({ entry }) => entry.id,
-              Assistant: ({ first }) => first,
-            }),
-          }),
-        )
-  return { messages, next }
+      : Option.some(HistoryCursor.make({ entry: oldest.first }))
+  return { messages: selected.map(({ message }) => message).toReversed(), next, oversized }
 })

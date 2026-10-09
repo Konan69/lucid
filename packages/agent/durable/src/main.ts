@@ -289,8 +289,17 @@ export const abort = (
 
 export type { HoldId } from './errors.ts'
 
-export type HistoryPage = { readonly messages: UIMessage[]; readonly next?: string }
-export type HistoryRequest = { readonly limit: number; readonly before?: string }
+export type { HistoryOversized } from './history.ts'
+export type HistoryPage = {
+  readonly messages: UIMessage[]
+  readonly next?: string
+  readonly oversized?: Core.HistoryOversized
+}
+export type HistoryRequest = {
+  readonly limit: number
+  readonly before?: string
+  readonly maxBytes?: number
+}
 const encodeCursor = Schema.encodeSync(Schema.fromJsonString(Core.HistoryCursor))
 const decodeCursor = Schema.decodeUnknownEffect(Schema.fromJsonString(Core.HistoryCursor), {
   onExcessProperty: 'error',
@@ -320,13 +329,17 @@ export const history = (
       const result = yield* Core.history(
         harness,
         conversationId,
-        { limit: page.limit, before },
+        { limit: page.limit, before, maxBytes: Option.fromNullishOr(page.maxBytes) },
         context,
       )
       const messages = [...result.messages]
-      return Option.match(result.next, {
+      const wire = Option.match(result.next, {
         onNone: (): HistoryPage => ({ messages }),
         onSome: (next): HistoryPage => ({ messages, next: encodeCursor(next) }),
+      })
+      return Option.match(result.oversized, {
+        onNone: () => wire,
+        onSome: (oversized): HistoryPage => ({ ...wire, oversized }),
       })
     }),
   )

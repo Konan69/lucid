@@ -89,7 +89,7 @@ it.live('carries each response and tool duration through live and both history A
     const core = yield* Core.history(
       opened.harness,
       opened.root.id,
-      { limit: 10, before: Option.none() },
+      { limit: 10, before: Option.none(), maxBytes: Option.none() },
       context,
     )
     for (const page of [promise, core]) {
@@ -174,7 +174,7 @@ it.live('omits absent response and unexecuted tool timings', () =>
     const page = yield* Core.history(
       opened.harness,
       opened.root.id,
-      { limit: 10, before: Option.none() },
+      { limit: 10, before: Option.none(), maxBytes: Option.none() },
       context,
     )
     const assistant = page.messages.find((message) => message.role === 'assistant')

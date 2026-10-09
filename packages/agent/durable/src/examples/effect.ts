@@ -149,7 +149,12 @@ export const history = Effect.fn('Example.history')(function* (
             Effect.mapError(() => new Durable.HistoryCursorInvalid({ conversationId })),
           ),
         )
-  const result = yield* Durable.history(harness, conversationId, { limit, before }, context)
+  const result = yield* Durable.history(
+    harness,
+    conversationId,
+    { limit, before, maxBytes: Option.none() },
+    context,
+  )
   const messages = [...result.messages]
   const body = Option.match(result.next, {
     onNone: () => ({ messages }),

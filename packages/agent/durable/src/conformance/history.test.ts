@@ -542,7 +542,7 @@ it.live('core pages the same settled messages as the Promise entry', () =>
     const first = yield* Core.history(
       opened.harness,
       opened.root.id,
-      { limit: 1, before: Option.none() },
+      { limit: 1, before: Option.none(), maxBytes: Option.none() },
       context,
     )
     expect(first.messages).toMatchObject([
@@ -552,7 +552,7 @@ it.live('core pages the same settled messages as the Promise entry', () =>
     const second = yield* Core.history(
       opened.harness,
       opened.root.id,
-      { limit: 1, before: first.next },
+      { limit: 1, before: first.next, maxBytes: Option.none() },
       context,
     )
     expect(second.messages).toMatchObject([
@@ -652,7 +652,12 @@ it.live('core exposes tagged history validation failures', () =>
     const fixture = yield* shop()
     const opened = yield* fixture.open()
     const invalidSize = yield* Effect.flip(
-      Core.history(opened.harness, opened.root.id, { limit: 0, before: Option.none() }, context),
+      Core.history(
+        opened.harness,
+        opened.root.id,
+        { limit: 0, before: Option.none(), maxBytes: Option.none() },
+        context,
+      ),
     )
     expect(invalidSize).toBeInstanceOf(HistoryPageInvalid)
     yield* Effect.promise(() =>
@@ -667,7 +672,11 @@ it.live('core exposes tagged history validation failures', () =>
       Core.history(
         opened.harness,
         opened.root.id,
-        { limit: 1, before: Option.some(Core.HistoryCursor.make({ entry: entry.id })) },
+        {
+          limit: 1,
+          before: Option.some(Core.HistoryCursor.make({ entry: entry.id })),
+          maxBytes: Option.none(),
+        },
         context,
       ),
     )
