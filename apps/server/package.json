@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@alchemy.run/better-auth": "catalog:",
+    "@earendil-works/pi-codemode": "1.0.0",
     "@effect/ai-openrouter": "catalog:",
     "@effect/ai-typesafe": "catalog:",
     "@effect/platform-node": "catalog:",
@@ -24,7 +25,6 @@
     "@helix-db/helix-db": "3.0.4",
     "@vivid/contracts": "workspace:*",
     "@vivid/skills": "workspace:*",
-    "acorn": "8.18.0",
     "alchemy": "catalog:",
     "better-auth": "catalog:",
     "croner": "^10.0.1",

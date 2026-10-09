@@ -112,7 +112,7 @@ const tool = DiscoveredTool.make({
   name: 'read_mail',
   description: 'Read mail',
   effect: 'read',
-  call: 'tools.use_tool({account: "Mail (Work)", tool: "read_mail", input, summary, rationale})',
+  call: 'accounts["Mail (Work)"].read_mail',
   signature:
     '(input: {email?: string; id?: string; query?: string}, about: {summary: string; rationale: string}) => Promise<{ok: true; output: Json} | {ok: false; reason: string}>',
 })

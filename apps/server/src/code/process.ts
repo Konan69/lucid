@@ -1,6 +1,5 @@
 import {
   CodeCall,
-  CodeCallKind,
   CodeOutcome,
   CodeFailure,
   CodeLogs,
@@ -27,10 +26,10 @@ import { isCodeName } from '../observability/messages.ts'
 import type { CodeBoundary } from './authority.ts'
 import { boundedLogs, encodedPrefix } from './logs.ts'
 import { budgets, bytes } from './budgets.ts'
-import { CodeRunner, type CodeRunnerService, type Runner } from './runner.ts'
+import { CodeComputer, type CodeComputerService, type Guest } from './computer.ts'
 import { ParentMessage, PipeFailure, WorkerMessage } from './protocol.ts'
 
-/** A completed call has a receipt; decisions stop admission before anything returns to the program. */
+/** A completed callback has a receipt; decisions stop admission before anything returns to the VM. */
 export const CallOutcome = Schema.TaggedUnion({
   Returned: {
     value: Schema.Json,
@@ -42,14 +41,7 @@ export const CallOutcome = Schema.TaggedUnion({
   Unknown: { summary: Schema.String },
 })
 export type CallOutcome = typeof CallOutcome.Type
-/**
- * One call a program made, as the check of it sees it: which of its tools, and the arguments as
- * JSON. It carries data only; the Person and the Thread it acts for are bound on the server and
- * never come from the program.
- */
-export const ProgramCall = Schema.Struct({ kind: CodeCallKind, input: Schema.Json })
-export interface ProgramCall extends Schema.Schema.Type<typeof ProgramCall> {}
-export type Dispatch = (call: ProgramCall) => Effect.Effect<CallOutcome>
+export type Dispatch = (call: typeof WorkerMessage.cases.Call.Type) => Effect.Effect<CallOutcome>
 
 /** Provider JSON may itself look like a CodeOutcome; it must never be mistaken for a host decision. */
 const CallStep = Schema.TaggedUnion({
@@ -65,7 +57,7 @@ export interface CodeProcessService {
   ) => Effect.Effect<CodeOutcome>
 }
 
-/** A supervised program is an authority seam, not a reusable session. */
+/** A supervised program is an authority seam, not a reusable guest session. */
 export class CodeProcess extends Context.Service<CodeProcess, CodeProcessService>()(
   'vivid/CodeProcess',
 ) {}
@@ -113,15 +105,11 @@ function supervisionTags<E>(cause: Cause.Cause<E>) {
     .join(',')
 }
 
-/**
- * What the server knows about one running program: the receipts of its calls, the data it has
- * moved, and any decision that ended it. None of it is supplied by the program's thread. A call
- * that changes something and was still running when the program was lost is uncertain.
- */
+/** Parent state is never supplied by the worker. Pending consequential calls are uncertain on loss. */
 export class Execution {
   readonly calls: CodeCall[] = []
   readonly finished = Deferred.makeUnsafe<void>()
-  // Until the program's final message arrives, what it printed may have been lost.
+  // Until a real final frame arrives, buffered guest output may have been lost.
   private logs = CodeLogs.make({ logs: [], logsTruncated: true })
   private terminal: Option.Option<CodeOutcome> = Option.none()
   /** Rebuilds the decision's snapshot once the calls that were already running have reported. */
@@ -135,7 +123,7 @@ export class Execution {
     typeof WorkerMessage.cases.Done.Type | typeof WorkerMessage.cases.Failed.Type
   > = Option.none()
 
-  /** The program's end and a policy decision independently close admission; a late decision wins. */
+  /** Guest completion and a policy decision independently close admission; a late decision wins. */
   get accepting() {
     return Option.isNone(this.terminal) && Option.isNone(this.ending)
   }
@@ -166,7 +154,7 @@ export class Execution {
     return boundedFailure(failure, this.calls, this.logs)
   }
 
-  /** Supervision owns recovery after the program's thread closes; receipts still determine uncertainty. */
+  /** Supervision owns recovery after guest resources close; receipts still determine uncertainty. */
   supervise<E, R>(program: Effect.Effect<CodeOutcome, E, R>) {
     return program.pipe(
       Effect.catchCause((cause) =>
@@ -217,10 +205,10 @@ export class Execution {
   }
 
   /**
-   * Only dispatched calls receive receipts. Calls a program starts together run together: the
-   * interpreter starts each where the program wrote it, at most eight at once
-   * (`interpreter/evaluate.ts`, `createToolCallPromise`), and each is dispatched here when its
-   * message arrives. Admission is checked immediately before dispatch.
+   * Only dispatched calls receive effect receipts. Calls from one program run at the same time, as
+   * in pi code mode (`@earendil-works/pi-codemode` 1.0.0 `runtime/host.js`, `handleCall`: each call
+   * is started when its message arrives and tracked by id, with no queue). Admission is checked
+   * immediately before dispatch.
    */
   readonly call = Effect.fn('Code.dispatchFrame')(function* (
     this: Execution,
@@ -304,7 +292,7 @@ export class Execution {
     })
   }
 
-  /** This synchronous transition precedes any answer to the program, so its catch/finally cannot admit work. */
+  /** This synchronous transition precedes pipe replies and prevents catch/finally from admitting work. */
   private latch(make: () => CodeOutcome, index: number, receipt: CodeCall) {
     this.calls[index] = receipt
     // The first decision is the one reported; a sibling that also asks keeps its own receipt. A
@@ -342,7 +330,7 @@ export class Execution {
     })
   }
 
-  /** Latch receipts before the order to stop and bound the wait for the final message; missing output stays marked. */
+  /** Latch receipts before cancellation and bound final-frame collection; missing output stays marked. */
   readonly timeout = Effect.fn('Code.collectDeadlineLogs')(function* (
     this: Execution,
     cancelled: Effect.Effect<void, PipeFailure>,
@@ -360,21 +348,20 @@ export class Execution {
 
 /** The reader continues during an action, so a final message closes queued admission immediately. */
 const readCalls = Effect.fn('Code.readCalls')(function* (
-  runner: Runner,
+  guest: Guest,
   execution: {
     readonly state: Execution
     readonly dispatch: Dispatch
     readonly stopped: Deferred.Deferred<CodeOutcome, PipeFailure>
   },
 ) {
+  // Calls overlap, so their answers can be ready together. Each answer is one request to the
+  // Computer's provider; this bounds how many are on their way at once.
+  const writes = yield* Semaphore.make(budgets.replies)
   const running: Fiber.Fiber<void, PipeFailure>[] = []
   const { state, stopped } = execution
-  // A program that stops waiting for a call frees the interpreter's own place for the next one,
-  // while the call itself goes on here. The bound on calls at work together is therefore kept
-  // here, where a place is held until the call has really ended.
-  const together = yield* Semaphore.make(budgets.together)
   while (true) {
-    const message = yield* runner.read.pipe(
+    const message = yield* guest.read.pipe(
       Effect.tapError(() =>
         Effect.sync(() =>
           state.end(
@@ -385,12 +372,6 @@ const readCalls = Effect.fn('Code.readCalls')(function* (
             }),
           ),
         ),
-      ),
-      // The thread is gone, but the calls it started run here and are not gone with it. They
-      // are left to finish, as after a final message, so that a thread lost to its memory limit
-      // does not turn a call that completes into one that "may have happened".
-      Effect.tapError(() =>
-        Effect.forEach(running, (fiber) => Fiber.await(fiber), { concurrency: 'unbounded' }),
       ),
     )
     if (WorkerMessage.isAnyOf(['Done', 'Failed'])(message)) {
@@ -408,7 +389,7 @@ const readCalls = Effect.fn('Code.readCalls')(function* (
     // are still running. Wait for the decision instead; the last of them reports it.
     if (Option.isSome(refused))
       return state.decided ? yield* Deferred.await(stopped) : refused.value
-    const call = together.withPermit(runCall(runner, message, execution)).pipe(
+    const call = runCall(guest, message, { ...execution, writes }).pipe(
       Effect.catchTag('CodePipeFailure', (failure) =>
         Effect.gen(function* () {
           state.end(
@@ -427,21 +408,22 @@ const readCalls = Effect.fn('Code.readCalls')(function* (
 })
 
 /**
- * Admission precedes dispatch and live authority refresh; replies cease once the program ends. When a
+ * Admission precedes dispatch and live authority refresh; replies cease once the guest ends. When a
  * call brings a decision (an Approval, a block, an unknown outcome), the program stops being
  * answered at once, but calls already running are left to finish and the decision is reported only
  * when the last of them has returned. Interrupting them would turn a real result into "unknown".
  */
 const runCall = Effect.fn('Code.runCall')(function* (
-  runner: Runner,
+  guest: Guest,
   message: typeof WorkerMessage.cases.Call.Type,
   execution: {
     readonly state: Execution
     readonly dispatch: Dispatch
     readonly stopped: Deferred.Deferred<CodeOutcome, PipeFailure>
+    readonly writes: Semaphore.Semaphore
   },
 ) {
-  const { state, dispatch, stopped } = execution
+  const { state, dispatch, stopped, writes } = execution
   if (!state.accepting) return yield* Effect.void
   const landed = yield* state.call(message, dispatch, stopped)
   // A decision is reported by the landing of the last running call, not from here.
@@ -449,73 +431,76 @@ const runCall = Effect.fn('Code.runCall')(function* (
   const step = landed.value
   if (CallStep.guards.Stop(step))
     return yield* Deferred.succeed(stopped, step.outcome).pipe(Effect.asVoid)
-  // Admission is checked again at the moment of answering: a decision taken while this call was
-  // landing has closed the program, and it must not hear an answer after that.
-  return yield* Effect.suspend(() =>
-    state.accepting
-      ? runner.send(ParentMessage.cases.Reply.make({ id: message.id, value: step.value }))
-      : Effect.void,
+  // Admission is checked again inside the permit: an answer that waited behind others must not
+  // reach the program after a decision has closed it.
+  return yield* writes.withPermit(
+    Effect.suspend(() =>
+      state.accepting
+        ? guest.send(ParentMessage.cases.Reply.make({ id: message.id, value: step.value }))
+        : Effect.void,
+    ),
   )
 })
 
 /** Policy decisions race the reader independently, so queued messages can never hide an Approval. */
 const exchange = Effect.fn('Code.exchange')(function* (
-  runner: Runner,
+  guest: Guest,
   state: Execution,
   dispatch: Dispatch,
 ) {
   const stopped = yield* Deferred.make<CodeOutcome, PipeFailure>()
   return yield* Effect.raceFirst(
-    readCalls(runner, { state, dispatch, stopped }),
+    readCalls(guest, { state, dispatch, stopped }),
     Deferred.await(stopped),
   )
 })
 
 /**
- * Runs one program on a thread of its own, in the interpreter ported from opencode
- * (`interpreter/`, started by `runner.ts`). The interpreter is what a program cannot get out of:
- * it has its tools and nothing else. The thread is what a program cannot use up: its memory is
- * capped and it can be ended from here, which a program on the server's own thread could not be
- * (9 October 2026: a regular expression held that thread past its deadline, and 21 small arrays
- * grew the heap by 254 MB in one call, both inside every limit the interpreter counts).
- *
- * The server's clock covers the thread starting and every tool call. No failure path replays a
- * program.
+ * The server's clock includes waking the Computer, starting the runner and every tool call. No
+ * failure path replays a program. A Computer that cannot be used (the Person has taken it over,
+ * it did not start, its provider is not answering) ends the program before anything ran.
  */
 const execute = Effect.fn('Code.supervise')(function* (
-  threads: CodeRunnerService,
+  computer: CodeComputerService,
   input: { readonly request: RunCodeRequest; readonly boundary: CodeBoundary },
   dispatch: Dispatch,
 ) {
   const state = new Execution()
-  const running = { runner: Option.none<Runner>() }
+  const running = { guest: Option.none<Guest>() }
   const failed = (failure: CodeFailure) => state.failed(failure)
   const program = Effect.scoped(
     Effect.gen(function* () {
-      const runner = yield* threads.open
-      running.runner = Option.some(runner)
-      yield* runner.send(ParentMessage.cases.Start.make({ code: input.request.code }))
-      return yield* exchange(runner, state, dispatch)
+      const guest = yield* computer.open(input.boundary.person)
+      running.guest = Option.some(guest)
+      yield* guest.send(ParentMessage.cases.Start.make({ code: input.request.code }))
+      return yield* exchange(guest, state, dispatch)
     }).pipe(
-      Effect.catchTag('CodePipeFailure', (failure) =>
-        failure.reason === 'size'
-          ? Effect.succeed(failed(CodeFailure.cases.OverLimit.make({ limit: 'data' })))
-          : // The thread is over without a final message. How it ended tells running out of
-            // memory apart from the rest.
-            Option.match(running.runner, {
-              onNone: () => Effect.succeed(failed(CodeFailure.cases.Unavailable.make({}))),
-              onSome: (runner) => runner.stopped.pipe(Effect.map(failed)),
-            }),
-      ),
+      Effect.catchTags({
+        CodeComputerUnavailable: (error) =>
+          Effect.logWarning('The Computer could not take a program').pipe(
+            Effect.annotateLogs({ 'vivid.computer.failure': error.reason }),
+            Effect.as(failed(CodeFailure.cases.Unavailable.make({}))),
+          ),
+        CodePipeFailure: (failure) =>
+          failure.reason === 'size'
+            ? Effect.succeed(failed(CodeFailure.cases.OverLimit.make({ limit: 'data' })))
+            : // The process is over, or the server can no longer talk to it and ends it. What
+              // its provider said about the end tells a memory or time limit apart from the rest.
+              Option.match(running.guest, {
+                onNone: () => Effect.succeed(failed(CodeFailure.cases.Unavailable.make({}))),
+                onSome: (guest) => guest.stopped.pipe(Effect.map(failed)),
+              }),
+      }),
     ),
   )
   const deadline = Effect.gen(function* () {
     yield* Effect.sleep(`${budgets.seconds} seconds`)
-    // Told to stop, the thread still sends what the program printed. A thread that cannot hear
-    // (it is inside one long built-in) says nothing within the grace, and the scope ends it.
-    const cancelled = Option.match(running.runner, {
+    // Told to stop, the runner still sends what the program printed (as pi's abort returns
+    // buffered output, `runtime/host.js` `Execution.abort`). Grace and admission share
+    // CodeTiming; a missing final message cannot claim its output was complete.
+    const cancelled = Option.match(running.guest, {
       onNone: () => Effect.void,
-      onSome: (runner) => runner.send(ParentMessage.cases.Cancel.make({})),
+      onSome: (guest) => guest.send(ParentMessage.cases.Cancel.make({})),
     })
     return yield* state.timeout(cancelled)
   }).pipe(Effect.withSpan('Code.deadline'))
@@ -526,7 +511,7 @@ const execute = Effect.fn('Code.supervise')(function* (
 export const codeProcessLayer = Layer.effect(
   CodeProcess,
   Effect.gen(function* () {
-    const threads = yield* CodeRunner
+    const computer = yield* CodeComputer
     const capacity = yield* Semaphore.make(budgets.processes)
     const active = new Set<ThreadId>()
     return CodeProcess.of({
@@ -548,7 +533,7 @@ export const codeProcessLayer = Layer.effect(
         if (active.has(thread)) return unavailable
         active.add(thread)
         const admitted = yield* capacity
-          .withPermitsIfAvailable(1)(execute(threads, input, dispatch))
+          .withPermitsIfAvailable(1)(execute(computer, input, dispatch))
           .pipe(Effect.ensuring(Effect.sync(() => active.delete(thread))))
         return Option.getOrElse(admitted, () => unavailable)
       }),

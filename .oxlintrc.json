@@ -333,27 +333,6 @@
         "max-lines-per-function": "off",
         "max-nested-callbacks": "off"
       }
-    },
-    {
-      "files": [
-        "apps/server/src/code/interpreter/{evaluate,model,program,schema,tool,tools,values,host,work}.ts",
-        "apps/server/src/code/interpreter/stdlib/*.ts",
-        "apps/server/src/code/interpreter/*.test.ts"
-      ],
-      "rules": {
-        "anti-slop/no-runtime-typeof": "off",
-        "anti-slop/no-unknown-parameters": "off",
-        "anti-slop/no-unknown-returns": "off",
-        "anti-slop/no-unsafe-dictionary-type": "off",
-        "anti-slop/require-safety-comment-for-type-assertion": "off",
-        "vivid/no-undefined-in-union": "off",
-        "vivid/no-optional-chaining": "off",
-        "vivid/require-schema-decode-in-boundary": "off",
-        "typescript/no-unnecessary-type-parameters": "off",
-        "complexity": "off",
-        "max-lines-per-function": "off",
-        "max-depth": "off"
-      }
     }
   ]
 }

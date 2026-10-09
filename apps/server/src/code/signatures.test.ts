@@ -1,33 +1,39 @@
+import * as NodeVM from 'node:vm'
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Option, type Schema } from 'effect'
 import { bytes } from './budgets.ts'
 import { callableTool, discoveredTool } from './signatures.ts'
 
-/** Discovery must give the exact call to write and the real input/output types, and nothing a description says may leave its comment. */
+/** Discovery must retain exact property access and actual input/output types without executable comments. */
 describe('Integration signatures', () => {
-  it.effect('renders the one call form with the exact account and tool names', () =>
-    Effect.gen(function* () {
-      const account = 'Work "Mail"\\Archive'
-      const tool = yield* discoveredTool({
-        account,
-        name: 'send-email',
-        input: { type: 'object', properties: { to: { type: 'string' } }, required: ['to'] },
-        output: Option.some({
-          type: 'object',
-          properties: { sent: { type: 'boolean' } },
-          required: ['sent'],
-        }),
-      })
-      expect(tool.call).toBe(
-        `tools.use_tool({account: ${JSON.stringify(account)}, tool: "send-email", input, summary, rationale})`,
-      )
-      expect(tool.signature).toContain(`account: ${JSON.stringify(account)}; tool: "send-email";`)
-      expect(tool.signature).toMatch(
-        /input: \{\s+to: string,\s+\}; summary: string; rationale: string\}/u,
-      )
-      expect(tool.signature).toMatch(/output: \{\s+sent: boolean,\s+\}\}/u)
-      expect(tool).not.toHaveProperty('input')
-    }),
+  it.effect(
+    'renders an expression that resolves quoted accounts and non-identifier tool names',
+    () =>
+      Effect.gen(function* () {
+        const account = 'Work "Mail"\\Archive'
+        const name = 'send-email'
+        const tool = yield* discoveredTool({
+          account,
+          name,
+          input: { type: 'object', properties: { to: { type: 'string' } }, required: ['to'] },
+          output: Option.some({
+            type: 'object',
+            properties: { sent: { type: 'boolean' } },
+            required: ['sent'],
+          }),
+        })
+        const target = { identity: 'exact tool' }
+        expect(
+          NodeVM.runInNewContext(tool.call, { accounts: { [account]: { [name]: target } } }),
+        ).toBe(target)
+        expect(tool.signature).toContain('(input: { to: string; }, about:')
+        expect(tool.signature).toContain('output: { sent: boolean; }')
+        expect(
+          (yield* discoveredTool({ account, name: 'send_email', input: {}, output: Option.none() }))
+            .call,
+        ).toBe(`accounts[${JSON.stringify(account)}].send_email`)
+        expect(tool).not.toHaveProperty('input')
+      }),
   )
 
   it.effect(
@@ -43,7 +49,7 @@ describe('Integration signatures', () => {
         })
         expect(bytes(tool.signature)).toBeLessThanOrEqual(4000)
         expect(tool.signature).toContain('input: unknown')
-        expect(tool.signature).toContain('fieldfield')
+        expect(tool.signature).toContain('output: { field')
         expect(tool.signature.endsWith('| {ok: false; reason: string}>')).toBe(true)
         const missing = yield* discoveredTool({
           account: 'Mail',
@@ -52,6 +58,29 @@ describe('Integration signatures', () => {
           output: Option.none(),
         })
         expect(missing.signature).toContain('output: Json')
+      }),
+  )
+
+  it.effect(
+    'confines descriptions to comments and bounds each rendered schema with pi truncation',
+    () =>
+      Effect.gen(function* () {
+        const tool = yield* discoveredTool({
+          output: Option.none(),
+          account: 'Mail',
+          name: 'send',
+          input: {
+            type: 'object',
+            properties: {
+              to: {
+                type: 'string',
+                description: '*/\nthrow new Error("injected")\n\u2028return 1',
+              },
+            },
+          },
+        })
+        expect(tool.signature).toContain('// */ throw new Error("injected")')
+        expect(tool.signature).toContain('output: Json')
         const huge = { type: 'object', properties: { ['x'.repeat(16_001)]: { type: 'string' } } }
         const bounded = yield* discoveredTool({
           account: 'Mail',
@@ -63,62 +92,46 @@ describe('Integration signatures', () => {
         expect(bounded.signature).toContain('output: unknown')
       }),
   )
+  it.effect('contains malformed references and excessively deep schemas within their types', () =>
+    Effect.gen(function* () {
+      let deep: Schema.Json = { type: 'string' }
+      for (let i = 0; i < 20_000; i++) deep = { type: 'array', items: deep }
+      for (const input of [{ $ref: '#/%' }, deep]) {
+        const tool = yield* discoveredTool({
+          account: 'Mail',
+          name: 'read',
+          input,
+          output: Option.some(input),
+        })
+        expect(tool.signature).toContain('input: unknown')
+        expect(tool.signature).toContain('output: unknown')
+      }
+    }),
+  )
 
-  it.effect('keeps a description inside its comment whatever it contains', () =>
+  it.effect('keeps lone CR and other comment terminators on one comment line', () =>
     Effect.gen(function* () {
       const tool = yield* discoveredTool({
         output: Option.none(),
         account: 'Mail',
-        name: 'send',
+        name: 'read',
         input: {
           type: 'object',
           properties: {
-            to: {
+            message: {
               type: 'string',
-              description: 'Who to. */\nthrow new Error("injected")\r\u2028return 1 /* */',
+              description: 'before\rafter\u0085next\vnext\fnext\u2028next\u2029end',
             },
           },
         },
       })
-      expect(tool.signature).toContain('Who to.')
-      // Every comment end the description wrote is broken up; the only one left closes the block.
-      const comment = tool.signature.slice(
-        tool.signature.indexOf('/**'),
-        tool.signature.indexOf('to?: string'),
-      )
-      expect(comment.match(/\*\//gu)).toHaveLength(1)
-      expect(comment.trimEnd().endsWith('*/')).toBe(true)
-      expect(tool.signature).not.toMatch(/[\u2028\u2029]/u)
+      expect(tool.signature).toContain('// before after next next next next end')
+      for (const separator of ['\r', '\u0085', '\v', '\f', '\u2028', '\u2029'])
+        expect(tool.signature).not.toContain(separator)
     }),
   )
 
-  it.effect('contains malformed references and excessively deep schemas within their types', () =>
-    Effect.gen(function* () {
-      const broken = yield* discoveredTool({
-        account: 'Mail',
-        name: 'read',
-        input: { $ref: '#/%' },
-        output: Option.some({ $ref: '#/%' }),
-      })
-      expect(broken.signature).toContain('input: unknown')
-      expect(broken.signature).toContain('output: unknown')
-      let deep: Schema.Json = { type: 'string' }
-      for (let i = 0; i < 20_000; i++) deep = { type: 'array', items: deep }
-      const nested = yield* discoveredTool({
-        account: 'Mail',
-        name: 'read',
-        input: deep,
-        output: Option.some(deep),
-      })
-      // The renderer follows a schema nine levels down and writes `unknown` for what is below.
-      expect(nested.signature).toContain('input: Array<Array<')
-      expect(nested.signature).toContain('<unknown>')
-      expect(nested.signature).not.toContain('string>')
-      expect(bytes(nested.signature)).toBeLessThanOrEqual(4_000)
-    }),
-  )
-
-  it.effect('bounds multibyte schemas in UTF-8 and escapes separators in names', () =>
+  it.effect('bounds multibyte schemas in UTF-8 and escapes separators in property access', () =>
     Effect.gen(function* () {
       const tool = yield* discoveredTool({
         output: Option.none(),
@@ -134,6 +147,24 @@ describe('Integration signatures', () => {
       expect(tool.call).toContain('\\u2028')
       expect(tool.call).toContain('\\u2029')
       expect(tool.call).not.toMatch(/[\u2028\u2029]/u)
+    }),
+  )
+
+  it.effect('renders then names through the single-object use_tool bridge', () =>
+    Effect.gen(function* () {
+      for (const names of [
+        { account: 'then', name: 'read' },
+        { account: 'Mail', name: 'then' },
+      ]) {
+        const tool = yield* discoveredTool({
+          output: Option.none(),
+          ...names,
+          input: { type: 'string' },
+        })
+        expect(tool.call).toContain('tools.use_tool({account:')
+        expect(tool.signature).toContain('(args: {account:')
+        expect(tool.signature).toContain('input: string; summary: string; rationale: string}')
+      }
     }),
   )
 

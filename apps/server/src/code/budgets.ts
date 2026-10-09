@@ -4,25 +4,19 @@ import { CodeTiming } from '@vivid/contracts/code'
 export const budgets = {
   source: 16_384,
   seconds: CodeTiming.seconds,
-  // Statements and expressions one program may evaluate: about two seconds of its own thread
-  // (a million steps a second, measured 9 October 2026). It ends a runaway program with a
-  // message the model can act on, long before the deadline would.
-  steps: 2_000_000,
-  // Characters of strings and items of arrays, objects, Maps and Sets one program may make.
-  growth: 16_777_216,
-  // The heap of the thread one program is interpreted on, in MiB (Node `resourceLimits`).
+  // The program's own heap on the Person's Computer, in MiB (Node `resourceLimits`).
   heap: 256,
   calls: 100,
   frame: 262_144,
-  // The longest message a program's thread may send: one call's arguments and their envelope.
   wire: 263_168,
   data: 4_194_304,
   result: 32_768,
   logs: 8_192,
-  // Programs this server interprets at once.
+  depth: 32,
+  // Programs this server follows at once, each an open connection to a Computer.
   processes: 4,
-  // Calls of one program at work at the same time.
-  together: 8,
+  // Answers on their way to one program at once. Each is a request to the Computer's provider.
+  replies: 8,
   pages: 8,
   pageBytes: 524_288,
   pageText: 24_576,
@@ -32,3 +26,26 @@ export const budgets = {
 
 /** UTF-8 bytes, rather than JavaScript code units, are the transport's resource unit. */
 export const bytes = (text: string) => Buffer.byteLength(text, 'utf8')
+
+/** Inspect nesting before JSON parsing/recursive schema decoding; quoted braces are just data. */
+export function boundedNesting(text: string) {
+  let depth = 0
+  let quoted = false
+  let escaped = false
+  for (const char of text) {
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (quoted && char === '\\') {
+      escaped = true
+      continue
+    }
+    if (char === '"') quoted = !quoted
+    if (quoted) continue
+    if (char === '{' || char === '[') depth++
+    if (char === '}' || char === ']') depth--
+    if (depth > budgets.depth) return false
+  }
+  return true
+}

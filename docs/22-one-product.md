@@ -426,10 +426,9 @@ Vivid is a character the Person works with, and the surface is built so that rea
   pointer and keys; `bash` is a shell. The Computer wakes when work needs it and stops
   when idle. The machine is Boat's (see [The Computer](04-computer.md)); a local container stands
   in for it offline.
-- **Write a program.** `run_code` runs a short program Vivid wrote over the tools it already has.
-  The server interprets it: a restricted JavaScript that can compute over plain data and call
-  those tools, with no files, network or modules, and no credentials; every call it makes for the
-  Person is authorised on the server as the acting Person
+- **Write a program.** `run_code` runs JavaScript Vivid wrote over the tools it already has. The
+  program runs on the Person's Computer, with that machine's files, network and Node, and holds no
+  credentials; every call it makes for the Person is authorised on the server as the acting Person
   and passes the same Gate, and an Approval ends the program.
 - **Read the web.** `read_page` reads one public page without a Computer.
 - **Follow procedures.** A starter set of skills ships with Vivid; a saved one of the same name

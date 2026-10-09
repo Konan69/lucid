@@ -8,14 +8,9 @@ import { Scope, type RunTool } from './scope.ts'
 import { warnFailure, type ToolResult } from './result.ts'
 import * as views from './views.ts'
 
-/**
- * What a program is and what it can call, with human account names and no Vivid ownership
- * arguments. The language section follows the instructions opencode's code mode gives its model
- * (`packages/codemode/src/tool-runtime.ts`, `prepare`); the server's interpreter is a port of it.
- */
-const PROGRAM = `Run a short program that calls your tools and works on their results. It is a restricted JavaScript for calling tools, not a general-purpose runtime. Write an async function body: top-level await and return work. Return JSON; lines printed with console.log are returned too.
-Language: use common JavaScript data operations, functions, control flow, selected standard-library methods and awaited tool calls. Built-ins include Object, Array, String, Number, Math, JSON, Date, RegExp, Map, Set, URL, URLSearchParams and the URI encoding helpers. Modules and imports, require, classes, generators, timers, fetch, eval, process, files, prototype access, new Promise, new Array(n) and promise chaining (.then/.catch) are unavailable: use await with try/catch, and use the tools for anything outside the program. Array.from takes no mapping function: call .map on its result. Map, Set and URLSearchParams keys(), values() and entries() return arrays. Functions may call each other 200 deep. Data in a result or a tool argument may nest 32 levels. Dates and URLs become strings in results and tool arguments; Map, Set and RegExp become {}. Variables do not last to the next program.
-Limits: 16 KiB source, ${CodeTiming.seconds} seconds, 100 calls, 256 KiB per call or answer, 4 MiB data, 32 KiB final result, and bounds on how much the program itself computes and holds (about two million steps, 256 MiB), so filter and aggregate, and do not loop without end. Approval, a blocking rule or an unknown action ends the program; calls already started finish and completed calls stay completed. Never replay it to resume. A failure of Unavailable means the server could not run the program just now (another program is still running here, or the server is busy) or lost it part way: read the calls listed to see what was done, and do not try again in a loop.
+/** The calls a program can make as the Person, with human account names and no Vivid ownership
+ * arguments. Everything else it has is the Computer it runs on. */
+const PROGRAM = `Run a JavaScript async function body on your Computer (top-level await and return work). Return JSON; lines printed with console.log are returned too. It runs under Node 24 there: await import("node:fs/promises"), await import("node:child_process") and other Node modules work, and so do the Computer's files, commands and network. Variables do not last to the next program; files on the Computer do. Limits: 16 KiB source, ${CodeTiming.seconds} seconds total including the Computer waking, 100 calls, 256 KiB per call/result, 4 MiB data, 32 KiB final result. Approval, a blocking rule or an unknown action ends the program; calls already started finish and completed calls stay completed. Never replay it to resume. A failure of Unavailable means the Computer could not be used just now, or contact with it was lost (it did not start, the Person is using it, or it stopped answering): say so and do not try again in a loop.
 The callable API (TypeScript declarations describe JavaScript inputs):
 type Json = null | boolean | number | string | Json[] | {[key: string]: Json};
 declare const tools: {
@@ -24,8 +19,9 @@ use_tool(input: {account: string, tool: string, input: Json, summary: string, ra
 browse(input: {action: BrowserAction, summary: string}): Promise<{ok: true, result: {title: string, outline: string, truncated: boolean}} | {ok: false, reason: string}>;
 read_page(input: {address: string}): Promise<{ok: true, address: string, title: string, text: string, truncated: boolean} | {ok: false, reason: string}>;
 };
+declare const accounts: {[account: string]: {[tool: string]: (input: Json, about: {summary: string, rationale: string}) => Promise<{ok: true, output: Json} | {ok: false, reason: string}>}};
 BrowserAction is defined by this JSON Schema: ${JSON.stringify(Schema.toJsonSchemaDocument(BrowserAction).schema)}
-Find first: find_tools returns each tool's call expression and its TypeScript signature. Call a tool exactly as its call says, for example await tools.use_tool({account: "Work Gmail", tool: "send_email", input: {to, subject, body}, summary, rationale}). Calls started together run together: use Promise.all for independent calls and pass one call's result into the next for dependent ones. Use only accounts and tools that find_tools returned. Check ok before reading output. Provider record identifiers remain usable data. Do not catch an approval to continue or retry an unknown action.`
+Find first: find_tools returns each tool's call expression and its TypeScript signature. Call a tool exactly as its call says, for example await accounts["Work Gmail"].send_email({to, subject, body}, {summary, rationale}). Calls started together run together: use Promise.all for independent calls and pass one call's result into the next for dependent ones. Use only accounts and tools that find_tools returned. Provider record identifiers remain usable data. Do not catch an approval to continue or retry an unknown action.`
 
 /** Error metadata is Vivid's; provider records in successful results retain their usable identifiers. */
 function failureView(failure: CodeFailure): Schema.Json {

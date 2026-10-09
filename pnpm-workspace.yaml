@@ -161,6 +161,7 @@ minimumReleaseAgeExclude:
   - '@turbo/windows-arm64@2.11.2'
   - effect@4.0.0-rc.116
   - turbo@2.11.2
+  - '@earendil-works/pi-codemode@1.0.0'
   - '@effect/tsgo-darwin-arm64@0.51.0'
   - '@effect/tsgo-darwin-x64@0.51.0'
   - '@effect/tsgo-linux-arm64@0.51.0'

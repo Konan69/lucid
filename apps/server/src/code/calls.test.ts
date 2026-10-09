@@ -40,8 +40,9 @@ import { CodeAuthority, CodeAuthorityRevoked, codeAuthorityLayer } from './autho
 import { CodeCalls, codeCallsLayer } from './calls.ts'
 import { codeHandlers } from './handlers.ts'
 import { publicPageLayer } from './page.ts'
-import { CallOutcome, codeProcessLayer, ProgramCall } from './process.ts'
-import { codeRunnerLayer } from './runner.ts'
+import { CallOutcome, codeProcessLayer } from './process.ts'
+import { WorkerMessage } from './protocol.ts'
+import { localCodeComputerLayer } from './testing.ts'
 
 const isRepositoryInput = Schema.is(Schema.Struct({ repoName: Schema.String }))
 
@@ -85,13 +86,14 @@ describe.skipIf(!testDatabaseConfigured)(
   'Programs under live authority',
   { timeout: 30_000 },
   () => {
-    // The program runs in the production interpreter; each test still owns fresh tenancy, Gate
-    // and provider fixtures. Nothing here waits on a clock.
+    // The program runs on a Computer that is this machine (`testing.ts`); each test still owns
+    // fresh tenancy, Gate and provider fixtures, and each program its own process. The ceiling is
+    // for those real processes on a loaded machine; nothing here waits on a clock.
     layer(
       Layer.mergeAll(
         testDatabaseLayer,
         silentChangesLayer,
-        codeProcessLayer.pipe(Layer.provide(codeRunnerLayer)),
+        codeProcessLayer.pipe(Layer.provide(localCodeComputerLayer)),
       ),
     )((it) => {
       it.effect(
@@ -441,7 +443,10 @@ describe.skipIf(!testDatabaseConfigured)(
       // Each decision needs one real interpreter startup; independent questions own independent fixtures.
       for (const decision of ['denied', 'expired'] as const)
         layer(
-          Layer.merge(testDatabaseLayer, codeProcessLayer.pipe(Layer.provide(codeRunnerLayer))),
+          Layer.merge(
+            testDatabaseLayer,
+            codeProcessLayer.pipe(Layer.provide(localCodeComputerLayer)),
+          ),
         )(`Clock for ${decision} program Approval`, (it) => {
           it.effect(`${decision} program Approvals execute nothing`, () =>
             withCalls(
@@ -549,7 +554,7 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
                 return yield* (yield* CodeCalls).bind({
                   person: test.personal.person.id,
                   thread: test.personalId,
-                })(ProgramCall.make({ kind, input }))
+                })(WorkerMessage.cases.Call.make({ id: 1, kind, input }))
               }),
               Layer.fresh(codeCallsLayer),
             ).pipe(
@@ -588,7 +593,8 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
                 person: test.personal.person.id,
                 thread: test.personalId,
               })(
-                ProgramCall.make({
+                WorkerMessage.cases.Call.make({
+                  id: 1,
                   kind: 'use_tool',
                   input: {
                     account: 'Records',
@@ -635,7 +641,13 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
             .bind({
               person: test.personal.person.id,
               thread: test.personalId,
-            })(ProgramCall.make({ kind: 'read_page', input: { address: 'file:///private' } }))
+            })(
+              WorkerMessage.cases.Call.make({
+                id: 1,
+                kind: 'read_page',
+                input: { address: 'file:///private' },
+              }),
+            )
             .pipe(
               Effect.updateService(
                 Logger.CurrentLoggers,
@@ -662,7 +674,13 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
               return yield* (yield* CodeCalls).bind({
                 person: test.personal.person.id,
                 thread: test.personalId,
-              })(ProgramCall.make({ kind: 'find_tools', input: { query: 'read' } }))
+              })(
+                WorkerMessage.cases.Call.make({
+                  id: 1,
+                  kind: 'find_tools',
+                  input: { query: 'read' },
+                }),
+              )
             }),
             Layer.fresh(codeCallsLayer),
           ).pipe(
@@ -702,7 +720,7 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
                 return yield* calls.bind({
                   person: test.personal.person.id,
                   thread: test.personalId,
-                })(ProgramCall.make({ kind, input: {} }))
+                })(WorkerMessage.cases.Call.make({ id: 1, kind, input: {} }))
               }),
               Layer.fresh(codeCallsLayer.pipe(Layer.provideMerge(codeAuthorityLayer))),
             ).pipe(
@@ -748,7 +766,13 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
                 return yield* (yield* CodeCalls).bind({
                   person: test.personal.person.id,
                   thread: test.personalId,
-                })(ProgramCall.make({ kind: 'find_tools', input: { query: 'read' } }))
+                })(
+                  WorkerMessage.cases.Call.make({
+                    id: 1,
+                    kind: 'find_tools',
+                    input: { query: 'read' },
+                  }),
+                )
               }),
               Layer.fresh(codeCallsLayer),
             ).pipe(Effect.provideService(ConnectionStore, unavailable))

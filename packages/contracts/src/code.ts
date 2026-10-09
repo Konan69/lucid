@@ -3,22 +3,27 @@ import { ACCOUNT_HANDLE_MAX } from './connections.js'
 import { ApprovalId } from './identity.js'
 
 /**
- * One timing contract keeps the server deadline, the wait that follows it and the client timeout
- * in order. After the deadline the server waits `graceMs` for what the program printed.
+ * One timing contract keeps the server deadline, the waits that follow it and the client timeout
+ * in order. After the deadline the server waits `graceMs` for what the program printed, then at
+ * most `stopMs` for its order to stop to reach the Computer and `endMs` for word that the program
+ * is over. Nothing else may be waited for before the outcome is returned.
  */
 export const CodeTiming = {
   seconds: 300,
   graceMs: 1_000,
+  stopMs: 4_000,
+  endMs: 3_000,
 } as const
 /**
- * The program tool's own timeout: the server deadline, the wait that can follow it, and a margin
- * for the answer's way back. It is the only client-side bound: the runtime's HTTP client already
- * waits an hour for headers and has no body timeout (`@effect/platform-node`
+ * The program tool's own timeout: the server deadline, every wait that can follow it, and a
+ * margin for the answer's way back. It is the only client-side bound: the runtime's HTTP client
+ * already waits an hour for headers and has no body timeout (`@effect/platform-node`
  * `NodeHttpClient.ts`, `makeUndici`), so the transport never gives up before this does.
  */
-export const CodeToolTimeout = CodeTiming.seconds * 1_000 + CodeTiming.graceMs + 5_000
+export const CodeToolTimeout =
+  CodeTiming.seconds * 1_000 + CodeTiming.graceMs + CodeTiming.stopMs + CodeTiming.endMs + 3_000
 
-/** Discovery and a program's calls accept exactly the same account/tool vocabulary. */
+/** Discovery and guest dispatch accept exactly the same account/tool vocabulary. */
 export const CodeToolNames = Schema.Struct({
   account: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(ACCOUNT_HANDLE_MAX)),
   tool: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200)),
@@ -29,13 +34,11 @@ export const CodeToolNames = Schema.Struct({
  *
  * Asking for one tool at a time costs a round trip through the model for every step, and every
  * intermediate result passes through its context. A program calls the same tools Vivid already
- * has (the Person's Connections, their Computer's browser, public pages), keeps what it reads to
- * itself, and answers with only what it chose to return. It is a restricted JavaScript that the
- * server interprets: it can compute over plain data and call its tools, and nothing else. It has
- * no files, network, modules or timers, holds no credentials and names nothing by identifier.
- * Each call it makes is checked on the server, as the Person the Run is for, exactly as if Vivid
- * had asked for it alone. The interpreter is a port of opencode's code mode
- * (`apps/server/src/code/interpreter`).
+ * has (the Person's Connections, their Computer), keeps what it reads to itself, and answers with
+ * only what it chose to return. It is JavaScript run on the Person's Computer. It holds no
+ * credentials and names nothing by identifier: each call it makes is checked on the server, as the
+ * Person the Run is for, exactly as if Vivid had asked for it alone. What a program sees (`tools`,
+ * `accounts`, an async function body) follows the code mode of the pi coding agent and of Executor.
  */
 export const RunCodeRequest = Schema.Struct({
   code: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(16_384)),
@@ -72,16 +75,14 @@ export interface CodeCall extends Schema.Schema.Type<typeof CodeCall> {}
 
 /** Why a program did not run to its end. Each is handled differently, so each has its own tag. */
 export const CodeFailure = Schema.TaggedUnion({
-  /** The program does not parse, uses something a program may not, or threw. `message` is the
-   * interpreter's own, bounded, and says what to change. */
+  /** The program is not valid JavaScript, or threw. `message` is the error's own, bounded. */
   Threw: { message: Schema.String },
   TimedOut: { seconds: Schema.Finite },
-  /** It computed more (`work`: steps taken or data made), used more memory, made more calls,
-   * moved more data or returned more than a program may. */
-  OverLimit: { limit: Schema.Literals(['work', 'memory', 'calls', 'data', 'result'] as const) },
-  /** The server could not run the program, or stopped carrying it: another program is running in
-   * this Thread, the server is running as many as it can, or the program's thread was lost. When
-   * no call is listed, nothing was done for the Person. */
+  /** It used more memory, made more calls or returned more than a program may. */
+  OverLimit: { limit: Schema.Literals(['memory', 'calls', 'data', 'result'] as const) },
+  /** The Person's Computer could not run the program, or stopped carrying it: it did not start,
+   * the Person is using it, or its provider stopped answering. When no call is listed, nothing
+   * was done for the Person; the program itself may have run for a while on the Computer. */
   Unavailable: {},
 })
 export type CodeFailure = typeof CodeFailure.Type
