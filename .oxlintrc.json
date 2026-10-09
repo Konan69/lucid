@@ -335,7 +335,11 @@
       }
     },
     {
-      "files": ["apps/server/src/code/interpreter/**/*.ts"],
+      "files": [
+        "apps/server/src/code/interpreter/{evaluate,model,program,schema,tool,tools,values,host,work}.ts",
+        "apps/server/src/code/interpreter/stdlib/*.ts",
+        "apps/server/src/code/interpreter/*.test.ts"
+      ],
       "rules": {
         "anti-slop/no-runtime-typeof": "off",
         "anti-slop/no-unknown-parameters": "off",

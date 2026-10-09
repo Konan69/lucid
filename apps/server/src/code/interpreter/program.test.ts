@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Effect, Schema } from 'effect'
+import { Effect, Schema, SchemaTransformation } from 'effect'
 import { Program, Tool } from './index.ts'
 
 const tools = {
@@ -14,6 +14,94 @@ const tools = {
 }
 
 describe('program interpreter', () => {
+  /** A host schema whose transformation throws, as a schema written with a plain function can. */
+  const Throwing = Schema.String.pipe(
+    Schema.decodeTo(
+      Schema.String,
+      SchemaTransformation.transform({
+        decode: (text: string): string => {
+          throw new Error(`decode-secret /home/host/private/key.pem for ${text}`)
+        },
+        encode: (text: string) => text,
+      }),
+    ),
+  )
+
+  it.live(
+    'a host schema that throws while decoding is an invalid input or output, not a leak',
+    () =>
+      Effect.gen(function* () {
+        const ended: string[] = []
+        const host = {
+          input: Tool.make({
+            description: 'Input decode throws',
+            input: Throwing,
+            run: () => Effect.succeed('unreached'),
+          }),
+          output: Tool.make({
+            description: 'Output decode throws',
+            input: Schema.Struct({}),
+            output: Throwing,
+            run: () => Effect.succeed('raw'),
+          }),
+        }
+        const run = (code: string) =>
+          Program.execute({
+            tools: { host },
+            code,
+            onToolCallEnd: (call) => Effect.sync(() => ended.push(`${call.name}:${call.outcome}`)),
+          })
+        const output = yield* run('return await tools.host.output({})')
+        expect(output).toMatchObject({
+          ok: false,
+          error: { kind: 'InvalidToolOutput', message: "Invalid output from tool 'host.output'." },
+        })
+        const caught = yield* run(
+          'try { await tools.host.output({}) } catch (e) { return e.message }',
+        )
+        expect(caught).toMatchObject({ ok: true, value: "Invalid output from tool 'host.output'." })
+        expect(yield* run('return await tools.host.input("x")')).toMatchObject({
+          ok: false,
+          error: { kind: 'InvalidToolInput' },
+        })
+        // The end of the call whose output could not be decoded is still observed.
+        expect(ended).toEqual(['host.output:failure', 'host.output:failure'])
+      }),
+  )
+
+  it.live(
+    'a JSON Schema input shapes the signature only: the value reaches the tool as written',
+    () =>
+      Effect.gen(function* () {
+        const seen: unknown[] = []
+        const result = yield* Program.execute({
+          tools: {
+            host: {
+              echo: Tool.make({
+                description: 'Echo',
+                input: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+                run: (input) => Effect.sync(() => seen.push(input)),
+              }),
+            },
+          },
+          code: 'return await tools.host.echo({ id: 7, extra: true })',
+        })
+        expect(result.ok).toBe(true)
+        expect(seen).toEqual([{ id: 7, extra: true }])
+      }),
+  )
+
+  it('refuses limits that are not whole numbers in range', () => {
+    for (const limits of [
+      { timeoutMs: 0 },
+      { maxToolCalls: -1 },
+      { maxOutputBytes: 1.5 },
+      { maxSteps: 0 },
+      { maxGrowth: Number.NaN },
+    ])
+      expect(() => Program.execute({ code: 'return 1', limits })).toThrow(RangeError)
+  })
+
   it.live('runs calls together and returns plain data', () =>
     Effect.gen(function* () {
       const result = yield* Program.execute({

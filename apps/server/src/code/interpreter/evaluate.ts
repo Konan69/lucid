@@ -2551,7 +2551,9 @@ class Interpreter<R> {
       this.work.entered()
       const savedScopes = this.scopes
       this.scopes = [...fn.capturedScopes, new Map<string, Binding>()]
-      const run = Effect.fn('Program.invokeFunction')(function* (this: Interpreter<R>) {
+      // Not `Effect.fn`: a named function opens a tracing span on every call, and a program may
+      // call its own functions hundreds of thousands of times.
+      return Effect.gen({ self: this }, function* () {
         // Seed every parameter name into the scope as a TDZ slot first, so a default that
         // references another parameter resolves to that (uninitialized) param rather than
         // silently falling through to an outer binding of the same name - matching JS.
@@ -2580,8 +2582,7 @@ class Interpreter<R> {
         }
 
         return yield* this.evaluateExpression(fn.body)
-      })
-      return run.call(this).pipe(
+      }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
             this.work.left()

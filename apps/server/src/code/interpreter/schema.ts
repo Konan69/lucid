@@ -1,6 +1,5 @@
 /** Ported from opencode `packages/codemode/src/tool-schema.ts` at 3884062 (MIT). */
-import { Result } from 'effect'
-import { Effect, JsonPointer, Schema } from 'effect'
+import { Cause, Effect, JsonPointer, Result, Schema } from 'effect'
 import type { Definition, JsonSchema, SchemaType } from './tool.ts'
 
 const isEffectSchema = (schema: SchemaType): schema is Schema.Decoder<unknown> & Schema.Top =>
@@ -346,15 +345,35 @@ const decoder = (schema: Schema.Decoder<unknown>) => {
   return compiled
 }
 
-export const decodeInput = <R>(definition: Definition<R>, value: unknown) =>
-  isEffectSchema(definition.input) ? decoder(definition.input)(value) : Effect.succeed(value)
+/**
+ * Decodes with a host schema and reports any failure as text. A schema's own transformation may
+ * throw: with the Effect decoder that is a defect, which no typed handler sees, so the reference's
+ * guarantee (a decode that goes wrong is an invalid input or output, and the tool's end is still
+ * observed) would be lost. The throw is caught here and becomes the same failure. Interruption is
+ * not a failure and passes through.
+ */
+const decoded = (schema: Schema.Decoder<unknown>, value: unknown): Effect.Effect<unknown, string> =>
+  Effect.suspend(() => decoder(schema)(value)).pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause) ? Effect.interrupt : Effect.fail(String(Cause.squash(cause))),
+    ),
+  )
+
+export const decodeInput = <R>(
+  definition: Definition<R>,
+  value: unknown,
+): Effect.Effect<unknown, string> =>
+  isEffectSchema(definition.input) ? decoded(definition.input, value) : Effect.succeed(value)
 
 /**
  * Decodes a tool result before it is exposed to the program. Effect Schemas validate and
  * transform with a typed failure; JSON Schema outputs and tools without an output schema pass
  * the host value through unchanged.
  */
-export const decodeOutput = <R>(definition: Definition<R>, value: unknown) =>
+export const decodeOutput = <R>(
+  definition: Definition<R>,
+  value: unknown,
+): Effect.Effect<unknown, string> =>
   definition.output !== undefined && isEffectSchema(definition.output)
-    ? decoder(definition.output)(value)
+    ? decoded(definition.output, value)
     : Effect.succeed(value)
