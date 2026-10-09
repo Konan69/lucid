@@ -1,4 +1,5 @@
 import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
 import type * as HttpClient from 'effect/unstable/http/HttpClient'
 import { ipcMain, type WebContents } from 'electron'
 import {
@@ -45,10 +46,16 @@ export function registerBridge(input: {
   })
 }
 
+/**
+ * The one place an event is put on the renderer's channel. Electron's `send` takes any value, so
+ * the compiler cannot tell an encoded event from anything else handed to it: every sender goes
+ * through here, and an event that will not encode is not sent at all.
+ */
+export function sendBridgeEvent(target: WebContents, event: BridgeEvent): void {
+  Option.map(encodeBridgeEvent(event), (encoded) => target.send(BRIDGE_EVENT_CHANNEL, encoded))
+}
+
 /** Encode a trusted native scheme notification before copying it to the isolated renderer. */
 export function sendColorSchemeChanged(target: WebContents, value: ColorSchemeState): void {
-  target.send(
-    BRIDGE_EVENT_CHANNEL,
-    encodeBridgeEvent(BridgeEvent.cases.ColorSchemeChanged.make({ value })),
-  )
+  sendBridgeEvent(target, BridgeEvent.cases.ColorSchemeChanged.make({ value }))
 }

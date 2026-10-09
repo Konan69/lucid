@@ -89,7 +89,7 @@ describe.skipIf(!testDatabaseConfigured)('Integration polling adapter', () => {
         yield* (yield* Database).run(
           (yield* Database)
             .update(connections)
-            .set({ references: encodeReferences(references) })
+            .set({ references: yield* encodeReferences(references) })
             .where(eq(connections.id, connected.connection.id)),
         )
         yield* Ref.set(probe.tools, [

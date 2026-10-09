@@ -23,7 +23,12 @@ import {
 } from '@vivid/contracts'
 import { loadSummaries } from '../auth/access.ts'
 import { personTable } from '../auth/tables.ts'
-import { Database, decodeStored, type DatabaseInfrastructureError } from '../database/client.ts'
+import {
+  Database,
+  decodeStored,
+  encodeStored,
+  type DatabaseInfrastructureError,
+} from '../database/client.ts'
 import { Admitted, StoredRunOrigin } from './conversation.ts'
 import { runs, threads } from './tables.ts'
 import { summaryFor } from './wire.ts'
@@ -199,7 +204,7 @@ export class RunStore extends Context.Service<RunStore, RunStoreService>()('vivi
 type DatabaseService = Database['Service']
 
 const decodeReceipt = decodeStored(Admitted, 'Run admission receipt')
-const encodeReceipt = Schema.encodeSync(Admitted)
+const encodeReceipt = encodeStored(Admitted, 'Run admission receipt')
 const decodeOrigin = decodeStored(StoredRunOrigin, 'Run origin')
 
 /** Standing checks choose attention through notify_person; completing a quiet check stays quiet. */
@@ -226,7 +231,7 @@ const decodeState = decodeStored(
   'Run state',
 )
 const decodeFailure = decodeStored(RunFailure, 'Run failure reason')
-const encodeOrigin = Schema.encodeSync(StoredRunOrigin)
+const encodeOrigin = encodeStored(StoredRunOrigin, 'Run origin')
 
 /** A Run's stored origin with the Person Vivid acted for put back beside it. */
 const originOf = (origin: StoredRunOrigin, person: PersonSummary) =>
@@ -350,7 +355,7 @@ const makeStart = (database: DatabaseService): RunStoreService['start'] =>
             personId: input.personId,
             libraryFolder: folder,
             turn: sql`(select coalesce(max("turn"), 0) + 1 from "vivid_runs" where "thread_id" = ${input.threadId})`,
-            origin: encodeOrigin(input.origin),
+            origin: yield* encodeOrigin(input.origin),
             state: 'working',
             startedAt: now,
           })
@@ -386,7 +391,7 @@ const makeAdmitted = (database: DatabaseService) =>
         .update(runs)
         .set({
           admittedAt: now,
-          receipt: encodeReceipt(receipt),
+          receipt: yield* encodeReceipt(receipt),
           state: 'working',
           finishedAt: null,
           failureReason: null,

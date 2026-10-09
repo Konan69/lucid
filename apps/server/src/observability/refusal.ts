@@ -67,7 +67,7 @@ export const Refusal = Schema.TaggedUnion({
 })
 export type Refusal = typeof Refusal.Type
 
-const encodeRefusal = Schema.encodeSync(Refusal)
+const encodeRefusal = Schema.encodeOption(Refusal)
 
 /** The attribute a case's field is written under. */
 const attributeKey = (field: string) => `vivid.refusal.${field}`
@@ -122,16 +122,20 @@ export const refusalExport: ReadonlyArray<readonly [key: string, members: Readon
  * keeps this total over the vocabulary: a new case or field is recorded without a second list to
  * extend, and every field is a string by construction of the cases above. Which of them are
  * exported is `refusalExport`'s decision.
+ *
+ * Recording cannot fail (`recordRefusal`), so a case whose fields will not encode is still
+ * recorded, by its kind alone: the kind is the typed value's own tag and needs no encoding.
  */
-const attributesOf = (refusal: Refusal) => {
-  const { _tag, ...fields } = encodeRefusal(refusal)
-  return {
-    [KIND]: _tag,
-    ...Object.fromEntries(
-      Object.entries(fields).map(([field, value]) => [attributeKey(field), value]),
-    ),
-  }
-}
+const attributesOf = (refusal: Refusal) =>
+  Option.match(encodeRefusal(refusal), {
+    onNone: () => ({ [KIND]: refusal._tag }),
+    onSome: ({ _tag, ...fields }) => ({
+      [KIND]: _tag,
+      ...Object.fromEntries(
+        Object.entries(fields).map(([field, value]) => [attributeKey(field), value]),
+      ),
+    }),
+  })
 
 /**
  * Records one refusal: one info log line with the fixed message `vivid.refusal` carrying the

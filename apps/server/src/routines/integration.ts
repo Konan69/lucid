@@ -9,7 +9,7 @@ import {
 } from '@vivid/contracts'
 import { appendAudit, AuditAttribution } from '../audit/record.ts'
 import { Changes, Topic } from '../live/changes.ts'
-import { Database, decodeStored } from '../database/client.ts'
+import { Database, decodeStored, encodeStored } from '../database/client.ts'
 import { integrationAttempt, replayAttempt } from './attempts.ts'
 import { decodeRoutine, type RoutineRecord } from './records.ts'
 import { occurrences, routines } from './tables.ts'
@@ -25,9 +25,9 @@ export const IntegrationNotice = Schema.TaggedUnion({
 })
 const decodePause = decodeStored(IntegrationNotice, 'Routine Integration pause')
 const decodeEvent = decodeStored(ProviderEvent, 'Routine provider event')
-const encodeWatch = Schema.encodeSync(Watch)
-const encodePause = Schema.encodeSync(IntegrationNotice)
-const encodeEvent = Schema.encodeSync(ProviderEvent)
+const encodeWatch = encodeStored(Watch, 'Routine Integration watch')
+const encodePause = encodeStored(IntegrationNotice, 'Routine Integration pause')
+const encodeEvent = encodeStored(ProviderEvent, 'Routine provider event')
 type Membership = (
   database: Pick<Database['Service'], 'select'>,
   record: RoutineRecord,
@@ -61,7 +61,7 @@ const retireIntegration = Effect.fn('RoutineIntegration.retire')(function* (
     .set({
       enabled: false,
       nextExpectedAt: null,
-      pause: encodePause(
+      pause: yield* encodePause(
         IntegrationNotice.cases.Pending.make({
           key: crypto.randomUUID(),
           reason: stopMessage(reason),
@@ -141,11 +141,11 @@ const rebaselineIntegration = (database: Database['Service']) =>
       database
         .update(routines)
         .set({
-          integration: encodeWatch(
+          integration: yield* encodeWatch(
             Watch.make({ ...record.integration, cursor, failures: Option.none() }),
           ),
           watchRevision: record.watchRevision + 1,
-          pause: encodePause(
+          pause: yield* encodePause(
             IntegrationNotice.cases.GapPending.make({ key: crypto.randomUUID(), reason }),
           ),
           nextExpectedAt: now + record.integration.intervalMillis,
@@ -184,7 +184,7 @@ const backoffIntegration = (database: Database['Service']) =>
       database
         .update(routines)
         .set({
-          integration: encodeWatch(
+          integration: yield* encodeWatch(
             Watch.make({ ...record.integration, failures: Option.some(failures) }),
           ),
           watchRevision: record.watchRevision + 1,
@@ -223,7 +223,7 @@ const skipCorrupt = Effect.fn('RoutineIntegration.skipCorrupt')(function* (
       nextExpectedAt: null,
       updatedAt: now,
       watchRevision: row.watchRevision + 1,
-      pause: encodePause(
+      pause: yield* encodePause(
         IntegrationNotice.cases.Corrupt.make({
           reason: 'Its stored Integration configuration is invalid',
         }),
@@ -345,7 +345,7 @@ const recordEvents = (database: Database['Service'], memberPresent: Membership) 
               finishedAt: null,
               output: null,
               error: null,
-              providerEvent: encodeEvent(item),
+              providerEvent: yield* encodeEvent(item),
               eventOrder: row.eventCounter + position,
             })
             .onConflictDoNothing({ target: occurrences.id })
@@ -353,7 +353,7 @@ const recordEvents = (database: Database['Service'], memberPresent: Membership) 
         yield* tx
           .update(routines)
           .set({
-            integration: encodeWatch(
+            integration: yield* encodeWatch(
               Watch.make({ ...binding, cursor: batch.cursor, failures: Option.none() }),
             ),
             watchRevision: row.watchRevision + 1,
@@ -456,13 +456,13 @@ const markIntegrationNotified = (database: Database['Service']) =>
       database
         .update(routines)
         .set({
-          pause: encodePause(
+          pause: yield* encodePause(
             IntegrationNotice.guards.GapPending(notice)
               ? IntegrationNotice.cases.GapNotified.make({ key: notice.key, reason: notice.reason })
               : IntegrationNotice.cases.Notified.make({ key: notice.key, reason: notice.reason }),
           ),
         })
-        .where(and(eq(routines.id, id), eq(routines.pause, encodePause(notice)))),
+        .where(and(eq(routines.id, id), eq(routines.pause, yield* encodePause(notice)))),
     )
   })
 

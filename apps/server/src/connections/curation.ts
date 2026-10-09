@@ -6,7 +6,7 @@ import {
   ServiceId,
   ServiceUnavailable,
 } from '@vivid/contracts'
-import { Array as Arr, Effect, Match, Order, Schema } from 'effect'
+import { Array as Arr, Effect, Match, Order, Result, Schema } from 'effect'
 import data from './curation.json' with { type: 'json' }
 import { KeyedService } from './keyed.ts'
 
@@ -44,8 +44,12 @@ export const CurationDocument = Schema.Struct({
 })
 /** GitHub accepts fine-grained and classic personal tokens; instruction and transport policy
  * live in curation data. See https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens.
- * Decode once at module ingress so Begin and catalogue presentation use the same policy. */
-const keyedCatalog = Schema.decodeSync(Schema.Record(ServiceId, KeyedService))(data.keyed)
+ * Decode once at module ingress so Begin and catalogue presentation use the same policy. The file
+ * is checked in, so one that does not decode is a broken build: the schema's own error ends the
+ * load, and the server does not start without the policy every keyed sign-in is held to. */
+const keyedCatalog = Result.getOrThrow(
+  Schema.decodeResult(Schema.Record(ServiceId, KeyedService))(data.keyed),
+)
 export function keyedService(service: ServiceId) {
   return keyedCatalog[service]
 }

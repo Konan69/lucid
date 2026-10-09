@@ -2,9 +2,8 @@ import * as Config from 'effect/Config'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 
-const defaultDevelopmentRendererUrl = Schema.decodeSync(Schema.URLFromString)(
-  'http://127.0.0.1:5178',
-)
+/** A literal address, so the platform's own constructor is its whole check; no schema is run. */
+const defaultDevelopmentRendererUrl = new URL('http://127.0.0.1:5178')
 
 /** Invalid runtime configuration names the variable without exposing its supplied value. */
 export class DesktopConfigurationInvalid extends Schema.TaggedError<DesktopConfigurationInvalid>()(

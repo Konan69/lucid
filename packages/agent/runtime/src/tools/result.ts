@@ -10,6 +10,7 @@ import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Predicate from 'effect/Predicate'
+import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import type * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
 import { modelText } from './views.ts'
@@ -114,11 +115,19 @@ export const warnFailure = (tool: string, tag: string) =>
   Effect.logWarning(`Tool failed tool=${tool} tag=${tag}`)
 
 const computerTools = new Set(['browse', 'use_desktop'])
-const session = Schema.encodeSync(ComputerSession)(
-  ComputerSession.make({
-    active: true,
-    screen: ComputerScreen.cases.Relay.make({ address: computerScreenAddress }),
-  }),
+/**
+ * The one receipt every Computer tool result carries, as the wire holds it. It is the same value
+ * for every call, so it is encoded once at load. Were the contract changed until this value no
+ * longer fitted it, the runtime must not start and hand out results without the receipt: the
+ * schema's own error ends the load.
+ */
+const session = Result.getOrThrow(
+  Schema.encodeResult(ComputerSession)(
+    ComputerSession.make({
+      active: true,
+      screen: ComputerScreen.cases.Relay.make({ address: computerScreenAddress }),
+    }),
+  ),
 )
 
 /** Only a successful Computer operation proves an active session. Flue's enclosing submission

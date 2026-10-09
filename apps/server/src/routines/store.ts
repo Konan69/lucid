@@ -42,6 +42,7 @@ import { ServerConfig } from '../config.ts'
 import {
   Database,
   decodeStored,
+  encodeStored,
   returned,
   type DatabaseInfrastructureError,
 } from '../database/client.ts'
@@ -119,7 +120,7 @@ type ChangeError =
   | import('@vivid/contracts').ServiceUnavailable
 type CreateInput = typeof CreateRoutineRequest.Type
 type PatchInput = typeof PatchRoutineRequest.Type
-const encodeWatch = Schema.encodeSync(Watch)
+const encodeWatch = encodeStored(Watch, 'Routine Integration watch')
 type DatabaseService = Database['Service']
 
 export interface RoutineStoreService extends ReturnType<typeof integrationOperations> {
@@ -299,7 +300,7 @@ const makeCreate = (database: DatabaseService, watch: IntegrationWatch['Service'
           name: input.name,
           prompt: input.prompt,
           ...triggerColumns(trigger),
-          integration: integration === null ? null : encodeWatch(integration),
+          integration: integration === null ? null : yield* encodeWatch(integration),
           webhookKeyHash: null,
           libraryFolderId: input.libraryFolderId === undefined ? null : input.libraryFolderId,
           enabled: true,
@@ -454,7 +455,7 @@ const makePatch = (
             prompt,
             ...triggerColumns(trigger),
             webhookKeyHash: RoutineTrigger.guards.Webhook(trigger) ? current.webhookKeyHash : null,
-            integration: integration === null ? null : encodeWatch(integration),
+            integration: integration === null ? null : yield* encodeWatch(integration),
             watchRevision: current.watchRevision + 1,
             pause: input.enabled === true || input.trigger !== undefined ? null : row.pause,
             libraryFolderId:

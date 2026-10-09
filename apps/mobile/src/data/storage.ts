@@ -22,7 +22,7 @@ export class StorageUnavailable extends Schema.TaggedError<StorageUnavailable>()
 ) {}
 
 const UNREADABLE = 'This device could not read what it had saved.'
-const UNWRITABLE = 'This device could not save that. Try again.'
+export const UNWRITABLE = 'This device could not save that. Try again.'
 
 const onDevice = Platform.OS !== 'web'
 

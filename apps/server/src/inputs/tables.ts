@@ -3,7 +3,7 @@ import { boolean, index, jsonb, pgTable, text } from 'drizzle-orm/pg-core'
 import { threads } from '../threads/tables.ts'
 import { personTable } from '../auth/tables.ts'
 import { epoch, personColumn } from '../database/owner.ts'
-import { Signal, encodeSignal } from '../approvals/signal.ts'
+import { storedNone } from '../approvals/signal.ts'
 
 /**
  * One row per Input request: a question a Run could not safely answer alone.
@@ -28,9 +28,7 @@ export const inputRequests = pgTable(
     answeredBy: text('answered_by').references(() => personTable.id, { onDelete: 'set null' }),
     answer: text('answer'),
     settledAt: epoch('settled_at'),
-    signal: jsonb('signal')
-      .notNull()
-      .default(encodeSignal(Signal.cases.None.make({}))),
+    signal: jsonb('signal').notNull().default(storedNone),
     signalDueAt: epoch('signal_due_at').notNull().default(0),
     signalClaim: text('signal_claim'),
     createdAt: epoch('created_at').notNull(),

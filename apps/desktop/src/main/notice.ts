@@ -41,7 +41,15 @@ const NOTICE_HEIGHT = 76
 const NOTICE_TOP = 8
 
 const decodeRequest = Schema.decodeUnknownOption(NoticeRequest, { onExcessProperty: 'error' })
-const encodeState = Schema.encodeSync(NoticeState)
+const encodeState = Schema.encodeOption(NoticeState)
+
+/**
+ * Tells the notice page a state. One that will not encode is not sent, and the page goes on
+ * showing what it last heard: half a state is never put on the channel.
+ */
+const tell = (target: BrowserWindow, next: NoticeState): void => {
+  Option.map(encodeState(next), (said) => target.webContents.send(NOTICE_STATE_CHANNEL, said))
+}
 
 export interface NoticeDependencies {
   /** The app session: the notice is a page of the selected server's own bundled web build. */
@@ -120,7 +128,9 @@ export function createNotice(dependencies: NoticeDependencies) {
     )
     const request = trusted ? decodeRequest(payload) : Option.none()
     if (Option.exists(request, NoticeRequest.guards.Stop)) dependencies.stop()
-    return encodeState(state)
+    // A state that will not encode is answered with nothing, which the page's decoder drops as it
+    // drops any answer that is not a state (`preload/notice.ts`).
+    return Option.getOrUndefined(encodeState(state))
   })
 
   return {
@@ -130,13 +140,13 @@ export function createNotice(dependencies: NoticeDependencies) {
       state = next
       if (NoticeState.guards.Hidden(next)) {
         Option.map(live(), (current) => {
-          current.webContents.send(NOTICE_STATE_CHANNEL, encodeState(next))
+          tell(current, next)
           current.hide()
         })
         return
       }
       Option.map(ensure(), (current) => {
-        current.webContents.send(NOTICE_STATE_CHANNEL, encodeState(next))
+        tell(current, next)
         if (!wasHidden) return
         place(current)
         current.showInactive()

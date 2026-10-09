@@ -470,8 +470,13 @@ export const googleSignIn = Effect.fn('DesktopSignIn.make')(function* (
       state: secrets.state,
       port: port.value,
     })
-    current = Option.some({ address, ended, fiber })
-    return yield* browse(address)
+    // With no address there is nothing to send a browser to, so nothing is left listening for one.
+    if (Option.isNone(address)) {
+      yield* Fiber.interrupt(fiber)
+      return unopened
+    }
+    current = Option.some({ address: address.value, ended, fiber })
+    return yield* browse(address.value)
   })
 
   /** Only an attempt still waiting for the browser has anywhere to send it. */

@@ -93,7 +93,7 @@ export const SignInStart = Schema.Struct({
   port: LoopbackPortFromText,
 })
 export type SignInStart = typeof SignInStart.Type
-const encodeStart = Schema.encodeSync(SignInStart)
+const encodeStart = Schema.encodeOption(SignInStart)
 
 /**
  * A query written out: each value percent-encoded, joined in the order given. Addresses are
@@ -108,10 +108,11 @@ const queryOf = (fields: Readonly<Record<string, string>>): string =>
 /**
  * The address the shell opens in the system browser to start an attempt on a server. The origin
  * is the shell's saved server (scheme, host and port, with no path) and never something a
- * document supplied.
+ * document supplied. There is none for a start that will not encode: the shell has nothing to
+ * open then, and says so as it does for a browser that would not open.
  */
-export const signInStartAddress = (origin: string, start: SignInStart): string =>
-  `${origin}${SIGN_IN_PLACES.start}?${queryOf(encodeStart(start))}`
+export const signInStartAddress = (origin: string, start: SignInStart): Option.Option<string> =>
+  Option.map(encodeStart(start), (query) => `${origin}${SIGN_IN_PLACES.start}?${queryOf(query)}`)
 
 /**
  * How an attempt comes back to the shell: with a code, or with the news that there is none. A

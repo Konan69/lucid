@@ -4,14 +4,19 @@ import * as NodeRuntime from '@effect/platform-node/NodeRuntime'
 import * as NodeWorkerRunner from '@effect/platform-node/NodeWorkerRunner'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import * as RpcServer from 'effect/unstable/rpc/RpcServer'
 import { ExtractionFaulted, ExtractionRpcs } from '../extraction/contract.ts'
 import { Fixture, FixtureArgument } from './mode.ts'
 import { RECEIPT_FD } from './process/mode.ts'
 
-/** `fork` builds argv as `[execPath, modulePath, ...args]` (Node v24.14.1 lib/child_process.js:160). */
-const input = Schema.decodeUnknownSync(FixtureArgument)(NodeProcess.argv[2])
+/**
+ * `fork` builds argv as `[execPath, modulePath, ...args]` (Node v24.14.1 lib/child_process.js:160).
+ * A fixture started without the launcher's argument has no behaviour to show: the schema's own
+ * error ends the load, before the handshake, and the launcher sees the exit.
+ */
+const input = Result.getOrThrow(Schema.decodeUnknownResult(FixtureArgument)(NodeProcess.argv[2]))
 
 /**
  * Capture the parent at load, then compare it with the default process object's live `ppid` getter.

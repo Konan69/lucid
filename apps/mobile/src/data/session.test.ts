@@ -61,7 +61,7 @@ const makeDevice = () => {
     forgetting: Forgetting.Done(),
   }
   const land = (session: Session) => {
-    device.stored = Option.some(writeKept(session, true))
+    device.stored = writeKept(session, true)
   }
   const custody = makeCustody({
     write: (session) =>
@@ -321,7 +321,7 @@ describe('signing in', () => {
 describe('what the store holds', () => {
   it('never hands the token to a store that anything can read', () => {
     // The browser preview's store: the address survives a reload, the sign-in does not.
-    expect(readKept(Option.some(writeKept(signedIn('token-a'), false)))).toEqual(signedOut)
+    expect(readKept(writeKept(signedIn('token-a'), false))).toEqual(signedOut)
   })
 
   it('reads anything that is not a session as a first launch', () => {

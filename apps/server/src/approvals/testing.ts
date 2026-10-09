@@ -1,6 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { expect } from '@effect/vitest'
 import { eq, inArray } from 'drizzle-orm'
+import * as Arr from 'effect/Array'
 import * as Clock from 'effect/Clock'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
@@ -41,7 +42,7 @@ import { Reviewer } from './review.ts'
 import { personTable } from '../auth/tables.ts'
 import { auditLayer } from '../audit/record.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
-import { Database } from '../database/client.ts'
+import { Database, encodeStored } from '../database/client.ts'
 import { testDatabaseLayer } from '../database/testdb.ts'
 import { inputStoreLayer } from '../inputs/store.ts'
 import { Changes, type Topic } from '../live/changes.ts'
@@ -366,7 +367,7 @@ export const JudgmentMode = Judgment
 
 // Run records and Flue history, for tests of what the reviewer is shown as the Person's request.
 
-const encodeOrigin = Schema.encodeSync(StoredRunOrigin)
+const encodeOrigin = encodeStored(StoredRunOrigin, 'Run origin')
 
 export interface RecordedRun {
   readonly id: string
@@ -382,14 +383,15 @@ export const recordRuns = Effect.fn('TrustTest.recordRuns')(function* (
   after = 0,
 ) {
   const database = yield* Database
+  const origins = yield* Effect.forEach(recorded, (run) => encodeOrigin(run.origin))
   yield* database.run(
     database.insert(runs).values(
-      recorded.map((run, index) => ({
+      Arr.zip(recorded, origins).map(([run, origin], index) => ({
         id: testRunId(threadId, run.id),
         threadId,
         personId: run.personId,
         turn: after + index + 1,
-        origin: encodeOrigin(run.origin),
+        origin,
         state: run.working ? 'working' : 'completed',
         startedAt: index + 1,
         admittedAt: index + 1,

@@ -1,7 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { and, eq, gt, lte, sql } from 'drizzle-orm'
 import { createSelectSchema } from 'drizzle-orm/effect-schema'
-import { Clock, Context, Effect, Layer, Schema } from 'effect'
+import { Clock, Context, Effect, Layer } from 'effect'
 import {
   Conflict,
   InvalidRequest,
@@ -12,7 +12,7 @@ import {
   SessionId,
   Unauthenticated,
 } from '@vivid/contracts'
-import { Database, decodeStored, returned } from '../database/client.ts'
+import { Database, decodeStored, encodeStored, returned } from '../database/client.ts'
 import { sessionTable } from '../auth/tables.ts'
 import { Changes, Topic } from '../live/changes.ts'
 import { pushTargets } from './tables.ts'
@@ -24,7 +24,7 @@ const TargetRow = createSelectSchema(pushTargets, {
   destination: PushDestination,
 })
 const decodeTarget = decodeStored(TargetRow, 'push target')
-const encodeDestination = Schema.encodeSync(PushDestination)
+const encodeDestination = encodeStored(PushDestination, 'push destination')
 
 /** Restrict Web Push to public provider hosts, so arbitrary subscriptions cannot become SSRF. */
 const providerHost = (hostname: string) =>
@@ -127,7 +127,7 @@ const makeTargets = (database: Database['Service'], changes: Changes['Service'])
             id,
             personId: input.personId,
             sessionId: input.sessionId,
-            destination: encodeDestination(input.destination),
+            destination: yield* encodeDestination(input.destination),
             addressHash: hash,
             createdAt: now,
           })
@@ -138,7 +138,7 @@ const makeTargets = (database: Database['Service'], changes: Changes['Service'])
               id: sql`case when ${pushTargets.sessionId} = ${input.sessionId} then ${pushTargets.id} else ${id} end`,
               createdAt: sql`case when ${pushTargets.sessionId} = ${input.sessionId} then ${pushTargets.createdAt} else ${now} end`,
               sessionId: input.sessionId,
-              destination: encodeDestination(input.destination),
+              destination: yield* encodeDestination(input.destination),
             },
             setWhere: eq(pushTargets.personId, input.personId),
           })

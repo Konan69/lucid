@@ -12,7 +12,7 @@ import {
   ThreadId,
   type PushTarget,
 } from '@vivid/contracts'
-import { Database, decodeStored, returned } from '../database/client.ts'
+import { Database, decodeStored, encodeStored, returned } from '../database/client.ts'
 import { notifications } from '../notifications/tables.ts'
 import { observeFailures } from '../observability/failure.ts'
 import { canSee, findThread } from '../threads/access.ts'
@@ -31,8 +31,9 @@ const NoticeRow = createSelectSchema(notifications, {
 })
 const decodeNotice = decodeStored(NoticeRow, 'push Notification')
 const decodeReceipt = decodeStored(PushReceipt, 'push receipt')
-const encodeReceipt = Schema.encodeSync(PushReceipt)
-const encodePayload = Schema.encodeSync(Schema.fromJsonString(PushPayload))
+const encodeReceipt = encodeStored(PushReceipt, 'push receipt')
+/** The body as it is sent: the claim row stores its hash and length, so one that will not encode cannot be claimed. */
+const encodePayload = encodeStored(Schema.fromJsonString(PushPayload), 'push payload')
 
 /** Push quotes only an existing Notification, with the recipient's current Thread access checked. */
 const readable = Effect.fn('Push.readable')(function* (notice: typeof NoticeRow.Type) {
@@ -59,7 +60,7 @@ const claim = Effect.fn('Push.claim')(function* (
   target: PushTarget,
 ) {
   const now = yield* Clock.currentTimeMillis
-  const body = encodePayload(payload)
+  const body = yield* encodePayload(payload)
   const claimed = yield* database.run(
     database
       .insert(pushDeliveries)
@@ -68,7 +69,7 @@ const claim = Effect.fn('Push.claim')(function* (
         targetId: target.id,
         bodyHash: NodeCrypto.createHash('sha256').update(body).digest('hex'),
         bodyLength: Buffer.byteLength(body),
-        receipt: encodeReceipt(PushReceipt.cases.Queued.make({})),
+        receipt: yield* encodeReceipt(PushReceipt.cases.Queued.make({})),
         createdAt: now,
         updatedAt: now,
       })
@@ -129,7 +130,7 @@ const makeSend = (services: DeliveryServices) => {
     yield* database.run(
       database
         .update(pushDeliveries)
-        .set({ receipt: encodeReceipt(receipt), updatedAt: now })
+        .set({ receipt: yield* encodeReceipt(receipt), updatedAt: now })
         .where(keyOf(notice.id, target)),
     )
     return receipt
@@ -277,7 +278,7 @@ const saveReceipt = Effect.fn('Push.saveReceipt')(function* (
   yield* database.run(
     database
       .update(pushDeliveries)
-      .set({ receipt: encodeReceipt(receipt), updatedAt: yield* Clock.currentTimeMillis })
+      .set({ receipt: yield* encodeReceipt(receipt), updatedAt: yield* Clock.currentTimeMillis })
       .where(
         and(
           eq(pushDeliveries.notificationId, key.notificationId),

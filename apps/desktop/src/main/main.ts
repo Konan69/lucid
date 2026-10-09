@@ -15,7 +15,7 @@ import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import * as Scope from 'effect/Scope'
 import { app, net, protocol, screen, session, type BrowserWindow, type Session } from 'electron'
-import { registerBridge } from './bridge.ts'
+import { registerBridge, sendBridgeEvent } from './bridge.ts'
 import { Browser } from './browser.ts'
 import { executor } from './control.ts'
 import { connectDevice, deviceLink, sessionChanges } from './device.ts'
@@ -43,13 +43,7 @@ import {
 import { ColorSchemeController } from './theme.ts'
 import { loadThemeSurfaces, type ThemeSurfaces } from './tokens.ts'
 import { RendererSource, createMainWindow, loadRenderer, openExternalUrl } from './window.ts'
-import {
-  AppInfo,
-  BRIDGE_EVENT_CHANNEL,
-  BridgeEvent,
-  encodeBridgeEvent,
-  type DesktopPlatform,
-} from '../shared/bridge.ts'
+import { AppInfo, BridgeEvent, type DesktopPlatform } from '../shared/bridge.ts'
 import { PageUnavailable, type Tab } from '../shared/pages.ts'
 import { DesktopSettings, settingsLayer } from './settings.ts'
 import { clearingLeft, storageLeftBehind } from './leaving.ts'
@@ -179,17 +173,11 @@ function createBrowser(
     // resets on `closed`), which showed a JavaScript error dialog on every quit.
     publish: (value) => {
       if (!window.isDestroyed() && !window.webContents.isDestroyed())
-        window.webContents.send(
-          BRIDGE_EVENT_CHANNEL,
-          encodeBridgeEvent(BridgeEvent.cases.PagesChanged.make({ value })),
-        )
+        sendBridgeEvent(window.webContents, BridgeEvent.cases.PagesChanged.make({ value }))
     },
     downloadRefused: (value) => {
       if (!window.isDestroyed() && !window.webContents.isDestroyed())
-        window.webContents.send(
-          BRIDGE_EVENT_CHANNEL,
-          encodeBridgeEvent(BridgeEvent.cases.PageDownloadRefused.make({ value })),
-        )
+        sendBridgeEvent(window.webContents, BridgeEvent.cases.PageDownloadRefused.make({ value }))
     },
   })
 }

@@ -590,7 +590,7 @@ const fromV2 = (stored: typeof DraftsV2.Type): Drafts => ({
 const decode = Schema.decodeUnknownOption(Schema.fromJsonString(Drafts))
 const decodeV2 = Schema.decodeUnknownOption(Schema.fromJsonString(DraftsV2))
 const decodeV1 = Schema.decodeUnknownOption(Schema.fromJsonString(DraftsV1))
-const encode = Schema.encodeSync(Schema.fromJsonString(Drafts))
+const encode = Schema.encodeOption(Schema.fromJsonString(Drafts))
 
 /**
  * Reads drafts back from storage, whichever build wrote them: today's format as it is, and each
@@ -609,5 +609,8 @@ export const readDrafts = (stored: Option.Option<string>): Drafts =>
     () => noDrafts,
   )
 
-/** The drafts as text to store. */
-export const writeDrafts = (drafts: Drafts): string => encode(drafts)
+/**
+ * The drafts as text to store. There is none for drafts that will not encode: the store keeps what
+ * it last held, and the words stay in memory, as when a store refuses a write.
+ */
+export const writeDrafts = (drafts: Drafts): Option.Option<string> => encode(drafts)

@@ -228,7 +228,7 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
         answeredBy: actor.person.id,
         answer: request.answer,
         settledAt: now,
-        signal: encodeSignal(signal),
+        signal: yield* encodeSignal(signal),
         signalDueAt: now,
       })
       .where(and(eq(inputRequests.id, request.id), eq(inputRequests.status, 'waiting')))

@@ -1,10 +1,15 @@
 import * as NodeFS from 'node:fs'
 import NodeProcess from 'node:process'
+import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import { NativeMode, RECEIPT_FD } from './mode.ts'
 
-/** `fork` builds argv as `[execPath, modulePath, ...args]` (Node v24.14.1 lib/child_process.js:160). */
-const mode = Schema.decodeUnknownSync(NativeMode)(NodeProcess.argv[2])
+/**
+ * `fork` builds argv as `[execPath, modulePath, ...args]` (Node v24.14.1 lib/child_process.js:160).
+ * Without a mode there is nothing to act out: the schema's own error ends the load before the
+ * receipt below is written, which is how the test tells this from a process that ran.
+ */
+const mode = Result.getOrThrow(Schema.decodeUnknownResult(NativeMode)(NodeProcess.argv[2]))
 
 /**
  * Retained ordinary objects exhaust V8's old generation, which is what `--max-old-space-size` caps;

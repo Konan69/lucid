@@ -12,7 +12,7 @@ import {
   ThreadId,
   type BrowseResult,
 } from '@vivid/contracts'
-import { Deferred, Effect, Fiber, Option, Schema } from 'effect'
+import { Deferred, Effect, Fiber, Option, Result, Schema } from 'effect'
 import { BrowserWindow, app, nativeImage, net, session, type WebContents } from 'electron'
 import { Browser } from '../src/main/browser.ts'
 import { executor } from '../src/main/control.ts'
@@ -47,9 +47,12 @@ const proved = (item: string) => Effect.sync(() => console.log(`proved: ${item}`
 const inPage = <Value>(contents: WebContents, script: string) =>
   Effect.promise((): Promise<Value> => contents.executeJavaScript(script, true))
 
-const decodeAddress = Schema.decodeUnknownSync(Schema.Struct({ port: Schema.Int }))
-/** The port a listening server was given. */
-const portOf = (server: NodeHttp.Server) => decodeAddress(server.address()).port
+const decodeAddress = Schema.decodeUnknownResult(Schema.Struct({ port: Schema.Int }))
+/**
+ * The port a listening server was given. A server with no port is not listening, which this
+ * proof cannot go on from: the schema's own error ends it, as its other broken premises do.
+ */
+const portOf = (server: NodeHttp.Server) => Result.getOrThrow(decodeAddress(server.address())).port
 
 /** Starts a server on a free loopback port, and closes it with the proof. */
 const listening = (server: NodeHttp.Server) =>

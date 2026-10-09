@@ -22,7 +22,7 @@ Guidance:
 - Use `schema.make(...)` when construction is trusted.
 - Use `schema.makeEffect(...)` when construction failure should stay in the Effect error channel.
 - Decode unknown input at boundaries with `Schema.decodeUnknownEffect(...)` by default.
-- Use `Schema.decodeUnknownSync(...)` only in scripts, tests, or startup paths where throwing is acceptable.
+- Use `Schema.decodeUnknownSync(...)` and the other throwing `*Sync` forms only in tests. Product code uses the `...Effect` form, or `...Result`/`...Option` in plain synchronous code; the `schemaSync` rule in `tsconfig.base.json` fails typecheck on a `*Sync` call anywhere else (root `AGENTS.md`, "Effect 4").
 - Use `Schema.decodeUnknownOption(...)` only when mismatch details are intentionally discarded.
 - Use `Schema.decodeUnknownResult(...)` for pure code that wants explicit success/failure without Effect.
 
