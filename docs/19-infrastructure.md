@@ -309,8 +309,8 @@ settings keep their defaults. Apply the auth then product
 migrations before starting the server; Flue migrates its own runtime schema at startup.
 
 Programs (`run_code`) need nothing from the server's host. A program runs on the Person's
-Computer: the server starts its runner there through the Computer's provider, follows what it
-prints, and answers its calls. Until 5 October 2026 a program ran on the server's own host inside
+Computer: the server starts its runner there over its SSH connection to the Computer, reads what
+it prints, and answers its calls on the same channel. Until 5 October 2026 a program ran on the server's own host inside
 user-systemd, a cgroup and bubblewrap, which an ordinary container does not have, so production
 refused every program. The server image therefore carries no isolation tools, and the only
 requirement is the one every Vivid already has: a Computer provider.
