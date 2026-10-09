@@ -60,26 +60,38 @@ const tool = (kind: CodeCallKind) =>
       }),
   })
 
-/** Why the interpreter stopped a program, in the words of the contract. */
-function failureOf(diagnostic: Program.Diagnostic): CodeFailure {
-  switch (diagnostic.kind) {
-    case 'TimeoutExceeded':
-      return CodeFailure.cases.TimedOut.make({ seconds: budgets.seconds })
-    case 'WorkLimitExceeded':
-      return CodeFailure.cases.OverLimit.make({ limit: 'work' })
-    case 'ToolCallLimitExceeded':
-      return CodeFailure.cases.OverLimit.make({ limit: 'calls' })
-    case 'ParseError':
-    case 'UnsupportedSyntax':
-    case 'UnknownTool':
-    case 'InvalidToolInput':
-    case 'InvalidToolOutput':
-    case 'InvalidDataValue':
-    case 'ToolFailure':
-    case 'ExecutionFailure':
-      // The program's own fault: the model reads the message and writes a better program.
-      return CodeFailure.cases.Threw.make({ message: diagnostic.message.slice(0, 500) })
-  }
+/** The program's own fault: the model reads the message and writes a better program. */
+const threw = (diagnostic: Program.Diagnostic) =>
+  CodeFailure.cases.Threw.make({ message: diagnostic.message.slice(0, 500) })
+
+/**
+ * Why the interpreter stopped a program, in the words of the contract. Every kind of diagnostic
+ * is named, so a kind the interpreter gains has no entry here and fails typecheck.
+ */
+const failures: Record<Program.DiagnosticKind, (diagnostic: Program.Diagnostic) => CodeFailure> = {
+  TimeoutExceeded: () => CodeFailure.cases.TimedOut.make({ seconds: budgets.seconds }),
+  WorkLimitExceeded: () => CodeFailure.cases.OverLimit.make({ limit: 'work' }),
+  ToolCallLimitExceeded: () => CodeFailure.cases.OverLimit.make({ limit: 'calls' }),
+  ParseError: threw,
+  UnsupportedSyntax: threw,
+  UnknownTool: threw,
+  InvalidToolInput: threw,
+  InvalidToolOutput: threw,
+  InvalidDataValue: threw,
+  ToolFailure: threw,
+  ExecutionFailure: threw,
+}
+
+/** The final message of a program that has no result, with what it printed. */
+const failed = (failure: CodeFailure) => {
+  const kept = logs()
+  return say(
+    WorkerMessage.cases.Failed.make({
+      failure,
+      logs: kept.logs,
+      logsTruncated: kept.logsTruncated,
+    }),
+  )
 }
 
 /**
@@ -99,18 +111,17 @@ const interpret = Effect.fn('Code.interpret')(function* (code: string) {
     },
     limits: { maxSteps: budgets.steps, maxGrowth: budgets.growth, maxToolCalls: budgets.calls },
   })
-  if (!result.ok)
-    return yield* say(
-      WorkerMessage.cases.Failed.make({ failure: failureOf(result.error), ...logs() }),
-    )
+  if (!result.ok) return yield* failed(failures[result.error.kind](result.error))
   if (bytes(JSON.stringify(result.value)) > budgets.result)
-    return yield* say(
-      WorkerMessage.cases.Failed.make({
-        failure: CodeFailure.cases.OverLimit.make({ limit: 'result' }),
-        ...logs(),
-      }),
-    )
-  return yield* say(WorkerMessage.cases.Done.make({ result: result.value, ...logs() }))
+    return yield* failed(CodeFailure.cases.OverLimit.make({ limit: 'result' }))
+  const kept = logs()
+  return yield* say(
+    WorkerMessage.cases.Done.make({
+      result: result.value,
+      logs: kept.logs,
+      logsTruncated: kept.logsTruncated,
+    }),
+  )
 })
 
 /**
@@ -125,9 +136,7 @@ const start = Effect.fn('Code.start')(function* (code: string) {
 /** The supervisor keeps its own reason for stopping; this returns what was printed so far. */
 const cancel = Effect.fn('Code.cancel')(function* () {
   if (Option.isSome(running.program)) yield* Fiber.interrupt(running.program.value)
-  return yield* say(
-    WorkerMessage.cases.Failed.make({ failure: CodeFailure.cases.Unavailable.make({}), ...logs() }),
-  )
+  return yield* failed(CodeFailure.cases.Unavailable.make({}))
 })
 
 /** The supervisor's three messages. Text that is not one of them is ignored. */

@@ -156,11 +156,9 @@ const serverProgram = Effect.gen(function* () {
   )
   const decisions = gateLayer.pipe(Layer.provideMerge(reviewerLayer), Layer.provideMerge(trust))
   // A program is interpreted in this process; its calls go through the decisions below.
-  const work = Layer.mergeAll(
-    routineStoreLayer,
-    codeCallsLayer,
-    codeProcessLayer,
-  ).pipe(Layer.provideMerge(decisions))
+  const work = Layer.mergeAll(routineStoreLayer, codeCallsLayer, codeProcessLayer).pipe(
+    Layer.provideMerge(decisions),
+  )
   const channelHandling = channelReceiverLayer.pipe(Layer.provideMerge(work))
   const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(channelHandling))
   const background = Layer.mergeAll(
