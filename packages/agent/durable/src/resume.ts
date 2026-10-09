@@ -27,6 +27,7 @@ import {
 import type { Reader } from './desk.ts'
 import { RunMissing, TurnWithdrawn, type PiFailed } from './errors.ts'
 import * as Pi from './pi.ts'
+import { absentTiming, taskTiming } from './timing.ts'
 import { messageMetadata } from './metadata.ts'
 
 /** A resume names the assistant run as well as the tool parts that the client already holds. */
@@ -53,6 +54,7 @@ const decodeSubmission = Schema.decodeUnknownOption(SubmissionIdentity)
  * when observation also needs the prefix that proved it. */
 type ResolvedRun = {
   readonly messageId: string
+  readonly taskId: Option.Option<TaskId>
   readonly receipt: Extract<SubmissionRecord, { type: 'input' }> & { readonly entry: EntryId }
   readonly entries: readonly EntryRecord[]
 }
@@ -133,7 +135,13 @@ export const resolveRunIdentity: (
       receipt,
       yield* entriesOf(reader, { first: receipt.entry, last: Option.none() }),
     )
-    return { messageId: assistantMessageId(identityFor(live, receipt, entries)), receipt, entries }
+    const identity = identityFor(live, receipt, entries)
+    const taskId = AssistantIdentity.$match(identity, {
+      Generated: (generated) => Option.some(generated.taskId),
+      Written: () => Option.none<TaskId>(),
+      Empty: () => Option.none<TaskId>(),
+    })
+    return { messageId: assistantMessageId(identity), taskId, receipt, entries }
   },
 )
 
@@ -145,9 +153,11 @@ export const captureRun: (
   reader: Reader,
   snapshot: SnapshotEvent,
 ) {
-  if (snapshot.run === undefined) return { ...snapshot, messageId: Option.none() }
+  if (snapshot.run === undefined)
+    return { ...snapshot, messageId: Option.none(), taskId: Option.none(), timing: absentTiming }
   const resolved = yield* resolveRunIdentity(reader, snapshot.run.inputs)
-  const { receipt } = resolved
+  const { receipt, taskId } = resolved
+  const timing = yield* taskTiming(reader.harness, taskId, reader.context)
   const messageId = Option.some(resolved.messageId)
   const ownEntries = new Set(resolved.entries.map((entry) => entry.id))
   // Usually the atomic model view contains the whole run. Compaction can remove its first input;
@@ -156,12 +166,14 @@ export const captureRun: (
     return {
       ...snapshot,
       messageId,
+      taskId,
+      timing,
       entries: snapshot.entries.filter((entry) => ownEntries.has(entry.id)),
     }
   const tail = Option.fromNullishOr(snapshot.entries.at(-1))
   if (Option.isNone(tail)) return yield* new RunMissing({ conversationId: reader.conversation.id })
   const entries = resolved.entries.filter((entry) => entry.id <= tail.value.id)
-  return { ...snapshot, messageId, entries }
+  return { ...snapshot, messageId, entries, taskId, timing }
 })
 
 /** Consecutive initial Person entries are one idle inbox-placement commit. Pi inbox.ts:75–81
@@ -325,7 +337,15 @@ export const selectRun: (
     return yield* new RunMissing({ conversationId: reader.conversation.id })
   // A completed run must not borrow the newer run's generation or live continuation.
   const { run: _run, generation: _generation, ...stored } = snapshot
-  const captured: RunSnapshot = { ...stored, entries, messageId: Option.some(input.messageId) }
+  const taskId = Option.some(assistant.byTaskId)
+  const timing = yield* taskTiming(reader.harness, taskId, reader.context)
+  const captured: RunSnapshot = {
+    ...stored,
+    entries,
+    messageId: Option.some(input.messageId),
+    taskId,
+    timing,
+  }
   const prefix = replayAfter(captured, input.known)
   if (Option.isNone(prefix))
     return yield* new RunMissing({ conversationId: reader.conversation.id })

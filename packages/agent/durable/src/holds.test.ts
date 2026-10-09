@@ -124,6 +124,8 @@ it.live('holds a call for approval across a restart, then runs it once', () =>
         callId: 'call-pay',
         toolName: 'pay',
         input: { amount: 500 },
+        startedAt: Option.some(expect.any(Number)),
+        endedAt: Option.none(),
       },
     ])
 
@@ -140,6 +142,8 @@ it.live('holds a call for approval across a restart, then runs it once', () =>
         callId: 'call-pay',
         toolName: 'pay',
         input: { amount: 500 },
+        startedAt: Option.some(expect.any(Number)),
+        endedAt: Option.none(),
       },
     ])
     yield* decide(
@@ -307,6 +311,8 @@ it.live('lets the model finish its answer and delivers a late answer as a new ru
         kind: 'later',
         callId: 'call-later',
         toolName: 'ask_later',
+        startedAt: Option.some(expect.any(Number)),
+        endedAt: Option.some(expect.any(Number)),
       },
     ])
 

@@ -26,6 +26,7 @@ import { RunMissing, type PiFailed, type WatchClosed, type WatchOverflowed } fro
 import { admit, placed, reacquireInput } from './admit.ts'
 import { readDesk, noDesk, type Reader } from './desk.ts'
 import * as Pi from './pi.ts'
+import { taskTiming } from './timing.ts'
 import { messageMetadata } from './metadata.ts'
 import {
   captureRun,
@@ -76,12 +77,25 @@ const annotateEvent = Effect.fn('Durable.identifyEvent')(function* (
   current: RunState,
   event: AgentEvent,
 ): Effect.fn.Return<RunEvent, PiFailed | RunMissing> {
+  // Pi emits turn_start after generation begins. Refresh its first task's start
+  // stamp once at that boundary, never on high-frequency text/block updates.
+  if (event.type === 'turn_start')
+    return { ...event, timing: yield* taskTiming(reader.harness, current.taskId, reader.context) }
   if (event.type !== 'run_start' && event.type !== 'run_end') return event
-  const messageId =
-    event.type === 'run_end' && Option.isSome(current.messageId)
-      ? current.messageId.value
-      : (yield* resolveRunIdentity(reader, event.inputs)).messageId
-  return { ...event, messageId }
+  if (event.type === 'run_end' && Option.isSome(current.messageId))
+    return {
+      ...event,
+      messageId: current.messageId.value,
+      taskId: current.taskId,
+      timing: yield* taskTiming(reader.harness, current.taskId, reader.context),
+    }
+  const resolved = yield* resolveRunIdentity(reader, event.inputs)
+  return {
+    ...event,
+    messageId: resolved.messageId,
+    taskId: resolved.taskId,
+    timing: yield* taskTiming(reader.harness, resolved.taskId, reader.context),
+  }
 })
 
 /** Parking completes the client's step and response, leaving Pi's durable run untouched. */

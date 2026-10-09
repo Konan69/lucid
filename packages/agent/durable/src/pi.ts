@@ -165,7 +165,7 @@ export const view = (owner: Conversation, context: Context) =>
   })
 
 /**
- * Pi 1.0.4 only accepts Promise callbacks. Like code/worker.ts invokeTool, this single ingress
+ * Pi 1.1.0 only accepts Promise callbacks. Like code/worker.ts invokeTool, this single ingress
  * runs an Effect and forwards Pi's cancellation signal; every Pi callback shares this boundary.
  */
 export function runForPi<A, E>(effect: Effect.Effect<A, E>, signal: Context['abortSignal']) {

@@ -16,6 +16,7 @@ import {
 } from './holds.ts'
 import { HoldId, PiFailed } from './errors.ts'
 import * as Pi from './pi.ts'
+import { taskTiming, type TaskTiming } from './timing.ts'
 import { questionOpen } from './answers.ts'
 
 /**
@@ -25,7 +26,7 @@ import { questionOpen } from './answers.ts'
  * - `answer`: the model waits inside the call for its result; supply it with `answer`.
  * - `later`: the call returned and the model moved on; `answer` delivers the result as a message.
  */
-export type Waiting = {
+export type Waiting = TaskTiming & {
   readonly kind: 'approval' | 'answer' | 'later'
   readonly holdId: HoldId
   readonly callId: string
@@ -67,7 +68,13 @@ export const waiting: (
         CallLookup.guards.Asked(found) &&
         (yield* questionOpen(harness, conversation, question, context))
       )
-        later.push({ kind: 'later', holdId, callId: found.callId, toolName: found.toolName })
+        later.push({
+          kind: 'later',
+          holdId,
+          callId: found.callId,
+          toolName: found.toolName,
+          ...(yield* taskTiming(harness, Option.some(found.taskId), context)),
+        })
     }
   }
   const ready = [...callIds].flatMap((callId) => {
@@ -117,6 +124,7 @@ const waitingCall = Effect.fn('Durable.waitingCall')(function* (
           callId: found.callId,
           toolName: call.name,
           input: copyJson(call.arguments),
+          ...(yield* taskTiming(reader.harness, Option.some(found.taskId), reader.context)),
         },
       ]
     : []

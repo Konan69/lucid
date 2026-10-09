@@ -496,7 +496,7 @@ const open = Effect.fn('Example.open')(function* (input: StartOptions) {
     }),
     (opened) => Effect.promise(() => opened.close(context)),
   )
-  /** Pi Durable 1.0.4 README "Persist and Resume" and dist/harness/types.d.ts:
+  /** Pi Durable 1.1.0 README "Persist and Resume" and dist/harness/types.d.ts:
    * resume(): void is idempotent, enables recovered pending work, and throws
    * after close. Read-only viewers do not start scheduling; resume before listen. */
   harness.resume()

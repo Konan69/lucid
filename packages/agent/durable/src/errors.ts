@@ -40,6 +40,7 @@ export class PiFailed extends Schema.TaggedError<PiFailed>()(
       'abort',
       'entries',
       'entry',
+      'task',
       'submission',
       'status',
     ]),
@@ -362,7 +363,7 @@ export class ToolApprovalContextUnavailable extends Schema.TaggedError<ToolAppro
   }
 }
 
-/** Hook ownership cannot disambiguate duplicate names across selected extensions in Pi 1.0.4. */
+/** Hook ownership cannot disambiguate duplicate names across selected extensions in Pi 1.1.0. */
 export class ToolNameDuplicated extends Schema.TaggedError<ToolNameDuplicated>()(
   'ToolNameDuplicated',
   { toolName: Schema.String },

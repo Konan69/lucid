@@ -4,7 +4,7 @@ Pi Durable conversations exposed as AI SDK chat streams. The Promise and Effect 
 
 ## Install and entries
 
-The package is private to this workspace. Use Node 22.19 or newer on the server and the pinned peers: Pi Durable, Pi AI and Chord 1.0.4, Effect 4.0.0-rc.116, and AI SDK 7.0.127.
+The package is private to this workspace. Use Node 22.19 or newer on the server and the pinned peers: Pi Durable, Pi AI and Chord 1.1.0, Effect 4.0.0-rc.116, and AI SDK 7.0.127.
 
 ```sh
 pnpm add @vivid/durable@workspace:* ai@7.0.127
@@ -35,6 +35,8 @@ export const chat = (
   context: Context,
 ): Promise<Response> => respond(harness, id, request, context)
 ```
+
+Hosts configure Pi's own `Harness` settings directly. `settings.contextRetentionMs` defaults to 600,000 ms and controls how long an idle conversation retains its derived context cache; `0` releases it at idle. `ToolExecutionApi.models` and `HookApi.models` expose that Harness's catalog, credentials and request transforms. Native Pi tools and hooks use these APIs directly. The SDK bridge supplies identity through `ToolScope` and leaves the host's retention setting and model catalog with Pi.
 
 POST decodes the newest user input or assistant tool settlements; the client's historical transcript is not trusted or persisted. Bodyless GET attaches to the run in progress, or returns 204 when idle. Other methods return 405. `decodeTurn(body)` and `respondTurn(harness, id, turn, context)` support hosts that decode their own ingress; the core accepts decoded `ChatTurn` values.
 
@@ -112,7 +114,7 @@ Client tools use `chat.addToolOutput`, including `{ state: 'output-error', error
 
 ## History, identity and metadata
 
-`history(harness, id, { limit, before? }, context)` returns oldest-first UI messages and an optional opaque next cursor. Limits count messages and pages never split an assistant stretch. It reads raw fork-aware entries, including history removed from model context by compaction. Invalid, foreign or interior cursors fail `HistoryCursorInvalid`; non-positive, fractional or non-finite page sizes fail `HistoryPageInvalid`. One shared desk reads plans, holds and unresolved task provenance per page. The core takes and returns Options for cursor absence.
+`history(harness, id, { limit, before? }, context)` returns oldest-first UI messages and an optional opaque next cursor. Limits count messages and pages never split an assistant stretch. It pages raw storage with `order: 'descending'` and groups each stretch for chronological presentation; it never loads the whole transcript just to reverse page order. It reads raw fork-aware entries, including history removed from model context by compaction. Invalid, foreign or interior cursors fail `HistoryCursorInvalid`; non-positive, fractional or non-finite page sizes fail `HistoryPageInvalid`. One shared desk reads plans, holds and unresolved task provenance per page. The core takes and returns Options for cursor absence.
 
 During a run, history includes placed user inputs before its first assistant entry; GET reconnect supplies the assistant and tool results. History excludes the active run’s assistant stretches, so a client holding history never sends a later stretch’s ID back for that active run. A steer placed after assistant entries stays out until settlement because reconnect cannot show it in order. System/reset/compaction/application entries are skipped. Late-answer entries are ordinary user messages without answerTo metadata.
 
@@ -120,7 +122,9 @@ Generated assistant IDs are `gen:<first generation task id>`, shared by live str
 
 A POST resuming a closed run verifies exactly one receipt candidate from its generation ID; a closed run begun from a queued input, or one with no assistant entry, returns `RunMissing` (409), so the host loads history. A run with no assistant entry is named `gen:<task id>` if the live reader resolved it before termination, or `input:<first input entry id>` if it resolved it afterwards. Stored replay uses the `input:` form because no generation attribution survives. A stock Chat shows one empty assistant message; history omits it. Old `run:<submission>` IDs are refused.
 
-Assistant `messageMetadata` carries recorded provider/model identities and summed token usage on start/finish chunks and in history, including failed response attempts without double-counting replayed entries. Live usage is summed over the whole run, while history splits that usage at steer/user boundaries. The Promise entry exports the Metadata type; core exports its Schema too. Optional provider token breakdowns are retained when reported. Metadata ingestion omits a response's entire usage if any count is non-finite, retaining its model identity and other responses' usage. Pi 1.0.4 itself rejects non-finite provider usage before committing a response, so host-written providers must also supply JSON-safe counts. Pi's entries and run records contain no creation/start/end time, so no lifecycle timestamps are invented.
+Assistant `messageMetadata` carries recorded provider/model identities and summed token usage on start/finish chunks and in history, including failed response attempts without double-counting replayed entries. Live usage is summed over the whole run, while history splits that usage at steer/user boundaries. The Promise entry exports the Metadata type; core exports its Schema too. Optional provider token breakdowns are retained when reported. Metadata ingestion omits a response's entire usage if any count is non-finite, retaining its model identity and other responses' usage. Pi 1.1.0 itself rejects non-finite provider usage before committing a response, so host-written providers must also supply JSON-safe counts. Optional `responses` records carry `{ entryId, durationMs }` for each timed assistant response; optional `tools` records carry `{ entryId, toolCallId, toolName, durationMs }` for each timed execute attempt. Entry identity keeps retries and reused call IDs separate. Snapshot/live overlap never duplicates a duration. Missing durations remain absent, including denied, interrupted and aborted calls; no zero is invented. Durations are monotonic elapsed milliseconds, separate from task lifecycle times.
+
+`waiting()` exposes each held Pi task's `startedAt` / `endedAt`: `Option<number>` in core and optional numbers in the Promise entry. `RunState` carries the same fields for the first generation task that identifies the run (`taskId`), including settled replay. These are the exact Session wall-clock milliseconds, retained across waits and reopening, not the aggregate span of all successor generation tasks. Pre-upgrade records have neither. `TaskTiming` is exported as a core Schema for annotated translator events/snapshots.
 
 A failed model run ends live and in stored replay with the same SDK error chunk. Its last assistant history message carries the terminal failure text as optional `metadata.failure`; core state keeps absence as an `Option`. A failed steer retains the first-input identity when the original snapshot or `run_end.inputs` proves its membership. After that watch is gone, an unanswered receipt has no shared answer entry to prove membership, so a restarted follower keeps its own input identity.
 

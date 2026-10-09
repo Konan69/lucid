@@ -39,7 +39,7 @@ function approval(chat: PlainChat) {
 }
 
 /**
- * Pi 1.0.4 generation.js startToolRound persists provider content order, while finishToolRound
+ * Pi 1.1.0 generation.js startToolRound persists provider content order, while finishToolRound
  * deletes live.tools. Neither the assistant entry nor tool results retain when a reader saw a
  * withheld input. An early attachment follows live admission order; settled history cannot
  * reproduce that observer order. Preserve this documented difference instead of claiming parity.

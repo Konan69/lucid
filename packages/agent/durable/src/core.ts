@@ -1,4 +1,5 @@
 // Explicit function contracts make published error-union changes fail at their signatures.
+export { TaskTiming } from './timing.ts'
 export { Metadata } from './metadata.ts'
 export {
   HistoryCursorInvalid,

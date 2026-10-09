@@ -15,7 +15,7 @@ import { Effect, Function, Option, Result, Schema, Stream } from 'effect'
 import * as Core from './core.ts'
 import { HoldIdInvalid, TurnInvalid } from './errors.ts'
 import type { Answer, Decision, Settlement } from './holds.ts'
-import type { Waiting } from './waiting.ts'
+import type { Waiting as EffectWaiting } from './waiting.ts'
 import type { RunInput } from './stream.ts'
 import type { ResumeInput } from './resume.ts'
 import { prepareRun } from './stream.ts'
@@ -80,7 +80,21 @@ export const waiting = (
   harness: Harness,
   conversationId: ConversationId,
   context: Context,
-): Promise<Waiting[]> => Effect.runPromise(Core.waiting(harness, conversationId, context))
+): Promise<Waiting[]> =>
+  Effect.runPromise(
+    Core.waiting(harness, conversationId, context).pipe(
+      Effect.map((rows) => rows.map(promiseWaiting)),
+    ),
+  )
+
+/** The Promise entry omits absent lifecycle keys; core preserves Option throughout. */
+function promiseWaiting(row: EffectWaiting): Waiting {
+  const { startedAt, endedAt, ...call } = row
+  let result: Waiting = call
+  if (Option.isSome(startedAt)) result = { ...result, startedAt: startedAt.value }
+  if (Option.isSome(endedAt)) result = { ...result, endedAt: endedAt.value }
+  return result
+}
 
 /** Stream consumption owns observation; the platform stream cancels only its consumer scope. */
 export const streamRun = (
@@ -250,11 +264,19 @@ export {
   ToolOutputFailed,
 } from './errors.ts'
 export type { Answer, Decision, Settlement, Plan, Source } from './holds.ts'
-export type { Waiting } from './waiting.ts'
+export type Waiting = Omit<EffectWaiting, 'startedAt' | 'endedAt'> & {
+  readonly startedAt?: number
+  readonly endedAt?: number
+}
 export type { Replay } from './tools.ts'
 export type { RunInput } from './stream.ts'
 export type { ResumeInput } from './resume.ts'
-export type { RunState, Step, Chunk } from './chunks.ts'
+export type { Chunk } from './chunks.ts'
+export type RunState = Omit<Core.RunState, 'startedAt' | 'endedAt'> & {
+  readonly startedAt?: number
+  readonly endedAt?: number
+}
+export type Step = Omit<Core.Step, 'state'> & { readonly state: RunState }
 export type { ChatTurn, TurnInput } from './respond.ts'
 export type { InputPart, InputOptions } from './input.ts'
 

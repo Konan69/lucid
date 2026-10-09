@@ -38,6 +38,7 @@ it.live('approval runs the tool once and clears its hold', () =>
         callId: 'pay',
         toolName: 'pay',
         input: { amount: 500 },
+        startedAt: expect.any(Number),
       },
     ])
     const resolved9 = yield* hold(opened.harness, opened.root.id, 'pay', context)

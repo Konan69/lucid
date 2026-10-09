@@ -243,6 +243,11 @@
     ]
   },
   {
+    "file": "packages/agent/durable/src/timing.ts",
+    "classification": "third-party-adapter",
+    "symbols": ["taskTiming"]
+  },
+  {
     "file": "packages/agent/durable/src/postgres/storage.ts",
     "classification": "third-party-adapter",
     "symbols": [
@@ -255,6 +260,9 @@
       "readEntry",
       "readLatestHeadMarker",
       "readEntries",
+      "readEntriesAscending",
+      "readEntriesDescending",
+      "readEntrySegments",
       "task",
       "scanTasks",
       "submission",

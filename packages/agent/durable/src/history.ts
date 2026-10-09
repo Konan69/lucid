@@ -139,7 +139,7 @@ const validateCursor = Effect.fn('Durable.historyCursor')(function* (
   reader: Reader,
   before: HistoryCursor,
 ) {
-  const query = { maxEntryId: before.entry }
+  const query = { maxEntryId: before.entry, order: 'descending' as const }
   let cursor = Option.none<Cursor>()
   let state: CursorCheck = CursorCheck.Initial()
   for (;;) {
@@ -187,7 +187,7 @@ const readGroups = Effect.fn('Durable.historyGroups')(function* (
 ) {
   const active = yield* boundary(reader)
   if (Option.isSome(page.before)) yield* validateCursor(reader, page.before.value)
-  const query = queryFor(page.before)
+  const query = { ...queryFor(page.before), order: 'descending' as const }
   let cursor = Option.none<Cursor>()
   const entries: EntryRecord[] = []
   for (;;) {

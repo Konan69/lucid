@@ -11,6 +11,8 @@ import type {
 import type { UIMessageChunk } from 'ai'
 import { Array as Arr, Data, Match, Option, Schema } from 'effect'
 
+import { absentTiming, type TaskTiming } from './timing.ts'
+
 import { ArgumentText, argumentDelta, argumentsShortened, rawArguments } from './arguments.ts'
 import {
   emptyMetadata,
@@ -47,7 +49,10 @@ const Reported = Data.taggedEnum<Reported>()
  * Translator state for one run. A run is the turns from an input to its final answer and becomes one
  * AI SDK assistant message; each turn becomes one AI SDK step.
  */
-export type RunState = {
+export type RunState = TaskTiming & {
+  /** The first generation task identifies this run. Its lifecycle is not the
+   * aggregate span of successor tasks; waits/recovery retain Pi's own stamps. */
+  readonly taskId: Option.Option<TaskId>
   /** Resolved before folding; later handovers and steers cannot rename this reader's message. */
   readonly messageId: Option.Option<string>
   /** Models and entry-deduplicated usage read from Pi's own provider responses. */
@@ -81,6 +86,8 @@ export type RunState = {
 }
 
 export const initialRunState: RunState = {
+  ...absentTiming,
+  taskId: Option.none(),
   messageId: Option.none(),
   metadata: emptyMetadata,
   generation: Option.none(),
@@ -535,7 +542,11 @@ function resultStep(state: RunState, callId: string, entry: Option.Option<EntryR
   return {
     state: Option.isNone(entry)
       ? state
-      : { ...state, results: new Set([...state.results, entry.value.id]) },
+      : {
+          ...state,
+          metadata: recordMetadata(state.metadata, entry.value),
+          results: new Set([...state.results, entry.value.id]),
+        },
     chunks: toolEnd(callId, entry),
   }
 }
@@ -580,16 +591,30 @@ function assistantEnd(state: RunState, message: AssistantMessage): Step {
  * chunks here; they are the caller's to surface.
  */
 export type RunEvent =
-  | Exclude<AgentEvent, { type: 'run_start' | 'run_end' }>
-  | (Extract<AgentEvent, { type: 'run_start' | 'run_end' }> & { readonly messageId: string })
+  | Exclude<AgentEvent, { type: 'run_start' | 'run_end' | 'turn_start' }>
+  | (Extract<AgentEvent, { type: 'turn_start' }> & { readonly timing?: TaskTiming })
+  | (Extract<AgentEvent, { type: 'run_start' | 'run_end' }> & {
+      readonly messageId: string
+      readonly timing?: TaskTiming
+      readonly taskId?: Option.Option<TaskId>
+    })
 /** Atomic snapshots are annotated at observation ingress, including genuine idle absence. */
-export type RunSnapshot = SnapshotEvent & { readonly messageId: Option.Option<string> }
+export type RunSnapshot = SnapshotEvent & {
+  readonly messageId: Option.Option<string>
+  readonly timing?: TaskTiming
+  readonly taskId?: Option.Option<TaskId>
+}
 
 /** Fold identified boundaries without reading Pi; subsequent task handovers cannot rename the run. */
 export function translate(state: RunState, event: RunEvent): Step {
   return Match.value(event).pipe(
     Match.when({ type: 'run_start' }, (started): Step => ({
-      state: { ...initialRunState, messageId: Option.some(started.messageId) },
+      state: {
+        ...initialRunState,
+        messageId: Option.some(started.messageId),
+        ...started.timing,
+        taskId: started.taskId ?? Option.none(),
+      },
       chunks: [
         {
           type: 'start',
@@ -599,13 +624,13 @@ export function translate(state: RunState, event: RunEvent): Step {
       ],
     })),
     Match.when({ type: 'run_end' }, (ended): Step => {
-      const closed = closeRun(state, ended.messageId)
+      const closed = closeRun({ ...state, ...ended.timing }, ended.messageId)
       return {
         state: closed.state,
         chunks: [...closed.chunks, ...finishRun(closed.state)],
       }
     }),
-    Match.when({ type: 'turn_start' }, () => startTurn(state)),
+    Match.when({ type: 'turn_start' }, (started) => startTurn({ ...state, ...started.timing })),
     Match.when({ type: 'message_start' }, (started) =>
       started.message.role === 'assistant'
         ? beginResponse(state, started.message)
@@ -716,7 +741,12 @@ export function replay(snapshot: RunSnapshot): Option.Option<Rebuilt> {
   if (snapshot.run === undefined || Option.isNone(snapshot.messageId)) return Option.none()
   const metadata = capturedMetadata(snapshot)
   const started: Step = {
-    state: { ...initialRunState, messageId: snapshot.messageId },
+    state: {
+      ...initialRunState,
+      messageId: snapshot.messageId,
+      ...snapshot.timing,
+      taskId: snapshot.taskId ?? Option.none(),
+    },
     // SDK chat.ts retains the streaming state after a network error. Its start chunk only
     // changes identity; process-ui-message-stream.ts reset-step clears the retained current step.
     chunks: [
@@ -799,6 +829,8 @@ export function replayAfter(
     {
       ...initialRunState,
       messageId: snapshot.messageId,
+      ...snapshot.timing,
+      taskId: snapshot.taskId ?? Option.none(),
       metadata: snapshot.entries.slice(0, index).reduce(recordMetadata, emptyMetadata),
     },
     calledEntry,

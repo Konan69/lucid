@@ -23,6 +23,7 @@ import type {
   Id,
   JsonObject,
   Page,
+  ScanOrder,
   Seq,
   Storage,
   StorageWrite,
@@ -42,6 +43,7 @@ import type {
 } from './database.ts'
 import type { StorageDisconnected } from './errors.ts'
 import { safeNumber } from './database.ts'
+import { scanStart, scanSql } from './scan.ts'
 import { Statements } from './statements.ts'
 import { applyPostgresMigrations } from './migrations.ts'
 
@@ -250,7 +252,8 @@ const encodeJson = (
  * indexed identities lossless, including NUL and lone UTF-16 surrogates. */
 const encodeIndexedString = (value: string): string => JSON.stringify(value)
 
-/** Pi src/storage/sqlite/storage.ts:cursorId. Validate the round-tripped numeric cursor before using it as a SQL bound. */
+/** Pi 1.1.0 src/storage/sqlite/storage.ts:65–73 (cursorId). Document scans
+ * keep the ascending numeric bound; order-aware table scans use scan.ts. */
 const cursorId = (cursor: Parameters<Storage['scanTasks']>[2]) => {
   const after = cursor === undefined ? undefined : cursor.after
   if (after === undefined) return undefined
@@ -258,14 +261,16 @@ const cursorId = (cursor: Parameters<Storage['scanTasks']>[2]) => {
   return after
 }
 
-/** Pi src/storage/sqlite/storage.ts:page. The extra row determines continuation; the last returned id is its cursor. */
+/** Pi 1.1.0 src/storage/sqlite/storage.ts:75–83 (page). The extra row determines
+ * continuation; the last returned id and scan direction form its opaque cursor. */
 const page = <T extends { readonly id: Id<string> }>(
   values: readonly T[],
   limit: number,
+  order: ScanOrder = 'ascending',
 ): Page<T, Cursor> => {
   const items = values.slice(0, limit)
   if (values.length <= limit) return { items }
-  return { items, next: { after: Option.getOrThrow(Option.fromNullishOr(items.at(-1))).id } }
+  return { items, next: { after: Option.getOrThrow(Option.fromNullishOr(items.at(-1))).id, order } }
 }
 
 /** Pi src/storage/sqlite/storage.ts:scopeColumns. Session ownership uses reserved zero; other scopes use their actual owner id. */
@@ -414,7 +419,7 @@ function checkDocumentRecord(
 }
 
 /** Port of Pi src/storage/sqlite/storage.ts:SqliteStorage and src/types.ts:Storage.
- * Statement order, paging, document revisions and close admission follow Pi 1.0.4.
+ * Statement order, paging, document revisions and close admission follow Pi 1.1.0.
  * Option is plain facade data; all Pi return types retain their original absence.
  * BIGINT metadata preserves the exhausted id sentinel and checks driver text before
  * returning Pi numeric brands. PostgreSQL errors identify this backend, while all
@@ -550,7 +555,7 @@ export class PostgresStorage implements Storage {
   }
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.scanConversations.
-   * Use the original ascending id cursor and fetch limit plus one for continuation. */
+   * Pi 1.1.0:211–241. Honor query/cursor order and fetch limit plus one for continuation. */
   // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.scanConversations.
   async scanConversations(
     query: ConversationQuery,
@@ -559,8 +564,10 @@ export class PostgresStorage implements Storage {
     _context: Context,
   ) {
     this.assertOpen()
-    const clauses = ['id > ?']
-    const params: PostgresValue[] = [cursorId(cursor) ?? -1]
+    const start = scanStart(query.order, cursor, 'ascending')
+    const scan = scanSql(start)
+    const clauses = [scan.clause]
+    const params: PostgresValue[] = [scan.param]
     if (query.ownerConversationId !== undefined) {
       clauses.push('owner_conversation_id = ?')
       params.push(query.ownerConversationId)
@@ -571,12 +578,13 @@ export class PostgresStorage implements Storage {
     }
     params.push(limit + 1)
     const rows = await this.db.all<JsonRow>(
-      `SELECT record FROM conversations WHERE ${clauses.join(' AND ')} ORDER BY id LIMIT ?`,
+      `SELECT record FROM conversations WHERE ${clauses.join(' AND ')} ORDER BY id ${scan.direction} LIMIT ?`,
       ...params,
     )
     return page(
       rows.map((row) => parseConversation(row.record)),
       limit,
+      start.order,
     )
   }
 
@@ -603,7 +611,7 @@ export class PostgresStorage implements Storage {
   }
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.scanEntries.
-   * Newest-first fork paging uses the original inclusive ancestry cutoffs. */
+   * Pi 1.1.0:264–271/332–409. Both orders retain inclusive ancestry cutoffs. */
   scanEntries(
     query: EntryQuery,
     limit: number,
@@ -704,18 +712,31 @@ export class PostgresStorage implements Storage {
   }
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.readEntries.
-   * Fill one page across ancestor segments without exposing entries beyond their inclusive fork cutoffs. */
+   * Pi 1.1.0:332–338. Resolve query/cursor direction before choosing the ancestry scan. */
   // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.readEntries.
   private async readEntries(
     query: EntryQuery,
     limit: number,
     cursor: Parameters<Storage['scanTasks']>[2],
   ) {
+    const { order, after } = scanStart(query.order, cursor, 'descending')
+    return order === 'ascending'
+      ? this.readEntriesAscending(query, limit, after)
+      : this.readEntriesDescending(query, limit, after)
+  }
+
+  /** Pi 1.1.0 src/storage/sqlite/storage.ts:339–367. Query descendant segments
+   * first; each parent is capped at the fork so excluded entries never reappear. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of SqliteStorage.readEntries descending branch.
+  private async readEntriesDescending(
+    query: EntryQuery,
+    limit: number,
+    after: Option.Option<number>,
+  ) {
     let conversation = await this.readConversation(query.conversationId)
     if (conversation === undefined) throw new Error(`Unknown conversation: ${query.conversationId}`)
-    const after = cursorId(cursor)
     let upper: ReturnType<typeof cursorId> = query.maxEntryId
-    if (after !== undefined) upper = Math.min(upper ?? Number.MAX_SAFE_INTEGER, after - 1)
+    if (Option.isSome(after)) upper = Math.min(upper ?? Number.MAX_SAFE_INTEGER, after.value - 1)
     const values: EntryRecord[] = []
     while (true) {
       const clauses = ['conversation_id = ?']
@@ -741,7 +762,75 @@ export class PostgresStorage implements Storage {
         Option.fromNullishOr(await this.readConversation(conversation.parent.conversationId)),
       )
     }
-    return page(values, limit)
+    return page(values, limit, 'descending')
+  }
+
+  /** Pi 1.1.0 src/storage/sqlite/storage.ts:370–409. Oldest first: the fork chain's segments from the root conversation forward, each up to its fork point. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of SqliteStorage.readEntriesAscending.
+  private async readEntriesAscending(
+    query: EntryQuery,
+    limit: number,
+    after: Option.Option<number>,
+  ): Promise<Page<EntryRecord, Cursor>> {
+    const segments = await this.readEntrySegments(query)
+    let lower: Option.Option<number> = Option.fromNullishOr(query.minEntryId)
+    if (Option.isSome(after))
+      lower = Option.some(
+        Math.max(
+          Option.getOrElse(lower, () => after.value + 1),
+          after.value + 1,
+        ),
+      )
+    const values: EntryRecord[] = []
+    for (const segment of segments.toReversed()) {
+      const clauses = ['conversation_id = ?']
+      const params: PostgresValue[] = [segment.conversationId]
+      if (Option.isSome(lower)) {
+        clauses.push('id >= ?')
+        params.push(lower.value)
+      }
+      if (Option.isSome(segment.upper)) {
+        clauses.push('id <= ?')
+        params.push(segment.upper.value)
+      }
+      params.push(limit + 1 - values.length)
+      const rows = await this.db.all<JsonRow>(
+        `SELECT record FROM entries WHERE ${clauses.join(' AND ')} ORDER BY id ASC LIMIT ?`,
+        ...params,
+      )
+      values.push(...rows.map((row) => parseEntry(row.record)))
+      if (values.length > limit) break
+    }
+    return page(values, limit, 'ascending')
+  }
+
+  /** Pi 1.1.0 src/storage/sqlite/storage.ts:375–386. Discover the fork chain
+   * before an ascending scan so roots precede descendants, each with its exact
+   * inclusive bound. Keep bounds as Options outside the SDK's query contract. */
+  // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of SqliteStorage.readEntriesAscending ancestry branch.
+  private async readEntrySegments(query: EntryQuery) {
+    const segments: {
+      readonly conversationId: ConversationId
+      readonly upper: Option.Option<number>
+    }[] = []
+    let conversation = await this.readConversation(query.conversationId)
+    if (conversation === undefined) throw new Error(`Unknown conversation: ${query.conversationId}`)
+    let upper: Option.Option<number> = Option.fromNullishOr(query.maxEntryId)
+    while (true) {
+      segments.push({ conversationId: conversation.id, upper })
+      if (conversation.parent === undefined) break
+      const at = conversation.parent.at
+      const bound = Option.match(upper, {
+        onNone: () => at,
+        onSome: (value) => Math.min(value, at),
+      })
+      upper = Option.some(bound)
+      if (query.minEntryId !== undefined && bound < query.minEntryId) break
+      conversation = Option.getOrThrow(
+        Option.fromNullishOr(await this.readConversation(conversation.parent.conversationId)),
+      )
+    }
+    return segments
   }
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.task.
@@ -756,7 +845,7 @@ export class PostgresStorage implements Storage {
   }
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.scanTasks.
-   * Keep every supplied filter conjunctive and fetch one extra row for ascending continuation. */
+   * Pi 1.1.0:417–458. Keep filters conjunctive and fetch one extra row in the scan order. */
   // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.scanTasks.
   async scanTasks(
     query: TaskQuery,
@@ -765,8 +854,10 @@ export class PostgresStorage implements Storage {
     _context: Context,
   ) {
     this.assertOpen()
-    const clauses = ['id > ?']
-    const params: PostgresValue[] = [cursorId(cursor) ?? -1]
+    const start = scanStart(query.order, cursor, 'ascending')
+    const scan = scanSql(start)
+    const clauses = [scan.clause]
+    const params: PostgresValue[] = [scan.param]
     if (query.conversationId !== undefined) {
       clauses.push('conversation_id = ?')
       params.push(query.conversationId)
@@ -789,12 +880,13 @@ export class PostgresStorage implements Storage {
     }
     params.push(limit + 1)
     const rows = await this.db.all<JsonRow>(
-      `SELECT record FROM tasks WHERE ${clauses.join(' AND ')} ORDER BY id LIMIT ?`,
+      `SELECT record FROM tasks WHERE ${clauses.join(' AND ')} ORDER BY id ${scan.direction} LIMIT ?`,
       ...params,
     )
     return page(
       rows.map((row) => parseTask(row.record)),
       limit,
+      start.order,
     )
   }
 
@@ -810,7 +902,7 @@ export class PostgresStorage implements Storage {
   }
 
   /** Pi src/storage/sqlite/storage.ts:SqliteStorage.scanSubmissions.
-   * Apply status and conversation filters before the ascending id limit. */
+   * Pi 1.1.0:466–495. Apply filters before the scan-order id limit. */
   // @effect-diagnostics-next-line asyncFunction:off -- Pi Storage Promise contract; port of src/storage/sqlite/storage.ts:SqliteStorage.scanSubmissions.
   async scanSubmissions(
     query: SubmissionQuery,
@@ -819,8 +911,10 @@ export class PostgresStorage implements Storage {
     _context: Context,
   ) {
     this.assertOpen()
-    const clauses = ['id > ?']
-    const params: PostgresValue[] = [cursorId(cursor) ?? -1]
+    const start = scanStart(query.order, cursor, 'ascending')
+    const scan = scanSql(start)
+    const clauses = [scan.clause]
+    const params: PostgresValue[] = [scan.param]
     if (query.conversationId !== undefined) {
       clauses.push('conversation_id = ?')
       params.push(query.conversationId)
@@ -831,12 +925,13 @@ export class PostgresStorage implements Storage {
     }
     params.push(limit + 1)
     const rows = await this.db.all<JsonRow>(
-      `SELECT record FROM submissions WHERE ${clauses.join(' AND ')} ORDER BY id LIMIT ?`,
+      `SELECT record FROM submissions WHERE ${clauses.join(' AND ')} ORDER BY id ${scan.direction} LIMIT ?`,
       ...params,
     )
     return page(
       rows.map((row) => parseSubmission(row.record)),
       limit,
+      start.order,
     )
   }
 

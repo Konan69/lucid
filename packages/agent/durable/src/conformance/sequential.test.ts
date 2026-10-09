@@ -25,7 +25,7 @@ import { context, host } from './fixtures/host.ts'
 import { providerFamilies } from '../fixtures/provider.ts'
 
 /**
- * Pi 1.0.4 generation.tools allocates c2 in a separate commit after c1 ends, but events.translate
+ * Pi 1.1.0 generation.tools allocates c2 in a separate commit after c1 ends, but events.translate
  * emits starts only for running slots. Observe all public channels, then append a receipt to drain
  * prior event delivery without sleeping or polling. This is evidence, not a presentation workaround.
  */

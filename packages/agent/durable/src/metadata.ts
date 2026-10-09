@@ -2,6 +2,16 @@ import type { AssistantMessage } from '@earendil-works/pi-ai'
 import type { EntryId, EntryRecord } from '@earendil-works/pi-durable'
 import { Option, Schema } from 'effect'
 
+const isEntryId = Schema.is(Schema.Int)
+const EntryIdentity = Schema.declare<EntryId>((value): value is EntryId => isEntryId(value))
+const ResponseDuration = Schema.Struct({ entryId: EntryIdentity, durationMs: Schema.Finite })
+const ToolDuration = Schema.Struct({
+  entryId: EntryIdentity,
+  toolCallId: Schema.String,
+  toolName: Schema.String,
+  durationMs: Schema.Finite,
+})
+
 const Model = Schema.Struct({
   provider: Schema.String,
   modelId: Schema.String,
@@ -22,26 +32,35 @@ const Tokens = Schema.Struct({
  * are monetary records; the token decoder projects only the count vocabulary. */
 const decodeTokens = Schema.decodeUnknownOption(Tokens)
 
-/**
- * Pi generation.js:523–528 persists each provider message and its usage together. Models name the
- * recorded provider/model pair; token counts sum those durable responses, including failed attempts.
- * Pi records response timestamps, but no run start/end timestamp. EntryRecord (types.d.ts:272–288)
- * also has no creation time; provider-message timestamps are not entry/run lifecycle times, so
- * neither start nor end is invented here.
- */
+/** Pi 1.1.0 generation.ts records response duration; tool.ts:appendToolResult
+ * records execute duration. Entry identity distinguishes retries and reused call ids.
+ * These are monotonic attempt durations, never task wall-clock lifecycle spans. */
 export const Metadata = Schema.Struct({
   models: Schema.Array(Model),
   usage: Schema.optionalKey(Tokens),
   failure: Schema.optionalKey(Schema.String),
+  responses: Schema.optionalKey(Schema.Array(ResponseDuration)),
+  tools: Schema.optionalKey(Schema.Array(ToolDuration)),
 })
 export type Metadata = typeof Metadata.Type
 
 /** Per-reader entry deduplication mirrors Pi's usage ledger without introducing another store. */
 export type MetadataState = {
   readonly models: Metadata['models']
-  readonly responses: ReadonlyMap<EntryId, Option.Option<typeof Tokens.Type>>
+  readonly responses: ReadonlyMap<
+    EntryId,
+    {
+      readonly usage: Option.Option<typeof Tokens.Type>
+      readonly durationMs: Option.Option<number>
+    }
+  >
+  readonly tools: ReadonlyMap<EntryId, typeof ToolDuration.Type>
 }
-export const emptyMetadata: MetadataState = { models: [], responses: new Map() }
+export const emptyMetadata: MetadataState = {
+  models: [],
+  responses: new Map(),
+  tools: new Map(),
+}
 
 /** Publish the actual model once its provider message exists; agent configuration is not an answer. */
 export function startMetadata(state: MetadataState, message: AssistantMessage): MetadataState {
@@ -66,15 +85,32 @@ export function startMetadata(state: MetadataState, message: AssistantMessage): 
 /** Watch/snapshot overlap must not count the same durable response twice. An invalid usage report
  * contributes no counts, but the response's model still belongs to the message. */
 export function recordMetadata(state: MetadataState, entry: EntryRecord): MetadataState {
-  if (state.responses.has(entry.id)) return state
+  if (state.responses.has(entry.id) || state.tools.has(entry.id)) return state
   if (entry.model === undefined) return state
+  const tool = entry.model.find((item) => item.role === 'toolResult')
+  if (tool !== undefined && tool.durationMs !== undefined)
+    return {
+      ...state,
+      tools: new Map(state.tools).set(
+        entry.id,
+        ToolDuration.make({
+          entryId: entry.id,
+          toolCallId: tool.toolCallId,
+          toolName: tool.toolName,
+          durationMs: tool.durationMs,
+        }),
+      ),
+    }
   const message = entry.model.find((item) => item.role === 'assistant')
   if (message === undefined) return state
   const next = startMetadata(state, message)
   const usage = decodeTokens(message.usage)
   return {
     ...next,
-    responses: new Map(next.responses).set(entry.id, usage),
+    responses: new Map(next.responses).set(entry.id, {
+      usage,
+      durationMs: Option.fromNullishOr(message.durationMs),
+    }),
   }
 }
 
@@ -100,11 +136,19 @@ function sumTokens(total: typeof Tokens.Type, response: typeof Tokens.Type): typ
 
 /** Absent completed usage stays absent; recorded zero counts are preserved as recorded zero counts. */
 export function messageMetadata(state: MetadataState, failure: Option.Option<string>): Metadata {
-  const responses = Array.from(state.responses.values()).flatMap(Option.toArray)
+  const responses = Array.from(state.responses.values()).flatMap((response) =>
+    Option.toArray(response.usage),
+  )
   const first = responses[0]
-  const metadata =
+  let metadata =
     first === undefined
       ? Metadata.make({ models: state.models })
       : Metadata.make({ models: state.models, usage: responses.slice(1).reduce(sumTokens, first) })
+  const durations = Array.from(state.responses, ([entryId, response]) =>
+    Option.map(response.durationMs, (durationMs) => ResponseDuration.make({ entryId, durationMs })),
+  ).flatMap(Option.toArray)
+  if (durations.length > 0) metadata = Metadata.make({ ...metadata, responses: durations })
+  if (state.tools.size > 0)
+    metadata = Metadata.make({ ...metadata, tools: [...state.tools.values()] })
   return Option.isSome(failure) ? Metadata.make({ ...metadata, failure: failure.value }) : metadata
 }

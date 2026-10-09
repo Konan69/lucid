@@ -595,7 +595,7 @@ function boundAddress(host: ProcessHost) {
     }),
   )
 }
-// Pi 1.0.4 README "Persist and Resume"; a read-only GET must finish recovered work without another POST.
+// Pi 1.1.0 README "Persist and Resume"; a read-only GET must finish recovered work without another POST.
 function crash(kind: 'slow' | 'approve') {
   return Effect.scoped(
     Effect.gen(function* () {
