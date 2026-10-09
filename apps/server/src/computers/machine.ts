@@ -6,7 +6,7 @@ import {
   type DesktopView,
   ComputerState,
 } from '@vivid/contracts'
-import { Context, type Effect, Schema, type Stream, type Redacted } from 'effect'
+import { Context, type Effect, type Redacted, Schema, type Scope, type Stream } from 'effect'
 
 /** App-owned RFB transport path; neither provider locations nor credentials belong in Running state. */
 export { computerScreenAddress } from '@vivid/contracts'
@@ -266,6 +266,22 @@ export const isStanding = (failure: MachineFailure): boolean =>
   failure instanceof MachineAuthenticationFailed ||
   failure instanceof MachineCreationUnresolved
 
+/**
+ * A command on the machine that is spoken with while it runs, over the machine's SSH connection
+ * (`ssh/link.ts`, `LinkConversation`): what it prints arrives as it prints, and text can be
+ * written to its standard input. This is how a program on the Computer and the server talk.
+ */
+export interface MachineConversation {
+  /** Standard output as text, in the pieces it arrives in; ends when the command ends. */
+  readonly output: Stream.Stream<string, MachineFailure>
+  readonly say: (text: string) => Effect.Effect<void, MachineFailure>
+  /** How the command ended. `timedOut` is the machine's own deadline for it. */
+  readonly ended: Effect.Effect<
+    { readonly exitCode: number | null; readonly timedOut: boolean },
+    MachineFailure
+  >
+}
+
 /** One machine boundary; ownership, approvals, receipts, and RPC remain application concerns. */
 export interface MachineOperations {
   readonly ensure: (
@@ -310,6 +326,16 @@ export interface MachineOperations {
     readonly directory: string
     readonly timeoutSeconds: number
   }) => Effect.Effect<MachineRun, MachineFailure>
+  /**
+   * Starts a command and holds it for the scope; closing the scope ends it. Unlike `follow`, it
+   * can be written to, so nothing has to be put on the machine's disk to answer it.
+   */
+  readonly converse: (input: {
+    readonly key: MachineKey
+    readonly command: string
+    readonly directory: string
+    readonly timeoutSeconds: number
+  }) => Effect.Effect<MachineConversation, MachineFailure, Scope.Scope>
   readonly read: (input: {
     readonly key: MachineKey
     readonly path: string
