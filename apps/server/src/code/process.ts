@@ -245,11 +245,7 @@ export class Execution {
   })
 
   /** Records what one finished call did. Synchronous: it is one step of the landing transition. */
-  private land(
-    index: number,
-    call: ProgramCall,
-    result: CallOutcome,
-  ): CallStep {
+  private land(index: number, call: ProgramCall, result: CallOutcome): CallStep {
     // One hundred receipts must fit the final aggregate even for Unicode or escaped summaries.
     // Bound encoded bytes, not code units; metadata cannot consume the returned value's budget.
     const summary = encodedPrefix(result.summary, 200)
@@ -336,7 +332,7 @@ export class Execution {
     this.printed(result.logs === undefined ? [] : result.logs)
     const decided = this.settled()
     if (Option.isSome(decided)) return decided.value
-    return result.ok ? this.completed(result.value) : this.failed(failure(result.error))
+    return result.ok ? this.completed(result.value) : this.failed(failureOf(result.error))
   }
 }
 
@@ -345,12 +341,24 @@ export class Execution {
  * the program's own fault (it does not parse, uses syntax a program may not, names a tool that
  * does not exist, threw) are one case: the model reads the message and writes a better program.
  */
-function failure(diagnostic: Program.Diagnostic): CodeFailure {
-  if (diagnostic.kind === 'TimeoutExceeded')
-    return CodeFailure.cases.TimedOut.make({ seconds: budgets.seconds })
-  if (diagnostic.kind === 'WorkLimitExceeded')
-    return CodeFailure.cases.OverLimit.make({ limit: 'work' })
-  return CodeFailure.cases.Threw.make({ message: diagnostic.message.slice(0, 500) })
+function failureOf(diagnostic: Program.Diagnostic): CodeFailure {
+  switch (diagnostic.kind) {
+    case 'TimeoutExceeded':
+      return CodeFailure.cases.TimedOut.make({ seconds: budgets.seconds })
+    case 'WorkLimitExceeded':
+      return CodeFailure.cases.OverLimit.make({ limit: 'work' })
+    case 'ToolCallLimitExceeded':
+      return CodeFailure.cases.OverLimit.make({ limit: 'calls' })
+    case 'ParseError':
+    case 'UnsupportedSyntax':
+    case 'UnknownTool':
+    case 'InvalidToolInput':
+    case 'InvalidToolOutput':
+    case 'InvalidDataValue':
+    case 'ToolFailure':
+    case 'ExecutionFailure':
+      return CodeFailure.cases.Threw.make({ message: diagnostic.message.slice(0, 500) })
+  }
 }
 
 const decodeInput = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))
@@ -427,6 +435,7 @@ const execute = Effect.fn('Code.supervise')(function* (
     },
     limits: {
       timeoutMs: budgets.seconds * 1_000,
+      maxToolCalls: budgets.calls,
       maxSteps: budgets.steps,
       maxGrowth: budgets.growth,
     },

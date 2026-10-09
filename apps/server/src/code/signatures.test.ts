@@ -22,42 +22,46 @@ describe('Integration signatures', () => {
         `tools.use_tool({account: ${JSON.stringify(account)}, tool: "send-email", input, summary, rationale})`,
       )
       expect(tool.signature).toContain(`account: ${JSON.stringify(account)}; tool: "send-email";`)
-      expect(tool.signature).toMatch(/input: \{\s+to: string,\s+\}; summary: string; rationale: string\}/u)
+      expect(tool.signature).toMatch(
+        /input: \{\s+to: string,\s+\}; summary: string; rationale: string\}/u,
+      )
       expect(tool.signature).toMatch(/output: \{\s+sent: boolean,\s+\}\}/u)
       expect(tool).not.toHaveProperty('input')
     }),
   )
 
-  it.effect('keeps complete declarations inside the model boundary when both schema types are large', () =>
-    Effect.gen(function* () {
-      const large = { type: 'object', properties: { ['field'.repeat(500)]: { type: 'string' } } }
-      const tool = yield* discoveredTool({
-        account: 'Mail',
-        name: 'send',
-        input: large,
-        output: Option.some(large),
-      })
-      expect(bytes(tool.signature)).toBeLessThanOrEqual(4000)
-      expect(tool.signature).toContain('input: unknown')
-      expect(tool.signature).toContain('fieldfield')
-      expect(tool.signature.endsWith('| {ok: false; reason: string}>')).toBe(true)
-      const missing = yield* discoveredTool({
-        account: 'Mail',
-        name: 'send',
-        input: large,
-        output: Option.none(),
-      })
-      expect(missing.signature).toContain('output: Json')
-      const huge = { type: 'object', properties: { ['x'.repeat(16_001)]: { type: 'string' } } }
-      const bounded = yield* discoveredTool({
-        account: 'Mail',
-        name: 'send',
-        input: huge,
-        output: Option.some(huge),
-      })
-      expect(bounded.signature).toContain('input: unknown')
-      expect(bounded.signature).toContain('output: unknown')
-    }),
+  it.effect(
+    'keeps complete declarations inside the model boundary when both schema types are large',
+    () =>
+      Effect.gen(function* () {
+        const large = { type: 'object', properties: { ['field'.repeat(500)]: { type: 'string' } } }
+        const tool = yield* discoveredTool({
+          account: 'Mail',
+          name: 'send',
+          input: large,
+          output: Option.some(large),
+        })
+        expect(bytes(tool.signature)).toBeLessThanOrEqual(4000)
+        expect(tool.signature).toContain('input: unknown')
+        expect(tool.signature).toContain('fieldfield')
+        expect(tool.signature.endsWith('| {ok: false; reason: string}>')).toBe(true)
+        const missing = yield* discoveredTool({
+          account: 'Mail',
+          name: 'send',
+          input: large,
+          output: Option.none(),
+        })
+        expect(missing.signature).toContain('output: Json')
+        const huge = { type: 'object', properties: { ['x'.repeat(16_001)]: { type: 'string' } } }
+        const bounded = yield* discoveredTool({
+          account: 'Mail',
+          name: 'send',
+          input: huge,
+          output: Option.some(huge),
+        })
+        expect(bounded.signature).toContain('input: unknown')
+        expect(bounded.signature).toContain('output: unknown')
+      }),
   )
 
   it.effect('keeps a description inside its comment whatever it contains', () =>
@@ -71,7 +75,7 @@ describe('Integration signatures', () => {
           properties: {
             to: {
               type: 'string',
-              description: 'Who to. */\nthrow new Error("injected")\r return 1 /* */',
+              description: 'Who to. */\nthrow new Error("injected")\r\u2028return 1 /* */',
             },
           },
         },
@@ -84,24 +88,33 @@ describe('Integration signatures', () => {
       )
       expect(comment.match(/\*\//gu)).toHaveLength(1)
       expect(comment.trimEnd().endsWith('*/')).toBe(true)
-      expect(tool.signature).not.toMatch(/[  ]/u)
+      expect(tool.signature).not.toMatch(/[\u2028\u2029]/u)
     }),
   )
 
   it.effect('contains malformed references and excessively deep schemas within their types', () =>
     Effect.gen(function* () {
+      const broken = yield* discoveredTool({
+        account: 'Mail',
+        name: 'read',
+        input: { $ref: '#/%' },
+        output: Option.some({ $ref: '#/%' }),
+      })
+      expect(broken.signature).toContain('input: unknown')
+      expect(broken.signature).toContain('output: unknown')
       let deep: Schema.Json = { type: 'string' }
       for (let i = 0; i < 20_000; i++) deep = { type: 'array', items: deep }
-      for (const input of [{ $ref: '#/%' }, deep]) {
-        const tool = yield* discoveredTool({
-          account: 'Mail',
-          name: 'read',
-          input,
-          output: Option.some(input),
-        })
-        expect(tool.signature).toContain('input: unknown')
-        expect(tool.signature).toContain('output: unknown')
-      }
+      const nested = yield* discoveredTool({
+        account: 'Mail',
+        name: 'read',
+        input: deep,
+        output: Option.some(deep),
+      })
+      // The renderer follows a schema nine levels down and writes `unknown` for what is below.
+      expect(nested.signature).toContain('input: Array<Array<')
+      expect(nested.signature).toContain('<unknown>')
+      expect(nested.signature).not.toContain('string>')
+      expect(bytes(nested.signature)).toBeLessThanOrEqual(4_000)
     }),
   )
 
@@ -109,8 +122,8 @@ describe('Integration signatures', () => {
     Effect.gen(function* () {
       const tool = yield* discoveredTool({
         output: Option.none(),
-        account: 'Mail archive',
-        name: 'read mail',
+        account: 'Mail\u2028archive',
+        name: 'read\u2029mail',
         input: {
           type: 'object',
           properties: { ['界'.repeat(1500)]: { type: 'string' } },
@@ -120,7 +133,7 @@ describe('Integration signatures', () => {
       expect(tool.signature).toContain('input: unknown')
       expect(tool.call).toContain('\\u2028')
       expect(tool.call).toContain('\\u2029')
-      expect(tool.call).not.toMatch(/[  ]/u)
+      expect(tool.call).not.toMatch(/[\u2028\u2029]/u)
     }),
   )
 

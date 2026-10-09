@@ -2174,6 +2174,7 @@ class Interpreter<R> {
         if (callable.path.length === 0)
           throw new InterpreterRuntimeError('The tools root is not callable.', callee)
         // An un-awaited tool call is a first-class promise value; the call itself starts now.
+        this.work.started(node)
         return yield* this.createToolCallPromise(callable.path, args)
       }
       if (callable instanceof PromiseMethodReference) {
@@ -2228,7 +2229,10 @@ class Interpreter<R> {
   private invokeConsole(name: string, args: Array<unknown>, node: AstNode): undefined {
     if (!consoleMethods.has(name))
       throw new InterpreterRuntimeError(`console.${name} is not available in a program.`, node)
-    this.logs.push(publicErrorMessage(this.formatConsoleMessage(name, args)))
+    const line = publicErrorMessage(this.formatConsoleMessage(name, args))
+    // A printed line is data the program made: it is kept until the program ends.
+    this.work.grew(line, node)
+    this.logs.push(line)
     return undefined
   }
 
@@ -2544,6 +2548,7 @@ class Interpreter<R> {
     args: Array<unknown>,
   ): Effect.Effect<unknown, Raised, R> {
     return Effect.suspend(() => {
+      this.work.entered()
       const savedScopes = this.scopes
       this.scopes = [...fn.capturedScopes, new Map<string, Binding>()]
       const run = Effect.fn('Program.invokeFunction')(function* (this: Interpreter<R>) {
@@ -2579,6 +2584,7 @@ class Interpreter<R> {
       return run.call(this).pipe(
         Effect.ensuring(
           Effect.sync(() => {
+            this.work.left()
             this.scopes = savedScopes
           }),
         ),
@@ -3863,7 +3869,11 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
       tools.invoke,
       tools.keys,
       logs,
-      new Work({ maxSteps: limits.maxSteps, maxGrowth: limits.maxGrowth }),
+      new Work({
+        maxSteps: limits.maxSteps,
+        maxGrowth: limits.maxGrowth,
+        maxCalls: limits.maxToolCalls,
+      }),
     )
     const value = yield* interpreter.run(program)
     const result = copyOut(copyIn(value, 'Execution result'), true) as DataValue

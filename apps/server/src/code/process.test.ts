@@ -1,4 +1,4 @@
-import { Layer, Logger } from 'effect'
+import { Logger } from 'effect'
 import { describe, expect, it as standalone, layer } from '@effect/vitest'
 import {
   ApprovalId,
@@ -92,7 +92,11 @@ describe('Supervised programs', () => {
           const dispatch: Dispatch = Effect.fn('Test.exactDiscoveredCall')(function* (call) {
             expect(call.kind).toBe('use_tool')
             yield* Ref.update(frames, (items) => items.concat([call.input]))
-            return CallOutcome.cases.Returned.make({ value: null, summary: 'Read', end: 'completed' })
+            return CallOutcome.cases.Returned.make({
+              value: null,
+              summary: 'Read',
+              end: 'completed',
+            })
           })
           const code =
             'const input={},summary="Read",rationale="Test";' +
@@ -273,7 +277,6 @@ describe('Supervised programs', () => {
         })
       }),
     )
-
 
     it.effect('enforces the UTF-8 source budget before startup', () =>
       Effect.gen(function* () {
@@ -498,34 +501,53 @@ describe('Supervised programs', () => {
       }),
     )
 
-    it.effect('a program that keeps making data is ended by its work limit and keeps what it printed', () =>
-      Effect.gen(function* () {
-        const outcome = yield* run(
-          'console.log("filling"); const items=[]; const row="x".repeat(1000); while(true) items.push(row + items.length);',
-          reply,
-        )
-        check(outcome, 'Failed', {
-          failure: CodeFailure.cases.OverLimit.make({ limit: 'work' }),
-          logs: ['filling'],
-        })
-      }),
+    it.effect(
+      'a program that keeps making data is ended by its work limit and keeps what it printed',
+      () =>
+        Effect.gen(function* () {
+          const outcome = yield* run(
+            'console.log("filling"); const items=[]; const row="x".repeat(1000); while(true) items.push(row + items.length);',
+            reply,
+          )
+          check(outcome, 'Failed', {
+            failure: CodeFailure.cases.OverLimit.make({ limit: 'work' }),
+            logs: ['filling'],
+          })
+        }),
     )
 
-    it.effect('a program that never stops is ended by its work limit, whatever it catches', () =>
+    it.effect(
+      'a program that never stops is ended by its work limit, whatever it catches',
+      () =>
+        Effect.gen(function* () {
+          for (const loop of [
+            'while(true) {}',
+            'for(;;) {}',
+            'while(true) await Promise.resolve();',
+            'let n = 0; try { while(true) n++; } catch (e) { return "caught"; } finally { n = 0; }',
+            'const spin = () => { try { spin(); } catch (e) {} }; while(true) spin();',
+          ]) {
+            const outcome = yield* run(`await tools.find_tools({}); ${loop} return "after";`, reply)
+            check(outcome, 'Failed', {
+              failure: CodeFailure.cases.OverLimit.make({ limit: 'work' }),
+            })
+            expect(outcome.calls.map((call) => call.end)).toEqual(['completed'])
+          }
+          expect(yield* run('return 42;', reply)).toHaveProperty('result', 42)
+        }),
+      // Five programs, each about two seconds of interpreting up to its step limit.
+      { timeout: 60_000 },
+    )
+
+    it.effect('a function that calls itself without end fails as a program error', () =>
       Effect.gen(function* () {
-        for (const loop of [
-          'while(true) {}',
-          'for(;;) {}',
-          'while(true) await Promise.resolve();',
-          'let n = 0; try { while(true) n++; } catch (e) { return "caught"; } finally { n = 0; }',
-          'const spin = () => spin(); spin();',
-        ]) {
-          const outcome = yield* run(`await tools.find_tools({}); ${loop} return "after";`, reply)
-          expect(outcome, loop).toHaveProperty('failure._tag', expect.stringMatching(/OverLimit|Threw/))
-          expect(outcome, loop).not.toHaveProperty('result')
-          expect(outcome.calls.map((call) => call.end)).toEqual(['completed'])
-        }
-        expect(yield* run('return 42;', reply)).toHaveProperty('result', 42)
+        const outcome = yield* run('const spin = () => spin(); return spin();', reply)
+        expect(outcome).toHaveProperty('failure.message', expect.stringContaining('nesting depth'))
+        const caught = yield* run(
+          'const spin = () => spin(); try { spin(); } catch (e) { return "recovered"; }',
+          reply,
+        )
+        expect(caught).toHaveProperty('result', 'recovered')
       }),
     )
 

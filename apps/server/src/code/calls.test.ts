@@ -86,13 +86,7 @@ describe.skipIf(!testDatabaseConfigured)(
   () => {
     // The program runs in the production interpreter; each test still owns fresh tenancy, Gate
     // and provider fixtures. Nothing here waits on a clock.
-    layer(
-      Layer.mergeAll(
-        testDatabaseLayer,
-        silentChangesLayer,
-        codeProcessLayer,
-      ),
-    )((it) => {
+    layer(Layer.mergeAll(testDatabaseLayer, silentChangesLayer, codeProcessLayer))((it) => {
       it.effect(
         'composes real named Connection calls and a gated Computer command with only selected results returned',
         () =>
@@ -439,53 +433,51 @@ describe.skipIf(!testDatabaseConfigured)(
 
       // Each decision needs one real interpreter startup; independent questions own independent fixtures.
       for (const decision of ['denied', 'expired'] as const)
-        layer(
-          Layer.merge(
-            testDatabaseLayer,
-            codeProcessLayer,
-          ),
-        )(`Clock for ${decision} program Approval`, (it) => {
-          it.effect(`${decision} program Approvals execute nothing`, () =>
-            withCalls(
-              Effect.gen(function* () {
-                const test = yield* fixture()
-                yield* (yield* ConnectionStore).begin(test.personal, {
-                  from: 'Web',
-                  service: serviceId,
-                  name: null,
-                  shared: false,
-                })
-                const store = yield* ApprovalStore
-                yield* run(test.personal, test.personalId, `await ${use('write')};`)
-                const approval = (yield* store.inThread(test.personalId))[0]
-                if (approval === undefined) return yield* Effect.die('No approval')
-                if (decision === 'denied')
-                  yield* store.decide(test.personal, {
-                    id: approval.id,
-                    digest: approval.digest,
-                    decision: ApprovalDecision.cases.Deny.make({}),
+        layer(Layer.merge(testDatabaseLayer, codeProcessLayer))(
+          `Clock for ${decision} program Approval`,
+          (it) => {
+            it.effect(`${decision} program Approvals execute nothing`, () =>
+              withCalls(
+                Effect.gen(function* () {
+                  const test = yield* fixture()
+                  yield* (yield* ConnectionStore).begin(test.personal, {
+                    from: 'Web',
+                    service: serviceId,
+                    name: null,
+                    shared: false,
                   })
-                else {
-                  yield* TestClock.adjust('25 hours')
-                  expect(
-                    Result.isFailure(
-                      yield* Effect.result(
-                        store.decide(test.personal, {
-                          id: approval.id,
-                          digest: approval.digest,
-                          decision: ApprovalDecision.cases.AllowOnce.make({}),
-                        }),
+                  const store = yield* ApprovalStore
+                  yield* run(test.personal, test.personalId, `await ${use('write')};`)
+                  const approval = (yield* store.inThread(test.personalId))[0]
+                  if (approval === undefined) return yield* Effect.die('No approval')
+                  if (decision === 'denied')
+                    yield* store.decide(test.personal, {
+                      id: approval.id,
+                      digest: approval.digest,
+                      decision: ApprovalDecision.cases.Deny.make({}),
+                    })
+                  else {
+                    yield* TestClock.adjust('25 hours')
+                    expect(
+                      Result.isFailure(
+                        yield* Effect.result(
+                          store.decide(test.personal, {
+                            id: approval.id,
+                            digest: approval.digest,
+                            decision: ApprovalDecision.cases.AllowOnce.make({}),
+                          }),
+                        ),
                       ),
-                    ),
-                  ).toBe(true)
-                }
-                expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
-                return yield* Effect.void
-              }),
-              testLayer,
-            ),
-          )
-        })
+                    ).toBe(true)
+                  }
+                  expect(yield* Ref.get((yield* Observation).actions)).toEqual([])
+                  return yield* Effect.void
+                }),
+                testLayer,
+              ),
+            )
+          },
+        )
 
       it.effect('a Never rule is terminal despite a guest catch and queued writes', () =>
         withCalls(
@@ -590,7 +582,8 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
                 person: test.personal.person.id,
                 thread: test.personalId,
               })(
-                ProgramCall.make({ kind: 'use_tool',
+                ProgramCall.make({
+                  kind: 'use_tool',
                   input: {
                     account: 'Records',
                     tool: 'read',
@@ -636,11 +629,7 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
             .bind({
               person: test.personal.person.id,
               thread: test.personalId,
-            })(
-              ProgramCall.make({ kind: 'read_page',
-                input: { address: 'file:///private' },
-              }),
-            )
+            })(ProgramCall.make({ kind: 'read_page', input: { address: 'file:///private' } }))
             .pipe(
               Effect.updateService(
                 Logger.CurrentLoggers,
@@ -667,11 +656,7 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
               return yield* (yield* CodeCalls).bind({
                 person: test.personal.person.id,
                 thread: test.personalId,
-              })(
-                ProgramCall.make({ kind: 'find_tools',
-                  input: { query: 'read' },
-                }),
-              )
+              })(ProgramCall.make({ kind: 'find_tools', input: { query: 'read' } }))
             }),
             Layer.fresh(codeCallsLayer),
           ).pipe(
@@ -757,11 +742,7 @@ describe.skipIf(!testDatabaseConfigured)('Program pre-dispatch failures', () => 
                 return yield* (yield* CodeCalls).bind({
                   person: test.personal.person.id,
                   thread: test.personalId,
-                })(
-                  ProgramCall.make({ kind: 'find_tools',
-                    input: { query: 'read' },
-                  }),
-                )
+                })(ProgramCall.make({ kind: 'find_tools', input: { query: 'read' } }))
               }),
               Layer.fresh(codeCallsLayer),
             ).pipe(Effect.provideService(ConnectionStore, unavailable))

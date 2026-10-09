@@ -205,10 +205,7 @@ const browse = Effect.fn('Code.browse')(function* (actor: Actor, input: Schema.J
 })
 
 /** Only these four tools exist. Payload ownership fields are excess properties and rejected at ingress. */
-const dispatch = Effect.fn('Code.dispatch')(function* (
-  boundary: CodeBoundary,
-  call: ProgramCall,
-) {
+const dispatch = Effect.fn('Code.dispatch')(function* (boundary: CodeBoundary, call: ProgramCall) {
   const actor = yield* (yield* CodeAuthority).refresh(boundary)
   switch (call.kind) {
     case 'find_tools': {
