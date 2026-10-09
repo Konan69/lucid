@@ -3,7 +3,6 @@ import * as NodeFS from 'node:fs'
 import type { PersonId } from '@vivid/contracts'
 import { CodeFailure, CodeTiming } from '@vivid/contracts/code'
 import { Context, Deferred, Effect, Layer, Option, Queue, Schema, Stream, type Scope } from 'effect'
-import { MachineOutput } from '../computers/machine.ts'
 import { ComputerStore, type ComputerAttachment } from '../computers/store.ts'
 import { boundedNesting, budgets, bytes } from './budgets.ts'
 import { printed } from './lines.ts'
@@ -84,59 +83,44 @@ export const loadRunner = Effect.try({
   catch: () => new CodeRunnerMissing(),
 })
 
-/** The start command's own exit code for "the runner is not on this Computer yet". */
+/** The start command's own exit code for "the runner is not on this Computer". */
 const NOT_INSTALLED = 78
 
-/** What the provider said about an ended process, as the reason a program has no result. */
-const endedBecause = (exit: Option.Option<typeof MachineOutput.cases.Exited.Type>): CodeFailure =>
-  Option.match(exit, {
-    // The connection ended without the provider reporting an exit.
-    onNone: () => CodeFailure.cases.Unavailable.make({}),
-    onSome: (end) => {
-      if (end.timedOut) return CodeFailure.cases.TimedOut.make({ seconds: budgets.seconds })
-      if (end.memory) return CodeFailure.cases.OverLimit.make({ limit: 'memory' })
-      return CodeFailure.cases.Unavailable.make({})
-    },
-  })
+/** How the runner's process ended, as the reason a program has no result. */
+const endedBecause = (end: { readonly timedOut: boolean }): CodeFailure =>
+  end.timedOut
+    ? CodeFailure.cases.TimedOut.make({ seconds: budgets.seconds })
+    : CodeFailure.cases.Unavailable.make({})
 
 /**
- * What is known about a program's process, each from its own evidence. Three of these mean the
- * program needs no order to stop: it printed its final message, it was given the order, or the
- * provider reported its exit. A stream that broke, or a line that was not a message, proves none
- * of them. `draining`: the server has given the program up, and reads on only to reach its end.
- * `waited`: word of its end has been waited for once; that wait is not repeated. `said`: the
- * program's own reason for having no result.
+ * Starts the runner on an attached Computer and joins its two directions.
+ *
+ * The runner is one command on the Computer's SSH connection (`computers/ssh/link.ts`,
+ * `converse`). A message from the program is one line it prints; a message to it is one line
+ * written to its standard input. Until 10 October 2026 the answers were small files the runner
+ * watched for, written through the provider's API, because the provider could follow a command's
+ * output but not write to it. The SSH channel carries both directions, so there is no directory
+ * of the program's on the Computer, nothing to remove afterwards, and no question of an answer
+ * landing after the runner has gone.
+ *
+ * The scope owns the command: when it closes, the Computer signals the runner and everything it
+ * started. A program the server gives up on therefore needs no order to stop and no wait.
+ * `missing` is called when the Computer says the runner is not there.
  */
-interface Known {
-  final: boolean
-  told: boolean
-  exited: boolean
-  draining: boolean
-  waited: boolean
-  said: Option.Option<CodeFailure>
-}
-
-/** One program's link, as its two halves share it: the reading and the ending. */
-interface Link {
-  readonly attachment: ComputerAttachment
-  readonly runner: Runner
-  readonly command: string
-  /** A full queue stops the reading, which stops the provider's stream: a program that prints
-   * faster than its calls are checked waits, and nothing piles up here. */
-  readonly messages: Queue.Queue<WorkerMessage, PipeFailure>
-  /** Why the reading ended. It is not proof that the process did: a broken stream ends the
-   * reading with the program possibly still running. */
-  readonly ended: Deferred.Deferred<CodeFailure>
-  readonly known: Known
-}
-
-/**
- * The reading half: follows the start command for the life of the scope and turns what it prints
- * into the program's messages. The first start on a Computer finds no runner, says so with its
- * exit code, and is repeated once after the file is put there.
- */
-const readGuest = Effect.fn('Code.readGuest')(function* (link: Link) {
-  const { attachment, runner, command, messages, ended, known } = link
+export const openGuest = Effect.fn('Code.openGuest')(function* (
+  attachment: ComputerAttachment,
+  runner: Runner,
+  missing: Effect.Effect<void>,
+) {
+  // Every word is the server's own: a path from a hash and four numbers.
+  const command = `[ -f '${runner.path}' ] || exit ${NOT_INSTALLED}; exec node '${runner.path}' ${budgets.result} ${budgets.logs} ${budgets.calls} ${budgets.frame}`
+  const spoken = yield* attachment
+    .converse({ command, timeoutSeconds: CodeTiming.seconds + 15 })
+    .pipe(Effect.mapError((failure) => new CodeComputerUnavailable({ reason: failure._tag })))
+  const messages = yield* Queue.unbounded<WorkerMessage, PipeFailure>()
+  /** Why the reading ended: the runner's own word when it gave one, else how its process ended. */
+  const ended = yield* Deferred.make<CodeFailure>()
+  const known = { final: false, said: Option.none<CodeFailure>() }
 
   const accept = Effect.fn('Code.guestLine')(function* (text: string) {
     if (!boundedNesting(text)) return yield* new PipeFailure({ reason: 'size' })
@@ -144,59 +128,30 @@ const readGuest = Effect.fn('Code.readGuest')(function* (link: Link) {
       Effect.mapError(() => new PipeFailure({ reason: 'invalid' })),
     )
     if (WorkerMessage.isAnyOf(['Done', 'Failed'])(message)) known.final = true
-    // The program's own word on why it has no result is kept even when nobody takes the message
-    // any more: a server that gave the program up because an answer could not be written still
-    // reports the limit or the error the program ended on, which is the truer reason.
+    // The program's own word on why it has no result is the truer reason, and is kept for
+    // whoever asks why the reading ended.
     if (WorkerMessage.guards.Failed(message)) known.said = Option.some(message.failure)
-    if (known.draining) return false
     return yield* Queue.offer(messages, message)
-  })
-
-  /** One piece of what the provider reports: printed text becomes messages, the end is kept. */
-  const take = (
-    reading: { rest: string; exit: Option.Option<typeof MachineOutput.cases.Exited.Type> },
-    output: MachineOutput,
-  ) =>
-    MachineOutput.match(output, {
-      Printed: Effect.fn('Code.guestPrinted')(function* ({ text }) {
-        const step = printed(reading.rest, text, budgets.wire)
-        if (Option.isNone(step)) return yield* new PipeFailure({ reason: 'size' })
-        reading.rest = step.value.rest
-        return yield* Effect.forEach(step.value.lines, accept, { discard: true })
-      }),
-      Exited: (end) =>
-        Effect.sync(() => {
-          known.exited = true
-          reading.exit = Option.some(end)
-        }),
-    })
-
-  /** One run of the start command, from its first printed piece to the provider's word on its end. */
-  const follow = Effect.fn('Code.followGuest')(function* () {
-    const reading = { rest: '', exit: Option.none<typeof MachineOutput.cases.Exited.Type>() }
-    yield* attachment
-      .follow({ command, timeoutSeconds: CodeTiming.seconds + 15 })
-      .pipe(Stream.runForEach((output) => take(reading, output)))
-    return reading.exit
-  })
-
-  /** The first start on a Computer finds no runner; it is put there and the start is repeated once. */
-  const installed = Effect.fn('Code.installedGuest')(function* () {
-    const first = yield* follow()
-    if (Option.isNone(first) || first.value.exitCode !== NOT_INSTALLED) return first
-    // That start ran nothing; the one that follows is the program's.
-    known.exited = false
-    yield* attachment.write({ path: runner.path, content: runner.text })
-    return yield* follow()
   })
 
   // The reason is settled before the queue fails, so a reader that sees `closed` can ask why.
   const close = (reason: CodeFailure, failure: PipeFailure) =>
     Deferred.succeed(ended, reason).pipe(Effect.andThen(Queue.fail(messages, failure)))
-  yield* installed().pipe(
-    Effect.flatMap((exit) =>
+  const reading = { rest: '' }
+  yield* spoken.output.pipe(
+    Stream.runForEach(
+      Effect.fn('Code.guestPrinted')(function* (text: string) {
+        const step = printed(reading.rest, text, budgets.wire)
+        if (Option.isNone(step)) return yield* new PipeFailure({ reason: 'size' })
+        reading.rest = step.value.rest
+        return yield* Effect.forEach(step.value.lines, accept, { discard: true })
+      }),
+    ),
+    Effect.andThen(spoken.ended),
+    Effect.tap((end) => (end.exitCode === NOT_INSTALLED ? missing : Effect.void)),
+    Effect.flatMap((end) =>
       close(
-        Option.getOrElse(known.said, () => endedBecause(exit)),
+        Option.getOrElse(known.said, () => endedBecause(end)),
         new PipeFailure({ reason: 'closed' }),
       ),
     ),
@@ -204,7 +159,7 @@ const readGuest = Effect.fn('Code.readGuest')(function* (link: Link) {
     Effect.catchTag('CodePipeFailure', (failure) =>
       close(CodeFailure.cases.Unavailable.make({}), failure),
     ),
-    // The provider stopped answering. Only the tag is logged: its text can hold a command.
+    // The connection to the Computer went. Only the tag is logged: its text can hold a command.
     Effect.catch((failure) =>
       Effect.logWarning('The Computer stopped carrying a program').pipe(
         Effect.annotateLogs({ 'vivid.computer.failure': failure._tag }),
@@ -215,111 +170,59 @@ const readGuest = Effect.fn('Code.readGuest')(function* (link: Link) {
     ),
     Effect.forkScoped,
   )
-})
-
-/**
- * Starts the runner on an attached Computer and joins its two directions.
- *
- * Out: the provider follows what the command prints, in pieces; whole lines are decoded as the
- * program's messages (`readGuest`). In: each message is a small file the runner is watching for,
- * because the provider cannot write to a running command (Boat v1 `CommandRequest`: `stream`
- * carries output only).
- */
-export const openGuest = Effect.fn('Code.openGuest')(function* (
-  attachment: ComputerAttachment,
-  runner: Runner,
-  /** Where work that outlives the program is done: the removal of its directory. */
-  background: Scope.Scope,
-) {
-  const directory = `.cache/vivid/programs/${NodeCrypto.randomUUID()}`
-  // Every word is the server's own: a path from a hash, a fresh identifier, five numbers.
-  const command = `[ -f '${runner.path}' ] || exit ${NOT_INSTALLED}; exec node '${runner.path}' '${directory}' ${budgets.result} ${budgets.logs} ${budgets.heap} ${budgets.calls} ${budgets.frame}`
-  const messages = yield* Queue.bounded<WorkerMessage, PipeFailure>(budgets.calls)
-  const ended = yield* Deferred.make<CodeFailure>()
-  const known: Known = {
-    final: false,
-    told: false,
-    exited: false,
-    draining: false,
-    waited: false,
-    said: Option.none(),
-  }
-
-  yield* readGuest({ attachment, runner, command, messages, ended, known })
 
   const send = Effect.fn('Code.sendGuest')(function* (message: ParentMessage) {
     // An answer for a program that has said its last has no reader.
     if (known.final && ParentMessage.guards.Reply(message)) return yield* Effect.void
-    const name = ParentMessage.match(message, {
-      Start: () => 'start',
-      Reply: ({ id }) => `reply-${id}`,
-      Cancel: () => 'cancel',
-    })
     // An order that will not encode is as unusable as one that will not decode: nothing is sent.
     const text = yield* encodeParent(message).pipe(
       Effect.mapError(() => new PipeFailure({ reason: 'invalid' })),
     )
     if (bytes(text) > budgets.wire || !boundedNesting(text))
       return yield* new PipeFailure({ reason: 'size' })
-    // The newline is how the runner knows the file is whole and not still being written.
-    yield* attachment
-      .write({ path: `${directory}/in/${name}.json`, content: `${text}\n` })
+    return yield* spoken
+      .say(`${text}\n`)
       .pipe(Effect.mapError(() => new PipeFailure({ reason: 'closed' })))
-    // Told only once the order is on the Computer: one that failed or was cut off is sent again.
-    if (ParentMessage.guards.Cancel(message)) known.told = true
-    return yield* Effect.void
   })
 
   /**
-   * Ends a program that is not known to be over: the order to stop, then a wait for word of its
-   * end, so the runner has ended what the program started and removed its directory before the
-   * followed command is let go. Both are bounded by the shared timing contract; a Computer that
-   * does not answer is not waited on, and its provider ends the program at the command's own
-   * deadline.
+   * Why a program the server has given up on has no result. A runner that is not known to be
+   * over is told to stop, which makes it say what the program printed and how it ended; word of
+   * that is waited for only briefly. A Computer that has stopped answering is not waited on, and
+   * the scope ends the runner whatever it does.
    */
-  const settle = Effect.fn('Code.settleGuest')(function* () {
-    // What it still prints is read only to reach its end; a reader waiting on a full queue is
-    // let through, because nothing in the queue will be answered now.
-    known.draining = true
-    yield* Queue.clear(messages).pipe(Effect.ignore)
-    // Sent again by a later caller for as long as it has not been delivered.
-    if (!(known.final || known.told || known.exited))
+  const stop = Effect.fn('Code.stopGuest')(function* () {
+    if (!(known.final || (yield* Deferred.isDone(ended))))
       yield* send(ParentMessage.cases.Cancel.make({})).pipe(
         Effect.timeout(CodeTiming.stopMs),
         Effect.ignore,
       )
-    // A program that said its last had finished its own cleanup before it said so.
-    if (known.final || known.exited || known.waited) return yield* Effect.void
-    known.waited = true
-    return yield* Deferred.await(ended).pipe(Effect.timeout(CodeTiming.endMs), Effect.ignore)
-  })
-
-  const stop = Effect.fn('Code.stopGuest')(function* () {
-    yield* settle()
-    // Known when the reading has ended; otherwise nothing more can be said about the program.
+    yield* Deferred.await(ended).pipe(Effect.timeout(CodeTiming.endMs), Effect.ignore)
     if (yield* Deferred.isDone(ended)) return yield* Deferred.await(ended)
     return CodeFailure.cases.Unavailable.make({})
   })
 
-  /**
-   * Takes the program's directory away, whatever became of the program. The runner removes it
-   * when it finishes, but a file of the server's that lands after that puts it back, and which
-   * of the two came first cannot be known from here: an answer can be written while the final
-   * line is still on its way. A runner that is still there and finds its directory gone ends
-   * itself. This runs after the outcome is decided and is not waited for, so it costs the
-   * program's caller nothing.
-   */
-  const remove = attachment
-    .follow({ command: `rm -rf -- '${directory}'`, timeoutSeconds: 30 })
-    .pipe(Stream.runDrain, Effect.timeout('30 seconds'), Effect.ignore)
-
-  // Added after the fork, so it runs before the reading is interrupted.
-  yield* Effect.addFinalizer(() =>
-    settle().pipe(Effect.andThen(Effect.forkIn(remove, background)), Effect.asVoid),
-  )
-
   const guest: Guest = { read: Queue.take(messages), send, stopped: stop() }
   return guest
+})
+
+/**
+ * Puts the runner on a Computer that does not have it. Asked once for each Person in the life of
+ * this server, and again after a Computer has said the runner is gone (a machine that was
+ * replaced or rolled back).
+ */
+export const installRunner = Effect.fn('Code.installRunner')(function* (
+  attachment: ComputerAttachment,
+  runner: Runner,
+) {
+  const there = yield* attachment
+    .converse({ command: `[ -f '${runner.path}' ]`, timeoutSeconds: 30 })
+    .pipe(
+      Effect.flatMap((spoken) => spoken.ended),
+      Effect.map((end) => end.exitCode === 0),
+      Effect.scoped,
+    )
+  if (!there) yield* attachment.write({ path: runner.path, content: runner.text })
 })
 
 /** The Person's own Computer, woken and kept awake while the program runs. */
@@ -328,13 +231,24 @@ export const codeComputerLayer = Layer.effect(
   Effect.gen(function* () {
     const store = yield* ComputerStore
     const runner = yield* loadRunner
-    const background = yield* Effect.scope
+    /** The Persons whose Computer is known to hold this server's runner. */
+    const installed = new Set<PersonId>()
     return CodeComputer.of({
       open: Effect.fn('Code.openComputer')(function* (person) {
-        const attachment = yield* store
-          .attach(person)
-          .pipe(Effect.mapError((failure) => new CodeComputerUnavailable({ reason: failure._tag })))
-        return yield* openGuest(attachment, runner, background)
+        const unusable = (failure: { readonly _tag: string }) =>
+          new CodeComputerUnavailable({ reason: failure._tag })
+        const attachment = yield* store.attach(person).pipe(Effect.mapError(unusable))
+        if (!installed.has(person)) {
+          yield* installRunner(attachment, runner).pipe(Effect.mapError(unusable))
+          installed.add(person)
+        }
+        return yield* openGuest(
+          attachment,
+          runner,
+          Effect.sync(() => installed.delete(person)).pipe(
+            Effect.andThen(Effect.logWarning('The Computer no longer holds the program runner')),
+          ),
+        )
       }),
     })
   }),

@@ -154,7 +154,9 @@ export const machineLinks = (api: Transport) => {
         const located = accepted(input.key).pipe(Effect.flatMap((identity) => locate(identity.id)))
         const link = yield* connections
           .get(input.key, located)
-          .pipe(Effect.mapError((failure) => (isLinkFailure(failure) ? linkFailure(failure) : failure)))
+          .pipe(
+            Effect.mapError((failure) => (isLinkFailure(failure) ? linkFailure(failure) : failure)),
+          )
         const lost = <A>(effect: Effect.Effect<A, LinkRunLost>) =>
           effect.pipe(
             Effect.tapError(() => connections.discard(input.key, link)),

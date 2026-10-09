@@ -15,7 +15,6 @@ import {
   Schema,
   Semaphore,
   Scope,
-  type Stream,
 } from 'effect'
 import {
   ActionTarget,
@@ -58,7 +57,7 @@ import {
   MachineResponseInvalid,
   type MachineFailure,
   type MachineScreen,
-  type MachineOutput,
+  type MachineConversation,
   type MachineRun,
   type MachineFileReason,
   MachineFileRefused,
@@ -509,10 +508,11 @@ export interface ComputerStoreService {
 
 /** A running Computer with its machine already chosen; no caller of this names a machine. */
 export interface ComputerAttachment {
-  readonly follow: (input: {
+  /** A command in the Computer's home that is spoken with while it runs; the scope ends it. */
+  readonly converse: (input: {
     readonly command: string
     readonly timeoutSeconds: number
-  }) => Stream.Stream<MachineOutput, MachineFailure>
+  }) => Effect.Effect<MachineConversation, MachineFailure, Scope.Scope>
   readonly write: (input: {
     readonly path: string
     readonly content: string
@@ -1003,8 +1003,14 @@ const attached = Effect.fn('ComputerStore.attach')(function* (
   yield* inactivity.watching(person)
   const key = yield* state.lock(person).withPermit(requireReady(state, person))
   const attachment: ComputerAttachment = {
-    follow: (input) =>
-      state.machine.follow({ key, command: input.command, timeoutSeconds: input.timeoutSeconds }),
+    // `.` is where an SSH command starts: the home of the Computer's user.
+    converse: (input) =>
+      state.machine.converse({
+        key,
+        command: input.command,
+        directory: '.',
+        timeoutSeconds: input.timeoutSeconds,
+      }),
     write: (input) => state.machine.write({ key, path: input.path, content: input.content }),
   }
   return attachment

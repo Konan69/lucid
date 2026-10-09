@@ -468,7 +468,8 @@ it.live.skipIf(!peerAvailable)(
       const spoken = yield* link.converse({
         // Echoes each line back in capitals until it is told to stop; the two-byte character is
         // split across writes to show a piece need not end on a character.
-        command: 'while read line; do [ "$line" = stop ] && exit 7; echo "$line" | tr a-z A-Z; done',
+        command:
+          'while read line; do [ "$line" = stop ] && exit 7; echo "$line" | tr a-z A-Z; done',
         directory: server.home,
         timeoutSeconds: 20,
       })
