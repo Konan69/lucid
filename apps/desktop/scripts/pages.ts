@@ -13,16 +13,11 @@ import {
 import { Effect, Schema } from 'effect'
 import { Browser } from '../src/main/browser.ts'
 import { DeviceLink } from '../src/shared/device.ts'
-import { registerBridge, type BridgeRuntime } from '../src/main/bridge.ts'
+import { registerBridge, sendBridgeEvent, type BridgeRuntime } from '../src/main/bridge.ts'
 import { DesktopSettings } from '../src/main/settings.ts'
 import { ServerSettings, SettingsSaveFailed } from '../src/shared/settings.ts'
 import { zoomPage } from '../src/main/menu.ts'
-import {
-  BRIDGE_EVENT_CHANNEL,
-  BridgeRequest,
-  BridgeEvent,
-  encodeBridgeEvent,
-} from '../src/shared/bridge.ts'
+import { BridgeRequest, BridgeEvent } from '../src/shared/bridge.ts'
 import {
   PagesRequest,
   PagesResponse,
@@ -299,10 +294,7 @@ const proof = Effect.scoped(
         // so a receipt cannot re-enter create/close while it still owns its Effect continuation.
         queueMicrotask(() => events.emit('state', state))
         if (!window.webContents.isDestroyed())
-          window.webContents.send(
-            BRIDGE_EVENT_CHANNEL,
-            encodeBridgeEvent(BridgeEvent.cases.PagesChanged.make({ value: state })),
-          )
+          sendBridgeEvent(window.webContents, BridgeEvent.cases.PagesChanged.make({ value: state }))
       },
       downloadRefused: () => {},
       run: runPopup,

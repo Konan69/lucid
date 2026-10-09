@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
 import * as Result from 'effect/Result'
 import {
   BridgeResponse,
@@ -221,7 +222,9 @@ describe('desktop bridge ingress', () => {
       if (BridgeResponse.guards.Pages(decoded) && PagesResponse.guards.State(decoded.value))
         expect(structuredClone(decoded.value.value)).toEqual(state)
       const event = BridgeEvent.cases.PagesChanged.make({ value: state })
-      const result = decodeBridgeEventResult(structuredClone(encodeBridgeEvent(event)))
+      const result = decodeBridgeEventResult(
+        structuredClone(Option.getOrThrow(encodeBridgeEvent(event))),
+      )
       expect(Result.isSuccess(result)).toBe(true)
       if (Result.isSuccess(result)) expect(result.success).toEqual(event)
       const refusal = BridgeResponse.cases.Pages.make({
