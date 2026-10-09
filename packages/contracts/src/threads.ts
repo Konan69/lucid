@@ -189,6 +189,14 @@ export const RunFailure = Schema.Literals([
 ])
 export type RunFailure = typeof RunFailure.Type
 
+/** The model-specific Run reasons shared by typed provider failures and telemetry's allowlist. */
+export const ModelFailureReason = RunFailure.pick([
+  'RateLimited',
+  'ModelUnavailable',
+  'NoAnswer',
+  'TimedOut',
+])
+
 /**
  * Where a Run stands. `Unknown` is an honest state: the runtime stopped reporting and the outcome
  * cannot be told, so nothing is retried on its account.

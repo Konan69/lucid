@@ -1,5 +1,5 @@
 import { getTableName, isTable } from 'drizzle-orm'
-import { RunFailure } from '@vivid/contracts'
+import { ModelFailureReason } from '@vivid/contracts'
 import * as Clock from 'effect/Clock'
 import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
@@ -206,7 +206,7 @@ const rulesOf = (): Rules => {
   return new Map<string, Rule>([
     [FailureAttribute.type, typeNames],
     [FailureAttribute.kind, oneOf(FailureKind.literals)],
-    [FailureAttribute.modelReason, oneOf(RunFailure.literals)],
+    [FailureAttribute.modelReason, oneOf(ModelFailureReason.literals)],
     [FailureAttribute.modelStatus, integer(400, 599)],
     [FailureAttribute.boundary, oneOf(Boundary.literals)],
     [FailureAttribute.root, typeNames],

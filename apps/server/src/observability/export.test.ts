@@ -394,26 +394,28 @@ it.effect.each(['Delivery', 'Unexplained'] as const)(
     ),
 )
 
-it.effect('drops provider prose and invalid status values from both traces and logs', () =>
-  withReceiver(
-    Effect.gen(function* () {
-      const attributes = {
-        'vivid.model.failure.reason': 'private provider prose',
-        'vivid.model.failure.status': 600,
-      }
-      const probe = Effect.fn('Probe.providerProse')(function* () {
-        yield* Effect.annotateCurrentSpan(attributes)
-        yield* Effect.logWarning(Message.failure).pipe(Effect.annotateLogs(attributes))
-      })
-      const { spans, lines, text } = yield* exported(probe())
-      const [span] = spanNamed(spans, 'Probe.providerProse')
-      expect(span === undefined ? {} : valuesOf(span.attributes)).toEqual({})
-      const failures = lines.filter((entry) => entry.body.stringValue === Message.failure)
-      expect(failures).toHaveLength(1)
-      expect(failures.map((entry) => valuesOf(entry.attributes))).toEqual([{}])
-      expect(text).not.toContain('private provider prose')
-    }),
-  ),
+it.effect.each(['private provider prose', 'Delivery', 'Unexplained'])(
+  'drops non-model reason %s and invalid status values from both traces and logs',
+  (reason) =>
+    withReceiver(
+      Effect.gen(function* () {
+        const attributes = {
+          'vivid.model.failure.reason': reason,
+          'vivid.model.failure.status': 600,
+        }
+        const probe = Effect.fn('Probe.providerProse')(function* () {
+          yield* Effect.annotateCurrentSpan(attributes)
+          yield* Effect.logWarning(Message.failure).pipe(Effect.annotateLogs(attributes))
+        })
+        const { spans, lines, text } = yield* exported(probe())
+        const [span] = spanNamed(spans, 'Probe.providerProse')
+        expect(span === undefined ? {} : valuesOf(span.attributes)).toEqual({})
+        const failures = lines.filter((entry) => entry.body.stringValue === Message.failure)
+        expect(failures).toHaveLength(1)
+        expect(failures.map((entry) => valuesOf(entry.attributes))).toEqual([{}])
+        expect(text).not.toContain(reason)
+      }),
+    ),
 )
 
 it.effect('exports a typed failure with its tag, as expected, at its boundary', () =>
