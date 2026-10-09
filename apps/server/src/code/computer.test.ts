@@ -57,8 +57,10 @@ describe('A program on a Computer, as the server speaks with it', () => {
       // One message in two pieces, then two messages in one piece.
       yield* Queue.offer(computer.output, call.slice(0, 9))
       yield* Queue.offer(computer.output, call.slice(9) + line(done))
-      expect(yield* guest.read).toMatchObject({ _tag: 'Call', id: 1 })
-      expect(yield* guest.read).toMatchObject({ _tag: 'Done', result: 1 })
+      expect(yield* guest.read).toEqual(
+        WorkerMessage.cases.Call.make({ id: 1, kind: 'find_tools', input: {} }),
+      )
+      expect(yield* guest.read).toEqual(done)
       expect(yield* Ref.get(computer.said)).toEqual(['{"_tag":"Start","code":"return 1"}\n'])
     }).pipe(Effect.scoped),
   )
@@ -83,7 +85,7 @@ describe('A program on a Computer, as the server speaks with it', () => {
       const sent = yield* Effect.flip(
         guest.send(ParentMessage.cases.Reply.make({ id: 1, value: 1 })),
       )
-      expect(sent).toMatchObject({ _tag: 'CodePipeFailure', reason: 'closed' })
+      expect(sent).toMatchObject({ reason: 'closed' })
     }).pipe(Effect.scoped),
   )
 

@@ -1,7 +1,7 @@
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import { expect, it } from '@effect/vitest'
-import { Deferred, Effect, Exit, Fiber, Ref, Scope, Stream } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Option, Ref, Scope, Stream } from 'effect'
 import {
   FILE_BYTES,
   LinkFileRefused,
@@ -475,7 +475,7 @@ it.live.skipIf(!peerAvailable)(
       })
       const heard = yield* Ref.make('')
       const reading = yield* Effect.forkChild(
-        Stream.runForEach(spoken.output, (piece) => Ref.update(heard, (text) => text + piece)),
+        Stream.runForEach(spoken.output, (piece) => Ref.update(heard, (all) => all + piece)),
       )
       yield* spoken.say('first\n')
       yield* spoken.say('caf')
@@ -503,7 +503,7 @@ it.live.skipIf(!peerAvailable)(
         })
         .pipe(Scope.provide(scope))
       const first = yield* Stream.runHead(spoken.output)
-      const pid = first._tag === 'Some' ? first.value.trim() : ''
+      const pid = Option.getOrElse(first, () => '').trim()
       expect(pid).toMatch(/^\d+$/u)
       yield* Scope.close(scope, Exit.void)
       // The machine signalled the command's whole group: what it started is gone as well.

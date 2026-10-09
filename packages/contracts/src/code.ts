@@ -78,7 +78,8 @@ export const CodeFailure = Schema.TaggedUnion({
   /** The program is not valid JavaScript, or threw. `message` is the error's own, bounded. */
   Threw: { message: Schema.String },
   TimedOut: { seconds: Schema.Finite },
-  /** It used more memory, made more calls or returned more than a program may. */
+  /** It ran out of the memory its engine allows, made more calls, moved more data or returned
+   * more than a program may. */
   OverLimit: { limit: Schema.Literals(['memory', 'calls', 'data', 'result'] as const) },
   /** The Person's Computer could not run the program, or stopped carrying it: it did not start,
    * the Person is using it, or its provider stopped answering. When no call is listed, nothing
