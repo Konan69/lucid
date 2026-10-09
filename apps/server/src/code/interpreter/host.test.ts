@@ -129,7 +129,7 @@ describe("Program tool-call observation", () => {
         });
         const result = (yield* Program.execute({
             tools: { context: { lookup } },
-            onToolCallStart: (call) => Effect.sync(() => calls.push(call)),
+            onToolCallStart: (call: Program.ToolCallStarted) => Effect.sync(() => calls.push(call)),
             code: `
         if (false) await tools.context.lookup({ query: "not called" })
         return await tools.context.lookup({ query: "deployment failure" })
@@ -154,10 +154,10 @@ describe("Program tool-call observation", () => {
         });
         const runtime = {
             tools: { context: { lookup } },
-            onToolCallStart: (call) => Effect.sync(() => {
+            onToolCallStart: (call: Program.ToolCallStarted) => Effect.sync(() => {
                 events.push({ phase: "start", index: call.index, name: call.name });
             }),
-            onToolCallEnd: (call) => Effect.sync(() => {
+            onToolCallEnd: (call: Program.ToolCallEnded) => Effect.sync(() => {
                 expect(call.durationMs).toBeGreaterThanOrEqual(0);
                 events.push({
                     phase: "end",
@@ -201,7 +201,7 @@ describe("Program console capture", () => {
             logs: ['Thread info: {"name":"Demo","count":2}', "[warn] careful"],
             toolCalls: [],
         });
-        expect(Schema.decodeUnknownSync(Program.Result)(JSON.parse(JSON.stringify(result)))).toStrictEqual(result);
+        expect((yield* Schema.decodeUnknownEffect(Program.Result)(JSON.parse(JSON.stringify(result))))).toStrictEqual(result);
     }));
     it.live("keeps logs captured before failures", () => Effect.gen(function* () {
         const result = (yield* Program.execute({
@@ -305,7 +305,7 @@ describe("Program output budget", () => {
         expect(result.truncated).toBe(true);
         expect(typeof result.value).toBe("string");
         expect(result.value).toMatch(/^\{"data":"x+ \[result truncated: \d+ bytes exceeds the 40-byte output limit; return a smaller value\]$/);
-        expect(Schema.decodeUnknownSync(Program.Result)(JSON.parse(JSON.stringify(result)))).toStrictEqual(result);
+        expect((yield* Schema.decodeUnknownEffect(Program.Result)(JSON.parse(JSON.stringify(result))))).toStrictEqual(result);
     }));
     it.live("keeps leading logs within the remaining budget and marks the cut", () => Effect.gen(function* () {
         const limits: Program.ExecutionLimits = { maxOutputBytes: 40 };
@@ -354,8 +354,8 @@ describe("Program public contract", () => {
         const observed: Array<unknown> = [];
         const transformed = Tool.make({
             description: "Double a number",
-            input: Schema.Struct({ value: Schema.NumberFromString }),
-            output: Schema.NumberFromString,
+            input: Schema.Struct({ value: Schema.FiniteFromString }),
+            output: Schema.FiniteFromString,
             run: ({ value }) => Effect.sync(() => {
                 observed.push(value);
                 return String(value * 2);
@@ -363,14 +363,14 @@ describe("Program public contract", () => {
         });
         const success = (yield* Program.execute({
             tools: { math: { double: transformed } },
-            onToolCallStart: (call) => Effect.sync(() => observed.push(call.input)),
+            onToolCallStart: (call: Program.ToolCallStarted) => Effect.sync(() => observed.push(call.input)),
             code: `return await tools.math.double({ value: "21" })`
         }));
         expect(success).toStrictEqual({ ok: true, value: 42, toolCalls: [{ name: "math.double" }] });
         expect(observed).toStrictEqual([{ value: 21 }, 21]);
         const invalid = (yield* Program.execute({
             tools: { math: { double: transformed } },
-            onToolCallStart: (call) => Effect.sync(() => observed.push(call.input)),
+            onToolCallStart: (call: Program.ToolCallStarted) => Effect.sync(() => observed.push(call.input)),
             code: `return await tools.math.double({ value: 21 })`
         }));
         expect(invalid.ok).toBe(false);
@@ -388,7 +388,7 @@ describe("Program public contract", () => {
             value: { top: null, nested: [1, null] },
             toolCalls: [],
         });
-        expect(Schema.decodeUnknownSync(Program.Result)(JSON.parse(JSON.stringify(result)))).toStrictEqual(result);
+        expect((yield* Schema.decodeUnknownEffect(Program.Result)(JSON.parse(JSON.stringify(result))))).toStrictEqual(result);
     }));
     it.live("enforces the tool-call limit as a diagnostic", () => Effect.gen(function* () {
         const result = (yield* Program.execute({ tools, code: source, limits: { maxToolCalls: 0 } }));
@@ -402,7 +402,7 @@ describe("Program public contract", () => {
         const counter = Tool.make({
             description: "Count invocations",
             input: Schema.Struct({}),
-            output: Schema.Number,
+            output: Schema.Finite,
             run: () => Effect.succeed(1),
         });
         const result = (yield* Program.execute({

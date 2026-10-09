@@ -1,5 +1,5 @@
 /** Ported from opencode `packages/codemode/src/tool-schema.ts` at 3884062 (MIT). */
-import { JsonPointer, Schema } from "effect"
+import { Effect, JsonPointer, Schema } from "effect"
 import type { Definition, JsonSchema, SchemaType } from "./tool.ts"
 
 const isEffectSchema = (schema: SchemaType): schema is Schema.Decoder<unknown> & Schema.Top => Schema.isSchema(schema)
@@ -254,18 +254,18 @@ export const outputTypeScript = <R>(definition: Definition<R>, pretty = false): 
       : jsonSchemaToTypeScript(definition.output, pretty)
 
 /**
- * Decodes tool input before `run` is invoked. Effect Schemas validate (throwing on failure);
+ * Decodes tool input before `run` is invoked. Effect Schemas validate with a typed failure;
  * JSON-Schema-described inputs pass through unvalidated (render-only).
  */
-export const decodeInput = <R>(definition: Definition<R>, value: unknown): unknown =>
-  isEffectSchema(definition.input) ? Schema.decodeUnknownSync(definition.input)(value) : value
+export const decodeInput = <R>(definition: Definition<R>, value: unknown) =>
+  isEffectSchema(definition.input) ? Schema.decodeUnknownEffect(definition.input)(value) : Effect.succeed(value)
 
 /**
  * Decodes a tool result before it is exposed to the program. Effect Schemas validate and
- * transform (throwing on failure); JSON Schema outputs and tools without an output schema pass
+ * transform with a typed failure; JSON Schema outputs and tools without an output schema pass
  * the host value through unchanged.
  */
-export const decodeOutput = <R>(definition: Definition<R>, value: unknown): unknown =>
+export const decodeOutput = <R>(definition: Definition<R>, value: unknown) =>
   definition.output !== undefined && isEffectSchema(definition.output)
-    ? Schema.decodeUnknownSync(definition.output)(value)
-    : value
+    ? Schema.decodeUnknownEffect(definition.output)(value)
+    : Effect.succeed(value)

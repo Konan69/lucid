@@ -1,6 +1,11 @@
 /** Ported from opencode `packages/codemode/src/interpreter/model.ts` at 3884062 (MIT). */
+import type { ToolRefusal } from "./refusal.ts"
+import type { ToolRuntimeError } from "./tools.ts"
 import type { SafeObject } from "./tools.ts"
 import type { SandboxURL } from "./values.ts"
+
+/** Closed failure set raised while evaluating a program or settling a host call. */
+export type Raised = InterpreterRuntimeError | ToolRuntimeError | ToolRefusal | ProgramThrow
 
 export type SourcePosition = {
   line: number

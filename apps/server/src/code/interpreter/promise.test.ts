@@ -15,8 +15,8 @@ const makeTrace = (): Trace => ({ starts: [], active: 0, maxActive: 0, completed
 /** Echoes `id` after `ms` milliseconds, recording start order, live concurrency, and interruption. */
 const sleepyTool = (trace: Trace) => Tool.make({
     description: "Echo an id after a delay",
-    input: Schema.Struct({ id: Schema.Number, ms: Schema.optionalKey(Schema.Number) }),
-    output: Schema.Number,
+    input: Schema.Struct({ id: Schema.Finite, ms: Schema.optionalKey(Schema.Finite) }),
+    output: Schema.Finite,
     run: ({ id, ms }) => Effect.gen(function* () {
         trace.starts.push(id);
         trace.active += 1;

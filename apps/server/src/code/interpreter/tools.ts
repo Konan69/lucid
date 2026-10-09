@@ -1,4 +1,5 @@
 /** Ported from opencode `packages/codemode/src/tool-runtime.ts` at 3884062 (MIT). */
+import type { Raised } from "./model.ts"
 import { Cause, Effect } from "effect"
 import { ToolRefusal, toolRefusal } from "./refusal.ts"
 import {
@@ -17,7 +18,7 @@ import {
 } from "./values.ts"
 
 
-export type HostTool<R = never> = (...args: Array<unknown>) => Effect.Effect<unknown, unknown, R>
+export type HostTool<R = never> = (...args: Array<unknown>) => Effect.Effect<unknown, Raised, R>
 
 export type HostTools<R = never> = {
   [name: string]: HostTool<R> | Definition<R> | HostTools<R>
@@ -27,11 +28,11 @@ export type Services<Tools> = ServicesOf<Tools, []>
 
 type ServicesOf<Tools, Depth extends ReadonlyArray<unknown>> = Depth["length"] extends 8
   ? never
-  : Tools extends (...args: Array<unknown>) => Effect.Effect<unknown, unknown, infer R>
+  : Tools extends (...args: Array<unknown>) => Effect.Effect<unknown, Raised, infer R>
     ? R
     : Tools extends {
           readonly _tag: "ProgramTool"
-          readonly run: (input: unknown) => Effect.Effect<unknown, unknown, infer R>
+          readonly run: (input: unknown) => Effect.Effect<unknown, Raised, infer R>
         }
       ? R
       : Tools extends object
@@ -327,7 +328,7 @@ const resolve = <R>(tools: HostTools<R>, path: ReadonlyArray<string>): HostTool<
 export type ToolRuntime<R = never> = {
   readonly root: ToolReference
   readonly calls: Array<ToolCall>
-  readonly invoke: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>
+  readonly invoke: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, Raised, R>
   /** Enumerable namespace/tool names at one node of the callable tool tree; see `namespaceKeys`. */
   readonly keys: (path: ReadonlyArray<string>) => ReadonlyArray<string>
 }
@@ -392,11 +393,9 @@ export const make = <R>(
         if (isDefinition(tool)) {
           if (externalArgs.length !== 1)
             throw new ToolRuntimeError("InvalidToolInput", `Tool '${name}' expects exactly one input object.`)
-          describedInput = yield* Effect.try({
-            try: () => decodeToolInput(tool, externalArgs[0]),
-            catch: (cause) =>
-              new ToolRuntimeError("InvalidToolInput", `Invalid input for tool '${name}': ${String(cause)}`),
-          })
+          describedInput = yield* decodeToolInput(tool, externalArgs[0]).pipe(
+            Effect.mapError((cause) => new ToolRuntimeError("InvalidToolInput", `Invalid input for tool '${name}': ${String(cause)}`)),
+          )
         }
         const input = isDefinition(tool) ? describedInput : externalArgs
         const index = yield* recordAndObserve(input)
@@ -405,10 +404,9 @@ export const make = <R>(
           return yield* observeEnd(
             Effect.gen(function* () {
               const raw = yield* runHost(Effect.suspend(() => tool.run(describedInput)))
-              const result = yield* Effect.try({
-                try: () => decodeToolOutput(tool, raw),
-                catch: () => new ToolRuntimeError("InvalidToolOutput", `Invalid output from tool '${name}'.`),
-              })
+              const result = yield* decodeToolOutput(tool, raw).pipe(
+                Effect.mapError(() => new ToolRuntimeError("InvalidToolOutput", `Invalid output from tool '${name}'.`)),
+              )
               return yield* decodeOutput(result, name)
             }),
             currentCall,

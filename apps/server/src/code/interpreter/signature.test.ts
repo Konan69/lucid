@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
-import { Program, Tool } from "./index.ts";
+import { Tool } from "./index.ts";
 import { inputTypeScript, jsonSchemaToTypeScript, outputTypeScript } from "./schema.ts";
 // A raw JSON Schema tool in the shape an MCP adapter produces: render-only input schema
 // whose property descriptions and constraints must surface as JSDoc in pretty signatures.

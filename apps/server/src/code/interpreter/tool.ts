@@ -1,5 +1,6 @@
 /** Ported from opencode `packages/codemode/src/tool.ts` at 3884062 (MIT). */
-import { Effect, Schema } from "effect"
+import { Cause, Effect, Schema } from "effect"
+import { ToolRefusal, toolRefusal } from "./refusal.ts"
 
 /**
  * JSON Schema subset accepted for render-only tool schemas.
@@ -39,7 +40,7 @@ export type Definition<R = never> = {
   readonly description: string
   readonly input: SchemaType
   readonly output: SchemaType | undefined
-  readonly run: (input: unknown) => Effect.Effect<unknown, unknown, R>
+  readonly run: (input: unknown) => Effect.Effect<unknown, ToolRefusal, R>
 }
 
 /** The value `run` receives: the decoded type for Effect Schemas, `unknown` for JSON Schemas. */
@@ -49,11 +50,11 @@ type InputType<S> = S extends Schema.Decoder<unknown> ? S["Type"] : unknown
 type ResultType<S> = S extends Schema.Decoder<unknown> ? S["Encoded"] : unknown
 
 /** Options for defining one Program tool. */
-export type Options<I extends SchemaType, O extends SchemaType | undefined, R = never> = {
+export type Options<I extends SchemaType, O extends SchemaType | undefined, R = never, E = never> = {
   readonly description: string
   readonly input: I
   readonly output?: O
-  readonly run: (input: InputType<I>) => Effect.Effect<ResultType<O>, unknown, R>
+  readonly run: (input: InputType<I>) => Effect.Effect<ResultType<O>, E, R>
 }
 
 export const isDefinition = <R = never>(value: unknown): value is Definition<R> =>
@@ -86,12 +87,18 @@ export const isDefinition = <R = never>(value: unknown): value is Definition<R> 
  * })
  * ```
  */
-export const make = <I extends SchemaType, const O extends SchemaType | undefined = undefined, R = never>(
-  options: Options<I, O, R>,
+export const make = <I extends SchemaType, const O extends SchemaType | undefined = undefined, R = never, E = never>(
+  options: Options<I, O, R, E>,
 ): Definition<R> => ({
   _tag: "ProgramTool",
   description: options.description,
   input: options.input,
   output: options.output,
-  run: (input) => options.run(input as InputType<I>),
+  run: (input) => Effect.suspend(() => options.run(input as InputType<I>)).pipe(
+    Effect.catchCause((cause) => {
+      if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt
+      const error = Cause.squash(cause)
+      return Effect.fail(error instanceof ToolRefusal ? error : toolRefusal("Tool execution failed", error))
+    }),
+  ),
 })

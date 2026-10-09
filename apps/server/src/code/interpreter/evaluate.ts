@@ -1,4 +1,5 @@
 /** Ported from opencode `packages/codemode/src/interpreter/runtime.ts` at 3884062 (MIT). */
+import type { Raised } from "./model.ts"
 import { parse } from "acorn"
 import { assertBuildable, Work } from "./work.ts"
 import { Cause, Effect, Exit, Fiber, Semaphore } from "effect"
@@ -17,7 +18,6 @@ import { ToolRefusal } from "./refusal.ts"
 import type {
   DataValue,
   Diagnostic,
-  DiagnosticKind,
   ExecuteOptions,
   ResolvedExecutionLimits,
   Result,
@@ -32,7 +32,6 @@ import {
   ErrorConstructorReference,
   GlobalMethodReference,
   GlobalNamespace,
-  type GlobalNamespaceName,
   formatLocation,
   getArray,
   getBoolean,
@@ -83,7 +82,6 @@ import {
   urlMethods,
   urlProperties,
   urlSearchParamsMethods,
-  urlStatics,
   urlWritableProperties,
   invokeUriFunction,
   invokeURLMethod,
@@ -604,7 +602,7 @@ const growing = new Set([
 
 class Interpreter<R> {
   private scopes: Array<Map<string, Binding>>
-  private readonly invokeTool: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>
+  private readonly invokeTool: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, Raised, R>
   // Enumerable namespace/tool names at a node of the host tool tree, threaded from
   // ToolRuntime.make like invokeTool: the interpreter never holds the tree itself.
   private readonly toolKeys: (path: ReadonlyArray<string>) => ReadonlyArray<string>
@@ -618,7 +616,7 @@ class Interpreter<R> {
   private readonly pendingSettlements = new Set<SandboxPromise>()
 
   constructor(
-    invokeTool: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>,
+    invokeTool: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, Raised, R>,
     toolKeys: (path: ReadonlyArray<string>) => ReadonlyArray<string>,
     logs: Array<string>,
     private readonly work: Work,
@@ -664,7 +662,7 @@ class Interpreter<R> {
     globalScope.set("Infinity", { mutable: false, value: Infinity })
   }
 
-  run(program: ProgramNode): Effect.Effect<unknown, unknown, R> {
+  run(program: ProgramNode): Effect.Effect<unknown, Raised, R> {
     const self = this
     // Run the program body in its own module scope on top of the builtin global scope, so
     // top-level declarations (`let undefined = 5`, `const Object = ...`) shadow builtins like
@@ -706,7 +704,7 @@ class Interpreter<R> {
   // their work completes before the execution ends - mirroring a JS runtime waiting on
   // in-flight I/O at exit. A failure nobody could have handled becomes an unhandled-rejection
   // diagnostic (interrupted calls, e.g. Promise.race losers, are ignored).
-  private drainPendingSettlements(): Effect.Effect<void, unknown, never> {
+  private drainPendingSettlements(): Effect.Effect<void, Raised, never> {
     const self = this
     return Effect.gen(function* () {
       for (const promise of [...self.pendingSettlements]) {
@@ -747,23 +745,23 @@ class Interpreter<R> {
   // The promise's settlement as an Exit, marking it observed for unhandled-rejection tracking.
   // Fiber settlement is idempotent, so observing the same promise repeatedly (await twice,
   // Promise.all([p, p])) never re-runs the underlying call.
-  private observePromise(promise: SandboxPromise): Effect.Effect<Exit.Exit<unknown, unknown>> {
+  private observePromise(promise: SandboxPromise): Effect.Effect<Exit.Exit<unknown, Raised>> {
     this.pendingSettlements.delete(promise)
     return promise.fiber !== undefined ? Fiber.await(promise.fiber) : Effect.exit(promise.immediate ?? Effect.void)
   }
 
   // `await promise`: succeed with the fulfilled value or re-raise the failure so try/catch
   // observes it exactly like a synchronous throw at the await site.
-  private settlePromise(promise: SandboxPromise, node?: AstNode): Effect.Effect<unknown, unknown, never> {
+  private settlePromise(promise: SandboxPromise, node?: AstNode): Effect.Effect<unknown, Raised, never> {
     const self = this
     return Effect.flatMap(this.observePromise(promise), (exit) => self.unwrapPromiseExit(promise, exit, node))
   }
 
   private unwrapPromiseExit(
     promise: SandboxPromise | undefined,
-    exit: Exit.Exit<unknown, unknown>,
+    exit: Exit.Exit<unknown, Raised>,
     node?: AstNode,
-  ): Effect.Effect<unknown, unknown> {
+  ): Effect.Effect<unknown, Raised> {
     if (Exit.isSuccess(exit)) return Effect.succeed(exit.value)
     // A call Promise.race interrupted after losing settles as a catchable program failure;
     // any other interruption is execution teardown (timeout/host) and must keep propagating
@@ -779,7 +777,7 @@ class Interpreter<R> {
     return Effect.failCause(exit.cause)
   }
 
-  private evaluateStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
+  private evaluateStatement(node: AstNode): Effect.Effect<StatementResult, Raised, R> {
     this.work.step(node)
     switch (node.type) {
       case "ExpressionStatement":
@@ -825,7 +823,7 @@ class Interpreter<R> {
     }
   }
 
-  private evaluateBlock(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
+  private evaluateBlock(node: AstNode): Effect.Effect<StatementResult, Raised, R> {
     this.pushScope()
     const self = this
     return Effect.gen(function* () {
@@ -876,7 +874,7 @@ class Interpreter<R> {
     }
   }
 
-  private evaluateIfStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
+  private evaluateIfStatement(node: AstNode): Effect.Effect<StatementResult, Raised, R> {
     const testNode = getNode(node, "test")
     const consequentNode = getNode(node, "consequent")
     const alternateNode = getOptionalNode(node, "alternate")
@@ -890,7 +888,7 @@ class Interpreter<R> {
     )
   }
 
-  private evaluateSwitchStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
+  private evaluateSwitchStatement(node: AstNode): Effect.Effect<StatementResult, Raised, R> {
     const self = this
     this.pushScope()
     return Effect.gen(function* () {
@@ -938,7 +936,7 @@ class Interpreter<R> {
     }).pipe(Effect.ensuring(Effect.sync(() => self.popScope())))
   }
 
-  private evaluateWhileStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
+  private evaluateWhileStatement(node: AstNode): Effect.Effect<StatementResult, Raised, R> {
     const testNode = getNode(node, "test")
     const bodyNode = getNode(node, "body")
 
@@ -968,7 +966,7 @@ class Interpreter<R> {
     })
   }
 
-  private evaluateDoWhileStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
+  private evaluateDoWhileStatement(node: AstNode): Effect.Effect<StatementResult, Raised, R> {
     const bodyNode = getNode(node, "body")
     const testNode = getNode(node, "test")
 
@@ -998,7 +996,7 @@ class Interpreter<R> {
     })
   }
 
-  private evaluateForStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
+  private evaluateForStatement(node: AstNode): Effect.Effect<StatementResult, Raised, R> {
     this.pushScope()
     const self = this
     return Effect.gen(function* () {
@@ -1071,7 +1069,7 @@ class Interpreter<R> {
     }).pipe(Effect.ensuring(Effect.sync(() => self.popScope())))
   }
 
-  private evaluateForOfStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
+  private evaluateForOfStatement(node: AstNode): Effect.Effect<StatementResult, Raised, R> {
     if (getBoolean(node, "await")) {
       throw new InterpreterRuntimeError("for await...of is not supported.", node)
     }
@@ -1161,7 +1159,7 @@ class Interpreter<R> {
     return undefined
   }
 
-  private evaluateForInStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
+  private evaluateForInStatement(node: AstNode): Effect.Effect<StatementResult, Raised, R> {
     const self = this
     return Effect.gen(function* () {
       const left = getNode(node, "left")
@@ -1256,12 +1254,12 @@ class Interpreter<R> {
     return { kind: "continue" }
   }
 
-  private evaluateThrowStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
+  private evaluateThrowStatement(node: AstNode): Effect.Effect<StatementResult, Raised, R> {
     const argument = getNode(node, "argument")
     return Effect.flatMap(this.evaluateExpression(argument), (value) => Effect.fail(new ProgramThrow(value)))
   }
 
-  private evaluateTryStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
+  private evaluateTryStatement(node: AstNode): Effect.Effect<StatementResult, Raised, R> {
     const body = getNode(node, "block")
     const handler = getOptionalNode(node, "handler")
     const finalizer = getOptionalNode(node, "finalizer")
@@ -1295,17 +1293,13 @@ class Interpreter<R> {
       onFailure: (cause) =>
         cause.reasons.some(Cause.isInterruptReason)
           ? Effect.failCause(cause)
-          : Effect.flatMap(this.evaluateStatement(finalizer), (final) =>
-              isAbrupt(final) ? Effect.succeed(final) : Effect.failCause(cause),
-            ),
+          : Effect.filterOrElse(this.evaluateStatement(finalizer), isAbrupt, () => Effect.failCause(cause)),
       onSuccess: (result) =>
-        Effect.flatMap(this.evaluateStatement(finalizer), (final) =>
-          isAbrupt(final) ? Effect.succeed(final) : Effect.succeed(result),
-        ),
+        Effect.filterOrElse(this.evaluateStatement(finalizer), isAbrupt, () => Effect.succeed(result)),
     })
   }
 
-  private evaluateVariableDeclaration(node: AstNode): Effect.Effect<void, unknown, R> {
+  private evaluateVariableDeclaration(node: AstNode): Effect.Effect<void, Raised, R> {
     const kind = getString(node, "kind")
     const declarations = getArray(node, "declarations")
     const self = this
@@ -1329,7 +1323,7 @@ class Interpreter<R> {
     value: unknown,
     mutable: boolean,
     node: AstNode,
-  ): Effect.Effect<void, unknown, R> {
+  ): Effect.Effect<void, Raised, R> {
     const self = this
     return Effect.gen(function* () {
       if (pattern.type === "Identifier") {
@@ -1413,7 +1407,7 @@ class Interpreter<R> {
    * data have what they made counted (see `Work`). Reading a name or a member makes nothing, so
    * a large value is counted where it is built and not each time it is read.
    */
-  private evaluateExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
+  private evaluateExpression(node: AstNode): Effect.Effect<unknown, Raised, R> {
     this.work.step(node)
     const result = this.evaluateNode(node)
     if (!growing.has(node.type)) return result
@@ -1424,7 +1418,7 @@ class Interpreter<R> {
     })
   }
 
-  private evaluateNode(node: AstNode): Effect.Effect<unknown, unknown, R> {
+  private evaluateNode(node: AstNode): Effect.Effect<unknown, Raised, R> {
     switch (node.type) {
       case "Literal": {
         // A regex literal parses as a Literal node carrying { pattern, flags }; construct the
@@ -1472,9 +1466,7 @@ class Interpreter<R> {
         // `await` resolves a promise value; awaiting anything else is a passthrough no-op,
         // matching real JS semantics for non-thenables.
         const self = this
-        return Effect.flatMap(this.evaluateExpression(getNode(node, "argument")), (value) =>
-          value instanceof SandboxPromise ? self.settlePromise(value, node) : Effect.succeed(value),
-        )
+        return Effect.filterOrElse(this.evaluateExpression(getNode(node, "argument")), (value) => !(value instanceof SandboxPromise), (value) => self.settlePromise(value as SandboxPromise, node))
       }
       case "NewExpression":
         return this.evaluateNewExpression(node)
@@ -1483,7 +1475,7 @@ class Interpreter<R> {
     }
   }
 
-  private evaluateNewExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
+  private evaluateNewExpression(node: AstNode): Effect.Effect<unknown, Raised, R> {
     const callee = getNode(node, "callee")
     if (callee.type !== "Identifier") {
       throw unsupportedSyntax("NewExpression", node)
@@ -1671,7 +1663,7 @@ class Interpreter<R> {
     )
   }
 
-  private evaluateBinaryExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
+  private evaluateBinaryExpression(node: AstNode): Effect.Effect<unknown, Raised, R> {
     const operator = getString(node, "operator")
     const self = this
     return Effect.gen(function* () {
@@ -1760,7 +1752,7 @@ class Interpreter<R> {
     }
   }
 
-  private evaluateLogicalExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
+  private evaluateLogicalExpression(node: AstNode): Effect.Effect<unknown, Raised, R> {
     const operator = getString(node, "operator")
     return Effect.flatMap(this.evaluateExpression(getNode(node, "left")), (left) => {
       if (operator === "&&") return left ? this.evaluateExpression(getNode(node, "right")) : Effect.succeed(left)
@@ -1773,7 +1765,7 @@ class Interpreter<R> {
     })
   }
 
-  private evaluateUnaryExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
+  private evaluateUnaryExpression(node: AstNode): Effect.Effect<unknown, Raised, R> {
     const operator = getString(node, "operator")
     const argument = getNode(node, "argument")
     // `typeof undeclaredIdentifier` is `"undefined"` in JS (never a ReferenceError), so
@@ -1817,7 +1809,7 @@ class Interpreter<R> {
     })
   }
 
-  private evaluateAssignmentExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
+  private evaluateAssignmentExpression(node: AstNode): Effect.Effect<unknown, Raised, R> {
     const left = getNode(node, "left")
     const operator = getString(node, "operator")
     const self = this
@@ -1853,7 +1845,7 @@ class Interpreter<R> {
     node: AstNode,
     left: AstNode,
     operator: string,
-  ): Effect.Effect<unknown, unknown, R> {
+  ): Effect.Effect<unknown, Raised, R> {
     const self = this
     const shouldAssign = (current: unknown): boolean =>
       operator === "??=" ? current === null || current === undefined : operator === "||=" ? !current : Boolean(current)
@@ -1881,7 +1873,7 @@ class Interpreter<R> {
     throw new InterpreterRuntimeError("Assignment target must be an Identifier or MemberExpression.", left)
   }
 
-  private evaluateUpdateExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
+  private evaluateUpdateExpression(node: AstNode): Effect.Effect<unknown, Raised, R> {
     const operator = getString(node, "operator")
     const argument = getNode(node, "argument")
     const prefix = getBoolean(node, "prefix")
@@ -1913,7 +1905,7 @@ class Interpreter<R> {
     throw new InterpreterRuntimeError("Update target must be an Identifier or MemberExpression.", argument)
   }
 
-  private evaluateCallExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
+  private evaluateCallExpression(node: AstNode): Effect.Effect<unknown, Raised, R> {
     const callee = getNode(node, "callee")
     const argNodes = getArray(node, "arguments")
 
@@ -1978,13 +1970,13 @@ class Interpreter<R> {
   private invokeConsole(name: string, args: Array<unknown>, node: AstNode): undefined {
     if (!consoleMethods.has(name))
       throw new InterpreterRuntimeError(`console.${name} is not available in Program.`, node)
-    this.logs.push(publicErrorMessage(this.formatConsoleMessage(name, args, node)))
+    this.logs.push(publicErrorMessage(this.formatConsoleMessage(name, args)))
     return undefined
   }
 
-  private formatConsoleMessage(name: string, args: Array<unknown>, node: AstNode): string {
+  private formatConsoleMessage(name: string, args: Array<unknown>): string {
     if (name === "dir") return args.length === 0 ? "undefined" : this.formatConsoleArgument(args[0])
-    if (name === "table") return this.formatConsoleTable(args[0], args[1], node)
+    if (name === "table") return this.formatConsoleTable(args[0], args[1])
     const prefix = name === "warn" ? "[warn] " : name === "error" ? "[error] " : name === "debug" ? "[debug] " : ""
     return `${prefix}${args.map((arg) => this.formatConsoleArgument(arg)).join(" ")}`
   }
@@ -2047,13 +2039,13 @@ class Interpreter<R> {
     }
   }
 
-  private formatConsoleTable(value: unknown, columnsArgument: unknown, node: AstNode): string {
+  private formatConsoleTable(value: unknown, columnsArgument: unknown): string {
     if (value === undefined) return "undefined"
     // Sandbox values are legitimate table data (cells render their friendly forms); only
     // truly opaque references (functions, tools, promises) collapse to the marker.
     if (containsOpaqueReference(value)) return "[Program reference]"
     const data = boundedData(value, "console.table argument")
-    const columns = this.consoleTableColumns(columnsArgument, node)
+    const columns = this.consoleTableColumns(columnsArgument)
     const rows = this.consoleTableRows(data, columns)
     const keys = columns ?? Array.from(new Set(rows.flatMap((row) => Object.keys(row.values))))
     const header = ["(index)", ...keys].join("\t")
@@ -2063,7 +2055,7 @@ class Interpreter<R> {
     ].join("\n")
   }
 
-  private consoleTableColumns(value: unknown, node: AstNode): ReadonlyArray<string> | undefined {
+  private consoleTableColumns(value: unknown): ReadonlyArray<string> | undefined {
     if (value === undefined) return undefined
     if (containsRuntimeReference(value)) return undefined
     const columns = copyOut(copyIn(value, "console.table columns"), true)
@@ -2098,7 +2090,7 @@ class Interpreter<R> {
     return this.formatConsoleValue(value, new Set(), 0)
   }
 
-  private evaluateCallArguments(argNodes: Array<unknown>): Effect.Effect<Array<unknown>, unknown, R> {
+  private evaluateCallArguments(argNodes: Array<unknown>): Effect.Effect<Array<unknown>, Raised, R> {
     const self = this
     return Effect.gen(function* () {
       const args: Array<unknown> = []
@@ -2130,7 +2122,7 @@ class Interpreter<R> {
     ref: PromiseMethodReference,
     args: Array<unknown>,
     node: AstNode,
-  ): Effect.Effect<unknown, unknown, R> {
+  ): Effect.Effect<unknown, Raised, R> {
     const self = this
     if (ref.name === "resolve") {
       // Promise.resolve of a promise is that promise (JS flattens); anything else is a
@@ -2235,7 +2227,7 @@ class Interpreter<R> {
     }
   }
 
-  private invokeFunction(fn: ProgramFunction, args: Array<unknown>): Effect.Effect<unknown, unknown, R> {
+  private invokeFunction(fn: ProgramFunction, args: Array<unknown>): Effect.Effect<unknown, Raised, R> {
     const self = this
     return Effect.suspend(() => {
       const savedScopes = self.scopes
@@ -2279,7 +2271,7 @@ class Interpreter<R> {
     ref: IntrinsicReference,
     args: Array<unknown>,
     node: AstNode,
-  ): Effect.Effect<unknown, unknown, R> {
+  ): Effect.Effect<unknown, Raised, R> {
     if (typeof ref.receiver === "string") {
       if (
         (ref.name === "replace" || ref.name === "replaceAll") &&
@@ -2321,7 +2313,7 @@ class Interpreter<R> {
     name: "replace" | "replaceAll",
     args: Array<unknown>,
     node: AstNode,
-  ): Effect.Effect<unknown, unknown, R> {
+  ): Effect.Effect<unknown, Raised, R> {
     const apply = this.applyCollectionCallback(args[1], `String.${name}`, node)
     const matches: Array<{ readonly match: string; readonly offset: number; readonly args: Array<unknown> }> = []
     const collect = (...callbackArgs: Array<unknown>): string => {
@@ -2382,7 +2374,7 @@ class Interpreter<R> {
     callback: unknown,
     name: string,
     node: AstNode,
-  ): (args: Array<unknown>) => Effect.Effect<unknown, unknown, R> {
+  ): (args: Array<unknown>) => Effect.Effect<unknown, Raised, R> {
     if (
       !(callback instanceof ProgramFunction) &&
       !(callback instanceof CoercionFunction) &&
@@ -2403,7 +2395,7 @@ class Interpreter<R> {
     name: string,
     args: Array<unknown>,
     node: AstNode,
-  ): Effect.Effect<unknown, unknown, R> {
+  ): Effect.Effect<unknown, Raised, R> {
     switch (name) {
       case "get":
         return Effect.succeed(target.map.get(args[0]))
@@ -2445,7 +2437,7 @@ class Interpreter<R> {
     name: string,
     args: Array<unknown>,
     node: AstNode,
-  ): Effect.Effect<unknown, unknown, R> {
+  ): Effect.Effect<unknown, Raised, R> {
     switch (name) {
       case "has":
         return Effect.succeed(target.set.has(args[0]))
@@ -2483,7 +2475,7 @@ class Interpreter<R> {
     name: string,
     args: Array<unknown>,
     node: AstNode,
-  ): Effect.Effect<unknown, unknown, R> {
+  ): Effect.Effect<unknown, Raised, R> {
     const arg = (index: number): string => uriArgument(args[index], `URLSearchParams.${name} argument ${index + 1}`)
     const requireArgs = (count: number): void => {
       if (args.length < count) {
@@ -2558,7 +2550,7 @@ class Interpreter<R> {
     name: string,
     args: Array<unknown>,
     node: AstNode,
-  ): Effect.Effect<unknown, unknown, R> {
+  ): Effect.Effect<unknown, Raised, R> {
     const optNumber = (value: unknown, label: string): number | undefined => {
       if (value === undefined) return undefined
       if (typeof value !== "number")
@@ -2673,7 +2665,7 @@ class Interpreter<R> {
     // Accept a user function or supported builtin callable, so idioms such as
     // `filter(Boolean)`, `map(String)`, and `map(encodeURIComponent)` work as in JS. Builtins
     // are synchronous; only ProgramFunctions can await tool calls.
-    const apply = (callbackArgs: Array<unknown>): Effect.Effect<unknown, unknown, R> =>
+    const apply = (callbackArgs: Array<unknown>): Effect.Effect<unknown, Raised, R> =>
       callback instanceof CoercionFunction
         ? Effect.succeed(invokeCoercion(callback, callbackArgs, node))
         : callback instanceof UriFunction
@@ -2781,7 +2773,7 @@ class Interpreter<R> {
     target: Array<unknown>,
     comparator: unknown,
     node: AstNode,
-  ): Effect.Effect<Array<unknown>, unknown, R> {
+  ): Effect.Effect<Array<unknown>, Raised, R> {
     if (comparator !== undefined && !(comparator instanceof ProgramFunction)) {
       throw new InterpreterRuntimeError("Array.sort expects an arrow function comparator.", node)
     }
@@ -2795,7 +2787,7 @@ class Interpreter<R> {
       )
     }
     const self = this
-    const mergeSort = (items: Array<unknown>): Effect.Effect<Array<unknown>, unknown, R> => {
+    const mergeSort = (items: Array<unknown>): Effect.Effect<Array<unknown>, Raised, R> => {
       if (items.length <= 1) return Effect.succeed(items)
       const midpoint = Math.floor(items.length / 2)
       return Effect.gen(function* () {
@@ -2820,7 +2812,7 @@ class Interpreter<R> {
     return Effect.map(mergeSort(defined), (items) => [...items, ...Array(undefinedCount).fill(undefined)])
   }
 
-  private evaluateObjectExpression(node: AstNode): Effect.Effect<Record<string, unknown>, unknown, R> {
+  private evaluateObjectExpression(node: AstNode): Effect.Effect<Record<string, unknown>, Raised, R> {
     const objectValue: Record<string, unknown> = Object.create(null) as Record<string, unknown>
     const properties = getArray(node, "properties")
     const self = this
@@ -2883,7 +2875,7 @@ class Interpreter<R> {
     })
   }
 
-  private evaluateArrayExpression(node: AstNode): Effect.Effect<Array<unknown>, unknown, R> {
+  private evaluateArrayExpression(node: AstNode): Effect.Effect<Array<unknown>, Raised, R> {
     const elements = getArray(node, "elements")
     const values: Array<unknown> = []
 
@@ -2912,7 +2904,7 @@ class Interpreter<R> {
     })
   }
 
-  private evaluateTemplateLiteral(node: AstNode): Effect.Effect<string, unknown, R> {
+  private evaluateTemplateLiteral(node: AstNode): Effect.Effect<string, Raised, R> {
     const quasis = getArray(node, "quasis")
     const expressions = getArray(node, "expressions")
 
@@ -2942,7 +2934,7 @@ class Interpreter<R> {
     })
   }
 
-  private evaluateConditionalExpression(node: AstNode): Effect.Effect<unknown, unknown, R> {
+  private evaluateConditionalExpression(node: AstNode): Effect.Effect<unknown, Raised, R> {
     return Effect.flatMap(this.evaluateExpression(getNode(node, "test")), (test) =>
       this.evaluateExpression(getNode(node, test ? "consequent" : "alternate")),
     )
@@ -2970,7 +2962,7 @@ class Interpreter<R> {
     | ComputedValue
     | typeof OptionalShortCircuit
     | undefined,
-    unknown,
+    Raised,
     R
   > {
     const objectNode = getNode(node, "object")
@@ -3143,7 +3135,7 @@ class Interpreter<R> {
     })
   }
 
-  private readMember(node: AstNode): Effect.Effect<unknown, unknown, R> {
+  private readMember(node: AstNode): Effect.Effect<unknown, Raised, R> {
     return Effect.map(this.getMemberReference(node), (reference) => {
       if (reference === OptionalShortCircuit) return OptionalShortCircuit
       if (reference instanceof ComputedValue) return reference.value
@@ -3168,7 +3160,7 @@ class Interpreter<R> {
     })
   }
 
-  private writeMember(node: AstNode, value: unknown): Effect.Effect<unknown, unknown, R> {
+  private writeMember(node: AstNode, value: unknown): Effect.Effect<unknown, Raised, R> {
     return this.modifyMember(node, () => Effect.succeed({ write: true, next: value, result: value }))
   }
 
@@ -3177,8 +3169,8 @@ class Interpreter<R> {
   // updates, plain writes, and short-circuiting logical assignment to share one safe path.
   private modifyMember(
     node: AstNode,
-    compute: (current: unknown) => Effect.Effect<{ write: boolean; next: unknown; result: unknown }, unknown, R>,
-  ): Effect.Effect<unknown, unknown, R> {
+    compute: (current: unknown) => Effect.Effect<{ write: boolean; next: unknown; result: unknown }, Raised, R>,
+  ): Effect.Effect<unknown, Raised, R> {
     const self = this
     return Effect.gen(function* () {
       const reference = yield* self.getMemberReference(node)

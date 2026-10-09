@@ -69,7 +69,7 @@ export type DiagnosticKind = typeof DiagnosticKind.Type
 export const Diagnostic = Schema.Struct({
   kind: DiagnosticKind,
   message: Schema.String,
-  location: Schema.optionalKey(Schema.Struct({ line: Schema.Number, column: Schema.Number })),
+  location: Schema.optionalKey(Schema.Struct({ line: Schema.Finite, column: Schema.Finite })),
   suggestions: Schema.optionalKey(Schema.Array(Schema.String)),
 })
 /** A normalized program diagnostic safe to return across an agent tool boundary. */

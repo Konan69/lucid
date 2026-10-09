@@ -1,11 +1,12 @@
 /** Ported from opencode `packages/codemode/src/values.ts` at 3884062 (MIT). */
+import type { Raised } from "./model.ts"
 import type { Effect, Fiber } from "effect"
 
 export class SandboxPromise {
   interrupted = false
   constructor(
-    readonly fiber: Fiber.Fiber<unknown, unknown> | undefined,
-    readonly immediate?: Effect.Effect<unknown, unknown>,
+    readonly fiber: Fiber.Fiber<unknown, Raised> | undefined,
+    readonly immediate?: Effect.Effect<unknown, Raised>,
   ) {}
 }
 
