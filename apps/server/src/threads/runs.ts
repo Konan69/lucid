@@ -59,27 +59,28 @@ export interface WorkingRun {
 
 /**
  * A Thread has no Run that may act for this Person right now. `NoWorkingRun`: nothing is running.
- * `SeveralWorkingRuns`: more than one is, so which of them asked cannot be told.
- * `ActsForAnotherPerson`: the Run in progress was started for somebody else in a shared Thread.
+ * `ActsForAnotherPerson`: at least one admitted working Run acts for somebody else.
  */
 export class NoActingRun extends Schema.TaggedError<NoActingRun>()(
   'NoActingRun',
   {
     threadId: ThreadId,
-    reason: Schema.Literals(['NoWorkingRun', 'SeveralWorkingRuns', 'ActsForAnotherPerson']),
+    reason: Schema.Literals(['NoWorkingRun', 'ActsForAnotherPerson']),
   },
   { title: 'No Run in this Thread is acting for this Person' },
 ) {}
 
 /**
- * The one Run working in a Thread, when it is acting for this Person.
+ * The oldest admitted working Run in a Thread, when all working Runs act for this Person.
  *
  * A tool call names a Thread and a Person and no Run, so the Run is found from the record:
  * `vivid_runs.person_id` is the Person each Run acts for, written when the Run was reserved. This
  * is what stops something that belongs to one Person (their own computer) being used by a Run
- * another member of a shared Thread started. Nothing is inferred when the record is not exact:
- * no working Run, or more than one, is a refusal rather than a pick. A reserved turn the runtime
- * has not accepted yet is also `working`, so only admitted Runs count, as in `start` below.
+ * another member of a shared Thread started. Same-Person deliveries may join the live response;
+ * its host is the earlier submission (`runtime/settlement.ts` hostOf and Flue 2.2.2
+ * readSubmissionReply). Check every admitted working Run's authority before choosing that host
+ * by turn. A reserved turn the runtime has not accepted is also `working`, so only admitted
+ * Runs count, as in `start` below.
  */
 export const actingRun = Effect.fn('RunStore.actingRun')(function* (
   threadId: ThreadId,
@@ -93,13 +94,11 @@ export const actingRun = Effect.fn('RunStore.actingRun')(function* (
       .where(
         and(eq(runs.threadId, threadId), eq(runs.state, 'working'), isNotNull(runs.admittedAt)),
       )
-      .limit(2),
+      .orderBy(asc(runs.turn)),
   )
-  const [run, another] = working
+  const [run] = working
   if (run === undefined) return yield* new NoActingRun({ threadId, reason: 'NoWorkingRun' })
-  if (another !== undefined)
-    return yield* new NoActingRun({ threadId, reason: 'SeveralWorkingRuns' })
-  if (run.personId !== personId)
+  if (working.some((candidate) => candidate.personId !== personId))
     return yield* new NoActingRun({ threadId, reason: 'ActsForAnotherPerson' })
   return run.id
 })
