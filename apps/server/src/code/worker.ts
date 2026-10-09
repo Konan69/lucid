@@ -1,8 +1,9 @@
 import * as NodeWorkerThreads from 'node:worker_threads'
 import { CodeCallKind, CodeFailure } from '@vivid/contracts/code'
 import { Effect, Fiber, Option, type Schema } from 'effect'
-import { budgets, bytes } from './budgets.ts'
+import { budgets } from './budgets.ts'
 import { Program, Tool, toolRefusal } from './interpreter/index.ts'
+import { encodedSize } from './interpreter/work.ts'
 import { boundedLogs } from './logs.ts'
 import { decodeJson, decodeParent, encodeWorker, ParentMessage, WorkerMessage } from './protocol.ts'
 
@@ -45,6 +46,13 @@ const tool = (kind: CodeCallKind) =>
     input: { type: 'object' },
     run: (input) =>
       Effect.gen(function* () {
+        // Measured before it is written or sent: arguments past what one call may carry end the
+        // program here, and the supervisor's thread never holds them. The effect then never
+        // completes, so a `catch` in the program cannot carry it past its limit.
+        if (encodedSize(input, budgets.frame) > budgets.frame) {
+          yield* failed(CodeFailure.cases.OverLimit.make({ limit: 'data' }))
+          return yield* Effect.never
+        }
         // `undefined` has no JSON form; a program that passes nothing passes null.
         const text = JSON.stringify(input === undefined ? null : input)
         const arguments_ = yield* decodeJson(text).pipe(
@@ -96,8 +104,8 @@ const failed = (failure: CodeFailure) => {
 
 /**
  * Interprets the program and says how it ended. The deadline is the supervisor's: it orders the
- * stop, so no timeout is set here. The result is measured before it is sent, so a program cannot
- * make the supervisor read more than a result may be.
+ * stop, so no timeout is set here. The result is measured before it is written, so a program
+ * cannot make this thread write, or the supervisor read, more than a result may be.
  */
 const interpret = Effect.fn('Code.interpret')(function* (code: string) {
   const result = yield* Program.execute({
@@ -112,7 +120,7 @@ const interpret = Effect.fn('Code.interpret')(function* (code: string) {
     limits: { maxSteps: budgets.steps, maxGrowth: budgets.growth, maxToolCalls: budgets.calls },
   })
   if (!result.ok) return yield* failed(failures[result.error.kind](result.error))
-  if (bytes(JSON.stringify(result.value)) > budgets.result)
+  if (encodedSize(result.value, budgets.result) > budgets.result)
     return yield* failed(CodeFailure.cases.OverLimit.make({ limit: 'result' }))
   const kept = logs()
   return yield* say(

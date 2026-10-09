@@ -1,6 +1,6 @@
 import * as NodeWorkerThreads from 'node:worker_threads'
 import { CodeFailure } from '@vivid/contracts'
-import { Cause, Effect, Queue } from 'effect'
+import { Cause, Context, Effect, Layer, Queue, type Scope } from 'effect'
 import { budgets, bytes } from './budgets.ts'
 import {
   decodeWorker,
@@ -24,8 +24,9 @@ export interface Runner {
  * Starts the thread one program is interpreted on (`worker.ts`), and ends it with the scope.
  *
  * The thread exists for two things the interpreter cannot do for itself. Its heap is capped
- * (`budgets.heap`), so a program cannot take the server's memory whatever it finds to allocate.
- * And it can be ended from outside, so a program that is inside one long built-in (a regular
+ * (`heap`, in MiB), so a program cannot take the server's memory by building ever more data.
+ * The cap covers the JavaScript heap only; what one built-in may write in a single step is
+ * bounded where the built-in is called (`interpreter/work.ts`). And it can be ended from outside, so a program that is inside one long built-in (a regular
  * expression that takes minutes on some input) does not hold the server's own thread, and stops
  * at the deadline like any other. Messages are JSON text in both directions: a call's arguments
  * and its answer are JSON anyway, and text is what the size limits are counted in.
@@ -33,7 +34,7 @@ export interface Runner {
  * `tsx` is imported in the thread because the server runs from TypeScript source; a thread does
  * not inherit the loader the main program was started with.
  */
-export const openRunner = Effect.fn('Code.openRunner')(function* (heap: number) {
+const openRunner = Effect.fn('Code.openRunner')(function* (heap: number) {
   const messages = yield* Queue.unbounded<string, PipeFailure>()
   const ended = { memory: false, exited: false }
   /**
@@ -54,7 +55,11 @@ export const openRunner = Effect.fn('Code.openRunner')(function* (heap: number) 
         resourceLimits: { maxOldGenerationSizeMb: heap },
       })
       started.on('message', (text: string) => {
-        Queue.offerUnsafe(messages, text)
+        // The thread measures what it sends, so a longer message is a fault in it. It is not
+        // kept: the program ends on its size, and nothing that large waits in the queue.
+        if (text.length > budgets.wire)
+          Queue.failCauseUnsafe(messages, Cause.fail(new PipeFailure({ reason: 'size' })))
+        else Queue.offerUnsafe(messages, text)
       })
       started.on('error', (error: NodeJS.ErrnoException) => {
         if (error.code === 'ERR_WORKER_OUT_OF_MEMORY') ended.memory = true
@@ -95,3 +100,22 @@ export const openRunner = Effect.fn('Code.openRunner')(function* (heap: number) 
   }
   return runner
 })
+
+export interface CodeRunnerService {
+  /** A thread for one program. It is ended when the scope closes. */
+  readonly open: Effect.Effect<Runner, never, Scope.Scope>
+}
+
+/**
+ * Where a program's thread comes from. It is a service so that the supervisor's handling of a
+ * thread that is lost, or that says something it should not, can be shown with a scripted one:
+ * a real thread cannot be made to die at a chosen moment.
+ */
+export class CodeRunner extends Context.Service<CodeRunner, CodeRunnerService>()(
+  'vivid/CodeRunner',
+) {}
+
+export const codeRunnerLayer = Layer.succeed(
+  CodeRunner,
+  CodeRunner.of({ open: openRunner(budgets.heap) }),
+)

@@ -27,7 +27,7 @@ import { isCodeName } from '../observability/messages.ts'
 import type { CodeBoundary } from './authority.ts'
 import { boundedLogs, encodedPrefix } from './logs.ts'
 import { budgets, bytes } from './budgets.ts'
-import { openRunner, type Runner } from './runner.ts'
+import { CodeRunner, type CodeRunnerService, type Runner } from './runner.ts'
 import { ParentMessage, PipeFailure, WorkerMessage } from './protocol.ts'
 
 /** A completed call has a receipt; decisions stop admission before anything returns to the program. */
@@ -369,6 +369,10 @@ const readCalls = Effect.fn('Code.readCalls')(function* (
 ) {
   const running: Fiber.Fiber<void, PipeFailure>[] = []
   const { state, stopped } = execution
+  // A program that stops waiting for a call frees the interpreter's own place for the next one,
+  // while the call itself goes on here. The bound on calls at work together is therefore kept
+  // here, where a place is held until the call has really ended.
+  const together = yield* Semaphore.make(budgets.together)
   while (true) {
     const message = yield* runner.read.pipe(
       Effect.tapError(() =>
@@ -381,6 +385,12 @@ const readCalls = Effect.fn('Code.readCalls')(function* (
             }),
           ),
         ),
+      ),
+      // The thread is gone, but the calls it started run here and are not gone with it. They
+      // are left to finish, as after a final message, so that a thread lost to its memory limit
+      // does not turn a call that completes into one that "may have happened".
+      Effect.tapError(() =>
+        Effect.forEach(running, (fiber) => Fiber.await(fiber), { concurrency: 'unbounded' }),
       ),
     )
     if (WorkerMessage.isAnyOf(['Done', 'Failed'])(message)) {
@@ -398,7 +408,7 @@ const readCalls = Effect.fn('Code.readCalls')(function* (
     // are still running. Wait for the decision instead; the last of them reports it.
     if (Option.isSome(refused))
       return state.decided ? yield* Deferred.await(stopped) : refused.value
-    const call = runCall(runner, message, execution).pipe(
+    const call = together.withPermit(runCall(runner, message, execution)).pipe(
       Effect.catchTag('CodePipeFailure', (failure) =>
         Effect.gen(function* () {
           state.end(
@@ -473,6 +483,7 @@ const exchange = Effect.fn('Code.exchange')(function* (
  * program.
  */
 const execute = Effect.fn('Code.supervise')(function* (
+  threads: CodeRunnerService,
   input: { readonly request: RunCodeRequest; readonly boundary: CodeBoundary },
   dispatch: Dispatch,
 ) {
@@ -481,7 +492,7 @@ const execute = Effect.fn('Code.supervise')(function* (
   const failed = (failure: CodeFailure) => state.failed(failure)
   const program = Effect.scoped(
     Effect.gen(function* () {
-      const runner = yield* openRunner(budgets.heap)
+      const runner = yield* threads.open
       running.runner = Option.some(runner)
       yield* runner.send(ParentMessage.cases.Start.make({ code: input.request.code }))
       return yield* exchange(runner, state, dispatch)
@@ -515,6 +526,7 @@ const execute = Effect.fn('Code.supervise')(function* (
 export const codeProcessLayer = Layer.effect(
   CodeProcess,
   Effect.gen(function* () {
+    const threads = yield* CodeRunner
     const capacity = yield* Semaphore.make(budgets.processes)
     const active = new Set<ThreadId>()
     return CodeProcess.of({
@@ -536,7 +548,7 @@ export const codeProcessLayer = Layer.effect(
         if (active.has(thread)) return unavailable
         active.add(thread)
         const admitted = yield* capacity
-          .withPermitsIfAvailable(1)(execute(input, dispatch))
+          .withPermitsIfAvailable(1)(execute(threads, input, dispatch))
           .pipe(Effect.ensuring(Effect.sync(() => active.delete(thread))))
         return Option.getOrElse(admitted, () => unavailable)
       }),

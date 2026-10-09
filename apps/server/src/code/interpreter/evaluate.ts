@@ -2,7 +2,7 @@
 import { Result as Outcome } from 'effect'
 import type { Raised, ResolvedExecutionLimits } from './model.ts'
 import { parse } from 'acorn'
-import { assertBuildable, Work } from './work.ts'
+import { assertBuildable, MAX_BUILT, Work } from './work.ts'
 import { Cause, Effect, Exit, Fiber, Match, Semaphore } from 'effect'
 import {
   copyIn,
@@ -441,12 +441,14 @@ const invokeStringMethod = (value: string, name: string, args: Array<unknown>, n
             node,
           )
         }
+        assertReplaceable(value, replacement, node)
         result =
           name === 'replace'
             ? value.replace(pattern, replacement)
             : value.replaceAll(pattern, replacement)
         break
       }
+      assertReplaceable(value, str(1), node)
       if (name === 'replace') {
         result = value.replace(str(0), str(1))
         break
@@ -638,6 +640,17 @@ const collectPatternNames = (pattern: AstNode, out: Array<string> = []): Array<s
       break
   }
   return out
+}
+
+/**
+ * Refuses a replacement that could make a string far larger than a program may hold. Every
+ * position of the text can match (an empty pattern matches between all of them), and each match
+ * writes the whole replacement, so the most it can make is known before it runs. The allowance
+ * is sixteen times one built-in's, which ordinary rewriting of a page of text does not approach.
+ */
+const assertReplaceable = (text: string, replacement: string, node: AstNode): void => {
+  if ((text.length + 1) * replacement.length > MAX_BUILT * 16)
+    assertBuildable((text.length + 1) * replacement.length, 'String.replace', node)
 }
 
 /** Puts `next` into `target`, element by element, and returns `target`. Same length by contract. */
@@ -2939,11 +2952,16 @@ class Interpreter<R> {
           )
         }
         const input = boundedData(target, 'Array.join input') as Array<unknown>
-        return Effect.succeed(
-          input
-            .map((item) => coerceToString(item ?? ''))
-            .join(args.length === 0 ? ',' : (args[0] as string)),
+        const parts = input.map((item) => coerceToString(item ?? ''))
+        const separator = args.length === 0 ? ',' : (args[0] as string)
+        // Summed before it is joined: an array that names one large string many times is small
+        // to hold and enormous to join.
+        assertBuildable(
+          parts.reduce((total, part) => total + part.length + separator.length, 0),
+          'Array.join',
+          node,
         )
+        return Effect.succeed(parts.join(separator))
       }
       case 'includes':
         if (args.length === 0 || args.length > 2)

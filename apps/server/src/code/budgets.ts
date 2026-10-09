@@ -4,9 +4,9 @@ import { CodeTiming } from '@vivid/contracts/code'
 export const budgets = {
   source: 16_384,
   seconds: CodeTiming.seconds,
-  // Statements and expressions one program may evaluate. The interpreter runs on the server's
-  // own thread at about a million steps a second (measured 9 October 2026), so this is about two
-  // seconds of that thread, taken in turns with everything else.
+  // Statements and expressions one program may evaluate: about two seconds of its own thread
+  // (a million steps a second, measured 9 October 2026). It ends a runaway program with a
+  // message the model can act on, long before the deadline would.
   steps: 2_000_000,
   // Characters of strings and items of arrays, objects, Maps and Sets one program may make.
   growth: 16_777_216,
@@ -21,6 +21,8 @@ export const budgets = {
   logs: 8_192,
   // Programs this server interprets at once.
   processes: 4,
+  // Calls of one program at work at the same time.
+  together: 8,
   pages: 8,
   pageBytes: 524_288,
   pageText: 24_576,

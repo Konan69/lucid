@@ -22,6 +22,58 @@ export const assertBuildable = (size: number, what: string, node: AstNode): void
     ).as('RangeError')
 }
 
+/** Strings shorter than this are measured each time; longer ones once (see `encodedSize`). */
+const REMEMBERED_FROM = 256
+
+/**
+ * The size plain data would have as JSON, in UTF-8 bytes, counted without writing the JSON.
+ * Counting stops as soon as `limit` is passed, and what is returned is then only "more than
+ * `limit`".
+ *
+ * It exists because writing the JSON is the expensive part. Data that names one large string
+ * many times is small to hold and enormous to write: on 9 October 2026 an array of 400 references
+ * to one 1 MiB string was written out to be measured against a 32 KiB limit, and the process grew
+ * by 845 MiB. Every value costs at least one byte, so the walk itself ends within `limit` steps.
+ * A long string is measured once and remembered, so repeating it costs nothing more.
+ */
+export const encodedSize = (value: unknown, limit: number): number => {
+  const remembered = new Map<string, number>()
+  const text = (item: string): number => {
+    if (item.length < REMEMBERED_FROM) return Buffer.byteLength(JSON.stringify(item))
+    const known = remembered.get(item)
+    if (known !== undefined) return known
+    const size = Buffer.byteLength(JSON.stringify(item))
+    remembered.set(item, size)
+    return size
+  }
+  let size = 0
+  const pending: Array<unknown> = [value]
+  while (pending.length > 0 && size <= limit) {
+    const item = pending.pop()
+    if (typeof item === 'string') size += text(item)
+    else if (typeof item === 'number') size += Number.isFinite(item) ? String(item).length : 4
+    else if (typeof item === 'boolean') size += item ? 4 : 5
+    else if (Array.isArray(item)) {
+      // Brackets and the commas between members.
+      size += 2 + Math.max(0, item.length - 1)
+      if (size + item.length > limit) return limit + 1
+      for (const member of item) pending.push(member)
+    } else if (item !== null && typeof item === 'object') {
+      size += 2
+      for (const [key, member] of Object.entries(item)) {
+        // JSON leaves out a member whose value is undefined.
+        if (member === undefined) continue
+        size += text(key) + 2
+        if (size > limit) return limit + 1
+        pending.push(member)
+      }
+    }
+    // null, and undefined as an array member, are both written `null`.
+    else size += 4
+  }
+  return size
+}
+
 /**
  * How deep one program's own functions may call each other. The interpreter evaluates on the
  * heap, not on the host's stack, so a function that calls itself without end is not stopped by a

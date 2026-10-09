@@ -30,7 +30,13 @@ call ended, and reports only that.
 - **The interpreter is what a program cannot get out of.** It is a port of opencode's code mode.
   It gives a program its tools and plain data, and nothing of the host.
 - **The thread is what a program cannot use up.** Its heap is capped, and the supervisor can end
-  it. opencode runs its interpreter in its own process with only a time limit, which is right for
+  it. The cap is on the thread's JavaScript heap, which is not everything a thread can allocate:
+  one built-in that writes a very large string does so outside it. So the built-ins that can
+  multiply data (`JSON.stringify`, `join`, `repeat`, padding, replacing) are refused above a
+  fixed size before they run, and a program's result and a call's arguments are measured without
+  being written out (`interpreter/work.ts`, `encodedSize`). This is a bound by construction for
+  the cases found, not a guarantee from the operating system: the server has no process-level
+  memory limit per program. opencode runs its interpreter in its own process with only a time limit, which is right for
   one person on their own machine. Vivid's server is one process and one thread for every
   Person. Measured on 9 October 2026 with the interpreter in the server's own thread: a regular
   expression held the thread 1.9 seconds past a 1 second limit (and would hold it for minutes

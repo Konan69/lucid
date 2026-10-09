@@ -7,6 +7,7 @@ import {
   supportedSyntaxMessage,
 } from '../model.ts'
 import { copyIn, copyOut } from '../tools.ts'
+import { assertBuildable, encodedSize, MAX_BUILT } from '../work.ts'
 
 export const jsonStatics = new Set(['stringify', 'parse'])
 
@@ -27,7 +28,11 @@ export const invokeJsonMethod = (name: string, args: Array<unknown>, node: AstNo
       }
       const space = args[2]
       const indent = typeof space === 'number' || typeof space === 'string' ? space : undefined
-      return JSON.stringify(copyOut(copyIn(args[0], 'JSON.stringify value')), null, indent)
+      const data = copyOut(copyIn(args[0], 'JSON.stringify value'))
+      // Measured before it is written: data that repeats one large string is small to hold and
+      // enormous to write (see `encodedSize`).
+      assertBuildable(encodedSize(data, MAX_BUILT), 'JSON.stringify', node)
+      return JSON.stringify(data, null, indent)
     }
     case 'parse': {
       const text = args[0]

@@ -1,4 +1,4 @@
-import { Logger } from 'effect'
+import { Layer, Logger } from 'effect'
 import { describe, expect, it as standalone, layer } from '@effect/vitest'
 import {
   ApprovalId,
@@ -12,10 +12,13 @@ import { Deferred, Effect, Exit, Fiber, Ref, Option, Schema, Cause } from 'effec
 import * as TestClock from 'effect/testing/TestClock'
 import { CallOutcome, CodeProcess, codeProcessLayer, Execution, type Dispatch } from './process.ts'
 import { CodeTiming } from '@vivid/contracts/code'
-import { WorkerMessage } from './protocol.ts'
+import { PipeFailure, WorkerMessage } from './protocol.ts'
+import { CodeRunner, codeRunnerLayer } from './runner.ts'
 import { discoveredTool } from './signatures.ts'
 import { budgets } from './budgets.ts'
 
+/** The supervisor with real threads. */
+const supervised = codeProcessLayer.pipe(Layer.provide(codeRunnerLayer))
 const person = PersonId.make('person-test')
 
 /** Compare observable variants without constructing partial domain records in matchers. */
@@ -64,7 +67,7 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
       return dispatch
     })
 
-  layer(codeProcessLayer)((it) => {
+  layer(supervised)((it) => {
     it.effect('round-trips production discovery expressions through the interpreter', () =>
       Effect.gen(function* () {
         const names = [
@@ -343,6 +346,34 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
           approvalId: 'approval-test',
           calls: [{ end: 'needs approval' }, { end: 'completed' }],
         })
+      }),
+    )
+
+    it.effect('data that repeats one large value is measured without being written out', () =>
+      Effect.gen(function* () {
+        const before = process.memoryUsage().rss
+        // 400 references to one 1 MiB string: small to hold, 400 MiB as JSON.
+        const build =
+          'const s = "x".repeat(1048576); const a = []; for (let i = 0; i < 400; i++) a.push(s);'
+        check(yield* run(`${build} return a;`, reply), 'Failed', {
+          failure: CodeFailure.cases.OverLimit.make({ limit: 'result' }),
+        })
+        const sent = yield* run(
+          `${build} try { await tools.use_tool({input: a}); } catch (e) {} return "caught";`,
+          reply,
+        )
+        check(sent, 'Failed', { failure: CodeFailure.cases.OverLimit.make({ limit: 'data' }) })
+        expect(sent.calls).toHaveLength(0)
+        for (const code of [
+          `${build} return JSON.stringify(a).length;`,
+          `${build} return a.join("").length;`,
+        ])
+          expect(yield* run(code, reply), code).toHaveProperty(
+            'failure.message',
+            expect.stringContaining('the most one step may make'),
+          )
+        // On 9 October 2026 the first of these alone grew the process by 845 MiB.
+        expect((process.memoryUsage().rss - before) / 1_048_576).toBeLessThan(400)
       }),
     )
 
@@ -667,7 +698,7 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
     )
   })
 
-  layer(codeProcessLayer)(
+  layer(supervised)(
     'Clock for keeps logs when the 300-second parent deadline ends a waiting program',
     (it) => {
       it.effect('keeps logs when the 300-second parent deadline ends a waiting program', () =>
@@ -693,7 +724,7 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
     },
   )
 
-  layer(codeProcessLayer)(
+  layer(supervised)(
     'Clock for lets a call that was already running finish before an Approval is reported',
     (it) => {
       it.effect('lets a call that was already running finish before an Approval is reported', () =>
@@ -737,7 +768,7 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
     },
   )
 
-  layer(codeProcessLayer)(
+  layer(supervised)(
     'Clock for reports an Approval when the last running call is interrupted',
     (it) => {
       it.effect('reports an Approval when the last running call is interrupted', () =>
@@ -775,7 +806,7 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
     },
   )
 
-  layer(codeProcessLayer)(
+  layer(supervised)(
     'Clock for a deadline leaves every running call unknown and admits nothing after it',
     (it) => {
       it.effect('a deadline leaves every running call unknown and admits nothing after it', () =>
@@ -809,7 +840,7 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
     },
   )
 
-  layer(codeProcessLayer)(
+  layer(supervised)(
     'Clock for the deadline ends a program that is inside one built-in and cannot hear',
     (it) => {
       it.effect('the deadline ends a program that is inside one built-in and cannot hear', () =>
@@ -842,7 +873,7 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
     },
   )
 
-  layer(codeProcessLayer)(
+  layer(supervised)(
     'Clock for marks a timed-out consequential dispatch unknown and retains a previous completed receipt',
     (it) => {
       it.effect(
@@ -866,6 +897,135 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
     },
   )
 })
+
+/**
+ * A thread that is lost while a call it started is still at work. The call runs on the
+ * supervisor, so it is left to finish and its receipt is the true one. A scripted thread stands
+ * in for the real one, which cannot be made to die at a chosen moment.
+ */
+standalone.effect('a thread lost while a call is at work does not cut the call short', () =>
+  Effect.gen(function* () {
+    const lose = yield* Deferred.make<void>()
+    const entered = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    const interrupted = yield* Ref.make(false)
+    const sent = yield* Ref.make(0)
+    const scripted = Layer.succeed(
+      CodeRunner,
+      CodeRunner.of({
+        open: Effect.succeed({
+          // Two calls, then nothing more: the thread ends when the test says so.
+          read: Effect.gen(function* () {
+            const position = yield* Ref.updateAndGet(sent, (value) => value + 1)
+            if (position === 1)
+              return WorkerMessage.cases.Call.make({ id: 1, kind: 'use_tool', input: {} })
+            if (position === 2)
+              return WorkerMessage.cases.Call.make({ id: 2, kind: 'find_tools', input: {} })
+            yield* Deferred.await(lose)
+            return yield* new PipeFailure({ reason: 'closed' })
+          }),
+          send: () => Effect.void,
+          stopped: Effect.succeed(CodeFailure.cases.OverLimit.make({ limit: 'memory' })),
+        }),
+      }),
+    )
+    const dispatch: Dispatch = Effect.fn('Test.atWorkWhenLost')(function* (call) {
+      if (call.kind === 'find_tools')
+        return CallOutcome.cases.Returned.make({ value: null, summary: 'Find', end: 'completed' })
+      yield* Deferred.succeed(entered, undefined)
+      yield* Deferred.await(release).pipe(Effect.onInterrupt(() => Ref.set(interrupted, true)))
+      return CallOutcome.cases.Returned.make({ value: true, summary: 'Sent', end: 'completed' })
+    })
+    const caseContext = yield* Layer.build(codeProcessLayer.pipe(Layer.provide(scripted)))
+    return yield* Effect.gen(function* () {
+      const running = yield* Effect.forkChild(
+        (yield* CodeProcess).run(
+          {
+            request: { code: 'return 1;', summary: 'Read' },
+            boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
+          },
+          dispatch,
+        ),
+      )
+      yield* Deferred.await(entered)
+      yield* Deferred.succeed(lose, undefined)
+      // The supervisor now learns the thread is gone. Give it every chance to interrupt the call.
+      for (let turn = 0; turn < 50; turn++) yield* Effect.yieldNow
+      expect(yield* Ref.get(interrupted)).toBe(false)
+      yield* Deferred.succeed(release, undefined)
+      check(yield* Fiber.join(running), 'Failed', {
+        failure: CodeFailure.cases.OverLimit.make({ limit: 'memory' }),
+        calls: [
+          { kind: 'use_tool', end: 'completed' },
+          { kind: 'find_tools', end: 'completed' },
+        ],
+      })
+    }).pipe(Effect.provide(caseContext))
+  }).pipe(Effect.scoped),
+)
+
+/**
+ * A program that stops waiting for a call frees the interpreter's place for the next, while the
+ * call itself goes on. The bound on calls at work together is the supervisor's, so twelve calls
+ * arriving at once are still eight at work. Scripted, so that all twelve arrive before any ends.
+ */
+standalone.effect('holds a program to eight calls at work, however fast they arrive', () =>
+  Effect.gen(function* () {
+    const sent = yield* Ref.make(0)
+    const atWork = yield* Ref.make(0)
+    const most = yield* Ref.make(0)
+    const release = yield* Deferred.make<void>()
+    const finish = yield* Deferred.make<void>()
+    const scripted = Layer.succeed(
+      CodeRunner,
+      CodeRunner.of({
+        open: Effect.succeed({
+          read: Effect.gen(function* () {
+            const position = yield* Ref.updateAndGet(sent, (value) => value + 1)
+            if (position <= 12)
+              return WorkerMessage.cases.Call.make({ id: position, kind: 'use_tool', input: {} })
+            yield* Deferred.await(finish)
+            return WorkerMessage.cases.Done.make({ result: 1, logs: [], logsTruncated: false })
+          }),
+          send: () => Effect.void,
+          stopped: Effect.succeed(CodeFailure.cases.Unavailable.make({})),
+        }),
+      }),
+    )
+    const dispatch: Dispatch = Effect.fn('Test.countAtWork')(function* () {
+      const now = yield* Ref.updateAndGet(atWork, (value) => value + 1)
+      yield* Ref.update(most, (value) => Math.max(value, now))
+      yield* Deferred.await(release)
+      yield* Ref.update(atWork, (value) => value - 1)
+      return CallOutcome.cases.Returned.make({ value: true, summary: 'Sent', end: 'completed' })
+    })
+    const caseContext = yield* Layer.build(codeProcessLayer.pipe(Layer.provide(scripted)))
+    return yield* Effect.gen(function* () {
+      const running = yield* Effect.forkChild(
+        (yield* CodeProcess).run(
+          {
+            request: { code: 'return 1;', summary: 'Read' },
+            boundary: { person, thread: ThreadId.make(crypto.randomUUID()) },
+          },
+          dispatch,
+        ),
+      )
+      // Every call has arrived and had every chance to start.
+      for (let turn = 0; turn < 100; turn++) yield* Effect.yieldNow
+      expect(yield* Ref.get(most)).toBe(budgets.together)
+      yield* Deferred.succeed(release, undefined)
+      // The four that waited for a place take their turn; a real program ends only after its
+      // calls have been answered.
+      for (let turn = 0; turn < 100; turn++) yield* Effect.yieldNow
+      yield* Deferred.succeed(finish, undefined)
+      const outcome = yield* Fiber.join(running)
+      check(outcome, 'Completed', { result: 1 })
+      expect(outcome.calls.map((call) => call.end)).toEqual(
+        Array.from({ length: 12 }, () => 'completed'),
+      )
+    }).pipe(Effect.provide(caseContext))
+  }).pipe(Effect.scoped),
+)
 
 /** The deadline's own transition with no final message: what was printed is marked incomplete. */
 standalone.effect(

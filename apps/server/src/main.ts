@@ -28,6 +28,7 @@ import { companyStoreLayer } from './companies/store.ts'
 import { codeAuthorityLayer } from './code/authority.ts'
 import { codeCallsLayer } from './code/calls.ts'
 import { codeProcessLayer } from './code/process.ts'
+import { codeRunnerLayer } from './code/runner.ts'
 import { publicPageLayer } from './code/page.ts'
 import { boatMachineLayer } from './computers/boat.ts'
 import { deviceLayer } from './computers/device.ts'
@@ -155,10 +156,12 @@ const serverProgram = Effect.gen(function* () {
     Layer.provideMerge(accounts),
   )
   const decisions = gateLayer.pipe(Layer.provideMerge(reviewerLayer), Layer.provideMerge(trust))
-  // A program is interpreted in this process; its calls go through the decisions below.
-  const work = Layer.mergeAll(routineStoreLayer, codeCallsLayer, codeProcessLayer).pipe(
-    Layer.provideMerge(decisions),
-  )
+  // A program is interpreted on a thread of this process; its calls go through the decisions below.
+  const work = Layer.mergeAll(
+    routineStoreLayer,
+    codeCallsLayer,
+    codeProcessLayer.pipe(Layer.provide(codeRunnerLayer)),
+  ).pipe(Layer.provideMerge(decisions))
   const channelHandling = channelReceiverLayer.pipe(Layer.provideMerge(work))
   const schedules = routineSchedulerServiceLayer.pipe(Layer.provideMerge(channelHandling))
   const background = Layer.mergeAll(
