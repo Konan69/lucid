@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
-import { Schema } from 'effect'
-import { classifyFailure, decodeFailureEvidence } from './failure.ts'
+import { Option, Schema } from 'effect'
+import { classifyFailure, decodeFailureEvidence, providerStatusOf } from './failure.ts'
 
 describe('runtime failure ingress', () => {
   it.each([
@@ -27,5 +27,17 @@ describe('runtime failure ingress', () => {
     })
     expect(classifyFailure(decodeFailureEvidence(failure))).toBe('TimedOut')
     expect(classifyFailure(decodeFailureEvidence({ message: 429 }))).toBe('Unexplained')
+  })
+
+  it.each([
+    ['520 status code (no body)', Option.some(520)],
+    ['504 status code (no body)', Option.some(504)],
+    ['503: private upstream body', Option.some(503)],
+    ['429: too many requests', Option.some(429)],
+    ['private content includes 520', Option.none()],
+    ['999 status code (no body)', Option.none()],
+    ['200 status code (no body)', Option.none()],
+  ])('exports only a leading provider HTTP failure status from %s', (reason, expected) => {
+    expect(providerStatusOf(decodeFailureEvidence({ meta: { reason } }))).toEqual(expected)
   })
 })

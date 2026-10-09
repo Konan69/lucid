@@ -1,5 +1,18 @@
-import { RunFailure } from '@vivid/contracts'
-import { Option, Schema } from 'effect'
+import { RunFailure, RunId, ThreadId } from '@vivid/contracts'
+import { Effect, Option, Schema } from 'effect'
+import { FailureAttribute, observeFailures } from '../observability/failure.ts'
+
+/** Only HTTP failure status numbers cross the telemetry boundary, never provider prose. */
+export const ProviderStatus = Schema.Int.check(Schema.isBetween({ minimum: 400, maximum: 599 }))
+
+/** Classification distinguishes failed model calls from delivery or unrecognized execution failures. */
+const ModelFailureReason = RunFailure.pick([
+  'RateLimited',
+  'ModelUnavailable',
+  'NoAnswer',
+  'TimedOut',
+])
+const isModelFailure = Schema.is(ModelFailureReason)
 
 /** Flue serializes provider failures; only diagnostic evidence, never private payloads, is read here. */
 const Evidence = Schema.Union([
@@ -12,6 +25,22 @@ const Evidence = Schema.Union([
 ])
 export const decodeFailureEvidence = Schema.decodeUnknownOption(Evidence)
 const isText = Schema.is(Schema.String)
+
+/** The SDK's nested reason outranks its generic message; prose stays local to this ingress. */
+const diagnosticOf = (evidence: typeof Evidence.Type): Option.Option<string> => {
+  if (isText(evidence)) return Option.some(evidence)
+  if (evidence.meta !== undefined && evidence.meta.reason !== undefined)
+    return Option.some(evidence.meta.reason)
+  return Option.fromUndefinedOr(evidence.message)
+}
+
+/** Pi 0.87.1 formats status-only SDK errors as "520 status code (no body)" or "520: <body>".
+ * Read only that leading numeric field; provider body and unrelated numbers are never exported. */
+export const providerStatusOf = (decoded: Option.Option<typeof Evidence.Type>) =>
+  Option.flatMap(Option.flatMap(decoded, diagnosticOf), (text) => {
+    const match = /^([45]\d{2})(?: status code\b|:)/u.exec(text)
+    return match === null ? Option.none<number>() : Option.some(Number(match[1]))
+  })
 
 /** The provider's schema-encoded SDK diagnostic is read exactly, before legacy prose classification. */
 const decodeReason = Schema.decodeUnknownOption(
@@ -31,10 +60,7 @@ export const classifyFailure = (decoded: Option.Option<typeof Evidence.Type>): R
   const evidence = decoded.value
   if (isText(evidence)) return reasonOf(evidence)
   if (evidence._tag !== undefined) return evidence._tag
-  if (evidence.meta !== undefined && evidence.meta.reason !== undefined)
-    return reasonOf(evidence.meta.reason)
-  if (evidence.message !== undefined) return reasonOf(evidence.message)
-  return 'Unexplained'
+  return Option.match(diagnosticOf(evidence), { onNone: () => 'Unexplained', onSome: reasonOf })
 }
 
 /** Provider status and known failure phrases outrank generic SDK operation names. */
@@ -51,3 +77,55 @@ const classifyText = (text: string): RunFailure => {
     return 'ModelUnavailable'
   return 'Unexplained'
 }
+
+/** The provider failed to answer; identities remain local and all diagnostics are closed values. */
+export class ModelProviderFailed extends Schema.TaggedError<ModelProviderFailed>()(
+  'ModelProviderFailed',
+  {
+    threadId: ThreadId,
+    runId: RunId,
+    reason: ModelFailureReason,
+    status: Schema.Option(ProviderStatus),
+  },
+  { title: 'The model provider failed' },
+) {}
+
+/** A terminal failure without provider evidence must not be mislabeled as a provider outage. */
+export class RunFailed extends Schema.TaggedError<RunFailed>()(
+  'RunFailed',
+  {
+    threadId: ThreadId,
+    runId: RunId,
+    reason: RunFailure.pick(['Delivery', 'Unexplained']),
+  },
+  { title: 'The Run failed' },
+) {}
+
+/** Give a value settlement an actual failed span before answering it, using the normal recorder.
+ * Never attach Flue's serialized error, its prose or a cause; only typed, classified evidence. */
+const failRun = Effect.fn('Runtime.failedRun')(function* (input: {
+  readonly threadId: ThreadId
+  readonly runId: RunId
+  readonly reason: RunFailure
+  readonly status: Option.Option<number>
+}) {
+  const attributes = Option.match(input.status, {
+    onNone: () => ({ [FailureAttribute.modelReason]: input.reason }),
+    onSome: (status) => ({
+      [FailureAttribute.modelReason]: input.reason,
+      [FailureAttribute.modelStatus]: status,
+    }),
+  })
+  yield* Effect.annotateCurrentSpan(attributes)
+  const failure = isModelFailure(input.reason)
+    ? new ModelProviderFailed({ ...input, reason: input.reason })
+    : new RunFailed({ threadId: input.threadId, runId: input.runId, reason: input.reason })
+  return yield* Effect.fail(failure).pipe(
+    observeFailures('runtime'),
+    Effect.annotateLogs(attributes),
+  )
+})
+
+/** Reporting answers only the failure it just constructed; settlement publishing continues. */
+export const recordRunFailure = (input: Parameters<typeof failRun>[0]) =>
+  failRun(input).pipe(Effect.catchTag(['ModelProviderFailed', 'RunFailed'], () => Effect.void))

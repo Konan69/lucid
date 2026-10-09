@@ -20,6 +20,7 @@ import { Changes } from '../live/changes.ts'
 import { Learning } from '../memory/learn.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { submissionId } from '../runtime/identity.ts'
+import { recordRunFailure } from '../runtime/failure.ts'
 import { Runtime, Settlement } from '../runtime/client.ts'
 import { audienceTopics, canSee, findThread, type StoredThread } from './access.ts'
 import {
@@ -116,6 +117,14 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   return Effect.fn('Conversation.observe')(function* (run: Followed) {
     const settlement = yield* runtime.settled(run.threadId, run.id)
     const changed = yield* runs.end(run.id, endingOf(settlement))
+    // The conditional write owns reporting too: replay and restart observers cannot count twice.
+    if (changed && Settlement.guards.Failed(settlement))
+      yield* recordRunFailure({
+        threadId: run.threadId,
+        runId: run.id,
+        reason: settlement.reason,
+        status: Option.fromUndefinedOr(settlement.providerStatus),
+      })
     yield* devices.ended(run.id)
     if (!changed) return
     // Naming lives in the server scope as its own fiber; even a stalled model cannot hold settlement open.

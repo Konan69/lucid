@@ -44,6 +44,8 @@ export const FailureAttribute = {
   databaseCode: 'db.response.status_code',
   constraint: 'vivid.failure.constraint',
   table: 'db.collection.name',
+  modelReason: 'vivid.model.failure.reason',
+  modelStatus: 'vivid.model.failure.status',
 } as const
 
 /** The log annotation holding the failure's message; read on stdout, absent from the allowlist. */
