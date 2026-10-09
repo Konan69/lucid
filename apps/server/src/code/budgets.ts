@@ -10,8 +10,12 @@ export const budgets = {
   steps: 2_000_000,
   // Characters of strings and items of arrays, objects, Maps and Sets one program may make.
   growth: 16_777_216,
+  // The heap of the thread one program is interpreted on, in MiB (Node `resourceLimits`).
+  heap: 256,
   calls: 100,
   frame: 262_144,
+  // The longest message a program's thread may send: one call's arguments and their envelope.
+  wire: 263_168,
   data: 4_194_304,
   result: 32_768,
   logs: 8_192,

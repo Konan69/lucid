@@ -635,6 +635,12 @@ const collectPatternNames = (pattern: AstNode, out: Array<string> = []): Array<s
   return out
 }
 
+/** Puts `next` into `target`, element by element, and returns `target`. Same length by contract. */
+const rewritten = (target: Array<unknown>, next: ReadonlyArray<unknown>): Array<unknown> => {
+  for (const [index, item] of next.entries()) target[index] = item
+  return target
+}
+
 /** The expressions whose result can be data that did not exist before. */
 const growing = new Set([
   'BinaryExpression',
@@ -2954,9 +2960,16 @@ class Interpreter<R> {
         return Effect.succeed(target.concat(...args))
       case 'flat':
         return Effect.succeed(target.flat(optNumber(args[0], 'depth') ?? 1))
+      // Vivid: `sort` and `reverse` change the array they are called on and return it, as in
+      // JavaScript. opencode returns a copy and leaves the receiver as it was (`runtime.ts`,
+      // array methods), so `items.sort(...)` followed by a read of `items` silently used the
+      // unsorted order: the most ordinary way to write it gave the wrong answer.
       case 'reverse':
-        return Effect.succeed(target.toReversed())
+        return Effect.sync(() => rewritten(target, target.toReversed()))
       case 'sort':
+        return Effect.map(this.sortArray(target, args[0], node), (sorted) =>
+          rewritten(target, sorted),
+        )
       case 'toSorted':
         return this.sortArray(target, args[0], node)
       case 'toReversed':
@@ -3853,7 +3866,9 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
     limits.maxToolCalls,
     hooks,
   )
-  const logs: Array<string> = []
+  // Vivid: the host may supply the list printed lines are kept in, so that it still has them
+  // when it interrupts the program (an interrupted execution returns no result).
+  const logs: Array<string> = options.logs === undefined ? [] : options.logs
   const logged = () => (logs.length > 0 ? { logs: [...logs] } : {})
 
   if (options.code.trim().length === 0) {

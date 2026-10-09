@@ -27,6 +27,8 @@ type ToolTree<R = never> = {
 export type ExecuteOptions<Tools extends Record<string, unknown> = {}> = {
   /** Source for one program in the supported JavaScript subset. */
   code: string
+  /** Where printed lines are kept. Absent means a list of the execution's own. */
+  logs?: Array<string>
   /** Explicit tool tree exposed to the program as `tools`. */
   tools?: Tools & ToolTree<Services<Tools>>
   /** Explicit resource limits for this execution. */

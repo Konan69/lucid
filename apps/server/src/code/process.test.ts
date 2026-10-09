@@ -11,6 +11,8 @@ import {
 import { Deferred, Effect, Exit, Fiber, Ref, Option, Schema, Cause } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
 import { CallOutcome, CodeProcess, codeProcessLayer, Execution, type Dispatch } from './process.ts'
+import { CodeTiming } from '@vivid/contracts/code'
+import { WorkerMessage } from './protocol.ts'
 import { discoveredTool } from './signatures.ts'
 import { budgets } from './budgets.ts'
 
@@ -23,11 +25,13 @@ function check(outcome: CodeOutcome, tag: CodeOutcome['_tag'], fields: Schema.Js
 }
 
 /**
- * Every execution here is the production supervisor and the production interpreter, in this
- * process. Only the check of each call as the Person (`calls.ts`) is replaced, by a `Dispatch`
- * the case supplies. Nothing here waits on a real clock.
+ * Every execution here is the production supervisor, a real thread and the production
+ * interpreter on it. Only the check of each call as the Person (`calls.ts`) is replaced, by a
+ * `Dispatch` the case supplies. A program costs a thread start (about a third of a second), and
+ * the gate runs this file beside every other suite, so the ceiling is generous. Nothing here
+ * waits on a real clock.
  */
-describe('Supervised programs', () => {
+describe('Supervised programs', { timeout: 30_000 }, () => {
   const run = Effect.fn('Test.program')(function* (code: string, dispatch: Dispatch) {
     return yield* (yield* CodeProcess).run(
       {
@@ -274,6 +278,70 @@ describe('Supervised programs', () => {
         check(yield* run('tools.use_tool({}); return "finished";', ask), 'ApprovalRequired', {
           approvalId: 'approval-test',
           calls: [{ end: 'needs approval' }],
+        })
+      }),
+    )
+
+    it.effect(
+      'a call the program gave up waiting for still runs to its end and keeps its receipt',
+      () =>
+        Effect.gen(function* () {
+          const second = yield* Deferred.make<void>()
+          const count = yield* Ref.make(0)
+          // The first call returns only once the second has been dispatched: when the program
+          // moves on from the race, the first is still running.
+          const dispatch: Dispatch = Effect.fn('Test.abandoned')(function* (call) {
+            if ((yield* Ref.updateAndGet(count, (value) => value + 1)) === 1)
+              yield* Deferred.await(second)
+            else yield* Deferred.succeed(second, undefined)
+            return yield* reply(call)
+          })
+          const outcome = yield* run(
+            'const first = tools.use_tool({}); const won = await Promise.race([first, 42]); await tools.browse({}); return won;',
+            dispatch,
+          )
+          // Nothing interrupted the first call, so it is not reported as uncertain.
+          check(outcome, 'Completed', {
+            result: 42,
+            calls: [
+              { kind: 'use_tool', end: 'completed' },
+              { kind: 'browse', end: 'completed' },
+            ],
+          })
+        }),
+    )
+
+    it.effect('a program that fails after a decision does not cut short the calls beside it', () =>
+      Effect.gen(function* () {
+        const second = yield* Deferred.make<void>()
+        const asked = yield* Deferred.make<void>()
+        const count = yield* Ref.make(0)
+        const dispatch: Dispatch = Effect.fn('Test.failsBesideWork')(function* () {
+          if ((yield* Ref.updateAndGet(count, (value) => value + 1)) === 1) {
+            yield* Deferred.await(second)
+            yield* Deferred.succeed(asked, undefined)
+            return CallOutcome.cases.ApprovalRequired.make({
+              approvalId: ApprovalId.make('approval-test'),
+              summary: 'Send the message',
+            })
+          }
+          yield* Deferred.succeed(second, undefined)
+          // Still working when the first call asks, and for as long as the program takes to throw.
+          yield* Deferred.await(asked)
+          yield* Effect.yieldNow
+          return CallOutcome.cases.Returned.make({
+            value: true,
+            summary: 'Filed the note',
+            end: 'completed',
+          })
+        })
+        const outcome = yield* run(
+          'tools.use_tool({}); tools.use_tool({}); for (let i = 0; i < 1000; i++) {} throw new Error("oops");',
+          dispatch,
+        )
+        check(outcome, 'ApprovalRequired', {
+          approvalId: 'approval-test',
+          calls: [{ end: 'needs approval' }, { end: 'completed' }],
         })
       }),
     )
@@ -551,12 +619,9 @@ describe('Supervised programs', () => {
       }),
     )
 
-    it.effect('one built-in cannot make a value larger than a program may hold', () =>
+    it.effect('data a program keeps making ends it, by its work limit or its memory', () =>
       Effect.gen(function* () {
         for (const code of [
-          'return "x".repeat(2**29).length;',
-          'return "".padStart(2**29).length;',
-          'return Array.from({length: 2**30}).length;',
           'let s = "x".repeat(4000000); while (true) { s = s + s }',
           'const big = "x".repeat(1048576); for (let i = 0; i < 100000; i++) console.log(big, i); return 1;',
         ])
@@ -564,6 +629,15 @@ describe('Supervised programs', () => {
             'failure',
             CodeFailure.cases.OverLimit.make({ limit: 'work' }),
           )
+        // Twenty-five small arrays that share their members: one built-in copies them apart into
+        // a tree of 2^25 arrays. No count of steps or of data made sees it; the thread's heap does.
+        const shared = yield* run(
+          'console.log("building"); let a = [0]; for (let i = 0; i < 24; i++) a = [a, a]; return JSON.stringify(a).length;',
+          reply,
+        )
+        check(shared, 'Failed', { failure: CodeFailure.cases.OverLimit.make({ limit: 'memory' }) })
+        // The server is as it was: the next program runs.
+        expect(yield* run('return 42;', reply)).toHaveProperty('result', 42)
       }),
     )
 
@@ -736,6 +810,39 @@ describe('Supervised programs', () => {
   )
 
   layer(codeProcessLayer)(
+    'Clock for the deadline ends a program that is inside one built-in and cannot hear',
+    (it) => {
+      it.effect('the deadline ends a program that is inside one built-in and cannot hear', () =>
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>()
+          const dispatch: Dispatch = Effect.fn('Test.beforeStall')(function* (call) {
+            yield* Deferred.succeed(entered, undefined)
+            return yield* reply(call)
+          })
+          // The match takes longer than the age of the universe; the thread never hears "stop".
+          const running = yield* Effect.forkChild(
+            run(
+              'console.log("matching"); await tools.find_tools({}); return /^(b+)+$/.test("b".repeat(200) + "!");',
+              dispatch,
+            ),
+          )
+          yield* Deferred.await(entered)
+          yield* TestClock.adjust('300 seconds')
+          yield* TestClock.adjust(CodeTiming.graceMs)
+          const outcome = yield* Fiber.join(running)
+          // What it printed could not be collected, and that is said.
+          check(outcome, 'Failed', {
+            failure: CodeFailure.cases.TimedOut.make({ seconds: 300 }),
+            calls: [{ end: 'completed' }],
+            logsTruncated: true,
+          })
+          expect(yield* run('return 42;', reply)).toHaveProperty('result', 42)
+        }),
+      )
+    },
+  )
+
+  layer(codeProcessLayer)(
     'Clock for marks a timed-out consequential dispatch unknown and retains a previous completed receipt',
     (it) => {
       it.effect(
@@ -760,6 +867,25 @@ describe('Supervised programs', () => {
   )
 })
 
+/** The deadline's own transition with no final message: what was printed is marked incomplete. */
+standalone.effect(
+  'marks logs incomplete when the final message does not come within the grace',
+  () =>
+    Effect.gen(function* () {
+      const state = new Execution()
+      const running = yield* Effect.forkChild(state.timeout(Effect.void))
+      yield* TestClock.adjust(CodeTiming.graceMs)
+      expect(yield* Fiber.join(running)).toEqual(
+        CodeOutcome.cases.Failed.make({
+          failure: CodeFailure.cases.TimedOut.make({ seconds: budgets.seconds }),
+          calls: [],
+          logs: [],
+          logsTruncated: true,
+        }),
+      )
+    }),
+)
+
 /** The false literal is one byte longer; clipping a near-full failure must reserve that byte. */
 standalone.effect('keeps failed aggregate bytes within the limit when logs nearly fit', () =>
   Effect.sync(() => {
@@ -777,7 +903,7 @@ standalone.effect('keeps failed aggregate bytes within the limit when logs nearl
       logsTruncated: false,
     })
     const line = 'x'.repeat(budgets.result - Buffer.byteLength(JSON.stringify(base)) - 1)
-    state.printed([line])
+    state.end(WorkerMessage.cases.Failed.make({ failure, logs: [line], logsTruncated: false }))
     const outcome = state.failed(failure)
     expect(Buffer.byteLength(JSON.stringify(outcome))).toBeLessThanOrEqual(budgets.result)
     expect(outcome).toHaveProperty('logsTruncated', true)

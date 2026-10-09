@@ -9,14 +9,17 @@ import { SandboxMap, SandboxSet } from './values.ts'
  */
 export const MAX_BUILT = 4_194_304
 
-/** Refuses a single built-in whose result would be larger than `MAX_BUILT`. */
+/**
+ * Refuses a single built-in whose result would be larger than `MAX_BUILT`. Nothing was made, so
+ * this is an ordinary error the program may catch, a RangeError as JavaScript's own "Invalid
+ * string length" is, and not the end of the program.
+ */
 export const assertBuildable = (size: number, what: string, node: AstNode): void => {
   if (size > MAX_BUILT)
     throw new InterpreterRuntimeError(
       `${what} would make a value of ${size} items; the most one step may make is ${MAX_BUILT}.`,
       node,
-      'WorkLimitExceeded',
-    )
+    ).as('RangeError')
 }
 
 /**

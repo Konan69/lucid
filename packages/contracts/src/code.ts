@@ -2,17 +2,21 @@ import * as Schema from 'effect/Schema'
 import { ACCOUNT_HANDLE_MAX } from './connections.js'
 import { ApprovalId } from './identity.js'
 
-/** How long one program may run on the server, every call it makes included. */
+/**
+ * One timing contract keeps the server deadline, the wait that follows it and the client timeout
+ * in order. After the deadline the server waits `graceMs` for what the program printed.
+ */
 export const CodeTiming = {
   seconds: 300,
+  graceMs: 1_000,
 } as const
 /**
- * The program tool's own timeout: the server deadline and a margin for the answer's way back. It
- * is the only client-side bound: the runtime's HTTP client already waits an hour for headers and
- * has no body timeout (`@effect/platform-node` `NodeHttpClient.ts`, `makeUndici`), so the
- * transport never gives up before this does.
+ * The program tool's own timeout: the server deadline, the wait that can follow it, and a margin
+ * for the answer's way back. It is the only client-side bound: the runtime's HTTP client already
+ * waits an hour for headers and has no body timeout (`@effect/platform-node`
+ * `NodeHttpClient.ts`, `makeUndici`), so the transport never gives up before this does.
  */
-export const CodeToolTimeout = CodeTiming.seconds * 1_000 + 5_000
+export const CodeToolTimeout = CodeTiming.seconds * 1_000 + CodeTiming.graceMs + 5_000
 
 /** Discovery and a program's calls accept exactly the same account/tool vocabulary. */
 export const CodeToolNames = Schema.Struct({
@@ -72,11 +76,12 @@ export const CodeFailure = Schema.TaggedUnion({
    * interpreter's own, bounded, and says what to change. */
   Threw: { message: Schema.String },
   TimedOut: { seconds: Schema.Finite },
-  /** It computed more (`work`: steps taken or data made), made more calls, moved more data or
-   * returned more than a program may. */
-  OverLimit: { limit: Schema.Literals(['work', 'calls', 'data', 'result'] as const) },
-  /** The server did not run the program: another program is running in this Thread, or the
-   * server is running as many as it can. Nothing was done for the Person. */
+  /** It computed more (`work`: steps taken or data made), used more memory, made more calls,
+   * moved more data or returned more than a program may. */
+  OverLimit: { limit: Schema.Literals(['work', 'memory', 'calls', 'data', 'result'] as const) },
+  /** The server could not run the program, or stopped carrying it: another program is running in
+   * this Thread, the server is running as many as it can, or the program's thread was lost. When
+   * no call is listed, nothing was done for the Person. */
   Unavailable: {},
 })
 export type CodeFailure = typeof CodeFailure.Type

@@ -309,8 +309,8 @@ settings keep their defaults. Apply the auth then product
 migrations before starting the server; Flue migrates its own runtime schema at startup.
 
 Programs (`run_code`) need nothing from the server's host and nothing from a Computer. The
-server interprets a program in its own process (`apps/server/src/code/README.md`): no isolation
-tools, no second process. Until 5 October 2026 a program ran on the server's host inside
+server interprets a program on a thread of its own process (`apps/server/src/code/README.md`): no
+isolation tools, no second process. Until 5 October 2026 a program ran on the server's host inside
 user-systemd, a cgroup and bubblewrap, which an ordinary container does not have, so production
 refused every program; from then until 9 October it ran on the Person's Computer.
 

@@ -180,12 +180,49 @@ return all.filter((o) => o.status === "open").map((o) => o.id)`,
         'return "x".repeat(2**29).length',
         'return "".padStart(2**29).length',
         'return Array.from({length: 2**30}).length',
-        'let s = "x".repeat(4000000); while (true) { s = s + s }',
       ])
         expect(yield* Program.execute({ tools, limits, code })).toMatchObject({
           ok: false,
-          error: { kind: 'WorkLimitExceeded' },
+          error: { kind: 'ExecutionFailure' },
         })
+      // Nothing was made, so it is an ordinary error, as JavaScript's "Invalid string length" is.
+      expect(
+        yield* Program.execute({
+          tools,
+          limits,
+          code: 'try { "x".repeat(2**29) } catch (e) { return e instanceof RangeError }',
+        }),
+      ).toMatchObject({ ok: true, value: true })
+      expect(
+        yield* Program.execute({
+          tools,
+          limits,
+          code: 'let s = "x".repeat(4000000); while (true) { s = s + s }',
+        }),
+      ).toMatchObject({ ok: false, error: { kind: 'WorkLimitExceeded' } })
+    }),
+  )
+
+  it.live('sort and reverse change the array they are called on, as in JavaScript', () =>
+    Effect.gen(function* () {
+      const result = yield* Program.execute({
+        tools,
+        code: `const a = [3, 1, 2]; const sorted = a.sort((x, y) => x - y)
+const b = ["x", "y", "z"]; const reversed = b.reverse()
+const c = [2, 1]; const copy = c.toSorted()
+return { a, same: sorted === a, b, sameReversed: reversed === b, c, copy }`,
+      })
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          a: [1, 2, 3],
+          same: true,
+          b: ['z', 'y', 'x'],
+          sameReversed: true,
+          c: [2, 1],
+          copy: [1, 2],
+        },
+      })
     }),
   )
 
