@@ -1,7 +1,7 @@
 import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem'
 import { describe, expect, layer } from '@effect/vitest'
 import { Cause, Effect, Exit, Layer, Option, Schedule, Stream } from 'effect'
-import * as SqlClient from 'effect/unstable/sql/SqlClient'
+import * as SqlClient from 'effect/sql/SqlClient'
 import { DatabaseFailure, LibraryItemId } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
 import { Database } from '../database/client.ts'

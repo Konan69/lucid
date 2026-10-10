@@ -13,7 +13,7 @@ import {
   Schema,
   type Scope,
 } from 'effect'
-import { AiError, Decision, DecisionModel } from 'effect/unstable/ai'
+import { AiError, Decision, DecisionModel } from 'effect/ai'
 import { TypeSafeClient, TypeSafeDecisionModel } from '@effect/ai-typesafe'
 
 /** docs/22, “The trust loop”: the reviewer has ten seconds and one attempt. */

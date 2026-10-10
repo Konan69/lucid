@@ -19,17 +19,17 @@ import {
 } from '@helix-db/helix-db'
 import { Memory, MemoryBrief, MemoryId, PersonId, ServiceUnavailable } from '@vivid/contracts'
 import { Context, Duration, Effect, Exit, Layer, Option, Schedule, Schema } from 'effect'
-import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
+import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { requiredSetting } from '../config.ts'
 import { embeddingDimensions, embeddingModel, MemoryRateLimited } from './embeddings.js'
 
 /** Partition and readable scope keys are separate authorities; no query derives additional scopes. */
-export const MemoryPartition = Schema.String.check(Schema.isPattern(/^[pc]-.+$/)).pipe(
+export const MemoryPartition = Schema.String.check(Schema.isPattern(/^[pc]-.+$/u)).pipe(
   Schema.brand('MemoryPartition'),
 )
 export type MemoryPartition = typeof MemoryPartition.Type
 export const MemoryScopeKey = Schema.String.check(
-  Schema.isPattern(/^(company|person:.+|thread:.+)$/),
+  Schema.isPattern(/^(company|person:.+|thread:.+)$/u),
 ).pipe(Schema.brand('MemoryScopeKey'))
 export type MemoryScopeKey = typeof MemoryScopeKey.Type
 export const MemoryRecord = Schema.Struct({

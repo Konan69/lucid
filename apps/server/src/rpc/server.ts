@@ -1,6 +1,6 @@
 import * as Layer from 'effect/Layer'
-import * as RpcSerialization from 'effect/unstable/rpc/RpcSerialization'
-import * as RpcServer from 'effect/unstable/rpc/RpcServer'
+import * as RpcSerialization from 'effect/rpc/RpcSerialization'
+import * as RpcServer from 'effect/rpc/RpcServer'
 import { VividRpc } from '@vivid/contracts/rpc'
 import { appearanceHandlers } from '../appearance/handlers.ts'
 import { artifactHandlers } from '../artifacts/handlers.ts'

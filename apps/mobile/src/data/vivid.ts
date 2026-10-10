@@ -1,5 +1,5 @@
 import { Appearance, DEFAULT_APPEARANCE, Look } from '@vivid/contracts'
-import * as Atom from 'effect/unstable/reactivity/Atom'
+import * as Atom from 'effect/reactivity/Atom'
 import { door, useDoor } from './door'
 import type { LiveData } from './live'
 import type { Colors } from '../theme'

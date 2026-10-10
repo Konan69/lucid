@@ -6,7 +6,7 @@ import {
 } from '@vivid/contracts'
 import { Effect, Filter, Layer, Option, Redacted, Schema, Stream } from 'effect'
 import { Spectrum, type Message, type Space } from 'spectrum-ts'
-import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { imessage } from 'spectrum-ts/providers/imessage'
 import { normalizeChannelAddress } from './address.ts'
 import {

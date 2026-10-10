@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Clock, Effect, Schema, Layer } from 'effect'
-import { Decision } from 'effect/unstable/ai'
+import { Decision } from 'effect/ai'
 import { decide } from './model.ts'
 import { liveDecisionEnabled, liveDecisionLayer } from './testing.ts'
 

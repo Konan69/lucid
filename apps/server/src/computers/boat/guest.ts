@@ -71,10 +71,10 @@ print(json.dumps({'socket':str(endpoint),'binary':str(binary),'generation':gener
 VIVID_DRIVER`
 const Endpoint = Schema.Struct({
   binary: Schema.String.check(
-    Schema.isPattern(/^\/home\/[a-z_][a-z0-9_-]*\/\.local\/share\/vivid\/computer\/driver$/),
+    Schema.isPattern(/^\/home\/[a-z_][a-z0-9_-]*\/\.local\/share\/vivid\/computer\/driver$/u),
   ),
-  generation: Schema.String.check(Schema.isPattern(/^[0-9a-f]{32}$/)),
-  socket: Schema.String.check(Schema.isPattern(/^\/run\/user\/[0-9]+\/vivid-driver\.sock$/)),
+  generation: Schema.String.check(Schema.isPattern(/^[0-9a-f]{32}$/u)),
+  socket: Schema.String.check(Schema.isPattern(/^\/run\/user\/[0-9]+\/vivid-driver\.sock$/u)),
 })
 const decodeEndpoint = Schema.decodeUnknownEffect(Schema.fromJsonString(Endpoint))
 

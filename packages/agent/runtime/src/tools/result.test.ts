@@ -14,7 +14,7 @@ import {
   Unauthenticated,
 } from '@vivid/contracts'
 import { Cause, Config, ConfigProvider, Effect, Exit, Logger } from 'effect'
-import { RpcClientDefect, RpcClientError } from 'effect/unstable/rpc/RpcClientError'
+import { RpcClientDefect, RpcClientError } from 'effect/rpc/RpcClientError'
 import { boundOutput, settle } from './result.ts'
 
 describe('output limits', () => {

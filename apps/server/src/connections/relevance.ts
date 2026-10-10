@@ -1,5 +1,5 @@
 import { Duration, Effect, Schema } from 'effect'
-import { Decision, DecisionModel } from 'effect/unstable/ai'
+import { Decision, DecisionModel } from 'effect/ai'
 import { decideWithin, DECISION_QUESTION_LIMIT, DecisionUnavailable } from '../decisions/model.ts'
 import { TOOL_DESCRIPTION_LIMIT, TOOL_NAME_LIMIT, delimitedToolData } from './effects.ts'
 

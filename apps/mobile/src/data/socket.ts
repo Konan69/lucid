@@ -1,5 +1,5 @@
 import { Layer, type Redacted } from 'effect'
-import * as Socket from 'effect/unstable/socket/Socket'
+import * as Socket from 'effect/socket/Socket'
 import { bearer } from './transport'
 
 /**

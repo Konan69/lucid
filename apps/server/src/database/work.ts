@@ -1,5 +1,5 @@
 import * as Layer from 'effect/Layer'
-import * as PersistedQueue from 'effect/unstable/persistence/PersistedQueue'
+import * as PersistedQueue from 'effect/persistence/PersistedQueue'
 
 export const WORK_TABLE = 'vivid_work'
 

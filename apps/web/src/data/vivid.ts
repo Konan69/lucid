@@ -6,7 +6,7 @@ import {
   type MeResponse,
 } from '@vivid/contracts'
 import { Option, Schema } from 'effect'
-import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
+import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import { useSyncExternalStore } from 'react'
 import type { FaceColor } from '../ui/Face'
 import { changing } from './app'

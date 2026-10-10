@@ -2,7 +2,7 @@ import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import { ServiceUnavailable } from '@vivid/contracts'
 import { ConfigProvider, Context, Effect, Layer, Ref } from 'effect'
-import { HttpClient, HttpClientRequest, HttpServer, HttpServerResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientRequest, HttpServer, HttpServerResponse } from 'effect/http'
 import { ConfigurationError } from '../config.ts'
 import { HelixMemory, helixMemoryLayer, MemoryPartition } from './helix.js'
 

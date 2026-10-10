@@ -1,5 +1,5 @@
 import { Effect, Match, Redacted } from 'effect'
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http'
 import { ConnectionState } from '@vivid/contracts'
 import { PHONE_SCHEME } from '../auth/signin.ts'
 import { ServerConfig } from '../config.ts'

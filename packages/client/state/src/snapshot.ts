@@ -8,8 +8,8 @@ import {
   ThreadListResponse,
 } from '@vivid/contracts'
 import { Data, Effect, Option, Queue, Schema } from 'effect'
-import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
-import type * as AtomRegistry from 'effect/unstable/reactivity/AtomRegistry'
+import * as AsyncResult from 'effect/reactivity/AsyncResult'
+import type * as AtomRegistry from 'effect/reactivity/AtomRegistry'
 import type { KeptQuery } from './live.js'
 import { workspaceKey } from './threads.js'
 

@@ -49,11 +49,7 @@
       "name": "server-stores-hold-no-transport",
       "paths": "apps/server/src/*/store.ts",
       "mustNot": {
-        "importValuesFrom": [
-          "effect/unstable/rpc/*",
-          "effect/unstable/httpapi/*",
-          "effect/unstable/http/*"
-        ]
+        "importValuesFrom": ["effect/rpc/*", "effect/http-api/*", "effect/http/*"]
       }
     }
   ]

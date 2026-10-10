@@ -1,7 +1,7 @@
 import * as NodeCrypto from 'node:crypto'
 import { and, eq, getTableName, isNull } from 'drizzle-orm'
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core/errors'
-import * as SqlError from 'effect/unstable/sql/SqlError'
+import * as SqlError from 'effect/sql/SqlError'
 import { Cause, Clock, Effect, Option, Predicate, Schema } from 'effect'
 import { Database, decodeStored, returned } from '../../database/client.ts'
 import { MachineHeld, MachinePersistenceFailed, MachineKey } from '../machine.ts'

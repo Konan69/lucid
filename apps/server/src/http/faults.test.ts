@@ -5,9 +5,9 @@ import { NodeHttpServer } from '@effect/platform-node'
 import { cutFault } from '@vivid/contracts'
 import { Console, Effect, Layer } from 'effect'
 import { TestClock } from 'effect/testing'
-import * as HttpClient from 'effect/unstable/http/HttpClient'
-import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
-import * as HttpRouter from 'effect/unstable/http/HttpRouter'
+import * as HttpClient from 'effect/http/HttpClient'
+import * as HttpClientRequest from 'effect/http/HttpClientRequest'
+import * as HttpRouter from 'effect/http/HttpRouter'
 import { faultRoutes, REPORTS_PER_WINDOW, WINDOW_MILLIS } from './faults.ts'
 
 /** How the default logger begins an entry: `[12:00:00.000] ERROR (#12)`. */

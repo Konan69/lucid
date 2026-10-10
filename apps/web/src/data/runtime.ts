@@ -2,8 +2,8 @@ import { VividRpcClient } from '@vivid/client-runtime'
 import { makeLink, makeLive, type ProductFailure } from '@vivid/state'
 import type { Effect } from 'effect'
 import { Layer } from 'effect'
-import * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
-import * as Socket from 'effect/unstable/socket/Socket'
+import * as RpcClientError from 'effect/rpc/RpcClientError'
+import * as Socket from 'effect/socket/Socket'
 
 export type { ProductFailure }
 

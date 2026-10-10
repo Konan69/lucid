@@ -12,7 +12,7 @@ import { Context, type Effect, type Redacted, Schema, type Scope, type Stream } 
 export { computerScreenAddress } from '@vivid/contracts'
 
 /** Opaque provider identity; the caller derives it without exposing a Person's identity. */
-export const MachineKey = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,62}$/)).pipe(
+export const MachineKey = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,62}$/u)).pipe(
   Schema.brand('MachineKey'),
 )
 export type MachineKey = typeof MachineKey.Type

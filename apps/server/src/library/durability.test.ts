@@ -16,8 +16,8 @@ import {
   Schema,
   Stream,
 } from 'effect'
-import * as SqlClient from 'effect/unstable/sql/SqlClient'
-import { SqlError } from 'effect/unstable/sql/SqlError'
+import * as SqlClient from 'effect/sql/SqlClient'
+import { SqlError } from 'effect/sql/SqlError'
 import { DatabaseFailure, LibraryItemId, PersonId } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
 import { Database } from '../database/client.ts'

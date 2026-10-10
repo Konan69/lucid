@@ -13,7 +13,7 @@ import {
   RequestResolver,
   Schema,
 } from 'effect'
-import { Decision, DecisionModel } from 'effect/unstable/ai'
+import { Decision, DecisionModel } from 'effect/ai'
 import { type ServiceId } from '@vivid/contracts'
 import {
   decideWithin,

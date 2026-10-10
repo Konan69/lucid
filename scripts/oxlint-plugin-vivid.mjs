@@ -975,7 +975,7 @@ const subjectKey = (node) => {
 
 const stateCheck = (subject, cases) => ({ subject, cases })
 
-/** `Union.guards.Case(value)`, the guard Schema.TaggedUnion generates per case in Effect rc.116. */
+/** `Union.guards.Case(value)`, the guard Schema.TaggedUnion generates per case in Effect 4.0.2. */
 const guardStateCheck = (node) => {
   const callee = node.callee
   if (callee?.type !== 'MemberExpression' || propertyName(callee.object) !== 'guards')

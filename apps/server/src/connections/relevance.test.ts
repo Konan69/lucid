@@ -1,6 +1,6 @@
 import { expect, it, layer } from '@effect/vitest'
 import { Effect } from 'effect'
-import { DecisionModel } from 'effect/unstable/ai'
+import { DecisionModel } from 'effect/ai'
 import { ScriptedAnswer } from '../decisions/testing.ts'
 import { unconfiguredDecisionLayer } from '../decisions/model.ts'
 import { TOOL_DESCRIPTION_LIMIT, TOOL_NAME_LIMIT } from './effects.ts'

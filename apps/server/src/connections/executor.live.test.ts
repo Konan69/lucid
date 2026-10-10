@@ -2,7 +2,7 @@ import * as NodeProcess from 'node:process'
 import { describe, expect, layer } from '@effect/vitest'
 import { ConnectionId, ServiceId } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Result } from 'effect'
-import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
+import * as FetchHttpClient from 'effect/http/FetchHttpClient'
 import {
   Executor,
   ExecutorOwnerId,

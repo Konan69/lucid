@@ -2,11 +2,11 @@ import { expect, it } from '@effect/vitest'
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core/errors'
 import { Cause, Effect, Exit, Logger, Option, Schema } from 'effect'
 import * as PlatformError from 'effect/PlatformError'
-import * as HttpClientError from 'effect/unstable/http/HttpClientError'
-import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
-import * as HttpServerError from 'effect/unstable/http/HttpServerError'
-import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
-import * as SqlError from 'effect/unstable/sql/SqlError'
+import * as HttpClientError from 'effect/http/HttpClientError'
+import * as HttpClientRequest from 'effect/http/HttpClientRequest'
+import * as HttpServerError from 'effect/http/HttpServerError'
+import * as HttpServerRequest from 'effect/http/HttpServerRequest'
+import * as SqlError from 'effect/sql/SqlError'
 import {
   failuresOf,
   FailureOutcome,

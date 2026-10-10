@@ -1,9 +1,9 @@
 import { expect, layer } from '@effect/vitest'
 import { NodeHttpServer } from '@effect/platform-node'
 import { Effect, FileSystem, Layer, Option, Path } from 'effect'
-import * as HttpRouter from 'effect/unstable/http/HttpRouter'
-import * as HttpClient from 'effect/unstable/http/HttpClient'
-import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
+import * as HttpRouter from 'effect/http/HttpRouter'
+import * as HttpClient from 'effect/http/HttpClient'
+import * as HttpServerResponse from 'effect/http/HttpServerResponse'
 import { staticRoutes } from './static.ts'
 
 /** Real router, filesystem and file responses: API specificity and HEAD semantics belong to Effect. */

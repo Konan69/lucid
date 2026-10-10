@@ -1,9 +1,9 @@
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
-import * as HttpClient from 'effect/unstable/http/HttpClient'
-import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
+import * as FetchHttpClient from 'effect/http/FetchHttpClient'
+import * as HttpClient from 'effect/http/HttpClient'
+import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import { ServerAddress, ServerChoice } from '../shared/settings.ts'
 import type { DesktopSettings } from './settings.ts'
 

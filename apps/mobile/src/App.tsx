@@ -1,5 +1,5 @@
 import { RegistryContext } from '@effect/atom-react'
-import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
+import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import { workspaceKey } from '@vivid/state'

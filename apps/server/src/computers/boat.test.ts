@@ -37,7 +37,7 @@ import {
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
-} from 'effect/unstable/http'
+} from 'effect/http'
 import { Gate, GateDecision } from '../approvals/gate.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
@@ -207,7 +207,9 @@ const Resume = HttpServerRequest.schemaBodyJson(
     type: Protocol.Size,
   }),
 )
-const decodeSession = Schema.decodeUnknownEffect(Schema.String.check(Schema.isStartsWith('Vivid-')))
+const decodeSession = Schema.decodeUnknownEffect(
+  Schema.String.check(Schema.isStartingWith('Vivid-')),
+)
 const decodeAddress = Schema.decodeUnknownEffect(Schema.String)
 const decodeArgs = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),

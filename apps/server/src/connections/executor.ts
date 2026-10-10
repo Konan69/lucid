@@ -25,9 +25,9 @@ import * as Record from 'effect/Record'
 import * as Redacted from 'effect/Redacted'
 import * as Schema from 'effect/Schema'
 import * as Semaphore from 'effect/Semaphore'
-import * as HttpClient from 'effect/unstable/http/HttpClient'
-import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
-import type * as HttpBody from 'effect/unstable/http/HttpBody'
+import * as HttpClient from 'effect/http/HttpClient'
+import * as HttpClientRequest from 'effect/http/HttpClientRequest'
+import type * as HttpBody from 'effect/http/HttpBody'
 
 import { toolRejectionMessage, validationProblems } from './message.ts'
 import { retainCatalog } from './catalog.ts'
@@ -69,8 +69,8 @@ export const ExecutorAuthorizationId = Schema.NonEmptyString.pipe(
  */
 export const AccountIdentity = Schema.String.check(
   Schema.isTrimmed(),
-  Schema.isLengthBetween(1, 120),
-  Schema.isPattern(/^[^\r\n]*$/),
+  Schema.isBetweenLength(1, 120),
+  Schema.isPattern(/^[^\r\n]*$/u),
 )
 export type AccountIdentity = typeof AccountIdentity.Type
 const decodeAccountIdentity = Schema.decodeUnknownOption(AccountIdentity)

@@ -1,82 +1,83 @@
 import * as Schema from 'effect/Schema'
 
-/** Creates a branded identifier schema for one Vivid ownership boundary. */
-const identifier = <Name extends string>(name: Name) => Schema.String.pipe(Schema.brand(name))
+// Each identifier brands a string with its own literal name. Effect 4.0.2's `Schema.brand` takes one
+// literal key (`EnsureSingleBrandKey`), so the brand is written at each identifier, not through a
+// generic helper.
 
 /** Person identifier used by identity and attribution contracts. */
-export const PersonId = identifier('PersonId')
+export const PersonId = Schema.String.pipe(Schema.brand('PersonId'))
 export type PersonId = typeof PersonId.Type
 /** Session identifier used by authentication contracts. */
-export const SessionId = identifier('SessionId')
+export const SessionId = Schema.String.pipe(Schema.brand('SessionId'))
 export type SessionId = typeof SessionId.Type
 /** Company identifier used by tenancy contracts. */
-export const CompanyId = identifier('CompanyId')
+export const CompanyId = Schema.String.pipe(Schema.brand('CompanyId'))
 export type CompanyId = typeof CompanyId.Type
 /** Membership identifier used by tenancy contracts. */
-export const MembershipId = identifier('MembershipId')
+export const MembershipId = Schema.String.pipe(Schema.brand('MembershipId'))
 export type MembershipId = typeof MembershipId.Type
 /** Invitation identifier: one pending offer of a Membership. */
-export const InvitationId = identifier('InvitationId')
+export const InvitationId = Schema.String.pipe(Schema.brand('InvitationId'))
 export type InvitationId = typeof InvitationId.Type
 /** Project identifier used by project contracts. */
-export const ProjectId = identifier('ProjectId')
+export const ProjectId = Schema.String.pipe(Schema.brand('ProjectId'))
 export type ProjectId = typeof ProjectId.Type
 /** Durable Thread identifier used by collaboration and Flue transport routes. */
-export const ThreadId = identifier('ThreadId')
+export const ThreadId = Schema.String.pipe(Schema.brand('ThreadId'))
 /** Decoded Thread identifier. */
 export type ThreadId = typeof ThreadId.Type
 /** Run identifier. It is Flue's submission id, so a Message can be joined to the Run that carried it. */
-export const RunId = identifier('RunId')
+export const RunId = Schema.String.pipe(Schema.brand('RunId'))
 export type RunId = typeof RunId.Type
 /** Durable notification identifier. */
-export const NotificationId = identifier('NotificationId')
+export const NotificationId = Schema.String.pipe(Schema.brand('NotificationId'))
 /** Decoded notification identifier. */
 export type NotificationId = typeof NotificationId.Type
 /** Durable Routine identifier. */
-export const RoutineId = identifier('RoutineId')
+export const RoutineId = Schema.String.pipe(Schema.brand('RoutineId'))
 /** Decoded Routine identifier. */
 export type RoutineId = typeof RoutineId.Type
 /** Durable Routine occurrence identifier. */
-export const OccurrenceId = identifier('OccurrenceId')
+export const OccurrenceId = Schema.String.pipe(Schema.brand('OccurrenceId'))
 /** Decoded Routine occurrence identifier. */
 export type OccurrenceId = typeof OccurrenceId.Type
 /** Durable Library item identifier. */
-export const LibraryItemId = identifier('LibraryItemId')
+export const LibraryItemId = Schema.String.pipe(Schema.brand('LibraryItemId'))
 /** Decoded Library item identifier. */
 export type LibraryItemId = typeof LibraryItemId.Type
 /** Durable Library folder identifier. */
-export const LibraryFolderId = identifier('LibraryFolderId')
+export const LibraryFolderId = Schema.String.pipe(Schema.brand('LibraryFolderId'))
 /** Decoded Library folder identifier. */
 export type LibraryFolderId = typeof LibraryFolderId.Type
 /** Input request identifier: one question a Run could not answer alone. */
-export const InputRequestId = identifier('InputRequestId')
+export const InputRequestId = Schema.String.pipe(Schema.brand('InputRequestId'))
 export type InputRequestId = typeof InputRequestId.Type
 /** Approval identifier: authorization for one consequential action. */
-export const ApprovalId = identifier('ApprovalId')
+export const ApprovalId = Schema.String.pipe(Schema.brand('ApprovalId'))
 export type ApprovalId = typeof ApprovalId.Type
 /** Rule identifier: one standing instruction about what Vivid may do without asking. */
-export const RuleId = identifier('RuleId')
+export const RuleId = Schema.String.pipe(Schema.brand('RuleId'))
 export type RuleId = typeof RuleId.Type
 /** A service Vivid can be connected to, as named by the Connection catalog. */
-export const ServiceId = identifier('ServiceId')
+export const ServiceId = Schema.String.pipe(Schema.brand('ServiceId'))
 export type ServiceId = typeof ServiceId.Type
 /** Connection identifier: one authorized relationship with an external account. */
-export const ConnectionId = identifier('ConnectionId')
+export const ConnectionId = Schema.String.pipe(Schema.brand('ConnectionId'))
 export type ConnectionId = typeof ConnectionId.Type
 /** Memory record identifier. */
-export const MemoryId = identifier('MemoryId')
+export const MemoryId = Schema.String.pipe(Schema.brand('MemoryId'))
 export type MemoryId = typeof MemoryId.Type
 /** Skill identifier: one saved procedure. */
-export const SkillId = identifier('SkillId')
+export const SkillId = Schema.String.pipe(Schema.brand('SkillId'))
 export type SkillId = typeof SkillId.Type
 /** Audit entry identifier. */
-export const AuditEntryId = identifier('AuditEntryId')
+export const AuditEntryId = Schema.String.pipe(Schema.brand('AuditEntryId'))
 export type AuditEntryId = typeof AuditEntryId.Type
 /** Artifact identifier: one durable thing made in a Thread. */
-export const ArtifactId = identifier('ArtifactId')
+export const ArtifactId = Schema.String.pipe(Schema.brand('ArtifactId'))
 export type ArtifactId = typeof ArtifactId.Type
 /** Computer identifier: one Person's machine. */
-export const ComputerId = identifier('ComputerId')
+export const ComputerId = Schema.String.pipe(Schema.brand('ComputerId'))
 export type ComputerId = typeof ComputerId.Type
 
 export class Person extends Schema.Class<Person>('Person')(
