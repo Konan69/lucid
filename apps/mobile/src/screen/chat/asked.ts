@@ -5,7 +5,7 @@ import {
   type PersonId,
   type ThreadDetail,
 } from '@vivid/contracts'
-import { Data, Option } from 'effect'
+import { Array as Arr, Data, Option, Order } from 'effect'
 
 /**
  * The decisions around a question from Vivid (an Input request) that need no screen to make:
@@ -185,9 +185,13 @@ export const linesOf = (
   const answers = requests.flatMap((request) => Option.toArray(answerOf(request)))
   const delivered = new Set(spoken.flatMap((said) => Option.toArray(said.answers)))
   // Answers with no delivering message, oldest first: placed by their time as the walk goes.
-  const loose = answers
-    .filter((line) => !delivered.has(line.request.id))
-    .toSorted((one, other) => one.at - other.at)
+  // Sorted through Effect's `Array.sort`, never `toSorted`: the phone's JavaScript engine (Hermes)
+  // does not have that method, and every Thread failed to draw on a device while this used it
+  // (10 October 2026). A browser and the test runner both have it, so only the device showed it.
+  const loose = Arr.sort(
+    answers.filter((line) => !delivered.has(line.request.id)),
+    Order.mapInput(Order.Number, (line: (typeof answers)[number]) => line.at),
+  )
   const asked = new Set<InputRequestId>()
   const placed = new Set<InputRequestId>()
   const lines: Array<Line> = []
