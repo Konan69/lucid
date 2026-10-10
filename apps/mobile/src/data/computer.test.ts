@@ -94,5 +94,9 @@ describe('the viewer address the glass loads', () => {
     expect(viewerOnGlass('https://v.example/stream.html?width=1920#theme=light')).toBe(
       'https://v.example/stream.html?width=1920#theme=light',
     )
+    // The fragment is the permission: text in it that looks like the setting is not touched.
+    expect(viewerOnGlass('https://v.example/stream.html?theme=light#token=x&theme=light&y=1')).toBe(
+      'https://v.example/stream.html#token=x&theme=light&y=1',
+    )
   })
 })

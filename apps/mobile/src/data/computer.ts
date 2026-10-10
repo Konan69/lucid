@@ -110,10 +110,18 @@ export const viewerPermission = (
  * Hermes's `URL` cannot be trusted to edit a query. Nothing else is touched: the permission is in
  * the fragment.
  */
-export const viewerOnGlass = (address: string): string =>
-  address.replace(/([?&])theme=[^&#]*(&?)/u, (_all, lead: string, more: string) =>
-    more === '' ? '' : lead,
+export const viewerOnGlass = (address: string): string => {
+  // The fragment is the permission and is kept byte for byte: only what stands before the first
+  // `#` is a query, and only there is `theme` a setting and not somebody's secret.
+  const mark = address.indexOf('#')
+  const before = mark === -1 ? address : address.slice(0, mark)
+  const fragment = mark === -1 ? '' : address.slice(mark)
+  return (
+    before.replace(/([?&])theme=[^&]*(&?)/u, (_all, lead: string, more: string) =>
+      more === '' ? '' : lead,
+    ) + fragment
   )
+}
 
 /**
  * What a running Computer's page says about its screen. The viewer page takes touches and keys

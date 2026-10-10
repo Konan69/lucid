@@ -1,5 +1,5 @@
 import { VividRpcClient } from '@vivid/client-runtime'
-import { ComputerScreen, ComputerState } from '@vivid/contracts'
+import { ComputerScreen, ComputerState, type Computer } from '@vivid/contracts'
 import { Effect, Result } from 'effect'
 import { lazy, Suspense, useCallback, useState } from 'react'
 import { TurboModuleRegistry, View } from 'react-native'
@@ -37,8 +37,9 @@ const read = Effect.fn('Computer.live.read')(function* () {
  *
  * The address is a short-lived permission to watch one machine. It is never written anywhere,
  * and a minute before it runs out the server is asked for the next one, so a screen left open
- * keeps showing. The timer belongs to the view that holds the page (a ref's own cleanup), not to
- * an effect.
+ * keeps showing; an ask that fails is made again five seconds later, for as long as the page is
+ * shown. The timer belongs to the view that holds the page (a ref's own cleanup), not to an
+ * effect.
  *
  * While the Person is only watching, nothing they do reaches the page (`pointerEvents`), so
  * looking can never fight with what Vivid is doing there. Once they have taken over, touches go
@@ -56,24 +57,30 @@ export function Live({
 }) {
   const data = useLiveData()
   const [shown, setShown] = useState({ address, expiresAt })
+  // How many times the next permission was asked for and not given. Each one sets the timer
+  // again, so a moment without the network does not leave the page on a permission that runs out.
+  const [missed, setMissed] = useState(0)
+  /** What the ask for the next permission came to. */
+  const renewed = (answer: Result.Result<Computer, unknown>) => {
+    if (Result.isFailure(answer)) return setMissed((count) => count + 1)
+    // A Computer that stopped has no screen to renew; its record takes this view down.
+    if (!ComputerState.guards.Running(answer.success.state)) return
+    const next = answer.success.state.screen
+    if (ComputerScreen.guards.Viewer(next))
+      setShown({ address: next.address, expiresAt: next.expiresAt })
+  }
   const renew = useCallback(
     (held: View | null) => {
       if (held === null) return undefined
       const timer = setTimeout(
-        () => {
-          void data.run(read()).then((answer) => {
-            if (Result.isFailure(answer)) return
-            if (!ComputerState.guards.Running(answer.success.state)) return
-            const next = answer.success.state.screen
-            if (ComputerScreen.guards.Viewer(next))
-              setShown({ address: next.address, expiresAt: next.expiresAt })
-          })
-        },
+        () => void data.run(read()).then(renewed),
         Math.max(shown.expiresAt - Date.now() - RENEW_BEFORE_MS, 5_000),
       )
       return () => clearTimeout(timer)
     },
-    [data, shown.expiresAt],
+    // `missed` is here so that a failed ask makes a new timer; it is not read inside.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+    [data, shown.expiresAt, missed],
   )
   return (
     <View
@@ -91,8 +98,6 @@ export function Live({
           mediaPlaybackRequiresUserAction={false}
           scrollEnabled={false}
           bounces={false}
-          overScrollMode="never"
-          setBuiltInZoomControls={false}
           // Nothing of the permission is kept after the page is gone.
           incognito
           style={{ flex: 1, backgroundColor: 'transparent' }}
