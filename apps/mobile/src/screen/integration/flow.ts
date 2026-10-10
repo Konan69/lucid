@@ -1,54 +1,20 @@
-import type { VividRpcClient } from '@vivid/client-runtime'
+import { useAtomValue } from '@effect/atom-react'
+import type { AccountName, Connection, ConnectionId, Service } from '@vivid/contracts'
+import { connecting } from '@vivid/state'
+import { Option, Result } from 'effect'
+import { createContext, useContext, useState } from 'react'
 import {
-  ConnectionStep,
-  type AccountName,
-  type Connection,
-  type ConnectionId,
-  type Service,
-} from '@vivid/contracts'
-import type { ProductFailure } from '@vivid/state'
-import { Option, Result, type Effect } from 'effect'
-import { createContext, useContext, useRef, useState } from 'react'
+  refusalOf,
+  standingFor,
+  standingForCard,
+  waitingOn,
+  type CarryOn,
+  type Pressing,
+} from '../../data/connecting'
 import { commit, warn } from '../../data/haptics'
-import {
-  afterPress,
-  inFlight,
-  type Pressed,
-  type Presses,
-  type PressKey,
-} from '../../data/integration'
+import { refusalSentence } from '../../data/integration'
 import { useLiveData } from '../../data/live'
-import {
-  bind,
-  forget,
-  leave,
-  refused as unanswered,
-  settled,
-  type Wish,
-  type Wishes,
-} from '../../data/wish'
 import { confirmDestructive } from '../../ui/ui'
-import type { Routes } from '../../workspace'
-import { HERE, showSignIn } from './Trip'
-
-/** The sign-in the Person left the app for: whose row says so, and which Integration to ask about. */
-interface Away {
-  readonly key: PressKey
-  readonly id: ConnectionId
-}
-
-/** How long a press is waited on to end in a connected account before its wish lapses, in ms. */
-const WISH_MS = 10 * 60_000
-
-/**
- * Opens the form for a service that takes a key (the `Key` route), and answers whether it could.
- * It is handed to the flow because the flow is held outside the navigator, which is what lets a
- * card, a page and a sheet share it.
- */
-export type ShowKey = (asked: Routes['Key']) => boolean
-
-/** One question put to the server whose answer is what an Integration needs next. */
-type Ask = (client: VividRpcClient['Service']) => Effect.Effect<ConnectionStep, ProductFailure>
 
 /**
  * Gives an account the Person's own name for it, or takes that name away with none. It answers
@@ -70,243 +36,117 @@ const renameWith =
   }
 
 /**
- * The wishes cards have left, held for the flow between two steps of `data/wish.ts`, which is
- * where what happens to them is decided. They are acted on, never drawn, so they are a ref and
- * not state: nothing redraws when one is left.
- */
-function useWishes() {
-  const held = useRef<Wishes>(new Map())
-  return {
-    leave: (card: string, go: Wish['go']) => {
-      held.current = leave(held.current, card, { until: Date.now() + WISH_MS, go })
-    },
-    bind: (card: string, key: PressKey) => {
-      held.current = bind(held.current, card, key)
-    },
-    forget: (card: string) => {
-      held.current = forget(held.current, card)
-    },
-    refused: (key: PressKey) => {
-      held.current = unanswered(held.current, key)
-    },
-    /**
-     * A press ended in a connected account: each card whose press it was gets its wish, once. One
-     * that waited longer than `WISH_MS` is dropped unanswered, as the web's listener gives up: by
-     * then the Person has moved on, and the card's own "Carry on" is still there to press.
-     */
-    fulfil: (key: PressKey, connected: Connection) => {
-      const { call, rest } = settled(held.current, key, Date.now())
-      held.current = rest
-      for (const wish of call) wish.go(connected)
-    },
-  }
-}
-
-/**
- * Everything the phone app does to an Integration: start one, pick one up where it stopped, hear
- * the Person come back from a provider's page, name one and disconnect one. It is held once for
- * the signed-in shell (`FlowProvider`, `Provider.tsx`) and read with `useFlow`, so the
- * Integrations page, an account's sheet, the form that names a new account and the card in a
- * Thread all act through the same one: an account begun from a card is heard coming back even
- * though the card is not what is in front, and only one can be begun at a time anywhere.
+ * Everything the phone app does to an Integration: start one, pick one up where it stopped, name
+ * one and disconnect one. It is held once for the signed-in shell (`FlowProvider`,
+ * `Provider.tsx`) and read with `useFlow`, so the Integrations page, an account's sheet, the form
+ * that names a new account and the card in a Thread all act through the same one.
  *
- * It is the web's flow (`begin` and `follow` in `apps/web/src/screen/integration/begin.ts`, and
- * `connect`, `resume` and `disconnect` in `apps/web/src/screen/settings/Connections.tsx`), with
- * the phone's differences:
+ * Connecting itself is not kept here. It is the session's one machine (`data/connecting.ts`,
+ * over `connecting` in `@vivid/state`, the machine the web's screens use through
+ * `apps/web/src/data/connecting.ts`): this reads where it stands and presses through it. It used
+ * to be `useState` here, set after an `await`, where a return check that answered late wrote
+ * over a newer press. So an account begun from a card is heard coming back even though the card
+ * is not what is in front, only one can be begun at a time anywhere, and a late answer has
+ * nowhere to land.
  *
- * - There is no tab to open ahead of the answer and so nothing to be blocked: the provider's page
- *   is handed to the phone's browser once the server has said where it is (`showSignIn`).
- * - The app leaves the front for that page, so when the Person comes back the server is asked
- *   where the Integration stands (`returned`). Only one sign-in can be away at a time, because
- *   there is only one front.
+ * What is the phone's own:
+ *
  * - Disconnecting asks first, with the system's own alert.
  * - Which account's sheet is open, and which account is being named, is not held here: each is a
  *   route on the stack (`Account`, `NameAccount`), where the web uses a popover and a dialog.
- * - The form for a service that takes a key is a route too (`Key`). This flow is held outside the
- *   navigator, so it is handed the way to open it (`showKey`) and holds no form of its own.
- *
- * The web's card listens to the live list for the account it asked for (`carryOnOnceReady`,
- * `apps/web/src/screen/thread/Cards.tsx`). Here the press itself is what is followed: this flow
- * began it and is told how it ends, so a card leaves a wish with its press (`onceConnected`) and
- * no list is subscribed to and no effect runs.
+ * - The form for a service that takes a key is a route too (`Key`), which the machine opens
+ *   through the shell (`keyRoute`); this holds no form of its own.
  */
-export function useFlowHeld(showKey: ShowKey) {
+export function useFlowHeld() {
   const data = useLiveData()
-  const [presses, setPresses] = useState<Presses>(new Map())
-  const [away, setAway] = useState<Option.Option<Away>>(Option.none())
-  const [refused, setRefused] = useState<Option.Option<string>>(Option.none())
-  const wishes = useWishes()
-  // One Integration is begun at a time: a press is on its way to the server, this row's or
-  // another's. Two answers arriving together used to be able to ask for two keys at once.
-  const busy = [...presses.values()].includes('starting')
+  const now = useAtomValue(data.connecting.attempt)
+  // Why an account could not be disconnected. It is not part of connecting: nothing waits on it
+  // but its own sentence. It is still set after the server answers (`remove`).
+  const [unremoved, setUnremoved] = useState<Option.Option<string>>(Option.none())
 
-  /** Keeps where one press stands beside the row that was pressed. */
-  const mark = (key: PressKey, pressed: Option.Option<Pressed>) =>
-    setPresses((before) => afterPress(before, key, pressed))
-
-  /** Does what an Integration says comes next, and says it on the row that was pressed. */
-  const settle = (key: PressKey, step: ConnectionStep) =>
-    ConnectionStep.match(step, {
-      OpenSignIn: ({ connection, address }) =>
-        showSignIn(address, connection.serviceName, {
-          away: () => {
-            mark(key, Option.some('waiting'))
-            setAway(Option.some({ key, id: connection.id }))
-          },
-          refused: (message) => {
-            setAway(Option.none())
-            mark(key, Option.some('refused'))
-            setRefused(Option.some(message))
-          },
-        }),
-      EnterKey: ({ connection, fields }) => {
-        // The key form is the answer; the row goes back to how it was. A press comes from a
-        // screen, so the navigator is there to show the form; were it ever not, the press is
-        // said to have failed where it was made, never dropped in silence.
-        const shown = showKey({
-          id: connection.id,
-          name: connection.serviceName,
-          fields,
-          press: key,
-        })
-        mark(key, shown ? Option.none() : Option.some('refused'))
-        if (!shown) wishes.refused(key)
-      },
-      Done: ({ connection }) => {
-        mark(key, Option.some('connected'))
-        wishes.fulfil(key, connection)
-      },
-    })
-
-  /** One press, from its first word to what the server made of it. */
-  async function press(key: PressKey, ask: Ask, card: Option.Option<string>) {
-    // Nothing is pressed while a press is still on its way. The buttons that begin an account
-    // are disabled by the same fact (`busy`), so this is the guard behind them.
-    if (busy) return
-    // Only now is the card's wish this press's to answer: a press that was not let through
-    // binds nothing, and what it would have begun cannot carry a Thread on.
-    if (Option.isSome(card)) wishes.bind(card.value, key)
-    // Felt as the Person commits, not when the answer comes back.
-    commit()
-    setRefused(Option.none())
-    mark(key, Option.some('starting'))
-    const result = await data.change(ask)
-    if (Result.isFailure(result)) {
-      mark(key, Option.some('refused'))
-      // Nothing was begun, so there is nothing to wait on; pressing again leaves the wish again.
-      wishes.refused(key)
-      return
-    }
-    settle(key, result.success)
+  /** One press. The haptic is felt as the Person commits, and only for a press that was made. */
+  const press = (pressing: Pressing) => {
+    setUnremoved(Option.none())
+    if (data.connecting.press(pressing)) commit()
   }
-
-  /**
-   * Begins one account on a service, under the Person's name for it when they gave one. `card` is
-   * the card in a Thread whose press this is, when it is one.
-   */
-  const begin = (
-    service: Service['id'],
-    shared: boolean,
-    name: Option.Option<AccountName>,
-    card: Option.Option<string>,
-  ) =>
-    void press(
-      service,
-      (client) =>
-        client.BeginConnection({ service, name: Option.getOrNull(name), shared, from: HERE }),
-      card,
-    )
 
   /** Removes an Integration once the Person has said yes; a refusal is said on the page. */
   async function remove(connection: Connection) {
     warn()
-    setRefused(Option.none())
+    setUnremoved(Option.none())
+    // What an attempt left said of this account ("Connected") is no longer true; the live list
+    // is what says how its row stands now. Said before the server is asked, not after.
+    data.connecting.forget(connection.id)
     const result = await data.change((client) => client.RemoveConnection({ id: connection.id }))
     if (Result.isFailure(result)) {
-      setRefused(Option.some(`${connection.serviceName} could not be disconnected. Try again.`))
-      return
+      setUnremoved(Option.some(`${connection.serviceName} could not be disconnected. Try again.`))
     }
-    // What an earlier press left on this account's row and on its service's row ("Connected") is
-    // no longer true; the live list is what says how they stand now.
-    mark(connection.id, Option.none())
-    mark(connection.service, Option.none())
   }
 
   return {
-    presses,
-    /** A press is on its way to the server, anywhere: nothing else can be begun until it answers. */
-    busy,
-    /** Whether the Person is away at a provider's page, which is when the return is listened for. */
-    away: Option.isSome(away),
-    /** The one sentence about something that did not happen, shown at the top of the page. */
-    refused,
+    /** The server is being waited on, anywhere: nothing else can be begun until it answers. */
+    busy: waitingOn(now),
+
+    /**
+     * The one sentence about something that did not happen, shown at the top of the page: a
+     * provider's page that could not be opened, else an account that could not be disconnected.
+     */
+    refused: Option.orElse(Option.flatMap(refusalOf(now), refusalSentence), () => unremoved),
+
+    /** Where the attempt made on a row stands, by the service or account the row is pressed as. */
+    standing: (pressed: connecting.Pressed) => standingFor(now, pressed),
+
+    /** Where the attempt made on a card stands, by the tool call the card stands for. */
+    standingOfCard: (card: string) => standingForCard(now, card),
 
     /**
      * Begins one account on a service, for this Person or their Company, under the name the
      * Person gave when they did. Whether a name has to be asked for first is the caller's to
-     * decide (`asksName`, `cardPress`) and to ask (`NameAccount`): this begins.
+     * decide (`asksName`, `cardPress`) and to ask (`NameAccount`): this begins. `card` is the
+     * card in a Thread whose press this is, when it is one.
      */
-    add: begin,
-
-    rename: renameWith(data),
+    add: (
+      service: Service['id'],
+      shared: boolean,
+      name: Option.Option<AccountName>,
+      card: Option.Option<string>,
+    ) =>
+      press({
+        pressed: service,
+        asked: connecting.Asked.cases.Begin.make({ service, shared, name }),
+        card,
+      }),
 
     /**
      * Picks an Integration up where it stopped: the provider's page was left, the key was never
      * entered, or the sign-in lapsed. It is the same Integration afterwards, not a second one.
      */
     resume: (id: ConnectionId, card: Option.Option<string>) =>
-      void press(id, (client) => client.ResumeConnection({ id, from: HERE }), card),
+      press({ pressed: id, asked: connecting.Asked.cases.Resume.make({ id }), card }),
+
+    rename: renameWith(data),
 
     /**
-     * Leaves a card's wish: `go` is called once, with the account, when a press that carries
-     * this card (`add` or `resume` handed the same `card`) ends connected, whether at once, on
-     * the way back from the provider's page, or when its key is taken. It lapses after ten
-     * minutes. `card` is the tool call the card stands for. Until a press carries the card the
-     * wish answers to nothing, so a name form that is dismissed leaves nothing behind that
-     * another press could set off.
+     * Leaves what a card is owed: `carryOn` is called once, with the account, when an attempt
+     * that carries this card (`add` or `resume` handed the same `card`) ends connected, whether
+     * at once, on the way back from the provider's page, or when its key is taken. The machine
+     * stops naming the card ten minutes after the press. See `owing` in `data/connecting.ts`
+     * for why leaving it sets nothing off by itself.
      */
-    onceConnected: wishes.leave,
+    owe: (card: string, carryOn: CarryOn) => data.connecting.owe(card, carryOn),
 
-    /** The Person carried on by hand from this card: its wish must not say it a second time. */
-    forget: wishes.forget,
+    /** The Person carried on by hand from this card: its attempt must not say it a second time. */
+    carriedOn: (card: string) => data.connecting.carriedOn(card),
 
     /**
-     * Forgets what finished presses left said on their rows ("Connected", "Did not start"), and
-     * the sentence at the top of the page. The page calls it as it is opened: these were this
-     * flow's words about an earlier visit, or about a card in a Thread, and the live list is what
-     * says how things stand now. A press that is still on its way keeps its words.
+     * Forgets what a finished attempt left said on its row ("Connected", "Did not start"), and
+     * the sentence at the top of the page. The row that opens the page calls it: these were words
+     * about an earlier visit, or about a card in a Thread, and the live list is what says how
+     * things stand now. An attempt that is still under way keeps its words.
      */
     rest: () => {
-      setRefused(Option.none())
-      setPresses(inFlight)
-    },
-
-    /**
-     * The Person is back from the provider's page. The server is asked where the Integration
-     * stands with the call that began the trip (`ResumeConnection`); it is the same Integration
-     * afterwards. A sign-in that is still to do is not an error, people look and leave: the row
-     * says nothing more, and the list shows it as not finished with a way to finish it.
-     */
-    returned: async () => {
-      if (Option.isNone(away)) return
-      const { key, id } = away.value
-      setAway(Option.none())
-      mark(key, Option.some('checking'))
-      const result = await data.change((client) => client.ResumeConnection({ id, from: HERE }))
-      if (Result.isFailure(result) || ConnectionStep.guards.OpenSignIn(result.success)) {
-        mark(key, Option.none())
-        return
-      }
-      settle(key, result.success)
-    },
-
-    /**
-     * The service took the key (the `Key` route says so): the row or card whose press asked for
-     * it, filed under `key`, says connected, and its wish is answered.
-     */
-    keyed: (key: PressKey, connected: Connection) => {
-      mark(key, Option.some('connected'))
-      wishes.fulfil(key, connected)
+      setUnremoved(Option.none())
+      data.connecting.rest()
     },
 
     /**

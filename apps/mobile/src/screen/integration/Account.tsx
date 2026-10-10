@@ -219,7 +219,7 @@ export function NameAccount({ route, navigation }: NativeStackScreenProps<Routes
   )
   const add = () => {
     if (Option.isNone(name) || taken || flow.busy) return
-    commit()
+    // The flow makes the press felt as it takes it.
     flow.add(service, shared, name, Option.fromNullOr(card))
     navigation.goBack()
   }

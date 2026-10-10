@@ -8,6 +8,7 @@ import { useState, type ComponentProps } from 'react'
 import { StatusBar, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
+import type { ShowKey } from './data/connecting'
 import { door, patienceAtom, useDoor } from './data/door'
 import { Front, makeFront } from './data/front'
 import {
@@ -28,7 +29,6 @@ import { Computer } from './screen/Computer'
 import { Door } from './screen/Door'
 import { Home } from './screen/Home'
 import { Account, NameAccount } from './screen/integration/Account'
-import type { ShowKey } from './screen/integration/flow'
 import { Key } from './screen/integration/Key'
 import { FlowProvider } from './screen/integration/Provider'
 import { Panel } from './screen/home/Panel'
@@ -344,13 +344,16 @@ function Shell() {
   const [front] = useState(() => makeFront(start.thread))
   /**
    * Opens the key form over whatever is in front. A press comes from a screen, so the navigator
-   * is ready; were it not, the flow is told, and says the press failed where it was made.
+   * is ready; were it not, the machine is told, and the press is said to have failed where it
+   * was made. It is made once for the shell, as the navigator's ref is: it is handed to the
+   * session's machine through a view's ref, which would be taken back and handed over again on
+   * every render if this were a new function each time.
    */
-  const showKey: ShowKey = (asked) => {
+  const [showKey] = useState((): ShowKey => (asked) => {
     if (!navigation.isReady()) return false
     navigation.navigate('Key', asked)
     return true
-  }
+  })
   return (
     <FrontProvider value={front}>
       <FlowProvider onKey={showKey}>

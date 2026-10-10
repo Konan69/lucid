@@ -1,38 +1,43 @@
-import { ConnectionStep, type ConnectionId, type ConnectionRequestMessage } from '@vivid/contracts'
-import { answered, answering, Awaited, awaitedWords, CardPress, cardPress } from '@vivid/state'
-import { Option, Result } from 'effect'
-import { useState } from 'react'
-import { View } from 'react-native'
-import { Check, ExternalLink, KeyRound, Link2 } from 'lucide-react-native'
-import { commit } from '../../data/haptics'
+import { ConnectionAuthorization, type ConnectionRequestMessage } from '@vivid/contracts'
 import {
-  CARD_PRESSED,
-  Finish,
-  finishOf,
-  finishOfStep,
-  type Authorization,
-  type KeyFields,
-} from '../../data/integration'
+  answered,
+  answering,
+  Awaited,
+  awaitedWords,
+  CardPress,
+  cardPress,
+  type connecting,
+} from '@vivid/state'
+import { Option } from 'effect'
+import { View } from 'react-native'
+import { Check, ExternalLink, KeyRound, Link2, type LucideIcon } from 'lucide-react-native'
+import { commit } from '../../data/haptics'
+import { cardSaid, type Authorization } from '../../data/integration'
 import { useLiveData, useLiveValue } from '../../data/live'
 import { useTheme } from '../../theme'
 import { ServiceMark } from '../../ui/Mark'
 import { Button, EDGE, Label, Notice, radius } from '../../ui/ui'
 import { useGo } from '../../workspace'
 import { useFlow } from './flow'
-import { HERE, Returning, showSignIn, Trip } from './Trip'
 
 /**
  * Vivid needs a service to go on. The card says why in Vivid's own words and finishes the job
  * where the Person already is.
  *
  * A service Vivid only offered from the catalogue is connected by the card's own button, right
- * here in the Thread (`Connect`); it used to open the whole Integrations page over the Thread,
- * where the Person had to find the service again. An Integration Vivid has already begun adding
- * carries what is left (`authorization`): a sign-in, which opens the provider's page in the phone's browser and
- * asks the server where things stand when the Person comes back, or a key, which is typed into a
- * sheet that sends it straight to the Integration (never into the Thread, never to Vivid). The
- * card names the Integration and nothing more: the sign-in address itself is asked of the server
- * when it is opened, and is never read from the Thread.
+ * here in the Thread; it used to open the whole Integrations page over the Thread, where the
+ * Person had to find the service again. An Integration Vivid has already begun adding carries
+ * what is left (`authorization`): a sign-in, which opens the provider's page in the phone's
+ * browser, or a key, which is typed into a sheet that sends it straight to the Integration
+ * (never into the Thread, never to Vivid). The card names the Integration and nothing more: the
+ * sign-in address itself is asked of the server when it is opened, and is never read from the
+ * Thread.
+ *
+ * The card keeps nothing of its own. Every press goes through the shell's one flow to the
+ * session's connecting machine (`data/connecting.ts`) with the tool call the card stands for,
+ * and the card draws where its own attempt stands (`flow.standingOfCard`). It used to make the
+ * sign-in trip itself, in its own state set after each answer, beside the flow's copy of the same
+ * trip; an answer that came late was written onto whatever the card showed by then.
  *
  * Whether it is ready is read live, so the card turns to "Carry on" by itself, on this phone or
  * because the sign-in was finished on another device.
@@ -43,8 +48,7 @@ import { HERE, Returning, showSignIn, Trip } from './Trip'
  * by an account begun after Vivid asked. That card is headed "Another Gmail account" and offers
  * "Add account" although the service is already connected.
  *
- * Adapted from the web's card (`ConnectionCard` and `Finish` in
- * `apps/web/src/screen/thread/Cards.tsx`).
+ * Adapted from the web's card (`ConnectionCard` in `apps/web/src/screen/thread/Cards.tsx`).
  */
 export function IntegrationCard({
   id,
@@ -54,7 +58,7 @@ export function IntegrationCard({
   current,
   onContinue,
 }: {
-  /** The tool call this card stands for, which names its one "carry on" in the flow. */
+  /** The tool call this card stands for, which names its attempt and its one "carry on". */
   id: string
   request: ConnectionRequestMessage
   /** What finishing it takes, when Vivid has already begun adding it. */
@@ -66,18 +70,50 @@ export function IntegrationCard({
 }) {
   const data = useLiveData()
   const flow = useFlow()
+  const go = useGo()
   const { colors: c } = useTheme()
   const connections = useLiveValue(data.live.connections)
-  // What the server last said is left: asked on the way back from the provider's page, or told
-  // when a key was taken. Until it has said anything, the card's own payload is what is left.
-  const [latest, setLatest] = useState<Option.Option<Finish>>(Option.none())
-  const finish = finishOf(authorization, latest)
+  const list = Option.match(connections, { onNone: () => [], onSome: (value) => value.connections })
   const words = awaitedWords(awaited, request.serviceName)
   // A request for one more account is never ready when it is made, whatever the card was told.
   const ready =
-    (Awaited.$is('Service')(awaited) && request.ready) ||
-    Option.exists(finish, Finish.$is('Done')) ||
-    Option.exists(connections, (value) => answered(value.connections, request, awaited))
+    (Awaited.$is('Service')(awaited) && request.ready) || answered(list, request, awaited)
+  // What one press does. An Integration Vivid began is picked up, whatever it is waiting for:
+  // the server says afresh whether that is a sign-in or a key, and the machine opens whichever
+  // it is. Otherwise it is decided from the list as it stands at the press (`cardPress`).
+  const next = Option.match(authorization, {
+    onNone: () => cardPress(list, request, awaited),
+    onSome: (begun) => CardPress.Resume({ id: begun.connectionId }),
+  })
+
+  /**
+   * One press. The card leaves what it is owed, then presses with the tool call it stands for:
+   * when the attempt that carries it ends in an account the Thread goes on by itself, as on the
+   * web, and only for a press made here. A card that is merely read again tomorrow says nothing
+   * for the Person, and "Carry on" stays on it as the way to do that by hand.
+   */
+  const press = () => {
+    flow.owe(id, (connected) => {
+      // Only the account this card asked for carries its Thread on, and it is named, so Vivid
+      // does not have to guess which of several accounts is the new one.
+      const account = answering([connected], request, awaited)
+      if (Option.isSome(account)) onContinue(words.carryOn(account))
+    })
+    CardPress.$match(next, {
+      Resume: ({ id: begun }) => flow.resume(begun, Option.some(id)),
+      // The Person's own account: a card never adds one for a whole Company. The form begins
+      // the account for this card, so what the card is owed is that press's to answer.
+      Name: () =>
+        go.navigate('NameAccount', {
+          service: request.service,
+          serviceName: request.serviceName,
+          shared: false,
+          card: id,
+        }),
+      Begin: () => flow.add(request.service, false, Option.none(), Option.some(id)),
+    })
+  }
+
   return (
     <View
       style={{
@@ -109,31 +145,33 @@ export function IntegrationCard({
           onPress={() => {
             // It says something in the Thread, and sending is felt.
             commit()
-            // The live list can say the account is ready before the press that connected it has
-            // heard so. That press must not then say "carry on" a second time.
-            flow.forget(id)
+            // The live list can say the account is ready before the attempt that connected it
+            // has said so. That attempt must not then say "carry on" a second time.
+            flow.carriedOn(id)
             // One more account is named by the account that was added, so Vivid does not have to
             // guess which of several is new.
-            onContinue(
-              words.carryOn(
-                Option.flatMap(connections, (value) =>
-                  answering(value.connections, request, awaited),
-                ),
-              ),
-            )
+            onContinue(words.carryOn(answering(list, request, awaited)))
           }}
         />
       )}
       {ready && !current && <Settled />}
-      {!ready &&
-        left({
-          id,
-          request,
-          awaited,
-          finish,
-          onFinish: (next) => setLatest(Option.some(next)),
-          onContinue,
-        })}
+      {!ready && (
+        <Press
+          way={wayIn(authorization, awaited)}
+          serviceName={request.serviceName}
+          said={flow.standingOfCard(id)}
+          busy={flow.busy}
+          current={current}
+          onPress={press}
+          onGiveUp={(message) => {
+            // It says something in the Thread, and sending is felt.
+            commit()
+            // A carry-on made by hand: nothing is owed for it by an attempt.
+            flow.carriedOn(id)
+            onContinue(message)
+          }}
+        />
+      )}
     </View>
   )
 }
@@ -157,253 +195,106 @@ function Settled() {
   )
 }
 
+/** The card's button as it stands before anything is pressed, and its word for its first wait. */
+interface Way {
+  readonly kind: 'primary' | 'plain'
+  readonly icon: LucideIcon
+  readonly label: string
+  /** What the button says while the server is first asked. */
+  readonly starting: string
+}
+
 /**
- * The one thing left to do to connect it: sign in, give it a key, or connect it from here. A
- * projection of what is left onto the control that advances it; it holds nothing itself.
+ * What the card offers, from what is known to be left. An Integration Vivid began says what it
+ * wants (a sign-in, a key) and leads with it; a service Vivid only offered is connected, or, when
+ * the card asked for one more account, added to.
  */
-const left = ({
-  id,
-  request,
-  awaited,
-  finish,
-  onFinish,
-  onContinue,
-}: {
-  id: string
-  request: ConnectionRequestMessage
-  awaited: Awaited
-  finish: Option.Option<Finish>
-  /** The server has said what is left now. */
-  onFinish: (finish: Finish) => void
-  onContinue: (message: string) => void
-}) =>
-  Option.match(finish, {
-    onNone: () => <Connect id={id} request={request} awaited={awaited} onContinue={onContinue} />,
-    onSome: (next) =>
-      Finish.$match(next, {
-        SignIn: ({ id: connection }) => (
-          <SignIn id={connection} name={request.serviceName} onFinish={onFinish} />
-        ),
-        Key: ({ id: connection, fields }) => (
-          <Key id={connection} name={request.serviceName} fields={fields} />
-        ),
-        // A card that is done is drawn as "Carry on"; there is nothing left to offer.
-        Done: () => null,
+const wayIn = (authorization: Option.Option<Authorization>, awaited: Awaited): Way =>
+  Option.match(authorization, {
+    onNone: (): Way => ({
+      kind: 'plain',
+      icon: Link2,
+      label: Awaited.$is('Another')(awaited) ? 'Add account' : 'Connect',
+      starting: 'Connecting…',
+    }),
+    onSome: (begun) =>
+      ConnectionAuthorization.match(begun, {
+        OpenSignIn: (): Way => ({
+          kind: 'primary',
+          icon: ExternalLink,
+          label: 'Sign in',
+          starting: 'Opening…',
+        }),
+        EnterKey: (): Way => ({
+          kind: 'primary',
+          icon: KeyRound,
+          label: 'Enter key',
+          starting: 'Opening…',
+        }),
       }),
   })
 
 /**
- * A service Vivid offered and has not begun adding, connected from the card. The press is the
- * web card's (`connect` in `ConnectionCard`, `apps/web/src/screen/thread/Cards.tsx`), through the
- * shell's one flow, so the provider's page, the key form and the way back are the same ones the
- * Integrations page uses and nothing is opened over the Thread but what the account needs:
+ * The one thing to press on a card that is not ready, and what its attempt has to say. It is the
+ * same button and the same press at every point of an attempt; what changes is what it says
+ * (`cardSaid`, from where the machine stands). It holds nothing itself.
  *
- * - an Integration that was begun for this card and left unfinished is picked up, not begun twice;
- * - one more account on a service that does not say who signs in is named first, in a bottom
- *   sheet over the Thread, which then begins it;
- * - anything else is begun at once.
- *
- * Which of the three it is, is decided from the list as it stands at the press (`cardPress`).
- *
- * Carrying on by itself: the card leaves a wish under its own name (`flow.onceConnected`, the
- * tool call it stands for) and hands that name to the press, and the flow, which is told how
- * every press it began ends, calls the wish once when a press that carried this card ends in a
- * connected account (`data/wish.ts`). A press from anywhere else never answers it. So the Thread goes on the moment the sign-in is finished, as on the web
- * (`carryOnOnceReady`), and only for a press made here: a card that is merely read again tomorrow
- * says nothing for the Person, and "Carry on" stays on it as the way to do that by hand. Nothing
- * is listened to and no effect runs. The flow drops the wish after ten minutes, the web's limit.
+ * The one exception is an attempt pressing again cannot mend (the service did not take the key):
+ * the button is then "Carry on", which tells Vivid what happened. It is offered only while the
+ * Thread is waiting on this card, so the same words are not sent a second time.
  */
-function Connect({
-  id,
-  request,
-  awaited,
-  onContinue,
+function Press({
+  way,
+  serviceName,
+  said,
+  busy,
+  current,
+  onPress,
+  onGiveUp,
 }: {
-  /** The tool call the card stands for: whose wish this is, and whose press. */
-  id: string
-  request: ConnectionRequestMessage
-  awaited: Awaited
-  onContinue: (message: string) => void
+  way: Way
+  /** The service's name, for the sentence about a sign-in that was not finished. */
+  serviceName: string
+  /** Where this card's own attempt stands. */
+  said: connecting.Standing
+  /** Whether nothing can be pressed for now: the server is being asked, here or anywhere. */
+  busy: boolean
+  /** Whether the Thread is waiting on this card. */
+  current: boolean
+  onPress: () => void
+  /** Carries the Thread on with what happened, when the attempt cannot be made again here. */
+  onGiveUp: (message: string) => void
 }) {
-  const data = useLiveData()
-  const flow = useFlow()
-  const go = useGo()
-  const connections = useLiveValue(data.live.connections)
-  const press = cardPress(
-    Option.match(connections, { onNone: () => [], onSome: (value) => value.connections }),
-    request,
-    awaited,
-  )
-  // What the flow files this press under: the Integration it picks up, or the service it begins on.
-  const key = CardPress.$is('Resume')(press) ? press.id : request.service
-  // A press that began on the service is still filed there once its account is in the list and
-  // the next press would pick that account up, so both are looked under.
-  const pressed = Option.orElse(Option.fromUndefinedOr(flow.presses.get(key)), () =>
-    Option.fromUndefinedOr(flow.presses.get(request.service)),
-  )
-  const said = Option.map(pressed, (value) => CARD_PRESSED[value])
-  const waiting = Option.flatMap(said, (words) => words.button)
-  const line = Option.flatMap(said, (words) => words.line)
-
-  const connect = () => {
-    const words = awaitedWords(awaited, request.serviceName)
-    flow.onceConnected(id, (connected) => {
-      // Only the account this card asked for carries its Thread on, and it is named, so Vivid
-      // does not have to guess which of several accounts is the new one.
-      const account = answering([connected], request, awaited)
-      if (Option.isSome(account)) onContinue(words.carryOn(account))
-    })
-    CardPress.$match(press, {
-      Resume: ({ id: begun }) => flow.resume(begun, Option.some(id)),
-      // The Person's own account: a card never adds one for a whole Company.
-      Name: () =>
-        go.navigate('NameAccount', {
-          service: request.service,
-          serviceName: request.serviceName,
-          shared: false,
-          // The form begins the account for this card, so the card's wish is its to answer.
-          card: id,
-        }),
-      Begin: () => flow.add(request.service, false, Option.none(), Option.some(id)),
-    })
-  }
-
+  const { button, line, carryOn } = cardSaid(said, { starting: way.starting, serviceName })
   return (
     <View style={{ gap: 8 }}>
-      <Button
-        icon={Link2}
-        label={Option.getOrElse(waiting, () =>
-          Awaited.$is('Another')(awaited) ? 'Add account' : 'Connect',
-        )}
-        // One press at a time, anywhere: nothing is begun while the server is still being asked,
-        // about this card's account or another's (`flow.busy`), or while this one is checked.
-        disabled={flow.busy || Option.isSome(waiting)}
-        onPress={connect}
-      />
+      {Option.isNone(carryOn) && (
+        <Button
+          kind={way.kind}
+          icon={way.icon}
+          label={Option.getOrElse(button, () => way.label)}
+          // One press at a time, anywhere: nothing is begun while the server is still being
+          // asked, about this card's account or another's. The machine refuses it as well.
+          disabled={busy}
+          onPress={onPress}
+        />
+      )}
+      {/* Not a press on the machine, so it does not wait for one; and never the card's own way
+          in, which would pick up an account the server refuses. */}
+      {Option.isSome(carryOn) && current && (
+        <Button
+          kind="primary"
+          label={Option.getOrElse(button, () => 'Carry on')}
+          onPress={() => onGiveUp(carryOn.value)}
+        />
+      )}
       {/* What did not happen is said as every refusal on a card is; the rest is a quiet line. */}
-      {Option.isSome(line) && Option.contains(pressed, 'refused') && (
-        <Notice message={line.value} />
-      )}
-      {Option.isSome(line) && !Option.contains(pressed, 'refused') && (
+      {Option.isSome(line) && line.value.urgent && <Notice message={line.value.words} />}
+      {Option.isSome(line) && !line.value.urgent && (
         <Label accessibilityLiveRegion="polite" size="label" tone="ink-2">
-          {line.value}
+          {line.value.words}
         </Label>
       )}
     </View>
-  )
-}
-
-/** What the button says at each point. It is the way in at every point but the two it waits at. */
-const signInLabel = (trip: Trip): string =>
-  Trip.$match(trip, {
-    Still: () => 'Sign in',
-    Opening: () => 'Opening…',
-    Away: () => 'Sign in',
-    Checking: () => 'Checking…',
-    Unfinished: () => 'Sign in',
-    Refused: () => 'Sign in',
-  })
-
-/**
- * Signing in on the provider's own page. The app has no browser of its own (it signs a device in
- * the same way, through the phone's browser), so the page is handed to the system and the app
- * goes to the background.
- *
- * The server is asked twice, with the same call (`ResumeConnection`), and it is the same
- * Integration afterwards, never a second one. Once on the press: a sign-in address is a
- * short-lived permission, so it is issued at the moment it is opened instead of being carried in
- * the Thread. And once when the Person comes back to the app, which is the cue to find out
- * whether it went through; if it did the card becomes "Carry on", and if it did not it says so
- * quietly and can be pressed again.
- *
- * The trip itself (its states, the hand-off to the browser, hearing the return) is `Trip.tsx`,
- * shared with the Integrations page.
- */
-function SignIn({
-  id,
-  name,
-  onFinish,
-}: {
-  id: ConnectionId
-  name: string
-  onFinish: (finish: Finish) => void
-}) {
-  const data = useLiveData()
-  const [trip, setTrip] = useState<Trip>(Trip.Still())
-
-  /** Asks where the Integration stands. A refusal is said on the card and answers with nothing. */
-  async function ask(): Promise<Option.Option<ConnectionStep>> {
-    const result = await data.change((client) => client.ResumeConnection({ id, from: HERE }))
-    if (Result.isSuccess(result)) return Option.some(result.success)
-    setTrip(Trip.Refused({ message: result.failure.message }))
-    return Option.none()
-  }
-
-  /** Hands the provider's page to the browser, and starts listening for the way back. */
-  const open = (address: string) =>
-    showSignIn(address, name, {
-      away: () => setTrip(Trip.Away()),
-      refused: (message) => setTrip(Trip.Refused({ message })),
-    })
-
-  async function leave() {
-    setTrip(Trip.Opening())
-    const step = await ask()
-    if (Option.isNone(step)) return
-    if (ConnectionStep.guards.OpenSignIn(step.value)) {
-      open(step.value.address)
-      return
-    }
-    // It was finished somewhere else, or the service wants a key after all: the card is redrawn
-    // as that, and this button is no longer on screen.
-    setTrip(Trip.Still())
-    onFinish(finishOfStep(step.value))
-  }
-
-  async function check() {
-    setTrip(Trip.Checking())
-    const step = await ask()
-    if (Option.isNone(step)) return
-    // Only read when the sign-in is still to do; otherwise the card is redrawn without this.
-    setTrip(Trip.Unfinished())
-    onFinish(finishOfStep(step.value))
-  }
-
-  const waiting = Trip.$is('Opening')(trip) || Trip.$is('Checking')(trip)
-  return (
-    <View style={{ gap: 8 }}>
-      {Trip.$is('Away')(trip) && <Returning onReturn={() => void check()} />}
-      <Button
-        kind="primary"
-        icon={ExternalLink}
-        label={signInLabel(trip)}
-        disabled={waiting}
-        onPress={() => void leave()}
-      />
-      {Trip.$is('Unfinished')(trip) && (
-        <Label size="label" tone="ink-2">
-          {name} is not signed in yet.
-        </Label>
-      )}
-      {Trip.$is('Refused')(trip) && <Notice message={trip.message} />}
-    </View>
-  )
-}
-
-/**
- * Giving the service its key, for an Integration Vivid already began. The form is the stack's
- * `Key` sheet, opened over the Thread; the card itself never holds what is typed. The press is
- * filed under the Integration, which is what there is to file it under: nothing was begun from
- * here. That the key was taken is read from the live list, as every other way of connecting is.
- */
-function Key({ id, name, fields }: { id: ConnectionId; name: string; fields: KeyFields }) {
-  const go = useGo()
-  return (
-    <Button
-      kind="primary"
-      icon={KeyRound}
-      label="Enter key"
-      onPress={() => go.navigate('Key', { id, name, fields, press: id })}
-    />
   )
 }
