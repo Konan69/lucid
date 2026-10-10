@@ -69,6 +69,15 @@ export class VividRpcClient extends Context.Service<VividRpcClient, VividRpcClie
    * a ping goes out and its answer has a whole interval to arrive, and a dead connection is
    * still found within fifteen seconds (rc.116 found it within ten).
    *
+   * What ten seconds does not cover: the check runs on a timer, and the pinger measures the time
+   * since the last frame before it pings, so a page whose timers stall for longer than the
+   * timeout closes a healthy connection at its next tick and opens another. A browser pass on
+   * 10 October 2026 saw exactly that when its debugger paused the page for ten seconds. A
+   * browser does the same to a tab left in the background for minutes (its timers run once a
+   * minute), so such a tab reconnects each minute; nothing is lost, because every subscription
+   * asks again when the socket opens. A longer timeout would hide that and leave a visible page
+   * showing stale data for as long after its network changed, which is the worse failure.
+   *
    * `onLink` hears each time the socket opens and each time it closes or fails to open, through
    * the protocol's own `ConnectionHooks`, so an app can say that it is reconnecting.
    *

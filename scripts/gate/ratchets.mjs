@@ -150,6 +150,14 @@ export const ratchets = [
     rule: 'react-no-inline-context-value',
     ceiling: 0,
   },
+  // Added 10 October 2026 with the rule. Each finding is React state moved from the far side of a
+  // wait; they come down as each lifecycle becomes a machine in `packages/client/state`.
+  {
+    label: 'state set after a wait',
+    plugin: 'vivid',
+    rule: 'react-no-state-after-wait',
+    ceiling: 117,
+  },
   { label: 'design-system raw colors', plugin: 'shadcn', rule: 'no-raw-colors', ceiling: 0 },
   {
     label: 'design-system arbitrary values',

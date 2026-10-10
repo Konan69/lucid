@@ -947,6 +947,82 @@ const reactNoDerivedStateEffect = rule(
   }),
 )
 
+/** The functions `then`, `catch` and `finally` call later, when what they waited for has ended. */
+const settlementMethods = new Set(['then', 'catch', 'finally'])
+
+/** Whether `node` is a callback handed to a promise's `then`, `catch` or `finally`. */
+const isSettlementCallback = (node) =>
+  node.parent?.type === 'CallExpression' &&
+  node.parent.arguments.includes(node) &&
+  settlementMethods.has(propertyName(node.parent.callee))
+
+/**
+ * A setter `useState` returned, called from the far side of a wait.
+ *
+ * `const [busy, setBusy] = useState(false)` followed by `await save(); setBusy(false)` holds a
+ * lifecycle in a component and moves it from a continuation that does not know whether the
+ * attempt it belongs to is still the one on screen: the Person pressed again, opened something
+ * else, or the screen was reused, and the older answer writes over the newer state. The survey of
+ * 10 October 2026 found about forty such lifecycles in the clients and a concrete overwrite in
+ * about twenty.
+ *
+ * A wait is an `await`, a `yield*` in a generator (an `Effect.gen` body waits there), or a
+ * callback given to `then`, `catch` or `finally`. Setters are recognised by the `useState`
+ * destructuring in the same file; one that reaches a function as a prop is not followed.
+ *
+ * This reads syntax, not types, so it cannot tell a lifecycle from a harmless note. It is a
+ * warning with a ratchet for that reason: the count may only go down, and a new screen that needs
+ * the pattern has to take a finding away first.
+ *
+ * What it does not follow, so its silence is not proof: a helper that sets state and is called
+ * after the wait (`const end = () => setBusy(false); await send(); end()`), a setter reached
+ * through a prop, and two bindings of one name in a file (names are tracked for the file). It
+ * also reads a function top to bottom and not path by path, so a setter after a branch that
+ * waited and returned is reported although that path never waited. The machine in
+ * `packages/client/state` is what makes a lifecycle safe; this only counts the old shape.
+ */
+const reactNoStateAfterWait = rule(
+  'Do not move React state from the far side of a wait.',
+  '`{{setter}}` is called after this function has waited, with nothing to say the answer still belongs to the attempt on screen: an older answer can write over a newer press. A lifecycle with async work is a machine in packages/client/state (see connecting.ts), and a value the server owns is a live query.',
+  (report) => {
+    const setters = new Set()
+    // One entry per function being visited, innermost last: whether it has waited yet.
+    const waited = []
+    const enter = (node) => waited.push(isSettlementCallback(node))
+    const leave = () => waited.pop()
+    const wait = () => {
+      if (waited.length > 0) waited[waited.length - 1] = true
+    }
+    return {
+      VariableDeclarator(node) {
+        const made = unwrapExpression(node.init)
+        if (made?.type !== 'CallExpression' || node.id?.type !== 'ArrayPattern') return
+        const callee = made.callee
+        const isUseState =
+          (callee?.type === 'Identifier' && callee.name === 'useState') ||
+          propertyName(callee) === 'useState'
+        const setter = node.id.elements[1]
+        if (isUseState && setter?.type === 'Identifier') setters.add(setter.name)
+      },
+      FunctionDeclaration: enter,
+      FunctionExpression: enter,
+      ArrowFunctionExpression: enter,
+      'FunctionDeclaration:exit': leave,
+      'FunctionExpression:exit': leave,
+      'ArrowFunctionExpression:exit': leave,
+      // On the way out: what is awaited runs before the wait, so a setter inside it is not late.
+      'AwaitExpression:exit': wait,
+      'YieldExpression:exit'(node) {
+        if (node.delegate) wait()
+      },
+      CallExpression(node) {
+        if (node.callee?.type !== 'Identifier' || !setters.has(node.callee.name)) return
+        if (waited.at(-1) === true) report(node, { setter: node.callee.name })
+      },
+    }
+  },
+)
+
 // Property and binding names that carry a closed lifecycle vocabulary in Vivid's contracts.
 // `type` and `_tag` are left out on purpose: `type` names open vocabularies such as AST nodes, and
 // raw `_tag` comparisons already belong to anti-slop-effect/no-manual-tag-comparison.
@@ -1185,6 +1261,7 @@ export default {
     'namespace-node-imports': namespaceNodeImports,
     'react-no-derived-state-effect': reactNoDerivedStateEffect,
     'react-no-inline-context-value': reactNoInlineContextValue,
+    'react-no-state-after-wait': reactNoStateAfterWait,
     'react-no-useless-memo': reactNoUselessMemo,
     'require-drizzle-config-paths': requireDrizzleConfigPaths,
     'require-named-effect-fn': requireNamedEffectFn,

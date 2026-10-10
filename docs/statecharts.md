@@ -1,22 +1,38 @@
 # State machines in Vivid
 
-2026-10-03: Historical deferred evaluation; relocated server domains and RPC subscriptions supersede its source map, with current behavior in [docs/14](14-product-feature-set-and-grok-bot-parity.md) and domain READMEs; one-off Routines supersede the retired Tasks model and this audit does not authorize adoption.
+**Decided 10 October 2026: client lifecycles are machines on `@typeonce/effect-machine`.** The rule is in `AGENTS.md` ("Lifecycles are machines"); the first machine is `packages/client/state/src/connecting.ts`. Everything below the next heading is the evaluation of 20 September 2026, kept for its reasoning; its version numbers and its "deferred" status are superseded by this section.
 
-**Tracking:** [GitHub issue #3](https://github.com/Konan69/vivid/issues/3).
+## What was run on 10 October 2026
 
-**Status:** Deferred evaluation; revisit before adoption. No implementation authorized by this note.
-**Evaluated:** 20 September 2026, through source inspection. No runtime, bundle-size, or performance trial was performed.
+Both candidates were installed against Effect 4.0.2 and driven through the same Integration press flow (press, ask the server, sign in away from the app, come back, key form). Nothing here is from documentation alone.
 
-## Recommendation
+| Check                                                                    | `@xstate/effect` 0.1.0-alpha.7 on XState 6.0.0-alpha.65 | Effect Machine 0.40.0   |
+| ------------------------------------------------------------------------ | ------------------------------------------------------- | ----------------------- |
+| An event the state does not take is refused                              | yes                                                     | yes                     |
+| A double press makes one call; cancel interrupts it; late answer ignored | yes                                                     | yes                     |
+| Unknown target state, wrong event payload                                | compile error                                           | compile error           |
+| Entering a state without its data                                        | compile error                                           | compile error           |
+| Reading another state's data                                             | allowed                                                 | not tested              |
+| A call that can fail with no failure transition                          | allowed                                                 | compile error           |
+| "Can this event be sent now" as an atom                                  | not tested                                              | yes (`AtomMachine.can`) |
+| Works through the Effect atom registry                                   | yes                                                     | yes                     |
+| Events per second, one rough run                                         | about 11,000                                            | about 53,000            |
+| Added size, minified / gzip, Effect excluded                             | 170 KB / 53 KB                                          | 166 KB / 45 KB          |
 
-Evaluate `@typeonce/effect-machine` on one shared Connection authorization controller before
-adopting it more widely. It fits Vivid's Effect schema and service model, and VCOS provides a
-working reference. Keep XState as an alternative if its tooling or semantics solve a concrete
-requirement Effect Machine cannot satisfy. Do not introduce both libraries speculatively.
+Effect Machine was chosen because it rejects more mistakes at compile time, above all a call whose failure has nowhere to go. What XState has and Effect Machine does not: a maintaining company and nine years of history. Effect Machine is one maintainer and was ten weeks old at the decision, and its README says breaking changes ship in minor releases; the version is pinned in the workspace catalog for that reason.
 
-A schema defines valid state values. A machine additionally defines which events permit movement
-between them. Use that distinction to decide whether a machine earns its complexity: ordinary
-Effect programs and tagged unions remain appropriate for simple updates and linear operations.
+Both libraries' atom bridges import `effect/reactivity`, which Effect 4.0.0-rc.116 did not have, so the move to Effect 4.0.2 came first.
+
+A static survey the same day found about forty client lifecycles held in `useState` or stores, most of them written twice (web and phone), about twenty with a concrete overwrite by a late answer. `vivid/react-no-state-after-wait` counts the sites; the ratchet in `scripts/gate/ratchets.mjs` is the list that is left.
+
+Two things to know when writing one:
+
+- A state is published before its invoked work starts. A test that answers "the call in flight" the moment it sees the state can answer before the call exists; hand answers through a queue.
+- Snapshot restore restarts a state's work from the beginning. A machine is not durable execution and does not replace a database transaction, an idempotency key, or Flue's submission receipts.
+
+Not yet run at the decision: either library inside the Expo app on Hermes.
+
+# The evaluation of 20 September 2026 (historical)
 
 ## Options and version snapshot
 
