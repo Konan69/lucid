@@ -8,6 +8,7 @@ import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import {
   CompanyId,
+  InputRequestState,
   InstallationId,
   SessionId,
   DeviceRequest,
@@ -48,7 +49,8 @@ import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
 import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
 import * as HttpClient from 'effect/unstable/http/HttpClient'
 import * as HttpServer from 'effect/unstable/http/HttpServer'
-import { findPerson } from '../auth/access.ts'
+import { findPerson, type Actor } from '../auth/access.ts'
+import { InputStore, inputStoreLayer } from '../inputs/store.ts'
 import { RoutineStore, routineStoreServiceLayer } from '../routines/store.ts'
 import { IntegrationWatch } from '../routines/watch.ts'
 import { RoutineScheduler, routineSchedulerServiceLayer } from '../routines/scheduler.ts'
@@ -57,7 +59,7 @@ import { personTable, sessionTable } from '../auth/tables.ts'
 import { companyTable, membershipTable } from '../companies/tables.ts'
 import { Database } from '../database/client.ts'
 import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { silentChangesLayer } from '../live/changes.ts'
+import { Changes, Topic, silentChangesLayer } from '../live/changes.ts'
 import { silentLearningLayer } from '../memory/testing.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { Message } from '../observability/messages.ts'
@@ -260,12 +262,19 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
   const runtime = yield* runtimeFixture()
   const recorded = yield* runFixture()
   const database = yield* Database
+  const topics = yield* Ref.make<ReadonlyArray<Topic>>([])
   const services = Layer.mergeAll(
     Layer.succeed(Database, database),
     Layer.succeed(RunStore, recorded.observed),
     Layer.succeed(Runtime, runtime.runtime),
     threadStoreLayer.pipe(Layer.provide(Layer.succeed(Database, database))),
-    silentChangesLayer,
+    Layer.succeed(
+      Changes,
+      Changes.of({
+        publish: (moved) => Ref.update(topics, (previous) => previous.concat(moved)),
+        subscribe: () => Effect.succeed(Stream.never),
+      }),
+    ),
     silentLearningLayer,
     Layer.mock(ThreadTitles, { afterRun: () => Effect.void }),
     Layer.succeed(
@@ -286,10 +295,55 @@ const harness = Effect.fn('Delivery.test.harness')(function* () {
     yield* runtime.finish(id)
     expect(yield* Queue.take(recorded.ended)).toBe(id)
   })
-  return { ...rows, ...runtime, ...recorded, conversation, devices, finish, services }
+  return { ...rows, ...runtime, ...recorded, conversation, devices, finish, services, topics }
 })
 
 type Harness = Effect.Success<ReturnType<typeof harness>>
+
+/** Input requests and admission share real stores; only external runtime and notification ports vary. */
+const inputHarness = Effect.fn('Delivery.test.inputs')(function* () {
+  const test = yield* harness()
+  const context = yield* Layer.build(
+    inputStoreLayer.pipe(
+      Layer.provide(Layer.succeed(Conversation, test.conversation)),
+      Layer.provide(test.services),
+    ),
+  )
+  const inputs = yield* InputStore.pipe(Effect.provide(context))
+  return { ...test, inputs }
+})
+
+/** Current persisted identity and Company scope are the same authority used by chat and answer handlers. */
+const actorOf = Effect.fn('Delivery.test.actor')(function* (test: Harness, personId: PersonId) {
+  const person = yield* findPerson(personId)
+  if (Option.isNone(person)) expect.fail('Missing test Person')
+  return {
+    person: person.value,
+    workspace: Workspace.cases.Company.make({
+      company: Company.make({ id: test.companyId, name: 'Delivery test', slug: test.companyId }),
+      role: 'member',
+    }),
+    by: 'person',
+    threadId: Option.none(),
+  } satisfies Actor
+})
+
+/** Ask through the production store, addressed by authenticated Vivid context rather than a fixture row. */
+const askFor = Effect.fn('Delivery.test.ask')(function* (
+  test: Effect.Success<ReturnType<typeof inputHarness>>,
+  personId: PersonId,
+  threadId: ThreadId,
+) {
+  const actor = yield* actorOf(test, personId)
+  return yield* test.inputs.ask(
+    { ...actor, by: 'vivid', threadId: Option.some(threadId) },
+    {
+      question: 'Which day works?',
+      options: [{ label: 'Monday', detail: 'Start the week' }],
+      allowsOwnAnswer: true,
+    },
+  )
+})
 
 /** The real gateway, authentication and Conversation remain in the request path. */
 const gateway = Effect.fn('Gateway.test.request')(function* (test: Harness, request: Request) {
@@ -356,6 +410,230 @@ const signals = [
 layer(
   databaseLayer.pipe(Layer.provideMerge(silentChangesLayer), Layer.provideMerge(testConfigLayer)),
 )((it) => {
+  describe.skipIf(!testDatabaseConfigured)('Input requests moved on by chat', () => {
+    it.effect(
+      'an admitted message withdraws all its Person’s questions, publishes, and replay changes nothing',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* inputHarness()
+          const actor = yield* actorOf(test, test.ben)
+          const first = yield* askFor(test, test.ben, test.threadId)
+          const second = yield* askFor(test, test.ben, test.threadId)
+          const otherPerson = yield* askFor(test, test.ada, test.threadId)
+          // The Company cleanup registered by fixture already owns this second Thread.
+          const database = yield* Database
+          const elsewhere = ThreadId.make(NodeCrypto.randomUUID())
+          yield* database.run(
+            database.insert(threads).values({
+              id: elsewhere,
+              personId: test.ben,
+              companyId: test.companyId,
+              audience: 'company',
+              title: 'Other work',
+              titleSource: 'Person',
+              updatedAt: 0,
+            }),
+          )
+          const otherThread = yield* askFor(test, test.ben, elsewhere)
+          yield* Ref.set(test.topics, [])
+          const body = {
+            kind: 'user',
+            body: 'Skip that question and carry on.',
+            idempotencyKey: 'skip',
+          }
+          const response = yield* post(test, body)
+          expect(response.status).toBe(202)
+          const records = yield* test.inputs.inThread(test.threadId)
+          expect(
+            records
+              .filter((request) => InputRequestState.guards.Withdrawn(request.state))
+              .map((request) => request.id)
+              .toSorted(),
+          ).toEqual([first.id, second.id].toSorted())
+          expect(records.find((request) => request.id === otherPerson.id)).toEqual(otherPerson)
+          expect(yield* test.inputs.inThread(elsewhere)).toEqual([otherThread])
+          expect(yield* test.inputs.inbox(actor)).toEqual([otherThread])
+          const topics = yield* Ref.get(test.topics)
+          expect(topics).toContain(Topic.person(test.ben))
+          expect(topics).toContain(Topic.thread(test.threadId))
+          const deliveries = yield* Ref.get(test.admitted)
+          expect(deliveries).toHaveLength(1)
+          const delivered = deliveries[0]
+          if (delivered === undefined) expect.fail('Missing admitted message')
+          expect(delivered.message.body).toContain('left it unanswered')
+          expect(delivered.message.body).toContain(body.body)
+          expect(delivered.message.body).not.toContain(first.id)
+          expect(delivered.message.body).not.toContain(test.ben)
+          // A later question must survive a replay, even after rebuilding the admission service.
+          const later = yield* askFor(test, test.ben, test.threadId)
+          const before = yield* test.inputs.inThread(test.threadId)
+          const beforeTopics = yield* Ref.get(test.topics)
+          const context = yield* Layer.build(
+            conversationLayer.pipe(
+              Layer.provide(silentChannelRepliesLayer),
+              Layer.provide(test.services),
+            ),
+          )
+          const conversation = yield* Conversation.pipe(Effect.provide(context))
+          const repeated = yield* post({ ...test, conversation }, body)
+          expect(repeated.status).toBe(202)
+          expect(repeated.body).toEqual(response.body)
+          expect(yield* test.inputs.inThread(test.threadId)).toEqual(before)
+          expect(yield* test.inputs.inbox(actor)).toEqual(
+            expect.arrayContaining([later, otherThread]),
+          )
+          expect(yield* Ref.get(test.topics)).toEqual(beforeTopics)
+          expect(yield* Ref.get(test.admitted)).toHaveLength(1)
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'an answer stays Answered and leaves other questions waiting through real admission',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* inputHarness()
+          const actor = yield* actorOf(test, test.ben)
+          const request = yield* askFor(test, test.ben, test.threadId)
+          const waiting = yield* askFor(test, test.ben, test.threadId)
+          const answered = yield* test.inputs.answer(actor, { id: request.id, answer: 'Monday' })
+          expect(InputRequestState.guards.Answered(answered.state)).toBe(true)
+          expect(yield* test.inputs.inThread(test.threadId)).toEqual(
+            expect.arrayContaining([answered, waiting]),
+          )
+          expect(yield* Ref.get(test.admitted)).toMatchObject([
+            {
+              message: {
+                kind: 'signal',
+                type: 'answer',
+                body: 'Monday',
+                attributes: { from: 'Ben' },
+              },
+            },
+          ])
+          const admitted = (yield* Ref.get(test.admitted))[0]
+          if (admitted === undefined) expect.fail('Missing answer delivery')
+          yield* test.finish(submissionId(test.threadId, admitted.idempotencyKey))
+          yield* post(test, { kind: 'user', body: 'Continue.', idempotencyKey: 'after-answer' })
+          expect(
+            (yield* test.inputs.inThread(test.threadId)).find((input) => input.id === request.id),
+          ).toEqual(answered)
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'private chat keeps pictures and original preview while withdrawing the question',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* inputHarness()
+          yield* privateThread(test)
+          const request = yield* askFor(test, test.ben, test.threadId)
+          const response = yield* post(test, {
+            kind: 'user',
+            body: 'Use this instead.',
+            attachments: [png],
+          })
+          expect(response.status).toBe(202)
+          expect(yield* test.inputs.inThread(test.threadId)).toMatchObject([
+            { id: request.id, state: InputRequestState.cases.Withdrawn.make({ withdrawnAt: 0 }) },
+          ])
+          expect(yield* Ref.get(test.admitted)).toMatchObject([
+            {
+              message: {
+                kind: 'user',
+                body: expect.stringContaining('left it unanswered'),
+                attachments: [png],
+              },
+            },
+          ])
+          const database = yield* Database
+          expect(
+            yield* database.run(
+              database
+                .select({ preview: threads.preview })
+                .from(threads)
+                .where(eq(threads.id, test.threadId)),
+            ),
+          ).toEqual([{ preview: 'Use this instead.' }])
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect('a refused admission and a Busy reservation both leave questions waiting', () =>
+      Effect.gen(function* () {
+        const test = yield* inputHarness()
+        const waiting = yield* askFor(test, test.ben, test.threadId)
+        const delivery = said(test.threadId, test.ben)
+        yield* Ref.set(
+          test.failure,
+          Option.some(
+            AdmissionRefused.make({
+              threadId: test.threadId,
+              runId: submissionId(test.threadId, delivery.idempotencyKey),
+              reason: 'Rejected',
+            }),
+          ),
+        )
+        const refused = yield* Effect.result(test.conversation.admit(delivery))
+        expect(Result.isFailure(refused) && refused.failure._tag).toBe('RuntimeUnavailable')
+        expect(yield* test.inputs.inThread(test.threadId)).toEqual([waiting])
+        yield* test.conversation.admit(said(test.threadId, test.ada))
+        const busy = yield* Effect.result(test.conversation.admit(said(test.threadId, test.ben)))
+        expect(Result.isFailure(busy) && busy.failure._tag).toBe('Conflict')
+        expect(yield* test.inputs.inThread(test.threadId)).toEqual([waiting])
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('Routine, wake, channel and server-written deliveries withdraw nothing', () =>
+      Effect.gen(function* () {
+        const test = yield* inputHarness()
+        const waiting = yield* askFor(test, test.ben, test.threadId)
+        const messages: ReadonlyArray<Delivery> = [
+          { ...said(test.threadId, test.ben), speaker: DeliverySpeaker.cases.Vivid.make({}) },
+          {
+            ...said(test.threadId, test.ben),
+            message: DeliveryMessage.cases.ChannelText.make({ body: 'Channel message' }),
+          },
+          {
+            ...said(test.threadId, test.ben),
+            origin: StoredRunOrigin.cases.Routine.make({ routineName: 'Review' }),
+            speaker: DeliverySpeaker.cases.Vivid.make({}),
+            message: DeliveryMessage.cases.Signal.make({
+              type: 'schedule',
+              body: 'Review now.',
+              attributes: { name: 'Review' },
+            }),
+          },
+          {
+            ...said(test.threadId, test.ben),
+            origin: StoredRunOrigin.cases.Decision.make({}),
+            speaker: DeliverySpeaker.cases.Vivid.make({}),
+            message: DeliveryMessage.cases.Signal.make({
+              // Continuations have no dedicated wake type in the current signal vocabulary.
+              type: 'message',
+              body: 'Continue working.',
+              attributes: {},
+            }),
+          },
+        ]
+        yield* privateThread(test)
+        const database = yield* Database
+        // A linked personal channel cannot enter a Company Thread, even a private one.
+        yield* database.run(
+          database.update(threads).set({ companyId: null }).where(eq(threads.id, test.threadId)),
+        )
+        for (const delivery of messages) {
+          const admission = yield* test.conversation.admit(delivery)
+          expect(yield* test.inputs.inThread(test.threadId)).toEqual([waiting])
+          yield* test.finish(admission.runId)
+        }
+        expect(
+          (yield* Ref.get(test.admitted)).every(
+            (input) => !input.message.body.includes('left it unanswered'),
+          ),
+        ).toBe(true)
+      }).pipe(Effect.scoped),
+    )
+  })
+
   describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
     it.effect(
       'records a failed model settlement at its boundary and persists the provider reason',
@@ -886,7 +1164,7 @@ layer(
           )
           expect(response.status).toBe(202)
           expect(yield* Ref.get(sent)).toMatchObject([
-            { body: 'Look', attributes: {}, attachments: [png] },
+            { body: expect.stringContaining('\n\nLook'), attributes: {}, attachments: [png] },
           ])
         }).pipe(Effect.scoped),
     )
@@ -996,7 +1274,7 @@ layer(
           const deliveries = yield* Ref.get(test.admitted)
           expect(deliveries).toHaveLength(1)
           expect(deliveries[0]).toMatchObject({
-            message: { kind: 'user', body: body.body, attachments: [png] },
+            message: { kind: 'user', body: expect.stringContaining(body.body), attachments: [png] },
             scope: { acting: test.ben },
           })
           expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(1)

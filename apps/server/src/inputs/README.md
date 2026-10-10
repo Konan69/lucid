@@ -11,3 +11,14 @@ answering it resumes the work.
 
 Vivid raises one with its `ask` tool; the Thread shows it as a card. Defined by
 `docs/03-surface.md`.
+
+An ordinary message admitted from the Person asked moves the Thread on: after Run reservation
+and runtime acceptance, `withdrawWaiting` conditionally closes all their waiting questions in
+that Thread. Answers, server signals, channel text, refused messages and replayed sends do not
+withdraw questions. The conditional update leaves answered and withdrawn rows unchanged.
+Admission publishes the Person and Thread topics so open inboxes and Thread cards refresh.
+
+The runtime receives the ordinary message with a stable, identifier-free prefix: any earlier
+question still waiting for this Person is left unanswered, and Vivid should continue from the
+message. The prefix does not depend on a database read, preserving keyed admission identity;
+the Thread preview and learning input still use only the Person's own words.

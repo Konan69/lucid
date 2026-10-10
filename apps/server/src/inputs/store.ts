@@ -244,6 +244,36 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
   return input
 }, Effect.uninterruptible)
 
+/**
+ * Admission has already checked this Person's reach and the runtime has accepted their message.
+ * One conditional write settles every question addressed to them in this Thread; an answer racing
+ * it keeps whichever terminal state won. Export the operation without capturing Conversation:
+ * InputStore uses Conversation to deliver answers, while admission must also close questions.
+ */
+export const withdrawWaiting = Effect.fn('Inputs.withdrawWaiting')(function* (
+  threadId: ThreadId,
+  personId: PersonId,
+) {
+  const database = yield* Database
+  const rows = yield* database.run(
+    database
+      .update(inputRequests)
+      .set({ status: 'withdrawn', settledAt: yield* Clock.currentTimeMillis })
+      .where(
+        and(
+          eq(inputRequests.threadId, threadId),
+          eq(inputRequests.personId, personId),
+          eq(inputRequests.status, 'waiting'),
+        ),
+      )
+      .returning(),
+  )
+  const withdrawn = yield* view(rows)
+  if (withdrawn.length > 0)
+    yield* (yield* Changes).publish([Topic.person(personId), Topic.thread(threadId)])
+  return withdrawn
+}, Effect.uninterruptible)
+
 /** Stores own the conditional transition; handlers share it with Vivid's tool entry point. */
 export const inputStoreLayer = Layer.effect(
   InputStore,
