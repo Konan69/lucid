@@ -1,6 +1,6 @@
 import { GlassContainer } from 'expo-glass-effect'
 import { ChevronDown } from 'lucide-react-native'
-import type { ReactNode } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 import { View } from 'react-native'
 import Animated, {
   Easing,
@@ -10,6 +10,7 @@ import Animated, {
   useDerivedValue,
   withTiming,
   type DerivedValue,
+  type SharedValue,
 } from 'react-native-reanimated'
 import { useTheme } from '../theme'
 import { GLASS_SUPPORTED } from './Glass'
@@ -83,6 +84,9 @@ const DOT = 9
  *   the app does, so the press is seen: the shape sinks to 0.96.
  * - It has no number and no words. One or more messages that arrived while the Person was
  *   scrolled away are a dot on the button; how many is said to a screen reader (`label`).
+ * - `lift` is the reference's (`lift`, "an overlay card's coverage"): how far a question's choices
+ *   stand over the foot of the conversation (`screen/chat/Choices.tsx`). The row rides up by it,
+ *   on the UI thread, so it is never drawn over the choices.
  *
  * The row is always there, so what is inside it can fade out. It is as tall as a finger's target
  * and takes no touches itself: only the button does, and it is drawn at 30 points inside a
@@ -99,6 +103,7 @@ export function Floating({
   away,
   arrived,
   label,
+  lift,
   onNewest,
 }: {
   /** Vivid is at work or about to be. */
@@ -109,6 +114,8 @@ export function Floating({
   arrived: boolean
   /** What the button says to a screen reader, with how many arrived. */
   label: string
+  /** How far up the row is carried, in points: what a card over the foot is covering. */
+  lift: SharedValue<number>
   onNewest: () => void
 }) {
   // It starts where it should rest (a derived value's first run takes an animation's end), as
@@ -117,8 +124,9 @@ export function Floating({
   const aside = useAnimatedStyle(() => ({
     transform: [{ translateX: SEPARATION * (1 - separation.get()) }],
   }))
+  const lifted = useAnimatedStyle(() => ({ transform: [{ translateY: -lift.get() }] }))
   return (
-    <Row>
+    <Row style={lifted}>
       {thinking && <Thinking style={aside} />}
       {(thinking || away) && (
         <Newest
@@ -138,30 +146,47 @@ export function Floating({
  * The row the two shapes are laid out in: over the foot of the conversation, as tall as a
  * finger's target with the shapes in its middle, which puts their foot `THINKING_CLEAR` above
  * the composer. Where the system has glass it is the container that runs their glass together.
+ * `style` carries the whole row up; it is on a view of its own around the container, so the
+ * system's container is never itself the thing being moved.
  */
-function Row({ children }: { children: ReactNode }) {
+function Row({
+  style,
+  children,
+}: {
+  style: ComponentProps<typeof Animated.View>['style']
+  children: ReactNode
+}) {
   const row = {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: THINKING_CLEAR - (TARGET - BUBBLE) / 2,
-    height: TARGET,
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: GAP,
   } as const
-  if (GLASS_SUPPORTED) {
-    return (
-      <GlassContainer spacing={MERGE} pointerEvents="box-none" style={row}>
-        {children}
-      </GlassContainer>
-    )
-  }
   return (
-    <View pointerEvents="box-none" style={row}>
-      {children}
-    </View>
+    <Animated.View
+      pointerEvents="box-none"
+      style={[
+        {
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: THINKING_CLEAR - (TARGET - BUBBLE) / 2,
+          height: TARGET,
+        },
+        style,
+      ]}
+    >
+      {GLASS_SUPPORTED ? (
+        <GlassContainer spacing={MERGE} pointerEvents="box-none" style={row}>
+          {children}
+        </GlassContainer>
+      ) : (
+        <View pointerEvents="box-none" style={row}>
+          {children}
+        </View>
+      )}
+    </Animated.View>
   )
 }
 

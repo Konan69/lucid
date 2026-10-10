@@ -1,11 +1,8 @@
 import {
   ApprovalDecision,
   ApprovalState,
-  InputRequestState,
   type Approval,
   type ApprovalId,
-  type InputRequest,
-  type InputRequestId,
   type PersonId,
   type ThreadDetail,
 } from '@vivid/contracts'
@@ -15,7 +12,7 @@ import { useState, type ReactNode } from 'react'
 import { View } from 'react-native'
 import { ShieldQuestion } from 'lucide-react-native'
 import type { Say } from '../../data/delivery'
-import { commit, confirm, warn } from '../../data/haptics'
+import { confirm, warn } from '../../data/haptics'
 import { useLiveData } from '../../data/live'
 import { Card, cardOf, type ToolPart } from '../../data/message'
 import { useAppearance } from '../../data/vivid'
@@ -23,14 +20,19 @@ import { useTheme } from '../../theme'
 import { Button, EDGE, Label, Notice, radius, styles } from '../../ui/ui'
 import { IntegrationCard } from '../integration/Card'
 import { Exactly } from './Exactly'
-import { Asked, Question } from './Question'
+import { requestOf } from './asked'
+import { Asked } from './Question'
 import { Display } from './Shown'
 
 /**
  * The cards a Thread shows where a plain message will not do: something Vivid wants to do and
- * needs a yes for, a question it could not answer alone, a service it needs connected, something
- * it took on. Each card is drawn from the server's record in the Thread's live detail, so it
- * keeps telling the truth after it is settled: who allowed it, what came back, or that it ran out.
+ * needs a yes for, a service it needs connected, something it took on. Each card is drawn from
+ * the server's record in the Thread's live detail, so it keeps telling the truth after it is
+ * settled: who allowed it, what came back, or that it ran out.
+ *
+ * A question Vivid could not answer alone is found here too, because it reaches the Thread the
+ * same way (a tool's result naming a record), but it is not a card: it is drawn as Vivid's own
+ * words (`Asked`, `Question.tsx`), and its choices rise from behind the composer (`Choices.tsx`).
  */
 export function Cards({
   tools,
@@ -56,7 +58,8 @@ export function Cards({
     return Option.match(cardOf(tool), {
       onNone: () => null,
       onSome: (card) => (
-        <View key={tool.toolCallId} style={{ marginTop: 8, marginBottom: 6 }}>
+        // A card stands a little apart from the words round it. A question is words itself.
+        <View key={tool.toolCallId} style={Card.$is('Input')(card) ? undefined : CARD_ROOM}>
           <Drawn
             call={tool.toolCallId}
             card={card}
@@ -71,16 +74,13 @@ export function Cards({
   })
 }
 
+/** The room above and below a card, between it and the reply's words. */
+const CARD_ROOM = { marginTop: 8, marginBottom: 6 } as const
+
 /** The Approval a card stands for, once the Thread's live detail carries it. */
 const approvalOf = (detail: Option.Option<ThreadDetail>, id: ApprovalId) =>
   Option.flatMap(detail, (value) =>
     Option.fromUndefinedOr(value.approvals.find((approval) => approval.id === id)),
-  )
-
-/** The Input request a card stands for, once the Thread's live detail carries it. */
-const requestOf = (detail: Option.Option<ThreadDetail>, id: InputRequestId) =>
-  Option.flatMap(detail, (value) =>
-    Option.fromUndefinedOr(value.requests.find((request) => request.id === id)),
   )
 
 /**
@@ -114,7 +114,7 @@ function Drawn({
     Input: ({ id }) =>
       Option.match(requestOf(detail, id), {
         onNone: () => null,
-        onSome: (request) => <InputCard request={request} me={me} />,
+        onSome: (request) => <Asked request={request} me={me} />,
       }),
     Connection: ({ request, authorization, awaited }) => (
       <IntegrationCard
@@ -140,7 +140,7 @@ function Shell({
   icon: ReactNode
   kind: string
   tone: 'status-approve' | 'status-attention' | 'ink-3'
-  /** Only Approval headers carry an effect chip; Input requests have no action effect. */
+  /** Only Approval headers carry an effect chip. */
   trailing?: ReactNode
   children: ReactNode
 }) {
@@ -310,71 +310,5 @@ function ApprovalCard({ approval, me }: { approval: Approval; me: PersonId }) {
       )}
       {refused && <Notice message="This was already decided, or it changed. Look again." />}
     </Shell>
-  )
-}
-
-/**
- * A question Vivid could not answer alone. The Person it is addressed to presses an option or
- * writes their own answer; once answered, the card closes down to what was said, and by whom
- * when that was someone else. The card itself is `Question`: this reads the server's record into
- * it and sends the answer.
- *
- * The phone answers the press in the hand at the moment it is made, and the pressed row says it
- * is on its way until the Thread's live detail says the question is answered. It is the record
- * that closes the card, not the call returning: the call can come back a moment before the
- * record does, and rows that woke up for that moment could be pressed a second time.
- */
-function InputCard({ request, me }: { request: InputRequest; me: PersonId }) {
-  // The name this Person or their Company gave Vivid, live.
-  const vivid = useAppearance()
-  const data = useLiveData()
-  const [sending, setSending] = useState(Option.none<string>())
-  const [refused, setRefused] = useState(false)
-  const mine = request.askedOf.id === me
-
-  async function answer(text: string) {
-    commit()
-    setRefused(false)
-    setSending(Option.some(text))
-    const result = await data.change((client) =>
-      client.AnswerInput({ id: request.id, answer: text }),
-    )
-    if (Result.isSuccess(result)) return
-    setSending(Option.none())
-    setRefused(true)
-  }
-
-  // Each standing is said to be an `Asked`, so the three branches agree on the union and not
-  // on whichever one is written first.
-  const asked = InputRequestState.match(request.state, {
-    Waiting: (): Asked =>
-      mine
-        ? Asked.Open({ sending, onAnswer: (text) => void answer(text) })
-        : Asked.Resting({ note: `Waiting on ${request.askedOf.name}.` }),
-    Answered: ({ answer: said, answeredBy }): Asked =>
-      Asked.Answered({
-        answer: said,
-        note: answeredBy.id === me ? Option.none() : Option.some(`Answered by ${answeredBy.name}`),
-      }),
-    Withdrawn: (): Asked => Asked.Resting({ note: 'No longer needed.' }),
-  })
-  return (
-    <Question
-      // Only the Person it is waiting on is told it needs them.
-      status={
-        InputRequestState.guards.Waiting(request.state) && mine
-          ? `${vivid.name} needs you`
-          : `${vivid.name} asked`
-      }
-      title={request.question}
-      choices={request.options}
-      allowsOwn={request.allowsOwnAnswer}
-      asked={asked}
-      problem={
-        refused
-          ? Option.some('That answer did not go through. It may already be answered.')
-          : Option.none()
-      }
-    />
   )
 }

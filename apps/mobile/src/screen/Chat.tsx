@@ -4,6 +4,8 @@ import type { FlueConversationMessage } from '@flue/sdk'
 import {
   ThreadAudience,
   Workspace,
+  type InputRequest,
+  type InputRequestId,
   type Thread,
   type ThreadDetail,
   type ThreadId,
@@ -11,9 +13,14 @@ import {
 import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Result } from 'effect'
 import { randomUUID } from 'expo-crypto'
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { ScrollView, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  type SharedValue,
+} from 'react-native-reanimated'
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 import { MessageCircleDashed, Share2, Users } from 'lucide-react-native'
 import { deliveryOf, type Delivery, type Say, type Unsent } from '../data/delivery'
@@ -39,7 +46,9 @@ import { Button, Empty, Face, GUTTER, Label, Notice, Skeleton, styles } from '..
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 import { useFirst, useFront, useMe } from '../workspace'
+import { hasChoices, Hold, holdOf, Send, sendOf, upOf } from './chat/asked'
 import { isAway, newestWords } from './chat/away'
+import { Choices, OVERLAID } from './chat/Choices'
 import { Message } from './chat/Message'
 import { Opening } from './home/First'
 import { Share } from './chat/Share'
@@ -324,6 +333,108 @@ function useSend(
   }
 }
 
+/** An answer to a question from Vivid that is on its way: which request, and with what words. */
+interface Answering {
+  readonly id: InputRequestId
+  readonly words: string
+}
+
+/**
+ * The question from Vivid whose choices are up over the composer, and answering it.
+ *
+ * `up` is the request that should be up (`upOf`). The card holds one request at a time and lets
+ * go of it only once it has slid away, so the next question rises after the last has settled
+ * (`holdOf`). What it holds follows `up` while rendering, which is React's own way to follow a
+ * value without an effect: a free card takes the request that is up, and a request that is
+ * leaving with no card to slide away (it offered no choices, or the card is in the flow, where
+ * it leaves by being taken out) is let go at once.
+ *
+ * An answer goes to the server as the request's answer, from a row or from the composer alike.
+ * It is kept as on its way until the request's record says it is answered: it is the record that
+ * takes the card away, not the call returning, so rows that woke up between the two could not be
+ * pressed a second time. A refusal is kept against the request it was for, and is not said about
+ * any other.
+ */
+function useAsking(up: Option.Option<InputRequest>) {
+  const data = useLiveData()
+  const [held, setHeld] = useState(up)
+  const [answering, setAnswering] = useState<Option.Option<Answering>>(Option.none())
+  const [refused, setRefused] = useState<Option.Option<InputRequestId>>(Option.none())
+  const hold = holdOf(held, up)
+  if (Hold.$is('Free')(hold) && Option.isSome(up)) setHeld(up)
+  if (Hold.$is('Leaving')(hold) && !(OVERLAID && hasChoices(hold.request))) setHeld(Option.none())
+  // One function for the life of the Thread: the card's slide is timed again when it changes.
+  const release = useCallback(() => setHeld(Option.none()), [])
+
+  /** Answers a request, and says whether the answer went through. */
+  async function answer(id: InputRequestId, words: string) {
+    commit()
+    setRefused(Option.none())
+    setAnswering(Option.some({ id, words }))
+    const result = await data.change((client) => client.AnswerInput({ id, answer: words }))
+    if (Result.isSuccess(result)) return true
+    setAnswering(Option.none())
+    setRefused(Option.some(id))
+    return false
+  }
+
+  return {
+    hold,
+    /** The words on their way to one request, when they are. */
+    sendingTo: (id: InputRequestId) =>
+      Option.map(
+        Option.filter(answering, (sent) => sent.id === id),
+        (sent) => sent.words,
+      ),
+    /** An answer to the request that is up is on its way, so another cannot start. */
+    answering:
+      Hold.$is('Up')(hold) && Option.exists(answering, (sent) => sent.id === hold.request.id),
+    /** The last answer to the request that is up did not go through. */
+    refused: Hold.$is('Up')(hold) && Option.contains(refused, hold.request.id),
+    answer,
+    release,
+  }
+}
+
+/**
+ * The card over the composer, for what it holds (`useAsking`): the choices of the request that
+ * is up, or of the one sliding away. A request that offers no choices has no card; the composer
+ * alone answers it. It is keyed by the request, so each card starts untucked and measures itself.
+ */
+function Raised({
+  asking,
+  covered,
+}: {
+  asking: ReturnType<typeof useAsking>
+  covered: SharedValue<number>
+}) {
+  const drawn = Hold.$match(asking.hold, {
+    Free: () => Option.none(),
+    Up: ({ request }) => Option.some({ request, leaving: false }),
+    Leaving: ({ request }) => Option.some({ request, leaving: true }),
+  })
+  if (Option.isNone(drawn) || !hasChoices(drawn.value.request)) return null
+  const { request, leaving } = drawn.value
+  return (
+    <Choices
+      key={request.id}
+      request={request}
+      leaving={leaving}
+      sending={asking.sendingTo(request.id)}
+      covered={covered}
+      onAnswer={(label) => void asking.answer(request.id, label)}
+      onGone={asking.release}
+    />
+  )
+}
+
+/** No questions: a Thread whose detail has not arrived. One value, not a new list each render. */
+const NO_REQUESTS: ReadonlyArray<InputRequest> = []
+
+/** The Thread's Input requests, oldest first, once its live detail carries them. */
+const requestsOf = (detail: Option.Option<ThreadDetail>): ReadonlyArray<InputRequest> =>
+  Option.match(detail, { onNone: () => NO_REQUESTS, onSome: (value) => value.requests })
+
 /**
  * One Thread's conversation: its words, the composer under them, and what is live around both. It
  * is keyed by the Thread (`Chat`), so everything held here, the stream and the delivery that is in
@@ -341,8 +452,6 @@ function Conversation({
   first: Option.Option<First>
   detail: Option.Option<ThreadDetail>
 }) {
-  // The name this Person or their Company gave Vivid, live.
-  const vivid = useAppearance()
   const me = useMe()
   const data = useLiveData()
   const front = useFront()
@@ -369,6 +478,11 @@ function Conversation({
   const thread = Option.map(detail, (value) => value.thread)
   const sending = useSend(id, thread, agent, place)
   const { shared } = sending
+  // The question waiting on this Person, when there is one: its choices rise from behind the
+  // composer, and while they are up the composer may be its answer (`Foot`).
+  const asking = useAsking(upOf(requestsOf(detail), me.person.id))
+  // How far the choices stand over the foot of the conversation, which keeps that much clear.
+  const covered = useSharedValue(0)
   const working = isWorking(agent.status, thread)
   const stopping = useStop(id, working)
   const around: Around = {
@@ -444,26 +558,24 @@ function Conversation({
           around={around}
           detail={detail}
           unsent={undelivered}
+          covered={covered}
           onContinue={speak}
         />
+        <Raised asking={asking} covered={covered} />
       </View>
-      {stopping.refused && (
-        <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
-          <Notice message="Vivid could not be stopped just now. Try again." />
-        </View>
-      )}
-      <Composer
-        value={typed}
-        autoFocus={writing}
-        placeholder={shared ? `Message everyone and ${vivid.name}` : `Message ${vivid.name}`}
+      <Foot
+        place={place}
+        typed={typed}
+        writing={writing}
+        shared={shared}
         working={working}
         // Nothing more can be said in a Thread until its first words are with Vivid; what is
         // typed meanwhile stays in the composer.
-        disabled={held(settled, sending.pending)}
-        onChange={type}
-        // Emptying the composer, which `speak` does, is also what removes this Thread's kept draft.
-        onSend={() => void speak(typed.trim())}
-        onStop={() => void stopping.stop()}
+        waits={held(settled, sending.pending || asking.answering)}
+        asking={asking}
+        stopping={stopping}
+        onType={type}
+        onSpeak={speak}
       />
       {sharing && Option.isSome(thread) && Workspace.guards.Company(me.workspace) && (
         <Share
@@ -478,11 +590,102 @@ function Conversation({
 }
 
 /**
+ * The foot of a Thread: the composer, and over it what could not be done from it (an answer that
+ * did not go through, a Stop that was refused).
+ *
+ * What the composer sends is decided here (`sendOf`). Ordinarily it is a message in the Thread.
+ * While a question that takes words of the Person's own is up, it is that question's answer: the
+ * composer says "Reply", and "skip that, just do this" is as good an answer as any row.
+ */
+function Foot({
+  place,
+  typed,
+  writing,
+  shared,
+  working,
+  waits,
+  asking,
+  stopping,
+  onType,
+  onSpeak,
+}: {
+  /** Where this Thread's unsent words are kept on the phone (`data/drafts.ts`). */
+  place: string
+  typed: string
+  writing: boolean
+  shared: boolean
+  working: boolean
+  /** Words must wait in the composer (`held`). */
+  waits: boolean
+  asking: ReturnType<typeof useAsking>
+  stopping: ReturnType<typeof useStop>
+  onType: (words: string) => void
+  onSpeak: Say
+}) {
+  // The name this Person or their Company gave Vivid, live.
+  const vivid = useAppearance()
+  const send = sendOf(asking.hold)
+
+  /**
+   * Answers the question that is up with what was typed. The words leave the composer as they
+   * go; if the answer does not go through they come back, unless the Person has started writing
+   * something else there since.
+   */
+  async function reply(request: InputRequestId, words: string) {
+    onType('')
+    const went = await asking.answer(request, words)
+    if (!went && draft.in(place).length === 0) draft.keep(place, words)
+  }
+
+  return (
+    <>
+      {asking.refused && (
+        <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
+          <Notice message="That answer did not go through. It may already be answered." />
+        </View>
+      )}
+      {stopping.refused && (
+        <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
+          <Notice message="Vivid could not be stopped just now. Try again." />
+        </View>
+      )}
+      <Composer
+        value={typed}
+        autoFocus={writing}
+        placeholder={placeholderOf(send, shared, vivid.name)}
+        working={working}
+        disabled={waits}
+        onChange={onType}
+        // Emptying the composer, which `onSpeak` does, is also what removes this Thread's kept
+        // draft.
+        onSend={() =>
+          Send.$match(send, {
+            Message: () => void onSpeak(typed.trim()),
+            Answer: ({ id }) => void reply(id, typed.trim()),
+          })
+        }
+        onStop={() => void stopping.stop()}
+      />
+    </>
+  )
+}
+
+/**
  * Whether words must wait in the composer: until the Thread's first words are with Vivid, and
- * while a send is on its way. One delivery is in doubt at a time (`useSend` keeps one), so a
+ * while a send, or an answer to a question of Vivid's, is on its way. One delivery is in doubt at a time (`useSend` keeps one), so a
  * second waits for the first to be answered, which takes a moment.
  */
 const held = (settled: boolean, pending: boolean): boolean => !settled || pending
+
+/**
+ * What the empty composer says. While a question that takes words of the Person's own is up,
+ * what is sent is its answer, so it says "Reply"; otherwise it says who a message goes to.
+ */
+const placeholderOf = (send: Send, shared: boolean, vivid: string): string =>
+  Send.$match(send, {
+    Answer: () => 'Reply',
+    Message: () => (shared ? `Message everyone and ${vivid}` : `Message ${vivid}`),
+  })
 
 /** No conversation to open yet. One value, so the hook is not handed a new one each render. */
 const UNOPENED: UseFlueAgentOptions = {}
@@ -595,6 +798,11 @@ interface MessagesProps {
   readonly detail: Option.Option<ThreadDetail>
   /** The ids of the messages written here that did not arrive. */
   readonly unsent: ReadonlySet<string>
+  /**
+   * How far a question's choices stand over the foot of the conversation, in points
+   * (`chat/Choices.tsx`). The conversation keeps that much more clear under its newest words.
+   */
+  readonly covered: SharedValue<number>
   readonly onContinue: Say
 }
 
@@ -673,6 +881,9 @@ function Messages(props: MessagesProps) {
  * count on it, stacked over the bubble and shown only once something had arrived. Whether they
  * are away is kept as the message count at the moment they left; it changes only when they cross
  * the threshold.
+ *
+ * While a question's choices are up over the foot of the conversation, that much more is kept
+ * clear under the newest words (`Cleared`), and the floating row rides up by the same.
  */
 function Transcript(props: MessagesProps) {
   const { messages, working, thinking, rising } = props
@@ -790,7 +1001,11 @@ function Transcript(props: MessagesProps) {
               onContinue={props.onContinue}
             />
           ))}
-          <Tail awaited={awaited} ended={props.ended} trouble={props.trouble} />
+          {/* One row, so the room under the tail is not also given the list's gap. */}
+          <View>
+            <Tail awaited={awaited} ended={props.ended} trouble={props.trouble} />
+            <Cleared by={props.covered} />
+          </View>
         </ScrollView>
         <TopFade />
         <Floating
@@ -798,12 +1013,28 @@ function Transcript(props: MessagesProps) {
           away={Option.isSome(awayAt)}
           arrived={arrived > 0}
           label={newestWords(arrived)}
+          lift={props.covered}
           onNewest={latest}
         />
       </View>
       <BarRoom />
     </View>
   )
+}
+
+/**
+ * The room kept clear at the foot of the conversation for a question's choices: as tall as the
+ * card stands over the conversation, frame by frame on the UI thread. It is the end of the
+ * scroller's content, so the content grows as the card rises and the scroller is put back on its
+ * newest words each time (`Transcript.settle`), which is what keeps them in sight above the card.
+ *
+ * T3 Code mobile adds the card's coverage to its list's end inset, a shared value its list
+ * library reads (`ThreadDetailScreen.tsx`, `combinedContentInsetEndAdjustment`). Vivid's
+ * scroller is the platform's and has no such inset, so the room is the last thing in its content.
+ */
+function Cleared({ by }: { by: SharedValue<number> }) {
+  const room = useAnimatedStyle(() => ({ height: by.get() }))
+  return <Animated.View style={room} />
 }
 
 /**
