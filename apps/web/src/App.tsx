@@ -10,6 +10,7 @@ import { panel } from './data/panel'
 import { Route, router } from './data/route'
 import { engine, link } from './data/runtime'
 import { sidebar } from './data/sidebar'
+import { wake } from './data/wake'
 import { startThread } from './data/threads'
 import { First } from './screen/First'
 import { Invite } from './screen/Invite'
@@ -244,7 +245,11 @@ function Shell({ me }: { me: MeResponse }) {
               route={route}
               me={me}
               beside={beside}
-              onTogglePanel={panel.toggle}
+              onTogglePanel={() => {
+                // Opening the panel is arriving at Vivid's computer, which turns it on.
+                if (!panel.isOpen()) wake()
+                panel.toggle()
+              }}
             />
           </div>
         </Suspense>

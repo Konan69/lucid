@@ -20,6 +20,7 @@ import {
 } from './data/live'
 import { leaveAtom } from './data/signing'
 import { Broken } from './screen/Broken'
+import { arrive } from './data/computer'
 import { Computer } from './screen/Computer'
 import { Door } from './screen/Door'
 import { Home } from './screen/Home'
@@ -246,13 +247,15 @@ const underMenu = ({ children, state, navigation }: StackLayout) => (
 function Vivid({ go }: { go: StackLayout['navigation'] }) {
   const front = useFront()
   const thread = Front.$is('Thread')(useShowing())
+  const data = useLiveData()
   return (
     <Presence
       menu={{
         places: thread ? IN_THREAD : ON_GREETING,
         onGo: (place) => {
-          if (place === 'Fresh') front.fresh()
-          else go.navigate(place)
+          if (place === 'Fresh') return front.fresh()
+          if (place === 'Computer') arrive(data)
+          go.navigate(place)
         },
       }}
     />

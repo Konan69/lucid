@@ -8,7 +8,7 @@ import type * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import * as RpcSerialization from 'effect/unstable/rpc/RpcSerialization'
 import * as Socket from 'effect/unstable/socket/Socket'
-import type { ThreadId } from '@vivid/contracts'
+import { ComputerState, type ThreadId } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
 
 /**
@@ -94,4 +94,22 @@ export const regenerateThreadTitle = Effect.fn('VividRpcClient.regenerateThreadT
   thread: ThreadId,
 ) {
   return yield* (yield* VividRpcClient).RegenerateThreadTitle({ thread })
+})
+
+/**
+ * What arriving at the Computer's view does, on every client surface: a Computer that was never
+ * started, or was turned off, is turned on, so the Person who came to see its screen sees it and
+ * is not asked to press Start first.
+ *
+ * The server is asked where the Computer stands and not this device's copy, which can be a
+ * launch old. One that is starting or running is left as it is. One whose last start failed is
+ * left too: the server counts every start a Person asks for against the provider's hourly limit
+ * (`apps/server/src/computers/README.md`), so trying again stays a press and is never the price
+ * of opening a view.
+ */
+export const wakeComputer = Effect.fn('VividRpcClient.wakeComputer')(function* () {
+  const client = yield* VividRpcClient
+  const { computer } = yield* client.GetComputer()
+  if (!ComputerState.isAnyOf(['Absent', 'Stopped'])(computer.state)) return computer
+  return (yield* client.StartComputer()).computer
 })

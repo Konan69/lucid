@@ -1,6 +1,8 @@
 import { ComputerScreen, ComputerState, type Computer } from '@vivid/contracts'
 import type { FaceMood } from '@vivid/marks'
+import { wakeComputer } from '@vivid/client-runtime'
 import { Option } from 'effect'
+import type { LiveData } from './live'
 
 /**
  * Vivid's computer, in words: where it stands, what that means for the Person, and the one thing
@@ -108,3 +110,11 @@ export const screenNote = (computer: Computer): string =>
         ? 'Its screen opens in your browser.'
         : 'Its screen opens in your browser. A touch there reaches the computer, so take over first if you mean to use it.',
   })
+
+/**
+ * Arriving at the Computer's page turns the Computer on (`wakeComputer`). It is called where the
+ * Person asks to go there, beside the navigation, and not by the page as it draws: a page that
+ * started the machine whenever it showed one turned off would start it again the moment the
+ * Person turned it off. A refusal is not said here; the page shows where the Computer stands.
+ */
+export const arrive = (data: LiveData) => void data.run(wakeComputer())
