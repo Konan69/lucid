@@ -47,14 +47,23 @@ const RISE = {
  * `layout` is given only by a control that changes shape (`ui/motion/morph.ts`). It is not on by
  * default: a layout transition on every pressable would also ease each one into place whenever
  * the keyboard or a list moved it, which reads as lag.
+ *
+ * `depth` is how small the surface gets under the finger, for the few shapes a design gives a
+ * depth of their own (the round button beside the thinking bubble and a question's choices sink
+ * to 0.96, as their approved prototypes do). Everything else sinks to `PRESSED_SCALE`.
  */
 export function Press({
   containerStyle,
   layout,
+  depth = PRESSED_SCALE,
   onPressIn,
   onPressOut,
   ...props
-}: PressableProps & { containerStyle?: StyleProp<ViewStyle>; layout?: LinearTransition }) {
+}: PressableProps & {
+  containerStyle?: StyleProp<ViewStyle>
+  layout?: LinearTransition
+  depth?: number
+}) {
   const scale = useSharedValue(1)
   // Reanimated's get/set API is the compiler-safe equivalent of reading and assigning `.value`.
   const sunk = useAnimatedStyle(() => ({ transform: [{ scale: scale.get() }] }))
@@ -65,7 +74,7 @@ export function Press({
         pressRetentionOffset={12}
         {...props}
         onPressIn={(event) => {
-          scale.set(withSpring(PRESSED_SCALE, SINK))
+          scale.set(withSpring(depth, SINK))
           if (onPressIn != null) onPressIn(event)
         }}
         onPressOut={(event) => {

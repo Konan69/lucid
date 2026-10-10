@@ -33,23 +33,13 @@ import { Screen } from '../ui/Screen'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
 import { HANG } from '../ui/Presence'
 import { Dots } from '../ui/Dots'
-import { Thinking, THINKING_CLEAR, THINKING_ROOM } from '../ui/Thinking'
-import {
-  Button,
-  EDGE,
-  Empty,
-  Face,
-  GUTTER,
-  Label,
-  Notice,
-  Press,
-  Skeleton,
-  styles,
-  TARGET,
-} from '../ui/ui'
+import { Floating } from '../ui/Floating'
+import { THINKING_ROOM } from '../ui/Thinking'
+import { Button, Empty, Face, GUTTER, Label, Notice, Skeleton, styles } from '../ui/ui'
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 import { useFirst, useFront, useMe } from '../workspace'
+import { isAway, newestWords } from './chat/away'
 import { Message } from './chat/Message'
 import { Opening } from './home/First'
 import { Share } from './chat/Share'
@@ -635,9 +625,6 @@ function Messages(props: MessagesProps) {
   return <Blank ready={props.page === 'Opening'} />
 }
 
-/** How far from the newest words still counts as reading them, in points. */
-const FOLLOWING = 80
-
 /**
  * The conversation, oldest words first, in a scroller that is the right way up and is kept on its
  * newest words by hand: each time its content grows or its viewport changes size while the Person
@@ -679,9 +666,13 @@ const FOLLOWING = 80
  * first drawn with, less a Thread's first words while they are within that window of their send
  * (`rising`). Whatever comes after is new, until the conversation is next scrolled.
  *
- * When the Person has scrolled away and words arrive, their place is held and a "Latest messages"
- * action with the real count of arrivals brings them back. Whether they are away is kept as the
- * message count at the moment they left; it changes only when they cross the threshold.
+ * When the Person has scrolled away (`isAway`, `chat/away.ts`) their place is held, and a round
+ * button comes out of the thinking bubble, or stands alone in its place, to bring them back
+ * (`Floating`, `ui/Floating.tsx`). Words that arrive meanwhile put a dot on it; how many is said
+ * only to a screen reader. Until 10 October 2026 that was a "Latest messages" button with the
+ * count on it, stacked over the bubble and shown only once something had arrived. Whether they
+ * are away is kept as the message count at the moment they left; it changes only when they cross
+ * the threshold.
  */
 function Transcript(props: MessagesProps) {
   const { messages, working, thinking, rising } = props
@@ -711,7 +702,11 @@ function Transcript(props: MessagesProps) {
     // having scrolled away.
     if (!placed) return
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent
-    const near = contentSize.height - contentOffset.y - layoutMeasurement.height < FOLLOWING
+    const near = !isAway({
+      offset: contentOffset.y,
+      content: contentSize.height,
+      viewport: layoutMeasurement.height,
+    })
     // A row is only ever drawn a second time after the list has moved, so moving it is when
     // everything in it stops being new: a message scrolled back to does not arrive again.
     setKnown((current) =>
@@ -798,20 +793,13 @@ function Transcript(props: MessagesProps) {
           <Tail awaited={awaited} ended={props.ended} trouble={props.trouble} />
         </ScrollView>
         <TopFade />
-        {/* Always there, so the bubble inside it can fade out when the work ends. */}
-        <View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            left: 0,
-            right: 0,
-            bottom: THINKING_CLEAR,
-            alignItems: 'center',
-          }}
-        >
-          {thinking && <Thinking />}
-        </View>
-        {arrived > 0 && <LatestButton count={arrived} lifted={thinking} onPress={latest} />}
+        <Floating
+          thinking={thinking}
+          away={Option.isSome(awayAt)}
+          arrived={arrived > 0}
+          label={newestWords(arrived)}
+          onNewest={latest}
+        />
       </View>
       <BarRoom />
     </View>
@@ -857,67 +845,6 @@ function TopFade() {
   )
 }
 
-/** The way back to the newest words after reading up, with how many arrived while away. */
-function LatestButton({
-  count,
-  lifted,
-  onPress,
-}: {
-  count: number
-  /** The thinking bubble is in the room at the foot, so this stands above it. */
-  lifted: boolean
-  onPress: () => void
-}) {
-  const { colors: c } = useTheme()
-  return (
-    <View
-      pointerEvents="box-none"
-      style={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: lifted ? THINKING_ROOM + 4 : 12,
-        alignItems: 'center',
-      }}
-    >
-      <Press
-        accessibilityRole="button"
-        accessibilityLabel={`Latest messages, ${count} new`}
-        onPress={onPress}
-        style={({ pressed }) => ({
-          minHeight: TARGET,
-          paddingLeft: 16,
-          paddingRight: 8,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-          borderRadius: TARGET / 2,
-          borderWidth: EDGE,
-          borderColor: c.border,
-          backgroundColor: pressed ? c['wash-pressed'] : c['subtle-strong'],
-        })}
-      >
-        <Label size="footnote">Latest messages</Label>
-        <View
-          style={{
-            minWidth: 24,
-            height: 24,
-            paddingHorizontal: 7,
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderRadius: 12,
-            backgroundColor: c.primary,
-          }}
-        >
-          <Label size="caption" tone="ink-on-accent">
-            {count}
-          </Label>
-        </View>
-      </Press>
-    </View>
-  )
-}
-
 /** A Thread with nothing in it: its outline while it opens, then Vivid waiting to be asked. */
 function Blank({ ready }: { ready: boolean }) {
   if (!ready) {
@@ -942,7 +869,7 @@ function Blank({ ready }: { ready: boolean }) {
 /**
  * What sits under the newest message: Vivid about to speak, that its last Run came to nothing,
  * or that something did not arrive. That Vivid is thinking is also said in a bubble floating
- * over the foot of the list, where it stays while the conversation is read (`ui/Thinking.tsx`).
+ * over the foot of the list, where it stays while the conversation is read (`ui/Floating.tsx`).
  */
 function Tail({
   awaited,

@@ -3,6 +3,7 @@ import {
   FadeIn,
   FadeInDown,
   FadeOut,
+  Keyframe,
   LinearTransition,
   ReduceMotion,
 } from 'react-native-reanimated'
@@ -53,3 +54,16 @@ export const SAID = FadeInDown.duration(220).reduceMotion(ReduceMotion.System)
 
 /** A reply that has just started: it fades in where it stands, as the reference's does. */
 export const ANSWERED = FadeIn.duration(220).reduceMotion(ReduceMotion.System)
+
+/**
+ * A small mark arriving on a control that is already there: the dot that says something new is
+ * waiting. It comes up from a quarter of its size while it fades in, over 200 ms on the product's
+ * settling curve (`Rise.tsx`, `SETTLE`; the web's `--ease-out`), the values of the approved
+ * prototype's dot. With reduced motion it is simply there.
+ */
+export const POP = new Keyframe({
+  0: { opacity: 0, transform: [{ scale: 0.25 }] },
+  100: { opacity: 1, transform: [{ scale: 1 }], easing: Easing.bezier(0.2, 0, 0, 1) },
+})
+  .duration(200)
+  .reduceMotion(ReduceMotion.System)
