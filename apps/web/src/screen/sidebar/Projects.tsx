@@ -2,9 +2,9 @@ import type { Project, ProjectId, Thread } from '@vivid/contracts'
 import { projects as projectsData } from '@vivid/state'
 import { Option } from 'effect'
 import { ChevronRight } from 'lucide-react'
-import { useSyncExternalStore } from 'react'
+import { create } from 'zustand'
 import { kept } from '../../data/kept'
-import { Route, router } from '../../data/route'
+import { router } from '../../router'
 import { scope } from '../../data/scope'
 import { cn } from '../../ui/cn'
 import { Count } from '../../ui/Count'
@@ -14,26 +14,20 @@ import { CAPTION, FULL, HOVER, ROW } from './rows'
 /** Going to a Project is scoping to it: its page opens and the Thread list narrows to it. */
 export function openProject(id: ProjectId) {
   scope.enter(id)
-  router.go(Route.Projects({ open: Option.some(id) }))
+  void router.navigate({ to: '/projects/{-$id}', params: { id: id } })
 }
 
 // Whether the group is folded away is the Person's choice on this browser, like the sidebar's
-// width. It is an external store so the caption needs no effect to remember it.
+// width. It is a Zustand store, as T3 Code web keeps its interface state
+// (`apps/web/src/rightPanelStore.ts`), so the caption needs no effect to remember it: the choice
+// is read once, when the store is made, and written when it is changed (`folded` or `open`).
 const key = 'vivid.projects'
-let folded = Option.contains(kept.read(key), 'folded')
-const listeners = new Set<() => void>()
+const useFold = create(() => ({ folded: Option.contains(kept.read(key), 'folded') }))
 const fold = {
-  subscribe: (listener: () => void) => {
-    listeners.add(listener)
-    return () => {
-      listeners.delete(listener)
-    }
-  },
-  isFolded: () => folded,
   toggle: () => {
-    folded = !folded
+    const folded = !useFold.getState().folded
+    useFold.setState({ folded })
     kept.write(key, folded ? 'folded' : 'open')
-    for (const listener of listeners) listener()
   },
 }
 
@@ -64,7 +58,7 @@ export function ProjectGroup({
   /** The Project whose page is on screen: its row carries the fill, as any open row does. */
   open: Option.Option<ProjectId>
 }) {
-  const isFolded = useSyncExternalStore(fold.subscribe, fold.isFolded)
+  const isFolded = useFold((state) => state.folded)
   const top = projectsData.projectsIn(projects, null)
   const shown = top.slice(0, SHOWN)
   const more = top.length - shown.length
@@ -106,7 +100,9 @@ export function ProjectGroup({
           {more > 0 && (
             <li>
               <button
-                onClick={() => router.go(Route.Projects({ open: Option.none() }))}
+                onClick={() =>
+                  void router.navigate({ to: '/projects/{-$id}', params: { id: undefined } })
+                }
                 className={cn(ROW, FULL, HOVER, 'text-ink-3 hover:text-ink')}
               >
                 <span className="size-5.5 shrink-0" />

@@ -13,6 +13,7 @@ import {
 import type { ThreadId } from '@vivid/contracts'
 import { Equivalence, Option } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
+import { create } from 'zustand'
 import { start } from './app'
 import { kept } from './kept'
 import { live } from './live'
@@ -61,16 +62,38 @@ const tab = crypto.randomUUID()
 /** The document the store held when this tab opened. */
 const opened = kept.read(KEY)
 
-/** This tab's copy. A tab that opens takes over whatever the last one left owed. */
-let drafts = readDrafts(opened)
-/**
- * Words that are only space, in the one place they were just typed. They are no draft and are
- * never kept, but the field must go on showing them: a Person who starts a message with a new
- * line would otherwise have it taken out from under the cursor. Writing anywhere lets it go.
- */
-let blank = Option.none<{ readonly where: string; readonly text: string }>()
+interface Typed {
+  /** This tab's copy. A tab that opens takes over whatever the last one left owed. */
+  readonly drafts: Drafts
+  /**
+   * Words that are only space, in the one place they were just typed. They are no draft and are
+   * never kept, but the field must go on showing them: a Person who starts a message with a new
+   * line would otherwise have it taken out from under the cursor. Writing anywhere lets it go.
+   */
+  readonly blank: Option.Option<{ readonly where: string; readonly text: string }>
+}
 
-const listeners = new Set<() => void>()
+/**
+ * This tab's copy, in a Zustand store, as T3 Code web keeps its interface state
+ * (`apps/web/src/uiStateStore.ts`). A field reads its own place with `draftAt`, so it is drawn
+ * again only when its own words change. The browser's copy is read and written by hand below,
+ * under the name and in the document it always was: the rules for when it may be written and
+ * what may be taken in from another tab are this module's own, and no middleware knows them.
+ */
+export const useDrafts = create<Typed>()(() => ({
+  drafts: readDrafts(opened),
+  blank: Option.none(),
+}))
+
+/** The words in a place right now, exactly as its field should show them. */
+export const draftAt = (where: string) => (state: Typed) =>
+  Option.match(
+    Option.filter(state.blank, (here) => here.where === where),
+    { onNone: () => draftIn(state.drafts, where), onSome: (here) => here.text },
+  )
+
+/** This tab's drafts as they stand. */
+const held = () => useDrafts.getState().drafts
 
 /** How long changed drafts may wait in memory before the store is written, in milliseconds. */
 const REST_MS = 300
@@ -108,11 +131,11 @@ const sameDocument = Option.makeEquivalence(Equivalence.strictEqual<string>())
  * over keystrokes this tab has not saved.
  */
 function takeIn() {
-  const held = kept.read(KEY)
-  if (sameDocument(held, seen)) return
+  const stored = kept.read(KEY)
+  if (sameDocument(stored, seen)) return
   // Marked before anything else can look: whether or not a write of this tab's follows.
-  seen = held
-  drafts = absorbed(drafts, readDrafts(held))
+  seen = stored
+  useDrafts.setState({ drafts: absorbed(held(), readDrafts(stored)) })
 }
 
 /** Writes this tab's drafts to the store now, after taking in what other tabs put there. */
@@ -122,7 +145,7 @@ function store() {
   takeIn()
   // A store that refuses is not said: this tab's memory has the words either way. It then still
   // holds the document just taken in, which `seen` already names.
-  Option.map(writeDrafts(drafts), (text) => {
+  Option.map(writeDrafts(held()), (text) => {
     if (kept.write(KEY, text)) seen = Option.some(text)
   })
 }
@@ -149,8 +172,8 @@ const scope = (): Option.Option<DraftScope> => {
 
 const sync = makeDraftSync({
   device: tab,
-  read: () => Option.some(drafts),
-  update: (change) => put(change(drafts)),
+  read: () => Option.some(held()),
+  update: (change) => put(change(held())),
   scope,
   threads: () => {
     const threads = engine.registry.get(live.threads.answers)
@@ -172,9 +195,8 @@ const sync = makeDraftSync({
  * once they have rested (`rest`).
  */
 function put(next: Drafts) {
-  drafts = next
+  useDrafts.setState({ drafts: next })
   rest()
-  for (const listener of listeners) listener()
   sync.changed()
 }
 
@@ -184,7 +206,6 @@ function put(next: Drafts) {
 window.addEventListener('storage', (event) => {
   if (event.key !== KEY) return
   takeIn()
-  for (const listener of listeners) listener()
 })
 
 // A page that is hidden or left may never run again: a phone's browser discards a tab in the
@@ -222,24 +243,21 @@ engine.registry.subscribe(
 export const forgetDrafts = () => {
   sync.stop()
   takeIn()
-  drafts = forgotten(drafts)
+  useDrafts.setState({ drafts: forgotten(held()) })
   // At once, not after a rest: what the session held must not outlast it in the store.
   store()
-  for (const listener of listeners) listener()
 }
 
 export const draft = {
-  /** The words in a place right now, exactly as its field should show them. */
-  in: (where: string) =>
-    Option.match(
-      Option.filter(blank, (here) => here.where === where),
-      { onNone: () => draftIn(drafts, where), onSome: (here) => here.text },
-    ),
+  /** The words in a place right now, for code that is not a component (`draftAt` for one that is). */
+  in: (where: string) => draftAt(where)(useDrafts.getState()),
   /** Keeps a place's words as they now stand; words that are only space remove its draft. */
   keep: (where: string, text: string) => {
-    blank =
-      text.length > 0 && text.trim().length === 0 ? Option.some({ where, text }) : Option.none()
-    put(withDraft(drafts, where, text, Date.now()))
+    useDrafts.setState({
+      blank:
+        text.length > 0 && text.trim().length === 0 ? Option.some({ where, text }) : Option.none(),
+    })
+    put(withDraft(held(), where, text, Date.now()))
   },
   /**
    * Takes a place's words to send them: answers them, trimmed, and empties the place in the same
@@ -254,12 +272,5 @@ export const draft = {
     const words = draft.in(where).trim()
     if (words.length > 0) draft.keep(where, '')
     return words
-  },
-  /** Told when any place's words change, here or because another device's draft arrived. */
-  subscribe: (listener: () => void) => {
-    listeners.add(listener)
-    return () => {
-      listeners.delete(listener)
-    }
   },
 }

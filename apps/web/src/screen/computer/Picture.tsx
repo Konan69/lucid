@@ -1,6 +1,7 @@
 import { ComputerScreen } from '@vivid/contracts'
 import { Monitor } from 'lucide-react'
 import { useReducer } from 'react'
+import { create } from 'zustand'
 import { Glass, sightAfter, Viewer, type Resolution } from '../Computer'
 
 /**
@@ -9,24 +10,12 @@ import { Glass, sightAfter, Viewer, type Resolution } from '../Computer'
  * the reason it rests while the panel is open: one window does not hold two connections to one
  * screen. It is a count and not a flag so a card that closes as another opens cannot leave the
  * small picture resting with nothing larger on show.
+ *
+ * A Zustand store, as T3 Code web keeps its interface state (`apps/web/src/rightPanelStore.ts`).
  */
-const listeners = new Set<() => void>()
-let showing = 0
+export const useCloseup = create(() => ({ showing: 0 }))
 
-const count = (by: number) => {
-  showing += by
-  for (const listener of listeners) listener()
-}
-
-export const closeup = {
-  isShowing: () => showing > 0,
-  subscribe: (listener: () => void) => {
-    listeners.add(listener)
-    return () => {
-      listeners.delete(listener)
-    }
-  },
-}
+const count = (by: number) => useCloseup.setState((was) => ({ showing: was.showing + by }))
 
 /**
  * The ref of the element that holds the larger picture: it is counted for exactly as long as the

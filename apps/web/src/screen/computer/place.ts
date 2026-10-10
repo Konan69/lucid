@@ -1,4 +1,5 @@
 import { Option } from 'effect'
+import { create } from 'zustand'
 
 /**
  * Where Vivid's computer floats when it is popped out of the page: a window over the app that the
@@ -14,8 +15,8 @@ import { Option } from 'effect'
  * bar and the line of control under the screen, where the reference's is a bare picture; and
  * there is no reserved space at the bottom, because nothing of Vivid's is pinned there.
  *
- * Like `data/split.ts` it is a store outside React: a drag writes the window's place on the
- * element itself and tells React once, when the hand lets go.
+ * Like the reference and `data/split.ts` it is a Zustand store. A drag writes the window's place
+ * on the element itself and changes the store once, when the hand lets go.
  */
 
 /** A width and a height, in CSS pixels. */
@@ -67,59 +68,43 @@ export const boxWithin = (box: Box, room: Size): Box => {
 /** Where it opens the first time: the usual size, at the top of the room's right-hand side. */
 const opening = (room: Size): Box => boxWithin({ ...USUAL, x: room.width, y: GAP }, room)
 
-const same = (one: Box, other: Box) =>
-  one.x === other.x && one.y === other.y && one.width === other.width && one.height === other.height
-
-const listeners = new Set<() => void>()
-let floating = false
-/** What the Person last chose by dragging; nothing until they have. */
-let chosen: Option.Option<Box> = Option.none()
-/** The page the window floats over, as last measured. */
-let room: Size = { width: 0, height: 0 }
-/** What is drawn: the choice, or the opening place, fitted to the room as it is now. */
-let shown: Box = opening(room)
-
-const tell = () => {
-  for (const listener of listeners) listener()
+interface Place {
+  /** Whether the Person popped the computer out of the page. */
+  readonly floating: boolean
+  /** What the Person last chose by dragging; nothing until they have. */
+  readonly chosen: Option.Option<Box>
+  /** The page the window floats over, as last measured. */
+  readonly room: Size
 }
 
-/** Fits what was chosen to the room there is, and tells whoever draws it when that moved it. */
-const fit = () => {
-  const next = Option.match(chosen, {
-    onNone: () => opening(room),
-    onSome: (box) => boxWithin(box, room),
+export const usePlace = create<Place>()(() => ({
+  floating: false,
+  chosen: Option.none(),
+  room: { width: 0, height: 0 },
+}))
+
+/**
+ * The window as drawn: the choice, or the opening place, fitted to the room as it is now. It is
+ * worked out each time and so is a new object each time; a screen reads it through `useShallow`,
+ * which draws again only when one of its four numbers moved.
+ */
+export const placeBox = (state: Place): Box =>
+  Option.match(state.chosen, {
+    onNone: () => opening(state.room),
+    onSome: (box) => boxWithin(box, state.room),
   })
-  if (same(next, shown)) return
-  shown = next
-  tell()
-}
-
-const setFloating = (next: boolean) => {
-  if (next === floating) return
-  floating = next
-  tell()
-}
 
 export const place = {
-  subscribe: (listener: () => void) => {
-    listeners.add(listener)
-    return () => {
-      listeners.delete(listener)
-    }
-  },
-  /** Whether the Person popped the computer out of the page. */
-  isFloating: () => floating,
-  float: () => setFloating(true),
-  dock: () => setFloating(false),
-  /** The window as drawn. The same object until it changes, so React can compare it. */
-  box: () => shown,
+  isFloating: () => usePlace.getState().floating,
+  float: () => usePlace.setState({ floating: true }),
+  dock: () => usePlace.setState({ floating: false }),
+  /** The window as drawn, for a drag to start from. */
+  box: () => placeBox(usePlace.getState()),
   /** The page the window floats over, for a drag to stay inside. */
-  room: () => room,
+  room: () => usePlace.getState().room,
   /** Remembers where a drag or a resize left the window. */
-  keep: (box: Box) => {
-    chosen = Option.some(boxWithin(box, room))
-    fit()
-  },
+  keep: (box: Box) =>
+    usePlace.setState((was) => ({ chosen: Option.some(boxWithin(box, was.room)) })),
   /**
    * Follows the page the window floats over, so a smaller browser window or an opened sidebar
    * brings the floating window back inside instead of leaving it off the page. Called from the
@@ -128,10 +113,8 @@ export const place = {
   attach: (element: HTMLElement) => {
     const parent = element.parentElement
     if (parent === null) return () => undefined
-    const measure = () => {
-      room = { width: parent.clientWidth, height: parent.clientHeight }
-      fit()
-    }
+    const measure = () =>
+      usePlace.setState({ room: { width: parent.clientWidth, height: parent.clientHeight } })
     const observer = new ResizeObserver(measure)
     observer.observe(parent)
     measure()

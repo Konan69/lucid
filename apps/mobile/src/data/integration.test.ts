@@ -1,28 +1,25 @@
 import {
-  ConnectionAuthorization,
   ConnectionId,
   ConnectionOwnership,
   ConnectionState,
-  ConnectionStep,
   PersonId,
   ServiceAuthorization,
   ServiceId,
   type Connection,
   type Service,
 } from '@vivid/contracts'
+import { connecting } from '@vivid/state'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { byPurpose } from '../screen/integration/purpose.ts'
 import {
   accountLine,
-  afterPress,
-  Finish,
-  finishOf,
-  finishOfStep,
+  cardSaid,
   marksOf,
   named,
   noteOf,
-  type Presses,
+  pressedWords,
+  refusalSentence,
 } from './integration.ts'
 
 const ada = { id: PersonId.make('ada'), name: 'Ada Obi', image: null }
@@ -57,49 +54,6 @@ const held = (
 /** The Person's own account called "Work", standing as given. */
 const account = (id: string, state: ConnectionState): Connection => held(id, work, mine, state)
 
-/** What a card carries for an Integration Vivid began adding, which here wants a key. */
-const started = ConnectionAuthorization.cases.EnterKey.make({
-  connectionId: ConnectionId.make('started'),
-  fields: [{ name: 'api_key', label: 'API key' }],
-})
-
-describe('what is left to do to finish an Integration', () => {
-  it('is what the card was handed, until the server has been asked', () => {
-    expect(finishOf(Option.some(started), Option.none())).toEqual(
-      Option.some(
-        Finish.Key({
-          id: ConnectionId.make('started'),
-          fields: [{ name: 'api_key', label: 'API key' }],
-        }),
-      ),
-    )
-  })
-
-  it('is what the server says once it has been asked, when that differs from the card', () => {
-    const signIn = ConnectionStep.cases.OpenSignIn.make({
-      connection: account('started', ConnectionState.cases.NeedsAuthorization.make({})),
-      address: 'https://linear.example/authorize?state=new',
-    })
-    // The address is not carried: it is asked for at the moment the page is opened.
-    expect(finishOf(Option.some(started), Option.some(finishOfStep(signIn)))).toEqual(
-      Option.some(Finish.SignIn({ id: ConnectionId.make('started') })),
-    )
-  })
-
-  it('is nothing once the server says it went through', () => {
-    const done = ConnectionStep.cases.Done.make({
-      connection: account('started', ConnectionState.cases.Ready.make({})),
-    })
-    expect(finishOf(Option.some(started), Option.some(finishOfStep(done)))).toEqual(
-      Option.some(Finish.Done()),
-    )
-  })
-
-  it('is not this card’s to finish when the service was only offered from the catalogue', () => {
-    expect(finishOf(Option.none(), Option.none())).toEqual(Option.none())
-  })
-})
-
 /** One catalog entry, entered the given way. */
 const offered = (
   name: string,
@@ -116,10 +70,20 @@ const offered = (
 const ready = ConnectionState.cases.Ready.make({})
 const unfinished = ConnectionState.cases.NeedsAuthorization.make({})
 
+/** A row or card with no attempt of its own under way. */
+const still = connecting.Standing.cases.Still.make({})
+const notBegun = connecting.Refusal.cases.NotBegun.make({})
+const unopened = connecting.Refusal.cases.Unopened.make({ serviceName: 'Linear' })
+const unshown = connecting.Refusal.cases.Unshown.make({ serviceName: 'Linear' })
+/** A card on Linear whose first wait is said as "Connecting…". */
+const card = { starting: 'Connecting…', serviceName: 'Linear' }
+const unusable = connecting.Refusal.cases.Unusable.make({ serviceName: 'Linear' })
+const refused = (refusal: connecting.Refusal) => connecting.Standing.cases.Refused.make({ refusal })
+
 const unnamed: Said = { name: null, identity: null, account: 'Linear (2)' }
 
 /** A row with nothing pressed, for the only account on its service unless said otherwise. */
-const facts = { alone: true, sharedWith: Option.none<string>(), pressed: Option.none() }
+const facts = { alone: true, sharedWith: Option.none<string>(), pressed: still }
 
 describe('a connected account’s row on the Integrations sheet', () => {
   it('says which account it is once it works: its name, and who the service says it is', () => {
@@ -169,7 +133,10 @@ describe('a connected account’s row on the Integrations sheet', () => {
 
   it('says where a press stands instead, while one is in flight', () => {
     expect(
-      accountLine(account('a', unfinished), { ...facts, pressed: Option.some('waiting') }),
+      accountLine(account('a', unfinished), {
+        ...facts,
+        pressed: connecting.Standing.cases.Away.make({}),
+      }),
     ).toBe('Finish signing in, then come back')
   })
 
@@ -181,13 +148,117 @@ describe('a connected account’s row on the Integrations sheet', () => {
 })
 
 describe('a pressed row', () => {
-  it('keeps what it has to say, and is forgotten when it has nothing more to say', () => {
-    const none: Presses = new Map()
-    const pressed = afterPress(none, ServiceId.make('linear'), Option.some('starting'))
-    expect([...pressed]).toEqual([['linear', 'starting']])
-    // The earlier map is not changed: it is what React still holds for the render before.
-    expect(none.size).toBe(0)
-    expect(afterPress(pressed, ServiceId.make('linear'), Option.none()).size).toBe(0)
+  it('says nothing while a key is asked for: the form in front is the answer', () => {
+    expect(pressedWords(still)).toEqual(Option.none())
+    expect(
+      pressedWords(
+        connecting.Standing.cases.Keying.make({
+          attempt: connecting.AttemptId.make('attempt-1'),
+          id: ConnectionId.make('a'),
+          serviceName: 'Linear',
+          fields: [{ name: 'k', label: 'Key' }],
+        }),
+      ),
+    ).toEqual(Option.none())
+  })
+
+  it('says it did not start however the attempt was refused', () => {
+    expect(pressedWords(refused(notBegun))).toEqual(Option.some('Did not start. Try again'))
+    expect(pressedWords(refused(unopened))).toEqual(Option.some('Did not start. Try again'))
+    expect(pressedWords(refused(unshown))).toEqual(Option.some('Did not start. Try again'))
+  })
+
+  it('says the service did not accept a key, and promises no retry', () => {
+    expect(pressedWords(refused(unusable))).toEqual(Option.some('Linear did not accept that.'))
+  })
+
+  it('says nothing of its own after a sign-in that was not finished: the list says that', () => {
+    expect(pressedWords(connecting.Standing.cases.Unfinished.make({}))).toEqual(Option.none())
+  })
+})
+
+describe('the sentence at the top of the page', () => {
+  it('names the service whose sign-in page could not be opened', () => {
+    expect(refusalSentence(unopened)).toEqual(
+      Option.some('Linear’s sign-in page could not be opened.'),
+    )
+  })
+
+  it('says nothing for a server that would not begin: the row that was pressed says that', () => {
+    expect(refusalSentence(notBegun)).toEqual(Option.none())
+  })
+
+  it('says nothing for a key form that could not be brought up, as for one that did not begin', () => {
+    expect(refusalSentence(unshown)).toEqual(Option.none())
+  })
+})
+
+describe('what a card in a Thread says about its own attempt', () => {
+  it('waits on its button in the card’s own word, and on the way back says it is checking', () => {
+    const opening = { ...card, starting: 'Opening…' }
+    expect(cardSaid(connecting.Standing.cases.Starting.make({}), opening)).toEqual({
+      button: Option.some('Opening…'),
+      line: Option.none(),
+      carryOn: Option.none(),
+    })
+    expect(cardSaid(connecting.Standing.cases.Checking.make({}), opening)).toEqual({
+      button: Option.some('Checking…'),
+      line: Option.none(),
+      carryOn: Option.none(),
+    })
+  })
+
+  it('says quietly, while the Person is away, that Vivid goes on without being told', () => {
+    expect(cardSaid(connecting.Standing.cases.Away.make({}), card).line).toEqual(
+      Option.some({
+        words: 'Finish signing in, then come back. Vivid carries on by itself.',
+        urgent: false,
+      }),
+    )
+  })
+
+  it('says what did not happen as a refusal: the page by name, else that it did not start', () => {
+    expect(cardSaid(refused(unopened), card).line).toEqual(
+      Option.some({ words: 'Linear’s sign-in page could not be opened.', urgent: true }),
+    )
+    expect(cardSaid(refused(notBegun), card).line).toEqual(
+      Option.some({ words: 'That did not start. Try again.', urgent: true }),
+    )
+    expect(cardSaid(refused(unshown), card).line).toEqual(
+      Option.some({ words: 'That did not start. Try again.', urgent: true }),
+    )
+  })
+
+  it('carries the Thread on, and does not offer its own way in, for a key the service refused', () => {
+    expect(cardSaid(refused(unusable), card)).toEqual({
+      button: Option.some('Carry on'),
+      line: Option.some({ words: 'Linear did not accept that.', urgent: true }),
+      // The button tells Vivid what happened; it does not pick the refused account up again.
+      carryOn: Option.some('Linear did not accept that key.'),
+    })
+    // Every other ending leaves the button as the attempt, to be made again.
+    expect(cardSaid(refused(notBegun), card).carryOn).toEqual(Option.none())
+    expect(cardSaid(connecting.Standing.cases.Unfinished.make({}), card).carryOn).toEqual(
+      Option.none(),
+    )
+    // The top of the Integrations page adds nothing: the row that asked for the key says it.
+    expect(refusalSentence(unusable)).toEqual(Option.none())
+  })
+
+  it('says calmly that a sign-in was left unfinished, and offers to try again', () => {
+    expect(cardSaid(connecting.Standing.cases.Unfinished.make({}), card)).toEqual({
+      button: Option.some('Try again'),
+      line: Option.some({ words: 'Linear is not signed in yet.', urgent: false }),
+      carryOn: Option.none(),
+    })
+  })
+
+  it('offers its own way in again once nothing is under way', () => {
+    expect(cardSaid(still, card)).toEqual({
+      button: Option.none(),
+      line: Option.none(),
+      carryOn: Option.none(),
+    })
   })
 })
 
@@ -196,40 +267,32 @@ describe('a service’s row in the catalog', () => {
 
   it('says how the service is entered only when that is worth knowing before pressing', () => {
     expect(
-      noteOf(offered('Gmail', ServiceAuthorization.cases.SignIn.make({})), false, Option.none()),
+      noteOf(offered('Gmail', ServiceAuthorization.cases.SignIn.make({})), false, still),
     ).toEqual(Option.none())
-    expect(noteOf(offered('Linear', key), false, Option.none())).toEqual(Option.some('Needs a key'))
+    expect(noteOf(offered('Linear', key), false, still)).toEqual(Option.some('Needs a key'))
     expect(
-      noteOf(
-        offered('Slack', ServiceAuthorization.cases.SetupRequired.make({})),
-        false,
-        Option.none(),
-      ),
+      noteOf(offered('Slack', ServiceAuthorization.cases.SetupRequired.make({})), false, still),
     ).toEqual(Option.some('Not set up on this Vivid'))
   })
 
   it('says a press before anything else, so adding one more account answers the press too', () => {
-    expect(noteOf(offered('Linear', key), false, Option.some('refused'))).toEqual(
+    expect(noteOf(offered('Linear', key), false, refused(notBegun))).toEqual(
       Option.some('Did not start. Try again'),
     )
-    expect(noteOf(offered('Linear', key), true, Option.some('starting'))).toEqual(
-      Option.some('Connecting…'),
-    )
+    expect(
+      noteOf(offered('Linear', key), true, connecting.Standing.cases.Starting.make({})),
+    ).toEqual(Option.some('Connecting…'))
   })
 
   it('says a connected service can be pressed for one more account', () => {
-    expect(noteOf(offered('Linear', key), true, Option.none())).toEqual(
+    expect(noteOf(offered('Linear', key), true, still)).toEqual(
       Option.some('Connected · Add another account'),
     )
   })
 
   it('does not offer one more account where a sign-in can no longer be begun', () => {
     expect(
-      noteOf(
-        offered('Slack', ServiceAuthorization.cases.SetupRequired.make({})),
-        true,
-        Option.none(),
-      ),
+      noteOf(offered('Slack', ServiceAuthorization.cases.SetupRequired.make({})), true, still),
     ).toEqual(Option.some('Connected'))
   })
 

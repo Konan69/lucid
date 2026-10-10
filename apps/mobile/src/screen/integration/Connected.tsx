@@ -2,8 +2,8 @@ import { ConnectionOwnership, ConnectionState, type Connection } from '@vivid/co
 import { Option } from 'effect'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
-import { byService } from '@vivid/state'
-import { accountLine, standingOf, type Presses, type StandingTone } from '../../data/integration'
+import { byService, type connecting } from '@vivid/state'
+import { accountLine, standingOf, type StandingTone } from '../../data/integration'
 import { useTheme } from '../../theme'
 import { Row, Section } from '../../ui/List'
 import { Button, Card, Dot, Label } from '../../ui/ui'
@@ -25,7 +25,8 @@ export function Connected({
   company,
   admin,
   marks,
-  presses,
+  standing,
+  busy,
   onResume,
   onManage,
 }: {
@@ -37,8 +38,10 @@ export function Connected({
   admin: boolean
   /** The icon address the catalog gives each service, for an account that carries none. */
   marks: ReadonlyMap<Connection['service'], string>
-  /** Where each row's last press stands. */
-  presses: Presses
+  /** Where the attempt made on an account's row stands; only the row that was pressed speaks. */
+  standing: (id: Connection['id']) => connecting.Standing
+  /** Whether nothing can be pressed for now: the server is being asked, here or anywhere. */
+  busy: boolean
   /** Picks up an account whose sign-in was left, or lapsed. */
   onResume: (connection: Connection) => void
   /** Opens the account's own sheet. */
@@ -63,7 +66,6 @@ export function Connected({
       {byService(connections).flatMap((group) =>
         group.accounts.map((connection) => {
           const own = ConnectionOwnership.guards.Personal(connection.ownership)
-          const pressed = Option.fromUndefinedOr(presses.get(connection.id))
           return (
             <Account
               key={connection.id}
@@ -71,13 +73,10 @@ export function Connected({
               line={accountLine(connection, {
                 alone: group.accounts.length === 1,
                 sharedWith: own ? Option.none() : company,
-                pressed,
+                pressed: standing(connection.id),
               })}
-              // One press at a time: nothing is asked again while the server is still asked.
-              asking={Option.exists(
-                pressed,
-                (value) => value === 'starting' || value === 'checking',
-              )}
+              // One press at a time, anywhere: the machine takes none while the server is asked.
+              asking={busy}
               mark={Option.orElse(Option.fromNullishOr(connection.mark), () =>
                 Option.fromUndefinedOr(marks.get(connection.service)),
               )}

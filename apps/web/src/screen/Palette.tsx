@@ -6,7 +6,7 @@ import { useAtomSet, useAtomValue } from '@effect/atom-react'
 import { useCallback, useState, type ReactNode } from 'react'
 import { shortcut } from '../data/keys'
 import { findings, findQuery, live, useLiveValue } from '../data/live'
-import { Route, router } from '../data/route'
+import { openSettings, router } from '../router'
 import { sidebar } from '../data/sidebar'
 import { cn } from '../ui/cn'
 import { Dialog, DialogContent, DialogTitle } from '../ui/dialog'
@@ -24,7 +24,7 @@ const describe = (result: Found) =>
       title: thread.title,
       detail: thread.preview,
       icon: <PlaceMark place="thread" />,
-      go: () => router.go(Route.Thread({ id: thread.id })),
+      go: () => void router.navigate({ to: '/t/$id', params: { id: thread.id } }),
     }),
     LibraryItem: ({ item }) => ({
       key: `item:${item.id}`,
@@ -36,14 +36,14 @@ const describe = (result: Found) =>
           <FileText />
         </Emblem>
       ),
-      go: () => router.go(Route.Library()),
+      go: () => void router.navigate({ to: '/library' }),
     }),
     Routine: ({ routine }) => ({
       key: `routine:${routine.id}`,
       title: routine.name,
       detail: 'Routine',
       icon: <PlaceMark place="routines" />,
-      go: () => router.go(Route.Routines()),
+      go: () => void router.navigate({ to: '/routines' }),
     }),
   })
 
@@ -67,7 +67,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     words: 'start chat message ask compose',
     icon: <PlaceMark place="compose" />,
     keys: Option.some(shortcut('⇧O')),
-    go: () => router.go(Route.New()),
+    go: () => void router.navigate({ to: '/' }),
   },
   {
     key: 'do:routines',
@@ -76,7 +76,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     words: 'schedule recurring cron automatic',
     icon: <PlaceMark place="routines" />,
     keys: Option.none(),
-    go: () => router.go(Route.Routines()),
+    go: () => void router.navigate({ to: '/routines' }),
   },
   {
     key: 'do:projects',
@@ -85,7 +85,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     words: 'folders groups spaces',
     icon: <PlaceMark place="projects" />,
     keys: Option.none(),
-    go: () => router.go(Route.Projects({ open: Option.none() })),
+    go: () => void router.navigate({ to: '/projects/{-$id}', params: { id: undefined } }),
   },
   {
     key: 'do:library',
@@ -94,7 +94,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     words: 'files documents uploads pdf',
     icon: <PlaceMark place="library" />,
     keys: Option.none(),
-    go: () => router.go(Route.Library()),
+    go: () => void router.navigate({ to: '/library' }),
   },
   {
     key: 'do:connections',
@@ -103,7 +103,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     words: 'connect integrations accounts gmail slack calendar',
     icon: <PlaceMark place="integrations" />,
     keys: Option.none(),
-    go: () => router.openSettings(Option.some('connections')),
+    go: () => void openSettings('connections'),
   },
   {
     key: 'do:memory',
@@ -112,7 +112,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     words: 'memory remember forget brain',
     icon: <PlaceMark place="memory" />,
     keys: Option.none(),
-    go: () => router.openSettings(Option.some('memory')),
+    go: () => void openSettings('memory'),
   },
   {
     key: 'do:settings',
@@ -121,7 +121,7 @@ const ACTIONS: ReadonlyArray<Item & { readonly words: string }> = [
     words: 'preferences theme dark light appearance account sign out',
     icon: <PlaceMark place="general" />,
     keys: Option.none(),
-    go: () => router.openSettings(Option.some('general')),
+    go: () => void openSettings('general'),
   },
   {
     key: 'do:sidebar',
@@ -159,7 +159,7 @@ const threadItem = (thread: Thread): Item => ({
   detail: thread.preview,
   icon: <PlaceMark place="thread" />,
   keys: Option.none(),
-  go: () => router.go(Route.Thread({ id: thread.id })),
+  go: () => void router.navigate({ to: '/t/$id', params: { id: thread.id } }),
 })
 
 /** A server result as something to go to. */

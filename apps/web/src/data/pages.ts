@@ -9,6 +9,7 @@ import {
   type VividAppBridge,
 } from '@vivid/desktop/bridge'
 import { Option, Schema } from 'effect'
+import { create } from 'zustand'
 import { panel } from './panel'
 import { say } from './said'
 
@@ -21,6 +22,10 @@ import { say } from './said'
  * The desktop app keeps the pages; this module mirrors what it reports (the tabs in order and
  * which one is showing) and adds the one thing only the panel knows: whether the Person is looking
  * at the pages or at Vivid's computer.
+ *
+ * Both are held in `usePages`, a Zustand store, as T3 Code web keeps its interface state
+ * (`apps/web/src/rightPanelStore.ts`). What the desktop app reports is stored as it arrives, the
+ * same object until the next report.
  */
 
 declare global {
@@ -40,34 +45,30 @@ const NO_PAGES: BrowserState = {
   using: UsedTab.cases.None.make({}),
 }
 
-const listeners = new Set<() => void>()
-let state = NO_PAGES
-let front: Front = 'computer'
+export const usePages = create<{ readonly browser: BrowserState; readonly front: Front }>()(() => ({
+  browser: NO_PAGES,
+  front: 'computer',
+}))
 
-const tell = () => {
-  for (const listener of listeners) listener()
-}
+const bring = (front: Front) => usePages.setState({ front })
 
-const bring = (next: Front) => {
-  if (next === front) return
-  front = next
-  tell()
+/**
+ * What is in front once the desktop app has reported. Vivid starting to use a page brings that
+ * page forward, so the Person sees what Vivid is doing and has the Stop button in front of them:
+ * only on the change, so a Person who then looks elsewhere is not pulled back for the rest of the
+ * action. The last page closing leaves nothing to show, so the panel goes back to the computer.
+ */
+const frontAfter = (front: Front, started: boolean, next: BrowserState): Front => {
+  const wanted = started ? 'page' : front
+  return next.tabs.length === 0 && wanted === 'page' ? 'computer' : wanted
 }
 
 if (Option.isSome(bridge)) {
   bridge.value.watch((next) => {
-    // Vivid has started using a page: bring that page and the panel forward, so the Person sees
-    // what Vivid is doing and has the Stop button in front of them. Only on the change, so a
-    // Person who then looks elsewhere is not pulled back for the rest of the action.
-    const started = UsedTab.guards.None(state.using) && UsedTab.guards.Some(next.using)
-    state = next
-    if (started) {
-      front = 'page'
-      panel.show()
-    }
-    // The last page closing leaves nothing to show, so the panel goes back to the computer.
-    if (next.tabs.length === 0 && front === 'page') front = 'computer'
-    tell()
+    const was = usePages.getState()
+    const started = UsedTab.guards.None(was.browser.using) && UsedTab.guards.Some(next.using)
+    usePages.setState({ browser: next, front: frontAfter(was.front, started, next) })
+    if (started) panel.show()
   })
   bridge.value.watchDownloads((refused) =>
     say(`“${refused.filename}” was not downloaded. Vivid’s pages do not keep files yet.`),
@@ -97,14 +98,9 @@ const showing = (browser: BrowserState): Option.Option<Page> =>
 export const pages = {
   /** Whether this is the desktop app, the only place a page can be opened inside Vivid. */
   available: Option.isSome(bridge),
-  subscribe: (listener: () => void) => {
-    listeners.add(listener)
-    return () => {
-      listeners.delete(listener)
-    }
-  },
-  current: () => state,
-  front: () => front,
+  /** What the desktop app last reported, for code that acts on a press and is not drawn from it. */
+  current: () => usePages.getState().browser,
+  front: () => usePages.getState().front,
   showing,
   /** Whether Vivid is acting on this page right now. The page says so while it is. */
   usedByVivid: (browser: BrowserState, page: Page) =>

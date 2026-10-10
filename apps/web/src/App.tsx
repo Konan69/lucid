@@ -1,23 +1,22 @@
 import { useAtomValue } from '@effect/atom-react'
 import { workspaceKey } from '@vivid/state'
-import { ThreadId, type MeResponse, type Thread as ThreadRecord } from '@vivid/contracts'
+import type { MeResponse, Thread as ThreadRecord } from '@vivid/contracts'
 import { Array as Arr, Option, Order } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import { PanelLeft } from 'lucide-react'
-import { lazy, Suspense, useSyncExternalStore } from 'react'
+import { Outlet, rootRouteId, useMatch, useMatches, useSearch } from '@tanstack/react-router'
+import { Fragment, lazy, Suspense } from 'react'
+import { create } from 'zustand'
 import { live, LiveState, useLive, useLiveValue } from './data/live'
-import { pages } from './data/pages'
-import { panel } from './data/panel'
-import { Route, router } from './data/route'
+import { panel, usePanel } from './data/panel'
+import { Me } from './data/me'
+import { warm } from './data/warm'
+import { router, threadOnScreen } from './router'
+import type { FileRoutesById } from './tree.gen'
 import { engine, link } from './data/runtime'
-import { sidebar } from './data/sidebar'
-import { wake } from './data/wake'
-import { startThread } from './data/threads'
-import { First } from './screen/First'
-import { Invite } from './screen/Invite'
+import { sidebar, sidebarShown, useSidebar } from './data/sidebar'
 import { Palette } from './screen/Palette'
 import { Sidebar } from './screen/Sidebar'
-import { Thread } from './screen/Thread'
 import { Welcome } from './screen/Welcome'
 import { IconButton } from './ui/button'
 import { Face } from './ui/Face'
@@ -26,41 +25,49 @@ import { Sayings } from './ui/Sayings'
 // The screens a Person may not open in a session, each in its own file on the wire: the Thread
 // is what loads first, and the Computer's screen client alone is a third of everything else.
 // Each is fetched when it is first drawn, and all of them are fetched once the first screen is
-// up and the browser is idle, so opening one later does not wait on the network.
-const screens = {
+// up and the browser is idle, so opening one later does not wait on the network. Routines, the
+// Library and Projects are places, so the router holds their files (`src/routes`) and is asked
+// to make them ready; the Computer and Settings open over a place and are held here.
+const overlays = {
   Computer: () => import('./screen/Computer'),
-  Library: () => import('./screen/Library'),
-  Projects: () => import('./screen/Projects'),
-  Routines: () => import('./screen/Routines'),
   Settings: () => import('./screen/Settings'),
 }
-const Computer = lazy(() => screens.Computer().then((module) => ({ default: module.Computer })))
-const Library = lazy(() => screens.Library().then((module) => ({ default: module.Library })))
-const Projects = lazy(() => screens.Projects().then((module) => ({ default: module.Projects })))
-const Routines = lazy(() => screens.Routines().then((module) => ({ default: module.Routines })))
-const Settings = lazy(() => screens.Settings().then((module) => ({ default: module.Settings })))
+const Computer = lazy(() => overlays.Computer().then((module) => ({ default: module.Computer })))
+const Settings = lazy(() => overlays.Settings().then((module) => ({ default: module.Settings })))
 
-const warm = () => {
-  for (const load of Object.values(screens)) void load()
+const afterFirst = () => {
+  for (const load of Object.values(overlays)) void load()
+  void router.preloadRoute({ to: '/routines' })
+  void router.preloadRoute({ to: '/library' })
+  void router.preloadRoute({ to: '/projects/{-$id}', params: { id: undefined } })
 }
-if ('requestIdleCallback' in globalThis) requestIdleCallback(warm)
-else setTimeout(warm, 2000)
+if ('requestIdleCallback' in globalThis) requestIdleCallback(afterFirst)
+else setTimeout(afterFirst, 2000)
+
+// The lists of the places beside Threads are begun the moment it is known who is signed in, and
+// held open from then on: a Person who goes to Routines a fifth of a second after the page shows
+// should find it drawn. It is heard from the query itself, so it happens once and before any
+// screen asks. What it begins is a few small subscriptions on the socket `me` came over.
+const stopWaiting = engine.registry.subscribe(
+  live.me.atom,
+  (me) => {
+    if (!AsyncResult.isSuccess(me)) return
+    // A turn later: on a device that kept `me`, this is heard as the subscription is being made,
+    // before there is a way to end it.
+    queueMicrotask(() => {
+      stopWaiting()
+      warm.places()
+    })
+  },
+  { immediate: true },
+)
 
 /** What floats over the app. One at a time, because each takes the keyboard. */
 type Overlay = 'none' | 'palette'
 
-const overlayListeners = new Set<() => void>()
-let overlay: Overlay = 'none'
-const setOverlay = (next: Overlay) => {
-  overlay = next
-  for (const listener of overlayListeners) listener()
-}
-const subscribeOverlay = (listener: () => void) => {
-  overlayListeners.add(listener)
-  return () => {
-    overlayListeners.delete(listener)
-  }
-}
+/** Which overlay is up. A store, because the shortcuts below open and close it from no component. */
+const useOverlay = create<{ readonly overlay: Overlay }>(() => ({ overlay: 'none' }))
+const setOverlay = (overlay: Overlay) => useOverlay.setState({ overlay })
 
 /** The Threads still in play, newest first: the order ⌘⇧[ and ⌘⇧] walk through. */
 const inPlay = () => {
@@ -76,12 +83,14 @@ const inPlay = () => {
 /** Goes to the Thread before or after the one on screen; from anywhere else, to the newest. */
 const step = (by: -1 | 1) => {
   const threads = inPlay()
-  const here = router.route()
-  const at = Route.$is('Thread')(here) ? threads.findIndex((thread) => thread.id === here.id) : -1
+  const at = Option.match(threadOnScreen(), {
+    onNone: () => -1,
+    onSome: (here) => threads.findIndex((thread) => thread.id === here),
+  })
   const next = Option.fromUndefinedOr(
     threads[at === -1 ? 0 : Math.min(Math.max(at + by, 0), threads.length - 1)],
   )
-  if (Option.isSome(next)) router.go(Route.Thread({ id: next.value.id }))
+  if (Option.isSome(next)) void router.navigate({ to: '/t/$id', params: { id: next.value.id } })
 }
 
 /** Whether a modal is open: Settings, a confirmation, the palette. */
@@ -110,6 +119,7 @@ const leavingWouldLose = (event: KeyboardEvent) => {
 const togglePalette = (event: KeyboardEvent) => {
   // Over a dialog that is already open (Settings, a confirmation) the palette would be a second
   // modal on top of the first; it only opens over the app itself.
+  const { overlay } = useOverlay.getState()
   if (overlay !== 'palette' && inDialog()) return
   event.preventDefault()
   setOverlay(overlay === 'palette' ? 'none' : 'palette')
@@ -121,7 +131,7 @@ const goElsewhere = (event: KeyboardEvent) => {
   if (event.key.toLocaleLowerCase() === 'o') {
     event.preventDefault()
     setOverlay('none')
-    router.go(Route.New())
+    void router.navigate({ to: '/' })
     return
   }
   // By position on the keyboard, not by character: with Shift held the key reads "{" or "}".
@@ -198,18 +208,27 @@ function Reconnecting() {
 }
 
 function Shell({ me }: { me: MeResponse }) {
-  const route = useSyncExternalStore(router.subscribe, router.route)
-  const section = useSyncExternalStore(router.subscribe, router.settings)
-  const sidebarOpen = useSyncExternalStore(sidebar.subscribe, sidebar.isOpen)
-  const floating = useSyncExternalStore(subscribeOverlay, () => overlay)
-  const beside = useSyncExternalStore(panel.subscribe, panel.isOpen)
+  // Each of these re-renders the shell only when its own answer changes, not on every move.
+  const onThread = useMatch({ from: '/t/$id', shouldThrow: false, select: () => true }) === true
+  const section = Option.fromUndefinedOr(useSearch({ from: rootRouteId }).settings)
+  // The deepest match is the place; the root alone is on screen only while an unknown address
+  // is being corrected.
+  const screen = useMatches({
+    select: (matches) =>
+      matches.reduce<(typeof SCREEN)[keyof typeof SCREEN]>(
+        (_, match) => SCREEN[match.routeId],
+        SCREEN.__root__,
+      ),
+  })
+  const sidebarOpen = useSidebar(sidebarShown)
+  const floating = useOverlay((state) => state.overlay)
+  const beside = usePanel((state) => state.open)
   const notices = useLiveValue(live.notifications)
 
   return (
     <div className="group/shell relative flex size-full" data-rail={sidebarOpen ? 'open' : 'shut'}>
       <Sidebar
         me={me}
-        route={route}
         open={sidebarOpen}
         onHide={sidebar.toggle}
         onSearch={() => setOverlay('palette')}
@@ -236,26 +255,20 @@ function Shell({ me }: { me: MeResponse }) {
       )}
       <main className="relative flex min-w-0 flex-1">
         <Suspense fallback={<Splash />}>
-          {/* A new element for each screen, so its arrival plays; see `screenOf`. */}
-          <div key={screenOf(route)} className="flex min-w-0 flex-1 motion-screen">
-            <Place
-              // A screen holds things that belong to the workspace it was opened in: the folder it
-              // is in, the item it has open, a half-written Routine. Changing workspace starts each
-              // screen again, so nothing of one Company is left on screen under another's name.
-              key={workspaceKey(me.workspace)}
-              route={route}
-              me={me}
-              beside={beside}
-              onTogglePanel={() => {
-                // Opening the panel onto Vivid's computer is arriving at it, which turns it on.
-                // Opening it onto a page that was left in front is not.
-                if (!panel.isOpen() && pages.front() === 'computer') wake()
-                panel.toggle()
-              }}
-            />
+          {/* A new element for each screen, so its arrival plays; see `SCREEN`. */}
+          <div key={screen} className="flex min-w-0 flex-1 motion-screen">
+            {/* A screen holds things that belong to the workspace it was opened in: the folder it
+                is in, the item it has open, a half-written Routine. Changing workspace starts each
+                screen again, so nothing of one Company is left on screen under another's name. */}
+            <Fragment key={workspaceKey(me.workspace)}>
+              {/* The screen the address names (`src/routes`, `src/place`). */}
+              <Me value={Option.some(me)}>
+                <Outlet />
+              </Me>
+            </Fragment>
           </div>
         </Suspense>
-        {beside && Route.$is('Thread')(route) && (
+        {beside && onThread && (
           <Suspense fallback={null}>
             <Computer onClose={panel.hide} />
           </Suspense>
@@ -276,55 +289,22 @@ function Shell({ me }: { me: MeResponse }) {
   )
 }
 
-const openThread = (id: string) => router.go(Route.Thread({ id: ThreadId.make(id) }))
-
 /**
  * Which screen a place is, for the moment one screen takes over from another. Going from one
  * Thread to the next, or from the first screen into the Thread it started, is the same screen
  * with different words in it and changes at once: it is done a hundred times a day, and the
  * shortcuts that do it are the keyboard's. Going to Routines, the Library or Projects is a
  * different screen, and that one arrives (`motion-screen`).
+ *
+ * Every route is named, the root too (it is the deepest match while an unknown address is being
+ * corrected), so a route added to the tree does not typecheck until it is given a screen here.
  */
-const screenOf = (route: Route) =>
-  Route.$match(route, {
-    New: () => 'thread',
-    Thread: () => 'thread',
-    Invite: () => 'thread',
-    Routines: () => 'routines',
-    Library: () => 'library',
-    Projects: () => 'projects',
-  })
-
-/** The screen the address names. */
-function Place({
-  route,
-  me,
-  beside,
-  onTogglePanel,
-}: {
-  route: Route
-  me: MeResponse
-  beside: boolean
-  onTogglePanel: () => void
-}) {
-  return Route.$match(route, {
-    New: () => <First me={me} />,
-    Thread: ({ id }) => <Thread id={id} me={me} panelOpen={beside} onTogglePanel={onTogglePanel} />,
-    Routines: () => <Routines onOpenConversation={(thread) => openThread(thread.id)} />,
-    Library: () => (
-      <Library
-        onAsk={(document) =>
-          startThread(`Read “${document.name}” in the Library and tell me what matters in it.`)
-        }
-      />
-    ),
-    Projects: ({ open }) => (
-      <Projects
-        open={open}
-        onOpen={(next) => router.go(Route.Projects({ open: next }))}
-        onOpenThread={(id) => router.go(Route.Thread({ id }))}
-      />
-    ),
-    Invite: ({ id }) => <Invite id={id} />,
-  })
-}
+const SCREEN = {
+  __root__: 'thread',
+  '/': 'thread',
+  '/t/$id': 'thread',
+  '/invite/$id': 'thread',
+  '/routines': 'routines',
+  '/library': 'library',
+  '/projects/{-$id}': 'projects',
+} as const satisfies Record<keyof FileRoutesById, string>

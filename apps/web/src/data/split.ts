@@ -1,4 +1,5 @@
 import { Option, Schema } from 'effect'
+import { create } from 'zustand'
 import { kept } from './kept'
 
 /**
@@ -7,9 +8,12 @@ import { kept } from './kept'
  * be, 1 the widest), not as pixels: a smaller window or a hidden sidebar keeps the same feel
  * instead of restoring a width that no longer fits.
  *
- * Like the sidebar's width this is a store outside React, so the divider can move it on every
- * pointer event without a render. The width reaches the layout as `--computer-w` on the document,
- * the same way the sidebar's does.
+ * Like the sidebar's width this is a Zustand store, as T3 Code web keeps its interface state
+ * (`apps/web/src/rightPanelStore.ts`), so the divider can move it on every pointer event and only
+ * what reads the width is drawn again. The width reaches the layout as `--computer-w` on the
+ * document, the same way the sidebar's does. The position is read from the browser once, when the
+ * store is made, and written only when the divider is let go (`keep`), as the number it always
+ * was.
  */
 
 /** Narrower than this a page or the computer's screen is not usable. */
@@ -23,62 +27,72 @@ const key = 'vivid.computer.split'
 const Position = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))
 const readPosition = Schema.decodeUnknownOption(Position)
 
-let position = Option.flatMap(kept.read(key), (value) => readPosition(Number(value)))
-let full = false
-let width = USUAL
-/** The room the Computer and the Thread share: the page beside the sidebar. */
-let available = 0
-const listeners = new Set<() => void>()
+interface Split {
+  /** Where the divider was put, inside the room there is. Nothing until the Person has moved it. */
+  readonly position: Option.Option<number>
+  /** The Person asked for the Computer to have the whole page. */
+  readonly full: boolean
+  /** The room the Computer and the Thread share: the page beside the sidebar. */
+  readonly available: number
+}
 
-/** The widest the Computer may be right now, and the narrowest. */
-const bounds = () => ({
+export const useSplit = create<Split>()(() => ({
+  position: Option.flatMap(kept.read(key), (value) => readPosition(Number(value))),
+  full: false,
+  available: 0,
+}))
+
+/** The widest the Computer may be in this room, and the narrowest. */
+const bounds = (state: Split) => ({
   minimum: NARROWEST,
-  maximum: Math.max(NARROWEST, available - READING),
+  maximum: Math.max(NARROWEST, state.available - READING),
 })
 
-/** Whether the room can hold both at their minimums; if not, the Computer takes the whole page. */
-const roomForBoth = () => available >= NARROWEST + READING
+/** The widest the Computer can be, so the divider can say how far it may move. */
+export const splitWidest = (state: Split) => bounds(state).maximum
 
-/** Applies the remembered position to the room there is, and tells whoever draws it. */
-const fit = () => {
-  const { minimum, maximum } = bounds()
-  width = Math.round(
-    Option.match(position, {
+/** Whether full view is a choice: the room can hold both at their minimums. If not, it is the only view. */
+export const canSplit = (state: Split) => state.available >= NARROWEST + READING
+
+/** Whether the Computer has the whole page: the Person asked, or there is no room for both. */
+export const splitFull = (state: Split) => state.full || !canSplit(state)
+
+/** The Computer's width: the remembered position applied to the room there is. */
+export const splitWidth = (state: Split) => {
+  const { minimum, maximum } = bounds(state)
+  return Math.round(
+    Option.match(state.position, {
       onNone: () => Math.min(maximum, USUAL),
       onSome: (value) => minimum + value * (maximum - minimum),
     }),
   )
-  document.documentElement.style.setProperty('--computer-w', `${width}px`)
-  for (const listener of listeners) listener()
 }
+
+// The width is a token (`--computer-w`) on the document, written each time the store changes, so
+// the layout follows the divider without a render. Nothing is written before the room has been
+// measured: until then the token keeps the value the stylesheet gives it.
+useSplit.subscribe((state) =>
+  document.documentElement.style.setProperty('--computer-w', `${splitWidth(state)}px`),
+)
 
 /** Sets the width to where the pointer is, within bounds. Nothing is remembered until it is let go. */
 const widen = (to: number) => {
-  const { minimum, maximum } = bounds()
+  const { minimum, maximum } = bounds(useSplit.getState())
   const next = Math.min(maximum, Math.max(minimum, to))
-  position = Option.some(maximum === minimum ? 0 : (next - minimum) / (maximum - minimum))
-  fit()
+  useSplit.setState({
+    position: Option.some(maximum === minimum ? 0 : (next - minimum) / (maximum - minimum)),
+  })
 }
 
 const keep = () => {
-  Option.map(position, (value) => kept.write(key, String(value)))
+  Option.map(useSplit.getState().position, (value) => kept.write(key, String(value)))
 }
 
 export const split = {
-  subscribe: (listener: () => void) => {
-    listeners.add(listener)
-    return () => {
-      listeners.delete(listener)
-    }
-  },
-  width: () => width,
-  /** The widest the Computer can be, so the divider can say how far it may move. */
-  widest: () => bounds().maximum,
   narrowest: () => NARROWEST,
-  /** Whether the Computer has the whole page: the Person asked, or there is no room for both. */
-  isFull: () => full || !roomForBoth(),
-  /** Whether full view is a choice. With no room for a split it is the only view. */
-  canSplit: roomForBoth,
+  /** The two a press reads at the moment it happens, where nothing is drawn from the answer. */
+  isFull: () => splitFull(useSplit.getState()),
+  canSplit: () => canSplit(useSplit.getState()),
   /**
    * Follows the room beside the sidebar. It observes the Computer's own container instead of
    * guessing from the window, so a sidebar opening or being dragged is the same as a resize. Called
@@ -87,10 +101,7 @@ export const split = {
   attach: (element: HTMLElement | null) => {
     const parent = element === null ? null : element.parentElement
     if (parent === null) return undefined
-    const measure = () => {
-      available = parent.getBoundingClientRect().width
-      fit()
-    }
+    const measure = () => useSplit.setState({ available: parent.getBoundingClientRect().width })
     const observer = new ResizeObserver(measure)
     observer.observe(parent)
     measure()
@@ -103,23 +114,21 @@ export const split = {
   keep,
   /** Moves the divider from the keyboard, and remembers it. */
   nudge: (by: number) => {
-    widen(width + by)
+    widen(splitWidth(useSplit.getState()) + by)
     keep()
   },
   /** Jumps the divider to its narrowest or widest, and remembers it. */
   edge: (end: 'minimum' | 'maximum') => {
-    widen(bounds()[end])
+    widen(bounds(useSplit.getState())[end])
     keep()
   },
   /** Back to where the divider starts. */
   reset: () => {
-    position = Option.none()
+    useSplit.setState({ position: Option.none() })
     kept.remove(key)
-    fit()
   },
   /** Full view and back; the split chosen before is kept and returns on the way out. */
   toggleFull: () => {
-    full = !split.isFull()
-    fit()
+    useSplit.setState((was) => ({ full: !splitFull(was) }))
   },
 }

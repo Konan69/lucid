@@ -1,13 +1,12 @@
 import { ComputerState, type Computer as ComputerRecord } from '@vivid/contracts'
 import { Option } from 'effect'
 import { Hand } from 'lucide-react'
-import { useSyncExternalStore } from 'react'
 import { live, useLiveValue } from '../../data/live'
-import { panel } from '../../data/panel'
+import { panel, usePanel } from '../../data/panel'
 import { Button } from '../../ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { hold, type Resolution } from '../Computer'
-import { closeup, Picture, Resting } from './Picture'
+import { Picture, Resting, useCloseup } from './Picture'
 
 /**
  * The small picture's box is one size whatever the machine's screen is, so the row in the Thread
@@ -24,7 +23,7 @@ const anyResolution = (_resolution: Resolution) => undefined
  *
  * The picture is the same watch-only connection the panel uses, scaled down; it sends no keys and
  * no pointer. Pressing it opens the panel beside the Thread. While the panel is open, or the card
- * around Vivid is showing the screen larger (`closeup`), the picture rests, so one window does not
+ * around Vivid is showing the screen larger (`useCloseup`), the picture rests, so one window does not
  * hold two connections to one screen.
  *
  * It shows only a computer that is running or starting. One that is off or absent
@@ -32,8 +31,8 @@ const anyResolution = (_resolution: Resolution) => undefined
  */
 export function Peek() {
   const state = useLiveValue(live.computer)
-  const beside = useSyncExternalStore(panel.subscribe, panel.isOpen)
-  const larger = useSyncExternalStore(closeup.subscribe, closeup.isShowing)
+  const beside = usePanel((shown) => shown.open)
+  const larger = useCloseup((closeup) => closeup.showing > 0)
   if (Option.isNone(state)) return null
   const computer = state.value.computer
   const machine = computer.state

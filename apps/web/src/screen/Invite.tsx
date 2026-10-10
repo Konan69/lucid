@@ -3,7 +3,7 @@ import { Effect, Result } from 'effect'
 import { use, useState } from 'react'
 import { act } from '../data/app'
 import { change, changing } from '../data/live'
-import { Route, router } from '../data/route'
+import { router } from '../router'
 import { PersonAvatar } from '../ui/Person'
 import { Button } from '../ui/button'
 import { Face } from '../ui/Face'
@@ -77,7 +77,7 @@ export function Invite({ id }: { id: InvitationId }) {
       const result = yield* accepting(id)
       if (Result.isFailure(result)) setRefusal('failed')
       else if (result.success !== 'joined') setRefusal(result.success)
-      else router.go(Route.New())
+      else void router.navigate({ to: '/' })
     })
   }
 
@@ -90,7 +90,7 @@ export function Invite({ id }: { id: InvitationId }) {
           <p className="max-w-sm text-body text-ink-3">
             It may have been withdrawn. Ask whoever invited you for a new link.
           </p>
-          <Button variant="outline" onClick={() => router.go(Route.New())}>
+          <Button variant="outline" onClick={() => void router.navigate({ to: '/' })}>
             Go to Vivid
           </Button>
         </>
@@ -104,7 +104,7 @@ export function Invite({ id }: { id: InvitationId }) {
           <Boundaries company={preview.company.name} />
           {preview.status === 'pending' ? (
             <div className="flex gap-2">
-              <Button variant="ghost" onClick={() => router.go(Route.New())}>
+              <Button variant="ghost" onClick={() => void router.navigate({ to: '/' })}>
                 Not now
               </Button>
               <Button onClick={() => void act(join())}>Join {preview.company.name}</Button>

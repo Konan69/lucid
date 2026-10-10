@@ -1,6 +1,6 @@
 import { Effect, Option, Result } from 'effect'
 import { Check } from 'lucide-react'
-import { useId, useState, useSyncExternalStore, type FormEvent } from 'react'
+import { useId, useState, type FormEvent } from 'react'
 import {
   adoptFirstArrival,
   continueWithGoogle,
@@ -10,7 +10,7 @@ import {
 } from '../data/account'
 import { act, running, send } from '../data/app'
 import { readAddress, SAID, Standing } from '../data/google'
-import { googleHandoff } from '../data/handoff'
+import { googleHandoff, useHandoff } from '../data/handoff'
 import { Way } from '../data/signin'
 import { Button } from '../ui/button'
 import { Face } from '../ui/Face'
@@ -159,7 +159,7 @@ export function Welcome({ returnTo }: { returnTo: string }) {
   const [password, setPassword] = useState('')
   const [notice, setNotice] = useState(opened.notice)
   const [busy, setBusy] = useState<Busy>('none')
-  const handoff = useSyncExternalStore(googleHandoff.subscribe, googleHandoff.current)
+  const handoff = useHandoff((state) => state.state)
   const copy = COPY[mode]
 
   function submit(event: FormEvent) {

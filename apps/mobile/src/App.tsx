@@ -3,10 +3,12 @@ import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import { workspaceKey } from '@vivid/state'
+import { Option } from 'effect'
 import { useState, type ComponentProps } from 'react'
 import { StatusBar, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
+import type { ShowKey } from './data/connecting'
 import { door, patienceAtom, useDoor } from './data/door'
 import { Front, makeFront } from './data/front'
 import {
@@ -18,6 +20,8 @@ import {
   useLiveData,
   type LiveData,
 } from './data/live'
+import { pageOf, type Place } from './data/place'
+import { keepPlace, placeIn, placesReadAtom } from './data/placed'
 import { leaveAtom } from './data/signing'
 import { Broken } from './screen/Broken'
 import { arrive } from './data/computer'
@@ -25,7 +29,6 @@ import { Computer } from './screen/Computer'
 import { Door } from './screen/Door'
 import { Home } from './screen/Home'
 import { Account, NameAccount } from './screen/integration/Account'
-import type { ShowKey } from './screen/integration/flow'
 import { Key } from './screen/integration/Key'
 import { FlowProvider } from './screen/integration/Provider'
 import { Panel } from './screen/home/Panel'
@@ -44,7 +47,7 @@ import { IN_THREAD, ON_GREETING, Presence } from './ui/Presence'
 import { Recover } from './ui/Recover'
 import { FITTED_SHEET, GLASS_HEADER, navigationTheme, SCREEN_CHANGE } from './ui/stack'
 import { Button, Face, GUTTER, Label } from './ui/ui'
-import { FrontProvider, MeProvider, useFront, useShowing, type Routes } from './workspace'
+import { FrontProvider, MeProvider, useFront, useMe, useShowing, type Routes } from './workspace'
 
 const Stack = createNativeStackNavigator<Routes>()
 
@@ -80,7 +83,7 @@ function Bar() {
 function Root() {
   const entry = useDoor(entryAtom)
   return Entry.$match(entry, {
-    Opening: () => <Quiet mood="neutral" />,
+    Opening: () => <Ground />,
     Door: ({ session }) => <Door session={session} />,
     In: ({ data }) => <SignedIn data={data} />,
   })
@@ -101,12 +104,26 @@ function SignedIn({ data }: { data: LiveData }) {
   )
 }
 
-/** Who is signed in is one live query; the shell is drawn only once it has answered. */
+/**
+ * Who is signed in is one live query; the shell is drawn only once it has answered, and once the
+ * phone has read where this Person was (`data/place.ts`), so the shell opens there and not at
+ * the greeting first.
+ *
+ * A phone that has been used before answers both from what it kept (`data/snapshot.ts`), a few
+ * milliseconds after launch and with no network, so what is drawn meanwhile is the bare ground
+ * (`Ground`) and never a word about connecting. The words come only for a phone that kept
+ * nothing and still has no answer after a while (`Unreached`).
+ */
 function Session() {
+  return useDoor(placesReadAtom) ? <Placed /> : <Ground />
+}
+
+/** The session once the phone knows where its Person was: the shell, as soon as `me` answers. */
+function Placed() {
   const data = useLiveData()
   const me = useLive(data.live.me)
   return LiveState.$match(me, {
-    Loading: () => <Connecting />,
+    Loading: () => <Unreached />,
     // A session the server no longer accepts is handled in the data (`live.ts`), which puts the
     // door back. What is left here is a server that knows the Person and still says no.
     Failed: ({ failure }) => <Stopped message={failure.message} />,
@@ -123,22 +140,16 @@ function Session() {
   })
 }
 
-/** Vivid alone on the palette's ground: what is shown while there is nothing truthful to say yet. */
-function Quiet({ mood }: { mood: 'neutral' | 'thinking' }) {
+/**
+ * The palette's ground and nothing on it: what is drawn for the few milliseconds in which the
+ * phone reads what it kept. It used to be Vivid's face, then "Connecting…" under a thinking
+ * face: two loading screens in a row on every launch, for a wait too short to read either. The
+ * ground is the colour the launch screen already is, so the app appears to open straight into
+ * itself.
+ */
+function Ground() {
   const { colors: c } = useTheme()
-  return (
-    <View
-      accessibilityLabel="Opening Vivid"
-      style={{
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: c.screen,
-      }}
-    >
-      <Face size={44} mood={mood} />
-    </View>
-  )
+  return <View accessibilityLabel="Opening Vivid" style={{ flex: 1, backgroundColor: c.screen }} />
 }
 
 /** Ends this device's session, whether or not the server can be told. */
@@ -148,13 +159,17 @@ function useLeave() {
 }
 
 /**
- * The socket is opening. It reconnects by itself for as long as it takes, so this never becomes
- * an error; but a Person who has waited a while is told what to check and given the way out.
+ * The server has not said who is signed in, and the phone kept nothing to start from: a first
+ * launch after signing in, or one after what was kept ran out. The socket reconnects by itself
+ * for as long as it takes, so this never becomes an error and for a while it says nothing at all
+ * (`Ground`); a Person who has waited is told what to check and given the way out. A phone with
+ * something kept never comes here.
  */
-function Connecting() {
+function Unreached() {
   const leave = useLeave()
   const { colors: c } = useTheme()
   const waited = AsyncResult.isSuccess(useDoor(patienceAtom))
+  if (!waited) return <Ground />
   return (
     <View
       accessibilityLiveRegion="polite"
@@ -169,18 +184,14 @@ function Connecting() {
     >
       <Face size={44} mood="thinking" />
       <Label size="headline" style={{ marginTop: 8, textAlign: 'center' }}>
-        {waited ? 'Still trying to reach Vivid' : 'Connecting…'}
+        Still trying to reach Vivid
       </Label>
-      {waited && (
-        <>
-          <Label size="label" tone="ink-2" style={{ textAlign: 'center', maxWidth: 300 }}>
-            Check your connection. Vivid opens by itself as soon as it can.
-          </Label>
-          <View style={{ marginTop: 14 }}>
-            <Button label="Sign out" onPress={leave} />
-          </View>
-        </>
-      )}
+      <Label size="label" tone="ink-2" style={{ textAlign: 'center', maxWidth: 300 }}>
+        Check your connection. Vivid opens by itself as soon as it can.
+      </Label>
+      <View style={{ marginTop: 14 }}>
+        <Button label="Sign out" onPress={leave} />
+      </View>
     </View>
   )
 }
@@ -211,6 +222,24 @@ function Stopped({ message }: { message: string }) {
       </View>
     </View>
   )
+}
+
+/**
+ * The pages open over Home, in order, up to the first that cannot be drawn again from its name
+ * and what it was opened with (`Page` in `data/place.ts`): a bottom sheet is a step in something
+ * the Person was doing, so what is kept ends at the page it was opened over.
+ */
+const pagesOf = (
+  routes: ReadonlyArray<{ readonly name: string; readonly params?: object }>,
+): Place['pages'] => {
+  const pages: Array<Place['pages'][number]> = []
+  // The first route is Home itself, which is always there.
+  for (const route of routes.slice(1)) {
+    const page = pageOf({ name: route.name, params: route.params })
+    if (Option.isNone(page)) break
+    pages.push(page.value)
+  }
+  return pages
 }
 
 /** What the stack hands its `layout`: its screens, where it stands, and its navigation. */
@@ -290,24 +319,57 @@ function Vivid({ go }: { go: StackLayout['navigation'] }) {
  */
 function Shell() {
   const { colors: c, dark } = useTheme()
-  // What Home shows belongs to this shell, which is built again for each workspace (`Session`).
-  const [front] = useState(makeFront)
+  const data = useLiveData()
+  const workspace = workspaceKey(useMe().workspace)
+  // Where the Person was in this workspace when the app was last open (`data/place.ts`), read
+  // once as the shell is built: it is where the shell starts, not something it follows.
+  const [start] = useState(() => placeIn(data.session.server, workspace))
   // This shell's navigator, for the flow that is held around it. One for each shell, as the
   // container is: a ref shared across workspaces would point at whichever mounted last.
   const [navigation] = useState(() => createNavigationContainerRef<Routes>())
   /**
-   * Opens the key form over whatever is in front. A press comes from a screen, so the navigator
-   * is ready; were it not, the flow is told, and says the press failed where it was made.
+   * Keeps where the Person now is: the Thread in front and the pages over Home. Before the stack
+   * exists there is nothing to read from it and nothing is written, so what was kept stands.
    */
-  const showKey: ShowKey = (asked) => {
+  const keep = (showing: Front) => {
+    if (!navigation.isReady()) return
+    const stack = Option.fromUndefinedOr(navigation.getRootState())
+    if (Option.isNone(stack)) return
+    keepPlace(data.session.server, workspace, {
+      thread: Front.$is('Thread')(showing) ? Option.some(showing.id) : Option.none(),
+      pages: pagesOf(stack.value.routes),
+    })
+  }
+  // What Home shows belongs to this shell, which is built again for each workspace (`Session`).
+  const [front] = useState(() => makeFront(start.thread))
+  /**
+   * Opens the key form over whatever is in front. A press comes from a screen, so the navigator
+   * is ready; were it not, the machine is told, and the press is said to have failed where it
+   * was made. It is made once for the shell, as the navigator's ref is: it is handed to the
+   * session's machine through a view's ref, which would be taken back and handed over again on
+   * every render if this were a new function each time.
+   */
+  const [showKey] = useState((): ShowKey => (asked) => {
     if (!navigation.isReady()) return false
     navigation.navigate('Key', asked)
     return true
-  }
+  })
   return (
     <FrontProvider value={front}>
       <FlowProvider onKey={showKey}>
-        <NavigationContainer ref={navigation} theme={navigationTheme(c, dark)}>
+        <NavigationContainer
+          ref={navigation}
+          theme={navigationTheme(c, dark)}
+          // The pages that were open over Home, in order, with Home under them.
+          initialState={{ routes: [{ name: 'Home' }, ...start.pages] }}
+          // Kept each time the Thread in front changes, from the moment there is a stack to read
+          // beside it. The store is this shell's own and goes with it, listener and all.
+          onReady={() => {
+            front.subscribe(() => keep(front.showing()))
+          }}
+          // And each time the stack changes: a page opened, closed, or gone back from.
+          onStateChange={() => keep(front.showing())}
+        >
           <Stack.Navigator
             layout={underMenu}
             screenOptions={{

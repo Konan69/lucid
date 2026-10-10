@@ -14,7 +14,7 @@ import { Option } from 'effect'
 import { createContext, useContext, useSyncExternalStore } from 'react'
 import type { First } from './data/first'
 import type { Front, FrontStore } from './data/front'
-import type { KeyFields, PressKey } from './data/integration'
+import type { KeyRoute } from './data/connecting'
 
 /**
  * Where a signed-in Person can be in the app. Every place is a screen on one native stack, so
@@ -44,10 +44,10 @@ import type { KeyFields, PressKey } from './data/integration'
  *   in a Thread that asked, when one did (the tool call it stands for), so the account it begins
  *   is that card's to carry on from. Route params are plain data, so absence is `null` here and
  *   an `Option` the moment it is read.
- * - `Key`: the bottom sheet that takes the key a service asks for. It carries which Integration
- *   the key is for, the service's name, the fields it asks for (their names and labels, never
- *   what is typed) and `press`, what the press that asked is filed under in the integration
- *   flow, so the row or card that asked hears the key was taken.
+ * - `Key`: the bottom sheet that takes the key a service asks for. It carries the attempt that
+ *   asked for it (said back to the session's machine as the sheet ends), which Integration the
+ *   key is for, the service's name, and the fields it asks for (their names and labels, never
+ *   what is typed).
  * - `Notifications`: what finished or needs the Person while they were elsewhere, in the drawer.
  */
 export type Routes = {
@@ -70,7 +70,7 @@ export type Routes = {
     shared: boolean
     card: string | null
   }
-  Key: { id: ConnectionId; name: string; fields: KeyFields; press: PressKey }
+  Key: KeyRoute
   Notifications: undefined
 }
 

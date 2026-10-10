@@ -1,6 +1,8 @@
 import { Option } from 'effect'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { said, sayWith } from './said'
+import { said, sayWith, useSaid } from './said'
+
+const shown = () => useSaid.getState().sayings
 
 describe('withdrawing a sentence', () => {
   beforeEach(() => {
@@ -18,13 +20,13 @@ describe('withdrawing a sentence', () => {
 
     said.withdraw('notice-1')
 
-    expect(said.all().map((saying) => [saying.words, saying.leaving])).toEqual([
+    expect(shown().map((saying) => [saying.words, saying.leaving])).toEqual([
       ['Budget review is ready', true],
       ['Weekly report ran', false],
     ])
     // The exit is 180 ms; after it the sentence is no longer in the document at all.
     vi.advanceTimersByTime(180)
-    expect(said.all().map((saying) => saying.words)).toEqual(['Weekly report ran'])
+    expect(shown().map((saying) => saying.words)).toEqual(['Weekly report ran'])
   })
 
   it('does nothing for a key nothing was said under', () => {
@@ -32,6 +34,6 @@ describe('withdrawing a sentence', () => {
 
     said.withdraw('notice-9')
 
-    expect(said.all().map((saying) => saying.leaving)).toEqual([false])
+    expect(shown().map((saying) => saying.leaving)).toEqual([false])
   })
 })

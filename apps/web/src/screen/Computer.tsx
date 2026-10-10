@@ -13,12 +13,13 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { useCallback, useReducer, useState, useSyncExternalStore } from 'react'
+import { useCallback, useReducer, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { act } from '../data/app'
 import { change, changing, live, LiveState, useLive } from '../data/live'
-import { pages, type Front } from '../data/pages'
+import { pages, usePages, type Front } from '../data/pages'
+import { canSplit as roomToSplit, split, splitFull, useSplit } from '../data/split'
 import { wake } from '../data/wake'
-import { split } from '../data/split'
 import { orSay } from '../data/said'
 import { Button, IconButton } from '../ui/button'
 import { cn } from '../ui/cn'
@@ -36,7 +37,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { Edge } from './computer/Edge'
 import { Corner, grip } from './computer/Float'
 import { PageTabs, PageToolbar, PageView } from './computer/Pages'
-import { place } from './computer/place'
+import { place, placeBox, usePlace } from './computer/place'
 import { viewerOnDesk, viewerResolution } from './computer/viewer'
 
 /**
@@ -103,10 +104,10 @@ const leave = (event: KeyboardEvent) => {
  */
 export function Computer({ onClose }: { onClose: () => void }) {
   const state = useLive(live.computer)
-  const full = useSyncExternalStore(split.subscribe, split.isFull)
-  const floating = useSyncExternalStore(place.subscribe, place.isFloating)
-  const box = useSyncExternalStore(place.subscribe, place.box)
-  const front = useSyncExternalStore(pages.subscribe, pages.front)
+  const full = useSplit(splitFull)
+  const floating = usePlace((placed) => placed.floating)
+  const box = usePlace(useShallow(placeBox))
+  const front = usePages((shown) => shown.front)
   const view = viewOf(floating, full, front)
   const computer = LiveState.$is('Ready')(state) ? Option.some(state.value.computer) : Option.none()
   // SAFETY: React forwards these CSS custom properties to the element. The popped-out window's
@@ -183,8 +184,8 @@ function Bar({
   running: boolean
   onClose: () => void
 }) {
-  const canSplit = useSyncExternalStore(split.subscribe, split.canSplit)
-  const browser = useSyncExternalStore(pages.subscribe, pages.current)
+  const canSplit = useSplit(roomToSplit)
+  const browser = usePages((state) => state.browser)
   const page = pages.showing(browser)
   return (
     <>
@@ -242,7 +243,7 @@ function Surface({
   front: Front
   children: React.ReactNode
 }) {
-  const browser = useSyncExternalStore(pages.subscribe, pages.current)
+  const browser = usePages((state) => state.browser)
   return (
     <div
       id="computer-surface"

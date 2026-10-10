@@ -17,7 +17,8 @@ import { useState, type ReactNode } from 'react'
 import { act } from '../data/app'
 import { IconButton } from '../ui/button'
 import { changing, live, useLiveValue } from '../data/live'
-import { Route, router } from '../data/route'
+import { Link, useMatch, type LinkProps } from '@tanstack/react-router'
+import { openSettings, router } from '../router'
 import { useScope } from '../data/scope'
 import { PersonAvatar } from '../ui/Person'
 import { cn } from '../ui/cn'
@@ -101,14 +102,12 @@ function Edge() {
  */
 export function Sidebar({
   me,
-  route,
   open,
   onHide,
   onSearch,
   unread,
 }: {
   me: MeResponse
-  route: Route
   /** Hidden by width rather than unmounted, so collapsing and returning both animate. */
   open: boolean
   onHide: () => void
@@ -156,29 +155,23 @@ export function Sidebar({
             scoped={scoped}
             onCreateCompany={() => setCreatingCompany(true)}
           />
-          <ToolRow
-            icon={<Plus className="size-4" strokeWidth={1.6} />}
-            label="New thread"
-            active={Route.$is('New')(route)}
-            onClick={() => router.go(Route.New())}
-          />
+          <ToolRow icon={<Plus className="size-4" strokeWidth={1.6} />} label="New thread" to="/" />
           <ToolRow
             icon={<FolderClosed className="size-4" strokeWidth={1.6} />}
             label="Projects"
-            active={Route.$is('Projects')(route) && Option.isNone(route.open)}
-            onClick={() => router.go(Route.Projects({ open: Option.none() }))}
+            to="/projects/{-$id}"
+            // The shelf itself: without this the link would keep whichever Project is open.
+            params={{ id: undefined }}
           />
           <ToolRow
             icon={<Repeat2 className="size-4" strokeWidth={1.6} />}
             label="Routines"
-            active={Route.$is('Routines')(route)}
-            onClick={() => router.go(Route.Routines())}
+            to="/routines"
           />
           <ToolRow
             icon={<Library className="size-4" strokeWidth={1.6} />}
             label="Library"
-            active={Route.$is('Library')(route)}
-            onClick={() => router.go(Route.Library())}
+            to="/library"
           />
         </div>
 
@@ -188,12 +181,12 @@ export function Sidebar({
           ref={settling}
           className="mt-2 min-h-0 flex-1 scroll-fade-y scrollbar-hidden overflow-y-auto px-2 pb-2"
         >
-          <Work route={route} scoped={scoped} />
+          <Work scoped={scoped} />
         </nav>
 
         <Started me={me} />
         <button
-          onClick={() => router.openSettings(Option.some('general'))}
+          onClick={() => void openSettings('general')}
           className={cn(ROW, FULL, HOVER, 'm-2 mt-0 w-auto')}
         >
           <PersonAvatar name={me.person.name} image={me.person.image ?? null} size={22} />
@@ -214,7 +207,19 @@ export function Sidebar({
  * there is one. Nothing of it is drawn until both answers are in: Projects arriving a moment
  * after the Threads would push every Thread down under the Person's pointer.
  */
-function Work({ route, scoped }: { route: Route; scoped: Option.Option<Project> }) {
+function Work({ scoped }: { scoped: Option.Option<Project> }) {
+  // Which Thread and which Project the address names, so their rows are marked as where the
+  // Person is. Each is read by its own route, and re-renders this only when its id changes.
+  const onThread = useMatch({
+    from: '/t/$id',
+    shouldThrow: false,
+    select: (match) => match.params.id,
+  })
+  const onProject = useMatch({
+    from: '/projects/{-$id}',
+    shouldThrow: false,
+    select: (match) => match.params.id,
+  })
   const threads = useLiveValue(live.threads)
   const projects = useLiveValue(live.projects)
   if (Option.isNone(threads) || Option.isNone(projects)) return <ThreadSkeleton />
@@ -227,12 +232,12 @@ function Work({ route, scoped }: { route: Route; scoped: Option.Option<Project> 
           projects={projects.value.projects}
           threads={threads.value.threads}
           scoped={scopedId}
-          open={Route.$is('Projects')(route) ? route.open : Option.none()}
+          open={Option.fromUndefinedOr(onProject)}
         />
       </div>
       <Threads
         threads={projectsData.scopedTo(threads.value.threads, projects.value.projects, scopedId)}
-        active={Route.$is('Thread')(route) ? route.id : null}
+        active={Option.getOrNull(Option.fromUndefinedOr(onThread))}
         empty={Option.match(scoped, {
           onNone: () => 'Threads you start will appear here.',
           onSome: (project) => `No threads in ${project.name} yet. Start one and it is filed here.`,
@@ -287,7 +292,7 @@ function WorkspaceSwitcher({
       // Only once the server has moved the Person: a Thread started a moment too early would be
       // made in the space they were leaving. A refused switch leaves them exactly where they were.
       // The list of Threads is then a different list, so the address must not point into the old one.
-      if (Result.isSuccess(switched)) router.go(Route.New())
+      if (Result.isSuccess(switched)) void router.navigate({ to: '/' })
     })
   }
 
@@ -364,36 +369,47 @@ function WorkspaceSwitcher({
   )
 }
 
+/**
+ * One of the places beside Threads, as a link to it.
+ *
+ * It is an anchor, not a button: the browser can open it in a new tab, and the router makes its
+ * place ready while the pointer is still on it (`defaultPreload` in `src/router.ts`). The link
+ * itself knows whether the address is its own, exactly (`/projects` and not a Project open on
+ * it), and marks itself as the current page.
+ */
 function ToolRow({
   icon,
   label,
-  active,
-  onClick,
+  to,
+  params,
 }: {
   icon: ReactNode
   label: string
-  active: boolean
-  onClick: () => void
-}) {
+} & Pick<LinkProps, 'to' | 'params'>) {
   return (
-    <button
-      onClick={onClick}
-      aria-current={active ? 'page' : undefined}
-      className={cn(
-        ROW,
-        TOOL,
-        active ? 'bg-wash-selected text-ink' : cn(HOVER, 'text-ink-2 hover:text-ink'),
-      )}
+    <Link
+      to={to}
+      params={params}
+      activeOptions={{ exact: true }}
+      // A row is pressed, not dragged: an anchor is draggable unless it says otherwise.
+      draggable={false}
+      className={cn(ROW, TOOL)}
+      activeProps={{ className: 'bg-wash-selected text-ink' }}
+      inactiveProps={{ className: cn(HOVER, 'text-ink-2 hover:text-ink') }}
     >
-      <span
-        className={cn(
-          'inline-flex size-5.5 items-center justify-center',
-          active ? 'text-ink' : 'text-ink-3 group-hover/row:text-ink',
-        )}
-      >
-        {icon}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-label">{label}</span>
-    </button>
+      {({ isActive }) => (
+        <>
+          <span
+            className={cn(
+              'inline-flex size-5.5 items-center justify-center',
+              isActive ? 'text-ink' : 'text-ink-3 group-hover/row:text-ink',
+            )}
+          >
+            {icon}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-label">{label}</span>
+        </>
+      )}
+    </Link>
   )
 }

@@ -4,7 +4,7 @@ import { Option } from 'effect'
 import { ChevronRight, Plus, SquarePen } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { live, LiveState, useLive } from '../data/live'
-import { Route, router } from '../data/route'
+import { router } from '../router'
 import { scope } from '../data/scope'
 import { PersonAvatar } from '../ui/Person'
 import { Button } from '../ui/button'
@@ -240,7 +240,7 @@ function ProjectPage({
           onClick={() => {
             // The first screen files what is written there in the scoped Project.
             scope.enter(project.id)
-            router.go(Route.New())
+            void router.navigate({ to: '/' })
           }}
         >
           <SquarePen className="size-3.5" />

@@ -1,4 +1,5 @@
 import { Option, Result, Schema } from 'effect'
+import type { HistoryState } from '@tanstack/react-router'
 import { vi } from 'vitest'
 
 /**
@@ -187,17 +188,45 @@ const makePage = (page: Target) => {
     get search() {
       return address.now.search
     },
+    get hash() {
+      return address.now.hash
+    },
     get href() {
       return address.now.href
     },
   })
-  const go = (_state: null, _title: string, path: string) => {
+  // The page's history as the router reads it (`@tanstack/history` `createBrowserHistory`): the
+  // address moves when a state is pushed or replaced, and the state given is the one read back.
+  // No test goes back or forward, so those do nothing.
+  let entry = Option.none<HistoryState>()
+  const go = (state: HistoryState, _title: string, path: string) => {
+    entry = Option.some(state)
     address.now = new URL(path, address.now)
   }
-  vi.stubGlobal('history', { pushState: go, replaceState: go })
+  const still = () => undefined
+  const history = {
+    get state() {
+      return Option.getOrNull(entry)
+    },
+    pushState: go,
+    replaceState: go,
+    back: still,
+    forward: still,
+    go: still,
+  }
+  vi.stubGlobal('history', history)
   // The page and its document share one list of listeners; no test tells them apart.
   vi.stubGlobal('addEventListener', page.addEventListener)
-  vi.stubGlobal('window', { addEventListener: page.addEventListener })
+  // The router reads the page through `window`, so it carries the same address and history.
+  const window = {
+    addEventListener: page.addEventListener,
+    removeEventListener: still,
+    history,
+    location: globalThis.location,
+  }
+  vi.stubGlobal('window', window)
+  // The page under its other name, which the router uses as it is made.
+  vi.stubGlobal('self', window)
   vi.stubGlobal('document', {
     addEventListener: page.addEventListener,
     hidden: false,

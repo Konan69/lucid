@@ -12,7 +12,7 @@ import { Option } from 'effect'
 import { Bell, Check, Hand, Share2, UserPlus } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { change, live, LiveState, useLive, useLiveValue } from '../data/live'
-import { Route, router } from '../data/route'
+import { router } from '../router'
 import { Button, IconButton } from '../ui/button'
 import { cn } from '../ui/cn'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
@@ -132,11 +132,12 @@ const visit = NoticeRow.$match({
   Single: ({ notice }) => {
     if (notice.readAt === null) read([notice.id])
     const invitation = invitationIn(notice)
-    if (Option.isSome(invitation)) router.go(Route.Invite({ id: invitation.value }))
+    if (Option.isSome(invitation))
+      void router.navigate({ to: '/invite/$id', params: { id: invitation.value } })
   },
   Grouped: ({ threadId, unread }) => {
     read(unread)
-    router.go(Route.Thread({ id: threadId }))
+    void router.navigate({ to: '/t/$id', params: { id: threadId } })
   },
 })
 

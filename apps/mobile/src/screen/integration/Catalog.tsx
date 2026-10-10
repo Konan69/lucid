@@ -4,12 +4,12 @@ import {
   type Connection,
   type Service,
 } from '@vivid/contracts'
-import { LiveState } from '@vivid/state'
+import { connecting, LiveState } from '@vivid/state'
 import { Option } from 'effect'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
 import { Check, CloudOff, Plus, SearchX } from 'lucide-react-native'
-import { noteOf, type Pressed, type Presses } from '../../data/integration'
+import { noteOf } from '../../data/integration'
 import { useTheme } from '../../theme'
 import { Row, Section } from '../../ui/List'
 import { Button, Empty } from '../../ui/ui'
@@ -33,7 +33,8 @@ export function Catalog({
   found,
   searching,
   ready,
-  presses,
+  standing,
+  busy,
   onConnect,
   onAgain,
   whose,
@@ -42,7 +43,10 @@ export function Catalog({
   searching: boolean
   /** The accounts this Person can use now; a service with one of them is already connected. */
   ready: ReadonlyArray<Connection>
-  presses: Presses
+  /** Where the attempt made on a service's row stands; only the row that was pressed speaks. */
+  standing: (service: Service['id']) => connecting.Standing
+  /** Whether nothing can be pressed for now: the server is being asked, here or anywhere. */
+  busy: boolean
   /** Adds an account on a service, given the accounts the Person already has on it. */
   onConnect: (service: Service, accounts: ReadonlyArray<Connection>) => void
   /** Asks the catalog again, after it could not be reached. */
@@ -92,7 +96,8 @@ export function Catalog({
               key={service.id}
               service={service}
               connected={ready.some((item) => item.service === service.id)}
-              pressed={Option.fromUndefinedOr(presses.get(service.id))}
+              pressed={standing(service.id)}
+              busy={busy}
               onConnect={() =>
                 onConnect(
                   service,
@@ -149,16 +154,26 @@ function Placeholder() {
  * a row that goes somewhere. A connected service can be pressed again, and that adds another
  * account: its row says so under the name, beside the check that says it is connected, and keeps
  * the plus, because pressing it still adds something.
+ *
+ * While the server is being asked, here or anywhere, no row is a button: the machine takes one
+ * press at a time, and a row left enabled either did nothing when pressed or opened the sheet
+ * that names an account whose press would then not be taken. The rows step back as one that is
+ * not on offer does; the row whose own attempt is speaking keeps its full ink, so "Connecting…"
+ * stays as easy to read as it was.
  */
 function ServiceRow({
   service,
   connected,
   pressed,
+  busy,
   onConnect,
 }: {
   service: Service
   connected: boolean
-  pressed: Option.Option<Pressed>
+  /** Where the attempt made on this row stands. */
+  pressed: connecting.Standing
+  /** Whether nothing can be pressed for now. */
+  busy: boolean
   onConnect: () => void
 }) {
   const { colors: c } = useTheme()
@@ -171,19 +186,28 @@ function ServiceRow({
       </View>
     )
   }
+  const trailing = (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+      {connected && (
+        <Check pointerEvents="none" size={18} strokeWidth={2} color={c['status-success']} />
+      )}
+      <Plus pointerEvents="none" size={18} strokeWidth={1.7} color={c.chevron} />
+    </View>
+  )
+  if (busy) {
+    const speaking = !connecting.Standing.guards.Still(pressed)
+    return (
+      <View accessibilityState={{ disabled: true }} style={{ opacity: speaking ? 1 : 0.6 }}>
+        <Row leading={leading} title={service.name} detail={detail} trailing={trailing} />
+      </View>
+    )
+  }
   return (
     <Row
       leading={leading}
       title={service.name}
       detail={detail}
-      trailing={
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          {connected && (
-            <Check pointerEvents="none" size={18} strokeWidth={2} color={c['status-success']} />
-          )}
-          <Plus pointerEvents="none" size={18} strokeWidth={1.7} color={c.chevron} />
-        </View>
-      }
+      trailing={trailing}
       onPress={onConnect}
     />
   )

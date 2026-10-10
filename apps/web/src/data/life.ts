@@ -1,5 +1,6 @@
 import { faceBeat, faceStill, type FaceMood, type FaceState } from '@vivid/marks'
 import { Option } from 'effect'
+import { create } from 'zustand'
 import { still } from '../ui/motion'
 
 /**
@@ -109,42 +110,36 @@ export const life = {
  */
 const WRITING_FOR_MS = 2800
 
-let writingUntil: Option.Option<Timer> = Option.none()
-const writingWatchers = new Set<() => void>()
-const tellWriting = () => {
-  for (const watcher of writingWatchers) watcher()
-}
-
 /**
  * Whether the Person is writing to Vivid right now, for the face that listens. The composer says
- * so on every change to its field; watchers hear only of the two edges, starting and stopping, so
- * typing a sentence renders nothing but its first key.
+ * so on every change to its field; the store changes only at the two edges, starting and
+ * stopping, so typing a sentence renders nothing but its first key.
+ *
+ * A Zustand store, as T3 Code web keeps its interface state (`apps/web/src/rightPanelStore.ts`).
+ * The timelines above are not one: a timeline runs for exactly as long as a face is subscribed
+ * to it, and that lifetime is what `useSyncExternalStore`'s subscribe function carries.
  */
+export const useWriting = create(() => ({ writing: false }))
+
+/** The timer that ends the writing. It is the clock behind the store, not something drawn. */
+let writingUntil: Option.Option<Timer> = Option.none()
+
 export const writing = {
   /** A key was pressed in the composer. */
   heard: () => {
-    const started = Option.isNone(writingUntil)
     Option.map(writingUntil, clearTimeout)
     writingUntil = Option.some(
       setTimeout(() => {
         writingUntil = Option.none()
-        tellWriting()
+        useWriting.setState({ writing: false })
       }, WRITING_FOR_MS),
     )
-    if (started) tellWriting()
+    useWriting.setState({ writing: true })
   },
   /** The words were sent, or the Person left: nobody is writing any more. */
   stopped: () => {
-    if (Option.isNone(writingUntil)) return
     Option.map(writingUntil, clearTimeout)
     writingUntil = Option.none()
-    tellWriting()
+    useWriting.setState({ writing: false })
   },
-  subscribe: (watcher: () => void) => {
-    writingWatchers.add(watcher)
-    return () => {
-      writingWatchers.delete(watcher)
-    }
-  },
-  now: () => Option.isSome(writingUntil),
 }

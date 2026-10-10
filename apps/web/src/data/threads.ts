@@ -2,10 +2,11 @@ import { createFlueClient } from '@flue/sdk'
 import { ThreadId, type ProjectId } from '@vivid/contracts'
 import { titleFromMessage } from '@vivid/state'
 import { Data, Effect, Result } from 'effect'
+import { create } from 'zustand'
 import { act } from './app'
 import { changing, live } from './live'
 import { engine } from './runtime'
-import { Route, router } from './route'
+import { router } from '../router'
 import { scope } from './scope'
 
 /**
@@ -38,20 +39,47 @@ interface Waiting {
 }
 export const FirstWords = Data.taggedEnum<FirstWords>()
 
+// One object for every Thread with nothing held: the store compares what a screen selected with
+// `Object.is`, and a new `Settled` each time would read as a change.
 const SETTLED = FirstWords.Settled()
-const held = new Map<ThreadId, FirstWords>()
-// Threads this page has made, so sending again after a failed send does not make one twice.
+// Threads this page has made, so sending again after a failed send does not make one twice. It
+// is the sender's own record and nothing is drawn from it, so it is not in the store.
 const made = new Set<ThreadId>()
-const landed = new Set<ThreadId>()
-const watchers = new Set<() => void>()
-const tell = () => {
-  for (const watcher of watchers) watcher()
+
+interface Held {
+  /** Where each Thread's first words stand, for the Threads that have some travelling or unsent. */
+  readonly held: ReadonlyMap<ThreadId, FirstWords>
+  /** Threads whose first words have landed since the page loaded. */
+  readonly landed: ReadonlySet<ThreadId>
 }
 
-const stand = (id: ThreadId, standing: FirstWords) => {
-  held.set(id, standing)
-  tell()
-}
+/**
+ * A Zustand store, as T3 Code web keeps its interface state (`apps/web/src/rightPanelStore.ts`).
+ * The map and the set are replaced, never changed in place, so a selector sees each move.
+ */
+export const useFirstWords = create<Held>()(() => ({ held: new Map(), landed: new Set() }))
+
+/** Where a Thread's first words stand. The same object until they move. */
+export const wordsFor =
+  (id: ThreadId) =>
+  (state: Held): FirstWords => {
+    const standing = state.held.get(id)
+    return standing === undefined ? SETTLED : standing
+  }
+
+/** Whether first words have landed since the page loaded, so the conversation is read again. */
+export const landedFor = (id: ThreadId) => (state: Held) => state.landed.has(id)
+
+const stand = (id: ThreadId, standing: FirstWords) =>
+  useFirstWords.setState((was) => ({ held: new Map(was.held).set(id, standing) }))
+
+/** The words landed: nothing is held for the Thread any more, and its screen is told to read again. */
+const land = (id: ThreadId) =>
+  useFirstWords.setState((was) => {
+    const held = new Map(was.held)
+    held.delete(id)
+    return { held, landed: new Set(was.landed).add(id) }
+  })
 
 /**
  * Makes the Thread if this page has not yet, then sends its first words, recording where they
@@ -85,32 +113,17 @@ const deliver = (id: ThreadId, waiting: Waiting) =>
         ),
     )
     if (sent) {
-      held.delete(id)
-      landed.add(id)
-      tell()
+      land(id)
     } else {
       stand(id, FirstWords.Unsent(waiting))
     }
   })
 
 export const firstWords = {
-  subscribe: (watcher: () => void) => {
-    watchers.add(watcher)
-    return () => {
-      watchers.delete(watcher)
-    }
-  },
-  /** Where a Thread's first words stand. The same object until they move, as a store must give. */
-  of: (id: ThreadId): FirstWords => {
-    const standing = held.get(id)
-    return standing === undefined ? SETTLED : standing
-  },
-  /** Whether first words have landed since the page loaded, so the conversation is read again. */
-  landed: (id: ThreadId) => landed.has(id),
   /** Sends unsent first words again, as the delivery they already are. */
   again: (id: ThreadId) => {
-    const standing = held.get(id)
-    if (standing !== undefined && FirstWords.$is('Unsent')(standing)) {
+    const standing = wordsFor(id)(useFirstWords.getState())
+    if (FirstWords.$is('Unsent')(standing)) {
       void act(
         deliver(id, { words: standing.words, projectId: standing.projectId, key: standing.key }),
       )
@@ -134,7 +147,7 @@ export function startThread(message: string, projectId: ProjectId | null = scope
   const id = ThreadId.make(crypto.randomUUID())
   const waiting: Waiting = { words: message, projectId, key: crypto.randomUUID() }
   stand(id, FirstWords.Sending(waiting))
-  router.go(Route.Thread({ id }))
+  void router.navigate({ to: '/t/$id', params: { id } })
   void act(deliver(id, waiting))
   return id
 }
@@ -149,7 +162,7 @@ export const openThread = (projectId: ProjectId | null = scope.filing()) =>
     const created = yield* changing((client) =>
       client.CreateThread({ id, title: 'New thread', projectId }),
     )
-    if (Result.isSuccess(created)) router.go(Route.Thread({ id }))
+    if (Result.isSuccess(created)) void router.navigate({ to: '/t/$id', params: { id } })
     return created
   })
 

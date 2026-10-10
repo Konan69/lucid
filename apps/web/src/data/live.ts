@@ -13,7 +13,7 @@ import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import { VividRpcClient } from '@vivid/client-runtime'
 import { change, changing, run } from './app'
-import { Route, router } from './route'
+import { router, threadOnScreen } from '../router'
 import { engine } from './runtime'
 import { said, sayWith } from './said'
 import { theme } from './theme'
@@ -160,15 +160,18 @@ engine.registry.subscribe(live.notifications.answers, (result) => {
   for (const id of previous) {
     if (!current.has(id)) said.withdraw(id)
   }
-  const here = router.route()
+  const here = threadOnScreen()
   for (const notice of fresh) {
     const threadId = notice.threadId
     if (threadId === null) {
       sayWith(notice.title, Option.none(), notice.id)
-    } else if (!(Route.$is('Thread')(here) && here.id === threadId)) {
+    } else if (!Option.contains(here, threadId)) {
       sayWith(
         notice.title,
-        Option.some({ label: 'Open', go: () => router.go(Route.Thread({ id: threadId })) }),
+        Option.some({
+          label: 'Open',
+          go: () => void router.navigate({ to: '/t/$id', params: { id: threadId } }),
+        }),
         notice.id,
       )
     }

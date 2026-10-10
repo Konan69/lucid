@@ -2,8 +2,9 @@ import { OpenFirstThreadResult, type ThreadId, type ThreadListResponse } from '@
 import type { LiveResult } from '@vivid/state'
 import { Data, Option, Result } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
+import { create } from 'zustand'
 import { change, live } from './live'
-import { Route, router } from './route'
+import { onFirst, router } from '../router'
 import { engine } from './runtime'
 
 /**
@@ -29,18 +30,27 @@ export type Arrival = Data.TaggedEnum<{
 }>
 export const Arrival = Data.taggedEnum<Arrival>()
 
-// One object for each standing, as an external store must hand out.
+// One object for each standing: the store compares what a screen selected with `Object.is`.
 const UNASKED = Arrival.Unasked()
 const ASKING = Arrival.Asking()
 const SETTLED = Arrival.Settled()
 
-let standing: Arrival = UNASKED
-// The Thread this page had the server open, which Vivid is about to speak in.
-let opened = Option.none<ThreadId>()
-const watchers = new Set<() => void>()
-const tell = () => {
-  for (const watcher of watchers) watcher()
+interface FirstArrival {
+  /** Where the first arrival stands. The same object until it moves. */
+  readonly standing: Arrival
+  /** The Thread this page had the server open, which Vivid is about to speak in. */
+  readonly opened: Option.Option<ThreadId>
 }
+
+/**
+ * A Zustand store, as T3 Code web keeps its interface state (`apps/web/src/rightPanelStore.ts`).
+ * Nothing outside this module changes it: it moves when the list, the address or the server's
+ * answer says so.
+ */
+export const useArrival = create<FirstArrival>()(() => ({
+  standing: UNASKED,
+  opened: Option.none(),
+}))
 
 /** Whether a Thread list has arrived and has nothing in it. */
 const isEmpty = (threads: LiveResult<ThreadListResponse>) =>
@@ -74,11 +84,10 @@ const destination = (answer: OpenFirstThreadResult): Option.Option<ThreadId> =>
  */
 const settle = (thread: Option.Option<ThreadId>) => {
   // The address moves before anyone is told, so no frame of Home is drawn on the way out.
-  if (Option.isSome(thread) && Route.$is('New')(router.route())) {
-    router.replace(Route.Thread({ id: thread.value }))
+  if (Option.isSome(thread) && onFirst()) {
+    void router.navigate({ to: '/t/$id', params: { id: thread.value }, replace: true })
   }
-  standing = SETTLED
-  tell()
+  useArrival.setState({ standing: SETTLED })
 }
 
 /**
@@ -86,13 +95,12 @@ const settle = (thread: Option.Option<ThreadId>) => {
  * back, so the Thread screen that opens next finds both and nothing has to be asked again.
  */
 const ask = () => {
-  standing = ASKING
-  tell()
+  useArrival.setState({ standing: ASKING })
   void change((client) => client.OpenFirstThread()).then(
     (answer) => {
       if (Result.isFailure(answer)) return settle(Option.none())
       if (OpenFirstThreadResult.guards.Opened(answer.success)) {
-        opened = Option.some(answer.success.thread)
+        useArrival.setState({ opened: Option.some(answer.success.thread) })
       }
       settle(destination(answer.success))
     },
@@ -107,22 +115,20 @@ const ask = () => {
  * taken away from it: nothing is asked until they are on Home.
  */
 const consider = () => {
-  if (!Arrival.$is('Unasked')(standing)) return
-  if (isEmpty(engine.registry.get(live.threads.atom)) && Route.$is('New')(router.route())) ask()
+  if (!Arrival.$is('Unasked')(useArrival.getState().standing)) return
+  if (isEmpty(engine.registry.get(live.threads.atom)) && onFirst()) ask()
 }
 
+// The list is heard here. The address is heard by the router, which calls `arrival.consider`
+// each time the Person arrives somewhere (subscribed in `src/main.tsx`): this module is imported by the route
+// tree's own imports, so it must not touch the router while it is being evaluated.
 engine.registry.subscribe(live.threads.atom, consider, { immediate: true })
-router.subscribe(consider)
 
 export const arrival = {
-  subscribe: (watcher: () => void) => {
-    watchers.add(watcher)
-    return () => {
-      watchers.delete(watcher)
-    }
-  },
-  /** Where the first arrival stands. The same object until it moves. */
-  standing: () => standing,
-  /** Whether this is the Thread this page had opened for Vivid to speak first in. */
-  isOpened: (id: ThreadId) => Option.contains(opened, id),
+  /** Looks again at whether to ask, now that the address has changed. */
+  consider,
 }
+
+/** Whether this is the Thread this page had opened for Vivid to speak first in. */
+export const openedFor = (id: ThreadId) => (state: FirstArrival) =>
+  Option.contains(state.opened, id)

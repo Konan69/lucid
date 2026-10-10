@@ -11,7 +11,7 @@ import { Building2, UserPlus } from 'lucide-react'
 import { useId, useState } from 'react'
 import { act } from '../../data/app'
 import { changing, live, LiveState, useLive } from '../../data/live'
-import { Route, router } from '../../data/route'
+import { router } from '../../router'
 import { PersonAvatar } from '../../ui/Person'
 import { Button } from '../../ui/button'
 import { Copy } from '../../ui/Copy'
@@ -179,7 +179,7 @@ function CompanyPeople({
                 void act(
                   attempt((client) => client.LeaveCompany(), 'You could not leave just now.'),
                 ).then((left) => {
-                  if (left) router.go(Route.New())
+                  if (left) void router.navigate({ to: '/' })
                 })
               }
             >

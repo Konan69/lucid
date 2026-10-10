@@ -34,17 +34,17 @@ browser.server.answers('CreateThread', (payload) => {
   })
 })
 
-const { FirstWords, firstWords, startThread } = await import('./threads')
+const { FirstWords, firstWords, startThread, useFirstWords, wordsFor } = await import('./threads')
 
 /** Waits until a Thread's first words stand as `tag`, on the store's own signal and no clock. */
 const stands = (id: ReturnType<typeof startThread>, tag: 'Unsent' | 'Settled') =>
   Effect.callback<void>((resume) => {
-    const there = () => FirstWords.$is(tag)(firstWords.of(id))
+    const there = () => FirstWords.$is(tag)(wordsFor(id)(useFirstWords.getState()))
     if (there()) {
       resume(Effect.void)
       return Effect.void
     }
-    const stop = firstWords.subscribe(() => {
+    const stop = useFirstWords.subscribe(() => {
       if (!there()) return
       stop()
       resume(Effect.void)

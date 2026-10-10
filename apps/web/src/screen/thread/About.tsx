@@ -5,7 +5,7 @@ import { Laptop, Plug, Plus } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { live, LiveState, useLive, useLiveValue } from '../../data/live'
 import { pages } from '../../data/pages'
-import { router } from '../../data/route'
+import { openSettings } from '../../router'
 import { wake } from '../../data/wake'
 import { engine } from '../../data/runtime'
 import { mayCustomise, useAppearance } from '../../data/vivid'
@@ -275,7 +275,7 @@ const LISTED = 4
 /** Leaves the card for the part of Settings where a thing around Vivid is managed. */
 const toSettings = (onClose: () => void, section: 'connections' | 'devices' | 'record') => {
   onClose()
-  router.openSettings(Option.some(section))
+  void openSettings(section)
 }
 
 /**

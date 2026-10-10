@@ -1,9 +1,9 @@
 import { BorderBeam } from 'border-beam'
 import { ArrowUp, Mic, Paperclip, Square } from 'lucide-react'
-import { memo, useRef, useSyncExternalStore, type ReactNode } from 'react'
-import { draft } from '../../data/drafts'
+import { memo, useRef, type ReactNode } from 'react'
+import { draft, draftAt, useDrafts } from '../../data/drafts'
 import { writing } from '../../data/life'
-import { theme } from '../../data/theme'
+import { themeShown, useTheme } from '../../data/theme'
 import { IconButton } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
@@ -54,11 +54,11 @@ export const Composer = memo(function Composer({
 }) {
   // Whether there are words to send. Only this edge is followed here; the words themselves are
   // the field's to draw.
-  const wordless = useSyncExternalStore(draft.subscribe, () => draft.in(place).trim().length === 0)
+  const wordless = useDrafts((state) => draftAt(place)(state).trim().length === 0)
   const attached = useAttachments(pictures)
   // Something to send: words, or a file that has arrived. A file still on its way holds the send.
   const empty = (wordless && attached.kept === 0) || attached.sending
-  const shown = useSyncExternalStore(theme.subscribe, theme.shown)
+  const shown = useTheme(themeShown)
   // The files the last message from here took with it. They are this render's until the field is
   // drawn again, so a second press in the same turn would find them still attached.
   const carried = useRef<typeof attached.files>(null)
@@ -162,7 +162,8 @@ function Field({
   onTyping?: (typing: boolean) => void
   onSubmit: () => void
 }) {
-  const message = useSyncExternalStore(draft.subscribe, () => draft.in(place))
+  // The field's own words and no other place's: it is drawn again only when they change.
+  const message = useDrafts(draftAt(place))
   return (
     <textarea
       // What is typed here is kept for its place, so leaving by a shortcut loses nothing.

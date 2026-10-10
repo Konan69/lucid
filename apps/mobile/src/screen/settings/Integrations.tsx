@@ -107,8 +107,8 @@ function Find({ query, onQuery }: { query: string; onQuery: (query: string) => v
 
 /**
  * Everything under the search. It reads the list of Integrations and the catalog's answer, and
- * acts through the shell's one flow (`useFlow`), which also draws the key form and hears the
- * Person come back from a provider's page.
+ * acts through the shell's one flow (`useFlow`), which presses and reads the session's connecting
+ * machine; the machine opens the key form and hears the Person come back from a provider's page.
  */
 function Body({ me, query }: { me: MeResponse; query: string }) {
   const data = useLiveData()
@@ -187,7 +187,8 @@ function Lists({
         company={Option.map(company, (workspace) => workspace.company.name)}
         admin={admin}
         marks={marksOf(offered)}
-        presses={flow.presses}
+        standing={flow.standing}
+        busy={flow.busy}
         onResume={(connection) => flow.resume(connection.id, Option.none())}
         onManage={(connection) => go.navigate('Account', { id: connection.id })}
       />
@@ -195,7 +196,8 @@ function Lists({
         found={found}
         searching={query.trim().length > 0}
         ready={connections.filter((item) => ConnectionState.guards.Ready(item.state))}
-        presses={flow.presses}
+        standing={flow.standing}
+        busy={flow.busy}
         onConnect={connect}
         onAgain={onAgain}
         whose={

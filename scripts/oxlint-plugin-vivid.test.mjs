@@ -183,6 +183,12 @@ const cases = [
     'component.tsx',
   ],
   [
+    'react-no-state-after-wait',
+    'const [busy, setBusy] = useState(false); async function save() { setBusy(true); await send(); setBusy(false) }',
+    'const [busy, setBusy] = useState(false); async function save() { setBusy(true); await send() }',
+    'component.tsx',
+  ],
+  [
     'react-no-useless-memo',
     'useMemo(() => input, [input])',
     'useMemo(() => derive(input), [input])',
@@ -300,6 +306,49 @@ for (const [ruleName, invalid, valid, filename] of cases) {
     if (ruleName === 'effect-require-effect-fn') {
       const callback = 'const options = { catch: () => Effect.fail(new DomainError({})) }'
       assert.equal(ruleDiagnostics(ruleName, lint(ruleName, callback)).length, 0)
+    }
+
+    if (ruleName === 'react-no-state-after-wait') {
+      const count = (source) =>
+        ruleDiagnostics(ruleName, lint(ruleName, source, 'component.tsx')).length
+      const state = 'const [said, setSaid] = useState(null); '
+      const late = [
+        // An Effect.gen body waits at each `yield*`.
+        'const save = Effect.gen(function* () { const answer = yield* send(); setSaid(answer) })',
+        // A callback given to then, catch or finally runs when the wait is over.
+        'function save() { send().then((answer) => setSaid(answer)) }',
+        'function save() { send().catch(() => setSaid(null)) }',
+        'function save() { send().finally(() => setSaid(null)) }',
+        // `React.useState` is the same hook.
+        'const [busy, setBusy] = React.useState(false); async function go() { await send(); setBusy(false) }',
+      ]
+      for (const source of late) {
+        assert.equal(count(source.startsWith('const [busy') ? source : state + source), 1, source)
+      }
+      const owned = [
+        // Before the wait, and inside what is awaited, nothing has been waited for yet.
+        'async function save() { setSaid(null); await send() }',
+        'async function save() { await send(setSaid(null)) }',
+        // A plain `yield` hands a value out; only `yield*` waits on other work.
+        'function* steps() { yield 1; setSaid(null) }',
+        // A function that never waits, and a setter that is not one of this file's.
+        'function clear() { setSaid(null) }',
+        'async function save() { await send(); setOther(null) }',
+      ]
+      for (const source of owned) assert.equal(count(state + source), 0, source)
+      // What the rule does not follow, stated so nobody takes its silence for proof: a helper
+      // that sets state and is called after the wait, and a branch that waited and returned
+      // (the second is reported although its path never waited).
+      assert.equal(
+        count(
+          state + 'async function save() { const end = () => setSaid(null); await send(); end() }',
+        ),
+        0,
+      )
+      assert.equal(
+        count(state + 'async function save(x) { if (x) { await send(); return } setSaid(null) }'),
+        1,
+      )
     }
 
     if (ruleName === 'prefer-state-match') {

@@ -2,10 +2,9 @@ import type { MeResponse } from '@vivid/contracts'
 import { Workspace } from '@vivid/contracts'
 import { draftPlace, greetingAt, standingWords, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
-import { lazy, Suspense, useState, useSyncExternalStore } from 'react'
-import { Arrival, arrival } from '../data/arrival'
+import { lazy, Suspense, useState } from 'react'
+import { Arrival, useArrival } from '../data/arrival'
 import { live, LiveState, useLive } from '../data/live'
-import { Route, router } from '../data/route'
 import { startThread } from '../data/threads'
 import { useAppearance } from '../data/vivid'
 import { Face } from '../ui/Face'
@@ -40,16 +39,14 @@ const AboutHome = lazy(() =>
  */
 export function First({ me }: { me: MeResponse }) {
   const threads = useLive(live.threads)
-  const route = useSyncExternalStore(router.subscribe, router.route)
-  const standing = useSyncExternalStore(arrival.subscribe, arrival.standing)
+  const standing = useArrival((state) => state.standing)
   const waiting = LiveState.$match(threads, {
     Loading: () => true,
     // A list that could not be read is not a reason to keep someone from typing.
     Failed: () => false,
-    // Only on Home itself: this screen also stands behind a device approval, where nothing is
-    // asked of the server and so nothing is being waited for.
-    Ready: ({ value }) =>
-      value.threads.length === 0 && Route.$is('New')(route) && !Arrival.$is('Settled')(standing),
+    // This screen is drawn only at `/` (`routes/first.tsx`), which is where the first arrival is
+    // asked for (`data/arrival`), so an empty list here is always one being waited on.
+    Ready: ({ value }) => value.threads.length === 0 && !Arrival.$is('Settled')(standing),
   })
   // Vivid is at work somewhere when any Thread in the list says so. A first message sent from
   // here is not counted: `startThread` goes to the new Thread at once, so Home is never on screen

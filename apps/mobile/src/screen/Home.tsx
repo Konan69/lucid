@@ -1,4 +1,3 @@
-import { useAtomValue } from '@effect/atom-react'
 import { useAppearance } from '../data/vivid'
 import { draftPlace, workspaceKey } from '@vivid/state'
 import { Option } from 'effect'
@@ -15,7 +14,7 @@ import { firstWay } from '../data/threads'
 import { BarRoom, NO_ACTIONS, NOBODY, VividBar } from '../ui/Bar'
 import { Composer } from '../ui/Composer'
 import { AboveKeyboardBelowBar } from '../ui/Keyboard'
-import { Label, styles } from '../ui/ui'
+import { styles } from '../ui/ui'
 import { useFront, useGo, useMe, useShowing } from '../workspace'
 import { Chat } from './Chat'
 import { First, Waiting } from './home/First'
@@ -73,7 +72,6 @@ function Fresh() {
       {/* No avatar at the top here: it is in the middle of the page, over the greeting. */}
       <VividBar conversation={false} present={NOBODY} actions={NO_ACTIONS} />
       <BarRoom />
-      <Reconnecting />
       <Under
         showing={showing}
         me={me}
@@ -155,27 +153,6 @@ function Writing({ me, mood, start, placeholder }: WritingProps) {
         onStop={() => undefined}
       />
     </>
-  )
-}
-
-/**
- * Said under the top bar while the phone cannot reach Vivid. The client is already trying again,
- * so there is nothing here to press.
- */
-function Reconnecting() {
-  const data = useLiveData()
-  const reach = useAtomValue(data.link)
-  if (reach !== 'lost') return null
-  return (
-    <View
-      accessibilityRole="alert"
-      accessibilityLiveRegion="polite"
-      style={{ alignItems: 'center', paddingVertical: 6 }}
-    >
-      <Label size="label" tone="ink-2">
-        Reconnecting…
-      </Label>
-    </View>
   )
 }
 

@@ -2,9 +2,11 @@ import { useAtomValue } from '@effect/atom-react'
 import { VividRpcClient } from '@vivid/client-runtime'
 import {
   ServiceCatalog,
+  type Appearance,
   type LibraryFolderId,
   type LibraryShelf,
   type MeResponse,
+  type Settings,
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
@@ -28,6 +30,7 @@ import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import * as Atom from 'effect/reactivity/Atom'
 import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
+import { makeConnecting } from './connecting'
 import { door } from './door'
 import { sessionExpiry } from './account'
 import { followDrafts, forgetDrafts } from './drafts'
@@ -38,6 +41,7 @@ import { dropAtom, sessionAtom } from './held'
 import { Session, type Outside, type SignedIn } from './session'
 import { bearerSocket } from './socket'
 import { launch, start } from './app'
+import { forgetPlaces } from './placed'
 import { snapshotStore } from './snapshot'
 
 /**
@@ -208,6 +212,8 @@ function keepOnDevice(
       // change (`dispose`): they are written on a turn of their own, as `dropAtom` is.
       Effect.andThen(Effect.yieldNow),
       Effect.andThen(Effect.sync(forgetDrafts)),
+      // Where the Person was is theirs too (`data/placed.ts`), and is a device atom like the drafts.
+      Effect.andThen(forgetPlaces),
     ),
   }
 }
@@ -246,6 +252,39 @@ function makeCatalog(engine: ReturnType<typeof makeLive>) {
   )
 
   return { serviceSearch, services }
+}
+
+/**
+ * Keeps this device's own atoms for how things look current with the session's answers, for the
+ * life of the session: Vivid's name and face, and the Person's theme.
+ */
+function followLook(
+  engine: ReturnType<typeof makeLive>,
+  live: { readonly appearance: LiveQuery<Appearance>; readonly settings: LiveQuery<Settings> },
+) {
+  // Vivid's name and look are drawn all over the app, so they are held in one device atom every
+  // face and header reads (`data/vivid.ts`). This keeps it current for the life of the session:
+  // the server's answer, an expected change, and the answer for a new workspace all arrive here.
+  engine.registry.subscribe(
+    live.appearance.atom,
+    (result) => {
+      if (AsyncResult.isSuccess(result)) door.set(vividAtom, result.value)
+    },
+    { immediate: true },
+  )
+
+  // The Person's theme is theirs on every device; when their settings arrive, this one follows.
+  engine.registry.subscribe(
+    live.settings.atom,
+    (result) => {
+      // Only a theme this device is not already showing is adopted, so an unrelated settings
+      // change does not rewrite the device's store.
+      if (AsyncResult.isSuccess(result) && result.value.theme !== door.get(themeAtom)) {
+        door.set(followThemeAtom, result.value.theme)
+      }
+    },
+    { immediate: true },
+  )
 }
 
 /**
@@ -378,29 +417,12 @@ function makeLiveData(session: SignedIn) {
 
   const seenThread = makeSeenThread(engine, live.thread)
 
-  // Vivid's name and look are drawn all over the app, so they are held in one device atom every
-  // face and header reads (`data/vivid.ts`). This keeps it current for the life of the session:
-  // the server's answer, an expected change, and the answer for a new workspace all arrive here.
-  engine.registry.subscribe(
-    live.appearance.atom,
-    (result) => {
-      if (AsyncResult.isSuccess(result)) door.set(vividAtom, result.value)
-    },
-    { immediate: true },
-  )
+  // Connecting an Integration is one machine for the session, made here because this is where
+  // the session's registry and socket are made: every screen, sheet and card of the session
+  // presses and draws from it, and an attempt outlives whichever of them began it.
+  const connecting = makeConnecting({ engine, connections: live.connections.atom })
 
-  // The Person's theme is theirs on every device; when their settings arrive, this one follows.
-  engine.registry.subscribe(
-    live.settings.atom,
-    (result) => {
-      // Only a theme this device is not already showing is adopted, so an unrelated settings
-      // change does not rewrite the device's store.
-      if (AsyncResult.isSuccess(result) && result.value.theme !== door.get(themeAtom)) {
-        door.set(followThemeAtom, result.value.theme)
-      }
-    },
-    { immediate: true },
-  )
+  followLook(engine, live)
 
   // A token the server no longer accepts (expired, revoked from another device, or left over from
   // a build that had no accounts) cannot be made to work by waiting. The device signs out, which
@@ -428,6 +450,7 @@ function makeLiveData(session: SignedIn) {
     dispose: () => {
       launch(onDevice.ended)
       onDevice.stop()
+      connecting.stop()
       engine.registry.dispose()
     },
     registry: engine.registry,
@@ -445,6 +468,8 @@ function makeLiveData(session: SignedIn) {
     ) => start(engine.change(program, ...expectations)),
     link: link.atom,
     ...catalog,
+    /** Connecting an Integration: the session's one machine (`data/connecting.ts`). */
+    connecting,
     gone,
     seenThread,
     typingIn,
@@ -484,7 +509,11 @@ export const entryAtom = Atom.keepAlive(
         if (!Session.$is('SignedIn')(value)) {
           // Nobody is signed in: signed out, expired, or never. The session's own ending erased
           // what it kept (`dispose`); this is for an app that was closed before that landed.
-          launch(snapshotStore.erase)
+          // Where they were goes with it (`data/placed.ts`), a turn later: it is a device atom, and
+          // this is inside the session atom's own change.
+          launch(
+            snapshotStore.erase.pipe(Effect.andThen(Effect.yieldNow), Effect.andThen(forgetPlaces)),
+          )
           return Entry.Door({ session: value })
         }
         const data = makeLiveData(value)
