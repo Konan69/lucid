@@ -6,7 +6,7 @@ import {
   type PersonId,
   type Run,
 } from '@vivid/contracts'
-import { makeFullWhen, makeWhen, speakerOfTurn, thisReader } from '@vivid/state'
+import { makeFullWhen, makeWhen, Source, sourceOf, speakerOfTurn, thisReader } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { AlarmClock, Check, Copy as CopyIcon, Repeat2 } from 'lucide-react'
 import { memo, useState } from 'react'
@@ -248,15 +248,19 @@ function picturesOf(message: FlueConversationMessage) {
   })
 }
 
-const SIGNAL_LINE = new Map([
-  ['schedule', { Icon: Repeat2, label: 'A routine came due' }],
-  ['follow-up', { Icon: AlarmClock, label: 'Time to follow up' }],
-])
+/** The quiet line each wake is drawn as, by why Vivid woke (`Source.Wake` in `@vivid/state`). */
+const SIGNAL_LINE = {
+  routine: { Icon: Repeat2, label: 'A routine came due' },
+  'follow-up': { Icon: AlarmClock, label: 'Time to follow up' },
+} as const
 
 /**
- * Something the server put in front of Vivid. A `message` signal is a Person speaking in a shared
- * Thread and is drawn as their bubble. A Routine or a follow-up is a quiet line. An Approval's
- * outcome and an answer are not drawn here at all: their cards already say what happened.
+ * Something the server or the runtime put in front of Vivid, drawn by where it came from
+ * (`sourceOf` in `@vivid/state`, the reading every surface shares). A Person speaking in a shared
+ * Thread is drawn as their bubble. A Routine or a follow-up is a quiet line. An answer that was
+ * not finished is said in Vivid's words, not the runtime's. Nothing else is drawn here: an
+ * Approval's outcome and an answer are told by their cards, and what the runtime says to itself
+ * and the model (its instructions were reloaded, its tools changed) is for no Person.
  */
 function Signal({
   message,
@@ -265,45 +269,41 @@ function Signal({
   message: FlueConversationMessage
   context: ThreadContext
 }) {
-  const signal = message.signal
-  if (signal === undefined) {
-    // A system message with no signal is the runtime talking to itself (its instructions were
-    // reloaded, a session was compacted). None of that is for a Person. The one thing worth
-    // saying is that an answer was not finished, and that is said in Vivid's words, not the
-    // runtime's.
-    if (message.settlement === undefined || message.settlement.outcome !== 'failed') return null
-    return (
+  return Source.$match(sourceOf(message), {
+    Failed: () => (
       <div className="rounded-panel bg-surface-2 px-4 py-3 text-label text-ink-3">
         Vivid could not finish that.
       </div>
-    )
-  }
-  const attributes = signal.attributes === undefined ? {} : signal.attributes
-  if (signal.tagName === 'message') {
-    return (
+    ),
+    Said: ({ turn, from }) => (
       <Said
         text={textOf(message)}
         pictures={[]}
         // Whose turn it was comes from the Thread's Runs; the conversation holds no identifier.
         mine={Option.exists(
-          speakerOfTurn(context.runs, Option.fromUndefinedOr(attributes.turn)),
+          speakerOfTurn(context.runs, turn),
           (speaker) => speaker.id === context.me,
         )}
-        from={{ name: attributes.from === undefined ? 'Someone' : attributes.from }}
+        from={{ name: Option.getOrElse(from, () => 'Someone') }}
       />
-    )
-  }
-  const line = signal.tagName === undefined ? undefined : SIGNAL_LINE.get(signal.tagName)
-  if (line === undefined) return null
-  return (
-    <div className="flex items-center gap-2 text-meta font-meta text-ink-3">
-      <line.Icon className="size-3.5" />
-      <span>
-        {line.label}
-        {attributes.name !== undefined && ` · ${attributes.name}`}
-      </span>
-    </div>
-  )
+    ),
+    Wake: ({ reason, name }) => {
+      const line = SIGNAL_LINE[reason]
+      return (
+        <div className="flex items-center gap-2 text-meta font-meta text-ink-3">
+          <line.Icon className="size-3.5" />
+          <span>
+            {line.label}
+            {Option.isSome(name) && ` · ${name.value}`}
+          </span>
+        </div>
+      )
+    },
+    // `Message` sends only `system` messages here, which are never a turn or a reply.
+    Person: () => null,
+    Vivid: () => null,
+    Plumbing: () => null,
+  })
 }
 
 const readShown = Schema.decodeUnknownOption(ShowRequest)

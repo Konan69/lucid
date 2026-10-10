@@ -2,7 +2,7 @@ import { useAtomMount, useAtomSet } from '@effect/atom-react'
 import { useFlueAgent, type FlueConversationMessage } from '@flue/react'
 import { createFlueClient } from '@flue/sdk'
 import { ThreadAudience, type MeResponse, type ThreadDetail, type ThreadId } from '@vivid/contracts'
-import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
+import { draftPlace, inThread, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { ArrowDown } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
@@ -238,14 +238,12 @@ function ConversationMessages({
 }
 
 /**
- * The messages of a conversation that are drawn: not the ones Flue marks hidden, unless they
- * carry a signal the screen shows, and not the ones with nothing in them.
+ * The messages of a conversation that are drawn: the ones that belong in a Thread on every
+ * surface (`inThread` in `@vivid/state`, which leaves out what the runtime says to itself and
+ * the model), and not the ones with nothing in them.
  */
 const shownIn = (messages: ReadonlyArray<FlueConversationMessage>) =>
-  messages.filter(
-    (message) =>
-      (message.display !== 'hidden' || message.signal !== undefined) && !isBlank(message),
-  )
+  messages.filter((message) => inThread(message) && !isBlank(message))
 
 function Conversation({
   id,
