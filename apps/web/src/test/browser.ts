@@ -1,4 +1,4 @@
-import { Option, Schema } from 'effect'
+import { Option, Result, Schema } from 'effect'
 import { vi } from 'vitest'
 
 /**
@@ -25,15 +25,20 @@ import { vi } from 'vitest'
 /** A value on the wire: what a contract schema encodes to, on its way through `JSON`. */
 type Wire = Schema.Json
 
-const asWire = Schema.decodeUnknownSync(Schema.Json)
+/** Reads what a contract schema encoded as JSON, the one shape a socket frame can carry. */
+const decodeWire = Schema.decodeUnknownResult(Schema.Json)
 
 /**
  * A contract value as the server puts it on the wire: encoded by the contract's own schema. A
  * test builds what the server answers out of the same types the server does, and this is the
  * one way such a value reaches the socket.
+ *
+ * A value its own schema cannot encode, or one that does not encode to JSON, is a fixture
+ * written wrong: both steps throw, so the test fails where the fixture is built, and there is no
+ * failure for the page to handle.
  */
 export const wire = <Value, Encoded>(schema: Schema.Codec<Value, Encoded>, value: Value): Wire =>
-  asWire(Schema.encodeSync(schema)(value))
+  Result.getOrThrow(decodeWire(Result.getOrThrow(Schema.encodeResult(schema)(value))))
 
 const RequestId = Schema.Union([Schema.String, Schema.Finite])
 
@@ -48,7 +53,12 @@ const Sent = Schema.TaggedUnion({
   Interrupt: {},
   Eof: {},
 })
-const readSent = Schema.decodeUnknownSync(Schema.fromJsonString(Sent))
+const decodeSent = Schema.decodeUnknownResult(Schema.fromJsonString(Sent))
+/**
+ * A frame the page sent, read. A frame this end cannot read means the page and this stand-in no
+ * longer speak the same protocol; it throws inside the page's `send`, so the test fails there.
+ */
+const readSent = (frame: string) => Result.getOrThrow(decodeSent(frame))
 
 /** How a call ended, as the server says it. Every call here succeeds. */
 const Ended = Schema.TaggedStruct('Success', { value: Schema.Json })
@@ -60,7 +70,12 @@ const Answered = Schema.TaggedUnion({
   Exit: { requestId: RequestId, exit: Ended },
 })
 type Answered = typeof Answered.Type
-const writeAnswered = Schema.encodeSync(Schema.fromJsonString(Answered))
+const encodeAnswered = Schema.encodeResult(Schema.fromJsonString(Answered))
+/**
+ * A frame as the text the socket carries. Every frame is made by a case's own `make`, so one
+ * that will not encode is a fault in this file, and it throws to fail the test.
+ */
+const writeAnswered = (frame: Answered) => Result.getOrThrow(encodeAnswered(frame))
 
 /**
  * One message as the conversation client posts it (`@flue/sdk` 2.2.2 `sendConversationMessage`:
@@ -74,7 +89,12 @@ const Posted = Schema.fromJsonString(
   }),
 )
 export interface Posted extends Schema.Schema.Type<typeof Posted> {}
-const readPosted = Schema.decodeUnknownSync(Posted)
+const decodePosted = Schema.decodeUnknownResult(Posted)
+/**
+ * The body of one post, read. A body that is not a message is the conversation client posting
+ * something this network does not know; it throws inside `fetch`, so the test fails there.
+ */
+const readPosted = (body: string) => Result.getOrThrow(decodePosted(body))
 
 /** What a listener is told. Each kind of event carries the few fields its listeners read. */
 interface Told {
