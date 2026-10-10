@@ -6,6 +6,7 @@ import { useState, type ReactNode } from 'react'
 import { live, LiveState, useLive, useLiveValue } from '../../data/live'
 import { pages } from '../../data/pages'
 import { router } from '../../data/route'
+import { wake } from '../../data/wake'
 import { engine } from '../../data/runtime'
 import { mayCustomise, useAppearance } from '../../data/vivid'
 import { Button } from '../../ui/button'
@@ -60,6 +61,8 @@ export function About({
   const openComputer = () => {
     onClose()
     pages.toComputer()
+    // Arriving at Vivid's computer turns it on, whether or not the panel was already open.
+    wake()
     onOpenComputer()
   }
   return (

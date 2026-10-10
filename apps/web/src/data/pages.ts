@@ -10,7 +10,6 @@ import {
 } from '@vivid/desktop/bridge'
 import { Option, Schema } from 'effect'
 import { panel } from './panel'
-import { wake } from './wake'
 import { say } from './said'
 
 /**
@@ -116,11 +115,8 @@ export const pages = {
       None: () => Option.none<string>(),
       Some: ({ value }) => Option.some(value),
     }),
-  /** Puts Vivid's computer in front, and turns it on. The pages stay open behind it. */
-  toComputer: () => {
-    bring('computer')
-    wake()
-  },
+  /** Puts Vivid's computer in front. The pages stay open behind it. */
+  toComputer: () => bring('computer'),
   /** A page that has not been opened yet: the address field, waiting for somewhere to go. */
   toNew: () => bring('new'),
   /** Opens an address, or a search for words that are not one, in a new page beside the Thread. */

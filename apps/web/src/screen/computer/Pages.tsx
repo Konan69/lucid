@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useState, type KeyboardEvent } from 'react'
 import { pages, type Front } from '../../data/pages'
+import { wake } from '../../data/wake'
 import { Button, IconButton } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import {
@@ -32,6 +33,12 @@ import {
 import { Face } from '../../ui/Face'
 import { floatingSurfaces } from '../../ui/Layer'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
+
+/** The Person asks for Vivid's computer: it comes in front of the pages, and is turned on. */
+const toComputer = () => {
+  pages.toComputer()
+  wake()
+}
 
 /**
  * One tab: 32 high, about 236 wide when there is room and shrinking to 90 before the strip
@@ -121,7 +128,7 @@ export function PageTabs({
           aria-selected={front === 'computer'}
           aria-controls="computer-surface"
           tabIndex={front === 'page' ? -1 : 0}
-          onClick={pages.toComputer}
+          onClick={toComputer}
           className={cn(TAB, 'cursor-pointer', front === 'computer' ? SELECTED : RESTING)}
         >
           <Monitor className="size-4 shrink-0" />
@@ -579,7 +586,7 @@ function Launcher() {
       <h3 className="text-title font-title text-ink-3">Open</h3>
       <div className="grid grid-cols-2 gap-4">
         <button
-          onClick={pages.toComputer}
+          onClick={toComputer}
           className="flex h-10 cursor-pointer items-center gap-2 rounded-row bg-surface-2 px-3 text-title text-ink transition-press duration-(--dur-fast) hover:bg-wash-pressed focus-visible:bg-wash-pressed active:scale-96"
         >
           <Monitor className="size-4 shrink-0" />
