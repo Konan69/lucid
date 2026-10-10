@@ -1,7 +1,7 @@
 import { ComputerId, ComputerScreen, ComputerState, type Computer } from '@vivid/contracts'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { standingOf } from './computer.ts'
+import { screenNote, standingOf, viewerOf } from './computer.ts'
 
 const computer = (state: ComputerState, heldByPerson = false): Computer => ({
   id: ComputerId.make('computer'),
@@ -41,5 +41,35 @@ describe('where Vivid’s computer stands, in words', () => {
     )
     // Already on its way: nothing to press.
     expect(offered(ComputerState.cases.Starting.make({ since: 1 }))).toEqual(Option.none())
+  })
+})
+
+describe('where a phone can watch the screen', () => {
+  const viewer = ComputerState.cases.Running.make({
+    since: 1,
+    screen: ComputerScreen.cases.Viewer.make({
+      address: 'https://viewer.example/stream.html#permission',
+      expiresAt: 2,
+    }),
+  })
+
+  it('is the provider’s viewer page, whole, with the permission in its fragment', () => {
+    expect(viewerOf(computer(viewer))).toEqual(
+      Option.some('https://viewer.example/stream.html#permission'),
+    )
+  })
+
+  it('is nowhere for a relayed screen or a computer that is off', () => {
+    expect(viewerOf(computer(running))).toEqual(Option.none())
+    expect(viewerOf(computer(ComputerState.cases.Stopped.make({ since: 1 })))).toEqual(
+      Option.none(),
+    )
+  })
+
+  it('warns that a touch reaches the machine only while Vivid has the keyboard', () => {
+    expect(screenNote(computer(viewer))).toContain('take over first')
+    expect(screenNote(computer(viewer, true))).toBe('Its screen opens in your browser.')
+    // No page to open: the note sends the Person to a browser and promises nothing here.
+    expect(screenNote(computer(running))).toContain('not shown on the phone')
   })
 })

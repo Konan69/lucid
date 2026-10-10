@@ -267,6 +267,21 @@ export const railwayResources = Effect.fn('railwayResources')(function* (
       EXECUTOR_URL_ALLOW_LOOPBACK_HTTP: 'false',
       EXECUTOR_URL_ALLOW_HTTP_ORIGINS: '[]',
       EXECUTOR_APPS_ALLOW_PRIVATE_FETCH: 'false',
+      /**
+       * Turns Executor's tracing off. Nobody reads its traces, and they were the cost of this
+       * service: with no endpoint set, the image sends every span to a collector bundled in the
+       * same process, and its idle one-second scheduler poll alone is about 48,000 spans an hour
+       * (upstream issue 2194). The collector's store reached its 1 GiB limit in 14 hours and the
+       * process grew about 80 MB an hour to Railway's 8 GB limit, where it was killed (9 October
+       * 2026; upstream issue 2216, open). The image has no switch for this. Its fallback applies
+       * only when neither traces nor logs has an endpoint
+       * (`apps/hosted/self-host/src/worker.ts`), and a signal without an endpoint gets no
+       * exporter at all (`packages/telemetry/src/layer.ts`, `Layer.empty`). Naming the logs
+       * endpoint alone therefore leaves no tracer; the address is the bundled collector's own,
+       * so the few log lines still have somewhere to go. Remove this when upstream stops
+       * tracing the idle poll or ships a switch.
+       */
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: 'http://127.0.0.1:4318/v1/logs',
     },
   })
   yield* Railway.Volume('ExecutorData', { project, service: executor, mountPath: '/app/data' })

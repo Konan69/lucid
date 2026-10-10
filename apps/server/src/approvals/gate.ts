@@ -64,9 +64,6 @@ export const actionOrigin = Effect.fn('Gate.origin')(function* (actor: Actor) {
         Match.when('NoWorkingRun', () =>
           Effect.succeed(ActionOrigin.cases.RuntimeThread.make({ threadId })),
         ),
-        Match.when('SeveralWorkingRuns', () =>
-          Effect.fail(new NotFound({ message: 'This work cannot safely act right now' })),
-        ),
         Match.when('ActsForAnotherPerson', () =>
           Effect.fail(new NotFound({ message: 'Action is acting for another Person' })),
         ),

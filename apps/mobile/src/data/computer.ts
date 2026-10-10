@@ -1,4 +1,4 @@
-import { ComputerState, type Computer } from '@vivid/contracts'
+import { ComputerScreen, ComputerState, type Computer } from '@vivid/contracts'
 import type { FaceMood } from '@vivid/marks'
 import { Option } from 'effect'
 
@@ -10,7 +10,8 @@ import { Option } from 'effect'
  * The sentences are the web panel's (`glass` and `RESTING` in `apps/web/src/screen/Computer.tsx`),
  * so the same machine is described the same way in a browser and on a phone. The one difference
  * is honest: the web says "you are watching" while Vivid has the keyboard, because its panel
- * shows the screen. The phone does not show the screen, so it does not say so.
+ * shows the screen. The phone's own page does not draw the screen (it opens it, `viewerOf`), so
+ * it does not say so.
  */
 export interface Standing {
   /** One line for the bar: where the computer stands and who is using it. */
@@ -74,4 +75,36 @@ export const standingOf = (computer: Computer): Standing =>
       mood: 'neutral',
       start: Option.some('Try again'),
     }),
+  })
+
+/**
+ * The page on which a running Computer's screen can be watched from a phone: the machine
+ * provider's own viewer (`ComputerScreen.Viewer`), which is a web page built for touch as well as
+ * a pointer (Boat's `stream.html` has a device-width viewport and its own touch handling, read on
+ * 10 October 2026). The app has no web view among its dependencies, so the page is opened in the
+ * system browser and not drawn inside the app.
+ *
+ * A relayed screen (`ComputerScreen.Relay`) has no page: it is a remote-framebuffer socket that
+ * only the web panel's client can draw, so for it, and for a Computer that is not running, there
+ * is nothing to open.
+ */
+export const viewerOf = (computer: Computer): Option.Option<string> =>
+  ComputerState.guards.Running(computer.state) &&
+  ComputerScreen.guards.Viewer(computer.state.screen)
+    ? Option.some(computer.state.screen.address)
+    : Option.none()
+
+/**
+ * What a running Computer's page says about its screen. The viewer page takes touches and keys
+ * whoever holds the keyboard (Boat's `stream.js` has no way to only watch), where the web panel's
+ * frame takes none until the Person has taken over. So while Vivid has the keyboard the Person is
+ * told that a touch there reaches the machine.
+ */
+export const screenNote = (computer: Computer): string =>
+  Option.match(viewerOf(computer), {
+    onNone: () => 'Its screen is not shown on the phone. Open Vivid in a browser to watch it.',
+    onSome: () =>
+      computer.heldByPerson
+        ? 'Its screen opens in your browser.'
+        : 'Its screen opens in your browser. A touch there reaches the computer, so take over first if you mean to use it.',
   })

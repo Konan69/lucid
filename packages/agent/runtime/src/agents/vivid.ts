@@ -215,8 +215,9 @@ Vivid.durability = {
   // never runs that call again, does not re-execute a call whose result was not recorded (the
   // model reads an unknown-outcome error for it and decides), and continues a partial answer from
   // what was persisted (`flue docs guide/durability`, "Recovery" and "Retry budget and timeout",
-  // Flue 2.2.2). Model retries inside one attempt stay with the provider adapter. The timeout
-  // below is the total for all attempts.
+  // Flue 2.2.2). Within an attempt, Pi retries request establishment and Flue independently
+  // retries some failed model turns. Neither budget is controlled by maxAttempts; Flue has no
+  // public option for its turn retry policy. The timeout below is the total for all attempts.
   maxAttempts: 3,
   timeoutMs: 60 * 60 * 1000,
 }

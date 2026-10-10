@@ -1,18 +1,20 @@
 // The program runner. It is the only file of the server that runs on a Person's Computer, so it
 // uses nothing but Node 24: the server sends this text as it is and starts it there with
-// `node <this file> <directory> <result bytes> <log characters> <heap MiB> <calls> <call bytes>`.
+// `node <this file> <result bytes> <log characters> <calls> <call bytes>`.
 //
 // The Computer is where a program runs (5 October 2026). There is no interpreter inside the
 // interpreter and no second sandbox: the program is JavaScript in a worker thread of this process,
-// with the Computer's files, network and Node modules. What it cannot do by itself is act for the
-// Person: every tool call is printed for the server, which checks it as the Person and answers.
+// with the Computer's files, network and Node modules, and as much of the Computer's memory as
+// any other program on it. What it cannot do by itself is act for the Person: every tool call is
+// printed for the server, which checks it as the Person and answers.
 //
 // The surface a program sees (`tools`, `accounts`, `text`, `console`, an async function body whose
 // `return` is the result) is the one of pi's code mode, which this replaces
 // (`@earendil-works/pi-codemode` 1.0.0, README "Usage" and `runtime/prelude-source.js`). The
-// messages are the server's `protocol.ts`: one JSON value per line on standard output going out
-// (Call, Done, Failed), one file holding one JSON line coming in (Start, Reply, Cancel). Boat can
-// follow what a command prints but cannot write to it, which is why answers arrive as files.
+// messages are the server's `protocol.ts`, one JSON value per line in both directions: going out
+// on standard output (Call, Done, Failed), coming in on standard input (Start, Reply, Cancel).
+// The server starts this over its SSH connection to the Computer, whose command channel carries
+// both. Standard input closing means the server has gone, and ends the program.
 //
 // The rules switched off below are the server's rules for Effect code. None of them can be met
 // here: this file has no Effect and no Schema to meet them with, because it must run on a
@@ -20,15 +22,12 @@
 // target origin.
 /* oxlint-disable vivid/no-promise-constructor, vivid/no-try-catch, vivid/require-schema-decode-in-boundary, anti-slop/no-runtime-typeof, anti-slop-effect/no-manual-tagged-construction, anti-slop-effect/no-manual-tag-comparison, unicorn/require-post-message-target-origin */
 import * as NodeFS from 'node:fs'
-import * as NodePath from 'node:path'
 import * as NodeWorkerThreads from 'node:worker_threads'
-
-/** Longest wait for the program text. A server that died after starting this must not leave it. */
-const START_SECONDS = 60
 
 /**
  * The program's side. It runs in a worker thread so that the thread above stays free to hear
- * Cancel while the program spins, and so that the heap limit ends the program and not the runner.
+ * Cancel while the program spins, and so that a program that runs out of memory ends itself and
+ * not the runner, which still has to say so.
  */
 function program() {
   const port = NodeWorkerThreads.parentPort
@@ -275,14 +274,12 @@ function printedLines(allowance) {
   return { keep, from, cut, read: () => ({ logs, logsTruncated }) }
 }
 
-/** The runner's side: the messages, the files that answer them, and the end of the program. */
+/** The runner's side: the messages in both directions, and the end of the program. */
 function runner() {
-  const [directory, resultBytes, logCharacters, heap, calls, frameBytes] = process.argv.slice(2)
-  const inbox = NodePath.join(directory, 'in')
+  const [resultBytes, logCharacters, calls, frameBytes] = process.argv.slice(2)
   const limits = {
     result: Number(resultBytes),
     logs: Number(logCharacters),
-    heap: Number(heap),
     calls: Number(calls),
     frame: Number(frameBytes),
   }
@@ -291,29 +288,16 @@ function runner() {
   let finished = false
   /**
    * Exactly one final message, printed when nothing of the program is left on the Computer: its
-   * thread is over, the processes it started are ended and its directory is gone. The server may
-   * start the next program the moment it reads that line. The process itself ends only once the
-   * line is written out: an exit straight after `write` can cut a long line short when the reader
-   * is slow.
+   * thread is over and the processes it started are ended. The server may start the next program
+   * the moment it reads that line. The process itself ends only once the line is written out: an
+   * exit straight after `write` can cut a long line short when the reader is slow.
    */
   const finish = (message) => {
     if (finished) return
     finished = true
-    clearTimeout(unstarted)
-    watcher.close()
     const ended = worker === undefined ? Promise.resolve() : worker.terminate()
     ended.then(() =>
       whenOver(endChildren(), () => {
-        // An answer can land in the directory while it is being removed, and the removal then
-        // fails on a directory that is no longer empty. Seen 5 October 2026: the throw ended
-        // this process before its final line, and a program that had ended on its call limit was
-        // reported as lost. The final line matters more than the directory, which the server
-        // removes again itself.
-        try {
-          NodeFS.rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
-        } catch {
-          // Left to the server's own removal.
-        }
         process.stdout.write(`${JSON.stringify({ ...message, ...output.read() })}\n`, () =>
           process.exit(0),
         )
@@ -323,14 +307,12 @@ function runner() {
   const failed = (failure) => finish({ _tag: 'Failed', failure })
   const start = (code) => {
     if (finished) return
-    clearTimeout(unstarted)
     worker = new NodeWorkerThreads.Worker(new URL(import.meta.url), {
       workerData: {
         code,
         kinds: ['find_tools', 'use_tool', 'browse', 'read_page'],
         limits: { calls: limits.calls, frame: limits.frame, logs: limits.logs },
       },
-      resourceLimits: { maxOldGenerationSizeMb: limits.heap },
       // What the program writes to its own output is not a message and must not become one.
       stdout: true,
       stderr: true,
@@ -373,46 +355,29 @@ function runner() {
     // The server keeps its own reason for stopping; this only returns what was printed so far.
     else if (message._tag === 'Cancel') failed({ _tag: 'Unavailable' })
   }
-  const taken = new Set()
-  /** A file is a message once its line is complete; one still being written is left for the next event. */
-  const drain = () => {
-    if (finished) return
-    let names
-    try {
-      names = NodeFS.readdirSync(inbox)
-    } catch {
-      // The directory was taken away under a running program: the server has given it up.
-      failed({ _tag: 'Unavailable' })
-      return
-    }
-    for (const name of names) {
+  // One message is one line. A piece of input may hold several lines, or the start of one.
+  let unread = ''
+  process.stdin.setEncoding('utf8')
+  process.stdin.on('data', (text) => {
+    const lines = (unread + text).split('\n')
+    unread = lines.pop()
+    for (const line of lines) {
       // An order to stop ends the reading: a program is never started after it.
       if (finished) return
-      if (taken.has(name)) continue
       let message
       try {
-        const text = NodeFS.readFileSync(NodePath.join(inbox, name), 'utf8')
-        if (!text.endsWith('\n')) continue
-        message = JSON.parse(text)
+        message = JSON.parse(line)
       } catch {
-        // The file went away under the reading, or is not a message. Either way the program
-        // ends the ordinary way, so what it started is ended and what it printed is sent.
+        // Not a message: the program ends the ordinary way, so what it started is ended and
+        // what it printed is sent.
         failed({ _tag: 'Unavailable' })
         return
       }
-      taken.add(name)
       receive(message)
     }
-  }
-  NodeFS.mkdirSync(inbox, { recursive: true })
-  // The first message may have arrived before this started, and its file made these directories
-  // with the provider's own mode. Answers hold what the Person's accounts returned: owner only.
-  NodeFS.chmodSync(directory, 0o700)
-  NodeFS.chmodSync(inbox, 0o700)
-  const watcher = NodeFS.watch(inbox, drain)
-  const unstarted = setTimeout(() => failed({ _tag: 'Unavailable' }), START_SECONDS * 1000)
-  // A message written before the watch began raises no event.
-  drain()
+  })
+  // The server closed the connection or has gone: nobody is left to answer the program.
+  process.stdin.on('end', () => failed({ _tag: 'Unavailable' }))
 }
 
 if (NodeWorkerThreads.isMainThread) runner()

@@ -31,6 +31,7 @@ import {
   Effect,
   Fiber,
   Layer,
+  Logger,
   Queue,
   Ref,
   Result,
@@ -59,6 +60,7 @@ import { testConfigLayer, testDatabaseConfigured, testDatabaseLayer } from '../d
 import { silentChangesLayer } from '../live/changes.ts'
 import { silentLearningLayer } from '../memory/testing.ts'
 import { Notifier } from '../notifications/notifier.ts'
+import { Message } from '../observability/messages.ts'
 import {
   Admission,
   AdmissionRefused,
@@ -213,16 +215,18 @@ const runtimeFixture = Effect.fn('Delivery.test.runtime')(function* () {
       )
     }),
   })
-  const finish = Effect.fn('Delivery.test.finish')(function* (id: RunId) {
+  const settle = Effect.fn('Delivery.test.settleRuntime')(function* (
+    id: RunId,
+    result: Settlement,
+  ) {
     const settlement = settlements.get(id)
     if (settlement === undefined)
       return yield* Effect.sync(() => expect.fail('Run was not admitted'))
-    return yield* Deferred.succeed(
-      settlement,
-      Settlement.cases.Completed.make({ reply: 'Finished', responseId: id }),
-    )
+    return yield* Deferred.succeed(settlement, result)
   })
-  return { runtime, admitted, requests, finish, failure, reads, readHeaders }
+  const finish = (id: RunId) =>
+    settle(id, Settlement.cases.Completed.make({ reply: 'Finished', responseId: id }))
+  return { runtime, admitted, requests, finish, settle, failure, reads, readHeaders }
 })
 
 /** Real RunStore methods also expose typed receipts so tests never sleep or poll for background work. */
@@ -354,6 +358,44 @@ layer(
 )((it) => {
   describe.skipIf(!testDatabaseConfigured)('One Person per response', () => {
     it.effect(
+      'records a failed model settlement at its boundary and persists the provider reason',
+      () =>
+        Effect.gen(function* () {
+          const reported = yield* Queue.unbounded<void>()
+          const lines: string[] = []
+          const capture = Logger.make((entry) => {
+            const line = Logger.formatSimple.log(entry)
+            if (line.includes(Message.failure)) {
+              lines.push(line)
+              Queue.offerUnsafe(reported, undefined)
+            }
+          })
+          const logging = yield* Layer.build(Logger.layer([capture]))
+          return yield* Effect.gen(function* () {
+            const test = yield* harness()
+            const admission = yield* test.conversation.admit(said(test.threadId, test.ada))
+            yield* test.settle(
+              admission.runId,
+              Settlement.cases.Failed.make({
+                reason: 'ModelUnavailable',
+                providerStatus: 520,
+              }),
+            )
+            yield* Queue.take(reported)
+            expect(yield* Queue.take(test.ended)).toBe(admission.runId)
+            const stored = yield* (yield* RunStore).list(test.threadId)
+            expect(stored.map((run) => run.state)).toEqual([
+              RunState.cases.Failed.make({ finishedAt: 0, reason: 'ModelUnavailable' }),
+            ])
+            expect(lines).toHaveLength(1)
+            expect(lines[0]).toContain('error.type=ModelProviderFailed')
+            expect(lines[0]).toContain('vivid.boundary=runtime')
+            expect(lines[0]).toContain('vivid.model.failure.status=520')
+          }).pipe(Effect.provide(logging))
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect(
       'a standing finding opens one private Thread and Run through normal admission; a child cannot fan out',
       () =>
         Effect.scoped(
@@ -438,8 +480,8 @@ layer(
           Layer.provideMerge(silentChangesLayer),
           Layer.provideMerge(testConfigLayer),
         ),
-      )('Clock case 1', (it) => {
-        it.effect(
+      )('Clock case 1', (clockIt) => {
+        clockIt.effect(
           `${failure.name} Flue admission ends the Run with Delivery and does not block Ben`,
           () =>
             Effect.gen(function* () {
@@ -573,8 +615,8 @@ layer(
         Layer.provideMerge(silentChangesLayer),
         Layer.provideMerge(testConfigLayer),
       ),
-    )('Clock case 2', (it) => {
-      it.effect(
+    )('Clock case 2', (clockIt) => {
+      clockIt.effect(
         'a Busy Routine keeps its tick while another due Routine runs in the same pass',
         () =>
           Effect.gen(function* () {

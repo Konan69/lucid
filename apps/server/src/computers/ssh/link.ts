@@ -1,5 +1,18 @@
 import * as NodeBuffer from 'node:buffer'
-import { Effect, Option, Predicate, Redacted, Result, Schema, type Scope } from 'effect'
+import * as NodeStringDecoder from 'node:string_decoder'
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Option,
+  Predicate,
+  Queue,
+  Redacted,
+  Result,
+  Schema,
+  type Scope,
+  Stream,
+} from 'effect'
 // ssh2 is CommonJS and Node's ESM loader finds no named exports in it (seen: the server entry
 // failed to load with a named import that Vite had accepted), so the module is imported whole.
 import ssh2, { type Client, type ClientChannel, type SFTPWrapper } from 'ssh2'
@@ -69,6 +82,27 @@ export interface LinkRun {
   readonly truncated: boolean
 }
 
+/** How a command that was spoken with ended. `timedOut` is the machine's own deadline for it. */
+export interface LinkEnd {
+  readonly exitCode: number | null
+  readonly timedOut: boolean
+}
+
+/**
+ * A command that is spoken with while it runs: what it prints arrives as it is printed, and text
+ * can be written to its standard input. An SSH command channel carries both directions, so a
+ * program on the machine and the server need nothing else between them.
+ */
+export interface LinkConversation {
+  /** Standard output as text, in the pieces it arrives in. It ends when the command ends, and
+   * fails `LinkRunLost` when the connection went first. */
+  readonly output: Stream.Stream<string, LinkRunLost>
+  /** Writes `text` to the command's standard input. */
+  readonly say: (text: string) => Effect.Effect<void, LinkRunLost>
+  /** The machine's word on how the command ended; `LinkRunLost` when it never gave one. */
+  readonly ended: Effect.Effect<LinkEnd, LinkRunLost>
+}
+
 export interface Link {
   /** Runs `command` with bash as a login shell, in `directory` (an absolute path). */
   readonly run: (input: {
@@ -76,6 +110,15 @@ export interface Link {
     readonly directory: string
     readonly timeoutSeconds: number
   }) => Effect.Effect<LinkRun, LinkUnreachable | LinkRunLost>
+  /**
+   * Starts `command` as `run` does, and holds it for the scope: closing the scope ends the
+   * command if it is still running. Its standard error is not kept.
+   */
+  readonly converse: (input: {
+    readonly command: string
+    readonly directory: string
+    readonly timeoutSeconds: number
+  }) => Effect.Effect<LinkConversation, LinkUnreachable, Scope.Scope>
   /** False once the connection has closed; whoever holds the link opens another. */
   readonly alive: () => boolean
   readonly read: (path: string) => Effect.Effect<Uint8Array, LinkUnreachable | LinkFileRefused>
@@ -433,6 +476,86 @@ const runner =
       .pipe(Effect.onInterrupt(() => Effect.sync(stop)))
   }
 
+/**
+ * One command on its own channel, spoken with while it runs.
+ *
+ * It is started exactly as `runner` starts one (a login shell under coreutils `timeout`, so the
+ * machine ends it at its deadline and a TERM over the channel reaches its whole process group),
+ * and for the same reasons. What differs is that nothing is collected: output is handed on as it
+ * arrives and the channel's input stays open for `say`. The scope owns the command: when it
+ * closes, the command is signalled and the channel closed, whether or not it had ended.
+ *
+ * As in `runner`, a command has ended only when the machine said so. A channel that closes with
+ * no exit status is a connection that went, which is `LinkRunLost`.
+ */
+const conversation =
+  (client: Client, calls: Waiting): Link['converse'] =>
+  ({ command, directory, timeoutSeconds }) =>
+    Effect.gen(function* () {
+      const pieces = yield* Queue.unbounded<string, LinkRunLost | Cause.Done>()
+      const end = yield* Deferred.make<LinkEnd, LinkRunLost>()
+      const script = `cd -- ${shellWord(directory)} || exit 1\n${command}`
+      const started = Date.now()
+      const channel = yield* Effect.acquireRelease(
+        calls.call<ClientChannel, LinkUnreachable>(new LinkUnreachable(), (settle) => {
+          client.exec(
+            `exec timeout -k ${GRACE_SECONDS} ${timeoutSeconds} bash -lc ${shellWord(script)}`,
+            (error, opened) => {
+              if (error !== undefined && error !== null)
+                return settle(Effect.fail(new LinkUnreachable()))
+              return settle(Effect.succeed(opened))
+            },
+          )
+        }),
+        (opened) =>
+          Effect.sync(() => {
+            opened.signal('TERM')
+            opened.close()
+          }),
+      )
+      // A piece may end in the middle of a character; the decoder keeps the rest for the next.
+      const decoder = new NodeStringDecoder.StringDecoder('utf8')
+      let ended = Option.none<number | null>()
+      channel.on('data', (piece: NodeBuffer.Buffer) => {
+        Queue.offerUnsafe(pieces, decoder.write(piece))
+      })
+      // Read and dropped, so that a command that writes there is never left waiting on a full
+      // pipe; a program's own errors come back in its messages.
+      channel.stderr.on('data', () => undefined)
+      channel.on('exit', (code: number | null) => {
+        ended = Option.some(Predicate.isNumber(code) ? code : null)
+      })
+      channel.on('close', () => {
+        if (Option.isNone(ended)) {
+          Deferred.doneUnsafe(end, Effect.fail(new LinkRunLost()))
+          return Queue.failCauseUnsafe(pieces, Cause.fail(new LinkRunLost()))
+        }
+        const code = ended.value
+        // `timeout` answers 124 or 137 when it ended the command; the clock tells that from a
+        // command that exits with those codes itself (see `runner`).
+        const timedOut =
+          (code === 124 || code === 137) && Date.now() - started >= timeoutSeconds * 1000
+        Deferred.doneUnsafe(end, Effect.succeed({ exitCode: timedOut ? null : code, timedOut }))
+        return Queue.endUnsafe(pieces)
+      })
+      const say = (text: string) =>
+        calls.call<void, LinkRunLost>(new LinkRunLost(), (settle) => {
+          // The callback comes when the text has been handed to the connection, or with the
+          // error that stopped it; a channel that has closed answers with an error at once.
+          channel.write(text, (error) =>
+            settle(
+              error === undefined || error === null ? Effect.void : Effect.fail(new LinkRunLost()),
+            ),
+          )
+        })
+      const spoken: LinkConversation = {
+        output: Stream.fromQueue(pieces),
+        say,
+        ended: Deferred.await(end),
+      }
+      return spoken
+    })
+
 /** The file subsystem is opened once per connection and shared by every read and put. */
 const subsystem = (client: Client, calls: Waiting) =>
   calls.call<SFTPWrapper, LinkUnreachable>(new LinkUnreachable(), (settle) => {
@@ -515,5 +638,11 @@ export const openLink = Effect.fn('Link.open')(function* (input: {
   )
   const sftp = yield* subsystem(client, calls)
   const { read, put } = files(sftp, calls)
-  return { run: runner(client, calls), alive: calls.alive, read, put }
+  return {
+    run: runner(client, calls),
+    converse: conversation(client, calls),
+    alive: calls.alive,
+    read,
+    put,
+  }
 })

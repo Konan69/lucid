@@ -84,6 +84,32 @@ const assistant = (parts: FlueConversationMessage['parts']): FlueConversationMes
 })
 
 describe('Run settlement observation', () => {
+  it.effect('keeps only the 520 status and classification from a provider settlement', () =>
+    Effect.gen(function* () {
+      const evidence = yield* fixture()
+      const run = yield* observeRun(evidence.client, runId, 90_000).pipe(Effect.forkScoped)
+      yield* Queue.take(evidence.ready)
+      evidence.publish({
+        conversationId: 'conversation',
+        messages: [assistant([])],
+        settlements: [
+          {
+            submissionId: runId,
+            outcome: 'failed',
+            error: {
+              type: 'operation_failed',
+              meta: { reason: '520 status code (no body)' },
+              message: 'private provider prose',
+            },
+          },
+        ],
+      })
+      expect(yield* Fiber.join(run)).toEqual(
+        Settlement.cases.Failed.make({ reason: 'ModelUnavailable', providerStatus: 520 }),
+      )
+    }),
+  )
+
   it.effect('classifies upstream timeout evidence and closes its observation', () =>
     Effect.gen(function* () {
       const evidence = yield* fixture()

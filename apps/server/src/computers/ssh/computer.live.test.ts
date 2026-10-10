@@ -2,11 +2,13 @@ import * as NodeCrypto from 'node:crypto'
 import * as NodeProcess from 'node:process'
 import * as NodeHttpClient from '@effect/platform-node/NodeHttpClient'
 import { expect, layer } from '@effect/vitest'
-import { Duration, Effect, Fiber, Schema } from 'effect'
+import { Duration, Effect, Fiber, Option, Ref, Schema, Stream } from 'effect'
 import { machineLinks } from '../boat/shell.ts'
 import { ProviderId } from '../boat/protocol.ts'
 import { active } from '../boat/state.ts'
 import { transport } from '../boat/transport.ts'
+import { loadRunner } from '../../code/computer.ts'
+import { decodeWorker, encodeParent, ParentMessage, WorkerMessage } from '../../code/protocol.ts'
 import { MachineKey } from '../machine.ts'
 import { KEY_TAG } from './link.ts'
 
@@ -130,6 +132,87 @@ layer(NodeHttpClient.layerUndici, { excludeTestServices: true, timeout: 180_000 
           `rm -rf ${proof} && sed -i '/ ${KEY_TAG}$/d' .ssh/authorized_keys && grep -c ' ${KEY_TAG}$' .ssh/authorized_keys; test ! -e ${proof} && echo clean`,
         )
         expect(cleaned.stdout.trim().split('\n')).toEqual(['0', 'clean'])
+      }).pipe(Effect.scoped),
+    180_000,
+  )
+
+  /**
+   * A program on a real Computer, spoken with over its SSH channel: the real runner
+   * (`code/guest.mjs`), started as the server starts it, given a program that uses the Computer's
+   * own files and asks the server for one thing. The server's side here is this test: it reads
+   * the runner's lines and writes the answer. No Person, no model and no store are involved; that
+   * a supervised program works through them is `code/process.test.ts`.
+   */
+  it.effect.skipIf(!enabled)(
+    'runs a program on a real Computer and answers its call over the SSH channel',
+    () =>
+      Effect.gen(function* () {
+        const api = yield* transport()
+        const id = yield* decodeMachine(NodeProcess.env.VIVID_LIVE_COMPUTER_MACHINE)
+        const record = (yield* api.get(id)).sandbox
+        if (!active(record.state))
+          expect.fail('The Computer is not running; this proof wakes nothing')
+        const key = MachineKey.make(`live-${NodeCrypto.randomUUID()}`)
+        const connections = machineLinks(api)
+        yield* Effect.addFinalizer(() => connections.close)
+        const { run, put, converse } = connections.operations(() => Effect.succeed({ id }))
+        const proof = `/home/user/vivid-proof-${NodeCrypto.randomUUID()}`
+        const runner = yield* loadRunner
+        yield* put({
+          key,
+          path: `${proof}/runner.mjs`,
+          content: new TextEncoder().encode(runner.text),
+        })
+        const spoken = yield* measured(
+          'start the runner',
+          converse({
+            key,
+            command: `exec node ${proof}/runner.mjs 32768 8192 100 262144`,
+            directory: proof,
+            timeoutSeconds: 120,
+          }),
+        )
+        const heard = yield* Ref.make('')
+        /** The runner's next whole line, as the server reads it. */
+        const line = Effect.fn('LiveComputer.line')(function* () {
+          const next = yield* spoken.output.pipe(
+            Stream.mapEffect((piece) => Ref.updateAndGet(heard, (text) => text + piece)),
+            Stream.filter((text) => text.includes('\n')),
+            Stream.runHead,
+          )
+          if (Option.isNone(next)) return expect.fail('The runner ended before it said anything')
+          const [whole, ...rest] = next.value.split('\n')
+          yield* Ref.set(heard, rest.join('\n'))
+          return yield* decodeWorker(String(whole))
+        })
+        const program = `const files = await import("node:fs/promises");
+const found = await tools.find_tools({query: "records"});
+await files.writeFile("note.txt", "asked for " + found.answer);
+console.log("wrote the file");
+return {note: await files.readFile("note.txt", "utf8"), platform: process.platform};`
+        const say = (message: ParentMessage) =>
+          encodeParent(message).pipe(Effect.flatMap((text) => spoken.say(`${text}\n`)))
+        yield* say(ParentMessage.cases.Start.make({ code: program }))
+        expect(yield* measured('the program asks', line())).toEqual(
+          WorkerMessage.cases.Call.make({ id: 1, kind: 'find_tools', input: { query: 'records' } }),
+        )
+        yield* say(ParentMessage.cases.Reply.make({ id: 1, value: { answer: 'records' } }))
+        expect(yield* measured('the program finishes', line())).toEqual(
+          WorkerMessage.cases.Done.make({
+            result: { note: 'asked for records', platform: 'linux' },
+            logs: ['wrote the file'],
+            logsTruncated: false,
+          }),
+        )
+        expect(yield* spoken.ended).toEqual({ exitCode: 0, timedOut: false })
+        // Leave nothing: the proof's files, then this opening's own key line.
+        const cleaned = yield* run({
+          key,
+          command: `rm -rf ${proof} && sed -i '/ ${KEY_TAG}$/d' .ssh/authorized_keys; test ! -e ${proof} && echo clean`,
+          directory: '/home/user',
+          timeoutSeconds: 30,
+        })
+        expect(cleaned.stdout.trim()).toBe('clean')
       }).pipe(Effect.scoped),
     180_000,
   )

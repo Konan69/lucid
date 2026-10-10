@@ -155,6 +155,17 @@ personal key was proven on the last published tag, `2.0.0-beta.8`, as well. A co
 data was started on the new image before the switch. The store schema and migrations are identical in both, the server's key is valid on both,
 and going back to the tag is safe.
 
+### Executor's tracing is off
+
+Executor's image traces itself into a collector bundled in the same process, and has no setting
+to stop. Idle, it produced about 48,000 spans an hour; the collector's store filled its 1 GiB
+limit in 14 hours and the process grew about 80 MB an hour until Railway killed it at 8 GB. That
+memory was 84% of the project's Railway usage on 9 October 2026. Upstream issues 2194 and 2216
+describe both and were open, with no fix in `2.0.0-beta.12`. `infra/railway.ts` sets
+`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` on the Executor, which leaves the image with no tracer; the
+comment there names the source lines. To check it, read the service's memory in Railway's
+metrics: it should stay near its starting value for days, not climb.
+
 ### Telemetry volume
 
 The server exports spans and log lines to Sentry over OTLP. Export is by allowlist, and work that
@@ -309,8 +320,8 @@ settings keep their defaults. Apply the auth then product
 migrations before starting the server; Flue migrates its own runtime schema at startup.
 
 Programs (`run_code`) need nothing from the server's host. A program runs on the Person's
-Computer: the server starts its runner there through the Computer's provider, follows what it
-prints, and answers its calls. Until 5 October 2026 a program ran on the server's own host inside
+Computer: the server starts its runner there over its SSH connection to the Computer, reads what
+it prints, and answers its calls on the same channel. Until 5 October 2026 a program ran on the server's own host inside
 user-systemd, a cgroup and bubblewrap, which an ordinary container does not have, so production
 refused every program. The server image therefore carries no isolation tools, and the only
 requirement is the one every Vivid already has: a Computer provider.

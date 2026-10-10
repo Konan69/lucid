@@ -1,6 +1,6 @@
 import { expect, it } from '@effect/vitest'
 import { NodeHttpClient, NodeHttpServer } from '@effect/platform-node'
-import { cutFault, ServiceId } from '@vivid/contracts'
+import { cutFault, RunId, ServiceId, ThreadId } from '@vivid/contracts'
 import { getTableName } from 'drizzle-orm'
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core/errors'
 import {
@@ -49,6 +49,7 @@ import {
 import { observeFailures } from './failure.ts'
 import { Message, OMITTED } from './messages.ts'
 import { recordRefusal, Refusal } from './refusal.ts'
+import { recordRunFailure } from '../runtime/failure.ts'
 
 /** The slice of OTLP/HTTP JSON these tests read; everything else in a post is left undecoded. */
 const Pair = Schema.Struct({
@@ -334,6 +335,88 @@ const withReceiver = <A, E, R>(program: Effect.Effect<A, E, R>) =>
     const context = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* program.pipe(Effect.provide(context))
   }).pipe(Effect.scoped)
+
+it.effect(
+  'exports failed model settlements as typed runtime failures with only closed diagnostics',
+  () =>
+    withReceiver(
+      Effect.gen(function* () {
+        const { lines, spans, text } = yield* exported(
+          recordRunFailure({
+            threadId: ThreadId.make('private-thread'),
+            runId: RunId.make('private-run'),
+            reason: 'ModelUnavailable',
+            status: Option.some(520),
+          }),
+        )
+        const expected = {
+          'error.type': 'ModelProviderFailed',
+          'vivid.failure.kind': 'expected',
+          'vivid.boundary': 'runtime',
+          'vivid.model.failure.reason': 'ModelUnavailable',
+          'vivid.model.failure.status': 520,
+        }
+        const [span] = spanNamed(spans, 'Runtime.failedRun')
+        expect(span === undefined ? {} : valuesOf(span.attributes)).toEqual(expected)
+        const failures = lines.filter((entry) => entry.body.stringValue === Message.failure)
+        expect(failures).toHaveLength(1)
+        expect(failures.map((entry) => valuesOf(entry.attributes))).toEqual([expected])
+        expect(text).not.toContain('private-thread')
+        expect(text).not.toContain('private-run')
+      }),
+    ),
+)
+
+it.effect.each(['Delivery', 'Unexplained'] as const)(
+  'exports a %s Run failure without attributing it to the model provider',
+  (reason) =>
+    withReceiver(
+      Effect.gen(function* () {
+        const { lines, spans } = yield* exported(
+          recordRunFailure({
+            threadId: ThreadId.make('private-thread'),
+            runId: RunId.make('private-run'),
+            reason,
+            status: Option.none(),
+          }),
+        )
+        const expected = {
+          'error.type': 'RunFailed',
+          'vivid.failure.kind': 'expected',
+          'vivid.boundary': 'runtime',
+        }
+        const [span] = spanNamed(spans, 'Runtime.failedRun')
+        expect(span === undefined ? {} : valuesOf(span.attributes)).toEqual(expected)
+        const failures = lines.filter((entry) => entry.body.stringValue === Message.failure)
+        expect(failures).toHaveLength(1)
+        expect(failures.map((entry) => valuesOf(entry.attributes))).toEqual([expected])
+      }),
+    ),
+)
+
+it.effect.each(['private provider prose', 'Delivery', 'Unexplained'])(
+  'drops non-model reason %s and invalid status values from both traces and logs',
+  (reason) =>
+    withReceiver(
+      Effect.gen(function* () {
+        const attributes = {
+          'vivid.model.failure.reason': reason,
+          'vivid.model.failure.status': 600,
+        }
+        const probe = Effect.fn('Probe.providerProse')(function* () {
+          yield* Effect.annotateCurrentSpan(attributes)
+          yield* Effect.logWarning(Message.failure).pipe(Effect.annotateLogs(attributes))
+        })
+        const { spans, lines, text } = yield* exported(probe())
+        const [span] = spanNamed(spans, 'Probe.providerProse')
+        expect(span === undefined ? {} : valuesOf(span.attributes)).toEqual({})
+        const failures = lines.filter((entry) => entry.body.stringValue === Message.failure)
+        expect(failures).toHaveLength(1)
+        expect(failures.map((entry) => valuesOf(entry.attributes))).toEqual([{}])
+        expect(text).not.toContain(reason)
+      }),
+    ),
+)
 
 it.effect('exports a typed failure with its tag, as expected, at its boundary', () =>
   withReceiver(
