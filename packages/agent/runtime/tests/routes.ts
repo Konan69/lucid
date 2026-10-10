@@ -209,11 +209,12 @@ export const routes = Effect.gen(function* () {
           expect(owned).toHaveLength(29)
           expect(owned.map((tool) => tool.name)).toContain('use_person_computer')
           // Every tool says its step to the Person in `summary`. `ask_person` is the one that
-          // does not: its `question` is already that sentence (`tools/ask.ts`, 5 October 2026).
+          // does not: its `questions` are already those sentences (`tools/ask.ts`, 5 October 2026;
+          // one to four of them since 10 October 2026).
           for (const tool of owned)
             expect(tool.parameters, tool.name).toHaveProperty(
               'required',
-              expect.arrayContaining([tool.name === 'ask_person' ? 'question' : 'summary']),
+              expect.arrayContaining([tool.name === 'ask_person' ? 'questions' : 'summary']),
             )
           return fauxAssistantMessage('ready')
         },
