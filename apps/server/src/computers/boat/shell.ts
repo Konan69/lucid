@@ -1,4 +1,4 @@
-import { Effect, Option } from 'effect'
+import { Effect, Option, Stream } from 'effect'
 import {
   MachineAuthenticationFailed,
   MachineExecutionUnknown,
@@ -121,7 +121,7 @@ export const machineLinks = (api: Transport) => {
   /** The machine boundary's `run`, `read` and `put`, over the machine's connection. */
   const operations = (
     accepted: (key: MachineKey) => Effect.Effect<{ readonly id: ProviderId }, MachineFailure>,
-  ): Pick<MachineOperations, 'run' | 'read' | 'put'> => {
+  ): Pick<MachineOperations, 'run' | 'converse' | 'read' | 'put'> => {
     const overLink = over(accepted)
     return {
       run: Effect.fn('Machine.boat.run')(function* (input) {
@@ -138,6 +138,47 @@ export const machineLinks = (api: Transport) => {
             timeoutSeconds: input.timeoutSeconds,
           }),
         )
+      }),
+      /**
+       * The conversation lives longer than this call, so the connection is taken once and what
+       * goes wrong later is put in the machine boundary's words where it happens: a connection
+       * that went is closed, as in `over`, and a command whose end was not heard is uncertain.
+       */
+      converse: Effect.fn('Machine.boat.converse')(function* (input) {
+        if (
+          !Number.isInteger(input.timeoutSeconds) ||
+          input.timeoutSeconds < 1 ||
+          input.command.length < 1
+        )
+          return yield* new MachineInputInvalid()
+        const located = accepted(input.key).pipe(Effect.flatMap((identity) => locate(identity.id)))
+        const link = yield* connections
+          .get(input.key, located)
+          .pipe(
+            Effect.mapError((failure) => (isLinkFailure(failure) ? linkFailure(failure) : failure)),
+          )
+        const lost = <A>(effect: Effect.Effect<A, LinkRunLost>) =>
+          effect.pipe(
+            Effect.tapError(() => connections.discard(input.key, link)),
+            Effect.mapError((): MachineFailure => new MachineExecutionUnknown({ key: input.key })),
+          )
+        const spoken = yield* link
+          .converse({
+            command: input.command,
+            directory: input.directory,
+            timeoutSeconds: input.timeoutSeconds,
+          })
+          .pipe(
+            Effect.tapError(() => connections.discard(input.key, link)),
+            Effect.mapError(linkFailure),
+          )
+        return {
+          output: spoken.output.pipe(
+            Stream.mapError((): MachineFailure => new MachineExecutionUnknown({ key: input.key })),
+          ),
+          say: (text) => lost(spoken.say(text)),
+          ended: lost(spoken.ended),
+        }
       }),
       read: Effect.fn('Machine.boat.read')((input) =>
         overLink(input.key, (link) => link.read(input.path)),

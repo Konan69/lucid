@@ -7,7 +7,8 @@ import { Duration, Effect, Layer, Ref } from 'effect'
 import { boatMachineLayer } from '../computers/boat.ts'
 import { Machine, MachineKey } from '../computers/machine.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
-import { CodeComputer, loadRunner, openGuest } from './computer.ts'
+import type { ComputerAttachment } from '../computers/store.ts'
+import { CodeComputer, installRunner, loadRunner, openGuest } from './computer.ts'
 import { CallOutcome, CodeProcess, codeProcessLayer, type Dispatch } from './process.ts'
 
 // A machine costs money and this test must never make one: it runs only when the installation
@@ -37,18 +38,12 @@ const onBoat = Layer.effect(
     const machine = yield* Machine
     const runner = yield* loadRunner
     yield* machine.ensure(key)
-    const background = yield* Effect.scope
-    return CodeComputer.of({
-      open: () =>
-        openGuest(
-          {
-            follow: (input) => machine.follow({ key, ...input }),
-            write: (input) => machine.write({ key, ...input }),
-          },
-          runner,
-          background,
-        ),
-    })
+    const attachment: ComputerAttachment = {
+      converse: (input) => machine.converse({ key, directory: '.', ...input }),
+      write: (input) => machine.write({ key, ...input }),
+    }
+    yield* installRunner(attachment, runner)
+    return CodeComputer.of({ open: () => openGuest(attachment, runner, Effect.void) })
   }),
 )
 const supervised = codeProcessLayer.pipe(Layer.provideMerge(onBoat), Layer.provideMerge(boat))
@@ -129,7 +124,7 @@ return {file, platform: process.platform};`,
     )
 
     it.effect(
-      'stops the program on the Computer when a call needs an Approval, and leaves nothing of it there',
+      'stops the program on the Computer when a call needs an Approval, and leaves nothing of it running',
       () =>
         Effect.gen(function* () {
           const process = yield* CodeProcess
@@ -156,11 +151,11 @@ return {file, platform: process.platform};`,
           )
           expect(CodeOutcome.guards.ApprovalRequired(outcome)).toBe(true)
           expect(outcome.calls.map((call) => call.end)).toEqual(['needs approval'])
-          // The runner removes its own directory when it is told to stop; a program still waiting
-          // on its ten-minute timer would have left it there.
+          // The program was waiting on a ten-minute timer. Closing its command ended the runner
+          // on the Computer; the bracket keeps the search from finding its own command line.
           const left = yield* machine.exec({
             key,
-            command: 'ls .cache/vivid/programs | wc -l',
+            command: "pgrep -f '[v]ivid/computer/program-' | wc -l",
             timeoutSeconds: 30,
           })
           expect(left.output.trim()).toBe('0')

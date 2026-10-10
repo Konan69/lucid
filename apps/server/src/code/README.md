@@ -11,37 +11,41 @@ credentials, the Gate and the Approvals. The program holds none of them.
 2. `computer.ts` wakes the Person's Computer and starts the runner on it (`guest.mjs`, sent as
    text and kept on the Computer under the hash of its content). The first program on a Computer
    installs the runner; later ones find it.
-3. The runner runs the program in a worker thread with a heap limit. The program sees `tools`,
-   `accounts`, `text` and `console`, and the Computer's own files, network and Node modules.
-4. A call the program makes for the Person is printed as one line. The Computer's provider
-   follows the output, so the server reads the line as it is printed, checks the call as the
-   Person (`calls.ts`), and writes the answer to a file the runner is watching for. Boat can
-   follow a command's output but cannot write to a running command; that is why answers are files.
+3. The runner runs the program in a worker thread. The program sees `tools`, `accounts`, `text`
+   and `console`, and the Computer's own files, network and Node modules. It has as much of the
+   Computer's memory as any other program there: the Computer is the Person's own machine.
+4. The runner is one command on the server's SSH connection to the Computer
+   (`computers/ssh/link.ts`, `converse`), and that command's channel carries both directions. A
+   call the program makes for the Person is one line the runner prints; the server checks the
+   call as the Person (`calls.ts`) and writes the answer as one line to the runner's input.
 5. The program's final line carries its result and what it printed. An Approval, a blocking rule
    or an unknown outcome ends the program from the server's side; calls already running finish.
 
 Nothing the program prints is believed: a line is decoded strictly, a call is admitted and
 checked like any call the model makes alone, and the receipts are the server's own.
 
+Until 10 October 2026 the answers were small files, written through the provider's API into a
+directory the runner watched, because the provider could follow a command's output but not write
+to it. The SSH channel made that directory, its removal and their bookkeeping unnecessary.
+
 ## Limits
 
 `budgets.ts` holds them. The server enforces time (from waking the Computer to the last line),
-the number of calls, the size of each call and answer, the total data, and the final result. The
-runner enforces the program's heap, cuts printed output, and stops a program at the call and
-call-size limits before anything is forwarded, so a program that starts calls without waiting for
-them cannot fill the Computer faster than the server reads. The provider ends a runner that
-outlives its deadline.
+the number of calls, the size of each call and answer, the total data, and the final result:
+these protect the server and what the model has to read. The runner cuts printed output and
+stops a program at the call and call-size limits before anything is forwarded, so a program that
+starts calls without waiting for them cannot flood the server. Nothing limits what a program
+does on the Computer itself. The Computer ends a runner that outlives its deadline.
 
 ## What is left on the Computer
 
-Nothing of the program. When it ends, the runner ends the processes the program started and
-left attached to it, removes its directory and only then prints its final line. A process the
+Nothing of the program is left running when it ends by itself: the runner ends the processes
+the program started and left attached to it, and only then prints its final line. A process the
 program put in the background on purpose keeps running, as it does after a command. A program the
-server gives up on (a decision, the deadline, a broken connection) is told to stop and its end is
-waited for briefly. The server then removes the program's directory itself, in the background,
-whatever happened: a file of the server's that arrives after the runner has gone puts the
-directory back, and which came first cannot be known. What the program wrote elsewhere on the
-Computer stays: that is the Person's machine and the program's to use.
+server gives up on (a decision, the deadline, a broken connection) has its command closed, and
+the Computer then signals the runner and everything in its process group; a background process
+meant to survive that must leave the group (`setsid`). What the program wrote on the Computer
+stays: that is the Person's machine and the program's to use.
 
 ## Tests
 

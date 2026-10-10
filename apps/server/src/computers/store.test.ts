@@ -275,6 +275,7 @@ const providerLayer = Layer.effect(
       follow,
       write,
       run,
+      converse: unused('converse'),
       read: unused('read'),
       put: unused('put'),
       browse,

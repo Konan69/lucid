@@ -261,26 +261,6 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
       }),
     )
 
-    it.effect('a finished program leaves nothing of itself on the Computer', () =>
-      Effect.gen(function* () {
-        // The count includes the program that is counting, and any other test's program that is
-        // still running; what matters is that one more finished program does not raise it. A late
-        // order to stop, written after the runner removed its directory, used to put it back.
-        const count =
-          'const files = await import("node:fs/promises"); return (await files.readdir(".cache/vivid/programs")).length;'
-        const before = yield* run(count, reply)
-        expect(yield* run('await tools.find_tools({}); return 1;', reply)).toHaveProperty(
-          'result',
-          1,
-        )
-        const after = yield* run(count, reply)
-        const counted = (outcome: CodeOutcome) =>
-          CodeOutcome.guards.Completed(outcome) ? Option.some(outcome.result) : Option.none()
-        expect(Option.isSome(counted(before))).toBe(true)
-        expect(counted(after)).toEqual(counted(before))
-      }),
-    )
-
     it.effect('ends a program that waits on something nothing can settle', () =>
       Effect.gen(function* () {
         const outcome = yield* run('console.log("waiting"); await new Promise(() => {});', reply)
@@ -569,23 +549,6 @@ describe('Supervised programs', { timeout: 30_000 }, () => {
         expect(aggregate).toHaveProperty('failure.limit', 'data')
         expect(aggregate.calls).toHaveLength(17)
       }),
-    )
-
-    it.effect(
-      'a program that fills its heap is ended with a memory failure and keeps what it printed',
-      () =>
-        Effect.gen(function* () {
-          const outcome = yield* run(
-            // Arrays of numbers are on the heap at once; repeated strings reach the limit far later.
-            'console.log("filling"); const items=[]; while(true) items.push(new Array(1048576).fill(0));',
-            reply,
-          )
-          check(outcome, 'Failed', {
-            failure: CodeFailure.cases.OverLimit.make({ limit: 'memory' }),
-            logs: ['filling'],
-          })
-        }),
-      { timeout: 20_000 },
     )
 
     it.effect(
@@ -946,11 +909,18 @@ standalone.effect(
         codeProcessLayer.pipe(
           Layer.provide(
             localCodeComputer((attachment) => ({
-              follow: attachment.follow,
-              write: (input) =>
-                input.path.includes('/in/reply-')
-                  ? Effect.fail(new MachineOperationFailed({ operation: 'write' }))
-                  : attachment.write(input),
+              write: attachment.write,
+              // The runner starts and hears its program; only answers cannot be written to it.
+              converse: (input) =>
+                attachment.converse(input).pipe(
+                  Effect.map((spoken) => ({
+                    ...spoken,
+                    say: (text: string) =>
+                      text.includes('"_tag":"Reply"')
+                        ? Effect.fail(new MachineOperationFailed({ operation: 'say' }))
+                        : spoken.say(text),
+                  })),
+                ),
             })),
           ),
         ),

@@ -1,7 +1,7 @@
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import { expect, it } from '@effect/vitest'
-import { Deferred, Effect, Fiber, Ref } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Option, Ref, Scope, Stream } from 'effect'
 import {
   FILE_BYTES,
   LinkFileRefused,
@@ -454,4 +454,65 @@ it.live.skipIf(!peerAvailable)(
       expect(other.authorizedLines()).not.toContain(two)
     }).pipe(Effect.scoped),
   40_000,
+)
+
+/**
+ * A command that is spoken with: it answers each line it is given, as a program on a Computer
+ * answers the server. Shown on a real SSH server, because the claim is about the channel.
+ */
+it.live.skipIf(!peerAvailable)(
+  'speaks with a running command in both directions, and hears how it ended',
+  () =>
+    Effect.gen(function* () {
+      const { server, link } = yield* connected()
+      const spoken = yield* link.converse({
+        // Echoes each line back in capitals until it is told to stop; the two-byte character is
+        // split across writes to show a piece need not end on a character.
+        command:
+          'while read line; do [ "$line" = stop ] && exit 7; echo "$line" | tr a-z A-Z; done',
+        directory: server.home,
+        timeoutSeconds: 20,
+      })
+      const heard = yield* Ref.make('')
+      const reading = yield* Effect.forkChild(
+        Stream.runForEach(spoken.output, (piece) => Ref.update(heard, (all) => all + piece)),
+      )
+      yield* spoken.say('first\n')
+      yield* spoken.say('caf')
+      yield* spoken.say('é second\n')
+      yield* spoken.say('stop\n')
+      yield* Fiber.join(reading)
+      expect(yield* Ref.get(heard)).toBe('FIRST\nCAFé SECOND\n')
+      expect(yield* spoken.ended).toEqual({ exitCode: 7, timedOut: false })
+    }).pipe(Effect.scoped),
+  30_000,
+)
+
+it.live.skipIf(!peerAvailable)(
+  'ends a spoken-with command, and what it started, when its scope closes',
+  () =>
+    Effect.gen(function* () {
+      const { server, link } = yield* connected()
+      const scope = yield* Scope.make()
+      const spoken = yield* link
+        .converse({
+          // Starts something that would run for ten minutes, says which process it is, and waits.
+          command: 'sleep 600 & echo $!; wait',
+          directory: server.home,
+          timeoutSeconds: 900,
+        })
+        .pipe(Scope.provide(scope))
+      const first = yield* Stream.runHead(spoken.output)
+      const pid = Option.getOrElse(first, () => '').trim()
+      expect(pid).toMatch(/^\d+$/u)
+      yield* Scope.close(scope, Exit.void)
+      // The machine signalled the command's whole group: what it started is gone as well.
+      const after = yield* link.run({
+        command: gone(pid),
+        directory: server.home,
+        timeoutSeconds: 20,
+      })
+      expect(after.stdout.trim()).toBe('gone')
+    }).pipe(Effect.scoped),
+  30_000,
 )

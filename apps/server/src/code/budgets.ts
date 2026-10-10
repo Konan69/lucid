@@ -4,8 +4,6 @@ import { CodeTiming } from '@vivid/contracts/code'
 export const budgets = {
   source: 16_384,
   seconds: CodeTiming.seconds,
-  // The program's own heap on the Person's Computer, in MiB (Node `resourceLimits`).
-  heap: 256,
   calls: 100,
   frame: 262_144,
   wire: 263_168,
