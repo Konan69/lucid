@@ -1,4 +1,5 @@
-import type { ConnectionId } from '@vivid/contracts'
+import type { Connection, ConnectionId } from '@vivid/contracts'
+import type { connecting } from '@vivid/state'
 import { Effect, Redacted, Result } from 'effect'
 import { useId, useState } from 'react'
 import { act } from '../../data/app'
@@ -16,10 +17,16 @@ import { Field, FieldError, FieldGroup, FieldLabel } from '../../ui/field'
 import { Input } from '../../ui/input'
 import { useSurface } from '../../ui/Layer'
 
-/** An integration that is waiting for its key: which one, what to call it, and what it asks for. */
+/**
+ * An integration that is waiting for its key: which one, what its service is called, and what it
+ * asks for. It is the part of the machine's `Keying` state the form needs (`connecting` in
+ * `@vivid/state`), so that state is handed over as it is.
+ */
 export interface Keying {
+  /** The attempt the dialog belongs to: its answer and its closing say this back. */
+  readonly attempt: { readonly id: connecting.AttemptId }
   readonly id: ConnectionId
-  readonly name: string
+  readonly serviceName: string
   readonly fields: ReadonlyArray<{ readonly name: string; readonly label: string }>
 }
 
@@ -27,13 +34,33 @@ export interface Keying {
  * Collects the key a service asks for. It is opened from Settings and from the card in a Thread;
  * either way the key goes straight to the integration and nowhere else. The values are wrapped the moment they leave the form and
  * sent once; they are not kept in state after the dialog closes and never appear anywhere else.
+ *
+ * The dialog is open for as long as the attempt is waiting for a key, so it does not close
+ * itself: `onClose` says the Person sent it away, and `onAnswered` hands over the account as the
+ * server answered with it, and either one moves the attempt on. Both name the attempt the dialog
+ * was opened for, so a dialog left from an attempt that was replaced ends nothing.
+ *
+ * Every answer that holds an account is handed over, whether or not the service took the key:
+ * the machine decides. After one completion the account no longer waits for a key and the server
+ * takes no second one (`makeComplete`, `apps/server/src/connections/executor.ts`), so a key the
+ * service refused ends the attempt (`Unusable`) and closes this; "check it and try again" was
+ * offering a retry the server cannot take. Only the call itself failing keeps the dialog open.
  */
-export function EnterKey({ keying, onClose }: { keying: Keying; onClose: () => void }) {
+export function EnterKey({
+  keying,
+  onClose,
+  onAnswered,
+}: {
+  keying: Keying
+  onClose: (attempt: connecting.AttemptId) => void
+  onAnswered: (attempt: connecting.AttemptId, connection: Connection) => void
+}) {
   const [refusal, setRefusal] = useState<string | null>(null)
   // One id for the form; each field's own name is added to it, so a label finds its input.
   const ids = useId()
   // Sent away (Escape, a click outside, the close button) it plays out before `onClose` is told.
-  const surface = useSurface(onClose)
+  const close = () => onClose(keying.attempt.id)
+  const surface = useSurface(close)
 
   function submit(form: HTMLFormElement) {
     return Effect.gen(function* () {
@@ -49,11 +76,12 @@ export function EnterKey({ keying, onClose }: { keying: Keying; onClose: () => v
       const result = yield* changing((client) =>
         client.CompleteConnection({ id: keying.id, fields }),
       )
+      // The call itself did not get through: nothing was completed, so it can be sent again.
       if (Result.isFailure(result)) {
         setRefusal('That was not accepted. Check it and try again.')
         return
       }
-      onClose()
+      onAnswered(keying.attempt.id, result.success.connection)
     })
   }
 
@@ -61,7 +89,7 @@ export function EnterKey({ keying, onClose }: { keying: Keying; onClose: () => v
     <Dialog {...surface}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{`Connect ${keying.name}`}</DialogTitle>
+          <DialogTitle>{`Connect ${keying.serviceName}`}</DialogTitle>
           <DialogDescription>
             This goes straight to the integration and is never shown to Vivid or kept in a thread.
           </DialogDescription>
@@ -92,7 +120,7 @@ export function EnterKey({ keying, onClose }: { keying: Keying; onClose: () => v
             {refusal !== null && <FieldError>{refusal}</FieldError>}
           </FieldGroup>
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onClose}>
+            <Button type="button" variant="ghost" onClick={close}>
               Cancel
             </Button>
             <Button type="submit">Connect</Button>

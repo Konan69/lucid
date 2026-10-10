@@ -17,15 +17,25 @@ import {
   byService,
   channelWords,
   composerOf,
+  connecting,
   liveStateOf,
   textLink,
   whichAccount,
   type ServiceAccounts,
 } from '@vivid/state'
-import { Effect, Option, Result } from 'effect'
+import { Option } from 'effect'
 import { Building2, Pencil, Plus, Search, Unplug } from 'lucide-react'
 import { useState, type ReactElement, type ReactNode } from 'react'
 import { act } from '../../data/app'
+import {
+  dismiss,
+  finish,
+  keyingFor,
+  press,
+  standingFor,
+  useAttempt,
+  waitingOn,
+} from '../../data/connecting'
 import {
   changing,
   live,
@@ -40,8 +50,7 @@ import { orSay } from '../../data/said'
 import { Button, buttonVariants, IconButton } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import { Segmented } from '../../ui/Segmented'
-import { Began, begin, follow } from '../integration/begin'
-import { EnterKey, type Keying } from '../integration/Key'
+import { EnterKey } from '../integration/Key'
 import { Mark } from '../integration/Mark'
 import { NameAccount } from '../integration/Name'
 import { byPurpose } from '../integration/purpose'
@@ -49,33 +58,39 @@ import { DRAW, ENTER, PRESS, stagger } from '../motion'
 import { Awaiting } from './Parts'
 
 /**
- * Where one tile stands after it was pressed. `starting` is said the moment it is pressed, so the
- * press is answered before the server is; the rest is what the server's answer came to.
+ * What a tile or a row says about the attempt made on it, from where that attempt stands in the
+ * machine (`connecting` in `@vivid/state`); nothing when it has no words of its own.
+ *
+ * "Connecting…" is said from the press, before the server answers. A key is asked for in a
+ * dialog, which is the answer, so the tile goes back to how it was. A sign-in page that could
+ * not be opened says to allow pop-ups; an attempt the server did not begin, or whose address was
+ * not a page, says only that it did not start.
  */
-type Pressed = 'starting' | 'waiting' | 'blocked' | 'refused' | 'connected'
-
-/** What a pressed tile says under the service's name. */
-const PRESSED = {
-  starting: 'Connecting…',
-  waiting: 'Finish in the new tab',
-  blocked: 'Allow pop-ups, then try again',
-  refused: 'Did not start. Try again',
-  connected: 'Connected',
-} satisfies Record<Pressed, string>
-
-/** A tile is pressed by the service it offers or by the Connection it shows. */
-type Key = Service['id'] | Connection['id']
-type Presses = ReadonlyMap<Key, Pressed>
-
-/** What one press came to, as what its tile should say; nothing when it needs no words. */
-const pressedOf = (began: Began): Option.Option<Pressed> =>
-  Began.$match(began, {
-    SigningIn: () => Option.some<Pressed>('waiting'),
-    // The key dialog is the answer; the tile goes back to how it was.
-    NeedsKey: () => Option.none(),
-    Connected: () => Option.some<Pressed>('connected'),
-    Blocked: () => Option.some<Pressed>('blocked'),
-    Refused: () => Option.some<Pressed>('refused'),
+const saidOf = (standing: connecting.Standing) =>
+  connecting.Standing.match<Option.Option<string>>(standing, {
+    Still: () => Option.none(),
+    Starting: () => Option.some('Connecting…'),
+    Away: () => Option.some('Finish in the new tab'),
+    // The server is being asked again, as it was at the press. The web does not reach this yet:
+    // it hears a sign-in finish through the live list and never says the Person came back.
+    Checking: () => Option.some('Connecting…'),
+    Keying: () => Option.none(),
+    // The Person came back without finishing. The list shows the account as unfinished, with
+    // its own way to finish it, so the tile and the row say nothing more.
+    Unfinished: () => Option.none(),
+    Connected: () => Option.some('Connected'),
+    Refused: ({ refusal }) =>
+      connecting.Refusal.match<Option.Option<string>>(refusal, {
+        NotBegun: () => Option.some('Did not start. Try again'),
+        Blocked: () => Option.some('Allow pop-ups, then try again'),
+        Unopened: () => Option.some('Did not start. Try again'),
+        // The web draws its key dialog from the state, so nothing can fail to show; were it
+        // ever said, it is a press that did not start.
+        Unshown: () => Option.some('Did not start. Try again'),
+        // The service did not take the key. No retry is promised: the server takes no second
+        // key for the account, which the list now shows as not working, with its own way out.
+        Unusable: ({ serviceName }) => Option.some(`${serviceName} did not accept that.`),
+      }),
   })
 
 /** How a Connection stands, as the colour of its dot and the words beside it. */
@@ -131,44 +146,26 @@ const named = (name: string, query: string) =>
 export function Connections({ me }: { me: MeResponse }) {
   const state = useLive(live.connections)
   const [query, setQuery] = useAtom(serviceSearch)
-  const [presses, setPresses] = useState<Presses>(new Map())
-  const [keying, setKeying] = useState<Option.Option<Keying>>(Option.none())
+  const attempt = useAttempt()
   const [forCompany, setForCompany] = useState(false)
   if (!LiveState.$is('Ready')(state)) return <Awaiting state={state} />
   const { connections } = state.value
+  const keying = keyingFor(attempt, Option.none())
   const company = Workspace.guards.Company(me.workspace) ? Option.some(me.workspace) : Option.none()
   const admin = Option.exists(company, (workspace) => workspace.role !== 'member')
-
-  /** Keeps where one press stands beside the tile that was pressed. */
-  const mark = (key: Key, pressed: Option.Option<Pressed>) =>
-    setPresses((before) => {
-      const after = new Map(before)
-      Option.match(pressed, {
-        onNone: () => after.delete(key),
-        onSome: (value) => after.set(key, value),
-      })
-      return after
-    })
-
-  /** Says what one press came to on its tile, and opens the key dialog when a key is wanted. */
-  function settle(key: Key, began: Began) {
-    mark(key, pressedOf(began))
-    if (Began.$is('NeedsKey')(began)) setKeying(Option.some(began.keying))
-  }
 
   /**
    * Begins one account on a service: the first, or one more on a service that is already
    * connected. `signIn` says a sign-in may be coming, and then the tab for it is opened by the
-   * click itself, before the server is asked anything; `follow` closes a tab the answer does not
-   * need.
+   * click itself, before the server is asked anything; a tab the answer does not need is closed.
    */
-  function connect(service: Service['id'], signIn: boolean, name: Option.Option<AccountName>) {
-    return Effect.gen(function* () {
-      const tab = signIn ? window.open('about:blank', '_blank') : null
-      mark(service, Option.some('starting'))
-      settle(service, yield* begin({ id: service }, tab, { shared: admin && forCompany, name }))
+  const connect = (service: Service['id'], signIn: boolean, name: Option.Option<AccountName>) =>
+    press({
+      pressed: service,
+      asked: connecting.Asked.cases.Begin.make({ service, shared: admin && forCompany, name }),
+      signIn,
+      card: Option.none(),
     })
-  }
 
   /**
    * Picks a Connection up where it stopped: the sign-in tab was closed, the key was never
@@ -176,20 +173,15 @@ export function Connections({ me }: { me: MeResponse }) {
    *
    * A Connection does not say whether it wants a sign-in page or a key until it is asked, so the
    * tab is opened once the answer is a sign-in page. A browser allows that for a few seconds
-   * after the click; when it has stopped allowing it, the tile says to allow pop-ups.
+   * after the click; when it has stopped allowing it, the row says to allow pop-ups.
    */
-  function resume(connection: Connection) {
-    return Effect.gen(function* () {
-      mark(connection.id, Option.some('starting'))
-      const result = yield* changing((client) =>
-        client.ResumeConnection({ id: connection.id, from: 'Web' }),
-      )
-      settle(
-        connection.id,
-        Result.isFailure(result) ? Began.Refused() : follow(result.success, null),
-      )
+  const resume = (connection: Connection) =>
+    press({
+      pressed: connection.id,
+      asked: connecting.Asked.cases.Resume.make({ id: connection.id }),
+      signIn: false,
+      card: Option.none(),
     })
-  }
 
   const disconnect = (connection: Connection) =>
     void act(
@@ -213,9 +205,9 @@ export function Connections({ me }: { me: MeResponse }) {
   const acts: Acts = {
     // How a connected service is entered is not on its accounts, so a sign-in is allowed for:
     // a tab the answer does not need is closed again.
-    onAdd: (group, name) => void act(connect(group.service, true, name)),
+    onAdd: (group, name) => connect(group.service, true, name),
     onRename: rename,
-    onResume: (connection) => void act(resume(connection)),
+    onResume: resume,
     onDisconnect: disconnect,
   }
 
@@ -227,20 +219,16 @@ export function Connections({ me }: { me: MeResponse }) {
         searching={query.trim().length > 0}
         company={Option.map(company, (workspace) => workspace.company.name)}
         admin={admin}
-        presses={presses}
         acts={acts}
       />
       <TextVivid query={query} />
       <Catalog
         ready={connections.filter((item) => ConnectionState.guards.Ready(item.state))}
-        presses={presses}
         onConnect={(service, name) =>
-          void act(
-            connect(
-              service.id,
-              ServiceAuthorization.isAnyOf(['SignIn', 'KnownAfterInstall'])(service.authorization),
-              name,
-            ),
+          connect(
+            service.id,
+            ServiceAuthorization.isAnyOf(['SignIn', 'KnownAfterInstall'])(service.authorization),
+            name,
           )
         }
         whose={
@@ -261,8 +249,9 @@ export function Connections({ me }: { me: MeResponse }) {
           ) : null
         }
       />
+      {/* The dialog is open exactly while an attempt made on this screen is waiting for a key. */}
       {Option.isSome(keying) && (
-        <EnterKey keying={keying.value} onClose={() => setKeying(Option.none())} />
+        <EnterKey keying={keying.value} onClose={dismiss} onAnswered={finish} />
       )}
     </div>
   )
@@ -329,7 +318,6 @@ function Connected({
   searching,
   company,
   admin,
-  presses,
   acts,
 }: {
   connections: ReadonlyArray<Connection>
@@ -337,7 +325,6 @@ function Connected({
   /** The Company's name, in a Company's workspace. */
   company: Option.Option<string>
   admin: boolean
-  presses: Presses
   acts: Acts
 }) {
   if (connections.length === 0) return searching ? null : <NothingConnected />
@@ -357,7 +344,6 @@ function Connected({
             group={group}
             company={company}
             admin={admin}
-            presses={presses}
             acts={acts}
           />
         ))}
@@ -415,17 +401,18 @@ function ServiceCard({
   group,
   company,
   admin,
-  presses,
   acts,
 }: {
   place: number
   group: ServiceAccounts
   company: Option.Option<string>
   admin: boolean
-  presses: Presses
   acts: Acts
 }) {
-  const adding = Option.fromUndefinedOr(presses.get(group.service))
+  const attempt = useAttempt()
+  // One attempt is made at a time: nothing is begun or picked up while the server is asked.
+  const waiting = waitingOn(attempt)
+  const adding = saidOf(standingFor(attempt, group.service))
   /** What one account's row is told: whose it is, where a press on it stands, who may act. */
   const told = (connection: Connection) => {
     const own = ConnectionOwnership.guards.Personal(connection.ownership)
@@ -433,19 +420,15 @@ function ServiceCard({
       connection,
       others: group.accounts.filter((account) => account.id !== connection.id),
       sharedWith: own ? Option.none<string>() : company,
-      pressed: Option.fromUndefinedOr(presses.get(connection.id)),
+      standing: standingFor(attempt, connection.id),
+      waiting,
       // A Company's account is named, finished or removed by an admin, never a member.
       acts: own || admin ? Option.some(acts) : Option.none<Acts>(),
     }
   }
   const [only, ...others] = group.accounts
   const add = group.accounts.some((account) => account.origin === 'Catalogue') && (
-    <AddAccount
-      group={group}
-      // One press is one account: nothing more is begun while a press is on its way.
-      busy={Option.contains(adding, 'starting')}
-      onAdd={(name) => acts.onAdd(group, name)}
-    />
+    <AddAccount group={group} busy={waiting} onAdd={(name) => acts.onAdd(group, name)} />
   )
   return (
     <li className={cn('rounded-card bg-surface-3 edge', ENTER, stagger(place))}>
@@ -458,7 +441,7 @@ function ServiceCard({
           <h4 className="truncate text-title font-title text-ink">{group.serviceName}</h4>
           {Option.isSome(adding) && (
             <p role="status" className="truncate text-label text-ink-3">
-              {PRESSED[adding.value]}
+              {adding.value}
             </p>
           )}
           {Option.isNone(adding) && others.length > 0 && (
@@ -550,7 +533,10 @@ interface Told {
   readonly others: ReadonlyArray<Connection>
   /** The Company this account is shared with, when it is not the Person's own. */
   readonly sharedWith: Option.Option<string>
-  readonly pressed: Option.Option<Pressed>
+  /** Where an attempt to pick this account up stands. */
+  readonly standing: connecting.Standing
+  /** Whether nothing can be pressed for now, because the server is being asked. */
+  readonly waiting: boolean
   /** Present for whoever may name, finish or remove this account. */
   readonly acts: Option.Option<Acts>
 }
@@ -562,16 +548,13 @@ interface Told {
 function AccountWords({
   connection,
   sharedWith,
-  pressed,
+  standing,
   alone,
 }: Told & {
   /** Whether it is the only account on its service, which then needs nothing to tell it apart. */
   alone: boolean
 }) {
-  const words = Option.match(pressed, {
-    onNone: () => rowWords(connection, alone),
-    onSome: (value) => PRESSED[value],
-  })
+  const words = Option.getOrElse(saidOf(standing), () => rowWords(connection, alone))
   return (
     <span className="flex min-w-0 flex-1 items-center gap-1.5 text-label text-ink-2" title={words}>
       <i aria-hidden className={cn('size-1.5 shrink-0 rounded-full', STANDING(connection).dot)} />
@@ -589,9 +572,9 @@ function AccountWords({
 }
 
 /** The account's own actions, for whoever may take them; nothing for anyone else. */
-function RowActions({ connection, others, acts }: Told) {
+function RowActions({ connection, others, waiting, acts }: Told) {
   return Option.isSome(acts) ? (
-    <AccountActions connection={connection} others={others} acts={acts.value} />
+    <AccountActions connection={connection} others={others} waiting={waiting} acts={acts.value} />
   ) : null
 }
 
@@ -599,10 +582,12 @@ function RowActions({ connection, others, acts }: Told) {
 function AccountActions({
   connection,
   others,
+  waiting,
   acts,
 }: {
   connection: Connection
   others: ReadonlyArray<Connection>
+  waiting: boolean
   acts: Acts
 }) {
   const naming = connection.name === null ? 'Name this account' : 'Rename this account'
@@ -628,7 +613,12 @@ function AccountActions({
         </Button>
       ) : (
         <>
-          <Button variant="outline" size="sm" onClick={() => acts.onResume(connection)}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={waiting}
+            onClick={() => acts.onResume(connection)}
+          >
             Reconnect
           </Button>
           <IconButton
@@ -795,13 +785,11 @@ function ConnectedChannelTile({
  */
 function Catalog({
   ready,
-  presses,
   onConnect,
   whose,
 }: {
   /** The accounts this Person can use now; a service with one of them is already connected. */
   ready: ReadonlyArray<Connection>
-  presses: Presses
   /** Begins an account on a service, under the name the Person gave when one was asked for. */
   onConnect: (service: Service, name: Option.Option<AccountName>) => void
   /** The admin's choice of who the next Connection is for, when there is one to make. */
@@ -863,7 +851,6 @@ function Catalog({
                   // would be noise: tiles arrive in a stagger only on the unsearched view.
                   place={searching ? Option.none() : Option.some(place)}
                   accounts={ready.filter((item) => item.service === service.id)}
-                  pressed={Option.fromUndefinedOr(presses.get(service.id))}
                   onConnect={(name) => onConnect(service, name)}
                 />
               </li>
@@ -876,14 +863,14 @@ function Catalog({
 }
 
 /**
- * What a tile says under the service's name: where a press stands, else what pressing it does
+ * What a tile says under the service's name: where an attempt on it stands (`saidOf`), else what pressing it does
  * when the service is already connected, else how it is entered.
  *
  * A connected service said only "Connected", and nothing told a Person that pressing it again
  * adds one more account. It says so now, in the words the card above uses.
  */
-function noteOf(service: Service, connected: boolean, pressed: Option.Option<Pressed>) {
-  if (Option.isSome(pressed)) return Option.some(PRESSED[pressed.value])
+function noteOf(service: Service, connected: boolean, said: Option.Option<string>) {
+  if (Option.isSome(said)) return said
   if (connected) {
     // One more account is offered only where a sign-in can still be begun. A service that was
     // connected before its sign-in was taken off this Vivid is not a tile to press, and said
@@ -918,7 +905,6 @@ function ServiceTile({
   service,
   place,
   accounts,
-  pressed,
   onConnect,
 }: {
   service: Service
@@ -926,11 +912,12 @@ function ServiceTile({
   place: Option.Option<number>
   /** The ready accounts this Person already has on the service. */
   accounts: ReadonlyArray<Connection>
-  pressed: Option.Option<Pressed>
   onConnect: (name: Option.Option<AccountName>) => void
 }) {
+  const attempt = useAttempt()
+  const standing = standingFor(attempt, service.id)
   const connected = accounts.length > 0
-  const note = noteOf(service, connected, pressed)
+  const note = noteOf(service, connected, saidOf(standing))
   const arriving = Option.match(place, {
     onNone: () => '',
     onSome: (value) => cn(ENTER, stagger(value)),
@@ -944,9 +931,9 @@ function ServiceTile({
           <span className="block truncate text-meta font-meta text-ink-3">{note.value}</span>
         )}
       </span>
-      {/* The check draws itself only on a tile this Person pressed on this visit: that is a
-          thing that has just happened. One that was connected all along is simply checked. */}
-      {connected && <Done drawn={Option.isSome(pressed)} />}
+      {/* The check draws itself only on a tile whose attempt is the one that just ran: that is
+          a thing that has just happened. One that was connected all along is simply checked. */}
+      {connected && <Done drawn={!connecting.Standing.guards.Still(standing)} />}
     </>
   )
   if (ServiceAuthorization.guards.SetupRequired(service.authorization)) {
@@ -957,10 +944,10 @@ function ServiceTile({
     <button
       type="button"
       onClick={asks ? undefined : () => onConnect(Option.none())}
-      // One press is one Connection: the tile is not pressed again while its first press is
-      // still on its way to the server.
-      disabled={Option.contains(pressed, 'starting')}
-      aria-busy={Option.contains(pressed, 'starting')}
+      // One attempt is made at a time: no tile is pressed while the server is being asked, by
+      // this tile or by anything else. The tile that is being asked about says it is busy.
+      disabled={waitingOn(attempt)}
+      aria-busy={connecting.Standing.guards.Starting(standing)}
       aria-label={connected ? `Add another ${service.name} account` : `Connect ${service.name}`}
       className={cn(
         TILE,

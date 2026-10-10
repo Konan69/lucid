@@ -14,34 +14,42 @@ import {
   type InputRequest,
   type PersonId,
 } from '@vivid/contracts'
-import { Effect, Option, Predicate, Result, Schema } from 'effect'
+import { Data, Effect, Option, Predicate, Result, Schema } from 'effect'
 import {
   answered,
   answering,
   APPROVAL_EFFECT_WORDS,
-  asksName,
   Awaited,
   awaitedOf,
   awaitedWords,
-  begunFor,
   browserStep,
+  CardPress,
+  cardPress,
+  connecting,
   desktopStep,
 } from '@vivid/state'
-import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import { Check, Globe, Link2, MousePointer2, ShieldQuestion, X } from 'lucide-react'
 import { BorderBeam } from 'border-beam'
 import { useState, type ReactNode } from 'react'
 import { act } from '../../data/app'
+import {
+  carriedOn,
+  dismiss,
+  finish,
+  keyingFor,
+  press,
+  standingForCard,
+  useAttempt,
+  waitingOn,
+} from '../../data/connecting'
 import { changing, live, useLiveValue } from '../../data/live'
 import { openSettings } from '../../router'
-import { engine } from '../../data/runtime'
 import { orSay } from '../../data/said'
 import { themeShown, useTheme } from '../../data/theme'
 import { Button } from '../../ui/button'
 import { Card } from '../../ui/card'
 import { cn } from '../../ui/cn'
-import { Began, begin, follow } from '../integration/begin'
-import { EnterKey, type Keying } from '../integration/Key'
+import { EnterKey } from '../integration/Key'
 import { Mark } from '../integration/Mark'
 import { NameAccount } from '../integration/Name'
 import { Asked, Question } from './Question'
@@ -390,72 +398,67 @@ export function InputCard({ request, me }: { request: InputRequest; me: PersonId
   )
 }
 
-/** How long a card keeps listening for its service after a press before it stops, in ms. */
-const LISTEN_MS = 10 * 60_000
-
-// The cards that are listening for their service, so pressing twice does not carry on twice.
-const listening = new Set<string>()
-
-/**
- * Carries the Thread on by itself once the service is connected. It is started by the press on
- * the card, not by rendering it: only a Person who just asked to connect wants Vivid to go on
- * the moment the sign-in finishes, and a card read again tomorrow must not speak for them. It
- * listens to the same live list of Connections the card draws from, and gives up after ten
- * minutes, when "Carry on" on the card is still there to press.
- */
-function carryOnOnceReady(
-  key: string,
-  ready: (connections: ReadonlyArray<Connection>) => boolean,
-  /** Told the list that settled it, so it can say which account that was. */
-  go: (connections: ReadonlyArray<Connection>) => void,
-) {
-  if (listening.has(key)) return
-  listening.add(key)
-  const stop = () => {
-    listening.delete(key)
-    clearTimeout(timer)
-    unsubscribe()
-  }
-  const unsubscribe = engine.registry.subscribe(live.connections.atom, (result) => {
-    if (!AsyncResult.isSuccess(result) || !ready(result.value.connections)) return
-    stop()
-    go(result.value.connections)
-  })
-  const timer = setTimeout(stop, LISTEN_MS)
+/** One sentence the card says under its reason, and whether it is a fault to be read at once. */
+interface Said {
+  readonly words: string
+  readonly urgent: boolean
 }
 
-/** Where a press on the card left things, until the live list says the service is connected. */
-type Pressed = 'not-yet' | 'starting' | 'waiting' | 'blocked' | 'refused'
-
-/** What the card says under the reason for each of those, when it says anything. */
-const AFTER_PRESS = {
-  'not-yet': Option.none(),
-  starting: Option.none(),
-  waiting: Option.some('Finish in the tab that opened. Vivid carries on by itself.'),
-  blocked: Option.some(
-    'The sign-in page could not open. Allow pop-ups for this page and try again.',
-  ),
-  refused: Option.some('That did not start. It may not be available on this server yet.'),
-} satisfies Record<Pressed, Option.Option<string>>
+const NOT_STARTED = Option.some<Said>({
+  words: 'That did not start. It may not be available on this server yet.',
+  urgent: true,
+})
 
 /**
- * Picks up an Integration that was begun and left unfinished, on the tab the press opened for
- * it. A refusal closes that tab: nothing is coming to show in it.
+ * What the card says under the reason, from where its own attempt stands in the machine
+ * (`connecting` in `@vivid/state`), when it says anything. A press that is on its way, a key
+ * being asked for and an account that connected are said by the button, the dialog and the live
+ * list; only a sign-in in its tab, one the Person came back from without finishing, and an
+ * attempt that ended without an account have a sentence. An unfinished sign-in is not a fault
+ * (people look at the page and leave), so it is said calmly, by the service's name.
  */
-const pickUp = (id: Connection['id'], tab: Window | null) =>
-  Effect.gen(function* () {
-    const step = yield* changing((client) => client.ResumeConnection({ id, from: 'Web' }))
-    if (Result.isSuccess(step)) return follow(step.success, tab)
-    if (tab !== null) tab.close()
-    return Began.Refused()
+const saidAfter = (standing: connecting.Standing, serviceName: string) =>
+  connecting.Standing.match<Option.Option<Said>>(standing, {
+    Still: () => Option.none(),
+    Starting: () => Option.none(),
+    Away: () =>
+      Option.some({
+        words: 'Finish in the tab that opened. Vivid carries on by itself.',
+        urgent: false,
+      }),
+    Checking: () => Option.none(),
+    Keying: () => Option.none(),
+    Unfinished: () => Option.some({ words: `${serviceName} is not signed in yet.`, urgent: false }),
+    Connected: () => Option.none(),
+    Refused: ({ refusal }) =>
+      connecting.Refusal.match<Option.Option<Said>>(refusal, {
+        NotBegun: () => NOT_STARTED,
+        Blocked: () =>
+          Option.some({
+            words: 'The sign-in page could not open. Allow pop-ups for this page and try again.',
+            urgent: true,
+          }),
+        Unopened: () => NOT_STARTED,
+        // A key form that could not be brought up is a press that did not start.
+        Unshown: () => NOT_STARTED,
+        // The service did not take the key, and the server takes no second one for the
+        // account. The card does not send the Person away to replace it: a card that waits for
+        // this very account would never be answered by another. Its button carries on instead.
+        Unusable: (unusable) =>
+          Option.some({ words: `${unusable.serviceName} did not accept that.`, urgent: true }),
+      }),
   })
 
 /**
  * Vivid needs a service to go on. One card says which service, why in Vivid's own words, and has
- * one thing to press. The press starts the same flow Settings uses, right here: a sign-in opens
- * in its own tab, a key is typed into a dialog that sends it straight to the Integration (never
- * into the Thread, never to Vivid). Whether it is connected is read live, so the card settles by
- * itself, and Vivid carries on without being told.
+ * one thing to press. The press starts the same attempt Settings makes, right here: a sign-in
+ * opens in its own tab, a key is typed into a dialog that sends it straight to the Integration
+ * (never into the Thread, never to Vivid). Whether it is connected is read live, so the card
+ * settles by itself, and Vivid carries on without being told.
+ *
+ * Where the attempt stands is not kept by the card. It is in the page's one machine
+ * (`data/connecting.ts`), found by the tool call this card stands for, so an answer that comes
+ * late cannot write over a newer press and a card drawn again says what the one before it said.
  *
  * Which accounts settle it is `awaited`. A service Vivid offered is settled by any ready account
  * on it. An Integration Vivid began is settled by that one. One more account, which Vivid asks
@@ -481,55 +484,65 @@ export function ConnectionCard({
   onContinue: (message: string) => void
 }) {
   const connections = useLiveValue(live.connections)
-  const [keying, setKeying] = useState<Option.Option<Keying>>(Option.none())
-  const [pressed, setPressed] = useState<Pressed>('not-yet')
+  const attempt = useAttempt()
   const shown = useTheme(themeShown)
   const list = Option.match(connections, { onNone: () => [], onSome: (value) => value.connections })
-  const readyIn = (all: ReadonlyArray<Connection>) => answered(all, request, awaited)
   // A request for one more account is never ready when it is made, whatever the card was told.
-  const ready = (Awaited.$is('Service')(awaited) && request.ready) || readyIn(list)
+  const ready =
+    (Awaited.$is('Service')(awaited) && request.ready) || answered(list, request, awaited)
   const words = awaitedWords(awaited, request.serviceName)
-  // Said with the list as it stands when it is said, so one more account is named by the
-  // account that was added and Vivid does not have to guess which of several is new.
-  const carryOn = (all: ReadonlyArray<Connection>) =>
-    onContinue(words.carryOn(answering(all, request, awaited)))
-  // One more account on a service that does not say who signs in is named before it is begun,
-  // as "Add account" in Settings does; the accounts already there are what show whether it says.
-  const held = list.filter((connection) => connection.service === request.service)
-  const named = Awaited.$is('Another')(awaited) && asksName(held)
+  const standing = standingForCard(attempt, id)
+  const keying = keyingFor(attempt, Option.some(id))
+  // What one press does, from the accounts as they stand: an Integration that was begun and left
+  // unfinished is picked up, not begun a second time, and one more account on a service that
+  // does not say who signs in is named first, as "Add account" in Settings does.
+  const next = cardPress(list, request, awaited)
+  const begin = (name: Option.Option<AccountName>) => ({
+    pressed: request.service,
+    asked: connecting.Asked.cases.Begin.make({ service: request.service, shared: false, name }),
+  })
 
-  /** One press: resume what was begun, or begin it, then listen for it to be connected. */
-  function connect(name: Option.Option<AccountName>) {
-    return Effect.gen(function* () {
-      // An Integration that was begun and left unfinished is picked up, not begun a second time.
-      const begun = begunFor(list, request, awaited)
-      // A sign-in tab is opened by the click itself when a sign-in is known to be coming.
-      const tab = Option.exists(authorization, ConnectionAuthorization.guards.OpenSignIn)
-        ? window.open('about:blank', '_blank')
-        : null
-      // Beginning can take the server many seconds; the button says so from the press.
-      setPressed('starting')
-      const began = yield* Option.match(begun, {
-        onNone: () => begin({ id: request.service }, tab, { shared: false, name }),
-        onSome: (connectionId) => pickUp(connectionId, tab),
-      })
-      setPressed(
-        Began.$match(began, {
-          SigningIn: (): Pressed => 'waiting',
-          NeedsKey: (): Pressed => 'not-yet',
-          Connected: (): Pressed => 'not-yet',
-          Blocked: (): Pressed => 'blocked',
-          Refused: (): Pressed => 'refused',
+  /**
+   * One press. The machine is told which card pressed, and the card is owed its carry-on from
+   * then: when the attempt ends in an account the Thread goes on by itself, said with the
+   * account that was connected, so one more account is named and Vivid does not have to guess
+   * which of several is new.
+   */
+  const connect = (name: Option.Option<AccountName>) =>
+    press({
+      ...CardPress.$match(next, {
+        Resume: ({ id: begun }) => ({
+          pressed: begun,
+          asked: connecting.Asked.cases.Resume.make({ id: begun }),
         }),
-      )
-      if (Began.$is('NeedsKey')(began)) setKeying(Option.some(began.keying))
-      if (!Began.$is('Blocked')(began) && !Began.$is('Refused')(began)) {
-        carryOnOnceReady(id, readyIn, carryOn)
-      }
+        Name: () => begin(name),
+        Begin: () => begin(name),
+      }),
+      // A sign-in tab is opened by the click itself when a sign-in is known to be coming.
+      signIn: Option.exists(authorization, ConnectionAuthorization.guards.OpenSignIn),
+      card: Option.some({
+        id,
+        carryOn: (connection) => onContinue(words.carryOn(Option.some(connection))),
+      }),
     })
+
+  /**
+   * "Carry on" from an attempt that ended without an account the service would take: Vivid is
+   * told what happened and decides what to do next. Nothing is owed for it, as for any carry-on
+   * made by hand.
+   */
+  const giveUp = (message: string) => {
+    carriedOn(id)
+    onContinue(message)
   }
 
-  const after = AFTER_PRESS[pressed]
+  /** "Carry on" by hand: said with the list as it stands, and no longer owed by an attempt. */
+  const carryOn = () => {
+    carriedOn(id)
+    onContinue(words.carryOn(answering(list, request, awaited)))
+  }
+
+  const said = saidAfter(standing, request.serviceName)
   return (
     // While it is the thing the Thread is waiting on, its edge breathes like an Approval's.
     <Edged>
@@ -545,29 +558,39 @@ export function ConnectionCard({
           <div className="min-w-48 flex-1">
             <h3 className="text-title font-title text-ink">{ready ? words.done : words.connect}</h3>
             <p className="mt-0.5 text-label text-pretty text-ink-3">{request.reason}</p>
-            {!ready && Option.isSome(after) && (
+            {!ready && Option.isSome(said) && (
               <p
-                role={pressed === 'waiting' ? 'status' : 'alert'}
+                role={said.value.urgent ? 'alert' : 'status'}
                 className={cn(
                   'mt-1.5 text-label text-pretty',
-                  pressed === 'waiting' ? 'text-working' : 'text-danger',
+                  said.value.urgent ? 'text-danger' : 'text-working',
                 )}
               >
-                {after.value}
+                {said.value.words}
               </p>
             )}
           </div>
           <ConnectionAction
             label={words.connect}
-            naming={named ? Option.some({ service: request.serviceName, held }) : Option.none()}
+            naming={
+              CardPress.$is('Name')(next)
+                ? Option.some({
+                    service: request.serviceName,
+                    held: list.filter((connection) => connection.service === request.service),
+                  })
+                : Option.none()
+            }
             ready={ready}
             current={current}
-            pressed={pressed}
-            onConnect={(name) => void act(connect(name))}
-            onCarryOn={() => carryOn(list)}
+            standing={standing}
+            waiting={waitingOn(attempt)}
+            onConnect={connect}
+            onCarryOn={carryOn}
+            onGiveUp={giveUp}
           />
+          {/* Open exactly while this card's own attempt is waiting for a key. */}
           {Option.isSome(keying) && (
-            <EnterKey keying={keying.value} onClose={() => setKeying(Option.none())} />
+            <EnterKey keying={keying.value} onClose={dismiss} onAnswered={finish} />
           )}
         </Card>
       </BorderBeam>
@@ -575,24 +598,17 @@ export function ConnectionCard({
   )
 }
 
-/** What the card's button says at each point; it is the same button and the same press. */
-const CONNECT_WORDS = {
-  'not-yet': 'Connect',
-  starting: 'Connecting…',
-  waiting: 'Open it again',
-  blocked: 'Connect',
-  refused: 'Connect',
-} satisfies Record<Pressed, string>
-
 /** The one thing to press on the card, or the settled fact when there is nothing left to press. */
 function ConnectionAction({
   label,
   naming,
   ready,
   current,
-  pressed,
+  standing,
+  waiting,
   onConnect,
   onCarryOn,
+  onGiveUp,
 }: {
   /** What the press does, for a screen reader: "Connect Gmail", "Add another Gmail account". */
   label: string
@@ -600,16 +616,21 @@ function ConnectionAction({
    * The service whose new account is asked a name for before it is begun, when one is, with the
    * accounts already on it: a name one of them has cannot be given again.
    */
-  naming: Option.Option<{ readonly service: string; readonly held: ReadonlyArray<Connection> }>
+  naming: Naming
   ready: boolean
   current: boolean
-  pressed: Pressed
+  /** Where this card's own attempt stands. */
+  standing: connecting.Standing
+  /** Whether nothing can be pressed for now: the server is being asked, here or anywhere. */
+  waiting: boolean
   onConnect: (name: Option.Option<AccountName>) => void
   onCarryOn: () => void
+  /** Carries the Thread on with what happened, when the attempt cannot be made again here. */
+  onGiveUp: (message: string) => void
 }) {
   if (ready && current) {
     // Reached when the service was connected somewhere else (Settings, another device), where no
-    // press here was listening for it.
+    // press here was owed its carry-on.
     return (
       <Button size="sm" onClick={onCarryOn}>
         Carry on
@@ -624,41 +645,145 @@ function ConnectionAction({
       </span>
     )
   }
-  if (pressed === 'refused') {
-    return (
+  /** The button at one point of an attempt: what it says, and whether a name is asked first. */
+  const says = (words: string) => Offer.Press({ words, naming })
+  // What there is to press, from where the card's own attempt stands.
+  const offer = connecting.Standing.match<Offer>(standing, {
+    Still: () => says('Connect'),
+    // Beginning can take the server many seconds; the button says so from the press.
+    Starting: () => says('Connecting…'),
+    // Once a press is waiting on a sign-in, pressing again opens it again: no second name is
+    // asked.
+    Away: () => Offer.Press({ words: 'Open it again', naming: Option.none() }),
+    Checking: () => says('Connecting…'),
+    Keying: () => says('Connect'),
+    // The account was begun and is in the list unfinished, so this press picks it up
+    // (`cardPress`) and no second name is asked.
+    Unfinished: () => Offer.Press({ words: 'Try again', naming: Option.none() }),
+    Connected: () => says('Connect'),
+    Refused: ({ refusal }) =>
+      connecting.Refusal.match<Offer>(refusal, {
+        NotBegun: () => Offer.Settings(),
+        Blocked: () => says('Connect'),
+        Unopened: () => Offer.Settings(),
+        Unshown: () => Offer.Settings(),
+        Unusable: ({ serviceName }) =>
+          Offer.CarryOn({ message: `${serviceName} did not accept that key.` }),
+      }),
+  })
+  return offered(offer, { label, waiting, current, onConnect, onGiveUp })
+}
+
+/**
+ * Draws what a card offers to press. A projection of the offer onto its control, as a plain
+ * function and not a component: it holds nothing, and each branch is drawn in the card's own
+ * render.
+ */
+const offered = (
+  offer: Offer,
+  card: {
+    readonly label: string
+    readonly waiting: boolean
+    readonly current: boolean
+    readonly onConnect: (name: Option.Option<AccountName>) => void
+    readonly onGiveUp: (message: string) => void
+  },
+) =>
+  Offer.$match(offer, {
+    Press: ({ words, naming }) => (
+      <ConnectButton
+        says={words}
+        label={card.label}
+        waiting={card.waiting}
+        naming={naming}
+        onConnect={card.onConnect}
+      />
+    ),
+    Settings: () => (
       <Button variant="outline" size="sm" onClick={() => void openSettings('connections')}>
         Open Integrations
       </Button>
-    )
-  }
-  // Once a press is waiting on a sign-in, pressing again opens it again: no second name is asked.
-  if (Option.isSome(naming) && pressed !== 'waiting') {
+    ),
+    // Offered only while the Thread is waiting on this card: once it has been carried on, the
+    // same words must not be sent to Vivid a second time.
+    CarryOn: ({ message }) =>
+      card.current ? (
+        <Button size="sm" onClick={() => card.onGiveUp(message)}>
+          Carry on
+        </Button>
+      ) : null,
+  })
+
+/**
+ * What a card that is not ready offers to press, from where its own attempt stands.
+ *
+ * - `Press`: make the attempt (again): what the button says, and whether a name is asked first.
+ * - `Settings`: the server would not begin it. It is not pressed again here; Settings is
+ *   offered, which says more.
+ * - `CarryOn`: the service did not take the key, and the server takes no second one for the
+ *   account. Pressing again would pick up an account the server refuses, and replacing it in
+ *   Settings would never answer a card that waits for this very account, so the Thread would be
+ *   stuck. The card carries the Thread on with `message` instead: Vivid hears what happened and
+ *   decides what to do next.
+ */
+type Offer = Data.TaggedEnum<{
+  Press: { readonly words: string; readonly naming: Naming }
+  Settings: {}
+  CarryOn: { readonly message: string }
+}>
+const Offer = Data.taggedEnum<Offer>()
+
+/** The accounts a new one must be told apart from, and the service they are on. */
+type Naming = Option.Option<{
+  readonly service: string
+  readonly held: ReadonlyArray<Connection>
+}>
+
+/**
+ * The card's button. It is the same button and the same press at every point of an attempt; what
+ * changes is what it says. Where a name is wanted for the new account it asks for one first, and
+ * the name it is given is what the press is made with.
+ */
+function ConnectButton({
+  says,
+  label,
+  waiting,
+  naming,
+  onConnect,
+}: {
+  says: string
+  label: string
+  waiting: boolean
+  naming: Naming
+  onConnect: (name: Option.Option<AccountName>) => void
+}) {
+  if (Option.isNone(naming)) {
     return (
-      <NameAccount
-        trigger={
-          <Button size="sm" aria-label={label} disabled={pressed === 'starting'}>
-            {CONNECT_WORDS[pressed]}
-          </Button>
-        }
-        title="Name the new account"
-        why={`${naming.value.service} does not say who signs in. A name is how you and Vivid tell your accounts apart.`}
-        action="Connect"
-        current={Option.none()}
-        others={naming.value.held}
-        optional={false}
-        onName={onConnect}
-      />
+      <Button
+        size="sm"
+        aria-label={label}
+        disabled={waiting}
+        onClick={() => onConnect(Option.none())}
+      >
+        {says}
+      </Button>
     )
   }
   return (
-    <Button
-      size="sm"
-      aria-label={label}
-      disabled={pressed === 'starting'}
-      onClick={() => onConnect(Option.none())}
-    >
-      {CONNECT_WORDS[pressed]}
-    </Button>
+    <NameAccount
+      trigger={
+        <Button size="sm" aria-label={label} disabled={waiting}>
+          {says}
+        </Button>
+      }
+      title="Name the new account"
+      why={`${naming.value.service} does not say who signs in. A name is how you and Vivid tell your accounts apart.`}
+      action="Connect"
+      current={Option.none()}
+      others={naming.value.held}
+      optional={false}
+      onName={onConnect}
+    />
   )
 }
 
