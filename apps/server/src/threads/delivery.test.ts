@@ -1159,7 +1159,7 @@ layer(
           )
           expect(response.status).toBe(202)
           expect(yield* Ref.get(sent)).toMatchObject([
-            { body: expect.stringContaining('\n\nLook'), attributes: {}, attachments: [png] },
+            { body: 'Look', attributes: {}, attachments: [png] },
           ])
         }).pipe(Effect.scoped),
     )
@@ -1269,7 +1269,7 @@ layer(
           const deliveries = yield* Ref.get(test.admitted)
           expect(deliveries).toHaveLength(1)
           expect(deliveries[0]).toMatchObject({
-            message: { kind: 'user', body: expect.stringContaining(body.body), attachments: [png] },
+            message: { kind: 'user', body: body.body, attachments: [png] },
             scope: { acting: test.ben },
           })
           expect(yield* (yield* RunStore).list(test.threadId)).toHaveLength(1)
