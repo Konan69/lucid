@@ -19,7 +19,6 @@ import { Palette } from './screen/Palette'
 import { Sidebar } from './screen/Sidebar'
 import { Welcome } from './screen/Welcome'
 import { IconButton } from './ui/button'
-import { Face } from './ui/Face'
 import { Sayings } from './ui/Sayings'
 
 // The screens a Person may not open in a session, each in its own file on the wire: the Thread
@@ -151,7 +150,7 @@ addEventListener('keydown', (event) => {
 
 /**
  * The app. Who is signed in decides everything else, and that is one live query: while it is on
- * its way there is a quiet splash, when there is nobody there is the welcome, and when there is
+ * its way there is the bare ground (`Splash`), when there is nobody there is the welcome, and when there is
  * someone there is the shell around wherever the address says they are.
  */
 export default function App() {
@@ -163,7 +162,6 @@ export default function App() {
     Ready: ({ value }) => (
       <>
         <Shell me={value} />
-        {reach === 'lost' && <Reconnecting />}
         <Sayings />
       </>
     ),
@@ -171,39 +169,24 @@ export default function App() {
 }
 
 /**
- * The first moment of the page. A server that cannot be reached used to look exactly like this
- * for as long as it lasted; now it says so, under the face, and keeps trying.
+ * The first moment of the page: the palette's ground and nothing on it. Who is signed in is
+ * answered from what the browser kept (`data/snapshot.ts`) a few milliseconds after the page
+ * starts, so a face here was a loading screen flashed on every visit for a wait too short to
+ * read. Words come only when the server cannot be reached and nothing was kept to draw.
+ *
+ * Over the app itself nothing is said about the connection: a "Reconnecting…" pill used to
+ * show here. What is on screen is the last thing the server said, and the socket comes back by
+ * itself (10 October 2026: "I never wanna see connecting or reconnecting").
  */
 function Splash({ unreachable = false }: { unreachable?: boolean }) {
   return (
-    <main
-      className="flex size-full flex-col items-center justify-center gap-4 bg-surface-1"
-      aria-busy
-    >
-      <Face size={40} mood="thinking" />
+    <main className="flex size-full items-center justify-center bg-surface-1" aria-busy>
       {unreachable && (
         <p role="status" className="animate-fade-in text-label text-ink-3">
           Can’t reach Vivid. Trying again…
         </p>
       )}
     </main>
-  )
-}
-
-/**
- * Said over the app while its connection is down. What is on screen stays, since it is the last
- * thing the server said, and this is the note that it may be behind. It waits a second before it
- * shows: most drops are over before anyone could read it, and a pill that flashes on every one
- * of them would be noise.
- */
-function Reconnecting() {
-  return (
-    <p
-      role="status"
-      className="pointer-events-none fixed top-3 left-1/2 z-50 -translate-x-1/2 rounded-full px-3 py-1 text-meta text-ink-2 lift glass transition-opacity delay-1000 duration-(--dur-base) starting:opacity-0"
-    >
-      Reconnecting…
-    </p>
   )
 }
 
