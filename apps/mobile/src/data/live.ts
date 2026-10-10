@@ -38,6 +38,7 @@ import { dropAtom, sessionAtom } from './held'
 import { Session, type Outside, type SignedIn } from './session'
 import { bearerSocket } from './socket'
 import { launch, start } from './app'
+import { forgetPlaces } from './placed'
 import { snapshotStore } from './snapshot'
 
 /**
@@ -208,6 +209,8 @@ function keepOnDevice(
       // change (`dispose`): they are written on a turn of their own, as `dropAtom` is.
       Effect.andThen(Effect.yieldNow),
       Effect.andThen(Effect.sync(forgetDrafts)),
+      // Where the Person was is theirs too (`data/placed.ts`), and is a device atom like the drafts.
+      Effect.andThen(forgetPlaces),
     ),
   }
 }
@@ -484,7 +487,11 @@ export const entryAtom = Atom.keepAlive(
         if (!Session.$is('SignedIn')(value)) {
           // Nobody is signed in: signed out, expired, or never. The session's own ending erased
           // what it kept (`dispose`); this is for an app that was closed before that landed.
-          launch(snapshotStore.erase)
+          // Where they were goes with it (`data/placed.ts`), a turn later: it is a device atom, and
+          // this is inside the session atom's own change.
+          launch(
+            snapshotStore.erase.pipe(Effect.andThen(Effect.yieldNow), Effect.andThen(forgetPlaces)),
+          )
           return Entry.Door({ session: value })
         }
         const data = makeLiveData(value)

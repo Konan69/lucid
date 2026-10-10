@@ -1,5 +1,5 @@
 import type { ThreadId } from '@vivid/contracts'
-import { Data } from 'effect'
+import { Data, Option } from 'effect'
 import { makeFirsts } from './first'
 
 /**
@@ -33,9 +33,17 @@ const FRESH = Front.Fresh()
  * What the first screen shows, for one workspace. The shell makes one each time it is built
  * (`Shell` in `App.tsx`, keyed by workspace), so a Thread of one Company is never still in front
  * after the Person has moved to another.
+ *
+ * It starts from the Thread that was in front when the app was last open in this workspace
+ * (`data/place.ts`), so a phone that ended the app, or an update that restarted it, brings the
+ * Person back to their conversation and not to the greeting. `writing` is false for it: nobody
+ * is typing in a Thread that is being opened again.
  */
-export function makeFront() {
-  let showing: Front = FRESH
+export function makeFront(start: Option.Option<ThreadId>) {
+  let showing: Front = Option.match(start, {
+    onNone: () => FRESH,
+    onSome: (id) => Front.Thread({ id, writing: false }),
+  })
   const listeners = new Set<() => void>()
 
   const show = (next: Front) => {
