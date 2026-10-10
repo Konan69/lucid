@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b --checkers 1 --builders 1 && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "typecheck": "node ../../scripts/types.mjs",
     "lint": "node ../../scripts/lint.mjs",
