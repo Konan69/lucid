@@ -18,12 +18,24 @@ import { scope } from './scope'
  * held here, drawn from here while they travel, and when they land the screen is told to observe
  * the conversation afresh. If they do not land they stay here, unsent, to be sent again; they are
  * never dropped.
+ *
+ * `key` names the one delivery these words are, to the server. It is made once, when the Person
+ * sends them (`startThread`), and stays with them until they have landed. The server admits a
+ * message under its key and makes a key of its own for a message that has none, so first words
+ * sent again without one were a second Message and a second Run whenever the first answer had
+ * only been lost on the way back. They used to be sent with none.
  */
 export type FirstWords = Data.TaggedEnum<{
   Settled: {}
-  Sending: { readonly words: string; readonly projectId: ProjectId | null }
-  Unsent: { readonly words: string; readonly projectId: ProjectId | null }
+  Sending: Waiting
+  Unsent: Waiting
 }>
+/** First words that have not landed: what they are, where they are filed, and their delivery. */
+interface Waiting {
+  readonly words: string
+  readonly projectId: ProjectId | null
+  readonly key: string
+}
 export const FirstWords = Data.taggedEnum<FirstWords>()
 
 const SETTLED = FirstWords.Settled()
@@ -45,15 +57,16 @@ const stand = (id: ThreadId, standing: FirstWords) => {
  * Makes the Thread if this page has not yet, then sends its first words, recording where they
  * stand at each step. The Thread must exist before the gateway will take a message for it.
  */
-const deliver = (id: ThreadId, words: string, projectId: ProjectId | null) =>
+const deliver = (id: ThreadId, waiting: Waiting) =>
   Effect.gen(function* () {
-    stand(id, FirstWords.Sending({ words, projectId }))
+    const { words, projectId, key } = waiting
+    stand(id, FirstWords.Sending(waiting))
     if (!made.has(id)) {
       const created = yield* changing((client) =>
         client.CreateThread({ id, title: titleFromMessage(words), projectId }),
       )
       if (Result.isFailure(created)) {
-        stand(id, FirstWords.Unsent({ words, projectId }))
+        stand(id, FirstWords.Unsent(waiting))
         return
       }
       made.add(id)
@@ -65,7 +78,7 @@ const deliver = (id: ThreadId, words: string, projectId: ProjectId | null) =>
     // this wait cannot reject: a send that did not go through is `false`, not a failure.
     const sent = yield* Effect.promise(() =>
       createFlueClient({ url: `/api/vivid/${encodeURIComponent(id)}` })
-        .send({ message: { kind: 'user', body: words } })
+        .send({ message: { kind: 'user', body: words }, idempotencyKey: key })
         .then(
           () => true,
           () => false,
@@ -76,7 +89,7 @@ const deliver = (id: ThreadId, words: string, projectId: ProjectId | null) =>
       landed.add(id)
       tell()
     } else {
-      stand(id, FirstWords.Unsent({ words, projectId }))
+      stand(id, FirstWords.Unsent(waiting))
     }
   })
 
@@ -94,11 +107,13 @@ export const firstWords = {
   },
   /** Whether first words have landed since the page loaded, so the conversation is read again. */
   landed: (id: ThreadId) => landed.has(id),
-  /** Sends unsent first words again. */
+  /** Sends unsent first words again, as the delivery they already are. */
   again: (id: ThreadId) => {
     const standing = held.get(id)
     if (standing !== undefined && FirstWords.$is('Unsent')(standing)) {
-      void act(deliver(id, standing.words, standing.projectId))
+      void act(
+        deliver(id, { words: standing.words, projectId: standing.projectId, key: standing.key }),
+      )
     }
   },
 }
@@ -117,9 +132,10 @@ export const firstWords = {
  */
 export function startThread(message: string, projectId: ProjectId | null = scope.filing()) {
   const id = ThreadId.make(crypto.randomUUID())
-  stand(id, FirstWords.Sending({ words: message, projectId }))
+  const waiting: Waiting = { words: message, projectId, key: crypto.randomUUID() }
+  stand(id, FirstWords.Sending(waiting))
   router.go(Route.Thread({ id }))
-  void act(deliver(id, message, projectId))
+  void act(deliver(id, waiting))
   return id
 }
 

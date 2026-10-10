@@ -11,7 +11,7 @@ import {
 import { Memory, MemoryId, MemoryScope, PersonId, PersonSummary } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Option, Result, Schema, Scope } from 'effect'
 import * as NodeCrypto from 'node:crypto'
-import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { describe, expect } from 'vitest'
 import { embeddingDimensions } from './embeddings.js'
 import {

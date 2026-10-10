@@ -3,7 +3,9 @@ import { greetingAt } from '@vivid/state'
 import { View } from 'react-native'
 import Animated from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { arrive } from '../../data/computer'
 import { useNow } from '../../data/foreground'
+import { useLiveData } from '../../data/live'
 import { useAppearance } from '../../data/vivid'
 import { APPEAR } from '../../ui/motion/morph'
 import { ON_GREETING, VividMenu, type Menu } from '../../ui/Presence'
@@ -44,11 +46,13 @@ export function Opening({
   const vivid = useAppearance()
   const go = useGo()
   const front = useFront()
+  const data = useLiveData()
   const menu: Menu = {
     places: ON_GREETING,
     onGo: (place) => {
-      if (place === 'Fresh') front.fresh()
-      else go.navigate(place)
+      if (place === 'Fresh') return front.fresh()
+      if (place === 'Computer') arrive(data)
+      go.navigate(place)
     },
   }
   return (

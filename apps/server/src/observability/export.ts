@@ -1,4 +1,5 @@
 import { getTableName, isTable } from 'drizzle-orm'
+import { ModelFailureReason } from '@vivid/contracts'
 import * as Clock from 'effect/Clock'
 import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
@@ -10,14 +11,14 @@ import * as Redacted from 'effect/Redacted'
 import * as Ref from 'effect/Ref'
 import * as Stream from 'effect/Stream'
 import * as Tracer from 'effect/Tracer'
-import * as HttpBody from 'effect/unstable/http/HttpBody'
-import * as HttpClient from 'effect/unstable/http/HttpClient'
-import type { HttpClientError } from 'effect/unstable/http/HttpClientError'
-import type { HttpClientResponse } from 'effect/unstable/http/HttpClientResponse'
-import * as OtlpExporter from 'effect/unstable/observability/OtlpExporter'
-import type { AnyValue, KeyValue, Resource } from 'effect/unstable/observability/OtlpResource'
-import * as OtlpSerialization from 'effect/unstable/observability/OtlpSerialization'
-import * as OtlpTracer from 'effect/unstable/observability/OtlpTracer'
+import * as HttpBody from 'effect/http/HttpBody'
+import * as HttpClient from 'effect/http/HttpClient'
+import type { HttpClientError } from 'effect/http/HttpClientError'
+import type { HttpClientResponse } from 'effect/http/HttpClientResponse'
+import * as OtlpExporter from 'effect/observability/OtlpExporter'
+import type { AnyValue, KeyValue, Resource } from 'effect/observability/OtlpResource'
+import * as OtlpSerialization from 'effect/observability/OtlpSerialization'
+import * as OtlpTracer from 'effect/observability/OtlpTracer'
 import { ObservabilityConfiguration } from '../config.ts'
 import * as productSchema from '../database/product.ts'
 import * as identitySchema from '../database/schema.ts'
@@ -191,11 +192,16 @@ const METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'TR
  * a range, or, for the few keys below that take a code name, when every writer of that key is
  * known to write a name from code:
  *
- * - `error.type` and `vivid.failure.root` are written by `failure.ts` alone, which takes a type
- *   from a class and never from a property of what was thrown (`typeOf` there). Nothing in
- *   rc.116 Effect writes either key. The two share one bounded set of names (`typeName`).
- * - `rpc.system`, `rpc.service` and `rpc.method` are not written by rc.116 `RpcServer` or by
- *   Vivid today; they are listed for a recorder that names the call from the contract.
+ * - `error.type` and `vivid.failure.root` are written by `failure.ts`, which takes a type from a
+ *   class and never from a property of what was thrown (`typeOf` there). Effect 4.0.2
+ *   `HttpClient.ts` also writes `error.type` on a client span whose response is 4xx or 5xx, as
+ *   the status in digits; that is not a code name, so the rule below drops it, and the status
+ *   still leaves as `http.response.status_code`. The two keys share one bounded set of names
+ *   (`typeName`).
+ * - `rpc.system.name` and `rpc.method` are written by Effect 4.0.2 `RpcServer` on each call's span
+ *   (`rpc/internal/tracing.ts` `spanAttributes`): the fixed `effect_rpc`, and the call's tag, which
+ *   is only ever a tag found in the contract's group. `rpc.system` and `rpc.service` are written by
+ *   nothing today; they are listed for a recorder that names the call from the contract.
  *
  * The rules are built once for each serialization layer, because two of them keep state: the
  * names and the database codes admitted so far (`admitting`).
@@ -205,6 +211,8 @@ const rulesOf = (): Rules => {
   return new Map<string, Rule>([
     [FailureAttribute.type, typeNames],
     [FailureAttribute.kind, oneOf(FailureKind.literals)],
+    [FailureAttribute.modelReason, oneOf(ModelFailureReason.literals)],
+    [FailureAttribute.modelStatus, integer(400, 599)],
     [FailureAttribute.boundary, oneOf(Boundary.literals)],
     [FailureAttribute.root, typeNames],
     [FailureAttribute.databaseCode, sqlState(admitting(MOST_DATABASE_CODES))],
@@ -222,6 +230,7 @@ const rulesOf = (): Rules => {
     ['deployment.environment.name', environmentName],
     ['deployment.environment', environmentName],
     ['rpc.system', codeName],
+    ['rpc.system.name', oneOf(['effect_rpc'])],
     ['rpc.service', codeName],
     ['rpc.method', codeName],
     ['http.request.method', oneOf(METHODS)],
@@ -270,27 +279,21 @@ const traceIdOf = (id: string): Option.Option<string> =>
   isTraceId(id) ? Option.some(id.padStart(32, '0')) : Option.none()
 
 /**
- * A span name that is a code identifier (an `Effect.fn` name, `RpcServer.<tag>`) or the fixed
- * name the HTTP server and client give a request (rc.116 `HttpMiddleware.SpanNameGenerator`,
- * `HttpClient.SpanNameGenerator`: `http.server METHOD`, `http.client METHOD`). `Effect.withSpan`
- * takes any string, so a name built from data would otherwise leave as written.
+ * A span name that is a code identifier (an `Effect.fn` name, an RPC's tag) or the fixed
+ * name the HTTP server and client give a request: the method alone (Effect 4.0.2
+ * `HttpMiddleware.SpanNameGenerator` and `HttpClient.SpanNameGenerator`, both `request.method`;
+ * rc.116 wrote `http.server METHOD` and `http.client METHOD`, and the span's kind is what tells a
+ * server span from a client span now). `Effect.withSpan` takes any string, so a name built from
+ * data would otherwise leave as written.
  *
  * The residual assumption is that span names are written in code. A dotted identifier built from
  * data (`Ada.Lovelace`) has the same shape and would pass, and nothing here can tell the two
- * apart. No producer does that today: every name is an `Effect.fn` literal, or
- * `RpcServer.<tag>`, which rc.116 `RpcServer.ts` `handleRequest` builds only after it has found
- * the tag in the contract's group. `export.test.ts` sends a marker of that shape through the
+ * apart. No producer does that today: every name is an `Effect.fn` literal, or an RPC's tag,
+ * which Effect 4.0.2 `RpcServer.ts` `handleRequest` uses as the span name only after it has found
+ * the tag in the contract's group (rc.116 wrote `RpcServer.<tag>`). `export.test.ts` sends a marker of that shape through the
  * path, the query, a header and an RPC payload and fails if it reaches a span name.
  */
-const spanName = (name: string) => {
-  const [prefix, method, ...rest] = name.split(' ')
-  const request =
-    (prefix === 'http.server' || prefix === 'http.client') &&
-    method !== undefined &&
-    METHODS.includes(method) &&
-    rest.length === 0
-  return request || isCodeName(name) ? name : OMITTED
-}
+const spanName = (name: string) => (METHODS.includes(name) || isCodeName(name) ? name : OMITTED)
 
 /**
  * An event is named by a log message (rc.116 `internal/effect.ts` `tracerLogger`) or is the
@@ -741,7 +744,7 @@ const endpoint = (base: URL, signal: Signal) => `${base.href.replace(/\/+$/, '')
  * VCOS `apps/web/src/observability/tracing.ts` `workerObservabilityLayer` is the reference: one
  * Layer that puts a tracer and a structured logger under the whole program. It hands spans to
  * Cloudflare's own pipeline; Vivid is a Node process, so the exporter is Effect's
- * (`effect/unstable/observability`), and the Layer is built once for the process, not per request.
+ * (`effect/observability`), and the Layer is built once for the process, not per request.
  *
  * - Only traces and logs: the backend has no OTLP metrics path, and counts are derived there from
  *   span and log attributes.

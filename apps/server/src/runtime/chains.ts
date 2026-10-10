@@ -14,7 +14,7 @@ import {
 } from '@vivid/contracts'
 import { Config, Effect, Layer, Option, Queue, Redacted, Schema, Stream } from 'effect'
 import { eq } from 'drizzle-orm'
-import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseLayer } from '../database/testdb.ts'

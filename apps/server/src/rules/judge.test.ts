@@ -1,7 +1,7 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { Effect, Fiber, Layer } from 'effect'
 import { ScriptedAnswer } from '../decisions/testing.ts'
-import { AiError, DecisionModel } from 'effect/unstable/ai'
+import { AiError, DecisionModel } from 'effect/ai'
 import * as TestClock from 'effect/testing/TestClock'
 import {
   ActionTarget,

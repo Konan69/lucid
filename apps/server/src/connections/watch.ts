@@ -1,7 +1,7 @@
 import { and, eq, isNull, or } from 'drizzle-orm'
 import { FindEventsResponse, InvalidRequest, RoutineTrigger } from '@vivid/contracts'
 import { Array as Arr, Effect, Layer, Option, Result, Schema } from 'effect'
-import { FetchHttpClient } from 'effect/unstable/http'
+import { FetchHttpClient } from 'effect/http'
 import type { Actor } from '../auth/access.ts'
 import { Database } from '../database/client.ts'
 import {

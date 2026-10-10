@@ -1,6 +1,6 @@
 import { RunId, ThreadId } from '@vivid/contracts'
 import { Array as Arr, Effect, Option, Schema } from 'effect'
-import { HttpClientResponse } from 'effect/unstable/http'
+import { HttpClientResponse } from 'effect/http'
 import type { RuntimeService } from '../runtime/client.ts'
 import type { LearningInput } from './learn.ts'
 import { MemoryExchange } from './extract.ts'

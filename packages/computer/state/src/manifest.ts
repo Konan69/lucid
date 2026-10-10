@@ -6,14 +6,14 @@ import * as Schema from 'effect/Schema'
  */
 export const ComputerId = Schema.String.pipe(
   // The id becomes an archive key and a directory name, so its alphabet is closed here.
-  Schema.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,64}$/)),
+  Schema.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,64}$/u)),
   Schema.brand('ComputerId'),
 )
 export type ComputerId = typeof ComputerId.Type
 
 /** Lowercase hex SHA-256 of a file's bytes. It is the file's address in the archive. */
 export const Digest = Schema.String.pipe(
-  Schema.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
+  Schema.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
   Schema.brand('Digest'),
 )
 export type Digest = typeof Digest.Type
@@ -24,7 +24,7 @@ export type Digest = typeof Digest.Type
  * shape is enforced at decode, not at use.
  */
 export const HomePath = Schema.String.pipe(
-  Schema.check(Schema.isPattern(/^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[^\0]+$/)),
+  Schema.check(Schema.isPattern(/^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[^\0]+$/u)),
   Schema.brand('HomePath'),
 )
 export type HomePath = typeof HomePath.Type

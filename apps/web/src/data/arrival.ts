@@ -1,7 +1,7 @@
 import { OpenFirstThreadResult, type ThreadId, type ThreadListResponse } from '@vivid/contracts'
 import type { LiveResult } from '@vivid/state'
 import { Data, Option, Result } from 'effect'
-import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
+import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import { change, live } from './live'
 import { Route, router } from './route'
 import { engine } from './runtime'

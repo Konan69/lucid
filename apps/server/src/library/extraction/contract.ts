@@ -1,7 +1,7 @@
 import * as Schema from 'effect/Schema'
-import * as Rpc from 'effect/unstable/rpc/Rpc'
-import * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
-import * as Transferable from 'effect/unstable/workers/Transferable'
+import * as Rpc from 'effect/rpc/Rpc'
+import * as RpcGroup from 'effect/rpc/RpcGroup'
+import * as Transferable from 'effect/workers/Transferable'
 
 /**
  * The extraction vocabulary shared by the server and the extraction process: the typed failures and

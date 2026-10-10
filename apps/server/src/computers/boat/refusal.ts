@@ -2,7 +2,7 @@ import { Effect, Schema } from 'effect'
 import { MachineOperationFailed, MachineResponseInvalid } from '../machine.ts'
 import { InputRoute } from './receipt.ts'
 
-const RefusalCode = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9_]*$/)).pipe(
+const RefusalCode = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9_]*$/u)).pipe(
   Schema.brand('ComputerToolRefusalCode'),
 )
 const ArgumentsRefused = Schema.Struct({ code: RefusalCode })

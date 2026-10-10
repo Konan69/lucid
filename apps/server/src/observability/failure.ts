@@ -9,8 +9,8 @@ import * as Predicate from 'effect/Predicate'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
 import * as SchemaAST from 'effect/SchemaAST'
-import * as HttpClientError from 'effect/unstable/http/HttpClientError'
-import * as HttpServerError from 'effect/unstable/http/HttpServerError'
+import * as HttpClientError from 'effect/http/HttpClientError'
+import * as HttpServerError from 'effect/http/HttpServerError'
 import { Message, isCodeName } from './messages.ts'
 
 /**
@@ -44,6 +44,8 @@ export const FailureAttribute = {
   databaseCode: 'db.response.status_code',
   constraint: 'vivid.failure.constraint',
   table: 'db.collection.name',
+  modelReason: 'vivid.model.failure.reason',
+  modelStatus: 'vivid.model.failure.status',
 } as const
 
 /** The log annotation holding the failure's message; read on stdout, absent from the allowlist. */
@@ -228,7 +230,7 @@ interface Link {
  * instance.
  *
  * Every typed error Vivid declares is such a class, and so are the SQL errors
- * (`effect/unstable/sql/SqlError`) and Effect Drizzle's (`drizzle-orm/effect-core/errors`). What
+ * (`effect/sql/SqlError`) and Effect Drizzle's (`drizzle-orm/effect-core/errors`). What
  * identifies one, in rc.116 `Schema.ts` `makeClass`:
  *
  * - the class is itself a schema: `static readonly [TypeId] = TypeId`, which `Schema.isSchema`

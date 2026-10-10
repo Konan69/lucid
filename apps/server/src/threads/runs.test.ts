@@ -11,8 +11,9 @@ import {
   Workspace,
 } from '@vivid/contracts'
 import { eq } from 'drizzle-orm'
-import { Array as Arr, Effect, Layer, Order, Result } from 'effect'
+import { Array as Arr, Effect, Layer, Option, Order, Result } from 'effect'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
+import { ActionOrigin, actionOrigin } from '../approvals/gate.ts'
 import { threadHandlers } from './handlers.ts'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
@@ -102,6 +103,62 @@ layer(testLayer)((it) => {
 
   /** Real PostgreSQL transactions prove that two deliveries cannot claim the same place in a Thread. */
   describe.skipIf(!testDatabaseConfigured)('Delivery turn authority', () => {
+    /** The gate uses the host turn; checking all rows prevents a later foreign Run lending authority. */
+    it.effect(
+      'resolves joined same-Person actions to the oldest turn and refuses any other Person',
+      () =>
+        Effect.gen(function* () {
+          const { personId, threadId } = yield* fixture()
+          const other = yield* fixture()
+          const store = yield* RunStore
+          const database = yield* Database
+          const actor = {
+            person: new Person({ id: personId, name: 'Run test', email: 'run@example.test' }),
+            workspace: Workspace.cases.Personal.make({}),
+            by: 'vivid' as const,
+            threadId: Option.some(threadId),
+          }
+          const host = RunId.make(NodeCrypto.randomUUID())
+          const joined = RunId.make(NodeCrypto.randomUUID())
+          const ids = [host, joined]
+          for (const id of ids) {
+            yield* reserve({
+              id,
+              personId,
+              threadId,
+              libraryFolder: null,
+              origin: StoredRunOrigin.cases.Message.make({}),
+            })
+            yield* store.admitted({ runId: id, offset: '0', incarnation: 'test' })
+          }
+          expect(yield* actionOrigin(actor)).toEqual(
+            ActionOrigin.cases.Run.make({ threadId, runId: host }),
+          )
+          const foreign = RunId.make(NodeCrypto.randomUUID())
+          yield* reserve({
+            id: foreign,
+            personId,
+            threadId,
+            libraryFolder: null,
+            origin: StoredRunOrigin.cases.Message.make({}),
+          })
+          yield* store.admitted({ runId: foreign, offset: '0', incarnation: 'test' })
+          // Admission prevents this state normally; old or inconsistent rows must still fail closed.
+          yield* database.run(
+            database.update(runs).set({ personId: other.personId }).where(eq(runs.id, foreign)),
+          )
+          const refusal = yield* actionOrigin(actor).pipe(Effect.flip)
+          expect(refusal._tag).toBe('NotFound')
+          expect(refusal.message).toBe('Action is acting for another Person')
+          yield* store.end(host, RunEnding.cases.Completed.make({}))
+          yield* store.end(joined, RunEnding.cases.Completed.make({}))
+          yield* store.end(foreign, RunEnding.cases.Completed.make({}))
+          expect(yield* actionOrigin(actor)).toEqual(
+            ActionOrigin.cases.RuntimeThread.make({ threadId }),
+          )
+        }).pipe(Effect.scoped),
+    )
+
     it.effect('allocates racing turns once and retains confinement on replay', () =>
       Effect.gen(function* () {
         const { personId, threadId } = yield* fixture()

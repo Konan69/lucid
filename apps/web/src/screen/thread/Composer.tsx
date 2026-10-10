@@ -1,6 +1,6 @@
 import { BorderBeam } from 'border-beam'
 import { ArrowUp, Mic, Paperclip, Square } from 'lucide-react'
-import { useSyncExternalStore, type ReactNode } from 'react'
+import { memo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { draft } from '../../data/drafts'
 import { writing } from '../../data/life'
 import { theme } from '../../data/theme'
@@ -8,6 +8,9 @@ import { IconButton } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { attachable, Attached, useAttachments, type Picture } from './Attach'
+
+/** What a message carries when its files have already gone with another: none. */
+const NO_FILES: ReturnType<ReturnType<typeof useAttachments>['take']> = { lines: [], pictures: [] }
 
 /**
  * Where a Person writes to Vivid. Enter sends, Shift+Enter makes a new line, and while Vivid is
@@ -17,8 +20,13 @@ import { attachable, Attached, useAttachments, type Picture } from './Attach'
  * typed in (`place`), on this device and for the Person's other devices (`data/drafts.ts`), so it
  * is still here after leaving and coming back; the Thread the composer belongs to decides what
  * sending means.
+ *
+ * It is drawn again only when what it is given changes (`memo`), and not at each key: the field
+ * follows the words itself (`Field`), and the composer hears only of the field becoming empty or
+ * not. A Thread draws its screen again at every streamed token, and the beam around the field
+ * reads its child's computed style whenever it is handed a new child.
  */
-export function Composer({
+export const Composer = memo(function Composer({
   place,
   placeholder = 'Message Vivid',
   working,
@@ -44,24 +52,39 @@ export function Composer({
   /** Something anchored above the composer: a live call, a notice. */
   above?: ReactNode
 }) {
-  // The field draws the kept draft and holds no copy of it, so what is on screen is what is kept,
-  // and words typed on another device arrive in a composer that is already open.
-  const message = useSyncExternalStore(draft.subscribe, () => draft.in(place))
+  // Whether there are words to send. Only this edge is followed here; the words themselves are
+  // the field's to draw.
+  const wordless = useSyncExternalStore(draft.subscribe, () => draft.in(place).trim().length === 0)
   const attached = useAttachments(pictures)
   // Something to send: words, or a file that has arrived. A file still on its way holds the send.
-  const empty = (message.trim().length === 0 && attached.kept === 0) || attached.sending
+  const empty = (wordless && attached.kept === 0) || attached.sending
   const shown = useSyncExternalStore(theme.subscribe, theme.shown)
+  // The files the last message from here took with it. They are this render's until the field is
+  // drawn again, so a second press in the same turn would find them still attached.
+  const carried = useRef<typeof attached.files>(null)
 
-  const write = (next: string) => draft.keep(place, next)
-
+  /**
+   * Sends what is written, once. The words are taken from the draft itself at the press
+   * (`draft.take`), not from what this render drew: presses handled before the emptied field is
+   * drawn again find nothing left to send, where each used to send the same words as a message
+   * of its own.
+   */
   function submit() {
-    if (empty) return
+    if (attached.sending) return
+    const typed = draft.take(place)
+    // This render's files went with an earlier press of this turn. They are not counted and not
+    // taken again, whether or not there are new words: words typed between two presses are a
+    // message of their own, without the files the first one carried.
+    const gone = carried.current === attached.files
+    if (typed.length === 0 && (gone || attached.kept === 0)) return
     // The files that made it are named under the words, so Vivid knows what to read; a message
     // that is only files still says what is wanted of them.
-    const words = message.trim().length === 0 ? 'Have a look at this.' : message.trim()
-    const taken = attached.take()
+    const words = typed.length === 0 ? 'Have a look at this.' : typed
+    const taken = gone ? NO_FILES : attached.take()
+    carried.current = attached.files
     const body = [words, ...taken.lines].join('\n\n')
-    write('')
+    // Only space was written beside the files: it is not words, and it does not stay behind.
+    if (typed.length === 0) draft.keep(place, '')
     // Sent: the Person has stopped writing, and Vivid's face turns from listening to the work.
     writing.stopped()
     if (onTyping !== undefined) onTyping(false)
@@ -97,36 +120,11 @@ export function Composer({
                 }}
               >
                 <Attached files={attached.files} onRemove={attached.remove} />
-                <textarea
-                  // What is typed here is kept for its place, so leaving by a shortcut loses nothing.
-                  data-keeps-draft
-                  rows={1}
-                  aria-label={placeholder}
+                <Field
+                  place={place}
                   placeholder={placeholder}
-                  value={message}
-                  onChange={(event) => {
-                    const next = event.target.value
-                    // Only the edges are reported: starting to type and clearing the field.
-                    if (onTyping !== undefined && (next.length === 0) !== (message.length === 0)) {
-                      onTyping(next.length > 0)
-                    }
-                    write(next)
-                    // Vivid's face listens while the Person writes (`data/life.ts`).
-                    if (next.length > 0) writing.heard()
-                    else writing.stopped()
-                  }}
-                  onKeyDown={(event) => {
-                    // While an input method is composing, Enter picks a candidate; it does not send.
-                    if (
-                      event.key === 'Enter' &&
-                      !event.shiftKey &&
-                      !event.nativeEvent.isComposing
-                    ) {
-                      event.preventDefault()
-                      submit()
-                    }
-                  }}
-                  className="block field-sizing-content max-h-60 min-h-14 w-full resize-none bg-transparent px-5 pt-4 pb-1 text-body text-ink outline-none placeholder:text-ink-3"
+                  onTyping={onTyping}
+                  onSubmit={submit}
                 />
                 <div className="flex items-center gap-1 px-3 pb-3">
                   <Pick accept={attachable(pictures)} onPick={attached.add} />
@@ -144,6 +142,56 @@ export function Composer({
         </div>
       </div>
     </div>
+  )
+})
+
+/**
+ * The field the words are written in. It draws the kept draft and holds no copy of it, so what
+ * is on screen is what is kept, and words typed on another device arrive in a field that is
+ * already open. It follows the draft itself, so a key draws this field again and nothing around
+ * it.
+ */
+function Field({
+  place,
+  placeholder,
+  onTyping,
+  onSubmit,
+}: {
+  place: string
+  placeholder: string
+  onTyping?: (typing: boolean) => void
+  onSubmit: () => void
+}) {
+  const message = useSyncExternalStore(draft.subscribe, () => draft.in(place))
+  return (
+    <textarea
+      // What is typed here is kept for its place, so leaving by a shortcut loses nothing.
+      data-keeps-draft
+      rows={1}
+      aria-label={placeholder}
+      placeholder={placeholder}
+      value={message}
+      onChange={(event) => {
+        const next = event.target.value
+        // Only the edges are reported: starting to type and clearing the field.
+        if (onTyping !== undefined && (next.length === 0) !== (message.length === 0)) {
+          onTyping(next.length > 0)
+        }
+        draft.keep(place, next)
+        // Vivid's face listens while the Person writes (`data/life.ts`).
+        if (next.length > 0) writing.heard()
+        else writing.stopped()
+      }}
+      onKeyDown={(event) => {
+        // While an input method is composing, Enter picks a candidate; it does not send.
+        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+          event.preventDefault()
+          // A key held down repeats; one press sends once, and the repeats add no line either.
+          if (!event.repeat) onSubmit()
+        }
+      }}
+      className="block field-sizing-content max-h-60 min-h-14 w-full resize-none bg-transparent px-5 pt-4 pb-1 text-body text-ink outline-none placeholder:text-ink-3"
+    />
   )
 }
 

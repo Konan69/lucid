@@ -72,6 +72,12 @@ export interface Delivery {
   readonly idempotencyKey: string
 }
 
+/** Only the ordinary chat path moves past questions; server signals and channel text do not. */
+export const movesThreadOn = (delivery: Delivery) =>
+  DeliveryMessage.guards.Said(delivery.message) &&
+  DeliverySpeaker.guards.Acting(delivery.speaker) &&
+  StoredRunOrigin.guards.Message(delivery.origin)
+
 /** Server producers deliver signals; Person-authored messages use immediate `admit` instead. */
 export interface SignalDelivery extends Delivery {
   readonly message:

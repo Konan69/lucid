@@ -8,7 +8,7 @@ import {
   Unauthenticated,
 } from '@vivid/contracts'
 import { Clock, Deferred, Effect, Fiber, Layer, Queue, Ref, Result, Stream } from 'effect'
-import * as Atom from 'effect/unstable/reactivity/Atom'
+import * as Atom from 'effect/reactivity/Atom'
 import * as TestClock from 'effect/testing/TestClock'
 import { LiveState, liveStateOf, makeLive, type ProductFailure } from './live.js'
 

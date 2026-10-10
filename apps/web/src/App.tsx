@@ -2,14 +2,16 @@ import { useAtomValue } from '@effect/atom-react'
 import { workspaceKey } from '@vivid/state'
 import { ThreadId, type MeResponse, type Thread as ThreadRecord } from '@vivid/contracts'
 import { Array as Arr, Option, Order } from 'effect'
-import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
+import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import { PanelLeft } from 'lucide-react'
 import { lazy, Suspense, useSyncExternalStore } from 'react'
 import { live, LiveState, useLive, useLiveValue } from './data/live'
+import { pages } from './data/pages'
 import { panel } from './data/panel'
 import { Route, router } from './data/route'
 import { engine, link } from './data/runtime'
 import { sidebar } from './data/sidebar'
+import { wake } from './data/wake'
 import { startThread } from './data/threads'
 import { First } from './screen/First'
 import { Invite } from './screen/Invite'
@@ -244,7 +246,12 @@ function Shell({ me }: { me: MeResponse }) {
               route={route}
               me={me}
               beside={beside}
-              onTogglePanel={panel.toggle}
+              onTogglePanel={() => {
+                // Opening the panel onto Vivid's computer is arriving at it, which turns it on.
+                // Opening it onto a page that was left in front is not.
+                if (!panel.isOpen() && pages.front() === 'computer') wake()
+                panel.toggle()
+              }}
             />
           </div>
         </Suspense>

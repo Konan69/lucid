@@ -23,7 +23,7 @@ import * as Schedule from 'effect/Schedule'
 import * as Schema from 'effect/Schema'
 import type * as Scope from 'effect/Scope'
 import * as Stream from 'effect/Stream'
-import * as Socket from 'effect/unstable/socket/Socket'
+import * as Socket from 'effect/socket/Socket'
 import { DeviceLink } from '../shared/device.ts'
 import { ServerSettings } from '../shared/settings.ts'
 

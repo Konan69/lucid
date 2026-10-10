@@ -1,6 +1,6 @@
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
-import type * as HttpClient from 'effect/unstable/http/HttpClient'
+import type * as HttpClient from 'effect/http/HttpClient'
 import { ipcMain, type WebContents } from 'electron'
 import {
   BRIDGE_EVENT_CHANNEL,

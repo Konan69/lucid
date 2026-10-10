@@ -1,5 +1,5 @@
 import { Config, Effect, Schema } from 'effect'
-import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 
 const Record = Schema.Struct({ sandbox: Schema.Struct({ createdAt: Schema.String }) })
 const decodeRecord = HttpClientResponse.schemaBodyJson(Record)

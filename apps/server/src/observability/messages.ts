@@ -35,7 +35,7 @@ export const isMessage = (text: string): text is Message => messages.has(text)
 
 /**
  * A code identifier, optionally dotted: an error's `_tag` or class name, an `Effect.fn` name,
- * `RpcServer.<tag>`. No spaces, quotes, slashes or punctuation, so prose, an address and a
+ * an RPC's tag. No spaces, quotes, slashes or punctuation, so prose, an address and a
  * statement cannot have this shape; the length bound keeps a generated name from being a payload.
  */
 const CODE_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/

@@ -7,6 +7,8 @@ import Animated from 'react-native-reanimated'
 import { AlarmClock, ChevronDown, ChevronRight, Monitor, Repeat2 } from 'lucide-react-native'
 import type { Say } from '../../data/delivery'
 import { useNow } from '../../data/foreground'
+import { arrive } from '../../data/computer'
+import { useLiveData } from '../../data/live'
 import {
   currentStepOf,
   isStreaming,
@@ -164,6 +166,7 @@ const STEP_TONE = {
 function Steps({ steps, working }: { steps: ReadonlyArray<Step>; working: boolean }) {
   const { colors: c, dark } = useTheme()
   const go = useGo()
+  const data = useLiveData()
   const [open, setOpen] = useState(false)
   if (steps.length === 0) return null
   const summary = stepsSummary(steps, working)
@@ -208,7 +211,12 @@ function Steps({ steps, working }: { steps: ReadonlyArray<Step>; working: boolea
             accessibilityLabel="Watch Vivid work on its Computer"
             // The pill is a quiet 28 points beside the line it belongs to; the slop makes it 44.
             hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
-            onPress={() => go.navigate('Computer')}
+            onPress={() => {
+              // The step says Vivid used its Computer, not that it is still on: going to watch
+              // is arriving at it, which turns it on.
+              arrive(data)
+              go.navigate('Computer')
+            }}
             style={({ pressed }) => ({
               height: 28,
               paddingHorizontal: 10,

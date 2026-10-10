@@ -10,7 +10,7 @@ import {
   PersonSummary,
 } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Option, Result, Schema } from 'effect'
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http'
+import { HttpClient, HttpClientRequest } from 'effect/http'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect } from 'vitest'
 import { Embeddings, embeddingsLayer } from './embeddings.js'

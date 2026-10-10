@@ -8,7 +8,7 @@ import {
   ToolOutcome,
 } from '@vivid/contracts'
 import { Context, Effect, Layer, Schema } from 'effect'
-import { DecisionModel } from 'effect/unstable/ai'
+import { DecisionModel } from 'effect/ai'
 import { CodeToolNames } from '@vivid/contracts/code'
 import { Refusal, recordRefusal } from '../observability/refusal.ts'
 import { ToolEffects } from '../connections/effects.ts'

@@ -1,6 +1,6 @@
 import { Effect, Option } from 'effect'
-import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
-import * as Atom from 'effect/unstable/reactivity/Atom'
+import * as AsyncResult from 'effect/reactivity/AsyncResult'
+import * as Atom from 'effect/reactivity/Atom'
 import { Platform } from 'react-native'
 import { door } from './door'
 import { Forgetting, makeCustody, readKept, writeKept, type Session } from './session'

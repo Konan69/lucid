@@ -57,7 +57,7 @@ export const ComputerResponse = Schema.Struct({ computer: Computer })
  * not asked about. The acting Person comes from the call's authority, never from these fields.
  */
 /** Absolute: the machine has no "current directory" between calls, so a relative path has no meaning. */
-export const ComputerPath = Schema.String.check(Schema.isPattern(/^\//), Schema.isMaxLength(4096))
+export const ComputerPath = Schema.String.check(Schema.isPattern(/^\//u), Schema.isMaxLength(4096))
 
 /** A command in a directory. The deadline is the caller's; the machine ends the command at it. */
 export const ComputerShellRequest = Schema.Struct({
@@ -188,7 +188,7 @@ export const MAX_BROWSER_PICTURE_ENCODED_LENGTH = 8 * 1024 * 1024
  * alphabet identify the representation; actual image decoding belongs to the consuming renderer. */
 export const BrowserPicture = Schema.String.check(
   Schema.isMaxLength(MAX_BROWSER_PICTURE_ENCODED_LENGTH),
-  Schema.isPattern(/^iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/),
+  Schema.isPattern(/^iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/u),
 ).pipe(Schema.brand('BrowserPicture'))
 export type BrowserPicture = typeof BrowserPicture.Type
 

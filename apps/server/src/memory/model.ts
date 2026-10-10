@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 import { optionalSetting, settingText } from '../config.ts'
 import {
   modelGatewayKey,

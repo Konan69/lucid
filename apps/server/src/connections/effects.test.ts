@@ -7,8 +7,8 @@ import {
 } from '../decisions/model.ts'
 import { ScriptedAnswer } from '../decisions/testing.ts'
 import * as TestClock from 'effect/testing/TestClock'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
-import { AiError, DecisionModel } from 'effect/unstable/ai'
+import { HttpClient, HttpClientResponse } from 'effect/http'
+import { AiError, DecisionModel } from 'effect/ai'
 import { ServiceId } from '@vivid/contracts'
 import { ExecutorTool } from './executor.ts'
 import {

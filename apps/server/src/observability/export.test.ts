@@ -1,6 +1,6 @@
 import { expect, it } from '@effect/vitest'
 import { NodeHttpClient, NodeHttpServer } from '@effect/platform-node'
-import { cutFault, ServiceId } from '@vivid/contracts'
+import { cutFault, RunId, ServiceId, ThreadId } from '@vivid/contracts'
 import { getTableName } from 'drizzle-orm'
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core/errors'
 import {
@@ -22,19 +22,19 @@ import {
   Tracer,
 } from 'effect'
 import { TestClock } from 'effect/testing'
-import * as HttpClient from 'effect/unstable/http/HttpClient'
-import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
-import * as HttpMiddleware from 'effect/unstable/http/HttpMiddleware'
-import * as HttpRouter from 'effect/unstable/http/HttpRouter'
-import * as HttpServer from 'effect/unstable/http/HttpServer'
-import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
-import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
-import * as OtlpExporter from 'effect/unstable/observability/OtlpExporter'
-import * as Rpc from 'effect/unstable/rpc/Rpc'
-import * as RpcClient from 'effect/unstable/rpc/RpcClient'
-import * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
-import * as RpcSerialization from 'effect/unstable/rpc/RpcSerialization'
-import * as RpcServer from 'effect/unstable/rpc/RpcServer'
+import * as HttpClient from 'effect/http/HttpClient'
+import * as HttpClientRequest from 'effect/http/HttpClientRequest'
+import * as HttpMiddleware from 'effect/http/HttpMiddleware'
+import * as HttpRouter from 'effect/http/HttpRouter'
+import * as HttpServer from 'effect/http/HttpServer'
+import * as HttpServerRequest from 'effect/http/HttpServerRequest'
+import * as HttpServerResponse from 'effect/http/HttpServerResponse'
+import * as OtlpExporter from 'effect/observability/OtlpExporter'
+import * as Rpc from 'effect/rpc/Rpc'
+import * as RpcClient from 'effect/rpc/RpcClient'
+import * as RpcGroup from 'effect/rpc/RpcGroup'
+import * as RpcSerialization from 'effect/rpc/RpcSerialization'
+import * as RpcServer from 'effect/rpc/RpcServer'
 import { ObservabilityConfiguration } from '../config.ts'
 import { faultRoutes } from '../http/faults.ts'
 import { threads } from '../threads/tables.ts'
@@ -49,6 +49,7 @@ import {
 import { observeFailures } from './failure.ts'
 import { Message, OMITTED } from './messages.ts'
 import { recordRefusal, Refusal } from './refusal.ts'
+import { recordRunFailure } from '../runtime/failure.ts'
 
 /** The slice of OTLP/HTTP JSON these tests read; everything else in a post is left undecoded. */
 const Pair = Schema.Struct({
@@ -334,6 +335,88 @@ const withReceiver = <A, E, R>(program: Effect.Effect<A, E, R>) =>
     const context = yield* Layer.build(NodeHttpServer.layerTest)
     return yield* program.pipe(Effect.provide(context))
   }).pipe(Effect.scoped)
+
+it.effect(
+  'exports failed model settlements as typed runtime failures with only closed diagnostics',
+  () =>
+    withReceiver(
+      Effect.gen(function* () {
+        const { lines, spans, text } = yield* exported(
+          recordRunFailure({
+            threadId: ThreadId.make('private-thread'),
+            runId: RunId.make('private-run'),
+            reason: 'ModelUnavailable',
+            status: Option.some(520),
+          }),
+        )
+        const expected = {
+          'error.type': 'ModelProviderFailed',
+          'vivid.failure.kind': 'expected',
+          'vivid.boundary': 'runtime',
+          'vivid.model.failure.reason': 'ModelUnavailable',
+          'vivid.model.failure.status': 520,
+        }
+        const [span] = spanNamed(spans, 'Runtime.failedRun')
+        expect(span === undefined ? {} : valuesOf(span.attributes)).toEqual(expected)
+        const failures = lines.filter((entry) => entry.body.stringValue === Message.failure)
+        expect(failures).toHaveLength(1)
+        expect(failures.map((entry) => valuesOf(entry.attributes))).toEqual([expected])
+        expect(text).not.toContain('private-thread')
+        expect(text).not.toContain('private-run')
+      }),
+    ),
+)
+
+it.effect.each(['Delivery', 'Unexplained'] as const)(
+  'exports a %s Run failure without attributing it to the model provider',
+  (reason) =>
+    withReceiver(
+      Effect.gen(function* () {
+        const { lines, spans } = yield* exported(
+          recordRunFailure({
+            threadId: ThreadId.make('private-thread'),
+            runId: RunId.make('private-run'),
+            reason,
+            status: Option.none(),
+          }),
+        )
+        const expected = {
+          'error.type': 'RunFailed',
+          'vivid.failure.kind': 'expected',
+          'vivid.boundary': 'runtime',
+        }
+        const [span] = spanNamed(spans, 'Runtime.failedRun')
+        expect(span === undefined ? {} : valuesOf(span.attributes)).toEqual(expected)
+        const failures = lines.filter((entry) => entry.body.stringValue === Message.failure)
+        expect(failures).toHaveLength(1)
+        expect(failures.map((entry) => valuesOf(entry.attributes))).toEqual([expected])
+      }),
+    ),
+)
+
+it.effect.each(['private provider prose', 'Delivery', 'Unexplained'])(
+  'drops non-model reason %s and invalid status values from both traces and logs',
+  (reason) =>
+    withReceiver(
+      Effect.gen(function* () {
+        const attributes = {
+          'vivid.model.failure.reason': reason,
+          'vivid.model.failure.status': 600,
+        }
+        const probe = Effect.fn('Probe.providerProse')(function* () {
+          yield* Effect.annotateCurrentSpan(attributes)
+          yield* Effect.logWarning(Message.failure).pipe(Effect.annotateLogs(attributes))
+        })
+        const { spans, lines, text } = yield* exported(probe())
+        const [span] = spanNamed(spans, 'Probe.providerProse')
+        expect(span === undefined ? {} : valuesOf(span.attributes)).toEqual({})
+        const failures = lines.filter((entry) => entry.body.stringValue === Message.failure)
+        expect(failures).toHaveLength(1)
+        expect(failures.map((entry) => valuesOf(entry.attributes))).toEqual([{}])
+        expect(text).not.toContain(reason)
+      }),
+    ),
+)
 
 it.effect('exports a typed failure with its tag, as expected, at its boundary', () =>
   withReceiver(
@@ -733,7 +816,7 @@ it.effect("exports no part of a client's fault report", () =>
       expect(
         span === undefined ? [] : span.events.map((event) => [event.name, event.attributes]),
       ).toEqual([[Message.fault, []]])
-      expect(spanNamed(spans, 'http.server POST')).toHaveLength(1)
+      expect(spanNamed(spans, 'POST')).toHaveLength(1)
       for (const secret of ['Skia', 'dami@example.com', 'Composer', 'ios 0.1.0', 'mobile'])
         expect(text).not.toContain(secret)
     }),
@@ -770,7 +853,7 @@ it.effect("exports no query, path or header of a provider's sign-in return", () 
       )
 
       expect(statuses).toEqual([200])
-      const [server] = spanNamed(spans, 'http.server GET')
+      const [server] = spanNamed(spans, 'GET')
       expect(server === undefined ? {} : valuesOf(server.attributes)).toEqual({
         'http.request.method': 'GET',
         'http.response.status_code': 200,
@@ -838,7 +921,7 @@ it.effect(
         expect(statuses).toEqual([204, 204, 204, 204, 204, 204])
         // The second and last requests' spans are exported, the server span as a root; the spans of
         // every other request are gone.
-        const servers = spanNamed(spans, 'http.server GET')
+        const servers = spanNamed(spans, 'GET')
         expect(servers.map((span) => [span.traceId, span.parentSpanId])).toEqual([
           [trace, undefined],
           [rooted, undefined],
@@ -898,7 +981,7 @@ it.effect('files a 64-bit B3 trace under its 128-bit form, on spans, links and l
 
       expect(statuses).toEqual([204])
       // The server span is the caller's child, and everything beneath it is in the same trace.
-      const servers = spanNamed(spans, 'http.server GET')
+      const servers = spanNamed(spans, 'GET')
       expect(servers.map((span) => [span.traceId, span.parentSpanId])).toEqual([[wide, caller]])
       const [server] = servers
       const [handler] = spanNamed(spans, 'Probe.inbound')
@@ -989,13 +1072,7 @@ it.effect('builds no span name from what a request carries, over HTTP or RPC', (
       // The spans those requests made are all here, under names from code.
       const names = spans.map((span) => span.name)
       expect(names).toEqual(
-        expect.arrayContaining([
-          'http.server GET',
-          'Probe.visit',
-          'http.server POST',
-          'RpcServer.Echo',
-          'Probe.echo',
-        ]),
+        expect.arrayContaining(['GET', 'Probe.visit', 'POST', 'Echo', 'Probe.echo']),
       )
       expect(names.filter((name) => name.includes('Ada') || name.includes('Lovelace'))).toEqual([])
       // And nowhere else in what left.

@@ -12,7 +12,7 @@ import {
 } from '@vivid/contracts'
 import { AuthContext, AuthState } from '@vivid/contracts/auth'
 import { Context, Deferred, Effect, Layer, Option, Queue, Ref, Stream } from 'effect'
-import { HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { auditLayer } from '../audit/record.ts'
 import { personTable, sessionTable } from '../auth/tables.ts'
 import { type Actor } from '../auth/access.ts'

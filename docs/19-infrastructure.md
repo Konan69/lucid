@@ -13,8 +13,13 @@ pnpm infra:dev
   └─ Command.Dev: Vite web proxy → 127.0.0.1:5178
 ```
 
-Alchemy `2.0.0-beta.79` owns the local resources through `alchemy.run.ts`, with only Command and
+Alchemy `2.0.0-beta.81` owns the local resources through `alchemy.run.ts`, with only Command and
 Docker providers registered. There is no AWS provider or emulator in the running stack.
+
+Do not go back to Alchemy beta.79 against state that beta.81 has written. beta.81 marks a resource
+whose name was taken over from a renamed one (`adoptionBlocked: "migrated-fqn"` in its state) and
+skips recovery for it; beta.79 does not know the mark, keeps the same state version, and would
+recover and then delete the renamed resource's predecessor.
 PostgreSQL uses database/user/password `vivid` and the named volume
 `vivid-postgres-local-data`. `infra/database.ts` is the database seam and returns a `Redacted`
 URL. `scripts/migrate.mjs` applies the server's auth then product chains; Flue `2.2.2` migrates

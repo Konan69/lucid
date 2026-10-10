@@ -9,8 +9,8 @@ import {
   type ProductFailure,
 } from '@vivid/state'
 import { Effect, Option, Stream, type Result } from 'effect'
-import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
-import * as Atom from 'effect/unstable/reactivity/Atom'
+import * as AsyncResult from 'effect/reactivity/AsyncResult'
+import * as Atom from 'effect/reactivity/Atom'
 import { randomUUID } from 'expo-crypto'
 import { launch } from './app'
 import { door, useDoor } from './door'

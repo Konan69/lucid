@@ -1,16 +1,16 @@
 import { ComputerState, type Computer as ComputerRecord } from '@vivid/contracts'
-import type { FaceMood } from '@vivid/marks'
 import { VividRpcClient } from '@vivid/client-runtime'
 import { Effect, Option, Result, Schema } from 'effect'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Linking, ScrollView, View } from 'react-native'
 import { Eye, Hand, MonitorPlay, Power } from 'lucide-react-native'
-import { screenNote, standingOf, viewerOf } from '../data/computer'
+import { glassNote, screenNote, standingOf, viewerOf, viewerPermission } from '../data/computer'
 import { commit } from '../data/haptics'
 import { LiveState, useLive, useLiveData, type LiveData } from '../data/live'
 import { useTheme } from '../theme'
 import { NO_ACTIONS, StandingBar } from '../ui/Bar'
 import { Screen } from '../ui/Screen'
+import { drawsScreen, Live } from './computer/Live'
 import { Button, Dot, EDGE, Face, Label, Notice, radius, styles } from '../ui/ui'
 
 /**
@@ -87,11 +87,11 @@ const watch = Effect.fn('Computer.watch')(function* () {
  * Person the controls that matter: turning it on and off, and
  * taking the keyboard and pointer, which stops Vivid acting on it until they hand it back.
  *
- * What it does not do is draw the machine's screen on this page. The web panel draws that with a
- * remote-framebuffer client, or the provider's own viewer in a frame; the phone has neither (no
- * web view is among this app's dependencies). So a running computer says who has the keyboard,
- * and "Watch its screen" opens the provider's viewer page in the system browser (`watch`), where
- * the screen is live and, once the Person has taken over, theirs to use.
+ * A running computer's screen is on the glass, live: the provider's own viewer page in a web
+ * view (`computer/Live.tsx`), watched until the Person takes over and theirs to touch after. An
+ * install from before the web view was in the app (below 0.3.0) keeps Vivid's face on the glass,
+ * and "Watch its screen" opens the same page in the system browser (`watch`). The remote-
+ * framebuffer screen the web panel can also draw (`ComputerScreen.Relay`) has no page to open.
  *
  * Everything on it is the live record. A press is shown at once and taken back, with the reason,
  * if the server refuses it.
@@ -132,11 +132,16 @@ export function Computer() {
 const page = (state: LiveState<{ readonly computer: ComputerRecord }>) =>
   LiveState.$match(state, {
     Loading: () => (
-      <Said mood="thinking" on={false} title="One moment" detail="Looking for your computer." />
+      <Said
+        glass={<Face size={56} mood="thinking" />}
+        on={false}
+        title="One moment"
+        detail="Looking for your computer."
+      />
     ),
     Failed: () => (
       <Said
-        mood="neutral"
+        glass={<Face size={56} mood="neutral" />}
         on={false}
         title="Not available"
         detail="Vivid could not reach its computer right now."
@@ -151,12 +156,13 @@ const page = (state: LiveState<{ readonly computer: ComputerRecord }>) =>
  * says how the machine is: thinking while it starts, asleep while it is off.
  */
 function Said({
-  mood,
+  glass,
   on,
   title,
   detail,
 }: {
-  mood: FaceMood
+  /** What is on the glass: Vivid's face saying how the machine is, or the machine's own screen. */
+  glass: ReactNode
   /** The machine is running, which the glass says in a word as well as a colour. */
   on: boolean
   title: string
@@ -174,8 +180,11 @@ function Said({
           borderWidth: EDGE,
           borderColor: c.border,
           backgroundColor: c['md-code-bg'],
+          // The machine's screen is cut to the glass's corners, as a picture in a frame is.
+          overflow: 'hidden',
         }}
       >
+        {glass}
         {on && (
           <View
             style={{
@@ -193,7 +202,6 @@ function Said({
             </Label>
           </View>
         )}
-        <Face size={56} mood={mood} />
       </View>
       <View accessibilityLiveRegion="polite" style={{ gap: 6, paddingHorizontal: 4 }}>
         <Label accessibilityRole="header" size="title" style={{ fontWeight: '600' }}>
@@ -214,12 +222,40 @@ const REFUSED = {
   watch: 'The screen could not be opened. Try again.',
 } as const
 
+/**
+ * The way to the provider's viewer page in the system browser. It is the main press only where
+ * it is the way to the screen at all: with the screen drawn on the glass it is the larger view,
+ * and while the Person holds the keyboard the main press is handing back.
+ */
+function Watch({
+  drawn,
+  held,
+  onPress,
+}: {
+  /** The screen is already on this page's glass. */
+  drawn: boolean
+  held: boolean
+  onPress: () => void
+}) {
+  return (
+    <Button
+      kind={!drawn && !held ? 'primary' : 'plain'}
+      icon={Eye}
+      label={drawn ? 'Open in your browser' : 'Watch its screen'}
+      onPress={onPress}
+    />
+  )
+}
+
 /** The computer as it stands, and the controls that go with where it stands. */
 function Machine({ computer }: { computer: ComputerRecord }) {
   const data = useLiveData()
   const standing = standingOf(computer)
   const running = ComputerState.guards.Running(computer.state)
   const watchable = Option.isSome(viewerOf(computer))
+  // The screen itself is on the glass where this install can draw a web page; where it cannot,
+  // the glass keeps Vivid's face and the button below opens the screen in the browser.
+  const live = Option.filter(viewerPermission(computer), drawsScreen)
   // The last press the server refused. It is about that press, so the next one takes it down.
   const [refused, setRefused] = useState<Option.Option<keyof typeof REFUSED>>(Option.none())
 
@@ -236,10 +272,27 @@ function Machine({ computer }: { computer: ComputerRecord }) {
 
   return (
     <>
-      <Said mood={standing.mood} on={running} title={standing.title} detail={standing.detail} />
+      <Said
+        glass={
+          Option.isSome(live) ? (
+            <Live
+              // A new machine start has a new viewer; the one on the glass is not carried over.
+              key={live.value.address}
+              address={live.value.address}
+              expiresAt={live.value.expiresAt}
+              control={computer.heldByPerson}
+            />
+          ) : (
+            <Face size={56} mood={standing.mood} />
+          )
+        }
+        on={running}
+        title={standing.title}
+        detail={standing.detail}
+      />
       {running && (
         <Label size="label" tone="ink-2" style={{ paddingHorizontal: 4 }}>
-          {screenNote(computer)}
+          {Option.isSome(live) ? glassNote(computer) : screenNote(computer)}
         </Label>
       )}
       {Option.isSome(refused) && <Notice message={REFUSED[refused.value]} />}
@@ -253,11 +306,9 @@ function Machine({ computer }: { computer: ComputerRecord }) {
           />
         )}
         {watchable && (
-          <Button
-            // One press on the page is the main one: handing back, while the Person holds it.
-            kind={computer.heldByPerson ? 'plain' : 'primary'}
-            icon={Eye}
-            label="Watch its screen"
+          <Watch
+            drawn={Option.isSome(live)}
+            held={computer.heldByPerson}
             onPress={() => void press('watch', () => data.run(watch()))}
           />
         )}

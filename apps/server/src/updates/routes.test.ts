@@ -2,9 +2,9 @@ import * as NodeCrypto from 'node:crypto'
 import { expect, layer } from '@effect/vitest'
 import { NodeHttpServer } from '@effect/platform-node'
 import { Effect, FileSystem, Layer, Option, Path, Schema } from 'effect'
-import * as HttpClient from 'effect/unstable/http/HttpClient'
-import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
-import * as HttpRouter from 'effect/unstable/http/HttpRouter'
+import * as HttpClient from 'effect/http/HttpClient'
+import * as HttpClientRequest from 'effect/http/HttpClientRequest'
+import * as HttpRouter from 'effect/http/HttpRouter'
 import { updateRoutes } from './routes.ts'
 
 // Mounted under a path with a trailing slash: both must survive into every address handed out.

@@ -7,12 +7,17 @@ import {
 } from '@flue/sdk'
 import { RunFailure, RunId } from '@vivid/contracts'
 import { Effect, Filter, Option, Queue, Ref, Schema, Stream } from 'effect'
-import { classifyFailure, decodeFailureEvidence } from './failure.ts'
+import {
+  classifyFailure,
+  decodeFailureEvidence,
+  ProviderStatus,
+  providerStatusOf,
+} from './failure.ts'
 
 /** The runtime verdict includes the classified reason before any product persistence or publishing. */
 export const Settlement = Schema.TaggedUnion({
   Completed: { reply: Schema.String, responseId: RunId },
-  Failed: { reason: RunFailure },
+  Failed: { reason: RunFailure, providerStatus: Schema.optionalKey(ProviderStatus) },
   Stopped: {},
   Unknown: {},
 })
@@ -33,12 +38,16 @@ const resultOf = (state: FlueConversationState, runId: RunId): Option.Option<Set
   const settled = state.settlements.find((candidate) => candidate.submissionId === runId)
   if (settled === undefined) return Option.none()
   if (settled.outcome === 'aborted') return Option.some(Settlement.cases.Stopped.make({}))
-  if (settled.outcome === 'failed')
+  if (settled.outcome === 'failed') {
+    const evidence = decodeFailureEvidence(settled.error)
+    const reason = classifyFailure(evidence)
     return Option.some(
-      Settlement.cases.Failed.make({
-        reason: classifyFailure(decodeFailureEvidence(settled.error)),
+      Option.match(providerStatusOf(evidence), {
+        onNone: () => Settlement.cases.Failed.make({ reason }),
+        onSome: (providerStatus) => Settlement.cases.Failed.make({ reason, providerStatus }),
       }),
     )
+  }
   const host = hostOf(state, runId)
   const answer = state.messages.filter(
     (message) => message.role === 'assistant' && message.submissionId === host,

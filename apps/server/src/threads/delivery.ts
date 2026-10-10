@@ -16,16 +16,19 @@ import { findPerson } from '../auth/access.ts'
 import { DeviceRegistry, deviceLayer } from '../computers/device.ts'
 import { ChannelReplies } from '../channels/replies.ts'
 import { Database } from '../database/client.ts'
+import { withdrawWaiting } from '../inputs/store.ts'
 import { Changes } from '../live/changes.ts'
 import { Learning } from '../memory/learn.ts'
 import { Notifier } from '../notifications/notifier.ts'
 import { submissionId } from '../runtime/identity.ts'
+import { recordRunFailure } from '../runtime/failure.ts'
 import { Runtime, Settlement } from '../runtime/client.ts'
 import { audienceTopics, canSee, findThread, type StoredThread } from './access.ts'
 import {
   Conversation,
   DeliveryMessage,
   DeliverySpeaker,
+  movesThreadOn,
   type Admitted,
   type ConversationService,
   type Delivery,
@@ -116,6 +119,14 @@ const makeObserve = Effect.fn('Conversation.makeObserve')(function* () {
   return Effect.fn('Conversation.observe')(function* (run: Followed) {
     const settlement = yield* runtime.settled(run.threadId, run.id)
     const changed = yield* runs.end(run.id, endingOf(settlement))
+    // The conditional write owns reporting too: replay and restart observers cannot count twice.
+    if (changed && Settlement.guards.Failed(settlement))
+      yield* recordRunFailure({
+        threadId: run.threadId,
+        runId: run.id,
+        reason: settlement.reason,
+        status: Option.fromUndefinedOr(settlement.providerStatus),
+      })
     yield* devices.ended(run.id)
     if (!changed) return
     // Naming lives in the server scope as its own fiber; even a stalled model cannot hold settlement open.
@@ -188,6 +199,32 @@ const resolvePerson = (database: Database['Service']) => {
   })
 }
 
+/** Resolve signal speech independently from the Person whose authority the continuation carries. */
+const resolveSpeaker = (database: Database['Service']) => {
+  const personOf = resolvePerson(database)
+  const withDatabase = Effect.provideService(Database, database)
+  /**
+   * A decision continues the Run under the Person it started for, including their Connections.
+   * The decider speaks in the signal and must independently still be able to see the Thread;
+   * approving or answering never lends the decider's authority to that continuation.
+   */
+  return Effect.fn('Conversation.speakerName')(function* (
+    delivery: Delivery,
+    thread: StoredThread,
+    acting: Person,
+  ) {
+    return yield* DeliverySpeaker.match(delivery.speaker, {
+      Acting: () => Effect.succeed(acting.name),
+      Vivid: () => Effect.succeed('Vivid'),
+      Decider: Effect.fn('Conversation.decider')(function* ({ personId }) {
+        if (!(yield* canSee(thread.id, personId).pipe(withDatabase))) return yield* threadMissing()
+        return (yield* personOf(personId)).name
+      }),
+    })
+  })
+}
+
+/** Admission owns reservation, runtime acceptance, input settlement and scoped Run observation. */
 const makeConversation = Effect.fn('Conversation.make')(function* () {
   const database = yield* Database
   const runtime = yield* Runtime
@@ -218,25 +255,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
 
   const personOf = resolvePerson(database)
 
-  /**
-   * A decision continues the Run under the Person it started for, including their Connections.
-   * The decider speaks in the signal and must independently still be able to see the Thread;
-   * approving or answering never lends the decider's authority to that continuation.
-   */
-  const speakerName = Effect.fn('Conversation.speakerName')(function* (
-    delivery: Delivery,
-    thread: StoredThread,
-    acting: Person,
-  ) {
-    return yield* DeliverySpeaker.match(delivery.speaker, {
-      Acting: () => Effect.succeed(acting.name),
-      Vivid: () => Effect.succeed('Vivid'),
-      Decider: Effect.fn('Conversation.decider')(function* ({ personId }) {
-        if (!(yield* canSee(thread.id, personId).pipe(withDatabase))) return yield* threadMissing()
-        return (yield* personOf(personId)).name
-      }),
-    })
-  })
+  const speakerName = resolveSpeaker(database)
 
   /**
    * The server never joins a different Person's delivery into a response in progress. The locked
@@ -299,6 +318,13 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         Effect.tapError(() => runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' }))),
         Effect.onInterrupt(() => runs.end(id, RunEnding.cases.Failed.make({ reason: 'Delivery' }))),
       )
+      // Replays returned above. Only a newly reserved ordinary message accepted by the runtime
+      // closes questions; refusals and every server-produced delivery leave them waiting.
+      if (movesThreadOn(delivery))
+        yield* withdrawWaiting(thread.id, speaker.id).pipe(
+          withDatabase,
+          Effect.provideService(Changes, changes),
+        )
       yield* runs.admitted(admission)
       yield* threads.touch(thread.id, said)
       // What a Person just sent is not unread for them. They were just shown to be able to see the

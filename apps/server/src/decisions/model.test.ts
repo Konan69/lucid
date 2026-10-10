@@ -1,8 +1,8 @@
 import * as TestClock from 'effect/testing/TestClock'
 import { expect, it } from '@effect/vitest'
 import { ConfigProvider, Deferred, Effect, Fiber, Layer, Logger, Predicate, Schema } from 'effect'
-import { AiError, Decision, DecisionModel } from 'effect/unstable/ai'
-import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
+import { AiError, Decision, DecisionModel } from 'effect/ai'
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http'
 import {
   decide,
   decideWithin,

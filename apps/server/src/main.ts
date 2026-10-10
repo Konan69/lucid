@@ -1,8 +1,8 @@
 import * as NodeHttp from 'node:http'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
-import * as PersistedQueue from 'effect/unstable/persistence/PersistedQueue'
-import * as HttpRouter from 'effect/unstable/http/HttpRouter'
+import * as PersistedQueue from 'effect/persistence/PersistedQueue'
+import * as HttpRouter from 'effect/http/HttpRouter'
 import {
   NodeFileSystem,
   NodeHttpClient,
