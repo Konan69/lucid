@@ -9,7 +9,7 @@ import {
 import { makeFullWhen, makeWhen, speakerOfTurn, thisReader } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { AlarmClock, Check, Copy as CopyIcon, Repeat2 } from 'lucide-react'
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { PersonAvatar } from '../../ui/Person'
 import { cn } from '../../ui/cn'
 import { Alive } from '../../ui/Alive'
@@ -80,24 +80,53 @@ export const isBlank = (message: FlueConversationMessage) =>
   !message.parts.some((part) => part.type === 'dynamic-tool')
 
 /**
+ * The fields of a message a row draws from. Flue hands back the same object for a message that
+ * did not change, with one exception: a message this page sent is copied on every snapshot to
+ * keep the id it was first drawn under (`converge` in `@flue/react` 2.2.2 `dist/index.mjs`,
+ * `{ ...message, id: localId }`). The copy is shallow, so its fields are the same values.
+ */
+const DRAWN = [
+  'id',
+  'role',
+  'parts',
+  'signal',
+  'settlement',
+  'submissionId',
+  'metadata',
+] as const satisfies ReadonlyArray<keyof FlueConversationMessage>
+
+/** Whether two messages draw the same row: the same object, or a copy with the same fields. */
+const sameMessage = (was: FlueConversationMessage, now: FlueConversationMessage) =>
+  was === now || DRAWN.every((field) => was[field] === now[field])
+
+interface MessageProps {
+  readonly message: FlueConversationMessage
+  readonly context: ThreadContext
+  /** Whether Vivid is working on this message right now; only the newest can be worked on. */
+  readonly working: boolean
+  /** Whether this is the newest message in the Thread, the one a Person can still answer. */
+  readonly latest: boolean
+  readonly onContinue: (text: string) => void
+}
+
+/**
  * One message in a Thread, drawn by who it is from. A Person's words are a bubble (theirs on the
  * right, anyone else's on the left with a face and a name); Vivid's are text with whatever it did
  * and whatever it is asking; a signal that woke Vivid is a quiet line saying why.
+ *
+ * A row is drawn again only when something it shows changed. Every streamed token is a new list
+ * of messages, and each one used to draw every row of the Thread again: 10,535 row renders and
+ * 36 long tasks while twenty keys were typed under a reply streaming into a Thread of 300
+ * messages (measured in a browser, 10 October 2026), which is what made typing lag in every
+ * field on the page. The design is T3 Code's memoised timeline row.
  */
-export function Message({
+export const Message = memo(function Message({
   message,
   context,
   working,
   latest,
   onContinue,
-}: {
-  message: FlueConversationMessage
-  context: ThreadContext
-  working: boolean
-  /** Whether this is the newest message in the Thread, the one a Person can still answer. */
-  latest: boolean
-  onContinue: (text: string) => void
-}) {
+}: MessageProps) {
   if (message.role === 'user') {
     return <Said text={textOf(message)} mine pictures={picturesOf(message)} />
   }
@@ -110,6 +139,17 @@ export function Message({
       latest={latest}
       onContinue={onContinue}
     />
+  )
+}, sameRow)
+
+/** Whether a row would be drawn the same: `memo`'s test, with the message compared by `sameMessage`. */
+function sameRow(was: MessageProps, now: MessageProps) {
+  return (
+    was.context === now.context &&
+    was.working === now.working &&
+    was.latest === now.latest &&
+    was.onContinue === now.onContinue &&
+    sameMessage(was.message, now.message)
   )
 }
 

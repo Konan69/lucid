@@ -6,7 +6,7 @@ import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { ArrowDown } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
-import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { memo, useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { arrival } from '../data/arrival'
 import { act } from '../data/app'
 import { change, changing, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
@@ -45,6 +45,12 @@ export function Thread({
   onTogglePanel: () => void
 }) {
   const detail = useLive(seenThread(id))
+  // One value for one answer from the server: the rows below are drawn again when what they are
+  // given changes, and a new `Option` around the same record on every render would be a change.
+  // It follows the record, which is the same object until the server answers again; the state
+  // around it is made anew by each read (`liveStateOf`).
+  const record = LiveState.$is('Ready')(detail) ? detail.value : undefined
+  const known = useMemo(() => Option.fromUndefinedOr(record), [record])
   const first = useSyncExternalStore(firstWords.subscribe, () => firstWords.of(id))
   const landed = useSyncExternalStore(firstWords.subscribe, () => firstWords.landed(id))
   // A Thread whose first words are still on their way may not exist on the server yet. It is not
@@ -58,7 +64,7 @@ export function Thread({
       id={id}
       me={me}
       first={first}
-      detail={LiveState.$is('Ready')(detail) ? Option.some(detail.value) : Option.none()}
+      detail={known}
       panelOpen={panelOpen}
       onTogglePanel={onTogglePanel}
     />
@@ -126,6 +132,43 @@ function contextFor(
   }
 }
 
+/**
+ * The messages of the conversation, one row each. It is drawn again only when the list, what the
+ * Thread carries beside it, or whether Vivid is working changes. The frame around it is drawn
+ * again far more often (Vivid's face changes its look every few seconds, and at the first key the
+ * Person types), and each time used to build every row again.
+ */
+const Rows = memo(function Rows({
+  visible,
+  context,
+  working,
+  onContinue,
+}: {
+  visible: ReadonlyArray<FlueConversationMessage>
+  context: ThreadContext
+  working: boolean
+  onContinue: (text: string, pictures?: ReadonlyArray<Picture>) => void
+}) {
+  return visible.map((message, position) => {
+    const latest = position === visible.length - 1
+    return (
+      // `data-arrives`: a Message that lands while the Thread is open rises into place; the
+      // ones already here when it opens do not move (`arriving`, on the list below).
+      <li key={message.id} data-arrives>
+        <Message
+          message={message}
+          context={context}
+          // Only the newest message can be the one Vivid is working on, so the others are not
+          // told when work starts and stops, and are not drawn again for it.
+          working={working && latest}
+          latest={latest}
+          onContinue={onContinue}
+        />
+      </li>
+    )
+  })
+})
+
 /** Keeps the conversation's message rows together, including deliveries still on their way. */
 function ConversationMessages({
   ready,
@@ -175,19 +218,7 @@ function ConversationMessages({
       failure={failure}
       onRetry={onRetry}
     >
-      {visible.map((message, position) => (
-        // `data-arrives`: a Message that lands while the Thread is open rises into place; the
-        // ones already here when it opens do not move (`arriving`, on the list below).
-        <li key={message.id} data-arrives>
-          <Message
-            message={message}
-            context={context}
-            working={working}
-            latest={position === visible.length - 1}
-            onContinue={onContinue}
-          />
-        </li>
-      ))}
+      <Rows visible={visible} context={context} working={working} onContinue={onContinue} />
       <OnTheirWay first={first} onAgain={onFirstAgain} />
       {Option.isSome(unsent) && (
         <NotSent
@@ -205,6 +236,16 @@ function ConversationMessages({
     </Messages>
   )
 }
+
+/**
+ * The messages of a conversation that are drawn: not the ones Flue marks hidden, unless they
+ * carry a signal the screen shows, and not the ones with nothing in them.
+ */
+const shownIn = (messages: ReadonlyArray<FlueConversationMessage>) =>
+  messages.filter(
+    (message) =>
+      (message.display !== 'hidden' || message.signal !== undefined) && !isBlank(message),
+  )
 
 function Conversation({
   id,
@@ -234,7 +275,16 @@ function Conversation({
   const setTyping = useAtomSet(typingIn(id))
   const thread = Option.map(detail, (value) => value.thread)
   const shared = Option.exists(thread, (value) => !ThreadAudience.guards.Private(value.audience))
-  const runs = Option.match(detail, { onNone: () => [], onSome: (value) => value.runs })
+  // A Thread started without a name takes its first message as one. It is read here, beside
+  // `shared` and before anything is remembered by either: React's compiler takes every later
+  // reading of `thread` as one that may change what was read from it before, and then cannot
+  // keep a `useMemo` or `useCallback` that names `shared`.
+  const unnamed = Option.exists(thread, (value) => value.title === 'New thread')
+  // The same list until the server answers again, so nothing drawn from it changes meanwhile.
+  const runs = useMemo(
+    () => Option.match(detail, { onNone: () => [], onSome: (value) => value.runs }),
+    [detail],
+  )
   // The Thread the server just opened for Vivid to speak first in already has a Run going. Until
   // the Thread's own record arrives to say so, that is known from having opened it, so the page
   // shows Vivid thinking from its first frame and never an empty Thread.
@@ -246,36 +296,57 @@ function Conversation({
     agent.status === 'streaming' ||
     FirstWords.$is('Sending')(first) ||
     Option.exists(thread, (value) => value.attention === 'Working')
-  const visible = agent.messages.filter(
-    (message) =>
-      (message.display !== 'hidden' || message.signal !== undefined) && !isBlank(message),
+  // Flue gives the same list until a message changes; the filtered list is kept the same with it.
+  const visible = useMemo(() => shownIn(agent.messages), [agent.messages])
+  // Made once per answer from the server, not once per streamed token: every row is given it,
+  // and a new one would draw every row again (`Message`).
+  const context = useMemo(
+    () => contextFor(detail, me.person.id, shared, runs),
+    [detail, me.person.id, shared, runs],
   )
-  const context = contextFor(detail, me.person.id, shared, runs)
+  // The hook answers with a new object on every streamed token, so `send` cannot depend on
+  // `agent`; it depends on this, which is bound once, when the screen is first drawn. Flue types
+  // `sendMessage` as a method (`UseFlueAgentResult` in `@flue/react` 2.2.2), so it is bound to
+  // what it was read from and never taken off loose. Once is enough: Flue makes one session for
+  // one client and gives that session's own `sendMessage` for as long as it lives (`useFlueAgent`
+  // and `AgentSession`, same package), the client above is made from `id` alone, and `Thread`
+  // keys this component by `id`, so another Thread is another mount and is bound again.
+  const [sendMessage] = useState(() => agent.sendMessage.bind(agent))
 
   /**
    * Sends words under a key that names this one delivery. A send whose answer was lost on the way
    * back is "not sent" as far as this page can tell; sending it again under the same key is the
    * same delivery to the server, not a second message and a second Run.
+   *
+   * It is the same function until what it sends through changes (`useCallback`), as are `say` and
+   * `halt` below: the rows and the composer are given them, and are not drawn again for a
+   * function that only looks new.
    */
-  function send(text: string, key: string, pictures: ReadonlyArray<Picture>) {
-    setUnsent(Option.none())
-    // A Thread started without a name takes its first message as one.
-    if (Option.exists(thread, (value) => value.title === 'New thread')) {
-      void change((sdk) => sdk.PatchThread({ id, patch: { title: titleFromMessage(text) } }))
-    }
-    // In a shared Thread the server turns the message into an attributed one, so it is sent
-    // plainly and drawn when it comes back; in a private one the hook shows it at once.
-    const sending = shared
-      ? client.send({ message: { kind: 'user', body: text }, idempotencyKey: key })
-      : agent.sendMessage(text, { idempotencyKey: key, images: [...pictures] })
-    void sending.catch((refusal) =>
-      setUnsent(Option.some({ words: text, key, pictures, why: whyNot(refusal) })),
-    )
-  }
+  const send = useCallback(
+    (text: string, key: string, pictures: ReadonlyArray<Picture>) => {
+      setUnsent(Option.none())
+      if (unnamed) {
+        void change((sdk) => sdk.PatchThread({ id, patch: { title: titleFromMessage(text) } }))
+      }
+      // In a shared Thread the server turns the message into an attributed one, so it is sent
+      // plainly and drawn when it comes back; in a private one the hook shows it at once.
+      const sending = shared
+        ? client.send({ message: { kind: 'user', body: text }, idempotencyKey: key })
+        : sendMessage(text, { idempotencyKey: key, images: [...pictures] })
+      void sending.catch((refusal) =>
+        setUnsent(Option.some({ words: text, key, pictures, why: whyNot(refusal) })),
+      )
+    },
+    [client, id, sendMessage, shared, unnamed],
+  )
 
   /** Says something new: a delivery of its own. */
-  const say = (text: string, pictures: ReadonlyArray<Picture> = []) =>
-    send(text, crypto.randomUUID(), pictures)
+  const say = useCallback(
+    (text: string, pictures: ReadonlyArray<Picture> = []) =>
+      send(text, crypto.randomUUID(), pictures),
+    [send],
+  )
+  const halt = useCallback(() => stop(id), [id])
 
   const lastSaid = lastWords(visible, me)
   const ended = working ? Option.none() : newestRun(runs)
@@ -326,7 +397,7 @@ function Conversation({
             // another path that cannot carry one yet.
             pictures={!shared}
             onSend={say}
-            onStop={() => stop(id)}
+            onStop={halt}
             onTyping={setTyping}
           />
         </>
