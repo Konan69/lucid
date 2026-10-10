@@ -1,7 +1,7 @@
 import { ComputerId, ComputerScreen, ComputerState, type Computer } from '@vivid/contracts'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { screenNote, standingOf, viewerOf } from './computer.ts'
+import { screenNote, standingOf, viewerOf, viewerOnGlass } from './computer.ts'
 
 const computer = (state: ComputerState, heldByPerson = false): Computer => ({
   id: ComputerId.make('computer'),
@@ -71,5 +71,28 @@ describe('where a phone can watch the screen', () => {
     expect(screenNote(computer(viewer, true))).toBe('Its screen opens in your browser.')
     // No page to open: the note sends the Person to a browser and promises nothing here.
     expect(screenNote(computer(running))).toContain('not shown on the phone')
+  })
+})
+
+describe('the viewer address the glass loads', () => {
+  it('drops the light theme wherever it stands and keeps everything else, the permission too', () => {
+    expect(viewerOnGlass('https://v.example/stream.html?appId=1&theme=light&width=1920#k=s')).toBe(
+      'https://v.example/stream.html?appId=1&width=1920#k=s',
+    )
+    expect(viewerOnGlass('https://v.example/stream.html?theme=light&width=1920#k=s')).toBe(
+      'https://v.example/stream.html?width=1920#k=s',
+    )
+    expect(viewerOnGlass('https://v.example/stream.html?width=1920&theme=light#k=s')).toBe(
+      'https://v.example/stream.html?width=1920#k=s',
+    )
+    expect(viewerOnGlass('https://v.example/stream.html?theme=light#k=s')).toBe(
+      'https://v.example/stream.html#k=s',
+    )
+  })
+
+  it('leaves an address with no theme as it came', () => {
+    expect(viewerOnGlass('https://v.example/stream.html?width=1920#theme=light')).toBe(
+      'https://v.example/stream.html?width=1920#theme=light',
+    )
   })
 })

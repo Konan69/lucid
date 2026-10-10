@@ -91,10 +91,29 @@ export const standingOf = (computer: Computer): Standing =>
  * is nothing to open.
  */
 export const viewerOf = (computer: Computer): Option.Option<string> =>
+  Option.map(viewerPermission(computer), (viewer) => viewer.address)
+
+/** The viewer page of a running Computer with when its permission runs out, when it has one. */
+export const viewerPermission = (
+  computer: Computer,
+): Option.Option<typeof ComputerScreen.cases.Viewer.Type> =>
   ComputerState.guards.Running(computer.state) &&
   ComputerScreen.guards.Viewer(computer.state.screen)
-    ? Option.some(computer.state.screen.address)
+    ? Option.some(computer.state.screen)
     : Option.none()
+
+/**
+ * The viewer address the app's own glass loads. The provider issues it with `theme=light`, which
+ * makes its page white around the screen and while it connects; the glass is dark in both of
+ * Vivid's themes, so the page is asked for its own default, which is dark. It is the web panel's
+ * `viewerOnDesk` (`apps/web/src/screen/computer/viewer.ts`) written on the text of the address:
+ * Hermes's `URL` cannot be trusted to edit a query. Nothing else is touched: the permission is in
+ * the fragment.
+ */
+export const viewerOnGlass = (address: string): string =>
+  address.replace(/([?&])theme=[^&#]*(&?)/u, (_all, lead: string, more: string) =>
+    more === '' ? '' : lead,
+  )
 
 /**
  * What a running Computer's page says about its screen. The viewer page takes touches and keys
@@ -118,3 +137,12 @@ export const screenNote = (computer: Computer): string =>
  * Person turned it off. A refusal is not said here; the page shows where the Computer stands.
  */
 export const arrive = (data: LiveData) => void data.run(wakeComputer())
+
+/**
+ * What the page says under a screen it is drawing itself. The glass takes no touch while Vivid
+ * has the keyboard (`screen/computer/Live.tsx`), so here watching is only watching.
+ */
+export const glassNote = (computer: Computer): string =>
+  computer.heldByPerson
+    ? 'Touch the screen to use it. Hand back when you are done.'
+    : 'You are watching. Take over to use it yourself.'
