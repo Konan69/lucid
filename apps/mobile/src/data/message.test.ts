@@ -135,19 +135,40 @@ describe('who a message is from', () => {
     )
   })
 
-  it('reads a runtime notice as nobody’s, and says when the reply failed', () => {
-    expect(speakerOf(message({ role: 'system' }), shared)).toEqual(
-      Speaker.Notice({ failed: false }),
-    )
-    expect(
-      speakerOf(message({ role: 'system', settlement: { outcome: 'failed' } }), shared),
-    ).toEqual(Speaker.Notice({ failed: true }))
+  it('draws nothing for what the runtime says to itself and the model', () => {
+    // Flue projects its own `instructions` signal with no `signal` and its `resources` signal
+    // with attributes only, both marked `diagnostic` and not hidden (`classifySignal`, 2.2.2).
+    const instructions = message({ role: 'system', purpose: 'advisory', display: 'diagnostic' })
+    const resources = message({
+      role: 'system',
+      purpose: 'advisory',
+      display: 'diagnostic',
+      signal: { attributes: { resource: 'skills' } },
+    })
+    expect(speakerOf(instructions, shared)).toEqual(Speaker.Silent())
+    expect(speakerOf(resources, shared)).toEqual(Speaker.Silent())
+    expect(isShown(instructions)).toBe(false)
+    expect(isShown(resources)).toBe(false)
+  })
+
+  it('reads a reply that was not finished as a notice from nobody', () => {
+    const failed = message({
+      role: 'system',
+      purpose: 'advisory',
+      display: 'diagnostic',
+      signal: { attributes: { submissionId: 'submission-7', reason: 'failed' } },
+      settlement: { outcome: 'failed' },
+    })
+    expect(speakerOf(failed, shared)).toEqual(Speaker.Notice({ failed: true }))
+    expect(isShown(failed)).toBe(true)
   })
 })
 
 describe('what a message holds', () => {
-  it('shows a shared Thread’s message although Flue hides signals', () => {
+  it('shows a shared Thread’s message and a wake, and hides the signals a card tells', () => {
     expect(isShown(said({ turn: '7', from: 'Dami Cole' }))).toBe(true)
+    expect(isShown(message({ role: 'system', signal: { tagName: 'schedule' } }))).toBe(true)
+    expect(isShown(message({ role: 'system', signal: { tagName: 'approval' } }))).toBe(false)
     expect(isShown(message({ role: 'system', display: 'hidden' }))).toBe(false)
     expect(isShown(message({ role: 'assistant' }))).toBe(true)
   })

@@ -6,10 +6,10 @@ import {
   type PersonId,
   type Run,
 } from '@vivid/contracts'
-import { makeFullWhen, makeWhen, speakerOfTurn, thisReader } from '@vivid/state'
+import { makeFullWhen, makeWhen, Source, sourceOf, speakerOfTurn, thisReader } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { AlarmClock, Check, Copy as CopyIcon, Repeat2 } from 'lucide-react'
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { PersonAvatar } from '../../ui/Person'
 import { cn } from '../../ui/cn'
 import { Alive } from '../../ui/Alive'
@@ -80,24 +80,53 @@ export const isBlank = (message: FlueConversationMessage) =>
   !message.parts.some((part) => part.type === 'dynamic-tool')
 
 /**
+ * The fields of a message a row draws from. Flue hands back the same object for a message that
+ * did not change, with one exception: a message this page sent is copied on every snapshot to
+ * keep the id it was first drawn under (`converge` in `@flue/react` 2.2.2 `dist/index.mjs`,
+ * `{ ...message, id: localId }`). The copy is shallow, so its fields are the same values.
+ */
+const DRAWN = [
+  'id',
+  'role',
+  'parts',
+  'signal',
+  'settlement',
+  'submissionId',
+  'metadata',
+] as const satisfies ReadonlyArray<keyof FlueConversationMessage>
+
+/** Whether two messages draw the same row: the same object, or a copy with the same fields. */
+const sameMessage = (was: FlueConversationMessage, now: FlueConversationMessage) =>
+  was === now || DRAWN.every((field) => was[field] === now[field])
+
+interface MessageProps {
+  readonly message: FlueConversationMessage
+  readonly context: ThreadContext
+  /** Whether Vivid is working on this message right now; only the newest can be worked on. */
+  readonly working: boolean
+  /** Whether this is the newest message in the Thread, the one a Person can still answer. */
+  readonly latest: boolean
+  readonly onContinue: (text: string) => void
+}
+
+/**
  * One message in a Thread, drawn by who it is from. A Person's words are a bubble (theirs on the
  * right, anyone else's on the left with a face and a name); Vivid's are text with whatever it did
  * and whatever it is asking; a signal that woke Vivid is a quiet line saying why.
+ *
+ * A row is drawn again only when something it shows changed. Every streamed token is a new list
+ * of messages, and each one used to draw every row of the Thread again: 10,535 row renders and
+ * 36 long tasks while twenty keys were typed under a reply streaming into a Thread of 300
+ * messages (measured in a browser, 10 October 2026), which is what made typing lag in every
+ * field on the page. The design is T3 Code's memoised timeline row.
  */
-export function Message({
+export const Message = memo(function Message({
   message,
   context,
   working,
   latest,
   onContinue,
-}: {
-  message: FlueConversationMessage
-  context: ThreadContext
-  working: boolean
-  /** Whether this is the newest message in the Thread, the one a Person can still answer. */
-  latest: boolean
-  onContinue: (text: string) => void
-}) {
+}: MessageProps) {
   if (message.role === 'user') {
     return <Said text={textOf(message)} mine pictures={picturesOf(message)} />
   }
@@ -110,6 +139,17 @@ export function Message({
       latest={latest}
       onContinue={onContinue}
     />
+  )
+}, sameRow)
+
+/** Whether a row would be drawn the same: `memo`'s test, with the message compared by `sameMessage`. */
+function sameRow(was: MessageProps, now: MessageProps) {
+  return (
+    was.context === now.context &&
+    was.working === now.working &&
+    was.latest === now.latest &&
+    was.onContinue === now.onContinue &&
+    sameMessage(was.message, now.message)
   )
 }
 
@@ -208,15 +248,19 @@ function picturesOf(message: FlueConversationMessage) {
   })
 }
 
-const SIGNAL_LINE = new Map([
-  ['schedule', { Icon: Repeat2, label: 'A routine came due' }],
-  ['follow-up', { Icon: AlarmClock, label: 'Time to follow up' }],
-])
+/** The quiet line each wake is drawn as, by why Vivid woke (`Source.Wake` in `@vivid/state`). */
+const SIGNAL_LINE = {
+  routine: { Icon: Repeat2, label: 'A routine came due' },
+  'follow-up': { Icon: AlarmClock, label: 'Time to follow up' },
+} as const
 
 /**
- * Something the server put in front of Vivid. A `message` signal is a Person speaking in a shared
- * Thread and is drawn as their bubble. A Routine or a follow-up is a quiet line. An Approval's
- * outcome and an answer are not drawn here at all: their cards already say what happened.
+ * Something the server or the runtime put in front of Vivid, drawn by where it came from
+ * (`sourceOf` in `@vivid/state`, the reading every surface shares). A Person speaking in a shared
+ * Thread is drawn as their bubble. A Routine or a follow-up is a quiet line. An answer that was
+ * not finished is said in Vivid's words, not the runtime's. Nothing else is drawn here: an
+ * Approval's outcome and an answer are told by their cards, and what the runtime says to itself
+ * and the model (its instructions were reloaded, its tools changed) is for no Person.
  */
 function Signal({
   message,
@@ -225,45 +269,41 @@ function Signal({
   message: FlueConversationMessage
   context: ThreadContext
 }) {
-  const signal = message.signal
-  if (signal === undefined) {
-    // A system message with no signal is the runtime talking to itself (its instructions were
-    // reloaded, a session was compacted). None of that is for a Person. The one thing worth
-    // saying is that an answer was not finished, and that is said in Vivid's words, not the
-    // runtime's.
-    if (message.settlement === undefined || message.settlement.outcome !== 'failed') return null
-    return (
+  return Source.$match(sourceOf(message), {
+    Failed: () => (
       <div className="rounded-panel bg-surface-2 px-4 py-3 text-label text-ink-3">
         Vivid could not finish that.
       </div>
-    )
-  }
-  const attributes = signal.attributes === undefined ? {} : signal.attributes
-  if (signal.tagName === 'message') {
-    return (
+    ),
+    Said: ({ turn, from }) => (
       <Said
         text={textOf(message)}
         pictures={[]}
         // Whose turn it was comes from the Thread's Runs; the conversation holds no identifier.
         mine={Option.exists(
-          speakerOfTurn(context.runs, Option.fromUndefinedOr(attributes.turn)),
+          speakerOfTurn(context.runs, turn),
           (speaker) => speaker.id === context.me,
         )}
-        from={{ name: attributes.from === undefined ? 'Someone' : attributes.from }}
+        from={{ name: Option.getOrElse(from, () => 'Someone') }}
       />
-    )
-  }
-  const line = signal.tagName === undefined ? undefined : SIGNAL_LINE.get(signal.tagName)
-  if (line === undefined) return null
-  return (
-    <div className="flex items-center gap-2 text-meta font-meta text-ink-3">
-      <line.Icon className="size-3.5" />
-      <span>
-        {line.label}
-        {attributes.name !== undefined && ` · ${attributes.name}`}
-      </span>
-    </div>
-  )
+    ),
+    Wake: ({ reason, name }) => {
+      const line = SIGNAL_LINE[reason]
+      return (
+        <div className="flex items-center gap-2 text-meta font-meta text-ink-3">
+          <line.Icon className="size-3.5" />
+          <span>
+            {line.label}
+            {Option.isSome(name) && ` · ${name.value}`}
+          </span>
+        </div>
+      )
+    },
+    // `Message` sends only `system` messages here, which are never a turn or a reply.
+    Person: () => null,
+    Vivid: () => null,
+    Plumbing: () => null,
+  })
 }
 
 const readShown = Schema.decodeUnknownOption(ShowRequest)

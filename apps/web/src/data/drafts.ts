@@ -10,7 +10,8 @@ import {
   type DraftScope,
   type Drafts,
 } from '@vivid/state'
-import { Option } from 'effect'
+import type { ThreadId } from '@vivid/contracts'
+import { Equivalence, Option } from 'effect'
 import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { start } from './app'
 import { kept } from './kept'
@@ -28,10 +29,19 @@ import { engine } from './runtime'
  * Each tab is a client of its own. It holds its own copy of the drafts and its own account of
  * which keystrokes it has not saved, and signs its saves with its own name. The browser's store
  * is where the tabs' copies meet: a tab takes in what another wrote by the same rule it applies
- * to a list from the server (`absorbed`: never over keystrokes it has not saved), before every
- * change of its own and whenever the store says it was written. Two tabs open on one Thread
- * therefore never pull words out from under each other, and typing in one Thread here does not
- * undo a draft just written in another tab.
+ * to a list from the server (`absorbed`: never over keystrokes it has not saved), whenever the
+ * store says it was written and before each write of its own, and each document once (`seen`).
+ * Two tabs open on one Thread therefore never pull words out from under each other, and typing
+ * in one Thread here does not undo a draft just written in another tab.
+ *
+ * A keystroke changes this tab's memory and nothing else. The store is one document holding every
+ * draft, and it is synchronous: reading it decodes all of them and writing it encodes all of
+ * them, on the thread the Person is typing on. That used to happen on every key (24 reads and 24
+ * writes for a 24-letter sentence, `drafts.test.ts`). Now the store is written at most once per
+ * `REST_MS` while words change, and at once when the page is hidden or left, which is when a
+ * browser may discard it. The design is T3 Code's (`apps/web/src/lib/storage.ts`
+ * `createDebouncedStorage`, flushed on unload); here the wait is not restarted by each key, so a
+ * tab that dies mid-sentence has lost at most `REST_MS` of it.
  *
  * The store can also refuse a write: the drafts then live in this tab's memory for as long as it
  * is open, and sending a message is never held up by it.
@@ -48,8 +58,11 @@ const KEY = 'vivid-drafts'
  */
 const tab = crypto.randomUUID()
 
+/** The document the store held when this tab opened. */
+const opened = kept.read(KEY)
+
 /** This tab's copy. A tab that opens takes over whatever the last one left owed. */
-let drafts = readDrafts(kept.read(KEY))
+let drafts = readDrafts(opened)
 /**
  * Words that are only space, in the one place they were just typed. They are no draft and are
  * never kept, but the field must go on showing them: a Person who starts a message with a new
@@ -59,8 +72,69 @@ let blank = Option.none<{ readonly where: string; readonly text: string }>()
 
 const listeners = new Set<() => void>()
 
-/** This tab's copy with whatever other tabs have written since taken in (`absorbed`). */
-const current = () => absorbed(drafts, readDrafts(kept.read(KEY)))
+/** How long changed drafts may wait in memory before the store is written, in milliseconds. */
+const REST_MS = 300
+
+/** The write that is waiting for `REST_MS` to pass. None when the store has what memory has. */
+let resting = Option.none<ReturnType<typeof setTimeout>>()
+
+/**
+ * The store's document as this tab last knew it: the one it last took in, or the one it last put
+ * there. While the store still holds exactly this, nothing in it is news, and there is nothing to
+ * decode or take in. It is also what tells another tab's words from this tab's own earlier
+ * write: taken for another's, an older copy of words typed here could replace the newer ones in
+ * memory (`absorbed` takes an unsaved text that differs).
+ *
+ * A document is taken in once, against the drafts this tab held when it found it. This used to
+ * be only the document this tab last wrote, so another tab's document went on reading as news
+ * until this tab's next write landed, and was taken in again at each look. In between, the
+ * server's answer to a save turns words here from keystrokes nothing may replace into saved
+ * words, which another tab's unsaved text does replace: the second taking-in put that tab's
+ * older words over the ones just saved. That was every time the other tab's document arrived
+ * while a save was on its way, and always in a store that takes no write (`reopened.test.ts`).
+ * The other tab still holds its words and still owes them; they come back from the server, in
+ * the server's order, once it has saved them.
+ *
+ * It starts as the document this tab opened on, which is this tab's copy too. Started as none,
+ * that document read as another tab's for as long as the store took no write from here: a
+ * browser whose store is full still answers reads, so words kept from the last visit came back
+ * over newer ones the moment the server had saved those (`reopened.test.ts`).
+ */
+let seen = opened
+const sameDocument = Option.makeEquivalence(Equivalence.strictEqual<string>())
+
+/**
+ * Takes in what another tab has stored since this tab last looked, by `absorbed`'s rule: never
+ * over keystrokes this tab has not saved.
+ */
+function takeIn() {
+  const held = kept.read(KEY)
+  if (sameDocument(held, seen)) return
+  // Marked before anything else can look: whether or not a write of this tab's follows.
+  seen = held
+  drafts = absorbed(drafts, readDrafts(held))
+}
+
+/** Writes this tab's drafts to the store now, after taking in what other tabs put there. */
+function store() {
+  Option.map(resting, clearTimeout)
+  resting = Option.none()
+  takeIn()
+  // A store that refuses is not said: this tab's memory has the words either way. It then still
+  // holds the document just taken in, which `seen` already names.
+  Option.map(writeDrafts(drafts), (text) => {
+    if (kept.write(KEY, text)) seen = Option.some(text)
+  })
+}
+
+/** Owes the store a write, `REST_MS` from the first change it has not had. */
+function rest() {
+  if (Option.isSome(resting)) return
+  resting = Option.some(setTimeout(store, REST_MS))
+}
+
+/** The Thread ids of one answer from the Thread list, made once for that answer. */
+const listed = new WeakMap<object, ReadonlySet<ThreadId>>()
 
 /**
  * Who is signed in and where they are working, once the server has said. It is the server's own
@@ -76,23 +150,30 @@ const scope = (): Option.Option<DraftScope> => {
 const sync = makeDraftSync({
   device: tab,
   read: () => Option.some(drafts),
-  update: (change) => put(change(current())),
+  update: (change) => put(change(drafts)),
   scope,
   threads: () => {
     const threads = engine.registry.get(live.threads.answers)
-    return AsyncResult.isSuccess(threads)
-      ? Option.some(new Set(threads.value.threads.map((thread) => thread.id)))
-      : Option.none()
+    if (!AsyncResult.isSuccess(threads)) return Option.none()
+    // `sync.changed` asks on every keystroke, and the list is the same answer between two of
+    // the server's; a set of every Thread's id is not built again for each letter.
+    const known = listed.get(threads.value)
+    if (known !== undefined) return Option.some(known)
+    const ids = new Set(threads.value.threads.map((thread) => thread.id))
+    listed.set(threads.value, ids)
+    return Option.some(ids)
   },
   save: (request) => engine.change((client) => client.SaveDraft(request)),
   launch: start,
 })
 
-/** Replaces this tab's drafts: in memory, in the store, on screen, and in what is owed. */
+/**
+ * Replaces this tab's drafts: in memory and on screen at once, in what is owed, and in the store
+ * once they have rested (`rest`).
+ */
 function put(next: Drafts) {
   drafts = next
-  // A store that refuses is not said: this tab's memory has the words either way.
-  Option.map(writeDrafts(next), (text) => kept.write(KEY, text))
+  rest()
   for (const listener of listeners) listener()
   sync.changed()
 }
@@ -102,8 +183,19 @@ function put(next: Drafts) {
 // has nothing new to say, and writing would only make the other tab hear its own words again.
 window.addEventListener('storage', (event) => {
   if (event.key !== KEY) return
-  drafts = current()
+  takeIn()
   for (const listener of listeners) listener()
+})
+
+// A page that is hidden or left may never run again: a phone's browser discards a tab in the
+// background, and closing the window ends it. What was typed in the last `REST_MS` is stored
+// before that, so it is there when the Person comes back.
+const storeIfOwed = () => {
+  if (Option.isSome(resting)) store()
+}
+window.addEventListener('pagehide', storeIfOwed)
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) storeIfOwed()
 })
 
 // Who is signed in, and where, is what says which of this browser's drafts are theirs to send;
@@ -129,8 +221,10 @@ engine.registry.subscribe(
  */
 export const forgetDrafts = () => {
   sync.stop()
-  drafts = forgotten(current())
-  Option.map(writeDrafts(drafts), (text) => kept.write(KEY, text))
+  takeIn()
+  drafts = forgotten(drafts)
+  // At once, not after a rest: what the session held must not outlast it in the store.
+  store()
   for (const listener of listeners) listener()
 }
 
@@ -145,7 +239,21 @@ export const draft = {
   keep: (where: string, text: string) => {
     blank =
       text.length > 0 && text.trim().length === 0 ? Option.some({ where, text }) : Option.none()
-    put(withDraft(current(), where, text, Date.now()))
+    put(withDraft(drafts, where, text, Date.now()))
+  },
+  /**
+   * Takes a place's words to send them: answers them, trimmed, and empties the place in the same
+   * step. Words that are only space are nothing to send and are left as they are.
+   *
+   * A composer used to send the words its last render had drawn. Three presses of Enter handled
+   * before React drew the emptied field each read those same words and sent them as three
+   * messages under three keys (reproduced in a browser on 10 October 2026). The words are read
+   * here, from the one copy, at the press: the first press takes them and the others find none.
+   */
+  take: (where: string): string => {
+    const words = draft.in(where).trim()
+    if (words.length > 0) draft.keep(where, '')
+    return words
   },
   /** Told when any place's words change, here or because another device's draft arrived. */
   subscribe: (listener: () => void) => {

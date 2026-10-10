@@ -11,8 +11,11 @@ import {
   awaitedOf,
   describeToolCall,
   drawn,
+  inThread,
   readAnswered,
   readAsked,
+  Source,
+  sourceOf,
   speakerOfTurn,
   summarizeSteps,
   type Awaited,
@@ -50,8 +53,10 @@ export interface Around {
  * - `Vivid`: Vivid's reply. `answering` names the Person it acted for, in a shared Thread where
  *   that is not obvious.
  * - `Wake`: a Routine coming due or a follow-up falling due: a quiet line saying why Vivid spoke.
- * - `Notice`: something the runtime said with nobody behind it, such as a reply that failed.
- * - `Silent`: not drawn. An Approval's outcome and an answer are told by their cards.
+ * - `Notice`: the runtime's word that a reply was not finished. It is the only thing the runtime
+ *   says that is drawn, so `failed` is always true.
+ * - `Silent`: not drawn. An Approval's outcome and an answer are told by their cards, and the
+ *   runtime's notes to itself and the model are for no Person.
  */
 export type Speaker = Data.TaggedEnum<{
   Me: {}
@@ -63,39 +68,6 @@ export type Speaker = Data.TaggedEnum<{
 }>
 export const Speaker = Data.taggedEnum<Speaker>()
 
-/** The signals that wake Vivid without a Person speaking, by the tag the server delivers. */
-const WAKES = new Map<string, 'routine' | 'follow-up'>([
-  ['schedule', 'routine'],
-  ['follow-up', 'follow-up'],
-])
-
-/**
- * Who a `system`-role message is from. The server delivers everything that is not a private
- * user turn as a signal: a `message` signal is a Person speaking in a shared Thread
- * (`attributes.turn` names the Run that says who they are, `attributes.from` their name).
- */
-function signalSpeaker(message: FlueConversationMessage, around: Around): Speaker {
-  const signal = message.signal
-  if (signal === undefined) {
-    const failed = message.settlement !== undefined && message.settlement.outcome === 'failed'
-    return Speaker.Notice({ failed })
-  }
-  const attributes = signal.attributes === undefined ? {} : signal.attributes
-  if (signal.tagName === 'message') {
-    // Whose turn it was comes from the Thread's Runs; the conversation holds no identifier.
-    return Option.exists(
-      speakerOfTurn(around.runs, Option.fromUndefinedOr(attributes.turn)),
-      (speaker) => speaker.id === around.me,
-    )
-      ? Speaker.Me()
-      : Speaker.Member({ name: Option.fromUndefinedOr(attributes.from) })
-  }
-  const reason = signal.tagName === undefined ? undefined : WAKES.get(signal.tagName)
-  return reason === undefined
-    ? Speaker.Silent()
-    : Speaker.Wake({ reason, name: Option.fromUndefinedOr(attributes.name) })
-}
-
 /** Who Vivid was answering, where more than one Person could have asked. */
 function answering(message: FlueConversationMessage, around: Around): Option.Option<string> {
   if (!around.shared) return Option.none()
@@ -105,19 +77,32 @@ function answering(message: FlueConversationMessage, around: Around): Option.Opt
   )
 }
 
-/** Who one message is from. */
+/**
+ * Who one message is from. Where it came from is the shared reading (`sourceOf` in
+ * `@vivid/state`), the same on every surface; this adds what only the Thread around it knows:
+ * which Person a turn belongs to, and who Vivid was answering.
+ *
+ * It read the conversation itself before, and took every `system` message without a signal for a
+ * notice. Flue projects its own `instructions` and `environment` signals exactly so, and not
+ * hidden, so the phone drew the runtime's notes to the model in the Thread.
+ */
 export function speakerOf(message: FlueConversationMessage, around: Around): Speaker {
-  if (message.role === 'user') return Speaker.Me()
-  if (message.role === 'system') return signalSpeaker(message, around)
-  return Speaker.Vivid({ answering: answering(message, around) })
+  return Source.$match(sourceOf(message), {
+    Person: () => Speaker.Me(),
+    Vivid: () => Speaker.Vivid({ answering: answering(message, around) }),
+    // Whose turn it was comes from the Thread's Runs; the conversation holds no identifier.
+    Said: ({ turn, from }) =>
+      Option.exists(speakerOfTurn(around.runs, turn), (speaker) => speaker.id === around.me)
+        ? Speaker.Me()
+        : Speaker.Member({ name: from }),
+    Wake: ({ reason, name }) => Speaker.Wake({ reason, name }),
+    Failed: () => Speaker.Notice({ failed: true }),
+    Plumbing: () => Speaker.Silent(),
+  })
 }
 
-/**
- * Whether a message belongs in the Thread at all. Flue hides runtime plumbing, but a signal is
- * hidden by default too, and a Person's message in a shared Thread arrives as one.
- */
-export const isShown = (message: FlueConversationMessage): boolean =>
-  message.display !== 'hidden' || message.signal !== undefined
+/** Whether a message belongs in the Thread at all, by the rule every surface shares. */
+export const isShown: (message: FlueConversationMessage) => boolean = inThread
 
 /** A message's words, each text part its own paragraph. */
 export const textOf = (message: FlueConversationMessage): string =>
