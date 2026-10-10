@@ -1,11 +1,10 @@
-import { StyleSheet, View } from 'react-native'
-import Animated from 'react-native-reanimated'
+import type { ComponentProps } from 'react'
+import { View } from 'react-native'
 import { ThinkingOrb } from '../../vendor/orb'
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
-import { cast, lifted } from './elevation'
-import { GLASS_SUPPORTED, GlassMaterial } from './Glass'
 import { APPEAR, LEAVE } from './motion/morph'
+import { Pill, PILL } from './Pill'
 import { Label } from './ui'
 
 /** The word beside the orb. The web says the same beside its own (`apps/web/src/screen/Thread.tsx`). */
@@ -15,8 +14,8 @@ const THINKING = 'Thinking…'
 const ORB = 20
 const SLOT = 24
 
-/** The bubble's height: the pill under Vivid's avatar is the same (`ui/Presence.tsx`, `PILL`). */
-const BUBBLE = 30
+/** The bubble's height: every pill's, and the round button's that comes out of its end. */
+export const BUBBLE = PILL
 
 /** What is kept clear under the bubble, before the composer, and over it, before the words. */
 export const THINKING_CLEAR = 6
@@ -36,21 +35,27 @@ export const THINKING_ROOM = BUBBLE + THINKING_CLEAR * 2
  * he asked for it "in the middle and still have a bubble, not on the left" (7 October 2026). The
  * arrangement is T3 Code mobile's working control (`FloatingWorkingControl`,
  * `src/features/threads/floating-working-control.tsx`): a glass pill centred over the foot of the
- * feed, above the composer, that fades in and out with the work. The glass is built as the pill
- * under Vivid's avatar is: an outline that clips, the passive material behind, the content in
- * front as the material's sibling.
+ * feed, above the composer, that fades in and out with the work. The shape is `Pill`
+ * (`ui/Pill.tsx`), which says how the glass is built.
  *
- * It floats: whoever draws it lays it over the foot of the conversation and keeps
- * `THINKING_ROOM` clear there, so nothing is pushed when it comes and goes.
+ * It floats: `Floating` (`ui/Floating.tsx`) lays it over the foot of the conversation, with the
+ * button that returns to the newest words folded into its end, and the conversation keeps
+ * `THINKING_ROOM` clear there, so nothing is pushed when it comes and goes. `style` is how that
+ * row moves it aside when the button comes out; the bubble itself decides nothing about where it
+ * is.
  *
  * The orb is the one moving thing, and it is drawn only while this is. The bubble fades in and
- * out with the work; nothing else moves, and with reduced motion it is simply there.
+ * out with the work; with reduced motion it is simply there.
  */
-export function Thinking() {
-  const { colors: c, dark } = useTheme()
+export function Thinking({ style }: { style: ComponentProps<typeof Pill>['style'] }) {
+  const { dark } = useTheme()
   const vivid = useAppearance()
   return (
-    <Animated.View
+    <Pill
+      interactive={false}
+      raised={false}
+      // It says something and does nothing: a touch on it goes to the conversation under it.
+      pointerEvents="none"
       entering={APPEAR}
       exiting={LEAVE}
       accessible
@@ -59,20 +64,8 @@ export function Thinking() {
       accessibilityState={{ busy: true }}
       // Said when it appears: it is how a Thread says that Vivid has started on what was sent.
       accessibilityLiveRegion="polite"
-      style={[
-        {
-          height: BUBBLE,
-          borderRadius: BUBBLE / 2,
-          borderCurve: 'continuous',
-          overflow: 'hidden',
-        },
-        // The system's glass has an edge of its own; without it the ring is the edge.
-        GLASS_SUPPORTED ? cast('sm') : lifted('sm', c.border),
-      ]}
+      style={style}
     >
-      <GlassMaterial
-        style={[StyleSheet.absoluteFill, { borderRadius: BUBBLE / 2, borderCurve: 'continuous' }]}
-      />
       <View
         style={{
           height: BUBBLE,
@@ -97,6 +90,6 @@ export function Thinking() {
           {THINKING}
         </Label>
       </View>
-    </Animated.View>
+    </Pill>
   )
 }

@@ -39,6 +39,16 @@ const CORNER = TARGET / 2 + EDGE_ROOM
 const ROUND = 30
 
 /**
+ * What the dock keeps clear above the composer's shape, for whatever is laid out against that
+ * shape's top edge: a question's choices rise from behind it (`screen/chat/Choices.tsx`).
+ */
+export const COMPOSER_CLEAR = AROUND
+/** What the dock keeps clear at each side of the shape. */
+export const COMPOSER_SIDE = 12
+/** The composer's height with one line in it and the keyboard up: the shape and the dock's room. */
+export const COMPOSER_RESTING = TARGET + EDGE_ROOM * 2 + AROUND * 2
+
+/**
  * Where a Person writes to Vivid: on the first screen to start a Thread, and in a Thread to
  * speak in it. The text is owned by the screen (a suggestion can fill it, a failed send keeps
  * it); this draws the field and the one button beside it.
@@ -125,7 +135,7 @@ export function Composer({
       style={{
         // The reference's dock: 12 at the sides and 6 above and below, over whatever the home
         // indicator needs when the keyboard is not covering it.
-        paddingHorizontal: 12,
+        paddingHorizontal: COMPOSER_SIDE,
         paddingTop: AROUND,
         paddingBottom: (keyboard ? 0 : insets.bottom) + AROUND,
       }}

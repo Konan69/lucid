@@ -1,599 +1,115 @@
-import { nativeMetrics as m } from '@vivid/tokens/native'
-import { Data, Option } from 'effect'
-import { ArrowUp, Check, PenLine } from 'lucide-react-native'
-import { useState, type ReactNode } from 'react'
-import { ActivityIndicator, Pressable, View } from 'react-native'
+import type { FlueConversationMessage } from '@flue/sdk'
+import {
+  InputRequestId,
+  InputRequestState,
+  type InputRequest,
+  type PersonId,
+} from '@vivid/contracts'
+import { Option, Schema } from 'effect'
+import { useState } from 'react'
+import { View } from 'react-native'
 import Animated from 'react-native-reanimated'
-import { useTheme } from '../../theme'
-import { APPEAR } from '../../ui/motion/morph'
-import { Dot, Field, Label, Notice, Press, radius, TARGET } from '../../ui/ui'
-
-/** One answer on offer: what it is called, and what picking it means in a line. */
-export interface Choice {
-  readonly label: string
-  /** Empty when the label says it all. */
-  readonly detail: string
-}
-
-/** Where a question stands, and what each standing needs to be drawn. */
-export type Asked = Data.TaggedEnum<{
-  /**
-   * Waiting on the Person looking at it. `sending` is the answer they gave that is on its way;
-   * `onAnswer` takes a row's label or words of their own.
-   */
-  Open: {
-    readonly sending: Option.Option<string>
-    readonly onAnswer: (answer: string) => void
-  }
-  /** Settled. `note` says something about the answer, such as who gave it. */
-  Answered: { readonly answer: string; readonly note: Option.Option<string> }
-  /** Not this Person's to answer, or no longer needed: `note` says which. */
-  Resting: { readonly note: string }
-}>
-export const Asked = Data.taggedEnum<Asked>()
-
-/** The letter on each row's keycap, by its place. The contract allows six options. */
-const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-
-/** A row is at least this tall: a finger's target with room to spare, as the reference draws it. */
-const ROW = 56
-
-/** How far a row stands back while another answer is on its way. Still readable, plainly idle. */
-const STANDING_BACK = 0.45
-
-/** The square before a row's label: its letter, or the pen on the row for words of one's own. */
-const KEYCAP = 24
+import { Card, cardOf, momentOf, toolsOf } from '../../data/message'
+import { SAID } from '../../ui/motion/morph'
+import { Label } from '../../ui/ui'
+import type { Spoken } from './asked'
+import { Said, Voice } from './Said'
+import { Words } from './Words'
 
 /**
- * A question from Vivid, and the ways to answer it. Every question a Person answers by pressing
- * goes through this one piece, a real Input request in a Thread (`InputCard` in `Cards.tsx`). It
- * is presentational: it is told the title, the choices and where the question stands, and owns
- * only what the Person is in the middle of (the words of their own answer).
+ * A question from Vivid (an Input request), as the Thread's conversation holds it. It is two
+ * ordinary messages and nothing else:
  *
- * Ported from the web's `apps/web/src/screen/thread/Question.tsx`, which follows the reference
- * assistant's question card: the title in title weight on a raised card; each row 56 tall with a
- * square 24 letter keycap on a subtle fill before its label, and a smaller second line when the
- * option has one; and, once answered, the card closed down to the title and the one chosen row,
- * muted, with a check at its far end.
+ * - The question is Vivid's words, drawn as its words are anywhere (`Asked`), in the reply that
+ *   asked it and beside the same face.
+ * - The answer, once there is one, is the bubble of whoever gave it (`Replied`), as if they had
+ *   typed it: a row of the Thread in its own right, where it was given (`linesOf`, `asked.ts`).
  *
- * It has no lines. The reference draws an outline round the card, a second round the rows, a
- * hairline between each pair of rows and one round every keycap; on a phone that was four kinds
- * of border on one card, and the owner asked for them to go (6 October 2026). The card is one
- * filled shape on the page, the rows are told apart by their keycaps and their even height, and a
- * keycap is a fill.
+ * The ways to answer are not in the conversation. While the question waits on the Person looking
+ * at it, its choices are a card that rises from behind the composer (`Choices.tsx`), and the
+ * composer itself takes words of their own.
  *
- * The phone differs where a hand does:
- * - A row is its whole width to press, and answers the press with a fill, not a hover.
- * - Pressing sends at once, so the row says it is on its way (its fill stays and a spinner stands
- *   where the check will be) while the others stand back. The web has no such moment drawn.
- * - "Type your own answer" is one more row, not a field that is always there: a field opens the
- *   keyboard over the rows the Person was reading. Pressing the row opens the field in its place.
- * - There are no letter shortcuts or arrow keys; the letters are only the rows' names.
- *
- * An answered card holds only what it shows, and it is drawn that way at once: the rows that
- * were not chosen are gone, the chosen one is where it now belongs, and only its check fades in.
- * The card used to fold down to its answer, each row gliding to its new place as the others faded
- * out (a layout transition on the card, its rows and its note, and an exit on every row). It is a
- * row of a Thread's conversation, which moves under it (and was then an upside-down list): answering is the moment Vivid
- * starts again, so new rows arrive and the card's own row shifts while it is folding. On the
- * owner's iPhone the card then came out jumbled and stayed that way (7 October 2026): rows that
- * were leaving were left on screen, and what stayed was drawn where the fold had been cut short.
- * Nothing in a row of that list changes place on a transition now.
+ * Until 10 October 2026 a question was a card in the conversation: a title, lettered rows, a row
+ * that opened a field for words of one's own, and, once answered, the card closed down to the
+ * chosen row with a check. The owner approved its replacement from a prototype: the conversation
+ * reads as a conversation, and what must be pressed is where the thumb already is.
  */
-export function Question({
-  status,
-  title,
-  choices,
-  allowsOwn,
-  asked,
-  problem,
-}: {
-  /** The line over the title saying whose move it is. */
-  status: string
-  title: string
-  choices: ReadonlyArray<Choice>
-  /** Whether words of the Person's own are an answer. */
-  allowsOwn: boolean
-  asked: Asked
-  /** Said under everything when an answer did not go through. */
-  problem: Option.Option<string>
-}) {
-  const { colors: c } = useTheme()
+
+/**
+ * The question, where the card was: Vivid's words. A question waiting on somebody else says who
+ * under it, since nothing else on this Person's screen does; one waiting on this Person, answered
+ * or withdrawn says nothing more here.
+ */
+export function Asked({ request, me }: { request: InputRequest; me: PersonId }) {
+  const theirs = InputRequestState.guards.Waiting(request.state) && request.askedOf.id !== me
   return (
-    <View
-      style={{
-        padding: 14,
-        gap: 8,
-        borderRadius: radius.card,
-        borderCurve: 'continuous',
-        backgroundColor: c.subtle,
-      }}
-    >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        <Dot tone="status-attention" size={6} />
-        <Label size="caption" tone="status-attention" style={{ flex: 1 }}>
-          {status}
+    <View>
+      <Words text={request.question} />
+      {theirs && (
+        <Label size="label" tone="ink-2">
+          Waiting on {request.askedOf.name}.
         </Label>
-      </View>
-      <Label accessibilityRole="header" size="body" style={{ fontWeight: m['weight-strong'] }}>
-        {title}
-      </Label>
-      <Body asked={asked} choices={choices} allowsOwn={allowsOwn} />
-      {Option.isSome(problem) && <Notice message={problem.value} />}
+      )}
     </View>
   )
 }
 
-/** What the rows of a question are drawn from, as it stands. */
-interface Rows {
-  readonly allowsOwn: boolean
-  readonly answer: Option.Option<string>
-  readonly sending: Option.Option<string>
-  /** There only while the question can still be answered. */
-  readonly onAnswer: Option.Option<(answer: string) => void>
-}
-
-/** What is under a question's title: its rows when it has any to draw, and a line when it has one. */
-interface Under {
-  readonly rows: Option.Option<Rows>
-  readonly note: Option.Option<string>
-}
-
-/** Reads where a question stands into what is drawn under its title. */
-const underOf = (asked: Asked, allowsOwn: boolean): Under =>
-  Asked.$match(asked, {
-    Resting: ({ note }) => ({ rows: Option.none(), note: Option.some(note) }),
-    Open: ({ sending, onAnswer }) => ({
-      rows: Option.some({
-        allowsOwn,
-        answer: Option.none(),
-        sending,
-        onAnswer: Option.some(onAnswer),
-      }),
-      note: Option.none(),
-    }),
-    Answered: ({ answer, note }) => ({
-      rows: Option.some({
-        allowsOwn: false,
-        answer: Option.some(answer),
-        sending: Option.none(),
-        onAnswer: Option.none(),
-      }),
-      note,
-    }),
-  })
+/** Reads a request's identifier from a signal's attribute, which arrives as plain text. */
+const decodeRequest = Schema.decodeUnknownOption(InputRequestId)
 
 /**
- * What is under the title for where the question stands: the rows to answer with, the answer and
- * who gave it, or the line saying why there is nothing to press.
- *
- * An open question and an answered one are the same `Answers` in the same place, told different
- * things. Drawn as two branches they would be two components to React: answering would take every
- * row out and put the chosen one back, and the chosen row would blink.
+ * One message of the conversation as placing answers needs it (`linesOf`, `asked.ts`): the
+ * requests it raised, when it is a reply of Vivid's that asked (`cardOf`); the request it is the
+ * delivered answer to, when it is that signal (the server sends an answer to Vivid as an
+ * `answer` signal whose `request` attribute names it, `apps/server/src/inputs/store.ts`); and
+ * when it was said, where the conversation stamps it.
  */
-function Body({
-  asked,
-  choices,
-  allowsOwn,
-}: {
-  asked: Asked
-  choices: ReadonlyArray<Choice>
-  allowsOwn: boolean
-}) {
-  const { rows, note } = underOf(asked, allowsOwn)
-  return (
-    <>
-      {Option.isSome(rows) && <Answers choices={choices} {...rows.value} />}
-      {Option.isSome(note) && <Note>{note.value}</Note>}
-    </>
-  )
-}
-
-/** A quiet line under the title or the answer: who it is waiting on, or who answered. */
-function Note({ children }: { children: string }) {
-  return (
-    <Label size="label" tone="ink-2">
-      {children}
-    </Label>
-  )
-}
-
-/** How one row stands: on offer, on its way, standing back while another is, or the answer. */
-type Standing = 'open' | 'sending' | 'waiting' | 'chosen'
-
-/** Where a choice stands, or none when the question was answered with something else. */
-const standingOf = (
-  choice: Choice,
-  answer: Option.Option<string>,
-  sending: Option.Option<string>,
-): Option.Option<Standing> => {
-  if (Option.isSome(answer)) {
-    return answer.value === choice.label ? Option.some('chosen') : Option.none()
+export const spokenOf = (message: FlueConversationMessage): Spoken => {
+  const signal = message.signal
+  const attributes =
+    signal === undefined || signal.attributes === undefined ? {} : signal.attributes
+  return {
+    key: message.id,
+    asked: toolsOf(message).flatMap((tool) =>
+      Option.toArray(Option.map(Option.filter(cardOf(tool), Card.$is('Input')), ({ id }) => id)),
+    ),
+    answers:
+      signal !== undefined && signal.tagName === 'answer'
+        ? decodeRequest(attributes.request)
+        : Option.none(),
+    at: momentOf(message),
   }
-  if (Option.isNone(sending)) return Option.some('open')
-  return Option.some(sending.value === choice.label ? 'sending' : 'waiting')
 }
 
+/** No pictures: an answer is words. One value, so the bubble is not handed a new list each time. */
+const NO_PICTURES = [] as const
+
 /**
- * The rows of a question in their one container: every choice while it is open, then the
- * row for words of the Person's own; and once it is answered only the one chosen, or the Person's
- * own words as a row when they wrote the answer themselves. Nothing is drawn for a question with
- * no choices, no own answer and nothing written.
+ * The answer to one question, as the bubble of the Person who gave it: this Person's own on the
+ * right, filled, exactly as a message they typed; somebody else's on the left under their name.
+ * A question still waiting, or withdrawn, draws nothing.
+ *
+ * It rises into place (`SAID`, as a message just sent does) only when the question was still
+ * waiting when this row was first drawn, which is when the Person watched it be answered. An
+ * answer that was already there when the Thread was opened is drawn whole, like everything else.
  */
-function Answers({
-  choices,
-  allowsOwn,
-  answer,
-  sending,
-  onAnswer,
-}: {
-  choices: ReadonlyArray<Choice>
-  allowsOwn: boolean
-  answer: Option.Option<string>
-  sending: Option.Option<string>
-  /** There only while the question can still be answered. */
-  onAnswer: Option.Option<(answer: string) => void>
-}) {
-  const { colors: c } = useTheme()
-  // Whether this card was open on screen before it was answered. Only then does the check arrive;
-  // a card first drawn answered is drawn whole, like everything else when a Thread is opened.
-  const [arrives] = useState(Option.isNone(answer))
-  const isChoice = (said: string) => choices.some((choice) => choice.label === said)
-  // An answer that is none of the rows was written by hand, and is shown as a row of its own.
-  const written = Option.filter(answer, (said) => !isChoice(said))
-  if (choices.length === 0 && !allowsOwn && Option.isNone(written)) return null
-  return (
-    // The container clips its rows to its corners, so a pressed fill never squares them off.
-    <View
-      style={{
-        marginTop: 2,
-        borderRadius: radius.row,
-        borderCurve: 'continuous',
-        overflow: 'hidden',
-      }}
-    >
-      {choices.map((choice, index) => {
-        const standing = standingOf(choice, answer, sending)
-        // A choice that was not the answer is not drawn once there is one.
-        return Option.isNone(standing) ? null : (
-          <Row
-            key={choice.label}
-            letter={LETTERS.charAt(index)}
-            choice={choice}
-            standing={standing.value}
-            arrives={arrives}
-            onPress={() => Option.map(onAnswer, (send) => send(choice.label))}
-          />
-        )
-      })}
-      {allowsOwn && Option.isSome(onAnswer) && (
-        <Own
-          bare={choices.length === 0}
-          // Words that are none of the rows are the Person's own, on their way.
-          sending={Option.exists(sending, (said) => !isChoice(said))}
-          held={Option.isSome(sending)}
-          onAnswer={onAnswer.value}
+export function Replied({ request, me }: { request: InputRequest; me: PersonId }) {
+  const [watched] = useState(InputRequestState.guards.Waiting(request.state))
+  return InputRequestState.match(request.state, {
+    Waiting: () => null,
+    Withdrawn: () => null,
+    Answered: ({ answer, answeredBy }) => (
+      <Animated.View entering={watched ? SAID : undefined}>
+        <Said
+          text={answer}
+          pictures={NO_PICTURES}
+          voice={
+            answeredBy.id === me
+              ? Voice.Mine()
+              : Voice.Theirs({ name: Option.some(answeredBy.name) })
+          }
         />
-      )}
-      {Option.isSome(written) && (
-        <Animated.View
-          entering={arrives ? APPEAR : undefined}
-          accessible
-          accessibilityLabel={`${written.value}, answered`}
-          style={{
-            minHeight: ROW,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 12,
-            paddingHorizontal: 12,
-            paddingVertical: 10,
-          }}
-        >
-          <Label size="body" tone="ink-2" style={{ flex: 1, fontSize: 15, lineHeight: 21 }}>
-            {written.value}
-          </Label>
-          <Check size={16} strokeWidth={2} color={c['ink-2']} />
-        </Animated.View>
-      )}
-    </View>
-  )
-}
-
-/** The square a row begins with. It says nothing to a screen reader: the row's label does. */
-function Keycap({ children }: { children: ReactNode }) {
-  const { colors: c } = useTheme()
-  return (
-    <View
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      style={{
-        width: KEYCAP,
-        height: KEYCAP,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: m['radius-sm'],
-        backgroundColor: c['subtle-strong'],
-      }}
-    >
-      {children}
-    </View>
-  )
-}
-
-/**
- * One answer: its keycap, its label, and a smaller line under it when it has one. It is the same
- * row whether the question is open or answered, so the chosen one never redraws: the others go,
- * it goes quiet, and its spinner gives way to a check.
- *
- * The press is answered by a fill across the whole row, not by the row sinking (`Press`): a row
- * that shrank inside its container would leave its fill short of the container's edges.
- */
-function Row({
-  letter,
-  choice,
-  standing,
-  arrives,
-  onPress,
-}: {
-  letter: string
-  choice: Choice
-  standing: Standing
-  /** Whether its check fades in: only on a card that was open on screen when it was answered. */
-  arrives: boolean
-  onPress: () => void
-}) {
-  const { colors: c } = useTheme()
-  const open = standing === 'open'
-  const chosen = standing === 'chosen'
-  return (
-    <Animated.View
-      style={{
-        // The rows that were not pressed stand back while the one that was is on its way.
-        opacity: standing === 'waiting' ? STANDING_BACK : 1,
-        transitionProperty: 'opacity',
-        transitionDuration: m['dur-fast'],
-      }}
-    >
-      <Pressable
-        accessibilityRole={chosen ? 'text' : 'button'}
-        accessibilityLabel={[choice.label, choice.detail, chosen ? 'chosen' : '']
-          .filter((part) => part.length > 0)
-          .join(', ')}
-        accessibilityState={{ disabled: !open, busy: standing === 'sending' }}
-        disabled={!open}
-        // A finger that drifts a little while pressing still means the press.
-        pressRetentionOffset={12}
-        onPress={onPress}
-        style={({ pressed }) => ({
-          minHeight: ROW,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 12,
-          paddingHorizontal: 12,
-          paddingVertical: 10,
-          backgroundColor: pressed || standing === 'sending' ? c['wash-pressed'] : 'transparent',
-        })}
-      >
-        <Keycap>
-          <Label size="caption" tone="ink-2" style={{ fontWeight: m['weight-strong'] }}>
-            {letter}
-          </Label>
-        </Keycap>
-        <View style={{ flex: 1, gap: 1 }}>
-          <Label
-            size="body"
-            tone={chosen ? 'ink-2' : 'ink'}
-            style={{ fontSize: 15, lineHeight: 21 }}
-          >
-            {choice.label}
-          </Label>
-          {choice.detail.length > 0 && (
-            <Label size="label" tone={chosen ? 'ink-3' : 'ink-2'}>
-              {choice.detail}
-            </Label>
-          )}
-        </View>
-        {standing === 'sending' && <ActivityIndicator size="small" color={c['ink-3']} />}
-        {chosen && (
-          <Animated.View entering={arrives ? APPEAR : undefined}>
-            <Check size={16} strokeWidth={2} color={c['ink-2']} />
-          </Animated.View>
-        )}
-      </Pressable>
-    </Animated.View>
-  )
-}
-
-/**
- * Words of the Person's own, as the last row. It rests as a row that says so (`OwnResting`);
- * pressing it puts the field in its place with the keyboard up (`OwnWriting`). It owns the words
- * being typed and whether the field is open, and nothing else.
- *
- * A question with no choices has only this to offer, so it is drawn open (`bare`), without
- * taking the keyboard: a card that raised the keyboard by being scrolled to would be a trap.
- * What was typed stays in the field until the question is answered, so an answer that did not
- * go through can be sent again.
- */
-function Own({
-  bare,
-  sending,
-  held,
-  onAnswer,
-}: {
-  bare: boolean
-  /** The Person's own words are on their way. */
-  sending: boolean
-  /** Any answer is on its way, so nothing here can be pressed. */
-  held: boolean
-  onAnswer: (answer: string) => void
-}) {
-  const [writing, setWriting] = useState(bare)
-  const [own, setOwn] = useState('')
-  // Keyed, so opening the field is one row leaving and another arriving, not one redrawn.
-  return writing ? (
-    <OwnWriting
-      key="writing"
-      own={own}
-      takesKeyboard={!bare}
-      sending={sending}
-      held={held}
-      onChange={setOwn}
-      onAnswer={onAnswer}
-    />
-  ) : (
-    <OwnResting key="resting" held={held} onOpen={() => setWriting(true)} />
-  )
-}
-
-/** The row that offers words of one's own: a pen where the others have a letter. */
-function OwnResting({ held, onOpen }: { held: boolean; onOpen: () => void }) {
-  const { colors: c } = useTheme()
-  return (
-    <Animated.View
-      style={{
-        opacity: held ? STANDING_BACK : 1,
-        transitionProperty: 'opacity',
-        transitionDuration: m['dur-fast'],
-      }}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ disabled: held }}
-        disabled={held}
-        pressRetentionOffset={12}
-        onPress={onOpen}
-        style={({ pressed }) => ({
-          minHeight: ROW,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 12,
-          paddingHorizontal: 12,
-          paddingVertical: 10,
-          backgroundColor: pressed ? c['wash-pressed'] : 'transparent',
-        })}
-      >
-        <Keycap>
-          <PenLine size={13} strokeWidth={2} color={c['ink-2']} />
-        </Keycap>
-        <Label size="body" tone="ink-2" style={{ flex: 1, fontSize: 15, lineHeight: 21 }}>
-          Type your own answer
-        </Label>
-      </Pressable>
-    </Animated.View>
-  )
-}
-
-/**
- * The field for words of the Person's own, in the row's place. The arrow sends what was typed,
- * and so does the keyboard's own Send. The row is the shape; the field inside it has none.
- */
-function OwnWriting({
-  own,
-  takesKeyboard,
-  sending,
-  held,
-  onChange,
-  onAnswer,
-}: {
-  own: string
-  /** Whether it was opened by a press, which is when the keyboard should come up with it. */
-  takesKeyboard: boolean
-  sending: boolean
-  held: boolean
-  onChange: (text: string) => void
-  onAnswer: (answer: string) => void
-}) {
-  const said = own.trim()
-  const ready = said.length > 0 && !held
-  const send = () => {
-    if (ready) onAnswer(said)
-  }
-  return (
-    <Animated.View
-      entering={APPEAR}
-      style={{
-        minHeight: ROW,
-        flexDirection: 'row',
-        alignItems: 'flex-end',
-        paddingLeft: 12,
-        paddingRight: 6,
-        paddingVertical: 6,
-        opacity: held && !sending ? STANDING_BACK : 1,
-      }}
-    >
-      <Field
-        accessibilityLabel="Your own answer"
-        value={own}
-        placeholder="Type your own answer"
-        autoFocus={takesKeyboard}
-        editable={!held}
-        multiline
-        returnKeyType="send"
-        submitBehavior="blurAndSubmit"
-        onChangeText={onChange}
-        onSubmitEditing={send}
-        style={{
-          flex: 1,
-          minHeight: TARGET,
-          paddingHorizontal: 0,
-          paddingVertical: 10,
-          borderWidth: 0,
-          backgroundColor: 'transparent',
-        }}
-      />
-      <SendOwn ready={ready} sending={sending} onPress={send} />
-    </Animated.View>
-  )
-}
-
-/**
- * The way to send words of one's own: the composer's round arrow, smaller, inside a full 44
- * target. While the words are on their way a spinner stands in its place.
- */
-function SendOwn({
-  ready,
-  sending,
-  onPress,
-}: {
-  ready: boolean
-  sending: boolean
-  onPress: () => void
-}) {
-  const { colors: c } = useTheme()
-  const target = {
-    width: TARGET,
-    height: TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-  } as const
-  if (sending) {
-    return (
-      <View style={target}>
-        <ActivityIndicator size="small" color={c['ink-3']} />
-      </View>
-    )
-  }
-  return (
-    <Press
-      accessibilityRole="button"
-      accessibilityLabel="Send answer"
-      accessibilityState={{ disabled: !ready }}
-      disabled={!ready}
-      onPress={onPress}
-      style={target}
-    >
-      <View
-        style={{
-          width: 30,
-          height: 30,
-          borderRadius: 15,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: ready ? c.primary : c['subtle-strong'],
-        }}
-      >
-        <ArrowUp size={17} strokeWidth={2.2} color={ready ? c['ink-on-accent'] : c['ink-3']} />
-      </View>
-    </Press>
-  )
+      </Animated.View>
+    ),
+  })
 }
