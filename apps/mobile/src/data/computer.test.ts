@@ -1,7 +1,7 @@
 import { ComputerId, ComputerScreen, ComputerState, type Computer } from '@vivid/contracts'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { standingOf, viewerOf } from './computer.ts'
+import { screenNote, standingOf, viewerOf } from './computer.ts'
 
 const computer = (state: ComputerState, heldByPerson = false): Computer => ({
   id: ComputerId.make('computer'),
@@ -64,5 +64,12 @@ describe('where a phone can watch the screen', () => {
     expect(viewerOf(computer(ComputerState.cases.Stopped.make({ since: 1 })))).toEqual(
       Option.none(),
     )
+  })
+
+  it('warns that a touch reaches the machine only while Vivid has the keyboard', () => {
+    expect(screenNote(computer(viewer))).toContain('take over first')
+    expect(screenNote(computer(viewer, true))).toBe('Its screen opens in your browser.')
+    // No page to open: the note sends the Person to a browser and promises nothing here.
+    expect(screenNote(computer(running))).toContain('not shown on the phone')
   })
 })

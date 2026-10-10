@@ -1,10 +1,11 @@
 import { ComputerState, type Computer as ComputerRecord } from '@vivid/contracts'
 import type { FaceMood } from '@vivid/marks'
-import { Option, Result } from 'effect'
+import { VividRpcClient } from '@vivid/client-runtime'
+import { Effect, Option, Result, Schema } from 'effect'
 import { useState } from 'react'
 import { Linking, ScrollView, View } from 'react-native'
 import { Eye, Hand, MonitorPlay, Power } from 'lucide-react-native'
-import { standingOf, viewerOf } from '../data/computer'
+import { screenNote, standingOf, viewerOf } from '../data/computer'
 import { commit } from '../data/haptics'
 import { LiveState, useLive, useLiveData, type LiveData } from '../data/live'
 import { useTheme } from '../theme'
@@ -51,24 +52,34 @@ const hold = (data: LiveData, held: boolean) =>
       })),
   )
 
+/** There was no page to open, or the phone's browser would not open it. */
+class ScreenUnopened extends Schema.TaggedError<ScreenUnopened>()(
+  'ScreenUnopened',
+  {},
+  { title: 'The screen could not be opened' },
+) {}
+
 /**
  * Opening the machine's screen. The address of the provider's viewer is a permission that runs
  * out ten minutes after it is issued, and the live record on this page may be older than that, so
  * the server is asked for the Computer again at the press and the address it answers with is the
  * one opened. It goes to the system browser (`Linking.openURL`, as sign-in does): the viewer is a
- * web page and this app has no web view. A Computer that stopped meanwhile, a screen with no
+ * web page and this app has no web view. That page has no way to only watch (its `stream.js`
+ * takes touches and keys whoever holds the keyboard), unlike the web panel, whose frame takes no
+ * input until the Person has taken over; so the page under the button says a touch there reaches
+ * the computer. A Computer that stopped meanwhile, a screen with no
  * page, or a browser that would not open are all the same thing to the Person: it did not open.
  */
-const watch = async (data: LiveData): Promise<Result.Result<void, unknown>> => {
-  const answer = await data.change((client) => client.GetComputer())
-  if (Result.isFailure(answer)) return Result.fail(answer.failure)
-  const address = viewerOf(answer.success.computer)
-  if (Option.isNone(address)) return Result.fail(undefined)
-  return Linking.openURL(address.value).then(
-    () => Result.succeed(undefined),
-    (cause: unknown) => Result.fail(cause),
-  )
-}
+const watch = Effect.fn('Computer.watch')(function* () {
+  const client = yield* VividRpcClient
+  const { computer } = yield* client.GetComputer()
+  const address = viewerOf(computer)
+  if (Option.isNone(address)) return yield* new ScreenUnopened({})
+  yield* Effect.tryPromise({
+    try: () => Linking.openURL(address.value),
+    catch: () => new ScreenUnopened({}),
+  })
+})
 
 /**
  * Vivid's computer: a real machine that is this Person's alone. The screen says honestly where it
@@ -228,9 +239,7 @@ function Machine({ computer }: { computer: ComputerRecord }) {
       <Said mood={standing.mood} on={running} title={standing.title} detail={standing.detail} />
       {running && (
         <Label size="label" tone="ink-2" style={{ paddingHorizontal: 4 }}>
-          {watchable
-            ? 'Its screen opens in your browser.'
-            : 'Its screen is not shown on the phone. Open Vivid in a browser to watch it.'}
+          {screenNote(computer)}
         </Label>
       )}
       {Option.isSome(refused) && <Notice message={REFUSED[refused.value]} />}
@@ -249,7 +258,7 @@ function Machine({ computer }: { computer: ComputerRecord }) {
             kind={computer.heldByPerson ? 'plain' : 'primary'}
             icon={Eye}
             label="Watch its screen"
-            onPress={() => void press('watch', () => watch(data))}
+            onPress={() => void press('watch', () => data.run(watch()))}
           />
         )}
         {running && (

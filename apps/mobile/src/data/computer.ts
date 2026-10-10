@@ -93,3 +93,18 @@ export const viewerOf = (computer: Computer): Option.Option<string> =>
   ComputerScreen.guards.Viewer(computer.state.screen)
     ? Option.some(computer.state.screen.address)
     : Option.none()
+
+/**
+ * What a running Computer's page says about its screen. The viewer page takes touches and keys
+ * whoever holds the keyboard (Boat's `stream.js` has no way to only watch), where the web panel's
+ * frame takes none until the Person has taken over. So while Vivid has the keyboard the Person is
+ * told that a touch there reaches the machine.
+ */
+export const screenNote = (computer: Computer): string =>
+  Option.match(viewerOf(computer), {
+    onNone: () => 'Its screen is not shown on the phone. Open Vivid in a browser to watch it.',
+    onSome: () =>
+      computer.heldByPerson
+        ? 'Its screen opens in your browser.'
+        : 'Its screen opens in your browser. A touch there reaches the computer, so take over first if you mean to use it.',
+  })
