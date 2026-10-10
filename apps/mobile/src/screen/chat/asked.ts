@@ -81,18 +81,133 @@ export const hasChoices = (request: InputRequest): boolean => request.options.le
  * - `Answer`: the answer to the request that is up, in the Person's own words. Only a request
  *   that takes words of one's own makes the composer this: with one that does not, the composer
  *   still sends an ordinary message and the request goes on waiting.
+ * - `Wait`: nothing can be sent for a moment. A request is waiting on the Person and its card is
+ *   not up yet, because the card of the one before it is still sliding away (or has only just
+ *   been let go). Words sent in that moment would be read as an ordinary message when the Person
+ *   may mean them as the answer to the question now arriving, so they stay in the composer.
  */
 export type Send = Data.TaggedEnum<{
   Message: {}
   Answer: { readonly id: InputRequestId }
+  Wait: {}
 }>
 export const Send = Data.taggedEnum<Send>()
 
-/** Reads what the composer sends from what the card is doing. A card that is leaving asks nothing. */
-export const sendOf = (hold: Hold): Send =>
-  Hold.$is('Up')(hold) && hold.request.allowsOwnAnswer
-    ? Send.Answer({ id: hold.request.id })
-    : Send.Message()
+/**
+ * Reads what the composer sends from what the card is doing and from the request that is up.
+ * The two are separate on purpose: the card that is retiring says nothing about what a send
+ * means. Only the request that is up does, and only once the card holds it.
+ *
+ * Until 11 October 2026 this read the card alone, so while one card slid away with the next
+ * request already waiting, the composer sent an ordinary message and was not held.
+ */
+export const sendOf = (hold: Hold, up: Option.Option<InputRequest>): Send => {
+  if (Hold.$is('Up')(hold)) {
+    return hold.request.allowsOwnAnswer ? Send.Answer({ id: hold.request.id }) : Send.Message()
+  }
+  return Option.isSome(up) ? Send.Wait() : Send.Message()
+}
+
+/**
+ * One try at answering one request. `attempt` tells two tries apart, so that the end of an old
+ * one is never taken for the end of the one now on its way.
+ */
+export interface Attempt {
+  readonly attempt: number
+  readonly id: InputRequestId
+  readonly words: string
+}
+
+/**
+ * What is on its way after one try ended without going through: nothing, when it was that try;
+ * unchanged when another has started since. A late failure for a request settled elsewhere must
+ * not wake the rows and the composer of the request being answered now.
+ */
+export const afterFailure = (
+  pending: Option.Option<Attempt>,
+  attempt: number,
+): Option.Option<Attempt> => Option.filter(pending, (current) => current.attempt !== attempt)
+
+/**
+ * Whether an answer to a request may start: not while one to the same request is in flight. Two
+ * presses in one moment, or a row and the composer together, are one answer.
+ */
+export const mayAnswer = (flying: ReadonlySet<InputRequestId>, id: InputRequestId): boolean =>
+  !flying.has(id)
+
+/**
+ * One message of the conversation, as far as placing answers needs to know it.
+ */
+export interface Spoken {
+  /** The message's own key in the list. */
+  readonly key: string
+  /** The requests this message raised, when it is a reply of Vivid's that asked. */
+  readonly asked: ReadonlyArray<InputRequestId>
+  /** The request this message is the delivered answer to, when it is that signal. */
+  readonly answers: Option.Option<InputRequestId>
+  /** When it was said, where the conversation stamps it (Vivid's replies; a Person's are not). */
+  readonly at: Option.Option<number>
+}
+
+/** One row of the Thread: a message, or the answer to a question as a row of its own. */
+export type Line = Data.TaggedEnum<{
+  Said: { readonly key: string }
+  Answer: { readonly request: InputRequest; readonly answer: string; readonly at: number }
+}>
+export const Line = Data.taggedEnum<Line>()
+
+/** An answered request as the row it becomes. */
+const answerOf = (request: InputRequest): Option.Option<Extract<Line, { _tag: 'Answer' }>> =>
+  InputRequestState.guards.Answered(request.state)
+    ? Option.some(
+        Line.Answer({ request, answer: request.state.answer, at: request.state.answeredAt }),
+      )
+    : Option.none()
+
+/**
+ * The rows of a Thread in the order they happened: its messages, with each answer to a question
+ * of Vivid's as a row of its own where it was given.
+ *
+ * Where an answer goes:
+ * - at the message that delivered it, when the conversation has that message (the server sends
+ *   an answer to Vivid as a signal naming its request, in order with everything else);
+ * - otherwise before the first message stamped later than the answer (`answeredAt`), and never
+ *   before the reply that asked;
+ * - otherwise at the end, which is where an answer just given belongs until its signal arrives.
+ *
+ * Until 11 October 2026 an answer was drawn under the reply that asked, whenever it was given,
+ * so with other messages in between it landed back in the history, possibly out of sight.
+ */
+export const linesOf = (
+  spoken: ReadonlyArray<Spoken>,
+  requests: ReadonlyArray<InputRequest>,
+): ReadonlyArray<Line> => {
+  const answers = requests.flatMap((request) => Option.toArray(answerOf(request)))
+  const delivered = new Set(spoken.flatMap((said) => Option.toArray(said.answers)))
+  // Answers with no delivering message, oldest first: placed by their time as the walk goes.
+  const loose = answers
+    .filter((line) => !delivered.has(line.request.id))
+    .toSorted((one, other) => one.at - other.at)
+  const asked = new Set<InputRequestId>()
+  const placed = new Set<InputRequestId>()
+  const lines: Array<Line> = []
+  for (const said of spoken) {
+    const later = Option.getOrElse(said.at, () => Number.NEGATIVE_INFINITY)
+    for (const line of loose) {
+      const due = asked.has(line.request.id) && !placed.has(line.request.id) && line.at < later
+      if (due) {
+        placed.add(line.request.id)
+        lines.push(line)
+      }
+    }
+    for (const id of said.asked) asked.add(id)
+    const here = Option.flatMap(said.answers, (id) =>
+      Option.fromUndefinedOr(answers.find((line) => line.request.id === id)),
+    )
+    lines.push(Option.getOrElse(here, (): Line => Line.Said({ key: said.key })))
+  }
+  return [...lines, ...loose.filter((line) => !placed.has(line.request.id))]
+}
 
 /** Where the card stands: all of it over the composer, only its grabber, or slid away behind it. */
 export type Stand = 'up' | 'tucked' | 'gone'

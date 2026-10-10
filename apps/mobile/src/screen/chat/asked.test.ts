@@ -8,8 +8,13 @@ import {
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
 import {
+  afterFailure,
   Hold,
   hasChoices,
+  Line,
+  linesOf,
+  mayAnswer,
+  type Spoken,
   holdOf,
   KEYBOARD_RESERVE,
   Send,
@@ -102,20 +107,129 @@ describe('hasChoices', () => {
 
 describe('sendOf', () => {
   it('answers the request that is up when it takes words of one own', () => {
-    expect(sendOf(Hold.Up({ request: request('a') }))).toEqual(
+    const up = request('a')
+    expect(sendOf(Hold.Up({ request: up }), Option.some(up))).toEqual(
       Send.Answer({ id: InputRequestId.make('a') }),
     )
   })
 
   it('sends an ordinary message when the request takes only its choices', () => {
-    expect(sendOf(Hold.Up({ request: request('a', { allowsOwnAnswer: false }) }))).toEqual(
-      Send.Message(),
-    )
+    const up = request('a', { allowsOwnAnswer: false })
+    expect(sendOf(Hold.Up({ request: up }), Option.some(up))).toEqual(Send.Message())
   })
 
-  it('sends an ordinary message when no card is up, or the card is leaving', () => {
-    expect(sendOf(Hold.Free())).toEqual(Send.Message())
-    expect(sendOf(Hold.Leaving({ request: request('a') }))).toEqual(Send.Message())
+  it('sends an ordinary message when nothing is waiting, card leaving or not', () => {
+    expect(sendOf(Hold.Free(), Option.none())).toEqual(Send.Message())
+    expect(sendOf(Hold.Leaving({ request: request('a') }), Option.none())).toEqual(Send.Message())
+  })
+
+  it('waits while one card leaves and the next request is not up yet', () => {
+    const next = Option.some(request('b'))
+    expect(sendOf(Hold.Leaving({ request: request('a') }), next)).toEqual(Send.Wait())
+    expect(sendOf(Hold.Free(), next)).toEqual(Send.Wait())
+  })
+})
+
+describe('afterFailure', () => {
+  const a = { attempt: 1, id: InputRequestId.make('a'), words: 'Work' }
+  const b = { attempt: 2, id: InputRequestId.make('b'), words: 'Monday' }
+
+  it('clears the try that failed', () => {
+    expect(afterFailure(Option.some(a), 1)).toEqual(Option.none())
+  })
+
+  it('leaves a later try on its way when an earlier one fails late', () => {
+    expect(afterFailure(Option.some(b), 1)).toEqual(Option.some(b))
+  })
+
+  it('has nothing to clear when nothing is on its way', () => {
+    expect(afterFailure(Option.none(), 1)).toEqual(Option.none())
+  })
+})
+
+describe('mayAnswer', () => {
+  it('refuses a second answer to a request while one is in flight', () => {
+    const flying = new Set([InputRequestId.make('a')])
+    expect(mayAnswer(flying, InputRequestId.make('a'))).toBe(false)
+    expect(mayAnswer(flying, InputRequestId.make('b'))).toBe(true)
+  })
+})
+
+describe('linesOf', () => {
+  const said = (key: string, patch: Partial<Spoken> = {}): Spoken => ({
+    key,
+    asked: [],
+    answers: Option.none(),
+    at: Option.none(),
+    ...patch,
+  })
+  const answeredAt = (id: string, at: number) =>
+    request(id, {
+      state: InputRequestState.cases.Answered.make({ answeredBy: me, answer: id, answeredAt: at }),
+    })
+  const order = (lines: ReadonlyArray<Line>) =>
+    lines.map((line) =>
+      Line.$match(line, { Said: ({ key }) => key, Answer: ({ answer }) => `answer:${answer}` }),
+    )
+
+  it('is the messages alone while nothing is answered', () => {
+    const spoken = [said('q', { asked: [InputRequestId.make('a')] }), said('m')]
+    expect(order(linesOf(spoken, [request('a')]))).toEqual(['q', 'm'])
+  })
+
+  it('puts an answer where the message that delivered it is', () => {
+    const spoken = [
+      said('q', { asked: [InputRequestId.make('a')] }),
+      said('m'),
+      said('signal', { answers: Option.some(InputRequestId.make('a')) }),
+      said('reply', { at: Option.some(50) }),
+    ]
+    expect(order(linesOf(spoken, [answeredAt('a', 40)]))).toEqual(['q', 'm', 'answer:a', 'reply'])
+  })
+
+  it('puts an answer with no delivering message at the end, not under its question', () => {
+    const spoken = [
+      said('q', { asked: [InputRequestId.make('a')], at: Option.some(10) }),
+      said('m'),
+      said('later', { at: Option.some(20) }),
+    ]
+    expect(order(linesOf(spoken, [answeredAt('a', 30)]))).toEqual(['q', 'm', 'later', 'answer:a'])
+  })
+
+  it('puts an older answer before the first message stamped after it', () => {
+    const spoken = [
+      said('q', { asked: [InputRequestId.make('a')], at: Option.some(10) }),
+      said('reply', { at: Option.some(50) }),
+      said('more', { at: Option.some(60) }),
+    ]
+    expect(order(linesOf(spoken, [answeredAt('a', 40)]))).toEqual([
+      'q',
+      'answer:a',
+      'reply',
+      'more',
+    ])
+  })
+
+  it('never puts an answer before the reply that asked', () => {
+    const spoken = [
+      said('before', { at: Option.some(50) }),
+      said('q', { asked: [InputRequestId.make('a')], at: Option.some(60) }),
+    ]
+    // A clock that disagrees: the answer is stamped earlier than the reply before its question.
+    expect(order(linesOf(spoken, [answeredAt('a', 40)]))).toEqual(['before', 'q', 'answer:a'])
+  })
+
+  it('orders several answers by when they were given', () => {
+    const spoken = [
+      said('q1', { asked: [InputRequestId.make('a')] }),
+      said('q2', { asked: [InputRequestId.make('b')] }),
+    ]
+    expect(order(linesOf(spoken, [answeredAt('a', 90), answeredAt('b', 70)]))).toEqual([
+      'q1',
+      'q2',
+      'answer:b',
+      'answer:a',
+    ])
   })
 })
 

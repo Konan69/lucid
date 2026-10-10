@@ -248,7 +248,7 @@ function Newest({
       >
         {/* Without glass the whole pill fades with the progress; with it only the glyph does,
             and the glass itself stays, run into the bubble's. */}
-        <Pill interactive style={[{ width: BUBBLE }, GLASS_SUPPORTED ? undefined : shown]}>
+        <Pill interactive raised style={[{ width: BUBBLE }, GLASS_SUPPORTED ? undefined : shown]}>
           <Animated.View
             style={[
               { width: BUBBLE, height: BUBBLE, alignItems: 'center', justifyContent: 'center' },

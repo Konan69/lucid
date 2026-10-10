@@ -29,16 +29,16 @@ import { ANSWERED, SAID } from '../../ui/motion/morph'
 import { EDGE, Face, HAIRLINE, Label, Press, radius } from '../../ui/ui'
 import { useGo } from '../../workspace'
 import { Cards } from './Cards'
-import { Replies } from './Question'
 import { Said, Voice } from './Said'
 import { Words } from './Words'
 
 /**
  * One message in a Thread, drawn by who it is from (`data/message.ts` decides that). A Person's
  * words are a bubble: the reader's own on the right, anyone else's on the left under their name.
- * Vivid's are plain text with what it did and what it is asking; the answer to a question it
- * asked is drawn after it, as the bubble of whoever answered (`Replies`, `Question.tsx`). A
- * Routine or a follow-up that woke Vivid is a quiet line saying why it spoke.
+ * Vivid's are plain text with what it did and what it is asking. A Routine or a follow-up that
+ * woke Vivid is a quiet line saying why it spoke. The answer to a question of Vivid's is not a
+ * message of the conversation; the Thread draws it as a row of its own (`Replied`,
+ * `Question.tsx`).
  */
 export function Message({
   message,
@@ -80,22 +80,17 @@ export function Message({
       <Said text={textOf(message)} pictures={picturesOf(message)} voice={Voice.Theirs({ name })} />
     ),
     Vivid: ({ answering }) => (
-      <>
-        <Arriving arrival={fresh ? 'answered' : 'there'}>
-          <FromVivid
-            message={message}
-            answering={answering}
-            detail={detail}
-            around={around}
-            working={working}
-            latest={latest}
-            onContinue={onContinue}
-          />
-        </Arriving>
-        {/* What was answered to a question this reply asked: rows of the Thread in their own
-            right, after the reply, as any message a Person sent is. */}
-        <Replies tools={toolsOf(message)} detail={detail} me={around.me} />
-      </>
+      <Arriving arrival={fresh ? 'answered' : 'there'}>
+        <FromVivid
+          message={message}
+          answering={answering}
+          detail={detail}
+          around={around}
+          working={working}
+          latest={latest}
+          onContinue={onContinue}
+        />
+      </Arriving>
     ),
     Wake: ({ reason, name }) => <Wake reason={reason} name={name} />,
     Notice: ({ failed }) => <Aside text={textOf(message)} failed={failed} />,

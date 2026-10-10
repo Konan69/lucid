@@ -53,6 +53,7 @@ export function Thinking({ style }: { style: ComponentProps<typeof Pill>['style'
   return (
     <Pill
       interactive={false}
+      raised={false}
       // It says something and does nothing: a touch on it goes to the conversation under it.
       pointerEvents="none"
       entering={APPEAR}

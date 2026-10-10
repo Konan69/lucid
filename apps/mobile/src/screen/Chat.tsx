@@ -17,7 +17,10 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { ScrollView, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
 import { useIsFocused } from '@react-navigation/native'
 import Animated, {
-  useAnimatedStyle,
+  scrollTo,
+  useAnimatedProps,
+  useAnimatedReaction,
+  useAnimatedRef,
   useSharedValue,
   type SharedValue,
 } from 'react-native-reanimated'
@@ -46,10 +49,23 @@ import { Button, Empty, Face, GUTTER, Label, Notice, Skeleton, styles } from '..
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 import { useFirst, useFront, useMe } from '../workspace'
-import { hasChoices, Hold, holdOf, Send, sendOf, upOf } from './chat/asked'
+import {
+  afterFailure,
+  hasChoices,
+  Hold,
+  holdOf,
+  Line,
+  linesOf,
+  mayAnswer,
+  Send,
+  sendOf,
+  upOf,
+  type Attempt,
+} from './chat/asked'
 import { isAway, newestWords } from './chat/away'
 import { Choices, OVERLAID } from './chat/Choices'
 import { Message } from './chat/Message'
+import { Replied, spokenOf } from './chat/Question'
 import { Opening } from './home/First'
 import { Share } from './chat/Share'
 
@@ -333,12 +349,6 @@ function useSend(
   }
 }
 
-/** An answer to a question from Vivid that is on its way: which request, and with what words. */
-interface Answering {
-  readonly id: InputRequestId
-  readonly words: string
-}
-
 /**
  * The question from Vivid whose choices are up over the composer, and answering it.
  *
@@ -352,14 +362,24 @@ interface Answering {
  * An answer goes to the server as the request's answer, from a row or from the composer alike.
  * It is kept as on its way until the request's record says it is answered: it is the record that
  * takes the card away, not the call returning, so rows that woke up between the two could not be
- * pressed a second time. A refusal is kept against the request it was for, and is not said about
- * any other.
+ * pressed a second time.
+ *
+ * Each answer is one `Attempt`, and what ends is that attempt and nothing else (`afterFailure`).
+ * A request can be settled somewhere else while its answer from here is still in flight; the
+ * next request is then up and may be answered before the first call comes back refused. That
+ * late refusal used to clear whatever was on its way, which woke the second request's rows and
+ * the composer in the middle of its own send. One request also takes one answer at a time
+ * (`mayAnswer`): a row and the composer pressed together are a single answer. Which requests
+ * have a call in flight is kept in a ref, read when a press happens and never while rendering,
+ * because two presses can land before React has drawn the first.
  */
 function useAsking(up: Option.Option<InputRequest>) {
   const data = useLiveData()
   const [held, setHeld] = useState(up)
-  const [answering, setAnswering] = useState<Option.Option<Answering>>(Option.none())
+  const [pending, setPending] = useState<Option.Option<Attempt>>(Option.none())
   const [refused, setRefused] = useState<Option.Option<InputRequestId>>(Option.none())
+  const flying = useRef(new Set<InputRequestId>())
+  const attempts = useRef(0)
   const hold = holdOf(held, up)
   if (Hold.$is('Free')(hold) && Option.isSome(up)) setHeld(up)
   if (Hold.$is('Leaving')(hold) && !(OVERLAID && hasChoices(hold.request))) setHeld(Option.none())
@@ -368,27 +388,34 @@ function useAsking(up: Option.Option<InputRequest>) {
 
   /** Answers a request, and says whether the answer went through. */
   async function answer(id: InputRequestId, words: string) {
+    if (!mayAnswer(flying.current, id)) return false
+    flying.current.add(id)
+    attempts.current += 1
+    const attempt = attempts.current
     commit()
     setRefused(Option.none())
-    setAnswering(Option.some({ id, words }))
+    setPending(Option.some({ attempt, id, words }))
     const result = await data.change((client) => client.AnswerInput({ id, answer: words }))
+    flying.current.delete(id)
     if (Result.isSuccess(result)) return true
-    setAnswering(Option.none())
+    setPending((current) => afterFailure(current, attempt))
     setRefused(Option.some(id))
     return false
   }
 
   return {
     hold,
+    /** What the composer's send means now (`sendOf`). */
+    send: sendOf(hold, up),
     /** The words on their way to one request, when they are. */
     sendingTo: (id: InputRequestId) =>
       Option.map(
-        Option.filter(answering, (sent) => sent.id === id),
+        Option.filter(pending, (sent) => sent.id === id),
         (sent) => sent.words,
       ),
     /** An answer to the request that is up is on its way, so another cannot start. */
     answering:
-      Hold.$is('Up')(hold) && Option.exists(answering, (sent) => sent.id === hold.request.id),
+      Hold.$is('Up')(hold) && Option.exists(pending, (sent) => sent.id === hold.request.id),
     /** The last answer to the request that is up did not go through. */
     refused: Hold.$is('Up')(hold) && Option.contains(refused, hold.request.id),
     answer,
@@ -595,7 +622,8 @@ function Conversation({
  *
  * What the composer sends is decided here (`sendOf`). Ordinarily it is a message in the Thread.
  * While a question that takes words of the Person's own is up, it is that question's answer: the
- * composer says "Reply", and "skip that, just do this" is as good an answer as any row.
+ * composer says "Reply", and "skip that, just do this" is as good an answer as any row. In the
+ * moment between one question's card leaving and the next one's rising it sends nothing (`Wait`).
  */
 function Foot({
   place,
@@ -624,7 +652,7 @@ function Foot({
 }) {
   // The name this Person or their Company gave Vivid, live.
   const vivid = useAppearance()
-  const send = sendOf(asking.hold)
+  const { send } = asking
 
   /**
    * Answers the question that is up with what was typed. The words leave the composer as they
@@ -654,7 +682,9 @@ function Foot({
         autoFocus={writing}
         placeholder={placeholderOf(send, shared, vivid.name)}
         working={working}
-        disabled={waits}
+        // Between one question's card leaving and the next one's rising nothing is sent: the
+        // words stay in the composer until it is plain what they would be an answer to.
+        disabled={waits || Send.$is('Wait')(send)}
         onChange={onType}
         // Emptying the composer, which `onSpeak` does, is also what removes this Thread's kept
         // draft.
@@ -662,6 +692,7 @@ function Foot({
           Send.$match(send, {
             Message: () => void onSpeak(typed.trim()),
             Answer: ({ id }) => void reply(id, typed.trim()),
+            Wait: () => undefined,
           })
         }
         onStop={() => void stopping.stop()}
@@ -684,6 +715,8 @@ const held = (settled: boolean, pending: boolean): boolean => !settled || pendin
 const placeholderOf = (send: Send, shared: boolean, vivid: string): string =>
   Send.$match(send, {
     Answer: () => 'Reply',
+    // The next question is about to come up; the composer is held for that moment.
+    Wait: () => 'Reply',
     Message: () => (shared ? `Message everyone and ${vivid}` : `Message ${vivid}`),
   })
 
@@ -883,11 +916,26 @@ function Messages(props: MessagesProps) {
  * the threshold.
  *
  * While a question's choices are up over the foot of the conversation, that much more is kept
- * clear under the newest words (`Cleared`), and the floating row rides up by the same.
+ * clear under the newest words, and the floating row rides up by the same. Both follow the card
+ * on the UI thread (`covered`), with nothing asked of JavaScript while it moves:
+ * - the scroller's end inset is the card's coverage (`inset`), as T3 Code mobile adds its card's
+ *   coverage to its list's end inset as a shared value (`ThreadDetailScreen.tsx`,
+ *   `combinedContentInsetEndAdjustment`);
+ * - while the Person is at the newest words (`following`), the scroller is put on its new end in
+ *   the same frame (`scrollTo` in a reaction), so the words rise exactly with the card. A Person
+ *   who has scrolled up is left where they are: only the room under the conversation changes.
+ * The reference's list library does the second part itself. Vivid's scroller is the platform's,
+ * so the end is worked out here from its two heights, kept as shared values when they change.
+ * Until 11 October 2026 the room was a view at the end of the content whose height followed the
+ * card, which made the scroller report a new content size, and be scrolled from JavaScript, on
+ * every frame of the glide: under load the newest words trailed the card.
+ *
+ * The card covers the conversation only where it is an overlay (iOS); where it is in the flow
+ * the scroller's box is simply shorter, `covered` stays at nothing, and none of this runs.
  */
 function Transcript(props: MessagesProps) {
   const { messages, working, thinking, rising } = props
-  const list = useRef<ScrollView>(null)
+  const { list, inset, extent, port, following } = useEndRoom(props.covered)
   // Whether the scroller has been put on its newest words once, which is when it is shown.
   const [placed, setPlaced] = useState(false)
   // The Person asked to be taken back to the newest words and is on the way there. Until they
@@ -927,6 +975,7 @@ function Transcript(props: MessagesProps) {
     )
     if (near) returning.current = false
     if (returning.current) return
+    following.set(near)
     setAwayAt((current) => {
       if (near) return Option.isNone(current) ? current : Option.none()
       return Option.isSome(current) ? current : Option.some(messages.length)
@@ -946,6 +995,7 @@ function Transcript(props: MessagesProps) {
 
   function latest() {
     returning.current = true
+    following.set(true)
     setAwayAt(Option.none())
     if (list.current !== null) list.current.scrollToEnd({ animated: true })
   }
@@ -959,12 +1009,19 @@ function Transcript(props: MessagesProps) {
     // The scroller's box is written first and drawn second: see the note above.
     <View style={{ flex: 1, flexDirection: 'column-reverse' }}>
       <View style={{ flex: 1, overflow: 'hidden' }} onLayout={settle}>
-        <ScrollView
+        <Animated.ScrollView
           ref={list}
+          animatedProps={inset}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
-          onLayout={props.onListed}
-          onContentSizeChange={settle}
+          onLayout={(event) => {
+            port.set(event.nativeEvent.layout.height)
+            props.onListed()
+          }}
+          onContentSizeChange={(_, height) => {
+            extent.set(height)
+            settle()
+          }}
           onScroll={follow}
           // A finger on the conversation takes over from a return that was under way.
           onScrollBeginDrag={() => {
@@ -988,25 +1045,18 @@ function Transcript(props: MessagesProps) {
         >
           {/* The room Vivid's avatar hangs into, so the oldest words rest under its name. */}
           <View style={{ height: HANG }} />
-          {messages.map((item, index) => (
-            <Message
-              key={item.id}
-              message={item}
-              around={props.around}
-              detail={props.detail}
-              working={working}
-              fresh={!known.has(item.id)}
-              latest={index === messages.length - 1}
-              unsent={props.unsent}
-              onContinue={props.onContinue}
-            />
-          ))}
-          {/* One row, so the room under the tail is not also given the list's gap. */}
-          <View>
-            <Tail awaited={awaited} ended={props.ended} trouble={props.trouble} />
-            <Cleared by={props.covered} />
-          </View>
-        </ScrollView>
+          <Rows
+            messages={messages}
+            lines={linesOf(messages.map(spokenOf), requestsOf(props.detail))}
+            known={known}
+            around={props.around}
+            detail={props.detail}
+            working={working}
+            unsent={props.unsent}
+            onContinue={props.onContinue}
+          />
+          <Tail awaited={awaited} ended={props.ended} trouble={props.trouble} />
+        </Animated.ScrollView>
         <TopFade />
         <Floating
           thinking={thinking}
@@ -1023,18 +1073,81 @@ function Transcript(props: MessagesProps) {
 }
 
 /**
- * The room kept clear at the foot of the conversation for a question's choices: as tall as the
- * card stands over the conversation, frame by frame on the UI thread. It is the end of the
- * scroller's content, so the content grows as the card rises and the scroller is put back on its
- * newest words each time (`Transcript.settle`), which is what keeps them in sight above the card.
- *
- * T3 Code mobile adds the card's coverage to its list's end inset, a shared value its list
- * library reads (`ThreadDetailScreen.tsx`, `combinedContentInsetEndAdjustment`). Vivid's
- * scroller is the platform's and has no such inset, so the room is the last thing in its content.
+ * The room at the end of a conversation's scroller that follows a question's choices, and the
+ * scroller kept on its newest words as that room changes, both on the UI thread (`Transcript`
+ * says why). `extent` and `port` are the scroller's content and viewport heights and `following`
+ * whether the Person is at the newest words; the scroller's own events keep them.
  */
-function Cleared({ by }: { by: SharedValue<number> }) {
-  const room = useAnimatedStyle(() => ({ height: by.get() }))
-  return <Animated.View style={room} />
+function useEndRoom(covered: SharedValue<number>) {
+  const list = useAnimatedRef<Animated.ScrollView>()
+  const extent = useSharedValue(0)
+  const port = useSharedValue(0)
+  const following = useSharedValue(true)
+  const inset = useAnimatedProps(() => ({
+    contentInset: { top: 0, left: 0, right: 0, bottom: covered.get() },
+  }))
+  useAnimatedReaction(
+    () => covered.get(),
+    (now, before) => {
+      // Nothing to follow on the first run, and a Person who has scrolled up is not pulled down.
+      if (before === null || now === before || !following.get()) return
+      scrollTo(list, 0, Math.max(0, extent.get() - port.get() + now), false)
+    },
+  )
+  return { list, inset, extent, port, following }
+}
+
+/**
+ * The rows of the conversation in the order they happened (`linesOf`, `chat/asked.ts`): each
+ * message, and each answer to a question of Vivid's as a row of its own where it was given. An
+ * answer is keyed by its request, so it stays the same row, and does not arrive a second time,
+ * when the message that delivered it turns up and gives it its lasting place.
+ */
+function Rows({
+  messages,
+  lines,
+  known,
+  around,
+  detail,
+  working,
+  unsent,
+  onContinue,
+}: {
+  messages: ReadonlyArray<FlueConversationMessage>
+  lines: ReadonlyArray<Line>
+  /** The messages that are not new here (`Transcript`). */
+  known: ReadonlySet<string>
+  around: Around
+  detail: Option.Option<ThreadDetail>
+  working: boolean
+  unsent: ReadonlySet<string>
+  onContinue: Say
+}) {
+  const newest = messages[messages.length - 1]
+  const byKey = new Map(messages.map((message) => [message.id, message]))
+  return lines.map((line) =>
+    Line.$match(line, {
+      Answer: ({ request }) => (
+        <Replied key={`answer:${request.id}`} request={request} me={around.me} />
+      ),
+      Said: ({ key }) => {
+        const message = byKey.get(key)
+        return message === undefined ? null : (
+          <Message
+            key={key}
+            message={message}
+            around={around}
+            detail={detail}
+            working={working}
+            fresh={!known.has(key)}
+            latest={message === newest}
+            unsent={unsent}
+            onContinue={onContinue}
+          />
+        )
+      },
+    }),
+  )
 }
 
 /**

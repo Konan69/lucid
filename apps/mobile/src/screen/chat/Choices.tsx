@@ -64,16 +64,27 @@ const INSET = 10
 const TUCK = 12
 /** How far below the conversation's box the card reaches: the dock's room, then the tuck. */
 const OVERHANG = COMPOSER_CLEAR + TUCK
-/** How much of a tucked card still shows in its window: the grabber, and a sliver under it. */
-const PEEK = 40
+/**
+ * How much of a tucked card shows above the composer's top edge: the grabber's row and a little
+ * under it. One number for both arrangements. On a device (Android, in the flow, 11 October
+ * 2026) the strip measured about 50 points where 40 was meant, because the tucked card kept the
+ * whole room under its rows.
+ */
+const TUCKED = 40
+/** A tucked card inside the overlay's window, whose foot is `TUCK` behind the composer's edge. */
+const PEEK = TUCKED + TUCK
 /** Room kept above the card inside its window, so the window does not cut the card's shadow. */
 const SHADOW_ROOM = 32
 /** The card's top corners. */
 const CORNER = 22
 /** The grabber's row, and the bar drawn in it. */
 const GRAB = 24
-/** The room between the last row and the composer's top edge. */
-const UNDER = 14
+/**
+ * The room between the last row and the composer's top edge: a little more than the gap between
+ * two rows, so the rows read as one group and the composer as the next thing. Everything of the
+ * card below that edge is empty room and never a row.
+ */
+const UNDER = 10
 /** The system bar's own height under the status bar, in points. */
 const NAV = 44
 
@@ -129,6 +140,10 @@ interface ChoicesProps {
  * - The reference first measures an expanded card without animating, because its list is doing
  *   its first end-pin. Vivid's conversation re-pins on every change of its content
  *   (`Transcript.settle`), so a card found waiting when a Thread opens simply rises.
+ * - The reference keeps the card's foot on the bar it rises over. Here the foot is tucked behind
+ *   the composer, and that strip is always empty room: the last row ends above the composer's
+ *   top edge, and when the rows do not fit the card's most height they scroll inside it, as the
+ *   reference's do, until the last one is wholly in view.
  * - No title, no question, no field and no submit button: one press on a row answers. An answer
  *   that did not go through is said over the composer (`screen/Chat.tsx`), not in the card.
  */
@@ -186,7 +201,11 @@ function Over({ request, leaving, sending, covered, onAnswer, onGone }: ChoicesP
   )
   return (
     <View
+      // A card that is leaving is no longer a way to answer: not to a finger, and not to a
+      // screen reader, which would otherwise still find its rows while it slides away.
       pointerEvents={leaving ? 'none' : 'box-none'}
+      accessibilityElementsHidden={leaving}
+      importantForAccessibility={leaving ? 'no-hide-descendants' : 'auto'}
       style={{
         position: 'absolute',
         left: 0,
@@ -205,12 +224,17 @@ function Over({ request, leaving, sending, covered, onAnswer, onGone }: ChoicesP
         // touch, so the conversation still scrolls from the strips at its sides.
         pointerEvents="box-none"
         onLayout={(event) => height.set(event.nativeEvent.layout.height)}
-        style={[{ flexShrink: 1, maxHeight: tallest }, slid]}
+        style={[{ flexShrink: 1 }, slid]}
       >
         <Surface
           request={request}
-          // Tucked, the rows are still there under the window's foot, and must not be pressed.
-          rows={tucked ? 'held' : 'pressable'}
+          // Tucked, the rows are still there under the window's foot, and must not be pressed;
+          // nor may those of a request that has just been settled, here or anywhere else.
+          rows={tucked || leaving ? 'held' : 'pressable'}
+          tallest={tallest}
+          // The window ends `OVERHANG` under the conversation's box, so that much of the card is
+          // room of its own, measured with it: it slides its whole height.
+          foot="padded"
           tucked={tucked}
           sending={sending}
           onToggle={() => setTucked((now) => !now)}
@@ -222,24 +246,25 @@ function Over({ request, leaving, sending, covered, onAnswer, onGone }: ChoicesP
 }
 
 /**
- * The card in the flow, under the conversation and over the composer, which is drawn after it
- * and so over its tucked foot. The conversation's box is shorter by the card, so nothing is
- * written to `covered`. Tucked, the rows are not drawn and the card is its grabber.
+ * The card in the flow, under the conversation and over the composer. The conversation's box is
+ * shorter by the card, so nothing is written to `covered`. Tucked, the rows are not drawn and
+ * the card is its grabber.
+ *
+ * Its foot is not part of its layout: the card ends where the conversation's box does, and the
+ * strip behind the composer is drawn hanging under it (`Surface`, `foot`). It was a negative
+ * margin until 11 October 2026; on a device the card then stood about 12 points higher than
+ * meant and its last row ended behind the composer.
  */
 function Inflow({ request, sending, onAnswer }: ChoicesProps) {
   const [tucked, setTucked] = useState(false)
   const tallest = useTallest()
   return (
-    <Animated.View
-      entering={ARRIVE}
-      exiting={DEPART}
-      layout={RESIZE}
-      pointerEvents="box-none"
-      style={{ maxHeight: tallest, marginBottom: -OVERHANG }}
-    >
+    <Animated.View entering={ARRIVE} exiting={DEPART} layout={RESIZE} pointerEvents="box-none">
       <Surface
         request={request}
         rows={tucked ? 'absent' : 'pressable'}
+        tallest={tallest}
+        foot="hung"
         tucked={tucked}
         sending={sending}
         onToggle={() => setTucked((now) => !now)}
@@ -261,6 +286,8 @@ function Inflow({ request, sending, onAnswer }: ChoicesProps) {
 function Surface({
   request,
   rows,
+  tallest,
+  foot,
   tucked,
   sending,
   onToggle,
@@ -269,19 +296,35 @@ function Surface({
   request: InputRequest
   /** The rows can be pressed, are there but out of reach, or are not drawn. */
   rows: 'pressable' | 'held' | 'absent'
+  /** The most the card may be tall, its foot aside. Past it the rows scroll inside the card. */
+  tallest: number
+  /**
+   * How the strip behind the composer is made: `padded` is room inside the card, measured with
+   * it (the overlay slides the whole of it); `hung` is drawn under the card and takes no room
+   * in the layout (the card in the flow ends where the conversation's box does).
+   */
+  foot: 'padded' | 'hung'
   tucked: boolean
   sending: Option.Option<string>
   onToggle: () => void
   onAnswer: (label: string) => void
 }) {
   const { colors: c } = useTheme()
+  // What is under the last row inside the conversation's box. The dock keeps `COMPOSER_CLEAR`
+  // more between the box and the composer's edge, so the two together are `UNDER`; a tucked
+  // card in the flow keeps only what makes its strip `TUCKED` tall over the composer.
+  const under = rows === 'absent' ? TUCKED - COMPOSER_CLEAR - GRAB - EDGE : UNDER - COMPOSER_CLEAR
   return (
     <View
       style={{
         flexShrink: 1,
+        // The height limit is on the shape that holds the scroller, which is what makes the
+        // scroller, and not the card's room, give way when the rows do not fit. It was on a
+        // wrapper, and the rows then ran on under the composer (seen on a device with five).
+        maxHeight: tallest + (foot === 'padded' ? OVERHANG : 0),
         marginHorizontal: COMPOSER_SIDE + INSET,
         paddingHorizontal: ROW.side,
-        paddingBottom: UNDER + TUCK,
+        paddingBottom: under + (foot === 'padded' ? OVERHANG : 0),
         borderTopLeftRadius: CORNER,
         borderTopRightRadius: CORNER,
         borderCurve: 'continuous',
@@ -310,11 +353,30 @@ function Surface({
             <Row
               key={option.label}
               option={option}
+              reach={rows === 'held' ? 'held' : 'pressable'}
               standing={standingOf(option.label, sending)}
               onPress={() => onAnswer(option.label)}
             />
           ))}
         </ScrollView>
+      )}
+      {foot === 'hung' && (
+        // The same surface carried on behind the composer: empty, and drawn outside the card's
+        // own box, so it changes nothing about where the card or its rows are.
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: -EDGE,
+            right: -EDGE,
+            height: OVERHANG,
+            borderLeftWidth: EDGE,
+            borderRightWidth: EDGE,
+            borderColor: c.border,
+            backgroundColor: c['subtle-strong'],
+          }}
+        />
       )}
     </View>
   )
@@ -364,16 +426,21 @@ const PAINT = {
  */
 function Row({
   option,
+  reach,
   standing,
   onPress,
 }: {
   option: InputOption
+  /** Whether the card's rows can be pressed at all (`Surface`, `rows`). */
+  reach: 'pressable' | 'held'
   standing: Standing
   onPress: () => void
 }) {
   const { colors: c } = useTheme()
   const paint = PAINT[standing]
-  const open = standing === 'open'
+  // A row out of reach is disabled as well as untouchable: a switch control or a keyboard
+  // reaches a control by other ways than a touch.
+  const open = standing === 'open' && reach === 'pressable'
   return (
     <Animated.View
       style={{

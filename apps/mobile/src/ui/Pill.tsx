@@ -5,6 +5,7 @@ import Animated from 'react-native-reanimated'
 import { useTheme } from '../theme'
 import { cast, lifted } from './elevation'
 import { GLASS_SUPPORTED, GlassMaterial } from './Glass'
+import { EDGE } from './ui'
 
 /** The height of a pill: the one under Vivid's avatar is the same (`ui/Presence.tsx`, `PILL`). */
 export const PILL = 30
@@ -38,6 +39,7 @@ const MovingGlass = Animated.createAnimatedComponent(GlassView)
  */
 export function Pill({
   interactive,
+  raised,
   style,
   children,
   ...moving
@@ -45,6 +47,17 @@ export function Pill({
   children: ReactNode
   /** The shape is itself pressed, so the system's glass answers the finger with its highlight. */
   interactive: boolean
+  /**
+   * Without the system's glass: whether the shape is an opaque raised surface with a border of
+   * its own, or the frosted fill inside the ring of its shadow.
+   *
+   * A shape that is pressed, and that stands alone over the words of a conversation, is raised:
+   * the reference's fallback button is `border border-border bg-glass-fallback shadow-md`. On a
+   * device (Android, 11 October 2026) the round button drawn the other way had no edge to speak
+   * of and read as a glyph lying on the text. The thinking bubble is not raised and looks as it
+   * did. Where there is glass this changes nothing: the glass is the edge.
+   */
+  raised: boolean
 }) {
   const { colors: c, dark } = useTheme()
   const outline = {
@@ -66,6 +79,22 @@ export function Pill({
       >
         {children}
       </MovingGlass>
+    )
+  }
+  if (raised) {
+    return (
+      // The border is the edge and the shadow the lift; the ring would be a second line.
+      <Animated.View
+        {...moving}
+        style={[
+          outline,
+          { borderWidth: EDGE, borderColor: c.border, backgroundColor: c['subtle-strong'] },
+          cast('sm'),
+          style,
+        ]}
+      >
+        {children}
+      </Animated.View>
     )
   }
   return (
