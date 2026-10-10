@@ -1,5 +1,6 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { create } from 'zustand'
 
 /**
  * Draws what floats over the page at the end of the document instead of inside whatever asked
@@ -17,15 +18,8 @@ export function Layer({ children }: { children: ReactNode }) {
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-let floating = 0
-const watchers = new Set<() => void>()
-const changed = (by: 1 | -1) => {
-  floating += by
-  for (const watcher of watchers) watcher()
-}
-
 /**
- * Whether a floating surface is open: a dialog, Settings, a menu, the palette, notifications.
+ * How many floating surfaces are open: a dialog, Settings, a menu, the palette, notifications.
  *
  * It exists for what cannot be drawn under them. The desktop app lays a native page over part of
  * the window, above everything the document draws, so that page has to step aside while a surface
@@ -33,15 +27,17 @@ const changed = (by: 1 | -1) => {
  * changes only among the children of `body`, and Settings is drawn inside the app's own tree: the
  * page never heard Settings close and stayed blank. Every surface already takes the keyboard
  * through `holdFocus`, so that is where they are counted, and nothing has to be looked for.
+ *
+ * A Zustand store, as T3 Code web keeps its interface state (`apps/web/src/rightPanelStore.ts`).
+ * The page's holder is not drawn from it: it subscribes to the store itself and asks
+ * `floatingSurfaces.open` when it is told (`screen/computer/Pages.tsx`).
  */
+export const useSurfaces = create(() => ({ floating: 0 }))
+
+const changed = (by: 1 | -1) => useSurfaces.setState((was) => ({ floating: was.floating + by }))
+
 export const floatingSurfaces = {
-  open: () => floating > 0,
-  subscribe: (watcher: () => void) => {
-    watchers.add(watcher)
-    return () => {
-      watchers.delete(watcher)
-    }
-  },
+  open: () => useSurfaces.getState().floating > 0,
 }
 
 /**

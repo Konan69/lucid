@@ -2,7 +2,7 @@ import { Effect, Result } from 'effect'
 import { useId, useState } from 'react'
 import { act } from '../../data/app'
 import { changing } from '../../data/live'
-import { Route, router } from '../../data/route'
+import { router } from '../../router'
 import { Button } from '../../ui/button'
 import {
   Dialog,
@@ -41,7 +41,7 @@ export function CreateCompany({ onClose }: { onClose: () => void }) {
         return
       }
       onClose()
-      router.go(Route.New())
+      void router.navigate({ to: '/' })
     })
   }
 

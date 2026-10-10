@@ -7,7 +7,7 @@ import {
 } from '@vivid/contracts'
 import { Option, Schema } from 'effect'
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
-import { useSyncExternalStore } from 'react'
+import { create } from 'zustand'
 import type { FaceColor } from '../ui/Face'
 import { changing } from './app'
 import { kept } from './kept'
@@ -25,6 +25,10 @@ import '../styles/vivid.css'
  * the Person left it instead of flashing the stock face while the socket connects.
  *
  * `ui/Face.tsx` reads it for every face that is not given a colour or an outline of its own.
+ *
+ * What is shown is held in a Zustand store, as T3 Code web keeps its interface state
+ * (`apps/web/src/rightPanelStore.ts`); `adopt` replaces it only when something a Person can see
+ * changed, so the object a screen reads is the same one until then.
  */
 
 const KEY = 'vivid-appearance'
@@ -36,8 +40,7 @@ const encodeKept = Schema.encodeOption(AppearanceJson)
 const remembered = (): Appearance =>
   Option.getOrElse(Option.flatMap(kept.read(KEY), decodeKept), () => DEFAULT_APPEARANCE)
 
-let shown = remembered()
-const listeners = new Set<() => void>()
+const useShown = create(() => ({ shown: remembered() }))
 
 /** The colour a look draws the face in. A hue the web face cannot draw fails to typecheck here. */
 export const faceColorOf = (look: Look): FaceColor =>
@@ -47,16 +50,16 @@ export const faceColorOf = (look: Look): FaceColor =>
   })
 
 const adopt = (next: Appearance) => {
+  const { shown } = useShown.getState()
   if (
     next.name === shown.name &&
     next.outline === shown.outline &&
     faceColorOf(next.look) === faceColorOf(shown.look)
   )
     return
-  shown = next
+  useShown.setState({ shown: next })
   // What will not encode is not remembered; it is still shown, and the server still has it.
   Option.map(encodeKept(next), (text) => kept.write(KEY, text))
-  for (const listener of listeners) listener()
 }
 
 /** The live query. An expected change (`saveAppearance`) flows through it like a server result. */
@@ -72,16 +75,9 @@ engine.registry.subscribe(
   { immediate: true },
 )
 
-const subscribe = (listener: () => void) => {
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
-}
-
 /** Vivid's name and look as they are now. Re-renders only when one of them changes. */
 export function useAppearance(): Appearance {
-  return useSyncExternalStore(subscribe, () => shown)
+  return useShown((state) => state.shown)
 }
 
 /** Whether this Person may change Vivid where they are working (`mayChangeAppearance`). */

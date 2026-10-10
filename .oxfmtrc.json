@@ -16,6 +16,7 @@
     "**/coverage/**",
     "**/dist/**",
     "**/node_modules/**",
+    "apps/web/src/tree.gen.ts",
     "**/drizzle/**/snapshot.json",
     "**/product-drizzle/**/snapshot.json",
     "apps/mobile/android/**",

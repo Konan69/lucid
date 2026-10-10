@@ -35,7 +35,7 @@ import {
   useLive,
   useLiveValue,
 } from '../../data/live'
-import { router } from '../../data/route'
+import { openSettings } from '../../router'
 import { orSay } from '../../data/said'
 import { Button, buttonVariants, IconButton } from '../../ui/button'
 import { cn } from '../../ui/cn'
@@ -709,7 +709,7 @@ function ChannelFace({ channel, line }: { channel: ChannelLink['channel']; line:
  */
 export function ChannelTile({ link }: { link: ChannelLink }) {
   const { channel, standing } = link
-  const settings = () => router.openSettings(Option.some('texting'))
+  const settings = () => void openSettings('texting')
   /** The tile for a channel with nothing to text yet: all of it opens Settings. */
   const opens = (line: string) => (
     <button

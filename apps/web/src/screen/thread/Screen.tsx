@@ -1,8 +1,8 @@
 import { ComputerScreen, ComputerState, type Computer } from '@vivid/contracts'
 import { Option } from 'effect'
-import { useReducer, useSyncExternalStore, type ReactNode } from 'react'
+import { useReducer, type ReactNode } from 'react'
 import { live, LiveState, useLive } from '../../data/live'
-import { panel } from '../../data/panel'
+import { usePanel } from '../../data/panel'
 import { engine } from '../../data/runtime'
 import { useAppearance } from '../../data/vivid'
 import { cn } from '../../ui/cn'
@@ -212,7 +212,7 @@ function Waking() {
  * Computer to the front.
  */
 function Live({ screen, onOpen }: { screen: ComputerScreen; onOpen: Option.Option<() => void> }) {
-  const beside = useSyncExternalStore(panel.subscribe, panel.isOpen)
+  const beside = usePanel((state) => state.open)
   const [heard, hearResolution] = useReducer(resolutionAfter, Option.none())
   const resolution = ComputerScreen.match(screen, {
     Viewer: (viewer) => viewerResolution(viewer.address),

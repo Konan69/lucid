@@ -1,7 +1,7 @@
 import { Workspace, type MeResponse } from '@vivid/contracts'
-import { Option } from 'effect'
 import { X } from 'lucide-react'
-import { router, type SettingsSection } from '../data/route'
+import { closeSettings, openSettings } from '../router'
+import { type SettingsSection } from '../data/route'
 import { IconButton } from '../ui/button'
 import { cn } from '../ui/cn'
 import { PlaceMark, type Place } from './Place'
@@ -54,7 +54,7 @@ const TITLE = {
  * to the workspace they are in. The open section is in the address, so it can be linked to.
  */
 export function Settings({ me, section }: { me: MeResponse; section: SettingsSection }) {
-  const close = () => router.openSettings(Option.none())
+  const close = () => void closeSettings()
   const place = Workspace.match(me.workspace, {
     Personal: () => 'Your space',
     Company: ({ company }) => company.name,
@@ -140,7 +140,7 @@ function Group({
       {entries.map((entry) => (
         <button
           key={entry.id}
-          onClick={() => router.openSettings(Option.some(entry.id))}
+          onClick={() => void openSettings(entry.id)}
           aria-current={entry.id === current ? 'page' : undefined}
           ref={entry.id === current ? reveal : undefined}
           className={cn(

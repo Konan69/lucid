@@ -6,8 +6,8 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { Option } from 'effect'
-import { lazy, Suspense, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { split } from '../../data/split'
+import { lazy, Suspense, useState, type ReactNode } from 'react'
+import { splitFull, useSplit } from '../../data/split'
 import { useFaceState, useLook } from '../../ui/Alive'
 import { cn } from '../../ui/cn'
 import { Header, Hero, STANDING, type Standing } from './Header'
@@ -71,7 +71,7 @@ export function Layout({
 }) {
   const [about, setAbout] = useState(false)
   const [sharing, setSharing] = useState(false)
-  const full = useSyncExternalStore(split.subscribe, split.isFull)
+  const full = useSplit(splitFull)
   const attention = working
     ? 'Working'
     : Option.match(thread, { onNone: () => 'Quiet' as const, onSome: (value) => value.attention })

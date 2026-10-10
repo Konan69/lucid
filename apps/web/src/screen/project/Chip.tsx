@@ -1,6 +1,5 @@
 import type { Project } from '@vivid/contracts'
-import { Option } from 'effect'
-import { Route, router } from '../../data/route'
+import { router } from '../../router'
 import { scope } from '../../data/scope'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { Mark } from './Mark'
@@ -42,7 +41,7 @@ export function ScopeChip({ project }: { project: Project }) {
       <button
         aria-current="true"
         title={project.name}
-        onClick={() => router.go(Route.Projects({ open: Option.some(project.id) }))}
+        onClick={() => void router.navigate({ to: '/projects/{-$id}', params: { id: project.id } })}
         className="flex h-6 min-w-0 cursor-pointer items-center gap-1.5 rounded-full bg-surface-3 pr-2.5 pl-2 text-meta font-title text-ink edge transition-colors duration-(--dur-fast) hover:bg-surface-2"
       >
         <Mark id={project.id} />

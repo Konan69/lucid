@@ -1,4 +1,5 @@
 import { Effect, Option, Result } from 'effect'
+import { create } from 'zustand'
 
 /**
  * Things the app has to tell the Person that have no place of their own on screen.
@@ -8,6 +9,9 @@ import { Effect, Option, Result } from 'effect'
  * shows its result at once and is taken back if the server refuses, and a title that silently
  * jumps back, or a Stop that seems to do nothing, reads as the app not working. Those say one
  * sentence here, at the foot of the window, for a few seconds.
+ *
+ * The sentences on show are `useSaid`, a Zustand store, as T3 Code web keeps its interface state
+ * (`apps/web/src/rightPanelStore.ts`).
  */
 
 export interface Saying {
@@ -31,31 +35,34 @@ const SAID_FOR_MS = 6000
  */
 const LEAVING_FOR_MS = 180
 
-let sayings: ReadonlyArray<Saying> = []
+export const useSaid = create<{ readonly sayings: ReadonlyArray<Saying> }>()(() => ({
+  sayings: [],
+}))
+/** How many sentences have been said, which numbers the next one. */
 let count = 0
-const listeners = new Set<() => void>()
 
-const set = (next: ReadonlyArray<Saying>) => {
-  sayings = next
-  for (const listener of listeners) listener()
-}
+const set = (sayings: ReadonlyArray<Saying>) => useSaid.setState({ sayings })
+const all = () => useSaid.getState().sayings
+
+/** The same sentence, on its way out. */
+const sentAway = ({ id, words, key, action }: Saying): Saying => ({
+  id,
+  words,
+  key,
+  action,
+  leaving: true,
+})
 
 export const said = {
-  subscribe: (listener: () => void) => {
-    listeners.add(listener)
-    return () => {
-      listeners.delete(listener)
-    }
-  },
-  all: () => sayings,
   /**
    * Sends a sentence away. It is marked as leaving at once, which is what the Person sees
    * answer their click, and taken out when it has gone. Dismissed twice, it still goes once.
    */
   dismiss: (id: number) => {
+    const sayings = all()
     if (!sayings.some((saying) => saying.id === id && !saying.leaving)) return
-    set(sayings.map((saying) => (saying.id === id ? { ...saying, leaving: true } : saying)))
-    setTimeout(() => set(sayings.filter((saying) => saying.id !== id)), LEAVING_FOR_MS)
+    set(sayings.map((saying) => (saying.id === id ? sentAway(saying) : saying)))
+    setTimeout(() => set(all().filter((saying) => saying.id !== id)), LEAVING_FOR_MS)
   },
   /**
    * Sends away the sentence a caller said under this key, when it is still showing. A sentence
@@ -64,7 +71,7 @@ export const said = {
    * sending the notice, so what was already said about it goes too.
    */
   withdraw: (key: string) => {
-    for (const saying of sayings) {
+    for (const saying of all()) {
       if (Option.isSome(saying.key) && saying.key.value === key) said.dismiss(saying.id)
     }
   },
@@ -75,14 +82,14 @@ export function sayWith(words: string, action: Saying['action'], key?: string) {
   const identity = Option.fromNullishOr(key)
   if (
     Option.isSome(identity) &&
-    sayings.some((saying) => Option.isSome(saying.key) && saying.key.value === identity.value)
+    all().some((saying) => Option.isSome(saying.key) && saying.key.value === identity.value)
   ) {
     return
   }
   count += 1
   const id = count
   // The newest three are kept: more than that is a wall, and the oldest was the first read.
-  set([...sayings, { id, words, action, key: identity, leaving: false }].slice(-3))
+  set([...all(), { id, words, action, key: identity, leaving: false }].slice(-3))
   setTimeout(() => said.dismiss(id), SAID_FOR_MS)
 }
 

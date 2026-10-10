@@ -1,4 +1,5 @@
 import { Effect, Option } from 'effect'
+import { create } from 'zustand'
 import { reload } from './account'
 import { send, start } from './app'
 import {
@@ -28,25 +29,21 @@ import {
  * trades for its session (`signin.ts`). A desktop app whose shell lacks that capability has
  * neither way, and `way` says so (`wayIn`).
  *
- * It is a store read with `useSyncExternalStore`, not a hook, because the hand-off outlives any
- * one drawing of the welcome and is started by a press, never by a render.
+ * It is a store and not a screen's own state, because the hand-off outlives any one drawing of
+ * the welcome and is started by a press, never by a render: a Zustand store, as T3 Code web keeps
+ * its interface state (`apps/web/src/rightPanelStore.ts`).
  */
 
 /** Which way this window signs in with Google, read once from the bridge the shell put on it. */
 const way = wayIn('vivid' in globalThis ? Option.some<unknown>(globalThis.vivid) : Option.none())
 
 /** What is on the screen: the form (no state) or the card, and the attempt that put it there. */
-let shown: Shown = { attempt: 0, state: Option.none() }
-/** Stops what is running. Does nothing when nothing is. */
+export const useHandoff = create<Shown>()(() => ({ attempt: 0, state: Option.none() }))
+/** Stops what is running. It is the running hand-off's handle, not something drawn. */
 let stop = () => {}
-const listeners = new Set<() => void>()
 
-/** Puts a screen up and says so, unless it is the one already up. */
-const set = (next: Shown) => {
-  if (next === shown) return
-  shown = next
-  for (const listener of listeners) listener()
-}
+/** Puts a screen up. One that is already up (`reopened` hands the same one back) changes nothing. */
+const set = (next: Shown) => useHandoff.setState(next, true)
 
 /**
  * Writes for one attempt, and only while it is still the current one. Stopping a hand-off
@@ -55,7 +52,7 @@ const set = (next: Shown) => {
  */
 const during = (attempt: number, state: Option.Option<Handing>) =>
   Effect.sync(() => {
-    if (shown.attempt === attempt) set({ attempt, state })
+    if (useHandoff.getState().attempt === attempt) set({ attempt, state })
   })
 
 /**
@@ -78,14 +75,6 @@ const parts = (
 export const googleHandoff = {
   /** Which way this window signs in with Google: a redirect, the hand-off, or not at all. */
   way,
-  subscribe: (listener: () => void) => {
-    listeners.add(listener)
-    return () => {
-      listeners.delete(listener)
-    }
-  },
-  /** Where the hand-off stands, or nothing while the form is showing. */
-  current: () => shown.state,
   /**
    * Starts a new attempt, in place of any that was running: the shell opens the browser, and this
    * window waits for how it ends. `destination` is where the Person was going.
@@ -98,7 +87,7 @@ export const googleHandoff = {
     stop()
     // The card is up before the hand-off takes its first step, so "Try again" never shows the
     // form for a moment between one attempt and the next.
-    const attempt = shown.attempt + 1
+    const attempt = useHandoff.getState().attempt + 1
     set({ attempt, state: Option.some(Handing.Opening()) })
     stop = start(handOff(parts(way, attempt, destination)))
   },
@@ -111,12 +100,12 @@ export const googleHandoff = {
    * (`reopened`): a code that lands while the browser is opening must not be painted over.
    */
   reopen: () => {
-    const { attempt } = shown
-    if (!Way.$is('Shell')(way) || !waitingOn(shown, attempt)) return
+    const { attempt } = useHandoff.getState()
+    if (!Way.$is('Shell')(way) || !waitingOn(useHandoff.getState(), attempt)) return
     const { signIn } = way
     void send(
       reopening(browserSaid(() => signIn.reopen())).pipe(
-        Effect.map((browser) => set(reopened(shown, attempt, browser))),
+        Effect.map((browser) => set(reopened(useHandoff.getState(), attempt, browser))),
       ),
     )
   },
@@ -132,6 +121,6 @@ export const googleHandoff = {
       const { signIn } = way
       void send(Effect.ignore(Effect.tryPromise(() => signIn.cancel())))
     }
-    set({ attempt: shown.attempt + 1, state: Option.none() })
+    set({ attempt: useHandoff.getState().attempt + 1, state: Option.none() })
   },
 }

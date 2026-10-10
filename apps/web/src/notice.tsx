@@ -1,8 +1,9 @@
 import { RegistryContext } from '@effect/atom-react'
 import { NoticeState, type VividNoticeBridge } from '@vivid/desktop/notice'
 import { Option } from 'effect'
-import { StrictMode, useSyncExternalStore } from 'react'
+import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { create } from 'zustand'
 import { engine } from './data/runtime'
 import { useAppearance } from './data/vivid'
 import { Button } from './ui/button'
@@ -40,21 +41,15 @@ declare global {
 
 const bridge = 'vividNotice' in globalThis ? Option.some(globalThis.vividNotice) : Option.none()
 
-let state: NoticeState = NoticeState.cases.Hidden.make({})
-const listeners = new Set<() => void>()
+/**
+ * What the desktop app last said the notice shows. A Zustand store, as T3 Code web keeps its
+ * interface state (`apps/web/src/rightPanelStore.ts`).
+ */
+const useNotice = create<{ readonly shown: NoticeState }>()(() => ({
+  shown: NoticeState.cases.Hidden.make({}),
+}))
 // Listened to for the life of the document, like the app's own stores: the window is one notice.
-Option.map(bridge, (available) =>
-  available.watch((next) => {
-    state = next
-    for (const listener of listeners) listener()
-  }),
-)
-const subscribe = (listener: () => void) => {
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
-}
+Option.map(bridge, (available) => available.watch((shown) => useNotice.setState({ shown })))
 
 // The app window owns the theme and keeps it in this origin's storage; a change there reaches
 // this document as a storage event, so the notice turns light or dark with the app.
@@ -76,7 +71,7 @@ const doing = (shown: NoticeState): Option.Option<string> =>
   })
 
 function Notice() {
-  const shown = useSyncExternalStore(subscribe, () => state)
+  const shown = useNotice((state) => state.shown)
   const vivid = useAppearance()
   // The window is off the screen while hidden; drawing nothing means the next turn's notice is
   // a new element, which is what makes it arrive again.

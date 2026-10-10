@@ -1,7 +1,6 @@
 import { Option } from 'effect'
 import { X } from 'lucide-react'
-import { useSyncExternalStore } from 'react'
-import { said } from '../data/said'
+import { said, useSaid } from '../data/said'
 
 /**
  * The sentences the app says at the foot of the window (see `data/said.ts`). Each comes up from
@@ -10,7 +9,7 @@ import { said } from '../data/said'
  * leaves it cannot be pressed.
  */
 export function Sayings() {
-  const sayings = useSyncExternalStore(said.subscribe, said.all)
+  const sayings = useSaid((state) => state.sayings)
   if (sayings.length === 0) return null
   return (
     <ul className="pointer-events-none fixed inset-x-0 bottom-24 z-50 flex flex-col items-center gap-2 px-4">

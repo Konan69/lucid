@@ -30,13 +30,13 @@ import {
 import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import { Check, Globe, Link2, MousePointer2, ShieldQuestion, X } from 'lucide-react'
 import { BorderBeam } from 'border-beam'
-import { useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { act } from '../../data/app'
 import { changing, live, useLiveValue } from '../../data/live'
-import { router } from '../../data/route'
+import { openSettings } from '../../router'
 import { engine } from '../../data/runtime'
 import { orSay } from '../../data/said'
-import { theme } from '../../data/theme'
+import { themeShown, useTheme } from '../../data/theme'
 import { Button } from '../../ui/button'
 import { Card } from '../../ui/card'
 import { cn } from '../../ui/cn'
@@ -262,7 +262,7 @@ export function ApprovalCard({ approval, me }: { approval: Approval; me: PersonI
   const [refusal, setRefusal] = useState<string | null>(null)
   const pending = ApprovalState.guards.Pending(approval.state)
   const mine = approval.askedOf.id === me
-  const shown = useSyncExternalStore(theme.subscribe, theme.shown)
+  const shown = useTheme(themeShown)
 
   function decide(decision: ApprovalDecision) {
     return Effect.gen(function* () {
@@ -483,7 +483,7 @@ export function ConnectionCard({
   const connections = useLiveValue(live.connections)
   const [keying, setKeying] = useState<Option.Option<Keying>>(Option.none())
   const [pressed, setPressed] = useState<Pressed>('not-yet')
-  const shown = useSyncExternalStore(theme.subscribe, theme.shown)
+  const shown = useTheme(themeShown)
   const list = Option.match(connections, { onNone: () => [], onSome: (value) => value.connections })
   const readyIn = (all: ReadonlyArray<Connection>) => answered(all, request, awaited)
   // A request for one more account is never ready when it is made, whatever the card was told.
@@ -626,11 +626,7 @@ function ConnectionAction({
   }
   if (pressed === 'refused') {
     return (
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => router.openSettings(Option.some('connections'))}
-      >
+      <Button variant="outline" size="sm" onClick={() => void openSettings('connections')}>
         Open Integrations
       </Button>
     )

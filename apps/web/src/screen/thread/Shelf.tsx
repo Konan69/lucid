@@ -5,7 +5,7 @@ import { FileText } from 'lucide-react'
 import { useState } from 'react'
 import { formatBytes } from '../../data/library'
 import { live, LiveState, useLive } from '../../data/live'
-import { Route, router } from '../../data/route'
+import { router } from '../../router'
 import { engine } from '../../data/runtime'
 import { SkeletonList } from '../../ui/skeleton'
 import { Fact, Refused, TextButton } from './Rows'
@@ -43,7 +43,7 @@ export function Shelf({ onClose }: { onClose: () => void }) {
   const [opened] = useState(() => Date.now())
   const toLibrary = () => {
     onClose()
-    router.go(Route.Library())
+    void router.navigate({ to: '/library' })
   }
   return LiveState.$match(state, {
     Loading: () => <SkeletonList of="row" count={2} />,

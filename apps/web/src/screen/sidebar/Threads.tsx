@@ -1,7 +1,7 @@
 import type { Thread, ThreadId } from '@vivid/contracts'
 import { ThreadAudience } from '@vivid/contracts'
 import { regenerateThreadTitle } from '@vivid/client-runtime'
-import { Data } from 'effect'
+import { Data, Option } from 'effect'
 import {
   Check,
   CircleCheck,
@@ -16,7 +16,8 @@ import {
 import { useRef, useState } from 'react'
 import { act, running } from '../../data/app'
 import { changing, live } from '../../data/live'
-import { Route, router } from '../../data/route'
+import { Link } from '@tanstack/react-router'
+import { router, threadOnScreen } from '../../router'
 import { orSay } from '../../data/said'
 import {
   AlertDialog,
@@ -298,8 +299,6 @@ function ThreadRow(props: RowProps) {
   )
 }
 
-const openThread = (thread: Thread) => router.go(Route.Thread({ id: thread.id }))
-
 /**
  * A Thread that needs someone or is being worked on. It is the same row as every other Thread,
  * with one more line under the title: the last thing said in it.
@@ -314,10 +313,12 @@ const openThread = (thread: Thread) => router.go(Route.Thread({ id: thread.id })
 function CardFace({ thread, active, now, retitling, onDo }: RowProps) {
   const needsYou = thread.attention === 'NeedsYou'
   return (
-    <button
-      onClick={() => openThread(thread)}
+    <Link
+      to="/t/$id"
+      params={{ id: thread.id }}
+      // A row is pressed, not dragged: an anchor is draggable unless it says otherwise.
+      draggable={false}
       onDoubleClick={() => onDo(Doing.Renaming({ id: thread.id }))}
-      aria-current={active ? 'page' : undefined}
       className={cn(ROW, 'items-start py-1.5', active ? 'bg-wash-selected' : HOVER)}
     >
       <span className="inline-flex size-5.5 shrink-0 items-center justify-center">
@@ -342,7 +343,7 @@ function CardFace({ thread, active, now, retitling, onDo }: RowProps) {
         </span>
         <span className="block truncate text-meta font-meta text-ink-3">{thread.preview}</span>
       </span>
-    </button>
+    </Link>
   )
 }
 
@@ -350,10 +351,12 @@ function CardFace({ thread, active, now, retitling, onDo }: RowProps) {
 function LineFace({ thread, active, now, retitling, onDo }: RowProps) {
   const unread = thread.attention === 'Unread' && !active
   return (
-    <button
-      onClick={() => openThread(thread)}
+    <Link
+      to="/t/$id"
+      params={{ id: thread.id }}
+      // A row is pressed, not dragged: an anchor is draggable unless it says otherwise.
+      draggable={false}
       onDoubleClick={() => onDo(Doing.Renaming({ id: thread.id }))}
-      aria-current={active ? 'page' : undefined}
       className={cn(ROW, FULL, active ? 'bg-wash-selected' : HOVER)}
     >
       <span className="inline-flex size-5.5 shrink-0 items-center justify-center">
@@ -374,7 +377,7 @@ function LineFace({ thread, active, now, retitling, onDo }: RowProps) {
       <time className={cn('shrink-0 text-meta font-meta text-ink-3 tabular-nums', AT_REST)}>
         {relativeTime(thread.updatedAt, now)}
       </time>
-    </button>
+    </Link>
   )
 }
 
@@ -533,8 +536,9 @@ function DeleteThread({ thread, onClose }: { thread: Thread; onClose: () => void
               onClose()
               // Only the Thread on screen has to be left; deleting another one from the list must
               // not take the Person away from what they are reading.
-              const here = router.route()
-              if (Route.$is('Thread')(here) && here.id === thread.id) router.replace(Route.New())
+              if (Option.contains(threadOnScreen(), thread.id)) {
+                void router.navigate({ to: '/', replace: true })
+              }
               void act(
                 orSay(
                   changing(
@@ -583,7 +587,7 @@ function Caption({ label, count }: { label: string; count?: number }) {
             <button
               type="button"
               aria-label="New thread"
-              onClick={() => router.go(Route.New())}
+              onClick={() => void router.navigate({ to: '/' })}
               className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-control text-ink-3 transition-colors duration-(--dur-fast) hover:bg-wash-hover hover:text-ink focus-visible:-outline-offset-2"
             />
           }

@@ -4,6 +4,8 @@ import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { sentryVitePlugin } from '@sentry/vite-plugin'
+import { tanstackRouter } from '@tanstack/router-plugin/vite'
+import { index, rootRoute, route } from '@tanstack/virtual-file-routes'
 import manifest from './package.json' with { type: 'json' }
 
 /**
@@ -97,6 +99,24 @@ export default defineConfig(({ mode }) => {
   return {
     define: { __VIVID_RELEASE__: JSON.stringify(release) },
     plugins: [
+      // The route tree (`src/tree.gen.ts`) is generated from this list, before React's plugin
+      // sees the files. The list is written out, not read from file names: the router's own
+      // naming (`__root.tsx`, `t.$id.tsx`) is not one word per file, and here each address
+      // names the file that defines it (`docs/00-structure.md`). No `autoCodeSplitting`: each
+      // route names its screen's file itself (`src/routes/root.tsx` says why).
+      tanstackRouter({
+        target: 'react',
+        routesDirectory: './src/routes',
+        generatedRouteTree: './src/tree.gen.ts',
+        virtualRouteConfig: rootRoute('root.tsx', [
+          index('first.tsx'),
+          route('/t/$id', 'thread.tsx'),
+          route('/routines', 'routines.tsx'),
+          route('/library', 'library.tsx'),
+          route('/projects/{-$id}', 'projects.tsx'),
+          route('/invite/$id', 'invite.tsx'),
+        ]),
+      }),
       react(),
       tailwindcss(),
       releaseUpstream(agent),

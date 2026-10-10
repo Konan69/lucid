@@ -1,5 +1,4 @@
-import { useSyncExternalStore } from 'react'
-import { split } from '../../data/split'
+import { split, splitWidest, splitWidth, useSplit } from '../../data/split'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 
 /** Pixels the divider moves for one arrow key. */
@@ -19,8 +18,8 @@ const STEP = 10
  * Computer. It goes away at the press, so nothing follows the edge while it is dragged.
  */
 export function Edge() {
-  const width = useSyncExternalStore(split.subscribe, split.width)
-  const widest = useSyncExternalStore(split.subscribe, split.widest)
+  const width = useSplit(splitWidth)
+  const widest = useSplit(splitWidest)
   return (
     <Tooltip>
       <TooltipTrigger

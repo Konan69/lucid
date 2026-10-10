@@ -1,10 +1,10 @@
 import type { MeResponse } from '@vivid/contracts'
 import { Option } from 'effect'
 import { Check, X } from 'lucide-react'
-import { useState, useSyncExternalStore } from 'react'
-import { onboarding } from '../../data/onboarding'
+import { useState } from 'react'
+import { onboarding, overFor, useOnboarding } from '../../data/onboarding'
 import { finished, useProgress, type Step, type StepKind } from '../../data/progress'
-import { router } from '../../data/route'
+import { openSettings } from '../../router'
 import { useAppearance } from '../../data/vivid'
 import { cn } from '../../ui/cn'
 import {
@@ -43,15 +43,15 @@ const TITLE = {
  */
 export function Started({ me }: { me: MeResponse }) {
   const steps = useProgress(me)
-  const over = useSyncExternalStore(onboarding.subscribe, () => onboarding.isOver(me.person.id))
+  const over = useOnboarding(overFor(me.person.id))
   const { name } = useAppearance()
   const [customising, setCustomising] = useState(false)
 
   // The steps close themselves when one is taken, so taking one is only going where it leads.
   const take = {
-    connect: () => router.openSettings(Option.some('connections')),
+    connect: () => void openSettings('connections'),
     name: () => setCustomising(true),
-    text: () => router.openSettings(Option.some('texting')),
+    text: () => void openSettings('texting'),
   } satisfies Record<StepKind, () => void>
 
   return (

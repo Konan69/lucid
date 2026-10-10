@@ -31,7 +31,7 @@ import {
   DropdownMenuTrigger,
 } from '../../ui/dropdownmenu'
 import { Face } from '../../ui/Face'
-import { floatingSurfaces } from '../../ui/Layer'
+import { floatingSurfaces, useSurfaces } from '../../ui/Layer'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 
 /** The Person asks for Vivid's computer: it comes in front of the pages, and is turned on. */
@@ -528,7 +528,7 @@ export function PageView({ page }: { page: Option.Option<Page> }) {
     }
     const sized = new ResizeObserver(schedule)
     sized.observe(element)
-    const unlayered = floatingSurfaces.subscribe(schedule)
+    const unlayered = useSurfaces.subscribe(schedule)
     addEventListener('resize', schedule)
     document.addEventListener('visibilitychange', schedule)
     report()

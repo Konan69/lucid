@@ -1,18 +1,18 @@
 import { useAtomMount, useAtomSet } from '@effect/atom-react'
 import { useFlueAgent, type FlueConversationMessage } from '@flue/react'
-import { createFlueClient } from '@flue/sdk'
 import { ThreadAudience, type MeResponse, type ThreadDetail, type ThreadId } from '@vivid/contracts'
 import { draftPlace, inThread, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { ArrowDown } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
-import { memo, useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { arrival } from '../data/arrival'
+import { memo, useCallback, useMemo, useRef, useState } from 'react'
+import { openedFor, useArrival } from '../data/arrival'
 import { act } from '../data/app'
+import { conversationOf, heardIn } from '../data/conversation'
 import { change, changing, LiveState, presentIn, seenThread, typingIn, useLive } from '../data/live'
-import { Route, router } from '../data/route'
+import { router } from '../router'
 import { orSay } from '../data/said'
-import { FirstWords, firstWords } from '../data/threads'
+import { FirstWords, firstWords, landedFor, useFirstWords, wordsFor } from '../data/threads'
 import { Button } from '../ui/button'
 import { Alive, ranBadly } from '../ui/Alive'
 import { Face } from '../ui/Face'
@@ -51,8 +51,8 @@ export function Thread({
   // around it is made anew by each read (`liveStateOf`).
   const record = LiveState.$is('Ready')(detail) ? detail.value : undefined
   const known = useMemo(() => Option.fromUndefinedOr(record), [record])
-  const first = useSyncExternalStore(firstWords.subscribe, () => firstWords.of(id))
-  const landed = useSyncExternalStore(firstWords.subscribe, () => firstWords.landed(id))
+  const first = useFirstWords(wordsFor(id))
+  const landed = useFirstWords(landedFor(id))
   // A Thread whose first words are still on their way may not exist on the server yet. It is not
   // gone, it is arriving, and what the Person just wrote is already on screen.
   if (LiveState.$is('Failed')(detail) && FirstWords.$is('Settled')(first)) return <Gone />
@@ -80,7 +80,7 @@ function Gone() {
       <p className="max-w-sm text-label text-ink-3">
         It may have been deleted, or it is in a space you are not working in right now.
       </p>
-      <Button variant="outline" onClick={() => router.go(Route.New())}>
+      <Button variant="outline" onClick={() => void router.navigate({ to: '/' })}>
         Start a new thread
       </Button>
     </section>
@@ -261,11 +261,17 @@ function Conversation({
   panelOpen: boolean
   onTogglePanel: () => void
 }) {
-  const client = useMemo(
-    () => createFlueClient({ url: `/api/vivid/${encodeURIComponent(id)}` }),
-    [id],
-  )
+  // The Thread's one conversation, usually open already: the router began it on the way here
+  // (`data/conversation.ts`), so the first frame has the words and not an empty Thread.
+  const client = conversationOf(id)
   const agent = useFlueAgent({ client })
+  // The hook begins reading in an effect, so on the first frame of every visit it has no words
+  // even when the conversation is open and known. For that frame the words are taken from the
+  // conversation itself (`heardIn`), and the Thread is drawn with them instead of as one that
+  // is still opening. From the next frame on the hook has them and is what is drawn.
+  const heard = heardIn(id)
+  const ready = agent.historyReady || Option.isSome(heard)
+  const said = agent.historyReady ? agent.messages : Option.getOrElse(heard, () => agent.messages)
   // Words that were sent from here and refused. They are kept, never dropped, until sent again.
   const [unsent, setUnsent] = useState<Option.Option<Unsent>>(Option.none())
   // Being on this screen is what makes the Person present in the Thread; see `presentIn`.
@@ -286,8 +292,7 @@ function Conversation({
   // The Thread the server just opened for Vivid to speak first in already has a Run going. Until
   // the Thread's own record arrives to say so, that is known from having opened it, so the page
   // shows Vivid thinking from its first frame and never an empty Thread.
-  const opening =
-    useSyncExternalStore(arrival.subscribe, () => arrival.isOpened(id)) && Option.isNone(thread)
+  const opening = useArrival(openedFor(id)) && Option.isNone(thread)
   const working =
     opening ||
     agent.status === 'submitted' ||
@@ -295,7 +300,7 @@ function Conversation({
     FirstWords.$is('Sending')(first) ||
     Option.exists(thread, (value) => value.attention === 'Working')
   // Flue gives the same list until a message changes; the filtered list is kept the same with it.
-  const visible = useMemo(() => shownIn(agent.messages), [agent.messages])
+  const visible = useMemo(() => shownIn(said), [said])
   // Made once per answer from the server, not once per streamed token: every row is given it,
   // and a new one would draw every row again (`Message`).
   const context = useMemo(
@@ -367,7 +372,7 @@ function Conversation({
         <>
           <ConversationMessages
             hero={hero}
-            ready={agent.historyReady}
+            ready={ready}
             empty={visible.length === 0 && FirstWords.$is('Settled')(first)}
             working={working}
             waiting={isWaiting(working, visible)}

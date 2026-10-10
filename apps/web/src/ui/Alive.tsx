@@ -1,7 +1,7 @@
 import { RunState, type Run } from '@vivid/contracts'
 import { faceState, type FaceMood, type FaceSignals, type FaceState } from '@vivid/marks'
 import { useState, useSyncExternalStore } from 'react'
-import { life, writing } from '../data/life'
+import { life, useWriting } from '../data/life'
 import { cn } from './cn'
 import { Face } from './Face'
 
@@ -36,7 +36,7 @@ type Known = Pick<FaceSignals, 'answering' | 'usingTool' | 'failed' | 'needsPers
 
 /**
  * The state Vivid's face is in for one Thread, from what the Thread knows plus the two things
- * only this page knows: that the Person is writing (`data/life.ts` `writing`), and that Vivid
+ * only this page knows: that the Person is writing (`data/life.ts` `useWriting`), and that Vivid
  * finished an answer while they were here.
  *
  * "Finished" is an edge, not a fact about the Thread: opening a Thread that was answered
@@ -45,7 +45,7 @@ type Known = Pick<FaceSignals, 'answering' | 'usingTool' | 'failed' | 'needsPers
  * own way to follow a prop without an effect.
  */
 export function useFaceState(known: Known): FaceState {
-  const personWriting = useSyncExternalStore(writing.subscribe, writing.now)
+  const personWriting = useWriting((state) => state.writing)
   const [was, setWas] = useState(known.answering)
   const [finished, setFinished] = useState(false)
   if (was !== known.answering) {
