@@ -400,12 +400,32 @@ const examples = [
     forCompany: false,
   }),
   toolScene('ask me', 'ask_person', {
-    question: 'Which rehearsal topic should we review?',
-    options: [
-      { label: 'Research', detail: 'Review the sources.' },
-      { label: 'Writing', detail: 'Review the draft.' },
+    questions: [
+      {
+        question: 'Which rehearsal topic should we review?',
+        options: [
+          { label: 'Research', detail: 'Review the sources.' },
+          { label: 'Writing', detail: 'Review the draft.' },
+        ],
+        several: true,
+        allowsOwnAnswer: true,
+      },
+      {
+        question: 'How much detail would you like?',
+        options: [
+          { label: 'Brief', detail: 'The main points.' },
+          { label: 'Thorough', detail: 'The full review.' },
+        ],
+        several: false,
+        allowsOwnAnswer: false,
+      },
+      {
+        question: 'What should the review focus on?',
+        options: [],
+        several: false,
+        allowsOwnAnswer: true,
+      },
     ],
-    allowsOwnAnswer: true,
   }),
   toolScene('browse example', 'browse', {
     action: { kind: 'open', address: 'https://example.com' },

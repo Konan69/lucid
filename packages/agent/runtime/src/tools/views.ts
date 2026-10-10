@@ -1,3 +1,4 @@
+import * as Arr from 'effect/Array'
 import {
   AnotherAccountMessage,
   MemoryScope,
@@ -169,7 +170,7 @@ export function inputRequest(item: InputRequest) {
   return {
     kind: 'input-request',
     requestId: item.id,
-    question: modelText(item.question),
+    questions: Arr.map(item.questions, (question) => modelText(question.question)),
     message: 'End the turn now; the person has been asked and their answer will return here.',
   }
 }

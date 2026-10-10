@@ -266,9 +266,7 @@ describe('model views', () => {
       threadId: ThreadId.make('MARK-thread'),
       runId: null,
       askedOf: person,
-      question: 'Send?',
-      options: [],
-      allowsOwnAnswer: true,
+      questions: [{ question: 'Send?', options: [], selection: 'One', allowsOwnAnswer: true }],
       state: InputRequestState.cases.Waiting.make({}),
       createdAt: 0,
     })
@@ -286,7 +284,7 @@ describe('model views', () => {
       ),
     ]
     expect(cards[0]).toMatchObject({ approvalId: reference })
-    expect(cards[1]).toMatchObject({ requestId: reference })
+    expect(cards[1]).toMatchObject({ requestId: reference, questions: ['Send?'] })
     expect(cards[2]).toMatchObject({ service: 'MARK-service' })
     const visible = cards.map((card) =>
       Object.fromEntries(
