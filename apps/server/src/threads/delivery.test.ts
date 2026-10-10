@@ -460,7 +460,8 @@ layer(
           expect(deliveries).toHaveLength(1)
           const delivered = deliveries[0]
           if (delivered === undefined) expect.fail('Missing admitted message')
-          expect(delivered.message.body).toContain('left it unanswered')
+          // The Person's words reach the runtime as written: nothing is put in their mouth.
+          expect(delivered.message.body).not.toContain('unanswered')
           expect(delivered.message.body).toContain(body.body)
           expect(delivered.message.body).not.toContain(first.id)
           expect(delivered.message.body).not.toContain(test.ben)
@@ -540,7 +541,6 @@ layer(
             {
               message: {
                 kind: 'user',
-                body: expect.stringContaining('left it unanswered'),
                 attachments: [png],
               },
             },
@@ -625,11 +625,6 @@ layer(
           expect(yield* test.inputs.inThread(test.threadId)).toEqual([waiting])
           yield* test.finish(admission.runId)
         }
-        expect(
-          (yield* Ref.get(test.admitted)).every(
-            (input) => !input.message.body.includes('left it unanswered'),
-          ),
-        ).toBe(true)
       }).pipe(Effect.scoped),
     )
   })

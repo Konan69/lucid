@@ -78,14 +78,6 @@ export const movesThreadOn = (delivery: Delivery) =>
   DeliverySpeaker.guards.Acting(delivery.speaker) &&
   StoredRunOrigin.guards.Message(delivery.origin)
 
-/**
- * A stable prefix teaches Vivid the ordinary-message policy without exposing request identifiers.
- * It is conditional in words, not on a mutable database read: retrying the same keyed message
- * must send identical text even if a question was answered or withdrawn between attempts.
- */
-export const movingOnBody = (body: string) =>
-  `If an earlier question is still waiting for this Person in this Thread, they have left it unanswered by writing this message instead. Continue from their message:\n\n${body}`
-
 /** Server producers deliver signals; Person-authored messages use immediate `admit` instead. */
 export interface SignalDelivery extends Delivery {
   readonly message:

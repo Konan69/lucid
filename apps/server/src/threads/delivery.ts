@@ -29,7 +29,6 @@ import {
   DeliveryMessage,
   DeliverySpeaker,
   movesThreadOn,
-  movingOnBody,
   type Admitted,
   type ConversationService,
   type Delivery,
@@ -56,12 +55,6 @@ const previewOf = (message: DeliveryMessage) =>
     Signal: () => Option.none<string>(),
     FirstConversation: () => Option.none<string>(),
   })
-
-/** Admission keeps attribution and pictures intact while the model reads why ordinary chat moves on. */
-const messageFor = (delivery: Delivery, thread: StoredThread, speaker: string, turn: number) => {
-  const message = flueMessage(thread.audience, speaker, delivery.message, turn)
-  return movesThreadOn(delivery) ? { ...message, body: movingOnBody(message.body) } : message
-}
 
 /** The runtime's classified failure stays attached through the single conditional settlement write. */
 const endingOf = (settlement: Settlement): RunEnding =>
@@ -315,7 +308,7 @@ const makeConversation = Effect.fn('Conversation.make')(function* () {
         const deliveryScope = yield* runs.scope({ threadId: thread.id, turn })
         return yield* admitRuntime(runtime, {
           threadId: thread.id,
-          message: messageFor(delivery, thread, from, turn),
+          message: flueMessage(thread.audience, from, delivery.message, turn),
           origin: { creator: creator.id, creatorName: creator.name },
           idempotencyKey: delivery.idempotencyKey,
           turn,

@@ -18,7 +18,6 @@ that Thread. Answers, server signals, channel text, refused messages and replaye
 withdraw questions. The conditional update leaves answered and withdrawn rows unchanged.
 Admission publishes the Person and Thread topics so open inboxes and Thread cards refresh.
 
-The runtime receives the ordinary message with a stable, identifier-free prefix: any earlier
-question still waiting for this Person is left unanswered, and Vivid should continue from the
-message. The prefix does not depend on a database read, preserving keyed admission identity;
-the Thread preview and learning input still use only the Person's own words.
+The runtime receives the message exactly as the Person wrote it. Nothing is added to their
+words: Vivid reads its own unanswered question followed by their message, and the question's
+record says it was withdrawn.
