@@ -133,6 +133,16 @@ describe('the conversations a page holds open', () => {
     expect(seen.refreshed).toBe(1)
   })
 
+  it('tries again when a screen opens a conversation that had given up with an error', () => {
+    const real = flue()
+    const conversations = makeConversations(3, real.connect)
+    conversations.warm(a)
+    real.of(a).phase = 'error'
+    const reader = conversations.of(a).observe()
+    expect(real.of(a).refreshed).toBe(1)
+    expect(reader.getSnapshot().phase).toBe('loading')
+  })
+
   it('says what is already known of a conversation, once it has been read', () => {
     const real = flue()
     const conversations = makeConversations(3, real.connect)

@@ -91,9 +91,14 @@ export const makeConversations = <Client extends Observable>(
           // and the Thread drew its empty state for the length of that round trip. So until the
           // observation says something new, this reader is told the truth of the moment: it is
           // being read.
+          //
+          // The same holds for an observation that gave up with an error (the server restarting
+          // for a deploy answers 503 for a moment). A screen used to get a new observation each
+          // visit, so leaving a Thread and coming back was a fresh try; with one observation held
+          // for all, the Thread would say "can't be reached" on every visit until it was let go.
           const stale = Option.filter(
             Option.some(observation.getSnapshot()),
-            (was) => was.phase === 'absent',
+            (was) => was.phase === 'absent' || was.phase === 'error',
           )
           if (Option.isSome(stale)) observation.refresh()
           const reading = Option.map(stale, (was): AgentConversationObservationSnapshot => ({
