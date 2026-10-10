@@ -13,6 +13,7 @@
     "types": "node ../../../scripts/types.mjs tsconfig.types.json"
   },
   "dependencies": {
+    "@typeonce/effect-machine": "catalog:",
     "@vivid/client-runtime": "workspace:*",
     "@vivid/contracts": "workspace:*",
     "effect": "catalog:"

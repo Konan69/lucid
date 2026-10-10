@@ -227,6 +227,9 @@ catalogs:
     '@tailwindcss/vite':
       specifier: 4.3.3
       version: 4.3.3
+    '@typeonce/effect-machine':
+      specifier: 0.40.0
+      version: 0.40.0
     '@types/node':
       specifier: 24.13.6
       version: 24.13.6
@@ -1028,6 +1031,9 @@ importers:
 
   packages/client/state:
     dependencies:
+      '@typeonce/effect-machine':
+        specifier: 'catalog:'
+        version: 0.40.0(effect@4.0.2)
       '@vivid/client-runtime':
         specifier: workspace:*
         version: link:../rpc
@@ -4981,6 +4987,12 @@ packages:
 
   '@tursodatabase/database@0.4.4':
     resolution: {integrity: sha512-QkQ0qLp0AY8dC9BOrIMyeyUXoFCvhlRaH+wcg013OvzYufSmDnnzg44U0tQkmnXYfUZEIp+IpADO/UeGNL0M2Q==}
+
+  '@typeonce/effect-machine@0.40.0':
+    resolution: {integrity: sha512-BaTY12ylWy+MPxEJtcD/9+PqQtLXzmiXbbdfIk46L+QXpo6eAtKl0NoS2/sGLOXTE25gXFFNRTU669Rz8PmTtQ==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      effect: 4.0.2
 
   '@types/aws-lambda@8.10.163':
     resolution: {integrity: sha512-+4zuoEB3S8RIhimtOFT7zAEk2SbpwrKjjGl9CyYnQR6k08uynxfauIIB0pDU1ssr05F8oyGiETwpn+8eXZMqPw==}
@@ -14194,6 +14206,10 @@ snapshots:
       '@tursodatabase/database-linux-arm64-gnu': 0.4.4
       '@tursodatabase/database-linux-x64-gnu': 0.4.4
       '@tursodatabase/database-win32-x64-msvc': 0.4.4
+
+  '@typeonce/effect-machine@0.40.0(effect@4.0.2)':
+    dependencies:
+      effect: 4.0.2
 
   '@types/aws-lambda@8.10.163': {}
 
