@@ -10,7 +10,8 @@ import * as Schema from 'effect/Schema'
 import {
   Conflict,
   DatabaseFailure,
-  InputOption,
+  InputAnswer,
+  InputQuestion,
   InputRequest,
   InputRequestId,
   InputRequestState,
@@ -22,10 +23,12 @@ import {
   type AskInputRequest,
   type PersonSummary,
 } from '@vivid/contracts'
+import type { InputAnswerFailure } from '@vivid/contracts/rpc'
 import { companyColumnOf, inWorkspace, loadSummaries, type Actor } from '../auth/access.ts'
 import {
   Database,
   decodeStored,
+  encodeStored,
   returned,
   type DatabaseInfrastructureError,
 } from '../database/client.ts'
@@ -38,13 +41,14 @@ import { Signal, encodeSignal } from '../approvals/signal.ts'
 import { replaySignals } from '../approvals/replay.ts'
 import { answerKey } from './answers.ts'
 import { inputRequests } from './tables.ts'
+import { answerText } from './validation.ts'
 
 const fields = createSelectSchema(inputRequests, {
   id: InputRequestId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
   personId: PersonId,
-  options: Schema.Array(InputOption),
+  questions: Schema.NonEmptyArray(InputQuestion),
   signal: Signal,
 }).fields
 const Row = Schema.Union([
@@ -52,26 +56,27 @@ const Row = Schema.Union([
     ...fields,
     status: Schema.Literal('waiting'),
     answeredBy: Schema.Null,
-    answer: Schema.Null,
+    answers: Schema.Null,
     settledAt: Schema.Null,
   }),
   Schema.Struct({
     ...fields,
     status: Schema.Literal('answered'),
     answeredBy: PersonId,
-    answer: Schema.String,
+    answers: Schema.NonEmptyArray(InputAnswer),
     settledAt: Schema.Finite,
   }),
   Schema.Struct({
     ...fields,
     status: Schema.Literal('withdrawn'),
     answeredBy: Schema.Null,
-    answer: Schema.Null,
+    answers: Schema.Null,
     settledAt: Schema.Finite,
   }),
 ]).pipe(Schema.toTaggedUnion('status'))
 const decodeRow = decodeStored(Row, 'Input request')
-const encodeOptions = Schema.encodeEffect(Schema.Array(InputOption))
+const encodeQuestions = encodeStored(InputRequest.fields.questions, 'Input questions')
+const encodeAnswers = encodeStored(InputRequestState.cases.Answered.fields.answers, 'Input answers')
 
 /** The addressed and answering Persons must still have real identities in persistence. */
 const personSummary = (
@@ -96,7 +101,7 @@ const stateOf = (
         Effect.map((answeredBy) =>
           InputRequestState.cases.Answered.make({
             answeredBy,
-            answer: value.answer,
+            answers: value.answers,
             answeredAt: value.settledAt,
           }),
         ),
@@ -105,7 +110,7 @@ const stateOf = (
       Effect.succeed(InputRequestState.cases.Withdrawn.make({ withdrawnAt: value.settledAt })),
   })
 
-/** Decodes stored options and state exactly at ingress and batches identity reads. */
+/** Decodes stored questions and state exactly at ingress and batches identity reads. */
 const view = Effect.fn('Inputs.view')(function* (
   values: ReadonlyArray<typeof inputRequests.$inferSelect>,
 ) {
@@ -120,9 +125,7 @@ const view = Effect.fn('Inputs.view')(function* (
         id: row.id,
         threadId: row.threadId,
         runId: row.runId,
-        question: row.question,
-        options: row.options,
-        allowsOwnAnswer: row.allowsOwnAnswer,
+        questions: row.questions,
         askedOf: yield* personSummary(people, row.personId),
         state: yield* stateOf(row, people),
         createdAt: row.createdAt,
@@ -146,11 +149,29 @@ export interface InputStoreService {
   readonly answer: (
     actor: Actor,
     request: AnswerInputRequest,
-  ) => Effect.Effect<InputRequest, NotFound | Conflict | DatabaseInfrastructureError>
+  ) => Effect.Effect<
+    InputRequest,
+    NotFound | Conflict | InputAnswerFailure | DatabaseInfrastructureError
+  >
 }
 export class InputStore extends Context.Service<InputStore, InputStoreService>()(
   'vivid/InputStore',
 ) {}
+
+/** A single notification previews the first question and names how much else needs an answer. */
+const noticeBody = (request: AskInputRequest) => {
+  const first = request.questions[0].question
+  switch (request.questions.length) {
+    case 1:
+      return first
+    case 2:
+      return `${first} One more question.`
+    case 3:
+      return `${first} Two more questions.`
+    default:
+      return `${first} Three more questions.`
+  }
+}
 
 /** Vivid asks only in its authenticated Thread and addresses the acting Person. */
 const ask = Effect.fn('Inputs.ask')(function* (actor: Actor, request: AskInputRequest) {
@@ -161,9 +182,7 @@ const ask = Effect.fn('Inputs.ask')(function* (actor: Actor, request: AskInputRe
   if (thread.companyId !== companyColumnOf(actor.workspace))
     return yield* new NotFound({ message: 'Thread not found in workspace' })
   const database = yield* Database
-  const options = yield* encodeOptions(request.options).pipe(
-    Effect.mapError(() => new DatabaseFailure({ message: 'Input options could not be encoded' })),
-  )
+  const questions = yield* encodeQuestions(request.questions)
   const rows = yield* database.run(
     database
       .insert(inputRequests)
@@ -172,9 +191,7 @@ const ask = Effect.fn('Inputs.ask')(function* (actor: Actor, request: AskInputRe
         threadId,
         personId: actor.person.id,
         runId: null,
-        question: request.question,
-        options,
-        allowsOwnAnswer: request.allowsOwnAnswer,
+        questions,
         status: 'waiting',
         createdAt: yield* Clock.currentTimeMillis,
       })
@@ -187,7 +204,7 @@ const ask = Effect.fn('Inputs.ask')(function* (actor: Actor, request: AskInputRe
     companyId: thread.companyId,
     kind: 'needs-you',
     title: 'Vivid has a question',
-    body: request.question,
+    body: noticeBody(request),
     threadId,
   })
   return input
@@ -208,15 +225,15 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
   if (value === undefined) return yield* new NotFound({ message: 'Input request not found' })
   const row = yield* decodeRow(value.request)
   yield* requireThread(row.threadId, actor.person.id)
-  if (!row.allowsOwnAnswer && !row.options.some((option) => option.label === request.answer))
-    return yield* new Conflict({ message: 'Choose one of the offered answers' })
+  const body = yield* answerText(row.questions, request)
+  const answers = yield* encodeAnswers(request.answers)
   const now = yield* Clock.currentTimeMillis
   const signal = Signal.cases.Owed.make({
     idempotencyKey: answerKey(request.id),
     deciderId: actor.person.id,
     message: DeliveryMessage.cases.Signal.make({
       type: 'answer',
-      body: request.answer,
+      body,
       attributes: { request: request.id },
     }),
   })
@@ -226,7 +243,7 @@ const answer = Effect.fn('Inputs.answer')(function* (actor: Actor, request: Answ
       .set({
         status: 'answered',
         answeredBy: actor.person.id,
-        answer: request.answer,
+        answers,
         settledAt: now,
         signal: yield* encodeSignal(signal),
         signalDueAt: now,

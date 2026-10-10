@@ -1,6 +1,13 @@
 import * as Layer from 'effect/Layer'
 import { describe, expect, layer } from '@effect/vitest'
-import { Conflict, DatabaseFailure, RuntimeUnavailable, Workspace } from '@vivid/contracts'
+import {
+  AskInputRequest,
+  Conflict,
+  DatabaseFailure,
+  InputAnswer,
+  RuntimeUnavailable,
+  Workspace,
+} from '@vivid/contracts'
 import { and, eq } from 'drizzle-orm'
 import { Effect, Exit, Logger, Option, Ref, Schema } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
@@ -15,55 +22,77 @@ import { inputRequests } from './tables.ts'
 
 const isDatabaseFailure = Schema.is(DatabaseFailure)
 
-const question = { question: 'Which day?', options: [], allowsOwnAnswer: true }
+const question = AskInputRequest.make({
+  questions: [{ question: 'Which day?', options: [], selection: 'One', allowsOwnAnswer: true }],
+})
 
 /** Answer writes and replay cross the real PostgreSQL seam with explicit failure injection. */
 /** Share only PostgreSQL; each case builds its own recording ports and captured stores. */
-layer(testDatabaseLayer)((it) => {
+layer(testDatabaseLayer)((cases) => {
   describe.skipIf(!testDatabaseConfigured)('Durable Input answer signals', () => {
     for (const failure of [
       new Conflict({ message: 'Busy' }),
       new RuntimeUnavailable({ message: 'Unavailable' }),
       new DatabaseFailure({ message: 'Private diagnostic must not enter logs' }),
     ]) {
-      layer(testDatabaseLayer)('Clock case 1', (it) => {
-        it.effect(`replay retains debt and logs only unexpected ${failure._tag} once`, () => {
-          const logged: string[] = []
-          const logger = Logger.make(({ message }) => logged.push(JSON.stringify(message)))
-          return Effect.gen(function* () {
-            const context = yield* Layer.build(
-              trustTestServices.pipe(Layer.provideMerge(Logger.layer([logger]))),
-            )
-            return yield* Effect.gen(function* () {
-              const test = yield* fixture()
-              const store = yield* InputStore
-              const observed = yield* Observation
-              yield* Ref.set(observed.deliveryFailure, Option.some(failure))
-              const request = yield* store.ask(test.vivid, question)
-              yield* store.answer(test.personal, { id: request.id, answer: 'Monday' })
-              expect(logged).toHaveLength(isDatabaseFailure(failure) ? 1 : 0)
-              if (isDatabaseFailure(failure)) {
-                expect(JSON.stringify(logged)).toContain('DatabaseFailure')
-                expect(JSON.stringify(logged)).not.toContain(failure.message)
-              }
-              yield* Ref.set(observed.deliveryFailure, Option.none())
-              yield* TestClock.adjust('2 minutes')
-              yield* store.replay
-              yield* store.replay
-              const deliveries = yield* Ref.get(observed.deliveries)
-              expect(deliveries).toHaveLength(2)
-              expect(deliveries.map((delivery) => delivery.idempotencyKey)).toEqual([
-                (yield* returned(deliveries, 'Delivery')).idempotencyKey,
-                (yield* returned(deliveries, 'Delivery')).idempotencyKey,
-              ])
-              expect(logged).toHaveLength(isDatabaseFailure(failure) ? 1 : 0)
-            }).pipe(Effect.scoped, Effect.provide(context))
-          })
-        })
+      layer(testDatabaseLayer)('Clock case 1', (clockCases) => {
+        clockCases.effect(
+          `replay retains debt and logs only unexpected ${failure._tag} once`,
+          () => {
+            const logged: string[] = []
+            const logger = Logger.make(({ message }) => logged.push(JSON.stringify(message)))
+            return Effect.gen(function* () {
+              const context = yield* Layer.build(
+                trustTestServices.pipe(Layer.provideMerge(Logger.layer([logger]))),
+              )
+              return yield* Effect.gen(function* () {
+                const test = yield* fixture()
+                const store = yield* InputStore
+                const observed = yield* Observation
+                yield* Ref.set(observed.deliveryFailure, Option.some(failure))
+                const request = yield* store.ask(test.vivid, {
+                  questions: [
+                    question.questions[0],
+                    { ...question.questions[0], question: 'Which place?' },
+                    { ...question.questions[0], question: 'What time?' },
+                  ],
+                })
+                yield* store.answer(test.personal, {
+                  id: request.id,
+                  answers: [
+                    InputAnswer.cases.Written.make({ words: 'Monday' }),
+                    InputAnswer.cases.Written.make({ words: 'Lagos' }),
+                    InputAnswer.cases.Written.make({ words: 'Morning' }),
+                  ],
+                })
+                expect(logged).toHaveLength(isDatabaseFailure(failure) ? 1 : 0)
+                if (isDatabaseFailure(failure)) {
+                  expect(JSON.stringify(logged)).toContain('DatabaseFailure')
+                  expect(JSON.stringify(logged)).not.toContain(failure.message)
+                }
+                yield* Ref.set(observed.deliveryFailure, Option.none())
+                yield* TestClock.adjust('2 minutes')
+                yield* store.replay
+                yield* store.replay
+                const deliveries = yield* Ref.get(observed.deliveries)
+                expect(deliveries).toHaveLength(2)
+                expect(deliveries.map((delivery) => delivery.message)).toMatchObject([
+                  { body: 'Which day? Monday\nWhich place? Lagos\nWhat time? Morning' },
+                  { body: 'Which day? Monday\nWhich place? Lagos\nWhat time? Morning' },
+                ])
+                expect(deliveries.map((delivery) => delivery.idempotencyKey)).toEqual([
+                  (yield* returned(deliveries, 'Delivery')).idempotencyKey,
+                  (yield* returned(deliveries, 'Delivery')).idempotencyKey,
+                ])
+                expect(logged).toHaveLength(isDatabaseFailure(failure) ? 1 : 0)
+              }).pipe(Effect.scoped, Effect.provide(context))
+            })
+          },
+        )
       })
     }
 
-    it.effect(
+    cases.effect(
       'a shared Thread answer carries its answerer while continuing the asked Person authority',
       () =>
         Effect.gen(function* () {
@@ -79,7 +108,10 @@ layer(testDatabaseLayer)((it) => {
                 .where(eq(threads.id, test.companyId)),
             )
             const request = yield* store.ask(test.companyVivid, question)
-            yield* store.answer(test.owner, { id: request.id, answer: 'Monday' })
+            yield* store.answer(test.owner, {
+              id: request.id,
+              answers: [InputAnswer.cases.Written.make({ words: 'Monday' })],
+            })
             expect(yield* Ref.get((yield* Observation).deliveries)).toMatchObject([
               {
                 personId: test.member.person.id,
@@ -93,8 +125,8 @@ layer(testDatabaseLayer)((it) => {
         }),
     )
 
-    layer(testDatabaseLayer)('Clock case 2', (it) => {
-      it.effect('a fresh store returns an answer recorded before a crash', () =>
+    layer(testDatabaseLayer)('Clock case 2', (clockCases) => {
+      clockCases.effect('a fresh store returns an answer recorded before a crash', () =>
         Effect.gen(function* () {
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
@@ -106,7 +138,10 @@ layer(testDatabaseLayer)((it) => {
             expect(
               Exit.isFailure(
                 yield* Effect.exit(
-                  store.answer(test.personal, { id: request.id, answer: 'Monday' }),
+                  store.answer(test.personal, {
+                    id: request.id,
+                    answers: [InputAnswer.cases.Written.make({ words: 'Monday' })],
+                  }),
                 ),
               ),
             ).toBe(true)
@@ -114,10 +149,10 @@ layer(testDatabaseLayer)((it) => {
             yield* Ref.set(observed.changesDefect, false)
             yield* TestClock.adjust('30 seconds')
             yield* Effect.gen(function* () {
-              const context = yield* Layer.build(Layer.fresh(inputStoreLayer))
+              const replayContext = yield* Layer.build(Layer.fresh(inputStoreLayer))
               return yield* Effect.gen(function* () {
                 yield* (yield* InputStore).replay
-              }).pipe(Effect.provide(context))
+              }).pipe(Effect.provide(replayContext))
             })
             yield* store.replay
             expect(yield* Ref.get(observed.deliveries)).toEqual([
@@ -131,8 +166,8 @@ layer(testDatabaseLayer)((it) => {
       )
     })
 
-    layer(testDatabaseLayer)('Clock case 3', (it) => {
-      it.effect('a transient admission failure preserves the answer and the key', () =>
+    layer(testDatabaseLayer)('Clock case 3', (clockCases) => {
+      clockCases.effect('a transient admission failure preserves the answer and the key', () =>
         Effect.gen(function* () {
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
@@ -144,7 +179,10 @@ layer(testDatabaseLayer)((it) => {
               observed.deliveryFailure,
               Option.some(new RuntimeUnavailable({ message: 'Unavailable' })),
             )
-            yield* store.answer(test.personal, { id: request.id, answer: 'Monday' })
+            yield* store.answer(test.personal, {
+              id: request.id,
+              answers: [InputAnswer.cases.Written.make({ words: 'Monday' })],
+            })
             yield* Ref.set(observed.deliveryFailure, Option.none())
             yield* TestClock.adjust('30 seconds')
             yield* store.replay
@@ -153,14 +191,14 @@ layer(testDatabaseLayer)((it) => {
               (yield* Ref.get(observed.deliveries)).map((delivery) => delivery.idempotencyKey),
             ).toEqual([`answer-${request.id}`, `answer-${request.id}`])
             expect((yield* store.inThread(test.personalId))[0]).toMatchObject({
-              state: { answer: 'Monday' },
+              state: { answers: [InputAnswer.cases.Written.make({ words: 'Monday' })] },
             })
           }).pipe(Effect.scoped, Effect.provide(context))
         }),
       )
     })
 
-    it.effect(
+    cases.effect(
       'Thread deletion cascades waiting and owed Input requests and never replays tombstones',
       () =>
         Effect.gen(function* () {
@@ -172,7 +210,12 @@ layer(testDatabaseLayer)((it) => {
             const database = yield* Database
             const request = yield* store.ask(test.vivid, question)
             yield* Ref.set(observed.changesDefect, true)
-            yield* Effect.exit(store.answer(test.personal, { id: request.id, answer: 'Monday' }))
+            yield* Effect.exit(
+              store.answer(test.personal, {
+                id: request.id,
+                answers: [InputAnswer.cases.Written.make({ words: 'Monday' })],
+              }),
+            )
             yield* Ref.set(observed.changesDefect, false)
             yield* store.ask(test.vivid, question)
             yield* database.run(database.delete(threads).where(eq(threads.id, test.personalId)))
@@ -191,8 +234,8 @@ layer(testDatabaseLayer)((it) => {
         }),
     )
 
-    layer(testDatabaseLayer)('Clock case 4', (it) => {
-      it.effect('membership loss stops replay even if access is later restored', () =>
+    layer(testDatabaseLayer)('Clock case 4', (clockCases) => {
+      clockCases.effect('membership loss stops replay even if access is later restored', () =>
         Effect.gen(function* () {
           const context = yield* Layer.build(trustTestServices)
           return yield* Effect.gen(function* () {
@@ -202,7 +245,12 @@ layer(testDatabaseLayer)((it) => {
             const database = yield* Database
             const request = yield* store.ask(test.companyVivid, question)
             yield* Ref.set(observed.changesDefect, true)
-            yield* Effect.exit(store.answer(test.member, { id: request.id, answer: 'Monday' }))
+            yield* Effect.exit(
+              store.answer(test.member, {
+                id: request.id,
+                answers: [InputAnswer.cases.Written.make({ words: 'Monday' })],
+              }),
+            )
             yield* Ref.set(observed.changesDefect, false)
             const removed = yield* database.run(
               database

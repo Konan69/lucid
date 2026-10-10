@@ -30,9 +30,14 @@ const testLayer = Layer.fresh(Layer.merge(approvalStoreLayer, inputStoreLayer)).
 )
 
 const question = AskInputRequest.make({
-  question: 'Which confidential launch date works?',
-  options: [{ label: 'Monday', detail: 'Private launch plan' }],
-  allowsOwnAnswer: true,
+  questions: [
+    {
+      selection: 'One',
+      question: 'Which confidential launch date works?',
+      options: [{ label: 'Monday', detail: 'Private launch plan' }],
+      allowsOwnAnswer: true,
+    },
+  ],
 })
 
 /** Use the public combined loader; observing exercises the exact production watch without sessions. */

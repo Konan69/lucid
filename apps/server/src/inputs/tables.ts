@@ -1,16 +1,16 @@
 import { sql } from 'drizzle-orm'
-import { boolean, index, jsonb, pgTable, text } from 'drizzle-orm/pg-core'
+import { index, jsonb, pgTable, text } from 'drizzle-orm/pg-core'
 import { threads } from '../threads/tables.ts'
 import { personTable } from '../auth/tables.ts'
 import { epoch, personColumn } from '../database/owner.ts'
 import { storedNone } from '../approvals/signal.ts'
 
 /**
- * One row per Input request: a question a Run could not safely answer alone.
+ * One row per Input request: questions a Run could not safely answer alone.
  *
  * `person_id` is the Person asked. `status` is `waiting`, `answered` or `withdrawn`; `answered_by`
- * and `answer` are set by the answer, and `settled_at` by either ending. `options` is the encoded
- * list of `InputOption`.
+ * and `answers` are set by the answer, and `settled_at` by either ending. `questions` and
+ * `answers` are encoded non-empty lists in the same order; unanswered rows have null answers.
  */
 export const inputRequests = pgTable(
   'vivid_input_requests',
@@ -21,12 +21,10 @@ export const inputRequests = pgTable(
       .references(() => threads.id, { onDelete: 'cascade' }),
     runId: text('run_id'),
     personId: personColumn().notNull(),
-    question: text('question').notNull(),
-    options: jsonb('options').notNull(),
-    allowsOwnAnswer: boolean('allows_own_answer').notNull(),
+    questions: jsonb('questions').notNull(),
     status: text('status').notNull(),
     answeredBy: text('answered_by').references(() => personTable.id, { onDelete: 'set null' }),
-    answer: text('answer'),
+    answers: jsonb('answers'),
     settledAt: epoch('settled_at'),
     signal: jsonb('signal').notNull().default(storedNone),
     signalDueAt: epoch('signal_due_at').notNull().default(0),

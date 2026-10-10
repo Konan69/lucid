@@ -114,6 +114,7 @@ import {
   ApprovalId,
   ConnectionId,
   InvitationId,
+  InputRequestId,
   LibraryFolderId,
   LibraryItemId,
   MembershipId,
@@ -439,8 +440,73 @@ const AskInput = Rpc.make('AskInput', {
   payload: AskInputRequest,
   success: InputRequestResponse,
 })
+/** Answer refusals name the request and question position, never echo supplied answer text. */
+const inputAnswerContext = { id: InputRequestId, questionIndex: Schema.Int }
+
+/** Every question needs one answer. */
+export class InputAnswerCountMismatch extends Schema.TaggedError<InputAnswerCountMismatch>()(
+  'InputAnswerCountMismatch',
+  {
+    id: InputRequestId,
+    expected: Schema.Int,
+    received: Schema.Int,
+    message: Schema.Literal('Every question needs one answer.'),
+  },
+  { title: 'Answer count mismatch' },
+) {}
+
+/** Choose only options offered for this question. */
+export class InputAnswerUnknownLabel extends Schema.TaggedError<InputAnswerUnknownLabel>()(
+  'InputAnswerUnknownLabel',
+  {
+    ...inputAnswerContext,
+    message: Schema.Literal('Choose only options offered for this question.'),
+  },
+  { title: 'Unknown answer option' },
+) {}
+
+/** Choose one option for this question. */
+export class InputAnswerSeveralForbidden extends Schema.TaggedError<InputAnswerSeveralForbidden>()(
+  'InputAnswerSeveralForbidden',
+  { ...inputAnswerContext, message: Schema.Literal('Choose one option for this question.') },
+  { title: 'Multiple choices forbidden' },
+) {}
+
+/** Choose each option only once. */
+export class InputAnswerRepeatedLabel extends Schema.TaggedError<InputAnswerRepeatedLabel>()(
+  'InputAnswerRepeatedLabel',
+  { ...inputAnswerContext, message: Schema.Literal('Choose each option only once.') },
+  { title: 'Repeated answer option' },
+) {}
+
+/** Choose an offered option for this question. */
+export class InputAnswerWrittenForbidden extends Schema.TaggedError<InputAnswerWrittenForbidden>()(
+  'InputAnswerWrittenForbidden',
+  { ...inputAnswerContext, message: Schema.Literal('Choose an offered option for this question.') },
+  { title: 'Written answer forbidden' },
+) {}
+
+/** Write an answer for this question. */
+export class InputAnswerEmptyWords extends Schema.TaggedError<InputAnswerEmptyWords>()(
+  'InputAnswerEmptyWords',
+  { ...inputAnswerContext, message: Schema.Literal('Write an answer for this question.') },
+  { title: 'Empty written answer' },
+) {}
+
+/** The closed answer-validation failures shared by the store and its RPC transport. */
+export const InputAnswerFailure = Schema.Union([
+  InputAnswerCountMismatch,
+  InputAnswerUnknownLabel,
+  InputAnswerSeveralForbidden,
+  InputAnswerRepeatedLabel,
+  InputAnswerWrittenForbidden,
+  InputAnswerEmptyWords,
+])
+export type InputAnswerFailure = typeof InputAnswerFailure.Type
+
 const AnswerInput = Rpc.make('AnswerInput', {
   ...call,
+  error: Schema.Union([RpcFailure, InputAnswerFailure]),
   payload: AnswerInputRequest,
   success: InputRequestResponse,
 })

@@ -7,6 +7,7 @@ import { createFlueClient } from '@flue/sdk'
 import { NodeHttpServer } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import {
+  InputAnswer,
   CompanyId,
   InputRequestState,
   InstallationId,
@@ -338,9 +339,14 @@ const askFor = Effect.fn('Delivery.test.ask')(function* (
   return yield* test.inputs.ask(
     { ...actor, by: 'vivid', threadId: Option.some(threadId) },
     {
-      question: 'Which day works?',
-      options: [{ label: 'Monday', detail: 'Start the week' }],
-      allowsOwnAnswer: true,
+      questions: [
+        {
+          question: 'Which day works?',
+          options: [{ label: 'Monday', detail: 'Start the week' }],
+          selection: 'One',
+          allowsOwnAnswer: true,
+        },
+      ],
     },
   )
 })
@@ -496,7 +502,10 @@ layer(
           const actor = yield* actorOf(test, test.ben)
           const request = yield* askFor(test, test.ben, test.threadId)
           const waiting = yield* askFor(test, test.ben, test.threadId)
-          const answered = yield* test.inputs.answer(actor, { id: request.id, answer: 'Monday' })
+          const answered = yield* test.inputs.answer(actor, {
+            id: request.id,
+            answers: [InputAnswer.cases.Chosen.make({ labels: ['Monday'] })],
+          })
           expect(InputRequestState.guards.Answered(answered.state)).toBe(true)
           expect(yield* test.inputs.inThread(test.threadId)).toEqual(
             expect.arrayContaining([answered, waiting]),

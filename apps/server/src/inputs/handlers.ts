@@ -5,7 +5,7 @@ import { requirePerson, requireVivid, type Actor } from '../auth/access.ts'
 import { InputStore } from './store.ts'
 
 export const inputHandlers = {
-  /** Vivid supplies the question; authenticated Run context supplies identity and Thread. */
+  /** Vivid supplies all questions together; authenticated Run context supplies identity and Thread. */
   AskInput: Effect.fn('Rpc.AskInput')(function* (request: AskInputRequest) {
     const auth = yield* requireVivid()
     const actor: Actor = {
@@ -16,7 +16,7 @@ export const inputHandlers = {
     }
     return { request: yield* (yield* InputStore).ask(actor, request) }
   }),
-  /** Answering is reserved to a signed-in Person and the store checks the exact addressee. */
+  /** Answering is reserved to a signed-in Person and the store validates every answer before the once-only settlement. */
   AnswerInput: Effect.fn('Rpc.AnswerInput')(function* (request: AnswerInputRequest) {
     const auth = yield* requirePerson()
     const actor: Actor = {

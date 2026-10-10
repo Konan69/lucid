@@ -1,7 +1,7 @@
 import * as Layer from 'effect/Layer'
 import { describe, expect, layer } from '@effect/vitest'
 import { Effect, Option } from 'effect'
-import { RuntimeUnavailable, type PersonId, type ThreadId } from '@vivid/contracts'
+import { InputAnswer, RuntimeUnavailable, type PersonId, type ThreadId } from '@vivid/contracts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'
@@ -35,12 +35,10 @@ const answeredRequest = Effect.fn('RequestTest.answered')(function* (
       id,
       threadId,
       personId: asked,
-      question: 'Shall I?',
-      options: [],
-      allowsOwnAnswer: true,
+      questions: [{ question: 'Shall I?', options: [], selection: 'One', allowsOwnAnswer: true }],
       status: 'answered',
       answeredBy,
-      answer: 'Yes',
+      answers: [InputAnswer.cases.Written.make({ words: 'Yes' })],
       settledAt: 1,
       createdAt: 1,
     }),

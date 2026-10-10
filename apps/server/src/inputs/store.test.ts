@@ -5,7 +5,13 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Ref from 'effect/Ref'
 import * as Result from 'effect/Result'
-import { Conflict, InputRequestState, NotFound } from '@vivid/contracts'
+import {
+  AskInputRequest,
+  Conflict,
+  InputAnswer,
+  InputRequestState,
+  NotFound,
+} from '@vivid/contracts'
 import { fixture, Observation, trustTestServices } from '../approvals/testing.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { membershipTable } from '../companies/tables.ts'
@@ -14,11 +20,16 @@ import { threads } from '../threads/tables.ts'
 import { InputStore } from './store.ts'
 import { inputRequests } from './tables.ts'
 
-const question = {
-  question: 'Which day works?',
-  options: [{ label: 'Monday', detail: 'Start the week' }],
-  allowsOwnAnswer: true,
-}
+const question = AskInputRequest.make({
+  questions: [
+    {
+      question: 'Which day works?',
+      options: [{ label: 'Monday', detail: 'Start the week' }],
+      selection: 'One',
+      allowsOwnAnswer: true,
+    },
+  ],
+})
 
 /** I1-I3 preserve waiting rows while testing current reach independently of cached workspace roles. */
 /** Share only PostgreSQL; each case builds its own recording ports and captured stores. */
@@ -153,8 +164,18 @@ layer(testDatabaseLayer)((it) => {
           const request = yield* store.ask(test.vivid, question)
           const answers = yield* Effect.all(
             [
-              Effect.result(store.answer(test.personal, { id: request.id, answer: 'Monday' })),
-              Effect.result(store.answer(test.personal, { id: request.id, answer: 'Tuesday' })),
+              Effect.result(
+                store.answer(test.personal, {
+                  id: request.id,
+                  answers: [InputAnswer.cases.Chosen.make({ labels: ['Monday'] })],
+                }),
+              ),
+              Effect.result(
+                store.answer(test.personal, {
+                  id: request.id,
+                  answers: [InputAnswer.cases.Written.make({ words: 'Tuesday' })],
+                }),
+              ),
             ],
             { concurrency: 2 },
           )
@@ -192,7 +213,10 @@ layer(testDatabaseLayer)((it) => {
           expect(yield* store.inbox(test.member)).toHaveLength(1)
           expect(yield* store.inbox(test.owner)).toEqual([])
           const answer = yield* Effect.result(
-            store.answer(test.owner, { id: request.id, answer: 'Monday' }),
+            store.answer(test.owner, {
+              id: request.id,
+              answers: [InputAnswer.cases.Chosen.make({ labels: ['Monday'] })],
+            }),
           )
           expect(Result.isFailure(answer)).toBe(true)
           if (Result.isFailure(answer)) expect(answer.failure).toBeInstanceOf(NotFound)
@@ -207,12 +231,20 @@ layer(testDatabaseLayer)((it) => {
         return yield* Effect.gen(function* () {
           const test = yield* fixture()
           const store = yield* InputStore
-          const request = yield* store.ask(test.vivid, { ...question, allowsOwnAnswer: false })
+          const request = yield* store.ask(test.vivid, {
+            questions: [{ ...question.questions[0], allowsOwnAnswer: false }],
+          })
           const rejected = yield* Effect.result(
-            store.answer(test.personal, { id: request.id, answer: 'Tuesday' }),
+            store.answer(test.personal, {
+              id: request.id,
+              answers: [InputAnswer.cases.Written.make({ words: 'Tuesday' })],
+            }),
           )
           expect(Result.isFailure(rejected)).toBe(true)
-          const accepted = yield* store.answer(test.personal, { id: request.id, answer: 'Monday' })
+          const accepted = yield* store.answer(test.personal, {
+            id: request.id,
+            answers: [InputAnswer.cases.Chosen.make({ labels: ['Monday'] })],
+          })
           expect(InputRequestState.guards.Answered(accepted.state)).toBe(true)
         }).pipe(Effect.scoped, Effect.provide(context))
       }),
