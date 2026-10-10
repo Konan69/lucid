@@ -7,12 +7,14 @@ import {
   ThreadId,
   Unauthenticated,
 } from '@vivid/contracts'
+import type { InputAnswerFailure } from '@vivid/contracts/rpc'
 import { Clock, Deferred, Effect, Fiber, Layer, Queue, Ref, Result, Stream } from 'effect'
 import * as Atom from 'effect/reactivity/Atom'
 import * as TestClock from 'effect/testing/TestClock'
 import { LiveState, liveStateOf, makeLive, type ProductFailure } from './live.js'
 
-type MarkThreadReadFailure = Exclude<ProductFailure, SkillReadOnly>
+/** What marking a Thread read can fail with: a product failure that is not about a skill or an answer. */
+type MarkThreadReadFailure = Exclude<ProductFailure, SkillReadOnly | InputAnswerFailure>
 
 /** Provides a controlled RPC write and shares the test clock with the atom runtime. */
 const testClientLayer = (markPlans: Queue.Queue<Effect.Effect<void, MarkThreadReadFailure>>) =>
