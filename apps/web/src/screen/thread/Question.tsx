@@ -1,29 +1,38 @@
-import { Data, Option } from 'effect'
-import { Check } from 'lucide-react'
-import { useState, type KeyboardEvent, type TransitionEvent } from 'react'
-import { Button } from '../../ui/button'
+import { InputAnswer, type InputOption, type InputQuestion } from '@vivid/contracts'
+import { asking } from '@vivid/state'
+import { Data, Option, type Array as Arr } from 'effect'
+import { Check, ChevronLeft } from 'lucide-react'
+import { useState, type KeyboardEvent, type ReactNode } from 'react'
+import { Button, IconButton } from '../../ui/button'
 import { Card } from '../../ui/card'
 import { cn } from '../../ui/cn'
 import { Input } from '../../ui/input'
 
-/** One answer on offer: what it is called, and what picking it means in a line. */
-export interface Choice {
-  readonly label: string
-  /** Empty when the label says it all. */
-  readonly detail: string
-}
-
-/** Where a question stands, and what each standing needs to be drawn. */
+/** Where a request stands, and what each standing needs to be drawn. */
 export type Asked = Data.TaggedEnum<{
-  /** Waiting on the Person looking at it. `onOwn` takes words of their own. */
+  /**
+   * Waiting on the Person looking at it. `onSend` takes every question's answer, in the
+   * questions' order. If they do not go through it says so (`onFailed`), with the question the
+   * server's refusal names when it names one, so the card can be answered again.
+   */
   Open: {
-    readonly onChoose: (choice: Choice) => void
-    readonly onOwn: (answer: string) => void
+    readonly questions: Arr.NonEmptyReadonlyArray<InputQuestion>
+    readonly onSend: (
+      answers: Arr.NonEmptyReadonlyArray<InputAnswer>,
+      onFailed: (place: Option.Option<number>) => void,
+    ) => void
   }
-  /** Settled. `note` says something about the answer, such as who gave it. */
-  Answered: { readonly answer: string; readonly note: Option.Option<string> }
+  /** Settled. `note` says something about the answers, such as who gave them. */
+  Answered: {
+    readonly questions: Arr.NonEmptyReadonlyArray<InputQuestion>
+    readonly answers: Arr.NonEmptyReadonlyArray<InputAnswer>
+    readonly note: Option.Option<string>
+  }
   /** Not this Person's to answer, or no longer needed: `note` says which. */
-  Resting: { readonly note: string }
+  Resting: {
+    readonly questions: Arr.NonEmptyReadonlyArray<InputQuestion>
+    readonly note: string
+  }
 }>
 export const Asked = Data.taggedEnum<Asked>()
 
@@ -34,253 +43,399 @@ const CARD = 'block w-full max-w-xl p-4'
 /** The letter on each row's keycap, by its place. The contract allows six options. */
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
+/** The line over a card's first title saying whose move it is, where the Thread needs that said. */
+function Status({ status }: { status: Option.Option<string> }) {
+  return Option.isNone(status) ? null : (
+    <div className="mb-2 flex items-center gap-2 text-meta text-attention">
+      <i className="size-1.5 rounded-full bg-attention" />
+      {status.value}
+    </div>
+  )
+}
+
+/** One question's words, as a card's title. */
+function Title({ children }: { children: ReactNode }) {
+  return <h3 className="text-title font-title text-pretty text-ink">{children}</h3>
+}
+
 /**
- * A question from Vivid, and the ways to answer it. Every question a Person answers by pressing
- * goes through this one piece, a real Input request in a Thread (`InputCard`). It is presentational:
- * it is told the title, the choices and where the question stands, and owns nothing but whether
- * it is still closing (the words being typed are `OwnAnswer`'s), so the phone app can mirror it
- * from the same description.
+ * A request from Vivid, and the ways to answer it. Every request a Person answers by pressing
+ * goes through this one piece, a real Input request in a Thread (`InputCard`). It is told where
+ * the request stands and owns only what the Person is in the middle of.
  *
  * The design follows the reference assistant's question card (Grok Bot's first conversation,
  * measured from screenshots): the title in title weight on a raised card; the rows in one
  * bordered container divided by hairlines; each row about 56px tall with a square 24px letter
  * keycap on a subtle fill before its label; "Type your own answer" under the rows; and, once
- * answered, the card closed down to the title and the one chosen row, muted, with a check at
- * its far end. Vivid's differs in two places. A row may carry a second, smaller line, because
- * the contract lets each option say what picking it means. And there is no dismiss mark at the
- * top right: the reference has one, but no request here can be dismissed by the Person yet.
+ * answered, the card closed down to the title and what was chosen, muted, with a check at its
+ * far end. Vivid's differs in two places. A row may carry a second, smaller line, because the
+ * contract lets each option say what picking it means. And there is no dismiss mark at the top
+ * right: the reference has one, but no request here can be dismissed by the Person yet.
  *
- * An answered card holds only what it shows. The rows that were not chosen, and the answer
- * field, are folded where they stand and then taken out of the document (`folding`). They used
- * to stay for good, invisible and `inert`, so the page still held every row with "(chosen)" on
- * one: anything that reads the document rather than the picture (a text snapshot, a copy, a
- * find-in-page) saw a card that had never closed. A card that is first drawn already answered,
- * which is every answered question after a reload, never draws them at all.
+ * A request carries one to four questions, answered together. While it is open the card asks
+ * them one at a time (`Open`), as T3 Code's `ComposerPendingUserInputPanel.tsx` does, on the
+ * model the phone shares (`asking`, `@vivid/state`). Once it is answered the card lists every
+ * question with what was said to it (`Settled`).
+ *
+ * Until 11 October 2026 a request was one question, and answering it folded the rows that were
+ * not chosen away where they stood. An answered card now lists questions that were never on
+ * screen together, so there is nothing to fold from: it is drawn as it is, and only its checks
+ * fade in.
  *
  * From the keyboard, with focus inside the card: a letter picks its row, the arrows move between
  * rows, Enter picks the one in focus. Letters typed into the answer field are left alone.
  */
-export function Question({
+export function Question({ status, asked }: { status: Option.Option<string>; asked: Asked }) {
+  return Asked.$match(asked, {
+    Open: (open) => <Open status={status} asked={open} />,
+    Resting: ({ questions, note }) => (
+      <Card className={CARD}>
+        <Status status={status} />
+        <div className="grid gap-2">
+          {questions.map((question) => (
+            <Title key={question.question}>{question.question}</Title>
+          ))}
+        </div>
+        <p className="mt-2 text-label text-ink-3">{note}</p>
+      </Card>
+    ),
+    Answered: ({ questions, answers, note }) => (
+      <Card className={CARD}>
+        <Status status={status} />
+        <div className="grid gap-4">
+          {questions.map((question, place) => (
+            <Settled
+              key={question.question}
+              question={question}
+              answer={Option.fromUndefinedOr(answers[place])}
+            />
+          ))}
+        </div>
+        {Option.isSome(note) && <p className="mt-2 text-meta font-meta text-ink-3">{note.value}</p>}
+      </Card>
+    ),
+  })
+}
+
+/**
+ * An open request: the question that is up, with its place among the others and a way back when
+ * there are several, its rows, the field for words of the Person's own when the question takes
+ * them, and for a question several options may be chosen for the button that moves on.
+ *
+ * A question that takes one option moves on by itself a moment after the press
+ * (`asking.ADVANCE_AFTER`, T3 Code's auto-advance), so the Person sees what they pressed; on the
+ * last question that sends every answer. What moving on comes to is worked out at the press and
+ * carried out after the moment, and nothing can be pressed meanwhile (`moving`). Words typed in
+ * the field are that question's answer and move on at once.
+ *
+ * Once the answers are sent nothing more can be pressed (`sent`): it is the request's record
+ * that closes the card, a moment after the call returns, and rows awake in between could send a
+ * second time. If the answers do not go through the card wakes again, on the question the
+ * server's refusal names when it names one, with everything picked kept.
+ */
+function Open({
   status,
-  title,
-  choices,
-  allowsOwn,
   asked,
 }: {
-  /** A line over the title saying whose move it is, where the Thread needs that said. */
   status: Option.Option<string>
-  title: string
-  choices: ReadonlyArray<Choice>
-  /** Whether words of the Person's own are an answer. Said apart from `asked`, so the field can
-   *  fold away with the rows when the question is answered instead of vanishing under them. */
-  allowsOwn: boolean
-  asked: Asked
+  asked: Extract<Asked, { readonly _tag: 'Open' }>
 }) {
-  // Whether what an answer folds away is still in the document. It is only while the card that
-  // was open on screen closes: a card born answered has nothing to fold.
-  const [folding, setFolding] = useState(Asked.$is('Open')(asked))
-  const head = (
-    <>
-      {Option.isSome(status) && (
-        <div className="mb-2 flex items-center gap-2 text-meta text-attention">
-          <i className="size-1.5 rounded-full bg-attention" />
-          {status.value}
-        </div>
-      )}
-      <h3 className="text-title font-title text-pretty text-ink">{title}</h3>
-    </>
-  )
-  if (Asked.$is('Resting')(asked)) {
-    return (
-      <Card className={CARD}>
-        {head}
-        <p className="mt-2 text-label text-ink-3">{asked.note}</p>
-      </Card>
-    )
+  const { questions, onSend } = asked
+  const [drafting, setDrafting] = useState(() => asking.begin(questions))
+  const [moving, setMoving] = useState(false)
+  const [sent, setSent] = useState(false)
+  const progress = asking.progressOf(questions, drafting)
+  const { question } = progress
+  const held = moving || sent
+
+  function take(step: asking.Step, from: asking.Asking) {
+    asking.Step.$match(step, {
+      Stay: () => undefined,
+      Next: ({ asking: next }) => setDrafting(next),
+      Send: ({ answers }) => {
+        setSent(true)
+        onSend(answers, (place) => {
+          setSent(false)
+          Option.map(place, (named) => setDrafting(asking.returnTo(from, named)))
+        })
+      },
+    })
   }
-  const open = Asked.$is('Open')(asked)
-  // What is not part of the answer is drawn while the question is open and while it folds.
-  const rest = open || folding
-  const answer = Asked.$is('Answered')(asked) ? Option.some(asked.answer) : Option.none()
+
+  function pick(label: string) {
+    if (held) return
+    const picked = asking.press(questions, drafting, label)
+    setDrafting(picked)
+    if (question.selection === 'Several') return
+    const step = asking.advance(questions, picked)
+    setMoving(true)
+    setTimeout(() => {
+      setMoving(false)
+      take(step, picked)
+    }, asking.ADVANCE_AFTER)
+  }
+
+  function write(words: string) {
+    const written = asking.type(questions, drafting, words)
+    setDrafting(written)
+    take(asking.advance(questions, written), written)
+  }
 
   return (
-    <Card
-      className={CARD}
-      onKeyDown={Asked.$is('Open')(asked) ? (event) => steer(event, choices, asked) : undefined}
-      onTransitionEnd={(event) => {
-        if (foldEnded(event)) setFolding(false)
-      }}
-    >
-      {head}
-      <Answers
-        choices={choices}
-        answer={answer}
-        rest={rest}
-        onChoose={Asked.$is('Open')(asked) ? Option.some(asked.onChoose) : Option.none()}
-      />
-      {allowsOwn && rest && (
-        <OwnAnswer onOwn={Asked.$is('Open')(asked) ? Option.some(asked.onOwn) : Option.none()} />
+    <Card className={CARD} onKeyDown={(event) => steer(event, question.options, pick)}>
+      <Status status={status} />
+      {progress.of > 1 && (
+        <Place progress={progress} held={held} onBack={() => setDrafting(asking.back(drafting))} />
       )}
-      {Asked.$is('Answered')(asked) && Option.isSome(asked.note) && (
-        <p className="mt-2 text-meta font-meta text-ink-3">{asked.note.value}</p>
+      <Title>{question.question}</Title>
+      <Rows
+        options={question.options}
+        picked={asking.pickedIn(progress.draft)}
+        standing="open"
+        onPress={held ? Option.none() : Option.some(pick)}
+      />
+      {question.allowsOwnAnswer && (
+        // Keyed by the question's place, so each question's field starts with its own words.
+        <OwnAnswer
+          key={progress.at}
+          written={asking.writtenIn(progress.draft)}
+          held={held}
+          onOwn={write}
+        />
+      )}
+      {question.selection === 'Several' && question.options.length > 0 && (
+        <div className="mt-3 flex justify-end">
+          <Button
+            disabled={!progress.canAdvance || held}
+            onClick={() => take(asking.advance(questions, drafting), drafting)}
+          >
+            {progress.last ? 'Send' : 'Next'}
+          </Button>
+        </div>
       )}
     </Card>
   )
 }
 
 /**
- * Whether a transition that just ended was a fold closing. The card hears every transition
- * inside it (a row's hover wash, the check fading in); only one that ended on a thing marked
- * `data-folded` means what was folded has finished going. Where nothing transitions (motion
- * turned off for a keyboard change) no end is heard, and the folded things stay as they were
- * before this was added: invisible, squeezed to nothing and `inert`.
+ * Where the Person is in a request of several questions, over the title: from the second
+ * question on a way back to the one before, with what was picked there kept, and which question
+ * this is.
  */
-const foldEnded = (event: TransitionEvent<HTMLElement>) =>
-  event.target instanceof HTMLElement && event.target.dataset['folded'] !== undefined
+function Place({
+  progress,
+  held,
+  onBack,
+}: {
+  progress: asking.Progress
+  /** The answers are on their way, or a pressed option is being shown: nothing moves. */
+  held: boolean
+  onBack: () => void
+}) {
+  return (
+    <div className="mb-1 flex h-6 items-center gap-1 text-meta font-meta text-ink-3 tabular-nums">
+      {!progress.first && (
+        <IconButton label="Previous question" size="icon-xs" disabled={held} onClick={onBack}>
+          <ChevronLeft />
+        </IconButton>
+      )}
+      <span aria-label={`Question ${progress.at + 1} of ${progress.of}`}>
+        {`${progress.at + 1} of ${progress.of}`}
+      </span>
+    </div>
+  )
+}
 
 /**
- * The rows of a question in their one bordered container: every choice while it is open, and
- * once it is answered only the one chosen, or the Person's own words as a row when they wrote
- * the answer themselves. `rest` says whether the rows that were not chosen are still drawn (they
- * are while the question is open and while they fold); `onChoose` is there only while a row can
- * still be pressed. Nothing is drawn for a question with no choices and no written answer.
+ * One question of an answered request: its words, and what was said to it in the rows' own
+ * container. Options that were picked are their rows, muted, each with a check; words that were
+ * written are a row of their own.
  */
-function Answers({
-  choices,
+function Settled({
+  question,
   answer,
-  rest,
-  onChoose,
 }: {
-  choices: ReadonlyArray<Choice>
-  answer: Option.Option<string>
-  rest: boolean
-  onChoose: Option.Option<(choice: Choice) => void>
+  question: InputQuestion
+  answer: Option.Option<InputAnswer>
 }) {
-  // An answer that is none of the rows was written by hand, and is shown as a row of its own.
-  const written = Option.filter(answer, (said) => choices.every((choice) => choice.label !== said))
-  if (choices.length === 0 && Option.isNone(written)) return null
+  const picked: ReadonlyArray<string> = Option.match(answer, {
+    onNone: () => [],
+    onSome: (said) =>
+      InputAnswer.match(said, {
+        Chosen: ({ labels }): ReadonlyArray<string> => labels,
+        Written: () => [],
+      }),
+  })
+  const written = Option.flatMap(answer, (said) =>
+    InputAnswer.match(said, {
+      Chosen: () => Option.none<string>(),
+      Written: ({ words }) => Option.some(words),
+    }),
+  )
+  return (
+    <div>
+      <Title>{question.question}</Title>
+      <Rows
+        options={question.options.filter((option) => picked.includes(option.label))}
+        letters={question.options}
+        picked={picked}
+        standing="settled"
+        onPress={Option.none()}
+      />
+      {Option.isSome(written) && (
+        <ul className="mt-3 overflow-hidden rounded-control edge">
+          <li className="flex min-h-14 items-center gap-3 px-3 py-2">
+            <span className="min-w-0 flex-1 text-body text-pretty wrap-anywhere text-ink-3">
+              {written.value}
+            </span>
+            <Check aria-hidden className="size-4 shrink-0 text-ink-3 motion-fade" />
+          </li>
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The rows of a question in their one bordered container. Open, they are every option, each
+ * pressable, with the ones in the draft marked; settled, they are the options that were picked.
+ * `letters` is the full list the keycaps are counted from, so a settled row keeps the letter it
+ * was offered under. Nothing is drawn where there are no rows.
+ */
+function Rows({
+  options,
+  letters = options,
+  picked,
+  standing,
+  onPress,
+}: {
+  options: ReadonlyArray<InputOption>
+  letters?: ReadonlyArray<InputOption>
+  picked: ReadonlyArray<string>
+  standing: 'open' | 'settled'
+  onPress: Option.Option<(label: string) => void>
+}) {
+  if (options.length === 0) return null
   return (
     // The list clips its rows to its corners, so a row's focus ring is drawn inside its edge.
     <ul className="mt-3 overflow-hidden rounded-control edge">
-      {choices.map((choice, index) => {
-        const standing = standingOf(answer, choice)
-        return standing === 'folded' && !rest ? null : (
-          <Row
-            key={choice.label}
-            letter={LETTERS.charAt(index)}
-            choice={choice}
-            standing={standing}
-            divided={index > 0 && Option.isSome(onChoose)}
-            onPress={() => Option.map(onChoose, (choose) => choose(choice))}
-          />
-        )
-      })}
-      {Option.isSome(written) && (
-        <li className="flex min-h-14 items-center gap-3 px-3 py-2 motion-fade">
-          <span className="min-w-0 flex-1 text-body text-pretty wrap-anywhere text-ink-3">
-            {written.value}
-          </span>
-          <Check aria-hidden className="size-4 shrink-0 text-ink-3" />
-        </li>
-      )}
+      {options.map((option, index) => (
+        <Row
+          key={option.label}
+          letter={LETTERS.charAt(letters.indexOf(option))}
+          option={option}
+          standing={rowStanding(standing, picked.includes(option.label))}
+          divided={index > 0}
+          pressable={Option.isSome(onPress)}
+          onPress={() => Option.map(onPress, (press) => press(option.label))}
+        />
+      ))}
     </ul>
   )
 }
 
 /**
- * The field for words of the Person's own, under the rows. It owns the words being typed and
- * nothing else. `onOwn` is where they go while the question is open; once it is answered there is
- * nowhere for them to go, and the field folds away with the rows that were not chosen.
+ * The field for words of the Person's own, under the rows of a question that takes them. It owns
+ * the words being typed; submitting them answers the question and moves on. `written` is what
+ * the question already holds, when the Person comes back to it.
  */
-function OwnAnswer({ onOwn }: { onOwn: Option.Option<(answer: string) => void> }) {
-  const [own, setOwn] = useState('')
-  const open = Option.isSome(onOwn)
+function OwnAnswer({
+  written,
+  held,
+  onOwn,
+}: {
+  written: string
+  /** The answers are on their way: the words cannot be sent again. */
+  held: boolean
+  onOwn: (answer: string) => void
+}) {
+  const [own, setOwn] = useState(written)
   return (
-    // The negative margin gives back the room the field's focus ring needs inside a thing that
-    // clips: the fold hides overflow, and the ring is drawn 2px outside the field. It is given
-    // up once folded, so the card ends exactly as tall as one drawn answered.
-    <div
-      className="-mx-0.5 -mb-0.5 motion-fold data-folded:mb-0"
-      data-folded={open ? undefined : ''}
-      inert={!open}
+    <form
+      className="flex gap-2 pt-2.5"
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (own.trim().length > 0 && !held) onOwn(own)
+      }}
     >
-      {/* The fold squeezes this box, which has no padding of its own. The form's padding was on
-          the squeezed box before, and padding cannot be squeezed: the card kept 10px of it
-          under the answer. */}
-      <div>
-        <form
-          className="flex gap-2 px-0.5 pt-2.5 pb-0.5"
-          onSubmit={(event) => {
-            event.preventDefault()
-            const said = own.trim()
-            if (said.length > 0) Option.map(onOwn, (send) => send(said))
-          }}
-        >
-          {/* It has no visible label (the placeholder and the question above say what it is), so
-              it is a bare `Input` with its name for a screen reader, not a `Field`. */}
-          <Input
-            compact
-            value={own}
-            onChange={(event) => setOwn(event.currentTarget.value)}
-            aria-label="Your own answer"
-            placeholder="Type your own answer"
-            className="flex-1"
-          />
-          <Button type="submit" disabled={own.trim().length === 0}>
-            Answer
-          </Button>
-        </form>
-      </div>
-    </div>
+      {/* It has no visible label (the placeholder and the question above say what it is), so it
+          is a bare `Input` with its name for a screen reader, not a `Field`. */}
+      <Input
+        compact
+        value={own}
+        onChange={(event) => setOwn(event.currentTarget.value)}
+        aria-label="Your own answer"
+        placeholder="Type your own answer"
+        className="flex-1"
+      />
+      <Button type="submit" variant="outline" disabled={own.trim().length === 0 || held}>
+        Answer
+      </Button>
+    </form>
   )
 }
 
-/** How one row stands: on offer, the one that was chosen, or folded away beside the chosen one. */
-type Standing = 'open' | 'chosen' | 'folded'
+/**
+ * How one row stands: on offer, picked (it is in the draft of the open question, and can be
+ * pressed again), or the settled answer of a question that is closed.
+ */
+type Standing = 'open' | 'picked' | 'settled'
 
-const standingOf = (answer: Option.Option<string>, choice: Choice): Standing =>
-  Option.match(answer, {
-    onNone: () => 'open',
-    onSome: (said) => (said === choice.label ? 'chosen' : 'folded'),
-  })
+const rowStanding = (rows: 'open' | 'settled', picked: boolean): Standing => {
+  if (rows === 'settled') return 'settled'
+  return picked ? 'picked' : 'open'
+}
 
 /**
- * One answer: its keycap, its label, and a smaller line under it when it has one. It is the same
- * button whether the question is open or answered, so the rows that were not chosen fold away
- * from where they stood and the chosen one never moves or redraws; it only stops being pressable.
- * `Question` takes a folded row out of the document once its fold has ended.
+ * How a row answers the pointer. A settled row is text, not a control. A row that can be pressed
+ * says so with the pointer and a wash under it; one that cannot just now (the answers are on
+ * their way) says that too.
+ */
+const pointerOf = (standing: Standing, pressable: boolean): string => {
+  if (standing === 'settled') return 'cursor-default'
+  return pressable
+    ? 'cursor-pointer hover:bg-wash-hover active:bg-wash-pressed'
+    : 'cursor-not-allowed'
+}
+
+/**
+ * One option: its keycap, its label, and a smaller line under it when it has one. On offer it
+ * is pressable; picked it keeps a fill and a check and can be pressed again (which takes it back
+ * where several may be chosen); settled it is muted and is no longer a control.
  */
 function Row({
   letter,
-  choice,
+  option,
   standing,
   divided,
+  pressable,
   onPress,
 }: {
   letter: string
-  choice: Choice
+  option: InputOption
   standing: Standing
-  /** Whether a hairline is drawn over it. None once answered: one row has nothing to divide. */
+  /** Whether a hairline is drawn over it. */
   divided: boolean
+  /** Whether a press does anything now: not while the answers are on their way. */
+  pressable: boolean
   onPress: () => void
 }) {
-  const folded = standing === 'folded'
+  const settled = standing === 'settled'
   return (
-    <li className="motion-fold" data-folded={folded ? '' : undefined} inert={folded}>
+    <li>
       <button
         type="button"
         data-choice
-        disabled={standing !== 'open'}
+        aria-pressed={settled ? undefined : standing === 'picked'}
+        disabled={settled || !pressable}
         onClick={onPress}
         className={cn(
           'block w-full text-left transition-colors duration-(--dur-fast) focus-visible:-outline-offset-2',
           divided && 'hairline-t',
-          standing === 'open'
-            ? 'cursor-pointer hover:bg-wash-hover active:bg-wash-pressed'
-            : 'cursor-default',
+          pointerOf(standing, pressable),
+          standing === 'picked' && 'bg-wash-selected',
         )}
       >
-        {/* The height is the inner line's: the button itself is what the fold squeezes to nothing. */}
         <span className="flex min-h-14 items-center gap-3 px-3 py-2">
           <span
             aria-hidden
@@ -290,20 +445,20 @@ function Row({
           </span>
           <span className="min-w-0 flex-1">
             <span
-              className={cn(
-                'block text-body text-pretty',
-                standing === 'open' ? 'text-ink' : 'text-ink-3',
-              )}
+              className={cn('block text-body text-pretty', settled ? 'text-ink-3' : 'text-ink')}
             >
-              {choice.label}
-              {standing === 'chosen' && <span className="sr-only"> (chosen)</span>}
+              {option.label}
+              {settled && <span className="sr-only"> (chosen)</span>}
             </span>
-            {choice.detail.length > 0 && (
-              <span className="block text-label text-pretty text-ink-3">{choice.detail}</span>
+            {option.detail.length > 0 && (
+              <span className="block text-label text-pretty text-ink-3">{option.detail}</span>
             )}
           </span>
-          {standing === 'chosen' && (
-            <Check aria-hidden className="size-4 shrink-0 text-ink-3 motion-fade" />
+          {standing !== 'open' && (
+            <Check
+              aria-hidden
+              className={cn('size-4 shrink-0 motion-fade', settled ? 'text-ink-3' : 'text-ink')}
+            />
           )}
         </span>
       </button>
@@ -318,8 +473,8 @@ function Row({
  */
 function steer(
   event: KeyboardEvent<HTMLElement>,
-  choices: ReadonlyArray<Choice>,
-  asked: Extract<Asked, { readonly _tag: 'Open' }>,
+  options: ReadonlyArray<InputOption>,
+  onPick: (label: string) => void,
 ) {
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
     return
@@ -332,10 +487,10 @@ function steer(
   }
   // A named key ("Enter", "Tab") is longer than one character; Enter on a row is the browser's.
   if (event.key.length !== 1) return
-  const choice = choices[LETTERS.indexOf(event.key.toLocaleUpperCase())]
-  if (choice === undefined) return
+  const option = options[LETTERS.indexOf(event.key.toLocaleUpperCase())]
+  if (option === undefined) return
   event.preventDefault()
-  asked.onChoose(choice)
+  onPick(option.label)
 }
 
 /**

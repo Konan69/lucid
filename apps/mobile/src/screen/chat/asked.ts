@@ -6,9 +6,8 @@ import {
   type PersonId,
   type ThreadDetail,
 } from '@vivid/contracts'
-import { InputAnswerFailure } from '@vivid/contracts/rpc'
 import { asking, type ProductFailure } from '@vivid/state'
-import { Array as Arr, Data, Option, Order, Schema } from 'effect'
+import { Array as Arr, Data, Option, Order } from 'effect'
 
 /**
  * The decisions around a request from Vivid (an Input request, of one to four questions) that
@@ -93,23 +92,25 @@ export interface Refusal {
   readonly place: Option.Option<number>
 }
 
-const isAnswerFailure = Schema.is(InputAnswerFailure)
-
 /**
  * Reads why an answer did not go through. The server's own refusals of an answer each say what
- * to do in one plain sentence and name the question they are about (`InputAnswerFailure`,
- * `packages/contracts/src/rpc.ts`); those words are said as they are. Anything else (the request
- * was settled meanwhile, the server could not be reached) names no question and gets one
- * sentence that covers them.
+ * to do in one plain sentence and name the question they are about (`asking.refusalIn`); those
+ * words are said as they are. Anything else (the request was settled meanwhile, the server could
+ * not be reached) names no question and gets one sentence that covers them.
  */
 export const refusedOf = (tried: Attempt, failure: ProductFailure): Refusal =>
-  isAnswerFailure(failure)
-    ? { ...tried, words: failure.message, place: asking.refusedAt(failure) }
-    : {
-        ...tried,
-        words: 'That answer did not go through. It may already be answered.',
-        place: Option.none(),
-      }
+  Option.match(asking.refusalIn(failure), {
+    onSome: (refusal) => ({
+      ...tried,
+      words: refusal.message,
+      place: asking.refusedAt(refusal),
+    }),
+    onNone: () => ({
+      ...tried,
+      words: 'That answer did not go through. It may already be answered.',
+      place: Option.none(),
+    }),
+  })
 
 /**
  * What is on its way after one try ended without going through: nothing, when it was that try;

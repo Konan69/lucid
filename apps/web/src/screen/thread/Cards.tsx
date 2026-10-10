@@ -11,14 +11,16 @@ import {
   InputRequestId,
   InputRequestState,
   type Approval,
+  type InputAnswer,
   type InputRequest,
   type PersonId,
 } from '@vivid/contracts'
-import { Data, Effect, Option, Predicate, Result, Schema } from 'effect'
+import { Data, Effect, Option, Predicate, Result, Schema, type Array as Arr } from 'effect'
 import {
   answered,
   answering,
   APPROVAL_EFFECT_WORDS,
+  asking,
   Awaited,
   awaitedOf,
   awaitedWords,
@@ -44,7 +46,7 @@ import {
 } from '../../data/connecting'
 import { changing, live, useLiveValue } from '../../data/live'
 import { openSettings } from '../../router'
-import { orSay } from '../../data/said'
+import { say } from '../../data/said'
 import { themeShown, useTheme } from '../../data/theme'
 import { Button } from '../../ui/button'
 import { Card } from '../../ui/card'
@@ -356,17 +358,34 @@ export function ApprovalCard({ approval, me }: { approval: Approval; me: PersonI
 }
 
 /**
- * A question Vivid could not answer alone. The Person it is addressed to picks an option or writes
- * their own answer; once answered, the card closes down to what was said, and by whom when that
- * was someone else. The card itself is `Question`: this reads the server's record into it.
+ * A request from Vivid: one to four questions it could not answer alone. The Person it is
+ * addressed to answers them one at a time; once answered, the card lists what was said to each,
+ * and by whom when that was someone else. The card itself is `Question`: this reads the server's
+ * record into it and sends the answers.
+ *
+ * A refusal of an answer is said in the server's own words, which say what to do, and the card
+ * is put back on the question it names (`asking.refusalIn`). Anything else that stops the
+ * answers arriving gets the one sentence it always had.
  */
 export function InputCard({ request, me }: { request: InputRequest; me: PersonId }) {
-  function answer(text: string) {
+  const { questions } = request
+  function send(
+    answers: Arr.NonEmptyReadonlyArray<InputAnswer>,
+    onFailed: (place: Option.Option<number>) => void,
+  ) {
     void act(
-      orSay(
-        changing((client) => client.AnswerInput({ id: request.id, answer: text })),
-        'Your answer did not reach Vivid. Try again.',
-      ),
+      Effect.gen(function* () {
+        const result = yield* changing((client) => client.AnswerInput({ id: request.id, answers }))
+        if (Result.isSuccess(result)) return
+        const refusal = asking.refusalIn(result.failure)
+        say(
+          Option.match(refusal, {
+            onNone: () => 'Your answer did not reach Vivid. Try again.',
+            onSome: (refused) => refused.message,
+          }),
+        )
+        onFailed(Option.flatMap(refusal, asking.refusedAt))
+      }),
     )
   }
   // Each standing is said to be an `Asked`, so the three branches agree on the union and not
@@ -374,14 +393,15 @@ export function InputCard({ request, me }: { request: InputRequest; me: PersonId
   const asked = InputRequestState.match(request.state, {
     Waiting: (): Asked =>
       request.askedOf.id === me
-        ? Asked.Open({ onChoose: (choice) => answer(choice.label), onOwn: answer })
-        : Asked.Resting({ note: `Waiting on ${request.askedOf.name}.` }),
-    Answered: ({ answer: said, answeredBy }): Asked =>
+        ? Asked.Open({ questions, onSend: send })
+        : Asked.Resting({ questions, note: `Waiting on ${request.askedOf.name}.` }),
+    Answered: ({ answers, answeredBy }): Asked =>
       Asked.Answered({
-        answer: said,
+        questions,
+        answers,
         note: answeredBy.id === me ? Option.none() : Option.some(`Answered by ${answeredBy.name}`),
       }),
-    Withdrawn: (): Asked => Asked.Resting({ note: 'No longer needed.' }),
+    Withdrawn: (): Asked => Asked.Resting({ questions, note: 'No longer needed.' }),
   })
   return (
     <div className="mt-3">
@@ -389,9 +409,6 @@ export function InputCard({ request, me }: { request: InputRequest; me: PersonId
         status={Option.some(
           InputRequestState.guards.Waiting(request.state) ? 'Vivid needs you' : 'Vivid asked',
         )}
-        title={request.question}
-        choices={request.options}
-        allowsOwn={request.allowsOwnAnswer}
         asked={asked}
       />
     </div>

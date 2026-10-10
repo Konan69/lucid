@@ -1,4 +1,4 @@
-import { InputAnswer, InputRequestId, type InputQuestion } from '@vivid/contracts'
+import { Conflict, InputAnswer, InputRequestId, type InputQuestion } from '@vivid/contracts'
 import { InputAnswerCountMismatch, InputAnswerUnknownLabel } from '@vivid/contracts/rpc'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
@@ -12,6 +12,7 @@ import {
   pickedIn,
   press,
   progressOf,
+  refusalIn,
   refusedAt,
   returnTo,
   said,
@@ -207,6 +208,18 @@ describe('refusedAt', () => {
       message: 'Choose only options offered for this question.',
     })
     expect(refusedAt(refusal)).toEqual(Option.some(1))
+  })
+
+  it('is found in what a send failed with, and nothing else is', () => {
+    const refusal = new InputAnswerUnknownLabel({
+      id,
+      questionIndex: 0,
+      message: 'Choose only options offered for this question.',
+    })
+    expect(refusalIn(refusal)).toEqual(Option.some(refusal))
+    expect(refusalIn(new Conflict({ message: 'Input request already answered' }))).toEqual(
+      Option.none(),
+    )
   })
 
   it('is no question when the count of answers was wrong', () => {

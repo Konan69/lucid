@@ -1,6 +1,7 @@
 import { InputAnswer, type InputQuestion } from '@vivid/contracts'
-import type { InputAnswerFailure } from '@vivid/contracts/rpc'
-import { Array as Arr, Data, Match, Option } from 'effect'
+import { InputAnswerFailure } from '@vivid/contracts/rpc'
+import { Array as Arr, Data, Match, Option, Schema } from 'effect'
+import type { ProductFailure } from './live.js'
 
 /**
  * Answering a request from Vivid that carries several questions, as every client does it: one
@@ -264,6 +265,17 @@ export const returnTo = (asking: Asking, place: number): Asking => ({
   at: Math.max(0, place),
   drafts: asking.drafts,
 })
+
+const isAnswerFailure = Schema.is(InputAnswerFailure)
+
+/**
+ * The server's refusal of an answer inside whatever a send failed with, when it was one. Each of
+ * those says what to do in one plain sentence (`message`) and all but one name their question
+ * (`refusedAt`). Any other failure (the request was settled meanwhile, the server could not be
+ * reached) is not about an answer, and a client says its own sentence for it.
+ */
+export const refusalIn = (failure: ProductFailure): Option.Option<InputAnswerFailure> =>
+  isAnswerFailure(failure) ? Option.some(failure) : Option.none()
 
 /**
  * The question a refused answer was about, by its place, when the refusal names one. A count
