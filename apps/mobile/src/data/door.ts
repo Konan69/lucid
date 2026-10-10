@@ -1,7 +1,7 @@
 import { Cause, Effect, Option } from 'effect'
-import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
-import * as Atom from 'effect/unstable/reactivity/Atom'
-import * as AtomRegistry from 'effect/unstable/reactivity/AtomRegistry'
+import * as AsyncResult from 'effect/reactivity/AsyncResult'
+import * as Atom from 'effect/reactivity/Atom'
+import * as AtomRegistry from 'effect/reactivity/AtomRegistry'
 import { useCallback, useSyncExternalStore } from 'react'
 
 /**

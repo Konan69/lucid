@@ -1,7 +1,7 @@
 import * as TestClock from 'effect/testing/TestClock'
 import { describe, expect, layer } from '@effect/vitest'
 import { Effect, Fiber, Layer } from 'effect'
-import { DecisionModel } from 'effect/unstable/ai'
+import { DecisionModel } from 'effect/ai'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'
 import { Runtime } from '../runtime/client.ts'
 import { StoredRunOrigin } from '../threads/conversation.ts'

@@ -24,7 +24,7 @@ import {
   Stream,
 } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
-import { HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { personTable } from '../auth/tables.ts'
 import { Database } from '../database/client.ts'
 import { testDatabaseConfigured, testDatabaseLayer } from '../database/testdb.ts'

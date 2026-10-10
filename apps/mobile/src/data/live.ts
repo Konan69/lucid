@@ -24,8 +24,8 @@ import {
   type Settle,
 } from '@vivid/state'
 import { Data, Effect, Equal, Layer, Option, Predicate, Result, Schedule, Stream } from 'effect'
-import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
-import * as Atom from 'effect/unstable/reactivity/Atom'
+import * as AsyncResult from 'effect/reactivity/AsyncResult'
+import * as Atom from 'effect/reactivity/Atom'
 import { createContext, useContext } from 'react'
 import { followThemeAtom, themeAtom } from './appearance'
 import { door } from './door'

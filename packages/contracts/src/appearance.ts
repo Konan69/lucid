@@ -69,8 +69,8 @@ export const VIVID_NAME_MAX = 24
  */
 export const VividName = Schema.String.check(
   Schema.isTrimmed(),
-  Schema.isLengthBetween(1, VIVID_NAME_MAX),
-  Schema.isPattern(/^[^\\\r\n]*$/),
+  Schema.isBetweenLength(1, VIVID_NAME_MAX),
+  Schema.isPattern(/^[^\\\r\n]*$/u),
 )
 export type VividName = typeof VividName.Type
 

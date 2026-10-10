@@ -51,7 +51,7 @@ import {
   HttpApiSecurity,
   HttpApiTest,
   OpenApi,
-} from 'effect/unstable/httpapi'
+} from 'effect/http-api'
 import {
   FetchHttpClient,
   HttpClientRequest,
@@ -59,10 +59,10 @@ import {
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
-} from 'effect/unstable/http'
+} from 'effect/http'
 ```
 
-The barrel exports the requested HTTP API modules at `~/agency/vivid/node_modules/.pnpm/effect@4.0.0-rc.112/node_modules/effect/src/unstable/httpapi/index.ts:10-70`; the portable HTTP barrel is at `~/agency/vivid/node_modules/.pnpm/effect@4.0.0-rc.112/node_modules/effect/src/unstable/http/index.ts:10-150`. There is no installed `@effect/platform` package; these portable modules live in `effect/unstable/httpapi` and `effect/unstable/http`. The Node implementation is separate `@effect/platform-node`: `~/agency/vivid/apps/server/node_modules/@effect/platform-node/src/index.ts:45-90`.
+The barrel exports the requested HTTP API modules at `~/agency/vivid/node_modules/.pnpm/effect@4.0.0-rc.112/node_modules/effect/src/unstable/httpapi/index.ts:10-70`; the portable HTTP barrel is at `~/agency/vivid/node_modules/.pnpm/effect@4.0.0-rc.112/node_modules/effect/src/unstable/http/index.ts:10-150`. There is no installed `@effect/platform` package; these portable modules live in `effect/httpapi` and `effect/http`. The Node implementation is separate `@effect/platform-node`: `~/agency/vivid/apps/server/node_modules/@effect/platform-node/src/index.ts:45-90`.
 
 ### Contract, handlers, OpenAPI, and a Fetch handler
 
@@ -170,15 +170,15 @@ A provider can be replaced in tests with `ConfigProvider.layer(...)` / a supplie
 ### Current imports and model
 
 ```ts
-import * as Rpc from 'effect/unstable/rpc/Rpc'
-import * as RpcClient from 'effect/unstable/rpc/RpcClient'
-import * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
-import * as RpcMiddleware from 'effect/unstable/rpc/RpcMiddleware'
-import * as RpcSchema from 'effect/unstable/rpc/RpcSchema'
-import * as RpcSerialization from 'effect/unstable/rpc/RpcSerialization'
-import * as RpcServer from 'effect/unstable/rpc/RpcServer'
-import * as Socket from 'effect/unstable/socket/Socket'
-import * as SocketServer from 'effect/unstable/socket/SocketServer'
+import * as Rpc from 'effect/rpc/Rpc'
+import * as RpcClient from 'effect/rpc/RpcClient'
+import * as RpcGroup from 'effect/rpc/RpcGroup'
+import * as RpcMiddleware from 'effect/rpc/RpcMiddleware'
+import * as RpcSchema from 'effect/rpc/RpcSchema'
+import * as RpcSerialization from 'effect/rpc/RpcSerialization'
+import * as RpcServer from 'effect/rpc/RpcServer'
+import * as Socket from 'effect/socket/Socket'
+import * as SocketServer from 'effect/socket/SocketServer'
 ```
 
 The rc.112 barrels export these modules: `~/agency/vivid/node_modules/.pnpm/effect@4.0.0-rc.112/node_modules/effect/src/unstable/rpc/index.ts:10-65`; sockets: `~/agency/vivid/node_modules/.pnpm/effect@4.0.0-rc.112/node_modules/effect/src/unstable/socket/index.ts:10-15`.
@@ -489,7 +489,7 @@ For stages, use separate stage names (`dev_$USER`, preview, production). Alchemy
 - Effect, Better Auth, Alchemy, and Drizzle ORM are ESM packages. Drizzle ORM publishes both import and require branches; `@alchemy.run/better-auth` publishes an import branch and has no CJS condition in its package exports: `~/agency/vivid/apps/server/node_modules/effect/package.json:1-4`; `~/agency/vivid/apps/server/node_modules/better-auth/package.json:1-8`; `~/agency/vivid/apps/server/node_modules/alchemy/package.json:1-4,33-48`; `~/agency/vivid/apps/server/node_modules/drizzle-orm/package.json:1-32`; `~/agency/vivid/apps/server/node_modules/@alchemy.run/better-auth/package.json:1-42`. Keep `apps/server` ESM and do not deep-import package internals.
 - `@effect/platform-node` and `@effect/sql-pg` must use the same rc.112 Effect peer. Drizzle rc.5 requires Effect `>=4.0.0-beta.105`; Alchemy Better Auth beta.76 pins/peers Drizzle rc.5 and Effect rc.112: `~/agency/vivid/apps/server/node_modules/@effect/platform-node/package.json:61-65`; `~/agency/vivid/apps/server/node_modules/@effect/sql-pg/package.json:63-66`; `~/agency/vivid/apps/server/node_modules/drizzle-orm/package.json:43-96`; `~/agency/vivid/apps/server/node_modules/@alchemy.run/better-auth/package.json:43-53`. Propagate exact versions through every workspace importer; do not let a caret range select another rc.
 - `drizzle-kit` v1-style config makes `dialect` mandatory and uses `dbCredentials`; old `driver` examples are only for exceptional drivers such as PGLite/AWS Data API. The installed rc.5 type and current docs agree on this: `~/agency/vivid/apps/server/node_modules/drizzle-kit/index.d.ts:17-63,102-168`; [config reference](https://orm.drizzle.team/docs/drizzle-config-file).
-- Effect HTTP/RPC/Socket APIs are explicitly under `unstable`; expect rc churn and keep imports centralized in the server/contracts packages. The installed package export map lists only `effect/unstable/*` for these areas: `~/agency/vivid/node_modules/.pnpm/effect@4.0.0-rc.112/node_modules/effect/package.json:14-32`.
+- Effect HTTP/RPC/Socket APIs are explicitly under `unstable`; expect rc churn and keep imports centralized in the server/contracts packages. The installed package export map lists only `effect/*` for these areas: `~/agency/vivid/node_modules/.pnpm/effect@4.0.0-rc.112/node_modules/effect/package.json:14-32`.
 - Do not use `Schema.TaggedErrorClass` with rc.112. Also do not copy the beta.84 checkout's old `Effect.catchSome -> Effect.catchIf` mapping: installed rc.112 exports `Effect.catchFilter` and `Effect.catchCauseFilter`: `~/agency/vivid/apps/server/node_modules/effect/src/Effect.ts:5812-6077`; the stale checkout mapping is `~/effect-smol/migration/v3-to-v4.md:368-410`, while its focused guide says `catchSome -> catchFilter` at `~/effect-smol/migration/error-handling.md:1-17`.
 
 ### High-signal v3 → v4 rename/import sweep
@@ -498,11 +498,11 @@ The checkout's migration map reports 290 import mappings, 43 no-counterpart modu
 
 | v3                                                                  | Effect 4 / current rc.112                                                                    |
 | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `@effect/platform/HttpApi*`, `OpenApi`                              | `effect/unstable/httpapi/*`                                                                  |
-| `@effect/platform/HttpRouter`, `HttpServer*`, `HttpClient*`         | `effect/unstable/http/*`                                                                     |
-| `@effect/platform/Socket*`                                          | `effect/unstable/socket/*`                                                                   |
-| `@effect/rpc/*`                                                     | `effect/unstable/rpc/*`                                                                      |
-| `@effect/sql/*`                                                     | `effect/unstable/sql/*`                                                                      |
+| `@effect/platform/HttpApi*`, `OpenApi`                              | `effect/http-api/*`                                                                          |
+| `@effect/platform/HttpRouter`, `HttpServer*`, `HttpClient*`         | `effect/http/*`                                                                              |
+| `@effect/platform/Socket*`                                          | `effect/socket/*`                                                                            |
+| `@effect/rpc/*`                                                     | `effect/rpc/*`                                                                               |
+| `@effect/sql/*`                                                     | `effect/sql/*`                                                                               |
 | `@effect/platform/FileSystem`, `Path`, `Error`                      | `effect/FileSystem`, `effect/Path`, `effect/PlatformError`                                   |
 | `Context.Tag`, `Context.GenericTag`, `Effect.Tag`, `Effect.Service` | `Context.Service` (type parameters first, ID second)                                         |
 | `Schema.TaggedErrorClass`                                           | `Schema.TaggedError` (the beta.105 rename; verified on rc.112)                               |
@@ -529,7 +529,7 @@ Import mappings: `~/effect-smol/migration/v3-to-v4.md:12-357`; API mappings: `~/
 
 Published documentation used:
 
-- Effect: [HTTP API](https://effect.website/docs/v4/api/effect/unstable/httpapi/HttpApiBuilder), [HTTP schema](https://effect.website/docs/v4/api/effect/unstable/httpapi/HttpApiSchema), [RPC server](https://effect.website/docs/v4/api/effect/unstable/rpc/RpcServer), [Effect 4 migration checkout](https://github.com/Effect-TS/effect-smol/blob/main/migration/v3-to-v4.md).
+- Effect: [HTTP API](https://effect.website/docs/v4/api/effect/httpapi/HttpApiBuilder), [HTTP schema](https://effect.website/docs/v4/api/effect/httpapi/HttpApiSchema), [RPC server](https://effect.website/docs/v4/api/effect/rpc/RpcServer), [Effect 4 migration checkout](https://github.com/Effect-TS/effect-smol/blob/main/migration/v3-to-v4.md).
 - Drizzle: [Effect Postgres](https://orm.drizzle.team/docs/connect-effect-postgres), [effect-schema](https://orm.drizzle.team/docs/effect-schema), [relations](https://orm.drizzle.team/docs/relations), [config](https://orm.drizzle.team/docs/drizzle-config-file), [rc.5 PR](https://github.com/drizzle-team/drizzle-orm/pull/5966).
 - Better Auth: [installation](https://better-auth.com/docs/installation), [email/password](https://better-auth.com/docs/authentication/email-password), [OAuth](https://better-auth.com/docs/concepts/oauth), [sessions](https://better-auth.com/docs/concepts/session-management), [cookies](https://better-auth.com/docs/concepts/cookies), [organization](https://better-auth.com/docs/plugins/organization), [bearer](https://better-auth.com/docs/plugins/bearer), [device authorization](https://better-auth.com/docs/plugins/device-authorization), [Drizzle adapter](https://better-auth.com/docs/adapters/drizzle).
 - Alchemy: [Stacks](https://alchemy.run/infrastructure-as-code/stack/), [local development](https://alchemy.run/environments/local-development/), [Docker](https://alchemy.run/docker/), [Neon](https://alchemy.run/neon/), [Hyperdrive](https://alchemy.run/cloudflare/data/hyperdrive), [Drizzle/Postgres](https://alchemy.run/sql/drizzle/postgres), and the installed versioned package README `~/agency/vivid/apps/server/node_modules/@alchemy.run/better-auth/README.md`.

@@ -1,6 +1,6 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { Layer, Effect, Logger, Option, Ref } from 'effect'
-import { HttpRouter, HttpServerRequest } from 'effect/unstable/http'
+import { HttpRouter, HttpServerRequest } from 'effect/http'
 import { ConnectionStep, NotFound, SignInSurface } from '@vivid/contracts'
 import { testDatabaseConfigured } from '../database/testdb.ts'
 import { ServerConfig } from '../config.ts'

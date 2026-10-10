@@ -1,7 +1,7 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { Clock, Deferred, Effect, Fiber, Layer, Logger, Predicate, Ref, Schema } from 'effect'
 import { ScriptedAnswer } from '../decisions/testing.ts'
-import { DecisionModel } from 'effect/unstable/ai'
+import { DecisionModel } from 'effect/ai'
 import { RELEVANCE_BUDGET } from './relevance.ts'
 import { ToolEffects, toolEffectsLayer } from './effects.ts'
 import * as TestClock from 'effect/testing/TestClock'

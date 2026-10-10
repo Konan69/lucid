@@ -23,7 +23,7 @@ const action = <Fields extends Schema.Struct.Fields, const Kind extends string>(
 const input = Schema.Struct({
   summary: UseWindowRequest.fields.summary
     .check(
-      Schema.isPattern(/\S/),
+      Schema.isPattern(/\S/u),
       Schema.makeFilter((value) => v.is(summary, value)),
     )
     .annotate({ description: v.getDescription(summary) }),

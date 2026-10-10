@@ -2,7 +2,7 @@ import * as NodeCrypto from 'node:crypto'
 import { expect } from '@effect/vitest'
 import { ConnectionId, ServiceId, ServiceUnavailable } from '@vivid/contracts'
 import { Clock, Config, Effect, Layer, Option, Redacted, Schema } from 'effect'
-import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { Database } from '../database/client.ts'
 import type { ChainFixture } from '../runtime/chains.ts'
 import {

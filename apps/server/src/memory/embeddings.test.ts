@@ -3,7 +3,7 @@ import { layer as testLayer } from '@effect/vitest'
 import { ServiceUnavailable } from '@vivid/contracts'
 import { memoryFailure } from './handlers.js'
 import { ConfigProvider, Effect, Layer, Result } from 'effect'
-import { HttpClient, HttpClientRequest, HttpServer, HttpServerResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientRequest, HttpServer, HttpServerResponse } from 'effect/http'
 import { describe, expect } from 'vitest'
 import {
   Embeddings,

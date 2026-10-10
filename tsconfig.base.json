@@ -12,6 +12,9 @@
     "noFallthroughCasesInSwitch": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
+    "paths": {
+      "effect/unstable/sql/SqlError": ["./node_modules/effect/dist/sql/SqlError.d.ts"]
+    },
     "plugins": [
       {
         "name": "@effect/language-service",

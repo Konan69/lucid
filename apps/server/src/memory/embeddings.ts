@@ -11,7 +11,7 @@ import {
   Redacted,
   Schema,
 } from 'effect'
-import { HttpClient, HttpClientRequest, HttpClientResponse, Headers } from 'effect/unstable/http'
+import { HttpClient, HttpClientRequest, HttpClientResponse, Headers } from 'effect/http'
 import { optionalSetting, requiredSetting, settingSecret, settingText } from '../config.ts'
 
 /**

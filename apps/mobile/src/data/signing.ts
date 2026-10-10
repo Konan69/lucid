@@ -1,5 +1,5 @@
 import { Data, Effect, Queue, Stream } from 'effect'
-import * as Atom from 'effect/unstable/reactivity/Atom'
+import * as Atom from 'effect/reactivity/Atom'
 import * as Crypto from 'expo-crypto'
 import { Linking } from 'react-native'
 import { signIn, signOut, signUp } from './account'

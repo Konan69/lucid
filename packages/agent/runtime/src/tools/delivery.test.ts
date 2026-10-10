@@ -1,8 +1,8 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Effect, Exit, Option, Predicate, Queue } from 'effect'
-import * as RpcClient from 'effect/unstable/rpc/RpcClient'
-import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
-import type * as RpcMessage from 'effect/unstable/rpc/RpcMessage'
+import * as RpcClient from 'effect/rpc/RpcClient'
+import type * as RpcGroup from 'effect/rpc/RpcGroup'
+import type * as RpcMessage from 'effect/rpc/RpcMessage'
 import { VividRpcClient } from '@vivid/client-runtime'
 import {
   DeliveryScope,

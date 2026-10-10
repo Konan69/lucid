@@ -14,10 +14,10 @@ import {
   Stream,
   type Duration,
 } from 'effect'
-import type * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
-import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
-import * as Atom from 'effect/unstable/reactivity/Atom'
-import * as AtomRegistry from 'effect/unstable/reactivity/AtomRegistry'
+import type * as RpcClientError from 'effect/rpc/RpcClientError'
+import * as AsyncResult from 'effect/reactivity/AsyncResult'
+import * as Atom from 'effect/reactivity/Atom'
+import * as AtomRegistry from 'effect/reactivity/AtomRegistry'
 
 /** Everything a product call can fail with: what the server said, or that it could not be reached. */
 export type ProductFailure = RpcFailure | SkillReadOnly | RpcClientError.RpcClientError

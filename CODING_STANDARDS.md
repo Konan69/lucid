@@ -1,6 +1,6 @@
 # Coding standards
 
-`AGENTS.md` is authoritative. The vendored `coding-standards`, `effect`, and `effect-service-design` skills provide the detailed guidance; this file is the short review index for Vivid's pinned Effect `4.0.0-rc.116` code.
+`AGENTS.md` is authoritative. The vendored `coding-standards`, `effect`, and `effect-service-design` skills provide the detailed guidance; this file is the short review index for Vivid's pinned Effect `4.0.2` code.
 
 Examples below illustrate the standard; they do not declare existing RPC routes or domain variants.
 

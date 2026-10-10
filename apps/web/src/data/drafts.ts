@@ -12,7 +12,7 @@ import {
 } from '@vivid/state'
 import type { ThreadId } from '@vivid/contracts'
 import { Equivalence, Option } from 'effect'
-import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
+import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import { start } from './app'
 import { kept } from './kept'
 import { live } from './live'

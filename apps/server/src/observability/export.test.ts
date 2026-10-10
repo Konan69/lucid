@@ -22,19 +22,19 @@ import {
   Tracer,
 } from 'effect'
 import { TestClock } from 'effect/testing'
-import * as HttpClient from 'effect/unstable/http/HttpClient'
-import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
-import * as HttpMiddleware from 'effect/unstable/http/HttpMiddleware'
-import * as HttpRouter from 'effect/unstable/http/HttpRouter'
-import * as HttpServer from 'effect/unstable/http/HttpServer'
-import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
-import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
-import * as OtlpExporter from 'effect/unstable/observability/OtlpExporter'
-import * as Rpc from 'effect/unstable/rpc/Rpc'
-import * as RpcClient from 'effect/unstable/rpc/RpcClient'
-import * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
-import * as RpcSerialization from 'effect/unstable/rpc/RpcSerialization'
-import * as RpcServer from 'effect/unstable/rpc/RpcServer'
+import * as HttpClient from 'effect/http/HttpClient'
+import * as HttpClientRequest from 'effect/http/HttpClientRequest'
+import * as HttpMiddleware from 'effect/http/HttpMiddleware'
+import * as HttpRouter from 'effect/http/HttpRouter'
+import * as HttpServer from 'effect/http/HttpServer'
+import * as HttpServerRequest from 'effect/http/HttpServerRequest'
+import * as HttpServerResponse from 'effect/http/HttpServerResponse'
+import * as OtlpExporter from 'effect/observability/OtlpExporter'
+import * as Rpc from 'effect/rpc/Rpc'
+import * as RpcClient from 'effect/rpc/RpcClient'
+import * as RpcGroup from 'effect/rpc/RpcGroup'
+import * as RpcSerialization from 'effect/rpc/RpcSerialization'
+import * as RpcServer from 'effect/rpc/RpcServer'
 import { ObservabilityConfiguration } from '../config.ts'
 import { faultRoutes } from '../http/faults.ts'
 import { threads } from '../threads/tables.ts'
@@ -816,7 +816,7 @@ it.effect("exports no part of a client's fault report", () =>
       expect(
         span === undefined ? [] : span.events.map((event) => [event.name, event.attributes]),
       ).toEqual([[Message.fault, []]])
-      expect(spanNamed(spans, 'http.server POST')).toHaveLength(1)
+      expect(spanNamed(spans, 'POST')).toHaveLength(1)
       for (const secret of ['Skia', 'dami@example.com', 'Composer', 'ios 0.1.0', 'mobile'])
         expect(text).not.toContain(secret)
     }),
@@ -853,7 +853,7 @@ it.effect("exports no query, path or header of a provider's sign-in return", () 
       )
 
       expect(statuses).toEqual([200])
-      const [server] = spanNamed(spans, 'http.server GET')
+      const [server] = spanNamed(spans, 'GET')
       expect(server === undefined ? {} : valuesOf(server.attributes)).toEqual({
         'http.request.method': 'GET',
         'http.response.status_code': 200,
@@ -921,7 +921,7 @@ it.effect(
         expect(statuses).toEqual([204, 204, 204, 204, 204, 204])
         // The second and last requests' spans are exported, the server span as a root; the spans of
         // every other request are gone.
-        const servers = spanNamed(spans, 'http.server GET')
+        const servers = spanNamed(spans, 'GET')
         expect(servers.map((span) => [span.traceId, span.parentSpanId])).toEqual([
           [trace, undefined],
           [rooted, undefined],
@@ -981,7 +981,7 @@ it.effect('files a 64-bit B3 trace under its 128-bit form, on spans, links and l
 
       expect(statuses).toEqual([204])
       // The server span is the caller's child, and everything beneath it is in the same trace.
-      const servers = spanNamed(spans, 'http.server GET')
+      const servers = spanNamed(spans, 'GET')
       expect(servers.map((span) => [span.traceId, span.parentSpanId])).toEqual([[wide, caller]])
       const [server] = servers
       const [handler] = spanNamed(spans, 'Probe.inbound')
@@ -1072,13 +1072,7 @@ it.effect('builds no span name from what a request carries, over HTTP or RPC', (
       // The spans those requests made are all here, under names from code.
       const names = spans.map((span) => span.name)
       expect(names).toEqual(
-        expect.arrayContaining([
-          'http.server GET',
-          'Probe.visit',
-          'http.server POST',
-          'RpcServer.Echo',
-          'Probe.echo',
-        ]),
+        expect.arrayContaining(['GET', 'Probe.visit', 'POST', 'Echo', 'Probe.echo']),
       )
       expect(names.filter((name) => name.includes('Ada') || name.includes('Lovelace'))).toEqual([])
       // And nowhere else in what left.

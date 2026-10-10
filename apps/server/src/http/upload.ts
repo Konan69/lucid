@@ -2,9 +2,9 @@ import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import * as Stream from 'effect/Stream'
-import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
-import * as Multipart from 'effect/unstable/http/Multipart'
-import * as MultipartParser from 'effect/unstable/http/MultipartParser'
+import * as HttpServerRequest from 'effect/http/HttpServerRequest'
+import * as Multipart from 'effect/http/Multipart'
+import * as MultipartParser from 'effect/http/MultipartParser'
 import { MAX_LIBRARY_FILE_BYTES } from '../library/ingest.ts'
 
 /** rc.116 counts part headers toward maxFileSize; reserve their bounded envelope separately. */

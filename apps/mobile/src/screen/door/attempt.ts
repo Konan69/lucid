@@ -1,5 +1,5 @@
 import { Cause, Option } from 'effect'
-import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
+import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import { useState } from 'react'
 import { door, useDoor } from '../../data/door'
 import { saidFor, type Beside } from '../../data/refusal'

@@ -3,7 +3,7 @@ import { inArray } from 'drizzle-orm'
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
-import * as SqlClient from 'effect/unstable/sql/SqlClient'
+import * as SqlClient from 'effect/sql/SqlClient'
 import {
   Company,
   CompanyId,

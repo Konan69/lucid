@@ -6,11 +6,11 @@ import * as Redacted from 'effect/Redacted'
 import * as Ref from 'effect/Ref'
 import * as Schema from 'effect/Schema'
 import { hostedExecutorFixture, hostedPrefix, hostedService } from './testing.ts'
-import { DecisionModel } from 'effect/unstable/ai'
+import { DecisionModel } from 'effect/ai'
 import { ScriptedAnswer } from '../decisions/testing.ts'
 import { ConfigurationError } from '../config.ts'
 import { ToolEffects, toolEffectsLayer } from './effects.ts'
-import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
+import * as FetchHttpClient from 'effect/http/FetchHttpClient'
 import {
   Executor,
   ExecutorAppId,

@@ -4,7 +4,7 @@ import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Result from 'effect/Result'
 import * as Schema from 'effect/Schema'
-import { Decision, DecisionModel } from 'effect/unstable/ai'
+import { Decision, DecisionModel } from 'effect/ai'
 import { ActionTarget, BrowseTarget, Rule, RuleScope, type ProposedAction } from '@vivid/contracts'
 import { DECISION_QUESTION_LIMIT, decideWithin, isDecisionNonEvent } from '../decisions/model.ts'
 

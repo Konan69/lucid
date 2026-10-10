@@ -1,7 +1,7 @@
 import { Effect, Function, Option, Redacted, Schema, Stream } from 'effect'
-import * as HttpClient from 'effect/unstable/http/HttpClient'
-import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
-import * as HttpClientResponse from 'effect/unstable/http/HttpClientResponse'
+import * as HttpClient from 'effect/http/HttpClient'
+import * as HttpClientRequest from 'effect/http/HttpClientRequest'
+import * as HttpClientResponse from 'effect/http/HttpClientResponse'
 import {
   MachineAuthenticationFailed,
   MachineRequestRejected,

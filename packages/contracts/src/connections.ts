@@ -44,8 +44,8 @@ export const ACCOUNT_HANDLE_MAX = 300
  */
 export const AccountName = Schema.String.check(
   Schema.isTrimmed(),
-  Schema.isLengthBetween(1, ACCOUNT_NAME_MAX),
-  Schema.isPattern(/^[^\r\n]*$/),
+  Schema.isBetweenLength(1, ACCOUNT_NAME_MAX),
+  Schema.isPattern(/^[^\r\n]*$/u),
 )
 export type AccountName = typeof AccountName.Type
 

@@ -1,7 +1,7 @@
 import { describe, expect, it, layer } from '@effect/vitest'
 import { ChannelAddress } from '@vivid/contracts'
 import { ConfigProvider, Effect, Layer, Redacted, Ref, Result, Schema, Predicate } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 import { photonLayer } from './photon.ts'
 import { ChannelProvider, ChannelEnrolmentId } from './provider.ts'
 

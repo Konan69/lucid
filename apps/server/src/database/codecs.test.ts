@@ -1,6 +1,6 @@
 import { describe, expect, layer } from '@effect/vitest'
 import { Effect, Schema } from 'effect'
-import * as SqlClient from 'effect/unstable/sql/SqlClient'
+import * as SqlClient from 'effect/sql/SqlClient'
 import { testDatabaseConfigured, testDatabaseLayer } from './testdb.ts'
 
 const decodeRange = Schema.decodeUnknownEffect(

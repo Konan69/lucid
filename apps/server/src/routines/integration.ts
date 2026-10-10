@@ -34,7 +34,7 @@ type Membership = (
 ) => Effect.Effect<
   boolean,
   | import('drizzle-orm/effect-core/errors').EffectDrizzleQueryError
-  | import('effect/unstable/sql/SqlError').SqlError
+  | import('effect/sql/SqlError').SqlError
 >
 
 /** Server retirement reasons are closed decisions, independent of provider error text. */

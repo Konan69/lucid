@@ -1,13 +1,13 @@
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
-import * as HttpClient from 'effect/unstable/http/HttpClient'
-import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
-import * as RpcClient from 'effect/unstable/rpc/RpcClient'
-import type * as RpcClientError from 'effect/unstable/rpc/RpcClientError'
-import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
-import * as RpcSerialization from 'effect/unstable/rpc/RpcSerialization'
-import * as Socket from 'effect/unstable/socket/Socket'
+import * as HttpClient from 'effect/http/HttpClient'
+import * as HttpClientRequest from 'effect/http/HttpClientRequest'
+import * as RpcClient from 'effect/rpc/RpcClient'
+import type * as RpcClientError from 'effect/rpc/RpcClientError'
+import type * as RpcGroup from 'effect/rpc/RpcGroup'
+import * as RpcSerialization from 'effect/rpc/RpcSerialization'
+import * as Socket from 'effect/socket/Socket'
 import { ComputerState, type ThreadId } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
 
@@ -56,9 +56,18 @@ export class VividRpcClient extends Context.Service<VividRpcClient, VividRpcClie
    * on a backoff for as long as the client lives. Nothing is replayed by the transport: a
    * subscription that wants to continue asks again (the live layer in `@vivid/state` does), and a
    * write that was on its way reports that it did not arrive. `retryTransientErrors` is off on
-   * purpose. With it on, the protocol keeps a connection that stopped answering its pings (a
-   * laptop that slept, a phone that changed network) to itself: the requests on it are neither
-   * failed nor sent again, so every screen kept its last result and never moved again.
+   * purpose: with it on, the protocol keeps a connection that failed to open to itself, and the
+   * requests on it are neither failed nor sent again. A connection that stopped answering (a
+   * laptop that slept, a phone that changed network) fails what is in flight either way in
+   * Effect 4.0.2 (`RpcClient.ts` `makeProtocolSocket`: a ping timeout is a `SocketReadError`).
+   *
+   * The ping timeout is set, not left to its default. Effect 4.0.2 (`RpcClient.ts` `makePinger`)
+   * pings every five seconds and, before each ping, closes the connection when no frame has come
+   * for longer than the timeout, which defaults to those same five seconds. A timer never fires
+   * early, so on a quiet connection the first check already finds more than five seconds gone
+   * and a healthy socket is closed without a ping having been sent. Ten seconds is two intervals:
+   * a ping goes out and its answer has a whole interval to arrive, and a dead connection is
+   * still found within fifteen seconds (rc.116 found it within ten).
    *
    * `onLink` hears each time the socket opens and each time it closes or fails to open, through
    * the protocol's own `ConnectionHooks`, so an app can say that it is reconnecting.
@@ -72,7 +81,13 @@ export class VividRpcClient extends Context.Service<VividRpcClient, VividRpcClie
     readonly onLink: (open: boolean) => void
   }) =>
     Layer.effect(VividRpcClient, RpcClient.make(VividRpc)).pipe(
-      Layer.provide(RpcClient.layerProtocolSocket({ retryTransientErrors: false })),
+      Layer.provide(
+        RpcClient.layerProtocolSocket({
+          retryTransientErrors: false,
+          pingInterval: '5 seconds',
+          pingTimeout: '10 seconds',
+        }),
+      ),
       Layer.provide(
         Layer.succeed(RpcClient.ConnectionHooks)({
           onConnect: Effect.sync(() => options.onLink(true)),

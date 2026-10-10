@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Option, Schema } from 'effect'
-import { Decision, DecisionModel } from 'effect/unstable/ai'
+import { Decision, DecisionModel } from 'effect/ai'
 import { ActionTarget, BrowseTarget, type ProposedAction } from '@vivid/contracts'
 import type { Actor } from '../auth/access.ts'
 import { decideWithin, decisionWouldAttempt, isDecisionNonEvent } from '../decisions/model.ts'

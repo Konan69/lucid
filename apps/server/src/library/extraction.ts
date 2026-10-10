@@ -3,8 +3,8 @@ import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
 import * as FileSystem from 'effect/FileSystem'
 import * as Option from 'effect/Option'
-import * as RpcClient from 'effect/unstable/rpc/RpcClient'
-import * as Worker from 'effect/unstable/workers/Worker'
+import * as RpcClient from 'effect/rpc/RpcClient'
+import * as Worker from 'effect/workers/Worker'
 import {
   ExtractionLimitExceeded,
   ExtractionRpcs,

@@ -18,7 +18,7 @@ export const Size = Schema.Literals(['small', 'default', 'large', 'xlarge'])
 export const Lifetime = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 2592000 }))
 /** Operator-published frozen Computer release; names are versioned and never point at a Person's machine. */
 export const TemplateName = Schema.String.check(
-  Schema.isPattern(/^vivid-computer-[a-z0-9-]{1,48}$/),
+  Schema.isPattern(/^vivid-computer-[a-z0-9-]{1,48}$/u),
 )
 export const CreateRequest = Schema.Struct({
   type: Size,
@@ -166,6 +166,6 @@ export const Authorized = Schema.Struct({
   machineIp: Schema.String.check(Schema.isNonEmpty()),
   sshEndpoint: Schema.optionalKey(Schema.NullOr(Schema.String)),
   sshUser: Schema.String.check(Schema.isNonEmpty()),
-  hostKey: Schema.String.check(Schema.isPattern(/^\S+ \S+/)),
+  hostKey: Schema.String.check(Schema.isPattern(/^\S+ \S+/u)),
 })
 export type Authorized = typeof Authorized.Type

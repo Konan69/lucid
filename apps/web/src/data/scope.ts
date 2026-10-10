@@ -1,7 +1,7 @@
 import { ProjectId, type Project } from '@vivid/contracts'
 import { projects as projectsData } from '@vivid/state'
 import { Option } from 'effect'
-import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
+import * as AsyncResult from 'effect/reactivity/AsyncResult'
 import { useSyncExternalStore } from 'react'
 import { kept } from './kept'
 import { live, useLiveValue } from './live'

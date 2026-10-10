@@ -18,7 +18,7 @@ import {
   Stream,
 } from 'effect'
 import * as TestClock from 'effect/testing/TestClock'
-import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
+import * as HttpServerRequest from 'effect/http/HttpServerRequest'
 import {
   BrowserAction,
   BrowseOutcome,

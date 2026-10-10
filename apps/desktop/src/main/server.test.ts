@@ -25,7 +25,7 @@ import type { GoogleSignIn } from './signin.ts'
 import { isAllowedBridgeRequest } from './security.ts'
 import { handleAppRequest } from './proxy.ts'
 import { PageUnavailable, PageLimitReached, PagesRequest, PagesResponse } from '../shared/pages.ts'
-import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
+import * as FetchHttpClient from 'effect/http/FetchHttpClient'
 
 class FixtureFailed extends Schema.TaggedError<FixtureFailed>()(
   'FixtureFailed',

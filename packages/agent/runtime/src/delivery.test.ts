@@ -3,9 +3,9 @@ import { VividRpcClient } from '@vivid/client-runtime'
 import { DatabaseUnavailable, DeliveryScope, PersonId, ThreadId } from '@vivid/contracts'
 import { VividRpc } from '@vivid/contracts/rpc'
 import { Effect, Exit, Fiber, Option, Predicate, Queue } from 'effect'
-import * as RpcClient from 'effect/unstable/rpc/RpcClient'
-import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
-import type * as RpcMessage from 'effect/unstable/rpc/RpcMessage'
+import * as RpcClient from 'effect/rpc/RpcClient'
+import type * as RpcGroup from 'effect/rpc/RpcGroup'
+import type * as RpcMessage from 'effect/rpc/RpcMessage'
 import { cachedAuthority, recordScope, recoverAuthority, resolveAuthority } from './delivery.ts'
 
 /** Recovery crosses the generated client; the controlled transport delays and fails real lookup requests. */

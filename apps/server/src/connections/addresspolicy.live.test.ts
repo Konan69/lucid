@@ -2,8 +2,8 @@ import * as NodeProcess from 'node:process'
 import { NodeHttpClient } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
 import { Effect, Schema } from 'effect'
-import * as HttpClient from 'effect/unstable/http/HttpClient'
-import * as HttpClientRequest from 'effect/unstable/http/HttpClientRequest'
+import * as HttpClient from 'effect/http/HttpClient'
+import * as HttpClientRequest from 'effect/http/HttpClientRequest'
 import { ConnectionAddress, connectionAddressLayer } from './address.ts'
 
 const url = NodeProcess.env['VIVID_TEST_EXECUTOR_URL']

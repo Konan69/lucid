@@ -36,7 +36,7 @@ const browserWords = {
 const modelWord = (spec: { readonly description: string; readonly maximum: number }) =>
   Schema.String.check(
     Schema.isNonEmpty(),
-    Schema.isPattern(/\S/),
+    Schema.isPattern(/\S/u),
     Schema.isMaxLength(spec.maximum),
   ).annotate({ description: spec.description })
 
@@ -87,7 +87,7 @@ const browseInput = Schema.Struct({
   ]),
   summary: BrowseRequest.fields.summary
     .check(
-      Schema.isPattern(/\S/),
+      Schema.isPattern(/\S/u),
       Schema.makeFilter((value) => v.is(summary, value)),
     )
     .annotate({ description: v.getDescription(summary) }),
@@ -164,7 +164,7 @@ const desktopInput = UseDesktopRequest.mapFields((fields) => ({
   action: fields.action,
   summary: fields.summary
     .check(
-      Schema.isPattern(/\S/),
+      Schema.isPattern(/\S/u),
       Schema.makeFilter((value) => v.is(summary, value)),
     )
     .annotate({ description: v.getDescription(summary) }),

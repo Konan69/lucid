@@ -1,6 +1,6 @@
 import { VividRpcClient } from '@vivid/client-runtime'
 import { Array as Arr, Data, Effect, Layer, Option, Order, Redacted, Schema } from 'effect'
-import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
+import * as FetchHttpClient from 'effect/http/FetchHttpClient'
 import { auth } from './auth'
 import { deviceName } from './device'
 import { firstArrival, googleAddresses, outcomeOf, type GoogleOutcome } from './google'

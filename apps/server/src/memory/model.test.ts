@@ -1,6 +1,6 @@
 import { expect, layer as testLayer } from '@effect/vitest'
 import { ConfigProvider, Effect, Layer, Predicate, Result, Schema } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 import { Completion, MemoryGenerationIncomplete, MemoryModel, memoryModelLayer } from './model.ts'
 
 const decodeRequest = Schema.decodeUnknownEffect(

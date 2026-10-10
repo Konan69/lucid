@@ -9,8 +9,8 @@ import {
   type ChannelListResponse,
 } from '@vivid/contracts'
 import { Option, Result, Schema } from 'effect'
-import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
-import * as Atom from 'effect/unstable/reactivity/Atom'
+import * as AsyncResult from 'effect/reactivity/AsyncResult'
+import * as Atom from 'effect/reactivity/Atom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { LiveQuery, LiveResult } from './live.js'
 import {

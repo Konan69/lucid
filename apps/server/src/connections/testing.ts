@@ -1,9 +1,9 @@
 import * as NodeHttp from 'node:http'
 import { NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
-import * as FetchHttpClient from 'effect/unstable/http/FetchHttpClient'
-import * as HttpServerRequest from 'effect/unstable/http/HttpServerRequest'
-import * as HttpServerResponse from 'effect/unstable/http/HttpServerResponse'
-import * as NetAddress from 'effect/unstable/net/NetAddress'
+import * as FetchHttpClient from 'effect/http/FetchHttpClient'
+import * as HttpServerRequest from 'effect/http/HttpServerRequest'
+import * as HttpServerResponse from 'effect/http/HttpServerResponse'
+import * as NetAddress from 'effect/net/NetAddress'
 import { eq, inArray } from 'drizzle-orm'
 import { Clock, ConfigProvider, Context, Effect, Layer, Option, Ref, Schema } from 'effect'
 import {
