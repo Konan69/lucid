@@ -1,17 +1,22 @@
 import {
   InputRequestState,
+  type InputAnswer,
   type InputRequest,
   type InputRequestId,
   type PersonId,
   type ThreadDetail,
 } from '@vivid/contracts'
-import { Array as Arr, Data, Option, Order } from 'effect'
+import { InputAnswerFailure } from '@vivid/contracts/rpc'
+import { asking, type ProductFailure } from '@vivid/state'
+import { Array as Arr, Data, Option, Order, Schema } from 'effect'
 
 /**
- * The decisions around a question from Vivid (an Input request) that need no screen to make:
- * which request's choices are up over the composer, what the card holds while one leaves and the
- * next waits its turn, what the composer's send means meanwhile, how each row stands, and how
- * tall the card may be. `Choices.tsx` draws them and `screen/Chat.tsx` holds the state.
+ * The decisions around a request from Vivid (an Input request, of one to four questions) that
+ * need no screen to make and are the phone's own: which request's card is up over the composer,
+ * what the card holds while one leaves and the next waits its turn, one try at answering and how
+ * it ends, how each row stands, where answers go in the Thread, and how tall the card may be.
+ * `Choices.tsx` draws them and `screen/Chat.tsx` holds the state. Answering the questions one at
+ * a time is shared with the web (`asking`, `@vivid/state`).
  */
 
 /** The Input request a tool call in the conversation stands for, once the Thread's detail has it. */
@@ -69,54 +74,42 @@ export const holdOf = (held: Option.Option<InputRequest>, up: Option.Option<Inpu
   })
 
 /**
- * Whether a held request has a card to slide away. One with no choices draws none (there is
- * nothing to press: the composer is the whole answer), so it is let go at once.
- */
-export const hasChoices = (request: InputRequest): boolean => request.options.length > 0
-
-/**
- * What the composer's send means.
- *
- * - `Message`: an ordinary message in the Thread.
- * - `Answer`: the answer to the request that is up, in the Person's own words. Only a request
- *   that takes words of one's own makes the composer this: with one that does not, the composer
- *   still sends an ordinary message and the request goes on waiting.
- * - `Wait`: nothing can be sent for a moment. A request is waiting on the Person and its card is
- *   not up yet, because the card of the one before it is still sliding away (or has only just
- *   been let go). Words sent in that moment would be read as an ordinary message when the Person
- *   may mean them as the answer to the question now arriving, so they stay in the composer.
- */
-export type Send = Data.TaggedEnum<{
-  Message: {}
-  Answer: { readonly id: InputRequestId }
-  Wait: {}
-}>
-export const Send = Data.taggedEnum<Send>()
-
-/**
- * Reads what the composer sends from what the card is doing and from the request that is up.
- * The two are separate on purpose: the card that is retiring says nothing about what a send
- * means. Only the request that is up does, and only once the card holds it.
- *
- * Until 11 October 2026 this read the card alone, so while one card slid away with the next
- * request already waiting, the composer sent an ordinary message and was not held.
- */
-export const sendOf = (hold: Hold, up: Option.Option<InputRequest>): Send => {
-  if (Hold.$is('Up')(hold)) {
-    return hold.request.allowsOwnAnswer ? Send.Answer({ id: hold.request.id }) : Send.Message()
-  }
-  return Option.isSome(up) ? Send.Wait() : Send.Message()
-}
-
-/**
  * One try at answering one request. `attempt` tells two tries apart, so that the end of an old
  * one is never taken for the end of the one now on its way.
  */
 export interface Attempt {
   readonly attempt: number
   readonly id: InputRequestId
-  readonly words: string
 }
+
+/**
+ * An answer that did not go through, as the screen needs it: which try and which request it
+ * was, what to say, and the question to put back up when the refusal names one.
+ */
+export interface Refusal {
+  readonly attempt: number
+  readonly id: InputRequestId
+  readonly words: string
+  readonly place: Option.Option<number>
+}
+
+const isAnswerFailure = Schema.is(InputAnswerFailure)
+
+/**
+ * Reads why an answer did not go through. The server's own refusals of an answer each say what
+ * to do in one plain sentence and name the question they are about (`InputAnswerFailure`,
+ * `packages/contracts/src/rpc.ts`); those words are said as they are. Anything else (the request
+ * was settled meanwhile, the server could not be reached) names no question and gets one
+ * sentence that covers them.
+ */
+export const refusedOf = (tried: Attempt, failure: ProductFailure): Refusal =>
+  isAnswerFailure(failure)
+    ? { ...tried, words: failure.message, place: asking.refusedAt(failure) }
+    : {
+        ...tried,
+        words: 'That answer did not go through. It may already be answered.',
+        place: Option.none(),
+      }
 
 /**
  * What is on its way after one try ended without going through: nothing, when it was that try;
@@ -152,7 +145,11 @@ export interface Spoken {
 /** One row of the Thread: a message, or the answer to a question as a row of its own. */
 export type Line = Data.TaggedEnum<{
   Said: { readonly key: string }
-  Answer: { readonly request: InputRequest; readonly answer: string; readonly at: number }
+  Answer: {
+    readonly request: InputRequest
+    readonly answers: Arr.NonEmptyReadonlyArray<InputAnswer>
+    readonly at: number
+  }
 }>
 export const Line = Data.taggedEnum<Line>()
 
@@ -160,7 +157,7 @@ export const Line = Data.taggedEnum<Line>()
 const answerOf = (request: InputRequest): Option.Option<Extract<Line, { _tag: 'Answer' }>> =>
   InputRequestState.guards.Answered(request.state)
     ? Option.some(
-        Line.Answer({ request, answer: request.state.answer, at: request.state.answeredAt }),
+        Line.Answer({ request, answers: request.state.answers, at: request.state.answeredAt }),
       )
     : Option.none()
 
@@ -223,16 +220,25 @@ export const standOf = (leaving: boolean, tucked: boolean): Stand => {
 }
 
 /**
- * How one row stands: on offer, the one whose answer is on its way, or standing back while
- * another answer (a row's, or the Person's own words from the composer) is.
+ * How one row stands: on offer, chosen (it is in the draft of the question that is up), or
+ * standing back because the answers are on their way and nothing more can be chosen.
  */
 export type Standing = 'open' | 'chosen' | 'back'
 
-export const standingOf = (label: string, sending: Option.Option<string>): Standing =>
-  Option.match(sending, {
-    onNone: () => 'open',
-    onSome: (said) => (said === label ? 'chosen' : 'back'),
-  })
+/** A chosen row stays chosen while the answers are on their way; the others stand back. */
+export const standingOf = (chosen: boolean, busy: boolean): Standing => {
+  if (chosen) return 'chosen'
+  return busy ? 'back' : 'open'
+}
+
+/**
+ * What an answered request says in the Thread, as the bubble of whoever answered: one line for
+ * each question, in the questions' order. A question's picked options are joined with commas;
+ * words written for it (from the web, which has a field for them) are given as they are. A
+ * request of one question is that one line.
+ */
+export const repliedWords = (answers: Arr.NonEmptyReadonlyArray<InputAnswer>): string =>
+  answers.map(asking.said).join('\n')
 
 /** The card is never taller than this, however large the screen. */
 const TALLEST = 560

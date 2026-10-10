@@ -1,10 +1,15 @@
-import type { InputOption, InputRequest } from '@vivid/contracts'
+import type { InputAnswer, InputOption, InputRequest } from '@vivid/contracts'
+import { asking } from '@vivid/state'
 import { nativeMetrics as m } from '@vivid/tokens/native'
-import type { Option } from 'effect'
+import { Option, type Array as Arr } from 'effect'
+import { Check, ChevronLeft } from 'lucide-react-native'
 import { useState } from 'react'
 import { ScrollView, useWindowDimensions, View } from 'react-native'
 import Animated, {
   Easing,
+  FadeIn,
+  FadeOut,
+  LayoutAnimationConfig,
   ReduceMotion,
   useAnimatedReaction,
   useAnimatedStyle,
@@ -18,8 +23,15 @@ import { scheduleOnRN } from 'react-native-worklets'
 import { useTheme } from '../../theme'
 import { COMPOSER_CLEAR, COMPOSER_SIDE } from '../../ui/Composer'
 import { HANG } from '../../ui/Presence'
-import { EDGE, Label, Press } from '../../ui/ui'
-import { KEYBOARD_RESERVE, standingOf, standOf, tallestOf, type Standing } from './asked'
+import { EDGE, Label, Press, TARGET } from '../../ui/ui'
+import {
+  KEYBOARD_RESERVE,
+  standingOf,
+  standOf,
+  tallestOf,
+  type Refusal,
+  type Standing,
+} from './asked'
 
 /**
  * The one clock the card and the foot of the conversation move on: the reference's
@@ -31,6 +43,18 @@ const RISE = {
   easing: Easing.out(Easing.cubic),
   reduceMotion: ReduceMotion.System,
 } as const
+
+/**
+ * One question giving way to the next, or to the one before: what the card holds fades out as
+ * what replaces it fades in, over 160 ms, in place. Nothing slides, so the card reads as one
+ * card being asked the next thing, not as a stack of cards. With reduced motion it simply
+ * changes. The card's own height follows on the card's clock (`RISE`).
+ */
+const SWAP_IN = FadeIn.duration(160).reduceMotion(ReduceMotion.System)
+const SWAP_OUT = FadeOut.duration(160).reduceMotion(ReduceMotion.System)
+
+/** The button that moves on from a question several options may be chosen for. */
+const BUTTON = { height: 46, corner: 14, over: 10 } as const
 
 /** How much narrower than the composer's shape the card is, at each side. */
 const INSET = 10
@@ -84,8 +108,10 @@ interface ChoicesProps {
   readonly request: InputRequest
   /** It is no longer the one that is up: the card slides away and then says so (`onGone`). */
   readonly leaving: boolean
-  /** The answer that is on its way: a row's label, or the Person's own words. */
-  readonly sending: Option.Option<string>
+  /** The answers are on their way: nothing more can be chosen until that try ends. */
+  readonly busy: boolean
+  /** The last try that did not go through; it may name the question to go back to. */
+  readonly refusal: Option.Option<Refusal>
   /**
    * The measured height of the composer's dock (`ui/Composer.tsx`), which is the last thing in
    * the Thread's column: the card is anchored to it, so it stays on the composer when the
@@ -97,17 +123,29 @@ interface ChoicesProps {
    * thread; the conversation keeps that much clear under its newest words.
    */
   readonly covered: SharedValue<number>
-  readonly onAnswer: (label: string) => void
+  /** Every question has its answer: send them, in the questions' order. */
+  readonly onSend: (answers: Arr.NonEmptyReadonlyArray<InputAnswer>) => void
   /** The card has slid away. */
   readonly onGone: () => void
 }
 
 /**
- * The choices of a question from Vivid, as a card that rises from behind the composer while the
- * question waits on the Person looking at it. It holds a grabber, the question's words and the
- * rows, and nothing else. The question is also Vivid's message in the conversation (`Asked`,
- * `Question.tsx`), and words of the Person's own go in the composer, which answers the question
- * while the card is up.
+ * What Vivid is asking, as a card that rises from behind the composer while the request waits on
+ * the Person looking at it. A request carries one to four questions, and the card asks them one
+ * at a time: the question's words, its options as rows, and, with more than one question, which
+ * of them this is ("1 of 3") and a way back to the one before. The questions are also Vivid's
+ * message in the conversation (`Asked`, `Question.tsx`).
+ *
+ * Answering one at a time, and sending every answer together at the end, is the model both
+ * clients share (`asking`, `@vivid/state`), after T3 Code's
+ * `ComposerPendingUserInputPanel.tsx`: a question that takes one option moves on by itself a
+ * moment after the press (`ADVANCE_AFTER`), and one that takes several has a button to move on.
+ *
+ * The composer is not part of answering. What the Person sends from it is an ordinary message:
+ * the server withdraws the waiting request when it takes that message, the card slides away,
+ * and Vivid reads the message right after its own questions. So a reply both skips the
+ * questions and answers them in the Person's own words, and the phone has no field for words
+ * inside the card. A question that offers no options says so, and is answered that way.
  *
  * Ported from T3 Code mobile `src/features/threads/PendingUserInputCard.tsx`
  * (`PendingUserInputCard`), mechanism kept:
@@ -145,8 +183,12 @@ interface ChoicesProps {
  *   the composer, and that strip is always empty room: the last row ends above the composer's
  *   top edge, and when the rows do not fit the card's most height they scroll inside it, as the
  *   reference's do, until the last one is wholly in view.
- * - No kicker, no field and no submit button: one press on a row answers. An answer
- *   that did not go through is said over the composer (`screen/Chat.tsx`), not in the card.
+ * - The reference lists every question in one scrolling card with a field under each and one
+ *   "Submit answers" button. A phone's card over a composer has room for one question, so it
+ *   takes the reference's web arrangement instead (one at a time, with its place and a way
+ *   back), and it has no field: the composer under it is the field.
+ * - An answer that did not go through is said over the composer (`screen/Chat.tsx`), not in the
+ *   card, and the card goes back to the question the refusal names.
  */
 
 /**
@@ -165,6 +207,69 @@ function useTallest(dock: number): number {
 }
 
 /**
+ * Answering a request's questions one at a time (`asking`, `@vivid/state`), as the card holds
+ * it: where the Person is and what they have picked, the moment a single press is shown before
+ * the card moves on, and going back to a question a refusal names.
+ *
+ * A question that takes one option moves on by itself `ADVANCE_AFTER` after the press, so the
+ * Person sees what they pressed; on the last question that sends. What moving on comes to is
+ * worked out at the press, from what was just picked, and only carried out later, so nothing
+ * that happens in between can change it; nothing can be pressed meanwhile (`moving`). The move
+ * is not dropped if the card is taken away in that moment: moving to a question of a card that
+ * is gone does nothing, and answers the Person has just finished giving are still theirs to
+ * send (a request settled meanwhile refuses them, and nothing is said about a request that is
+ * no longer up).
+ *
+ * A refusal is followed while rendering, once for each try (React's own way to follow a value
+ * without an effect): when it names a question, that question is put back up with every pick
+ * kept.
+ */
+function useAnswering(
+  request: InputRequest,
+  refusal: Option.Option<Refusal>,
+  onSend: (answers: Arr.NonEmptyReadonlyArray<InputAnswer>) => void,
+) {
+  const { questions } = request
+  const [drafting, setDrafting] = useState(() => asking.begin(questions))
+  const [moving, setMoving] = useState(false)
+  const [heeded, setHeeded] = useState(Option.none<number>())
+  if (Option.isSome(refusal) && !Option.contains(heeded, refusal.value.attempt)) {
+    setHeeded(Option.some(refusal.value.attempt))
+    if (Option.isSome(refusal.value.place)) {
+      setDrafting(asking.returnTo(drafting, refusal.value.place.value))
+    }
+  }
+
+  function take(step: asking.Step) {
+    asking.Step.$match(step, {
+      Stay: () => undefined,
+      Next: ({ asking: next }) => setDrafting(next),
+      Send: ({ answers }) => onSend(answers),
+    })
+  }
+
+  function pick(label: string) {
+    const picked = asking.press(questions, drafting, label)
+    setDrafting(picked)
+    if (asking.progressOf(questions, picked).question.selection === 'Several') return
+    const step = asking.advance(questions, picked)
+    setMoving(true)
+    setTimeout(() => {
+      setMoving(false)
+      take(step)
+    }, asking.ADVANCE_AFTER)
+  }
+
+  return {
+    progress: asking.progressOf(questions, drafting),
+    moving,
+    pick,
+    next: () => take(asking.advance(questions, drafting)),
+    back: () => setDrafting(asking.back(drafting)),
+  }
+}
+
+/**
  * The window and the card in it. The window is as wide as the conversation and clips what is
  * inside it; its foot is `TUCK` behind the composer's top edge. The card sits at the window's
  * foot and is translated down by whatever part of it is not showing, so it leaves through the
@@ -178,13 +283,15 @@ function useTallest(dock: number): number {
 export function Choices({
   request,
   leaving,
-  sending,
+  busy,
+  refusal,
   dock,
   covered,
-  onAnswer,
+  onSend,
   onGone,
 }: ChoicesProps) {
   const [tucked, setTucked] = useState(false)
+  const answering = useAnswering(request, refusal, onSend)
   const tallest = useTallest(dock)
   // What slides, measured straight from its layout: the distance it travels.
   const height = useSharedValue(0)
@@ -206,7 +313,10 @@ export function Choices({
     () => Math.max(0, showing.get() - HEADROOM - OVERHANG),
     (over) => covered.set(over),
   )
-  const held = tucked || leaving
+  // Tucked, the rows are still there under the window's foot, and must not be pressed; nor may
+  // those of a request that has just been settled, here or anywhere else, or whose answers are
+  // on their way, or in the moment a pressed option is shown before the card moves on.
+  const held = tucked || leaving || busy || answering.moving
   return (
     <View
       // A card that is leaving is no longer a way to answer: not to a finger, and not to a
@@ -232,16 +342,16 @@ export function Choices({
         style={[{ flexShrink: 1, paddingTop: HEADROOM }, slid]}
       >
         <Surface
-          request={request}
-          // Tucked, the rows are still there under the window's foot, and must not be pressed;
-          // nor may those of a request that has just been settled, here or anywhere else.
+          progress={answering.progress}
           rows={held ? 'held' : 'pressable'}
           tucked={tucked}
+          busy={busy}
           tallest={tallest}
-          sending={sending}
-          onAnswer={onAnswer}
+          onPick={answering.pick}
+          onNext={answering.next}
         />
         <Grabber tucked={tucked} disabled={leaving} onPress={() => setTucked((now) => !now)} />
+        <Place progress={answering.progress} held={held} onBack={answering.back} />
       </Animated.View>
     </View>
   )
@@ -253,26 +363,32 @@ export function Choices({
  * composer. It is opaque on purpose, as the reference's is: it lies over the conversation with
  * no blur behind it, and a translucent card would show the message under it through the rows.
  *
+ * Under the grabber's row it holds the question that is up (`Current`), keyed by the question's
+ * place: moving to another question takes the one out and puts the other in, and the two
+ * cross-fade (`SWAP_IN`, `SWAP_OUT`). The first question is simply there when the card rises.
+ *
  * The shadow is written here and is not one of `ui/elevation.ts`'s tiers: those fall downward,
  * and this is the one shape in the app whose shadow falls up, onto the conversation it covers.
  */
 function Surface({
-  request,
+  progress,
   rows,
   tucked,
+  busy,
   tallest,
-  sending,
-  onAnswer,
+  onPick,
+  onNext,
 }: {
-  request: InputRequest
+  progress: asking.Progress
+  /** The rows can be pressed, or are there but out of reach. */
+  rows: Reach
   /** Only the grabber's strip is showing, so the head's words are not drawn half cut. */
   tucked: boolean
-  /** The rows can be pressed, or are there but out of reach. */
-  rows: 'pressable' | 'held'
+  busy: boolean
   /** The most of the card that may stand over the composer. Past it the rows scroll inside. */
   tallest: number
-  sending: Option.Option<string>
-  onAnswer: (label: string) => void
+  onPick: (label: string) => void
+  onNext: () => void
 }) {
   const { colors: c } = useTheme()
   return (
@@ -298,30 +414,228 @@ function Surface({
         boxShadow: '0 -10px 30px -18px rgba(0, 0, 0, 0.3)',
       }}
     >
-      {/* The grabber's row. The grabber itself is laid over it from outside (`Grabber`). */}
+      {/* The grabber's row. The grabber, the way back and the count are laid over it from
+          outside (`Grabber`, `Place`). */}
       <View style={{ height: GRAB }} />
-      <Title question={request.question} shown={!tucked} />
-      <ScrollView
-        // A card with more rows than fit scrolls inside itself, as the reference's does.
-        bounces={false}
-        nestedScrollEnabled
-        keyboardShouldPersistTaps="handled"
-        pointerEvents={rows === 'held' ? 'none' : 'auto'}
-        accessibilityElementsHidden={rows === 'held'}
-        importantForAccessibility={rows === 'held' ? 'no-hide-descendants' : 'auto'}
-        style={{ flexShrink: 1 }}
-        contentContainerStyle={{ gap: ROW.gap }}
-      >
-        {request.options.map((option) => (
-          <Row
-            key={option.label}
-            option={option}
-            reach={rows === 'held' ? 'held' : 'pressable'}
-            standing={standingOf(option.label, sending)}
-            onPress={() => onAnswer(option.label)}
+      <LayoutAnimationConfig skipEntering>
+        <Animated.View
+          key={progress.at}
+          entering={SWAP_IN}
+          exiting={SWAP_OUT}
+          style={{ flexShrink: 1 }}
+        >
+          <Current
+            progress={progress}
+            rows={rows}
+            tucked={tucked}
+            busy={busy}
+            onPick={onPick}
+            onNext={onNext}
           />
-        ))}
-      </ScrollView>
+        </Animated.View>
+      </LayoutAnimationConfig>
+    </View>
+  )
+}
+
+/** Whether a card's controls can be pressed, or are there but out of reach. */
+type Reach = 'pressable' | 'held'
+
+/**
+ * One question as the card asks it: its words at the head, its options as rows that scroll
+ * under the head when they do not fit, and, for a question several options may be chosen for,
+ * the button that moves on at the foot. A question that offers no options has a line in their
+ * place saying how it is answered.
+ */
+function Current({
+  progress,
+  rows,
+  tucked,
+  busy,
+  onPick,
+  onNext,
+}: {
+  progress: asking.Progress
+  rows: Reach
+  tucked: boolean
+  busy: boolean
+  onPick: (label: string) => void
+  onNext: () => void
+}) {
+  const { question } = progress
+  const picked = asking.pickedIn(progress.draft)
+  const several = question.selection === 'Several'
+  return (
+    <>
+      <Title question={question.question} shown={!tucked} />
+      {question.options.length === 0 ? (
+        <Unoffered />
+      ) : (
+        <ScrollView
+          // A card with more rows than fit scrolls inside itself, as the reference's does.
+          bounces={false}
+          nestedScrollEnabled
+          keyboardShouldPersistTaps="handled"
+          pointerEvents={rows === 'held' ? 'none' : 'auto'}
+          accessibilityElementsHidden={tucked}
+          importantForAccessibility={tucked ? 'no-hide-descendants' : 'auto'}
+          style={{ flexShrink: 1 }}
+          contentContainerStyle={{ gap: ROW.gap }}
+        >
+          {question.options.map((option) => (
+            <Row
+              key={option.label}
+              option={option}
+              several={several}
+              reach={rows}
+              standing={standingOf(picked.includes(option.label), busy)}
+              onPress={() => onPick(option.label)}
+            />
+          ))}
+        </ScrollView>
+      )}
+      {several && question.options.length > 0 && (
+        <Onward
+          last={progress.last}
+          ready={progress.canAdvance}
+          reach={tucked ? 'held' : rows}
+          onPress={onNext}
+        />
+      )}
+    </>
+  )
+}
+
+/**
+ * What stands in the rows' place for a question that offers no options. Nothing in the card can
+ * answer it: the Person answers in their own words from the composer under the card, and that
+ * reply stands for the whole request (`Choices`).
+ */
+function Unoffered() {
+  return (
+    <Label size="label" tone="ink-3" style={{ paddingHorizontal: ROW.side, paddingBottom: 4 }}>
+      Reply below in your own words.
+    </Label>
+  )
+}
+
+/**
+ * The button that moves on from a question several options may be chosen for: "Next", or "Send"
+ * on the last question, where moving on sends every answer. It is at the card's foot, under the
+ * rows and over the room behind the composer, and does nothing until at least one option is
+ * chosen. A question that takes one option has no button; its press moves on.
+ */
+function Onward({
+  last,
+  ready,
+  reach,
+  onPress,
+}: {
+  /** Moving on from this question sends the answers. */
+  last: boolean
+  /** At least one option is chosen. */
+  ready: boolean
+  reach: Reach
+  onPress: () => void
+}) {
+  const { colors: c } = useTheme()
+  const open = ready && reach === 'pressable'
+  return (
+    <Press
+      accessibilityRole="button"
+      accessibilityState={{ disabled: !open }}
+      disabled={!open}
+      depth={0.96}
+      onPress={onPress}
+      containerStyle={{ marginTop: BUTTON.over }}
+      style={{
+        height: BUTTON.height,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: BUTTON.corner,
+        borderCurve: 'continuous',
+        backgroundColor: c.primary,
+        opacity: open ? 1 : 0.4,
+      }}
+    >
+      <Label size="body" tone="ink-on-accent" style={{ fontWeight: m['weight-title'] }}>
+        {last ? 'Send' : 'Next'}
+      </Label>
+    </Press>
+  )
+}
+
+/**
+ * Where the Person is in a request of several questions, laid over the leading end of the
+ * grabber's row: from the second question on a way back to the one before, with what was picked
+ * there kept, and then which question this is ("2 of 3"), quietly. A request of one question
+ * has neither.
+ *
+ * Like the grabber it is laid over the card from the view that slides, so the way back is a
+ * full 44-point target (the row and the clear `HEADROOM` over it) with every point inside its
+ * parent. It is drawn after the grabber and so takes its own corner of the grabber's target.
+ */
+function Place({
+  progress,
+  held,
+  onBack,
+}: {
+  progress: asking.Progress
+  /** The card's controls are out of reach. */
+  held: boolean
+  onBack: () => void
+}) {
+  const { colors: c } = useTheme()
+  if (progress.of < 2) return null
+  return (
+    <View
+      pointerEvents="box-none"
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: COMPOSER_SIDE + INSET,
+        height: HEADROOM + GRAB,
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+      }}
+    >
+      {!progress.first && (
+        <Press
+          accessibilityRole="button"
+          accessibilityLabel="Previous question"
+          accessibilityState={{ disabled: held }}
+          disabled={held}
+          onPress={onBack}
+          style={({ pressed }) => ({
+            width: TARGET,
+            height: HEADROOM + GRAB,
+            paddingTop: HEADROOM + EDGE,
+            alignItems: 'center',
+            justifyContent: 'center',
+            opacity: pressed ? 0.6 : 1,
+          })}
+        >
+          <ChevronLeft pointerEvents="none" size={18} strokeWidth={2} color={c['ink-2']} />
+        </Press>
+      )}
+      <View
+        pointerEvents="none"
+        style={{
+          height: GRAB + EDGE,
+          justifyContent: 'center',
+          // With no way back before it, it starts where the rows' labels start.
+          paddingLeft: progress.first ? ROW.side * 2 : 0,
+        }}
+      >
+        <Label
+          size="micro"
+          tone="ink-3"
+          accessibilityLabel={`Question ${progress.at + 1} of ${progress.of}`}
+          style={{ fontVariant: ['tabular-nums'] }}
+        >
+          {`${progress.at + 1} of ${progress.of}`}
+        </Label>
+      </View>
     </View>
   )
 }
@@ -422,7 +736,7 @@ function Grabber({
   )
 }
 
-/** What each standing looks like: the fill, and the ring round the row that was chosen. */
+/** What each standing looks like: the fill, and the ring round a row that is chosen. */
 const PAINT = {
   open: { fill: 'subtle', ring: false },
   back: { fill: 'subtle', ring: false },
@@ -430,31 +744,37 @@ const PAINT = {
 } as const satisfies Record<Standing, { fill: 'subtle' | 'accent-soft'; ring: boolean }>
 
 /**
- * One choice: its label, and what picking it means in a smaller line under it when the request
- * gave one. One press answers with the label. While its answer is on its way the row is tinted
- * with the accent inside a ring of it, and the others stand back; it is the request's record
- * that takes the card away, not the call returning, so no row can be pressed a second time.
+ * One option: its label, and what picking it means in a smaller line under it when the question
+ * gave one. A chosen row is tinted with the accent inside a ring of it. Where several may be
+ * chosen a chosen row also has a check at its trailing end, so what is chosen is not said by
+ * colour alone, and a press takes the choice back; where one may be chosen the press moves on.
+ * While the answers are on their way the rows that were not chosen stand back.
  *
  * It has no border and no keycap. The ring is a border that is always there, clear until the row
  * is chosen, so choosing a row never changes its size.
  */
 function Row({
   option,
+  several,
   reach,
   standing,
   onPress,
 }: {
   option: InputOption
-  /** Whether the card's rows can be pressed at all (`Surface`, `rows`). */
-  reach: 'pressable' | 'held'
+  /** Several of the question's options may be chosen, so this one is a checkbox. */
+  several: boolean
+  /** Whether the card's rows can be pressed at all (`Current`, `rows`). */
+  reach: Reach
   standing: Standing
   onPress: () => void
 }) {
   const { colors: c } = useTheme()
   const paint = PAINT[standing]
+  const chosen = standing === 'chosen'
   // A row out of reach is disabled as well as untouchable: a switch control or a keyboard
-  // reaches a control by other ways than a touch.
-  const open = standing === 'open' && reach === 'pressable'
+  // reaches a control by other ways than a touch. A chosen row can be pressed again only where
+  // that takes the choice back.
+  const open = reach === 'pressable' && (standing === 'open' || (chosen && several))
   return (
     <Animated.View
       style={{
@@ -464,17 +784,19 @@ function Row({
       }}
     >
       <Press
-        accessibilityRole="button"
+        accessibilityRole={several ? 'checkbox' : 'button'}
         accessibilityLabel={[option.label, option.detail]
           .filter((part) => part.length > 0)
           .join(', ')}
-        accessibilityState={{ disabled: !open, busy: standing === 'chosen' }}
+        accessibilityState={several ? { checked: chosen, disabled: !open } : { disabled: !open }}
         disabled={!open}
         depth={0.96}
         onPress={onPress}
         style={{
           minHeight: ROW.height,
-          justifyContent: 'center',
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
           paddingVertical: ROW.vertical - RING,
           paddingHorizontal: ROW.side - RING,
           borderRadius: ROW.corner,
@@ -484,13 +806,21 @@ function Row({
           backgroundColor: c[paint.fill],
         }}
       >
-        <Label size="body" style={{ fontSize: 15, lineHeight: 20, fontWeight: m['weight-title'] }}>
-          {option.label}
-        </Label>
-        {option.detail.length > 0 && (
-          <Label size="label" tone="ink-3">
-            {option.detail}
+        <View style={{ flex: 1 }}>
+          <Label
+            size="body"
+            style={{ fontSize: 15, lineHeight: 20, fontWeight: m['weight-title'] }}
+          >
+            {option.label}
           </Label>
+          {option.detail.length > 0 && (
+            <Label size="label" tone="ink-3">
+              {option.detail}
+            </Label>
+          )}
+        </View>
+        {several && chosen && (
+          <Check pointerEvents="none" size={18} strokeWidth={2} color={c.primary} />
         )}
       </Press>
     </Animated.View>

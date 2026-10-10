@@ -1,24 +1,26 @@
 import {
+  Conflict,
+  InputAnswer,
   InputRequestId,
   InputRequestState,
   PersonId,
   ThreadId,
   type InputRequest,
 } from '@vivid/contracts'
+import { InputAnswerSeveralForbidden } from '@vivid/contracts/rpc'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
 import {
   afterFailure,
   Hold,
-  hasChoices,
   Line,
   linesOf,
   mayAnswer,
   type Spoken,
   holdOf,
   KEYBOARD_RESERVE,
-  Send,
-  sendOf,
+  refusedOf,
+  repliedWords,
   standingOf,
   standOf,
   tallestOf,
@@ -31,7 +33,7 @@ const them = { id: PersonId.make('them'), name: 'Bisi', image: null }
 const waiting = InputRequestState.cases.Waiting.make({})
 const answered = InputRequestState.cases.Answered.make({
   answeredBy: me,
-  answer: 'Work',
+  answers: [InputAnswer.cases.Chosen.make({ labels: ['Work'] })],
   answeredAt: 2,
 })
 const withdrawn = InputRequestState.cases.Withdrawn.make({ withdrawnAt: 2 })
@@ -40,12 +42,17 @@ const request = (id: string, patch: Partial<InputRequest> = {}): InputRequest =>
   id: InputRequestId.make(id),
   threadId: ThreadId.make('thread'),
   runId: null,
-  question: 'Which inbox should I start with?',
-  options: [
-    { label: 'Work', detail: '' },
-    { label: 'Personal', detail: '' },
+  questions: [
+    {
+      question: 'Which inbox should I start with?',
+      options: [
+        { label: 'Work', detail: '' },
+        { label: 'Personal', detail: '' },
+      ],
+      selection: 'One',
+      allowsOwnAnswer: true,
+    },
   ],
-  allowsOwnAnswer: true,
   askedOf: me,
   state: waiting,
   createdAt: 1,
@@ -79,7 +86,7 @@ describe('holdOf', () => {
   })
 
   it('draws the held request from its newest record while it is up', () => {
-    const newer = request('a', { question: 'Which one?' })
+    const newer = request('a', { createdAt: 5 })
     expect(holdOf(Option.some(request('a')), Option.some(newer))).toEqual(
       Hold.Up({ request: newer }),
     )
@@ -98,41 +105,9 @@ describe('holdOf', () => {
   })
 })
 
-describe('hasChoices', () => {
-  it('has no card for a request that offers nothing to press', () => {
-    expect(hasChoices(request('a', { options: [] }))).toBe(false)
-    expect(hasChoices(request('a'))).toBe(true)
-  })
-})
-
-describe('sendOf', () => {
-  it('answers the request that is up when it takes words of one own', () => {
-    const up = request('a')
-    expect(sendOf(Hold.Up({ request: up }), Option.some(up))).toEqual(
-      Send.Answer({ id: InputRequestId.make('a') }),
-    )
-  })
-
-  it('sends an ordinary message when the request takes only its choices', () => {
-    const up = request('a', { allowsOwnAnswer: false })
-    expect(sendOf(Hold.Up({ request: up }), Option.some(up))).toEqual(Send.Message())
-  })
-
-  it('sends an ordinary message when nothing is waiting, card leaving or not', () => {
-    expect(sendOf(Hold.Free(), Option.none())).toEqual(Send.Message())
-    expect(sendOf(Hold.Leaving({ request: request('a') }), Option.none())).toEqual(Send.Message())
-  })
-
-  it('waits while one card leaves and the next request is not up yet', () => {
-    const next = Option.some(request('b'))
-    expect(sendOf(Hold.Leaving({ request: request('a') }), next)).toEqual(Send.Wait())
-    expect(sendOf(Hold.Free(), next)).toEqual(Send.Wait())
-  })
-})
-
 describe('afterFailure', () => {
-  const a = { attempt: 1, id: InputRequestId.make('a'), words: 'Work' }
-  const b = { attempt: 2, id: InputRequestId.make('b'), words: 'Monday' }
+  const a = { attempt: 1, id: InputRequestId.make('a') }
+  const b = { attempt: 2, id: InputRequestId.make('b') }
 
   it('clears the try that failed', () => {
     expect(afterFailure(Option.some(a), 1)).toEqual(Option.none())
@@ -144,6 +119,48 @@ describe('afterFailure', () => {
 
   it('has nothing to clear when nothing is on its way', () => {
     expect(afterFailure(Option.none(), 1)).toEqual(Option.none())
+  })
+})
+
+describe('refusedOf', () => {
+  const tried = { attempt: 3, id: InputRequestId.make('a') }
+
+  it('says the server refusal as it is and names its question', () => {
+    const failure = new InputAnswerSeveralForbidden({
+      id: tried.id,
+      questionIndex: 1,
+      message: 'Choose one option for this question.',
+    })
+    expect(refusedOf(tried, failure)).toEqual({
+      ...tried,
+      words: 'Choose one option for this question.',
+      place: Option.some(1),
+    })
+  })
+
+  it('names no question for any other failure', () => {
+    const failure = new Conflict({ message: 'Input request already answered' })
+    expect(refusedOf(tried, failure)).toEqual({
+      ...tried,
+      words: 'That answer did not go through. It may already be answered.',
+      place: Option.none(),
+    })
+  })
+})
+
+describe('repliedWords', () => {
+  it('is the picked label for a request of one question', () => {
+    expect(repliedWords([InputAnswer.cases.Chosen.make({ labels: ['Work'] })])).toBe('Work')
+  })
+
+  it('is one line for each question, picks joined and written words as they are', () => {
+    expect(
+      repliedWords([
+        InputAnswer.cases.Chosen.make({ labels: ['Work'] }),
+        InputAnswer.cases.Chosen.make({ labels: ['Monday', 'Friday'] }),
+        InputAnswer.cases.Written.make({ words: 'Lunch on Friday' }),
+      ]),
+    ).toBe('Work\nMonday, Friday\nLunch on Friday')
   })
 })
 
@@ -165,11 +182,18 @@ describe('linesOf', () => {
   })
   const answeredAt = (id: string, at: number) =>
     request(id, {
-      state: InputRequestState.cases.Answered.make({ answeredBy: me, answer: id, answeredAt: at }),
+      state: InputRequestState.cases.Answered.make({
+        answeredBy: me,
+        answers: [InputAnswer.cases.Chosen.make({ labels: [id] })],
+        answeredAt: at,
+      }),
     })
   const order = (lines: ReadonlyArray<Line>) =>
     lines.map((line) =>
-      Line.$match(line, { Said: ({ key }) => key, Answer: ({ answer }) => `answer:${answer}` }),
+      Line.$match(line, {
+        Said: ({ key }) => key,
+        Answer: ({ request: asked }) => `answer:${asked.id}`,
+      }),
     )
 
   it('is the messages alone while nothing is answered', () => {
@@ -246,17 +270,17 @@ describe('standOf', () => {
 })
 
 describe('standingOf', () => {
-  it('is on offer while no answer is on its way', () => {
-    expect(standingOf('Work', Option.none())).toBe('open')
+  it('is on offer while it is not chosen and nothing is on its way', () => {
+    expect(standingOf(false, false)).toBe('open')
   })
 
-  it('is chosen when its own answer is on its way', () => {
-    expect(standingOf('Work', Option.some('Work'))).toBe('chosen')
+  it('is chosen when it is in the draft, sending or not', () => {
+    expect(standingOf(true, false)).toBe('chosen')
+    expect(standingOf(true, true)).toBe('chosen')
   })
 
-  it('stands back for another row and for words of the Person own', () => {
-    expect(standingOf('Work', Option.some('Personal'))).toBe('back')
-    expect(standingOf('Work', Option.some('skip that, just sort my inbox'))).toBe('back')
+  it('stands back while the answers are on their way', () => {
+    expect(standingOf(false, true)).toBe('back')
   })
 })
 

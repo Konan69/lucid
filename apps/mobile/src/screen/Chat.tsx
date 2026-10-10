@@ -4,6 +4,7 @@ import type { FlueConversationMessage } from '@flue/sdk'
 import {
   ThreadAudience,
   Workspace,
+  type InputAnswer,
   type InputRequest,
   type InputRequestId,
   type Thread,
@@ -11,7 +12,7 @@ import {
   type ThreadId,
 } from '@vivid/contracts'
 import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
-import { Option, Result } from 'effect'
+import { Option, Result, type Array as Arr } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { ScrollView, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
@@ -51,16 +52,15 @@ import { useTheme } from '../theme'
 import { useFirst, useFront, useMe } from '../workspace'
 import {
   afterFailure,
-  hasChoices,
   Hold,
   holdOf,
   Line,
   linesOf,
   mayAnswer,
-  Send,
-  sendOf,
+  refusedOf,
   upOf,
   type Attempt,
+  type Refusal,
 } from './chat/asked'
 import { isAway, newestWords } from './chat/away'
 import { Choices } from './chat/Choices'
@@ -350,82 +350,91 @@ function useSend(
 }
 
 /**
- * The question from Vivid whose choices are up over the composer, and answering it.
+ * The request from Vivid whose card is up over the composer, and answering it.
  *
  * `up` is the request that should be up (`upOf`). The card holds one request at a time and lets
- * go of it only once it has slid away, so the next question rises after the last has settled
- * (`holdOf`). What it holds follows `up` while rendering, which is React's own way to follow a
- * value without an effect: a free card takes the request that is up, and a request that is
- * leaving with no card to slide away (it offered no choices) is let go at once.
+ * go of it only once it has slid away, so the next request's card rises after the last has
+ * settled (`holdOf`). What it holds follows `up` while rendering, which is React's own way to
+ * follow a value without an effect: a free card takes the request that is up.
  *
- * An answer goes to the server as the request's answer, from a row or from the composer alike.
- * It is kept as on its way until the request's record says it is answered: it is the record that
- * takes the card away, not the call returning, so rows that woke up between the two could not be
- * pressed a second time.
+ * The answers to a request's questions go to the server together, once the card has one for
+ * each (`chat/Choices.tsx`). They are kept as on their way until the request's record says it
+ * is answered: it is the record that takes the card away, not the call returning, so rows that
+ * woke up between the two could not be pressed a second time.
  *
- * Each answer is one `Attempt`, and what ends is that attempt and nothing else (`afterFailure`).
- * A request can be settled somewhere else while its answer from here is still in flight; the
+ * Each send is one `Attempt`, and what ends is that attempt and nothing else (`afterFailure`).
+ * A request can be settled somewhere else while its answers from here are still in flight; the
  * next request is then up and may be answered before the first call comes back refused. That
- * late refusal used to clear whatever was on its way, which woke the second request's rows and
- * the composer in the middle of its own send. One request also takes one answer at a time
- * (`mayAnswer`): a row and the composer pressed together are a single answer. Which requests
- * have a call in flight is kept in a ref, read when a press happens and never while rendering,
- * because two presses can land before React has drawn the first.
+ * late refusal used to clear whatever was on its way, which woke the second request's rows in
+ * the middle of its own send. One request also takes one send at a time (`mayAnswer`). Which
+ * requests have a call in flight is kept in a ref, read when a press happens and never while
+ * rendering, because two presses can land before React has drawn the first.
+ *
+ * A refusal is kept with what to say and the question it names (`refusedOf`), against the
+ * request it was for, and is not said about any other.
+ *
+ * The composer is no part of this: what is sent from it while a request waits is an ordinary
+ * message, which the server answers by withdrawing the request (`Foot`).
  */
 function useAsking(up: Option.Option<InputRequest>) {
   const data = useLiveData()
   const [held, setHeld] = useState(up)
   const [pending, setPending] = useState<Option.Option<Attempt>>(Option.none())
-  const [refused, setRefused] = useState<Option.Option<InputRequestId>>(Option.none())
+  const [refused, setRefused] = useState<Option.Option<Refusal>>(Option.none())
   const flying = useRef(new Set<InputRequestId>())
   const attempts = useRef(0)
   const hold = holdOf(held, up)
   if (Hold.$is('Free')(hold) && Option.isSome(up)) setHeld(up)
-  if (Hold.$is('Leaving')(hold) && !hasChoices(hold.request)) setHeld(Option.none())
   // One function for the life of the Thread: the card's slide is timed again when it changes.
   const release = useCallback(() => setHeld(Option.none()), [])
 
-  /** Answers a request, and says whether the answer went through. */
-  async function answer(id: InputRequestId, words: string) {
-    if (!mayAnswer(flying.current, id)) return false
+  /** Sends a request's answers, one for each of its questions in their order. */
+  async function answer(id: InputRequestId, answers: Arr.NonEmptyReadonlyArray<InputAnswer>) {
+    if (!mayAnswer(flying.current, id)) return
     flying.current.add(id)
     attempts.current += 1
-    const attempt = attempts.current
+    const tried: Attempt = { attempt: attempts.current, id }
     commit()
     setRefused(Option.none())
-    setPending(Option.some({ attempt, id, words }))
-    const result = await data.change((client) => client.AnswerInput({ id, answer: words }))
+    setPending(Option.some(tried))
+    const result = await data.change((client) => client.AnswerInput({ id, answers }))
     flying.current.delete(id)
-    if (Result.isSuccess(result)) return true
-    setPending((current) => afterFailure(current, attempt))
-    setRefused(Option.some(id))
-    return false
+    if (Result.isSuccess(result)) return
+    setPending((current) => afterFailure(current, tried.attempt))
+    setRefused(Option.some(refusedOf(tried, result.failure)))
   }
+
+  /** What is kept against one request, when it is about that request. */
+  const about = <Kept extends { readonly id: InputRequestId }>(
+    kept: Option.Option<Kept>,
+    id: InputRequestId,
+  ) => Option.filter(kept, (one) => one.id === id)
 
   return {
     hold,
-    /** What the composer's send means now (`sendOf`). */
-    send: sendOf(hold, up),
-    /** The words on their way to one request, when they are. */
-    sendingTo: (id: InputRequestId) =>
-      Option.map(
-        Option.filter(pending, (sent) => sent.id === id),
-        (sent) => sent.words,
-      ),
-    /** An answer to the request that is up is on its way, so another cannot start. */
-    answering:
-      Hold.$is('Up')(hold) && Option.exists(pending, (sent) => sent.id === hold.request.id),
-    /** The last answer to the request that is up did not go through. */
-    refused: Hold.$is('Up')(hold) && Option.contains(refused, hold.request.id),
+    /** A request is waiting on this Person, whether or not its card is up yet. */
+    waiting: Option.isSome(up),
+    /** The answers to one request are on their way. */
+    sendingTo: (id: InputRequestId) => Option.isSome(about(pending, id)),
+    /** The last answers to one request did not go through. */
+    refusedBy: (id: InputRequestId) => about(refused, id),
+    /** The answers to the request that is up are on their way, so nothing else is sent. */
+    answering: Option.exists(Option.filter(Option.some(hold), Hold.$is('Up')), ({ request }) =>
+      Option.isSome(about(pending, request.id)),
+    ),
+    /** What to say when the last answers to the request that is up did not go through. */
+    refusal: Option.flatMap(Option.filter(Option.some(hold), Hold.$is('Up')), ({ request }) =>
+      about(refused, request.id),
+    ),
     answer,
     release,
   }
 }
 
 /**
- * The card over the composer, for what it holds (`useAsking`): the choices of the request that
- * is up, or of the one sliding away. A request that offers no choices has no card; the composer
- * alone answers it. It is keyed by the request, so each card starts untucked and measures itself.
+ * The card over the composer, for what it holds (`useAsking`): the questions of the request that
+ * is up, or of the one sliding away. It is keyed by the request, so each card starts on its
+ * first question, untucked, with nothing picked, and measures itself.
  *
  * It is drawn as a child of the Thread's column (`Conversation`), which holds the conversation
  * and the composer and ends at the keyboard, and it is anchored to the composer's measured dock
@@ -446,17 +455,18 @@ function Raised({
     Up: ({ request }) => Option.some({ request, leaving: false }),
     Leaving: ({ request }) => Option.some({ request, leaving: true }),
   })
-  if (Option.isNone(drawn) || Option.isNone(dock) || !hasChoices(drawn.value.request)) return null
+  if (Option.isNone(drawn) || Option.isNone(dock)) return null
   const { request, leaving } = drawn.value
   return (
     <Choices
       key={request.id}
       request={request}
       leaving={leaving}
-      sending={asking.sendingTo(request.id)}
+      busy={asking.sendingTo(request.id)}
+      refusal={asking.refusedBy(request.id)}
       dock={dock.value}
       covered={covered}
-      onAnswer={(label) => void asking.answer(request.id, label)}
+      onSend={(answers) => void asking.answer(request.id, answers)}
       onGone={asking.release}
     />
   )
@@ -532,8 +542,8 @@ function Conversation({
   const thread = Option.map(detail, (value) => value.thread)
   const sending = useSend(id, thread, agent, place)
   const { shared } = sending
-  // The question waiting on this Person, when there is one: its choices rise from behind the
-  // composer, and while they are up the composer may be its answer (`Foot`).
+  // The request waiting on this Person, when there is one: its questions rise from behind the
+  // composer as a card (`Raised`).
   const asking = useAsking(upOf(requestsOf(detail), me.person.id))
   // How far the choices stand over the foot of the conversation, which keeps that much clear.
   const covered = useSharedValue(0)
@@ -620,7 +630,6 @@ function Conversation({
         </View>
         <Raised asking={asking} dock={dock} covered={covered} />
         <Foot
-          place={place}
           typed={typed}
           writing={writing}
           shared={shared}
@@ -651,13 +660,14 @@ function Conversation({
  * The foot of a Thread: the composer, and over it what could not be done from it (an answer that
  * did not go through, a Stop that was refused).
  *
- * What the composer sends is decided here (`sendOf`). Ordinarily it is a message in the Thread.
- * While a question that takes words of the Person's own is up, it is that question's answer: the
- * composer says "Reply", and "skip that, just do this" is as good an answer as any row. In the
- * moment between one question's card leaving and the next one's rising it sends nothing (`Wait`).
+ * What the composer sends is always an ordinary message in the Thread, a waiting request or
+ * not. While a request waits it says "Reply": the server withdraws the request when it takes the
+ * message, the card slides away with whatever was picked in it, and Vivid reads the message
+ * right after its own questions, so "skip that, just do this" and an answer in the Person's own
+ * words are the same thing to send. Until 11 October 2026 the composer sent the request's answer
+ * while a question that took words of one's own was up, and could not skip it.
  */
 function Foot({
-  place,
   typed,
   writing,
   shared,
@@ -669,8 +679,6 @@ function Foot({
   onSpeak,
   onDock,
 }: {
-  /** Where this Thread's unsent words are kept on the phone (`data/drafts.ts`). */
-  place: string
   typed: string
   writing: boolean
   shared: boolean
@@ -689,24 +697,11 @@ function Foot({
 }) {
   // The name this Person or their Company gave Vivid, live.
   const vivid = useAppearance()
-  const { send } = asking
-
-  /**
-   * Answers the question that is up with what was typed. The words leave the composer as they
-   * go; if the answer does not go through they come back, unless the Person has started writing
-   * something else there since.
-   */
-  async function reply(request: InputRequestId, words: string) {
-    onType('')
-    const went = await asking.answer(request, words)
-    if (!went && draft.in(place).length === 0) draft.keep(place, words)
-  }
-
   return (
     <>
-      {asking.refused && (
+      {Option.isSome(asking.refusal) && (
         <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
-          <Notice message="That answer did not go through. It may already be answered." />
+          <Notice message={asking.refusal.value.words} />
         </View>
       )}
       {stopping.refused && (
@@ -718,21 +713,13 @@ function Foot({
         <Composer
           value={typed}
           autoFocus={writing}
-          placeholder={placeholderOf(send, shared, vivid.name)}
+          placeholder={placeholderOf(asking.waiting, shared, vivid.name)}
           working={working}
-          // Between one question's card leaving and the next one's rising nothing is sent: the
-          // words stay in the composer until it is plain what they would be an answer to.
-          disabled={waits || Send.$is('Wait')(send)}
+          disabled={waits}
           onChange={onType}
           // Emptying the composer, which `onSpeak` does, is also what removes this Thread's kept
           // draft.
-          onSend={() =>
-            Send.$match(send, {
-              Message: () => void onSpeak(typed.trim()),
-              Answer: ({ id }) => void reply(id, typed.trim()),
-              Wait: () => undefined,
-            })
-          }
+          onSend={() => void onSpeak(typed.trim())}
           onStop={() => void stopping.stop()}
         />
       </View>
@@ -748,16 +735,14 @@ function Foot({
 const held = (settled: boolean, pending: boolean): boolean => !settled || pending
 
 /**
- * What the empty composer says. While a question that takes words of the Person's own is up,
- * what is sent is its answer, so it says "Reply"; otherwise it says who a message goes to.
+ * What the empty composer says. While a request from Vivid waits on the Person (`asked`), what
+ * they send is their reply to it, in place of the card's answers, so it says "Reply"; otherwise
+ * it says who a message goes to.
  */
-const placeholderOf = (send: Send, shared: boolean, vivid: string): string =>
-  Send.$match(send, {
-    Answer: () => 'Reply',
-    // The next question is about to come up; the composer is held for that moment.
-    Wait: () => 'Reply',
-    Message: () => (shared ? `Message everyone and ${vivid}` : `Message ${vivid}`),
-  })
+const placeholderOf = (asked: boolean, shared: boolean, vivid: string): string => {
+  if (asked) return 'Reply'
+  return shared ? `Message everyone and ${vivid}` : `Message ${vivid}`
+}
 
 /** No conversation to open yet. One value, so the hook is not handed a new one each render. */
 const UNOPENED: UseFlueAgentOptions = {}
