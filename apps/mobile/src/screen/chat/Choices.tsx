@@ -63,6 +63,12 @@ const GRAB = 24
  * card below that edge is empty room and never a row.
  */
 const UNDER = 10
+/**
+ * The question at the head of the card: the room over it (under the grabber's row) and under it
+ * (over the first row), and the most lines it takes before it is cut short with an ellipsis. The
+ * contract allows a question 400 characters long; all of it is in the Thread, as Vivid's message.
+ */
+const TITLE = { over: 4, under: 12, lines: 4 } as const
 /** The system bar's own height under the status bar, in points. */
 const NAV = 44
 
@@ -98,9 +104,10 @@ interface ChoicesProps {
 
 /**
  * The choices of a question from Vivid, as a card that rises from behind the composer while the
- * question waits on the Person looking at it. It holds a grabber and the rows, and nothing else:
- * the question itself is Vivid's message in the conversation (`Asked`, `Question.tsx`), and words
- * of the Person's own go in the composer, which answers the question while the card is up.
+ * question waits on the Person looking at it. It holds a grabber, the question's words and the
+ * rows, and nothing else. The question is also Vivid's message in the conversation (`Asked`,
+ * `Question.tsx`), and words of the Person's own go in the composer, which answers the question
+ * while the card is up.
  *
  * Ported from T3 Code mobile `src/features/threads/PendingUserInputCard.tsx`
  * (`PendingUserInputCard`), mechanism kept:
@@ -138,7 +145,7 @@ interface ChoicesProps {
  *   the composer, and that strip is always empty room: the last row ends above the composer's
  *   top edge, and when the rows do not fit the card's most height they scroll inside it, as the
  *   reference's do, until the last one is wholly in view.
- * - No title, no question, no field and no submit button: one press on a row answers. An answer
+ * - No kicker, no field and no submit button: one press on a row answers. An answer
  *   that did not go through is said over the composer (`screen/Chat.tsx`), not in the card.
  */
 
@@ -229,6 +236,7 @@ export function Choices({
           // Tucked, the rows are still there under the window's foot, and must not be pressed;
           // nor may those of a request that has just been settled, here or anywhere else.
           rows={held ? 'held' : 'pressable'}
+          tucked={tucked}
           tallest={tallest}
           sending={sending}
           onAnswer={onAnswer}
@@ -251,11 +259,14 @@ export function Choices({
 function Surface({
   request,
   rows,
+  tucked,
   tallest,
   sending,
   onAnswer,
 }: {
   request: InputRequest
+  /** Only the grabber's strip is showing, so the head's words are not drawn half cut. */
+  tucked: boolean
   /** The rows can be pressed, or are there but out of reach. */
   rows: 'pressable' | 'held'
   /** The most of the card that may stand over the composer. Past it the rows scroll inside. */
@@ -289,6 +300,7 @@ function Surface({
     >
       {/* The grabber's row. The grabber itself is laid over it from outside (`Grabber`). */}
       <View style={{ height: GRAB }} />
+      <Title question={request.question} shown={!tucked} />
       <ScrollView
         // A card with more rows than fit scrolls inside itself, as the reference's does.
         bounces={false}
@@ -311,6 +323,56 @@ function Surface({
         ))}
       </ScrollView>
     </View>
+  )
+}
+
+/**
+ * The question the choices answer, at the head of the card: under the grabber's row and over the
+ * rows. The owner asked for it there (10 October 2026: "the title of the question should be on
+ * the card"). It is also still Vivid's message in the Thread (`Asked`, `Question.tsx`), which is
+ * what remains as history once the card has gone, so while the card is up the words are in both
+ * places.
+ *
+ * It is part of the card's fixed head: when the rows do not fit they scroll under it. It starts
+ * where the rows' labels start, not at the rows' edge. A long question takes at most
+ * `TITLE.lines` lines. Its lines are balanced where the platform can (Android's
+ * `textBreakStrategy`; iOS has no such setting for text).
+ *
+ * It is the card's heading for a screen reader, and the first thing in the card, so the card is
+ * read question first, then the choices, then the grabber.
+ *
+ * It takes one question's words and knows nothing else about the request, so a request that
+ * comes to carry several questions hands it the one being asked.
+ *
+ * Tucked, the strip over the composer is the grabber and a little under it, which would show the
+ * top of the first line and nothing else; the words go clear while the card is tucked and come
+ * back with it. They still slide with the card.
+ */
+function Title({ question, shown }: { question: string; shown: boolean }) {
+  return (
+    <Animated.View
+      accessibilityElementsHidden={!shown}
+      importantForAccessibility={shown ? 'auto' : 'no-hide-descendants'}
+      style={{
+        paddingHorizontal: ROW.side,
+        paddingTop: TITLE.over,
+        paddingBottom: TITLE.under,
+        opacity: shown ? 1 : 0,
+        transitionProperty: 'opacity',
+        transitionDuration: m['dur-fast'],
+      }}
+    >
+      <Label
+        accessibilityRole="header"
+        size="body"
+        numberOfLines={TITLE.lines}
+        ellipsizeMode="tail"
+        textBreakStrategy="balanced"
+        style={{ fontWeight: m['weight-strong'] }}
+      >
+        {question}
+      </Label>
+    </Animated.View>
   )
 }
 

@@ -236,7 +236,11 @@ export const standingOf = (label: string, sending: Option.Option<string>): Stand
 
 /** The card is never taller than this, however large the screen. */
 const TALLEST = 560
-/** Nor is it squeezed under this: two rows and the grabber stay reachable, and the rest scrolls. */
+/**
+ * Nor is it squeezed under this. The card's head (the grabber and the question, up to four
+ * lines) is fixed and the rows scroll in what is left, so at this floor a short question leaves
+ * about two rows in sight and a long one leaves the rows to be scrolled to.
+ */
 const SHORTEST = 160
 /** What is kept clear between the top of the card and what is above it. */
 const ABOVE = 12
