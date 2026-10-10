@@ -6,6 +6,7 @@ import * as AsyncResult from 'effect/unstable/reactivity/AsyncResult'
 import { PanelLeft } from 'lucide-react'
 import { lazy, Suspense, useSyncExternalStore } from 'react'
 import { live, LiveState, useLive, useLiveValue } from './data/live'
+import { pages } from './data/pages'
 import { panel } from './data/panel'
 import { Route, router } from './data/route'
 import { engine, link } from './data/runtime'
@@ -246,8 +247,9 @@ function Shell({ me }: { me: MeResponse }) {
               me={me}
               beside={beside}
               onTogglePanel={() => {
-                // Opening the panel is arriving at Vivid's computer, which turns it on.
-                if (!panel.isOpen()) wake()
+                // Opening the panel onto Vivid's computer is arriving at it, which turns it on.
+                // Opening it onto a page that was left in front is not.
+                if (!panel.isOpen() && pages.front() === 'computer') wake()
                 panel.toggle()
               }}
             />

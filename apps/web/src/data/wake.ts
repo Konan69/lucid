@@ -15,7 +15,9 @@ let waking = false
 export const wake = () => {
   if (waking) return
   waking = true
-  void run(wakeComputer()).finally(() => {
+  const done = () => {
     waking = false
-  })
+  }
+  // A refusal is a value and ends the first way; the second is for a program that died.
+  void run(wakeComputer()).then(done, done)
 }

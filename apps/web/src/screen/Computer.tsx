@@ -17,6 +17,7 @@ import { useCallback, useReducer, useState, useSyncExternalStore } from 'react'
 import { act } from '../data/app'
 import { change, changing, live, LiveState, useLive } from '../data/live'
 import { pages, type Front } from '../data/pages'
+import { wake } from '../data/wake'
 import { split } from '../data/split'
 import { orSay } from '../data/said'
 import { Button, IconButton } from '../ui/button'
@@ -62,6 +63,10 @@ const viewOf = (floating: boolean, full: boolean, front: Front): View => {
 /** Changes how the computer is seen. Leaving full view is part of every change but the one to it. */
 const show = (next: View) => {
   if (next === 'popout') {
+    // Popping out from a page brings the Computer forward, which is arriving at it and turns it
+    // on. Popping out the Computer already in front is the same view moved, and leaves a
+    // Computer the Person turned off as they left it.
+    if (pages.front() !== 'computer') wake()
     pages.toComputer()
     place.float()
   } else {
