@@ -18,7 +18,7 @@ import { ScrollView, View, type NativeScrollEvent, type NativeSyntheticEvent } f
 import { useIsFocused } from '@react-navigation/native'
 import Animated, {
   scrollTo,
-  useAnimatedProps,
+  useAnimatedStyle,
   useAnimatedReaction,
   useAnimatedRef,
   useSharedValue,
@@ -63,7 +63,7 @@ import {
   type Attempt,
 } from './chat/asked'
 import { isAway, newestWords } from './chat/away'
-import { Choices, OVERLAID } from './chat/Choices'
+import { Choices } from './chat/Choices'
 import { Message } from './chat/Message'
 import { Replied, spokenOf } from './chat/Question'
 import { Opening } from './home/First'
@@ -356,8 +356,7 @@ function useSend(
  * go of it only once it has slid away, so the next question rises after the last has settled
  * (`holdOf`). What it holds follows `up` while rendering, which is React's own way to follow a
  * value without an effect: a free card takes the request that is up, and a request that is
- * leaving with no card to slide away (it offered no choices, or the card is in the flow, where
- * it leaves by being taken out) is let go at once.
+ * leaving with no card to slide away (it offered no choices) is let go at once.
  *
  * An answer goes to the server as the request's answer, from a row or from the composer alike.
  * It is kept as on its way until the request's record says it is answered: it is the record that
@@ -382,7 +381,7 @@ function useAsking(up: Option.Option<InputRequest>) {
   const attempts = useRef(0)
   const hold = holdOf(held, up)
   if (Hold.$is('Free')(hold) && Option.isSome(up)) setHeld(up)
-  if (Hold.$is('Leaving')(hold) && !(OVERLAID && hasChoices(hold.request))) setHeld(Option.none())
+  if (Hold.$is('Leaving')(hold) && !hasChoices(hold.request)) setHeld(Option.none())
   // One function for the life of the Thread: the card's slide is timed again when it changes.
   const release = useCallback(() => setHeld(Option.none()), [])
 
@@ -427,12 +426,19 @@ function useAsking(up: Option.Option<InputRequest>) {
  * The card over the composer, for what it holds (`useAsking`): the choices of the request that
  * is up, or of the one sliding away. A request that offers no choices has no card; the composer
  * alone answers it. It is keyed by the request, so each card starts untucked and measures itself.
+ *
+ * It is drawn as a child of the Thread's column (`Conversation`), which holds the conversation
+ * and the composer and ends at the keyboard, and it is anchored to the composer's measured dock
+ * (`dock`). Until the dock has been laid out there is nothing to anchor to, and no card.
  */
 function Raised({
   asking,
+  dock,
   covered,
 }: {
   asking: ReturnType<typeof useAsking>
+  /** The height of the composer's dock, once it has been laid out. */
+  dock: Option.Option<number>
   covered: SharedValue<number>
 }) {
   const drawn = Hold.$match(asking.hold, {
@@ -440,7 +446,7 @@ function Raised({
     Up: ({ request }) => Option.some({ request, leaving: false }),
     Leaving: ({ request }) => Option.some({ request, leaving: true }),
   })
-  if (Option.isNone(drawn) || !hasChoices(drawn.value.request)) return null
+  if (Option.isNone(drawn) || Option.isNone(dock) || !hasChoices(drawn.value.request)) return null
   const { request, leaving } = drawn.value
   return (
     <Choices
@@ -448,11 +454,27 @@ function Raised({
       request={request}
       leaving={leaving}
       sending={asking.sendingTo(request.id)}
+      dock={dock.value}
       covered={covered}
       onAnswer={(label) => void asking.answer(request.id, label)}
       onGone={asking.release}
     />
   )
+}
+
+/**
+ * The height of the composer's dock as it was last laid out, which is what a question's choices
+ * are anchored to (`Raised`), and the way to say it was laid out. Nothing until the first
+ * layout. A layout that changed nothing is not a new height, and draws nothing again.
+ */
+function useDock() {
+  const [dock, setDock] = useState<Option.Option<number>>(Option.none())
+  const onDock = useCallback(
+    (height: number) =>
+      setDock((now) => (Option.contains(now, height) ? now : Option.some(height))),
+    [],
+  )
+  return [dock, onDock] as const
 }
 
 /** No questions: a Thread whose detail has not arrived. One value, not a new list each render. */
@@ -466,6 +488,11 @@ const requestsOf = (detail: Option.Option<ThreadDetail>): ReadonlyArray<InputReq
  * One Thread's conversation: its words, the composer under them, and what is live around both. It
  * is keyed by the Thread (`Chat`), so everything held here, the stream and the delivery that is in
  * doubt included, belongs to that one Thread and to nothing opened after it.
+ *
+ * The conversation and the composer share one column, which ends at the keyboard. A question's
+ * choices are laid over that column between the two (`Raised`): over the conversation, under the
+ * composer, and inside the column's bounds at every point, which is what lets them be touched on
+ * Android.
  */
 function Conversation({
   id,
@@ -510,6 +537,7 @@ function Conversation({
   const asking = useAsking(upOf(requestsOf(detail), me.person.id))
   // How far the choices stand over the foot of the conversation, which keeps that much clear.
   const covered = useSharedValue(0)
+  const [dock, onDock] = useDock()
   const working = isWorking(agent.status, thread)
   const stopping = useStop(id, working)
   const around: Around = {
@@ -572,38 +600,41 @@ function Conversation({
         listed={listed && page === 'Conversation'}
         onShare={() => setSharing(true)}
       />
-      <View ref={wake} style={{ flex: 1 }}>
-        <Messages
-          messages={shown}
-          page={page}
+      <View style={{ flex: 1 }}>
+        <View ref={wake} style={{ flex: 1 }}>
+          <Messages
+            messages={shown}
+            page={page}
+            working={working}
+            thinking={thinking}
+            rising={Option.map(first, ({ start }) => ({ id: firstKey(id), at: start.at }))}
+            onListed={() => setListed(true)}
+            ended={ended}
+            trouble={trouble}
+            around={around}
+            detail={detail}
+            unsent={undelivered}
+            covered={covered}
+            onContinue={speak}
+          />
+        </View>
+        <Raised asking={asking} dock={dock} covered={covered} />
+        <Foot
+          place={place}
+          typed={typed}
+          writing={writing}
+          shared={shared}
           working={working}
-          thinking={thinking}
-          rising={Option.map(first, ({ start }) => ({ id: firstKey(id), at: start.at }))}
-          onListed={() => setListed(true)}
-          ended={ended}
-          trouble={trouble}
-          around={around}
-          detail={detail}
-          unsent={undelivered}
-          covered={covered}
-          onContinue={speak}
+          // Nothing more can be said in a Thread until its first words are with Vivid; what is
+          // typed meanwhile stays in the composer.
+          waits={held(settled, sending.pending || asking.answering)}
+          asking={asking}
+          stopping={stopping}
+          onType={type}
+          onSpeak={speak}
+          onDock={onDock}
         />
-        <Raised asking={asking} covered={covered} />
       </View>
-      <Foot
-        place={place}
-        typed={typed}
-        writing={writing}
-        shared={shared}
-        working={working}
-        // Nothing more can be said in a Thread until its first words are with Vivid; what is
-        // typed meanwhile stays in the composer.
-        waits={held(settled, sending.pending || asking.answering)}
-        asking={asking}
-        stopping={stopping}
-        onType={type}
-        onSpeak={speak}
-      />
       {sharing && Option.isSome(thread) && Workspace.guards.Company(me.workspace) && (
         <Share
           thread={thread.value}
@@ -636,6 +667,7 @@ function Foot({
   stopping,
   onType,
   onSpeak,
+  onDock,
 }: {
   /** Where this Thread's unsent words are kept on the phone (`data/drafts.ts`). */
   place: string
@@ -649,6 +681,11 @@ function Foot({
   stopping: ReturnType<typeof useStop>
   onType: (words: string) => void
   onSpeak: Say
+  /**
+   * The composer's dock was laid out this tall: it grows with what is typed, and loses the home
+   * indicator's inset when the keyboard covers it.
+   */
+  onDock: (height: number) => void
 }) {
   // The name this Person or their Company gave Vivid, live.
   const vivid = useAppearance()
@@ -677,26 +714,28 @@ function Foot({
           <Notice message="Vivid could not be stopped just now. Try again." />
         </View>
       )}
-      <Composer
-        value={typed}
-        autoFocus={writing}
-        placeholder={placeholderOf(send, shared, vivid.name)}
-        working={working}
-        // Between one question's card leaving and the next one's rising nothing is sent: the
-        // words stay in the composer until it is plain what they would be an answer to.
-        disabled={waits || Send.$is('Wait')(send)}
-        onChange={onType}
-        // Emptying the composer, which `onSpeak` does, is also what removes this Thread's kept
-        // draft.
-        onSend={() =>
-          Send.$match(send, {
-            Message: () => void onSpeak(typed.trim()),
-            Answer: ({ id }) => void reply(id, typed.trim()),
-            Wait: () => undefined,
-          })
-        }
-        onStop={() => void stopping.stop()}
-      />
+      <View onLayout={(event) => onDock(event.nativeEvent.layout.height)}>
+        <Composer
+          value={typed}
+          autoFocus={writing}
+          placeholder={placeholderOf(send, shared, vivid.name)}
+          working={working}
+          // Between one question's card leaving and the next one's rising nothing is sent: the
+          // words stay in the composer until it is plain what they would be an answer to.
+          disabled={waits || Send.$is('Wait')(send)}
+          onChange={onType}
+          // Emptying the composer, which `onSpeak` does, is also what removes this Thread's kept
+          // draft.
+          onSend={() =>
+            Send.$match(send, {
+              Message: () => void onSpeak(typed.trim()),
+              Answer: ({ id }) => void reply(id, typed.trim()),
+              Wait: () => undefined,
+            })
+          }
+          onStop={() => void stopping.stop()}
+        />
+      </View>
     </>
   )
 }
@@ -918,24 +957,26 @@ function Messages(props: MessagesProps) {
  * While a question's choices are up over the foot of the conversation, that much more is kept
  * clear under the newest words, and the floating row rides up by the same. Both follow the card
  * on the UI thread (`covered`), with nothing asked of JavaScript while it moves:
- * - the scroller's end inset is the card's coverage (`inset`), as T3 Code mobile adds its card's
- *   coverage to its list's end inset as a shared value (`ThreadDetailScreen.tsx`,
- *   `combinedContentInsetEndAdjustment`);
+ * - the room at the end of the scroller is the card's coverage (`room`), as T3 Code mobile adds
+ *   its card's coverage to its list's end inset as a shared value (`ThreadDetailScreen.tsx`,
+ *   `combinedContentInsetEndAdjustment`). A scroll view's own end inset exists only on iOS, so
+ *   here the room is a view after everything said, whose height is that shared value;
  * - while the Person is at the newest words (`following`), the scroller is put on its new end in
  *   the same frame (`scrollTo` in a reaction), so the words rise exactly with the card. A Person
  *   who has scrolled up is left where they are: only the room under the conversation changes.
  * The reference's list library does the second part itself. Vivid's scroller is the platform's,
  * so the end is worked out here from its two heights, kept as shared values when they change.
- * Until 11 October 2026 the room was a view at the end of the content whose height followed the
- * card, which made the scroller report a new content size, and be scrolled from JavaScript, on
- * every frame of the glide: under load the newest words trailed the card.
+ * Putting the scroller back on its end from JavaScript is kept for what JavaScript causes, new
+ * words and a viewport that changed size (`settle`), and is asked by the height of everything
+ * said, never by the room: while the card moves, nothing is asked of JavaScript at all. It used
+ * to be asked on every frame of the glide, and under load the newest words trailed the card.
  *
- * The card covers the conversation only where it is an overlay (iOS); where it is in the flow
- * the scroller's box is simply shorter, `covered` stays at nothing, and none of this runs.
+ * The card is laid over the conversation on both platforms (`chat/Choices.tsx`), so this is the
+ * same on both.
  */
 function Transcript(props: MessagesProps) {
   const { messages, working, thinking, rising } = props
-  const { list, inset, extent, port, following } = useEndRoom(props.covered)
+  const { list, room, body, port, following } = useEndRoom(props.covered)
   // Whether the scroller has been put on its newest words once, which is when it is shown.
   const [placed, setPlaced] = useState(false)
   // The Person asked to be taken back to the newest words and is on the way there. Until they
@@ -1011,16 +1052,11 @@ function Transcript(props: MessagesProps) {
       <View style={{ flex: 1, overflow: 'hidden' }} onLayout={settle}>
         <Animated.ScrollView
           ref={list}
-          animatedProps={inset}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
           onLayout={(event) => {
             port.set(event.nativeEvent.layout.height)
             props.onListed()
-          }}
-          onContentSizeChange={(_, height) => {
-            extent.set(height)
-            settle()
           }}
           onScroll={follow}
           // A finger on the conversation takes over from a return that was under way.
@@ -1029,33 +1065,43 @@ function Transcript(props: MessagesProps) {
           }}
           scrollEventThrottle={32}
           style={{ opacity: placed ? 1 : 0 }}
-          contentContainerStyle={[
-            styles.column,
-            {
-              // A Thread with few words keeps them at the foot, beside the composer.
-              flexGrow: 1,
-              justifyContent: 'flex-end',
-              paddingHorizontal: GUTTER - 4,
-              paddingTop: 16,
-              // The room the thinking bubble floats in, kept whether or not it is there.
-              paddingBottom: THINKING_ROOM,
-              gap: 22,
-            },
-          ]}
+          // A Thread with few words keeps them at the foot, beside the composer.
+          contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}
         >
-          {/* The room Vivid's avatar hangs into, so the oldest words rest under its name. */}
-          <View style={{ height: HANG }} />
-          <Rows
-            messages={messages}
-            lines={linesOf(messages.map(spokenOf), requestsOf(props.detail))}
-            known={known}
-            around={props.around}
-            detail={props.detail}
-            working={working}
-            unsent={props.unsent}
-            onContinue={props.onContinue}
-          />
-          <Tail awaited={awaited} ended={props.ended} trouble={props.trouble} />
+          {/* Everything said, in a view of its own: its height is what the scroller's end is
+              worked out from, and its growing is when the scroller is put back on that end. */}
+          <View
+            onLayout={(event) => {
+              body.set(event.nativeEvent.layout.height)
+              settle()
+            }}
+            style={[
+              styles.column,
+              {
+                paddingHorizontal: GUTTER - 4,
+                paddingTop: 16,
+                // The room the thinking bubble floats in, kept whether or not it is there.
+                paddingBottom: THINKING_ROOM,
+                gap: 22,
+              },
+            ]}
+          >
+            {/* The room Vivid's avatar hangs into, so the oldest words rest under its name. */}
+            <View style={{ height: HANG }} />
+            <Rows
+              messages={messages}
+              lines={linesOf(messages.map(spokenOf), requestsOf(props.detail))}
+              known={known}
+              around={props.around}
+              detail={props.detail}
+              working={working}
+              unsent={props.unsent}
+              onContinue={props.onContinue}
+            />
+            <Tail awaited={awaited} ended={props.ended} trouble={props.trouble} />
+          </View>
+          {/* The room a question's choices are covering, after everything said (`useEndRoom`). */}
+          <Animated.View style={room} />
         </Animated.ScrollView>
         <TopFade />
         <Floating
@@ -1075,26 +1121,29 @@ function Transcript(props: MessagesProps) {
 /**
  * The room at the end of a conversation's scroller that follows a question's choices, and the
  * scroller kept on its newest words as that room changes, both on the UI thread (`Transcript`
- * says why). `extent` and `port` are the scroller's content and viewport heights and `following`
- * whether the Person is at the newest words; the scroller's own events keep them.
+ * says why).
+ *
+ * `room` is the style of a view after everything said, as tall as the card is covering. `body`
+ * is the height of everything said, `port` the scroller's viewport and `following` whether the
+ * Person is at the newest words; the scroller's own events keep the three. The scroller's end is
+ * worked out from them, not read from its content size: the room is changing in this very frame,
+ * and what the scroller would report is a frame old.
  */
 function useEndRoom(covered: SharedValue<number>) {
   const list = useAnimatedRef<Animated.ScrollView>()
-  const extent = useSharedValue(0)
+  const body = useSharedValue(0)
   const port = useSharedValue(0)
   const following = useSharedValue(true)
-  const inset = useAnimatedProps(() => ({
-    contentInset: { top: 0, left: 0, right: 0, bottom: covered.get() },
-  }))
+  const room = useAnimatedStyle(() => ({ height: covered.get() }))
   useAnimatedReaction(
     () => covered.get(),
     (now, before) => {
       // Nothing to follow on the first run, and a Person who has scrolled up is not pulled down.
       if (before === null || now === before || !following.get()) return
-      scrollTo(list, 0, Math.max(0, extent.get() - port.get() + now), false)
+      scrollTo(list, 0, Math.max(0, body.get() + now - port.get()), false)
     },
   )
-  return { list, inset, extent, port, following }
+  return { list, room, body, port, following }
 }
 
 /**
