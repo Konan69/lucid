@@ -24,7 +24,7 @@ import { useTheme } from '../../theme'
 import { COMPOSER_CLEAR, COMPOSER_SIDE } from '../../ui/Composer'
 import { HANG } from '../../ui/Presence'
 import { EDGE, Label, Press, TARGET } from '../../ui/ui'
-import { KEYBOARD_RESERVE, standingOf, standOf, tallestOf, type Standing } from './asked'
+import { KEYBOARD_RESERVE, tallestOf } from './asked'
 
 /**
  * The one clock the card and the foot of the conversation move on: the reference's
@@ -105,7 +105,7 @@ interface ChoicesProps {
   readonly busy: boolean
   /**
    * Where the Person is in the request's questions. It is kept by the screen, not the card,
-   * because the composer answers a question that offers no options (`replyOf`, `asked.ts`).
+   * because the composer answers a question that offers no options (`asking.replyOf`, `@vivid/state`).
    */
   readonly drafting: asking.Asking
   readonly onDraft: (next: asking.Asking) => void
@@ -144,7 +144,7 @@ interface ChoicesProps {
  * questions and answers them in the Person's own words, and the card has no field. The one
  * exception is a question that offers no options and takes words: with nothing to press, what
  * is sent from the composer is that question's answer, the card moves on, and what was picked
- * before is kept (`replyOf`, `asked.ts`). Its card is the question's words and its place.
+ * before is kept (`asking.replyOf`, `@vivid/state`). Its card is the question's words and its place.
  *
  * Ported from T3 Code mobile `src/features/threads/PendingUserInputCard.tsx`
  * (`PendingUserInputCard`), mechanism kept:
@@ -297,7 +297,7 @@ export function Choices({
   const tallest = useTallest(dock)
   // What slides, measured straight from its layout: the distance it travels.
   const height = useSharedValue(0)
-  const stand = standOf(leaving, tucked)
+  const stand = asking.standOf(leaving, tucked)
   const showing = useDerivedValue<number>(() => {
     const whole = height.get()
     const target = { up: whole, tucked: Math.min(HEADROOM + PEEK, whole), gone: 0 }[stand]
@@ -490,7 +490,7 @@ function Current({
               option={option}
               several={several}
               reach={rows}
-              standing={standingOf(picked.includes(option.label), busy)}
+              standing={asking.standingOf(picked.includes(option.label), busy)}
               onPress={() => onPick(option.label)}
             />
           ))}
@@ -730,7 +730,7 @@ const PAINT = {
   open: { fill: 'subtle', ring: false },
   back: { fill: 'subtle', ring: false },
   chosen: { fill: 'accent-soft', ring: true },
-} as const satisfies Record<Standing, { fill: 'subtle' | 'accent-soft'; ring: boolean }>
+} as const satisfies Record<asking.Standing, { fill: 'subtle' | 'accent-soft'; ring: boolean }>
 
 /**
  * One option: its label, and what picking it means in a smaller line under it when the question
@@ -754,7 +754,7 @@ function Row({
   several: boolean
   /** Whether the card's rows can be pressed at all (`Current`, `rows`). */
   reach: Reach
-  standing: Standing
+  standing: asking.Standing
   onPress: () => void
 }) {
   const { colors: c } = useTheme()

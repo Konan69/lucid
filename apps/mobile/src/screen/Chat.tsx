@@ -52,22 +52,6 @@ import { Button, Empty, Face, GUTTER, Label, Notice, Skeleton, styles } from '..
 import { useAppearance } from '../data/vivid'
 import { useTheme } from '../theme'
 import { useFirst, useFront, useMe } from '../workspace'
-import {
-  afterFailure,
-  Hold,
-  holdOf,
-  Line,
-  linesOf,
-  draftingOf,
-  mayAnswer,
-  refusedOf,
-  Reply,
-  replyOf,
-  upOf,
-  type Attempt,
-  type Kept,
-  type Refusal,
-} from './chat/asked'
 import { isAway, newestWords } from './chat/away'
 import { Choices } from './chat/Choices'
 import { Message } from './chat/Message'
@@ -387,31 +371,31 @@ function useSend(
 function useAsking(up: Option.Option<InputRequest>) {
   const data = useLiveData()
   const [held, setHeld] = useState(up)
-  const [pending, setPending] = useState<Option.Option<Attempt>>(Option.none())
-  const [refused, setRefused] = useState<Option.Option<Refusal>>(Option.none())
+  const [pending, setPending] = useState<Option.Option<model.Attempt>>(Option.none())
+  const [refused, setRefused] = useState<Option.Option<model.Refusal>>(Option.none())
   // Where the Person is in the questions of the request the card holds (`draftingOf`).
-  const [kept, setKept] = useState<Option.Option<Kept>>(Option.none())
+  const [kept, setKept] = useState<Option.Option<model.Kept>>(Option.none())
   const flying = useRef(new Set<InputRequestId>())
   const attempts = useRef(0)
-  const hold = holdOf(held, up)
-  if (Hold.$is('Free')(hold) && Option.isSome(up)) setHeld(up)
+  const hold = model.holdOf(held, up)
+  if (model.Hold.$is('Free')(hold) && Option.isSome(up)) setHeld(up)
   // One function for the life of the Thread: the card's slide is timed again when it changes.
   const release = useCallback(() => setHeld(Option.none()), [])
 
   /** Sends a request's answers, one for each of its questions in their order. */
   async function answer(id: InputRequestId, answers: Arr.NonEmptyReadonlyArray<InputAnswer>) {
-    if (!mayAnswer(flying.current, id)) return
+    if (!model.mayAnswer(flying.current, id)) return
     flying.current.add(id)
     attempts.current += 1
-    const tried: Attempt = { attempt: attempts.current, id }
+    const tried: model.Attempt = { attempt: attempts.current, id }
     commit()
     setRefused(Option.none())
     setPending(Option.some(tried))
     const result = await data.change((client) => client.AnswerInput({ id, answers }))
     flying.current.delete(id)
     if (Result.isSuccess(result)) return
-    setPending((current) => afterFailure(current, tried.attempt))
-    setRefused(Option.some(refusedOf(tried, result.failure)))
+    setPending((current) => model.afterFailure(current, tried.attempt))
+    setRefused(Option.some(model.refusedOf(tried, result.failure)))
   }
 
   /** What is kept against one request, when it is about that request. */
@@ -421,16 +405,16 @@ function useAsking(up: Option.Option<InputRequest>) {
   ) => Option.filter(held, (one) => one.id === id)
 
   /** Where the Person is in one request's questions, with a new refusal's question put back up. */
-  const draftingIn = (request: InputRequest) => draftingOf(request, kept, refused)
+  const draftingIn = (request: InputRequest) => model.draftingOf(request, kept, refused)
 
   return {
     hold,
     draftingIn,
     /** Keeps where the Person is in one request, as having seen the last refusal. */
-    draft: (id: InputRequestId, drafting: Kept['drafting']) =>
+    draft: (id: InputRequestId, drafting: model.Kept['drafting']) =>
       setKept(Option.some({ id, drafting, heeded: Option.map(refused, (one) => one.attempt) })),
     /** The request whose card is up, and where the Person is in it: what the composer reads. */
-    up: Option.map(Option.filter(Option.some(hold), Hold.$is('Up')), ({ request }) => ({
+    up: Option.map(Option.filter(Option.some(hold), model.Hold.$is('Up')), ({ request }) => ({
       request,
       drafting: draftingIn(request),
     })),
@@ -439,11 +423,12 @@ function useAsking(up: Option.Option<InputRequest>) {
     /** The answers to one request are on their way. */
     sendingTo: (id: InputRequestId) => Option.isSome(about(pending, id)),
     /** The answers to the request that is up are on their way, so nothing else is sent. */
-    answering: Option.exists(Option.filter(Option.some(hold), Hold.$is('Up')), ({ request }) =>
-      Option.isSome(about(pending, request.id)),
+    answering: Option.exists(
+      Option.filter(Option.some(hold), model.Hold.$is('Up')),
+      ({ request }) => Option.isSome(about(pending, request.id)),
     ),
     /** What to say when the last answers to the request that is up did not go through. */
-    refusal: Option.flatMap(Option.filter(Option.some(hold), Hold.$is('Up')), ({ request }) =>
+    refusal: Option.flatMap(Option.filter(Option.some(hold), model.Hold.$is('Up')), ({ request }) =>
       about(refused, request.id),
     ),
     answer,
@@ -470,7 +455,7 @@ function Raised({
   dock: Option.Option<number>
   covered: SharedValue<number>
 }) {
-  const drawn = Hold.$match(asking.hold, {
+  const drawn = model.Hold.$match(asking.hold, {
     Free: () => Option.none(),
     Up: ({ request }) => Option.some({ request, leaving: false }),
     Leaving: ({ request }) => Option.some({ request, leaving: true }),
@@ -565,7 +550,7 @@ function Conversation({
   const { shared } = sending
   // The request waiting on this Person, when there is one: its questions rise from behind the
   // composer as a card (`Raised`).
-  const asking = useAsking(upOf(requestsOf(detail), me.person.id))
+  const asking = useAsking(model.upOf(requestsOf(detail), me.person.id))
   // How far the choices stand over the foot of the conversation, which keeps that much clear.
   const covered = useSharedValue(0)
   const [dock, onDock] = useDock()
@@ -723,7 +708,7 @@ function Foot({
    * leave the composer, the card moves on, and on the last question every answer is sent.
    */
   function reply(words: string) {
-    Reply.$match(replyOf(asking.up, words), {
+    model.Reply.$match(model.replyOf(asking.up, words), {
       Message: () => void onSpeak(words),
       Answer: ({ drafting, step }) => {
         onType('')
@@ -1154,7 +1139,7 @@ function Transcript(props: MessagesProps) {
             <View style={{ height: HANG }} />
             <Rows
               messages={messages}
-              lines={linesOf(messages.map(spokenOf), requestsOf(props.detail))}
+              lines={model.linesOf(messages.map(spokenOf), requestsOf(props.detail))}
               known={known}
               around={props.around}
               detail={props.detail}
@@ -1211,7 +1196,7 @@ function useEndRoom(covered: SharedValue<number>) {
 }
 
 /**
- * The rows of the conversation in the order they happened (`linesOf`, `chat/asked.ts`): each
+ * The rows of the conversation in the order they happened (`asking.linesOf`, `@vivid/state`): each
  * message, and each answer to a question of Vivid's as a row of its own where it was given. An
  * answer is keyed by its request, so it stays the same row, and does not arrive a second time,
  * when the message that delivered it turns up and gives it its lasting place.
@@ -1227,7 +1212,7 @@ function Rows({
   onContinue,
 }: {
   messages: ReadonlyArray<FlueConversationMessage>
-  lines: ReadonlyArray<Line>
+  lines: ReadonlyArray<model.Line>
   /** The messages that are not new here (`Transcript`). */
   known: ReadonlySet<string>
   around: Around
@@ -1239,7 +1224,7 @@ function Rows({
   const newest = messages[messages.length - 1]
   const byKey = new Map(messages.map((message) => [message.id, message]))
   return lines.map((line) =>
-    Line.$match(line, {
+    model.Line.$match(line, {
       Answer: ({ request }) => (
         <Replied key={`answer:${request.id}`} request={request} me={around.me} />
       ),

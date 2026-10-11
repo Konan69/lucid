@@ -1,26 +1,57 @@
-import { Conflict, InputAnswer, InputRequestId, type InputQuestion } from '@vivid/contracts'
-import { InputAnswerCountMismatch, InputAnswerUnknownLabel } from '@vivid/contracts/rpc'
+import {
+  Conflict,
+  InputAnswer,
+  InputRequestId,
+  InputRequestState,
+  PersonId,
+  ThreadId,
+  type InputQuestion,
+  type InputRequest,
+} from '@vivid/contracts'
+import {
+  InputAnswerCountMismatch,
+  InputAnswerSeveralForbidden,
+  InputAnswerUnknownLabel,
+} from '@vivid/contracts/rpc'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
 import {
   advance,
+  afterFailure,
   answerOf,
   answersOf,
   back,
   begin,
   Draft,
+  draftingOf,
+  Hold,
+  holdOf,
+  Line,
+  linesOf,
+  mayAnswer,
   pickedIn,
   press,
   progressOf,
   refusalIn,
   refusedAt,
+  refusedOf,
+  repliedWords,
+  Reply,
+  replyOf,
   returnTo,
   said,
+  standingOf,
+  standOf,
   Step,
   toggle,
+  Tried,
+  triesAfter,
   type,
+  untried,
+  upOf,
   write,
   writtenIn,
+  type Spoken,
 } from './asking.js'
 
 const option = (label: string) => ({ label, detail: '' })
@@ -239,5 +270,379 @@ describe('said', () => {
     expect(said(InputAnswer.cases.Written.make({ words: 'Lunch on Friday' }))).toBe(
       'Lunch on Friday',
     )
+  })
+})
+
+const me = { id: PersonId.make('me'), name: 'Ada', image: null }
+const them = { id: PersonId.make('them'), name: 'Bisi', image: null }
+
+const waiting = InputRequestState.cases.Waiting.make({})
+const answered = InputRequestState.cases.Answered.make({
+  answeredBy: me,
+  answers: [InputAnswer.cases.Chosen.make({ labels: ['Work'] })],
+  answeredAt: 2,
+})
+const withdrawn = InputRequestState.cases.Withdrawn.make({ withdrawnAt: 2 })
+
+const request = (id: string, patch: Partial<InputRequest> = {}): InputRequest => ({
+  id: InputRequestId.make(id),
+  threadId: ThreadId.make('thread'),
+  runId: null,
+  questions: [
+    {
+      question: 'Which inbox should I start with?',
+      options: [
+        { label: 'Work', detail: '' },
+        { label: 'Personal', detail: '' },
+      ],
+      selection: 'One',
+      allowsOwnAnswer: true,
+    },
+  ],
+  askedOf: me,
+  state: waiting,
+  createdAt: 1,
+  ...patch,
+})
+
+describe('upOf', () => {
+  it('is the oldest request still waiting on this Person', () => {
+    const requests = [request('a', { state: answered }), request('b'), request('c')]
+    expect(Option.map(upOf(requests, me.id), (up) => up.id)).toEqual(
+      Option.some(InputRequestId.make('b')),
+    )
+  })
+
+  it('passes over a request asked of somebody else', () => {
+    const requests = [request('a', { askedOf: them }), request('b')]
+    expect(Option.map(upOf(requests, me.id), (up) => up.id)).toEqual(
+      Option.some(InputRequestId.make('b')),
+    )
+  })
+
+  it('is nothing when every request is settled', () => {
+    const requests = [request('a', { state: answered }), request('b', { state: withdrawn })]
+    expect(Option.isNone(upOf(requests, me.id))).toBe(true)
+  })
+})
+
+describe('holdOf', () => {
+  it('is free while nothing is held', () => {
+    expect(holdOf(Option.none(), Option.some(request('a')))).toEqual(Hold.Free())
+  })
+
+  it('draws the held request from its newest record while it is up', () => {
+    const newer = request('a', { createdAt: 5 })
+    expect(holdOf(Option.some(request('a')), Option.some(newer))).toEqual(
+      Hold.Up({ request: newer }),
+    )
+  })
+
+  it('keeps the held request as it was while it leaves for the next', () => {
+    const held = request('a')
+    expect(holdOf(Option.some(held), Option.some(request('b')))).toEqual(
+      Hold.Leaving({ request: held }),
+    )
+  })
+
+  it('leaves when nothing is up any more', () => {
+    const held = request('a')
+    expect(holdOf(Option.some(held), Option.none())).toEqual(Hold.Leaving({ request: held }))
+  })
+})
+
+describe('afterFailure', () => {
+  const a = { attempt: 1, id: InputRequestId.make('a') }
+  const b = { attempt: 2, id: InputRequestId.make('b') }
+
+  it('clears the try that failed', () => {
+    expect(afterFailure(Option.some(a), 1)).toEqual(Option.none())
+  })
+
+  it('leaves a later try on its way when an earlier one fails late', () => {
+    expect(afterFailure(Option.some(b), 1)).toEqual(Option.some(b))
+  })
+
+  it('has nothing to clear when nothing is on its way', () => {
+    expect(afterFailure(Option.none(), 1)).toEqual(Option.none())
+  })
+})
+
+describe('triesAfter', () => {
+  const a = { attempt: 1, id: InputRequestId.make('a') }
+  const b = { attempt: 2, id: InputRequestId.make('b') }
+  const failure = new Conflict({ message: 'Input request already answered' })
+
+  it('puts a try on its way and forgets what was last refused', () => {
+    const refused = triesAfter(
+      triesAfter(untried, Tried.Began({ tried: a })),
+      Tried.Failed({ tried: a, failure }),
+    )
+    expect(Option.isSome(refused.refused)).toBe(true)
+    expect(triesAfter(refused, Tried.Began({ tried: b }))).toEqual({
+      pending: Option.some(b),
+      refused: Option.none(),
+    })
+  })
+
+  it('ends the try that failed and keeps why', () => {
+    const after = triesAfter(
+      triesAfter(untried, Tried.Began({ tried: a })),
+      Tried.Failed({ tried: a, failure }),
+    )
+    expect(after.pending).toEqual(Option.none())
+    expect(Option.map(after.refused, (refusal) => refusal.attempt)).toEqual(Option.some(1))
+  })
+
+  it('leaves a later try on its way when an earlier one fails late', () => {
+    const later = triesAfter(untried, Tried.Began({ tried: b }))
+    expect(triesAfter(later, Tried.Failed({ tried: a, failure })).pending).toEqual(Option.some(b))
+  })
+})
+
+describe('refusedOf', () => {
+  const tried = { attempt: 3, id: InputRequestId.make('a') }
+
+  it('says the server refusal as it is and names its question', () => {
+    const failure = new InputAnswerSeveralForbidden({
+      id: tried.id,
+      questionIndex: 1,
+      message: 'Choose one option for this question.',
+    })
+    expect(refusedOf(tried, failure)).toEqual({
+      ...tried,
+      words: 'Choose one option for this question.',
+      place: Option.some(1),
+    })
+  })
+
+  it('names no question for any other failure', () => {
+    const failure = new Conflict({ message: 'Input request already answered' })
+    expect(refusedOf(tried, failure)).toEqual({
+      ...tried,
+      words: 'That answer did not go through. It may already be answered.',
+      place: Option.none(),
+    })
+  })
+})
+
+describe('repliedWords', () => {
+  it('is the picked label for a request of one question', () => {
+    expect(repliedWords([InputAnswer.cases.Chosen.make({ labels: ['Work'] })])).toBe('Work')
+  })
+
+  it('is one line for each question, picks joined and written words as they are', () => {
+    expect(
+      repliedWords([
+        InputAnswer.cases.Chosen.make({ labels: ['Work'] }),
+        InputAnswer.cases.Chosen.make({ labels: ['Monday', 'Friday'] }),
+        InputAnswer.cases.Written.make({ words: 'Lunch on Friday' }),
+      ]),
+    ).toBe('Work\nMonday, Friday\nLunch on Friday')
+  })
+})
+
+describe('mayAnswer', () => {
+  it('refuses a second answer to a request while one is in flight', () => {
+    const flying = new Set([InputRequestId.make('a')])
+    expect(mayAnswer(flying, InputRequestId.make('a'))).toBe(false)
+    expect(mayAnswer(flying, InputRequestId.make('b'))).toBe(true)
+  })
+})
+
+describe('linesOf', () => {
+  const spoke = (key: string, patch: Partial<Spoken> = {}): Spoken => ({
+    key,
+    asked: [],
+    answers: Option.none(),
+    at: Option.none(),
+    ...patch,
+  })
+  const answeredAt = (id: string, at: number) =>
+    request(id, {
+      state: InputRequestState.cases.Answered.make({
+        answeredBy: me,
+        answers: [InputAnswer.cases.Chosen.make({ labels: [id] })],
+        answeredAt: at,
+      }),
+    })
+  const order = (lines: ReadonlyArray<Line>) =>
+    lines.map((line) =>
+      Line.$match(line, {
+        Said: ({ key }) => key,
+        Answer: ({ request: asked }) => `answer:${asked.id}`,
+      }),
+    )
+
+  it('is the messages alone while nothing is answered', () => {
+    const spoken = [spoke('q', { asked: [InputRequestId.make('a')] }), spoke('m')]
+    expect(order(linesOf(spoken, [request('a')]))).toEqual(['q', 'm'])
+  })
+
+  it('puts an answer where the message that delivered it is', () => {
+    const spoken = [
+      spoke('q', { asked: [InputRequestId.make('a')] }),
+      spoke('m'),
+      spoke('signal', { answers: Option.some(InputRequestId.make('a')) }),
+      spoke('reply', { at: Option.some(50) }),
+    ]
+    expect(order(linesOf(spoken, [answeredAt('a', 40)]))).toEqual(['q', 'm', 'answer:a', 'reply'])
+  })
+
+  it('puts an answer with no delivering message at the end, not under its question', () => {
+    const spoken = [
+      spoke('q', { asked: [InputRequestId.make('a')], at: Option.some(10) }),
+      spoke('m'),
+      spoke('later', { at: Option.some(20) }),
+    ]
+    expect(order(linesOf(spoken, [answeredAt('a', 30)]))).toEqual(['q', 'm', 'later', 'answer:a'])
+  })
+
+  it('puts an older answer before the first message stamped after it', () => {
+    const spoken = [
+      spoke('q', { asked: [InputRequestId.make('a')], at: Option.some(10) }),
+      spoke('reply', { at: Option.some(50) }),
+      spoke('more', { at: Option.some(60) }),
+    ]
+    expect(order(linesOf(spoken, [answeredAt('a', 40)]))).toEqual([
+      'q',
+      'answer:a',
+      'reply',
+      'more',
+    ])
+  })
+
+  it('never puts an answer before the reply that asked', () => {
+    const spoken = [
+      spoke('before', { at: Option.some(50) }),
+      spoke('q', { asked: [InputRequestId.make('a')], at: Option.some(60) }),
+    ]
+    // A clock that disagrees: the answer is stamped earlier than the reply before its question.
+    expect(order(linesOf(spoken, [answeredAt('a', 40)]))).toEqual(['before', 'q', 'answer:a'])
+  })
+
+  it('orders several answers by when they were given', () => {
+    const spoken = [
+      spoke('q1', { asked: [InputRequestId.make('a')] }),
+      spoke('q2', { asked: [InputRequestId.make('b')] }),
+    ]
+    expect(order(linesOf(spoken, [answeredAt('a', 90), answeredAt('b', 70)]))).toEqual([
+      'q1',
+      'q2',
+      'answer:b',
+      'answer:a',
+    ])
+  })
+})
+
+describe('replyOf', () => {
+  const pick = { label: 'Work', detail: '' }
+  const question = (patch: Partial<InputRequest['questions'][number]>) => ({
+    question: 'What should the subject line say?',
+    options: [],
+    selection: 'One' as const,
+    allowsOwnAnswer: true,
+    ...patch,
+  })
+  const up = (set: InputRequest['questions'], at = 0) => {
+    const asked = request('a', { questions: set })
+    return Option.some({ request: asked, drafting: returnTo(begin(set), at) })
+  }
+
+  it('is an ordinary reply when the question offers options, own answer allowed or not', () => {
+    expect(replyOf(up([question({ options: [pick] })]), 'skip that')).toEqual(Reply.Message())
+  })
+
+  it('is an ordinary reply when a question with no options takes no words either', () => {
+    expect(replyOf(up([question({ allowsOwnAnswer: false })]), 'skip that')).toEqual(
+      Reply.Message(),
+    )
+  })
+
+  it('is an ordinary reply when no card is up', () => {
+    expect(replyOf(Option.none(), 'hello')).toEqual(Reply.Message())
+  })
+
+  it('answers a question with no options in words, and sends every answer from the last', () => {
+    const set = [question({ options: [pick] }), question({})] as const
+    const first = press(set, begin(set), 'Work')
+    const reply = replyOf(
+      Option.some({ request: request('a', { questions: set }), drafting: returnTo(first, 1) }),
+      'Lunch on Friday',
+    )
+    expect(Reply.$is('Answer')(reply) && reply.step).toEqual(
+      Step.Send({
+        answers: [
+          InputAnswer.cases.Chosen.make({ labels: ['Work'] }),
+          InputAnswer.cases.Written.make({ words: 'Lunch on Friday' }),
+        ],
+      }),
+    )
+  })
+
+  it('moves on to the next question from one in the middle, with the words kept', () => {
+    const set = [question({}), question({ options: [pick] })] as const
+    const reply = replyOf(up(set), 'Lunch on Friday')
+    expect(Reply.$is('Answer')(reply) && Step.$is('Next')(reply.step)).toBe(true)
+    expect(Reply.$is('Answer')(reply) && writtenIn(reply.drafting.drafts[0] ?? Draft.Blank())).toBe(
+      'Lunch on Friday',
+    )
+  })
+})
+
+describe('draftingOf', () => {
+  const asked = request('a')
+  const start = begin(asked.questions)
+
+  it('starts a request nothing is kept for', () => {
+    expect(draftingOf(asked, Option.none(), Option.none())).toEqual(start)
+  })
+
+  it('does not take another request drafts', () => {
+    const other = {
+      id: InputRequestId.make('b'),
+      drafting: returnTo(start, 3),
+      heeded: Option.none(),
+    }
+    expect(draftingOf(asked, Option.some(other), Option.none())).toEqual(start)
+  })
+
+  it('puts the question a new refusal names back up, once', () => {
+    const kept = {
+      id: asked.id,
+      drafting: returnTo(start, 2),
+      heeded: Option.none<number>(),
+    }
+    const refusal = { attempt: 4, id: asked.id, words: 'Choose one option.', place: Option.some(0) }
+    expect(draftingOf(asked, Option.some(kept), Option.some(refusal)).at).toBe(0)
+    const heeded = { ...kept, heeded: Option.some(4) }
+    expect(draftingOf(asked, Option.some(heeded), Option.some(refusal)).at).toBe(2)
+  })
+})
+
+describe('standOf', () => {
+  it('is up until the grabber tucks it', () => {
+    expect(standOf(false, false)).toBe('up')
+    expect(standOf(false, true)).toBe('tucked')
+  })
+
+  it('is gone once it is leaving, tucked or not', () => {
+    expect(standOf(true, false)).toBe('gone')
+    expect(standOf(true, true)).toBe('gone')
+  })
+})
+
+describe('standingOf', () => {
+  it('is on offer while it is not chosen and nothing is on its way', () => {
+    expect(standingOf(false, false)).toBe('open')
+  })
+
+  it('is chosen when it is in the draft, sending or not', () => {
+    expect(standingOf(true, false)).toBe('chosen')
+    expect(standingOf(true, true)).toBe('chosen')
+  })
+
+  it('stands back while the answers are on their way', () => {
+    expect(standingOf(false, true)).toBe('back')
   })
 })

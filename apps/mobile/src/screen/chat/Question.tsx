@@ -5,6 +5,7 @@ import {
   type InputRequest,
   type PersonId,
 } from '@vivid/contracts'
+import { asking } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { useState } from 'react'
 import { View } from 'react-native'
@@ -12,7 +13,6 @@ import Animated from 'react-native-reanimated'
 import { Card, cardOf, momentOf, toolsOf } from '../../data/message'
 import { SAID } from '../../ui/motion/morph'
 import { Label } from '../../ui/ui'
-import { repliedWords, type Spoken } from './asked'
 import { Said, Voice } from './Said'
 import { Words } from './Words'
 
@@ -24,7 +24,7 @@ import { Words } from './Words'
  *   that asked them and beside the same face: each question a paragraph of its own.
  * - The answers, once there are any, are the bubble of whoever gave them (`Replied`), as if they
  *   had typed it: a row of the Thread in its own right, where it was given (`linesOf`,
- *   `asked.ts`), with one line for each question.
+ *   `asking`, `@vivid/state`), with one line for each question.
  *
  * The ways to answer are not in the conversation. While the request waits on the Person looking
  * at it, its questions are a card that rises from behind the composer (`Choices.tsx`). A reply
@@ -60,13 +60,13 @@ export function Asked({ request, me }: { request: InputRequest; me: PersonId }) 
 const decodeRequest = Schema.decodeUnknownOption(InputRequestId)
 
 /**
- * One message of the conversation as placing answers needs it (`linesOf`, `asked.ts`): the
+ * One message of the conversation as placing answers needs it (`asking.linesOf`, `@vivid/state`): the
  * requests it raised, when it is a reply of Vivid's that asked (`cardOf`); the request it is the
  * delivered answer to, when it is that signal (the server sends an answer to Vivid as an
  * `answer` signal whose `request` attribute names it, `apps/server/src/inputs/store.ts`); and
  * when it was said, where the conversation stamps it.
  */
-export const spokenOf = (message: FlueConversationMessage): Spoken => {
+export const spokenOf = (message: FlueConversationMessage): asking.Spoken => {
   const signal = message.signal
   const attributes =
     signal === undefined || signal.attributes === undefined ? {} : signal.attributes
@@ -103,7 +103,7 @@ export function Replied({ request, me }: { request: InputRequest; me: PersonId }
     Answered: ({ answers, answeredBy }) => (
       <Animated.View entering={watched ? SAID : undefined}>
         <Said
-          text={repliedWords(answers)}
+          text={asking.repliedWords(answers)}
           pictures={NO_PICTURES}
           voice={
             answeredBy.id === me
