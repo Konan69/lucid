@@ -21,6 +21,7 @@ import {
   type LiveData,
 } from './data/live'
 import { pageOf, type Place } from './data/place'
+import { heardReadAtom } from './data/hearing'
 import { keepPlace, placeIn, placesReadAtom } from './data/placed'
 import { leaveAtom } from './data/signing'
 import { Broken } from './screen/Broken'
@@ -106,8 +107,9 @@ function SignedIn({ data }: { data: LiveData }) {
 
 /**
  * Who is signed in is one live query; the shell is drawn only once it has answered, and once the
- * phone has read where this Person was (`data/place.ts`), so the shell opens there and not at
- * the greeting first.
+ * phone has read where this Person was (`data/place.ts`) and what their recent Threads last
+ * said (`data/heard.ts`), so the shell opens there, with its words, and not at the greeting or
+ * a Thread's outline first.
  *
  * A phone that has been used before answers both from what it kept (`data/snapshot.ts`), a few
  * milliseconds after launch and with no network, so what is drawn meanwhile is the bare ground
@@ -115,7 +117,10 @@ function SignedIn({ data }: { data: LiveData }) {
  * nothing and still has no answer after a while (`Unreached`).
  */
 function Session() {
-  return useDoor(placesReadAtom) ? <Placed /> : <Ground />
+  // Both files are read at once as the app starts; the shell waits for the two answers.
+  const placed = useDoor(placesReadAtom)
+  const heard = useDoor(heardReadAtom)
+  return placed && heard ? <Placed /> : <Ground />
 }
 
 /** The session once the phone knows where its Person was: the shell, as soon as `me` answers. */

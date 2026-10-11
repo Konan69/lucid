@@ -41,6 +41,7 @@ import { dropAtom, sessionAtom } from './held'
 import { Session, type Outside, type SignedIn } from './session'
 import { bearerSocket } from './socket'
 import { launch, start } from './app'
+import { forgetHeard } from './hearing'
 import { forgetPlaces } from './placed'
 import { snapshotStore } from './snapshot'
 
@@ -214,6 +215,8 @@ function keepOnDevice(
       Effect.andThen(Effect.sync(forgetDrafts)),
       // Where the Person was is theirs too (`data/placed.ts`), and is a device atom like the drafts.
       Effect.andThen(forgetPlaces),
+      // And so is what they were last told in their Threads (`data/hearing.ts`).
+      Effect.andThen(forgetHeard),
     ),
   }
 }
@@ -512,7 +515,11 @@ export const entryAtom = Atom.keepAlive(
           // Where they were goes with it (`data/placed.ts`), a turn later: it is a device atom, and
           // this is inside the session atom's own change.
           launch(
-            snapshotStore.erase.pipe(Effect.andThen(Effect.yieldNow), Effect.andThen(forgetPlaces)),
+            snapshotStore.erase.pipe(
+              Effect.andThen(Effect.yieldNow),
+              Effect.andThen(forgetPlaces),
+              Effect.andThen(forgetHeard),
+            ),
           )
           return Entry.Door({ session: value })
         }
