@@ -32,6 +32,8 @@ import { commit } from '../data/haptics'
 import { draft, useDraft } from '../data/drafts'
 import { useDrawerOpened } from '../data/drawer'
 import { inFront, onForeground } from '../data/foreground'
+import type { Whose } from '../data/heard'
+import { heardIn, heardThrough } from '../data/hearing'
 import { LiveState, refusalOf, useLiveData, useLiveWhen } from '../data/live'
 import { isShown, lastWordsOf, type Around } from '../data/message'
 import { endingOf, newestRun } from '../data/outcome'
@@ -509,7 +511,7 @@ function Conversation({
   const me = useMe()
   const data = useLiveData()
   const front = useFront()
-  const client = useMemo(() => conversation(data.session, id), [data.session, id])
+  const { whose, client } = useConversation(id)
   // The conversation is opened only once the Thread's first words are with Vivid. Before that
   // there may be no Thread, and after it the stream's first look finds the message already
   // there, as it did when a Thread was only opened once it had started.
@@ -545,10 +547,9 @@ function Conversation({
     shared,
     runs: Option.match(detail, { onNone: () => [], onSome: (value) => value.runs }),
   }
-  const shown = withFirst(id, first, {
-    messages: agent.messages.filter(isShown),
-    ready: agent.historyReady,
-  })
+  const { said, ready } = drawn(agent, heardIn(whose, id))
+  const whole = agent.historyReady
+  const shown = withFirst(id, first, { messages: said.filter(isShown), ready: whole })
   // First words count as on their way from the send until the Thread's own two sources have both
   // spoken: after that, whether Vivid is working is theirs to say. Without the second half the
   // thinking would stop for the moment between the server taking the words and the Thread's
@@ -559,7 +560,7 @@ function Conversation({
   const starting = isOnItsWay(first, read && Option.isSome(detail))
   // Thinking starts at the send; the composer's button waits for Vivid to have really started.
   const thinking = working || sending.pending || starting
-  const page = pageOf(agent.historyReady, shown.length, thinking)
+  const page = pageOf(ready, shown.length, thinking)
   // The stream keeps a message it could not send, under the id it showed it with, so the Thread
   // can draw it as not sent instead of as said. Sending again clears the list. First words that
   // did not arrive are drawn the same way, under their own key.
@@ -877,6 +878,47 @@ interface MessagesProps {
   readonly covered: SharedValue<number>
   readonly onContinue: Say
 }
+
+/**
+ * A Thread's conversation client, the same one for as long as the Thread and the session are.
+ * Its reading is also kept on the phone (`data/hearing.ts`), which is what the next opening of
+ * this Thread is drawn from.
+ */
+function useConversation(id: ThreadId) {
+  const { session } = useLiveData()
+  // Whose words these are, for what the phone keeps of them (`data/heard.ts`).
+  const whose: Whose = { origin: session.server, person: useMe().person.id }
+  const { origin, person } = whose
+  const client = useMemo(
+    () => heardThrough({ origin, person }, id, conversation(session, id)),
+    [origin, person, session, id],
+  )
+  return { whose, client }
+}
+
+/**
+ * What a Thread is drawn from. Until its conversation has been read, that is what this phone last
+ * heard in it (`data/hearing.ts`): its words are on the first frame, and the reading takes their
+ * place when it arrives. It used to be drawn as its outline for that round trip, on every opening.
+ *
+ * `ready` here is only that there is something to draw. Whether the Thread's first words are
+ * already in the conversation (`withFirst`) is known once it has been read whole: what the phone
+ * kept is its newest messages and may not reach back to them.
+ */
+const drawn = (
+  agent: ReturnType<typeof useFlueAgent>,
+  heard: Option.Option<ReadonlyArray<FlueConversationMessage>>,
+): { readonly said: ReadonlyArray<FlueConversationMessage>; readonly ready: boolean } =>
+  agent.historyReady
+    ? { said: agent.messages, ready: true }
+    : // Kept messages that are all hidden ones would draw as an empty Thread, which this one is not.
+      Option.match(
+        Option.filter(heard, (kept) => kept.some(isShown)),
+        {
+          onNone: () => ({ said: agent.messages, ready: false }),
+          onSome: (said) => ({ said, ready: true }),
+        },
+      )
 
 /**
  * What a Thread's page is. It is decided once (`pageOf`) for everything that depends on it: the
