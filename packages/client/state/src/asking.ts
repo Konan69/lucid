@@ -539,10 +539,13 @@ export const linesOf = (
   return [...lines, ...loose.filter((line) => !placed.has(line.request.id))]
 }
 
-/** Where the card stands: all of it over the composer, only its grabber, or slid away behind it. */
+/**
+ * Where the phone's banner stands: all of it over the composer, closed to its head row (`tucked`),
+ * or slid away behind the composer.
+ */
 export type Stand = 'up' | 'tucked' | 'gone'
 
-/** A card that is leaving is gone whatever the Person last did with its grabber. */
+/** A banner that is leaving is gone whether the Person had it open or closed. */
 export const standOf = (leaving: boolean, tucked: boolean): Stand => {
   if (leaving) return 'gone'
   return tucked ? 'tucked' : 'up'

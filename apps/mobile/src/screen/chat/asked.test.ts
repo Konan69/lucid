@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { KEYBOARD_RESERVE, tallestOf } from './asked'
+import { KEYBOARD_RESERVE, keyboardRoomOf, tallestOf } from './asked'
 
 describe('tallestOf', () => {
   const phone = { window: 844, keyboard: KEYBOARD_RESERVE, bar: 147, composer: 60 }
 
   it('is what is left between the bar and the composer over the keyboard', () => {
     expect(tallestOf(phone)).toBe(844 - 336 - 147 - 60 - 12)
+  })
+
+  it('gives the room of the keyboard back while the keyboard is down', () => {
+    const down = tallestOf({ ...phone, keyboard: keyboardRoomOf(false) })
+    const up = tallestOf({ ...phone, keyboard: keyboardRoomOf(true) })
+    expect(down).toBe(Math.min(560, 844 - 147 - 60 - 12))
+    expect(down - up).toBeGreaterThan(200)
   })
 
   it('is never more than its ceiling on a large screen', () => {

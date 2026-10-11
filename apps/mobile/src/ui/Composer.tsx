@@ -1,7 +1,8 @@
-import { useState, type Ref } from 'react'
-import { View } from 'react-native'
+import { Option } from 'effect'
+import { useState, type ReactNode, type Ref } from 'react'
+import { Platform, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { ArrowUp, Square } from 'lucide-react-native'
+import { ArrowUp, ChevronLeft, Square } from 'lucide-react-native'
 import { commit } from '../data/haptics'
 import { useKeyboardShowing } from '../data/keyboard'
 import { MOBILE_TYPOGRAPHY } from '../data/typography'
@@ -11,7 +12,7 @@ import { useTheme } from '../theme'
 import { BorderBeam } from '../../vendor/beam'
 import { cast, lifted } from './elevation'
 import { GLASS_SUPPORTED, GlassMaterial } from './Glass'
-import { Press, styles, TARGET } from './ui'
+import { Label, Press, styles, TARGET } from './ui'
 
 /**
  * The composer's measures. The one-line shape is T3 Code mobile's capsule
@@ -38,15 +39,51 @@ const CORNER = TARGET / 2 + EDGE_ROOM
 /** The drawn round of the one button, inside its 44-point target. */
 const ROUND = 30
 
+/** The pill that moves on from a question, and the round way back beside it (`Onward`). */
+const PILL = { height: 34, side: 15, gap: 6 } as const
+const BACK = 32
+/** What the round button keeps between its drawn edge and the shape's: the pill keeps the same. */
+const TRAILING = (TARGET - ROUND) / 2
+
+/**
+ * The shadow the composer casts up onto a question's banner where they meet, so the banner
+ * reads as behind the composer and not as one flat shape with it: the approved mockup's
+ * `0 -14px 20px -12px` at 26% black. Its spread keeps it inside the banner's width, which is
+ * narrower than the composer by 10 points at each side.
+ */
+const SEAM = '0 -14px 20px -12px rgba(0, 0, 0, 0.26)'
+
 /**
  * What the dock keeps clear above the composer's shape, for whatever is laid out against that
- * shape's top edge: a question's choices rise from behind it (`screen/chat/Choices.tsx`).
+ * shape's top edge: a question's banner rises from behind it (`screen/chat/Choices.tsx`).
  */
 export const COMPOSER_CLEAR = AROUND
 /** What the dock keeps clear at each side of the shape. */
 export const COMPOSER_SIDE = 12
 /** The composer's height with one line in it and the keyboard up: the shape and the dock's room. */
 export const COMPOSER_RESTING = TARGET + EDGE_ROOM * 2 + AROUND * 2
+
+/**
+ * A question from Vivid that is up over the composer (`screen/chat/Choices.tsx`), as far as the
+ * composer has a part in it. The banner has no button of its own, as T3 Code's has none
+ * (`ComposerPrimaryActions.tsx`, the `pendingAction` branch): the composer moves on from the
+ * question. The web's composer is given the same (`apps/web/src/screen/thread/Composer.tsx`).
+ */
+export interface Onward {
+  /** There is no question before this one to go back to. */
+  readonly first: boolean
+  /** Moving on from this question sends the answers. */
+  readonly last: boolean
+  /**
+   * The question offers options, so it is moved on from with the pill. One that offers none is
+   * answered by writing, and keeps the ordinary button.
+   */
+  readonly offers: boolean
+  /** The question that is up has an answer, and none is on its way: the Person may move on. */
+  readonly ready: boolean
+  readonly onNext: () => void
+  readonly onBack: () => void
+}
 
 /**
  * Where a Person writes to Vivid: on the first screen to start a Thread, and in a Thread to
@@ -75,6 +112,13 @@ export const COMPOSER_RESTING = TARGET + EDGE_ROOM * 2 + AROUND * 2
  * reference's attachment button, dictation, model control and command popover are things
  * Vivid's composer does not have, and are not here.
  *
+ * While a question from Vivid is up (`asked`) and nothing is written, the trailing end is T3
+ * Code's compact footer in place of the one button (`Moving`): from the second question a way
+ * back, and a pill that says "Next", or "Submit" on the last question. With words written the
+ * ordinary button is back and sends them; what they mean then is the Thread's to decide
+ * (`screen/Chat.tsx`, `reply`). While a banner is attached above it (`attached`), the composer
+ * casts a soft shadow up onto it (`Seam`).
+ *
  * It rests on the home indicator's inset when the keyboard is down and directly on the keyboard
  * when it is up. The screen around it moves it there (`KeyboardAvoidingView`). The reference uses
  * `KeyboardStickyView` from a native keyboard module Vivid does not ship, so that is not ported.
@@ -89,6 +133,8 @@ export function Composer({
   onChange,
   onSend,
   onStop,
+  asked,
+  attached = false,
 }: {
   ref?: Ref<ComposerEditorHandle>
   value: string
@@ -105,6 +151,10 @@ export function Composer({
   onChange: (text: string) => void
   onSend: () => void
   onStop: () => void
+  /** A question from Vivid is up: with nothing written, the trailing end moves on from it. */
+  asked?: Onward
+  /** A question's banner is attached above, up or sliding away: the shadow falls up onto it. */
+  attached?: boolean
 }) {
   const { colors: c } = useTheme()
   const insets = useSafeAreaInsets()
@@ -120,7 +170,10 @@ export function Composer({
   // Words that cannot be sent yet (a send still on its way) leave the button dimmed, not a way to
   // stop: it must not change what it does under words the Person means to send.
   const sends = !empty && !disabled
-  const stops = working && empty
+  // Nothing written while a question is up: the trailing end moves on from the question. That
+  // comes before stopping, because a Run that asked is waiting on the Person, not working.
+  const moving = empty ? asked : undefined
+  const stops = working && empty && moving === undefined
   const idle = !sends && !stops
 
   function act() {
@@ -140,64 +193,219 @@ export function Composer({
         paddingBottom: (keyboard ? 0 : insets.bottom) + AROUND,
       }}
     >
-      <View
-        style={[
-          styles.column,
-          {
-            borderRadius: CORNER,
-            borderCurve: 'continuous',
-            overflow: 'hidden',
-          },
-          // Over the page: the plugin's stack. The system's glass has an edge of its own; without
-          // it the edge is the stack's ring, and there is no border.
-          GLASS_SUPPORTED ? cast('md') : lifted('md', c.border),
-        ]}
-      >
-        <GlassMaterial
-          style={{
-            position: 'absolute',
-            top: 0,
-            right: 0,
-            bottom: 0,
-            left: 0,
-            borderRadius: CORNER,
-            borderCurve: 'continuous',
-          }}
-        />
-        {/* The button keeps to the foot as the text grows; one line is centred beside it. */}
-        <View style={{ flexDirection: 'row', alignItems: 'flex-end', paddingVertical: EDGE_ROOM }}>
-          <View
+      <View style={styles.column}>
+        {attached && <Seam />}
+        <View
+          style={[
+            {
+              borderRadius: CORNER,
+              borderCurve: 'continuous',
+              overflow: 'hidden',
+            },
+            // Over the page: the plugin's stack. The system's glass has an edge of its own;
+            // without it the edge is the stack's ring, and there is no border.
+            GLASS_SUPPORTED ? cast('md') : lifted('md', c.border),
+          ]}
+        >
+          <GlassMaterial
             style={{
-              flex: 1,
-              minWidth: 0,
-              paddingLeft: 16,
-              paddingVertical: (TARGET - ONE_LINE) / 2,
+              position: 'absolute',
+              top: 0,
+              right: 0,
+              bottom: 0,
+              left: 0,
+              borderRadius: CORNER,
+              borderCurve: 'continuous',
             }}
+          />
+          {/* The button keeps to the foot as the text grows; one line is centred beside it. */}
+          <View
+            style={{ flexDirection: 'row', alignItems: 'flex-end', paddingVertical: EDGE_ROOM }}
           >
-            <ComposerEditor
-              ref={ref}
-              value={value}
-              placeholder={placeholder}
-              autoFocus={autoFocus}
-              multiline
-              onChangeText={onChange}
-              onSubmit={act}
-              // The text scrolls only once it has more lines than the composer will grow to.
-              scrollEnabled={needed > TALLEST}
-              // Android sets text from the top of its box, which leaves one line a few points
-              // high beside the button (measured on a device); the editor centres it on
-              // request. A point of tolerance, so a rounding difference is not a second line.
-              singleLineCentered={needed <= ONE_LINE + 1}
-              contentInsetVertical={INSET}
-              onContentHeightChange={setNeeded}
-              style={{ height: Math.min(TALLEST, Math.max(ONE_LINE, needed)) }}
-              textStyle={MOBILE_TYPOGRAPHY.typing}
-            />
+            <View
+              style={{
+                flex: 1,
+                minWidth: 0,
+                paddingLeft: 16,
+                paddingVertical: (TARGET - ONE_LINE) / 2,
+              }}
+            >
+              <ComposerEditor
+                ref={ref}
+                value={value}
+                placeholder={placeholder}
+                autoFocus={autoFocus}
+                multiline
+                onChangeText={onChange}
+                onSubmit={act}
+                // The text scrolls only once it has more lines than the composer will grow to.
+                scrollEnabled={needed > TALLEST}
+                // Android sets text from the top of its box, which leaves one line a few points
+                // high beside the button (measured on a device); the editor centres it on
+                // request. A point of tolerance, so a rounding difference is not a second line.
+                singleLineCentered={needed <= ONE_LINE + 1}
+                contentInsetVertical={INSET}
+                onContentHeightChange={setNeeded}
+                style={{ height: Math.min(TALLEST, Math.max(ONE_LINE, needed)) }}
+                textStyle={MOBILE_TYPOGRAPHY.typing}
+              />
+            </View>
+            <Trailing moving={Option.fromUndefinedOr(moving)}>
+              <Act working={working} stops={stops} idle={idle} onPress={act} />
+            </Trailing>
           </View>
-          <Act working={working} stops={stops} idle={idle} onPress={act} />
         </View>
       </View>
     </View>
+  )
+}
+
+/**
+ * The shadow the composer casts up onto a question's banner (`SEAM`), on iOS: a clear shape
+ * exactly under the composer's own, whose one shadow falls outside it and upward. It is a shape
+ * of its own so the composer's look is the same with a banner and without, and so the shadow
+ * comes and goes with the banner and nothing else is drawn again. Android draws nothing here: an
+ * elevation there falls downward only, and the banner draws the shadow as a strip over itself
+ * (`Seam` in `screen/chat/Choices.tsx`).
+ */
+function Seam() {
+  if (Platform.OS === 'android') return null
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        borderRadius: CORNER,
+        borderCurve: 'continuous',
+        boxShadow: SEAM,
+      }}
+    />
+  )
+}
+
+/**
+ * The composer's trailing end. Ordinarily it is the one button (`children`). While a question
+ * is up and nothing is written (`moving`) it is the way on from the question: for one that
+ * offers options the pill (`Moving`), and for one answered by writing the one button still,
+ * dimmed until there are words, after the way back.
+ */
+function Trailing({ moving, children }: { moving: Option.Option<Onward>; children: ReactNode }) {
+  return Option.match(moving, {
+    onNone: () => children,
+    onSome: (asked) =>
+      asked.offers ? (
+        <Moving asked={asked} />
+      ) : (
+        <>
+          <Back asked={asked} />
+          {children}
+        </>
+      ),
+  })
+}
+
+/**
+ * The way back to the question before the one that is up, with what was picked there kept: a
+ * 32-point round outline button with a chevron, T3 Code's compact Previous
+ * (`ComposerPrimaryActions.tsx`: `variant="outline"`, an icon button with `ChevronLeftIcon`).
+ * Nothing on the first question. It is pressed 44 points tall inside the row's own height, and
+ * its slop stops halfway to the control after it so the two targets never overlap.
+ */
+function Back({ asked }: { asked: Onward }) {
+  const { colors: c } = useTheme()
+  if (asked.first) return null
+  return (
+    <View style={{ height: TARGET, justifyContent: 'center', marginLeft: PILL.gap }}>
+      <Press
+        accessibilityRole="button"
+        accessibilityLabel="Previous question"
+        depth={0.96}
+        hitSlop={{
+          top: (TARGET - BACK) / 2,
+          bottom: (TARGET - BACK) / 2,
+          left: PILL.gap,
+          right: PILL.gap / 2,
+        }}
+        onPress={asked.onBack}
+        style={({ pressed }) => ({
+          width: BACK,
+          height: BACK,
+          borderRadius: BACK / 2,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: 1,
+          borderColor: c['line-3'],
+          backgroundColor: pressed ? c['wash-pressed'] : c['subtle-strong'],
+        })}
+      >
+        <ChevronLeft pointerEvents="none" size={16} strokeWidth={2.2} color={c.ink} />
+      </Press>
+    </View>
+  )
+}
+
+/**
+ * What takes the one button's place while a question that offers options is up and nothing is
+ * written: the way back (`Back`), and a pill that moves on. The pill says what it does in a
+ * word, T3 Code's compact labels (`formatPendingPrimaryActionLabel`): "Next", or "Submit" on
+ * the last question, where moving on sends every answer. An arrow on a round button was the
+ * mark that sends a message, and was not read as the way to the next question.
+ *
+ * Until the question has an answer the pill is a quiet shape with muted words, not a faded
+ * accent: a neutral one reads as "pick something first". It is 34 points tall and pressed 44.
+ */
+function Moving({ asked }: { asked: Onward }) {
+  const { colors: c } = useTheme()
+  const label = asked.last ? 'Submit' : 'Next'
+  return (
+    <>
+      <Back asked={asked} />
+      <View
+        style={{
+          height: TARGET,
+          justifyContent: 'center',
+          marginLeft: PILL.gap,
+          marginRight: TRAILING,
+        }}
+      >
+        <Press
+          accessibilityRole="button"
+          accessibilityLabel={asked.last ? 'Submit answers' : 'Next question'}
+          accessibilityState={{ disabled: !asked.ready }}
+          disabled={!asked.ready}
+          depth={0.96}
+          hitSlop={{
+            top: (TARGET - PILL.height) / 2,
+            bottom: (TARGET - PILL.height) / 2,
+            left: PILL.gap / 2,
+            right: TRAILING,
+          }}
+          onPress={asked.onNext}
+          style={({ pressed }) => ({
+            height: PILL.height,
+            paddingHorizontal: PILL.side,
+            borderRadius: PILL.height / 2,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: asked.ready ? c.primary : c['wash-pressed'],
+            opacity: pressed ? 0.85 : 1,
+          })}
+        >
+          <Label
+            size="footnote"
+            tone={asked.ready ? 'ink-on-accent' : 'ink-4'}
+            numberOfLines={1}
+            style={{ fontWeight: '600' }}
+          >
+            {label}
+          </Label>
+        </Press>
+      </View>
+    </>
   )
 }
 
