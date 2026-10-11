@@ -20,6 +20,12 @@ const completion = () =>
     { headers: { 'content-type': 'text/event-stream' } },
   )
 
+/** Where a request goes, in whichever of fetch's three forms the client named it. */
+const addressOf = (input: string | URL | Request) => {
+  if (typeof input === 'string') return input
+  return input instanceof URL ? input.href : input.url
+}
+
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
@@ -85,20 +91,31 @@ describe('production provider request retries', () => {
 
   it.effect('names itself and the session a request belongs to, as OpenCode Go asks', () =>
     Effect.gen(function* () {
-      const fetch = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
-        Promise.resolve(completion()),
-      )
+      const sent: Array<{ readonly address: string; readonly headers: Headers }> = []
+      const fetch = vi.fn((input: string | URL | Request, init: RequestInit = {}) => {
+        sent.push({ address: addressOf(input), headers: new Headers(init.headers) })
+        return Promise.resolve(completion())
+      })
       const result = provider
         .streamSimple(model, context, { apiKey: 'test', fetch, sessionId: 'thread-1' })
         .result()
       yield* Effect.promise(() => vi.runAllTimersAsync())
       expect((yield* Effect.promise(() => result)).stopReason).toBe('stop')
-      const [address, request] = fetch.mock.calls[0] ?? []
-      expect(String(address)).toBe('https://opencode.ai/zen/go/v1/chat/completions')
-      const headers = new Headers(request?.headers)
-      expect(headers.get('x-opencode-session')).toBe('thread-1')
-      expect(headers.get('user-agent')).toBe('vivid-runtime')
-      expect(headers.get('authorization')).toBe('Bearer test')
+      expect(
+        sent.map((request) => ({
+          address: request.address,
+          session: request.headers.get('x-opencode-session'),
+          agent: request.headers.get('user-agent'),
+          authorization: request.headers.get('authorization'),
+        })),
+      ).toEqual([
+        {
+          address: 'https://opencode.ai/zen/go/v1/chat/completions',
+          session: 'thread-1',
+          agent: 'vivid-runtime',
+          authorization: 'Bearer test',
+        },
+      ])
     }),
   )
 

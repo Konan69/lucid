@@ -1,4 +1,10 @@
-import { createProvider, envApiKeyAuth, type ProviderStreams } from '@earendil-works/pi-ai'
+import {
+  createProvider,
+  envApiKeyAuth,
+  type ProviderStreams,
+  type StreamOptions,
+} from '@earendil-works/pi-ai'
+import { Option } from 'effect'
 import { setProvider } from '@flue/runtime'
 import { completions, requestBudget } from './budget.ts'
 
@@ -44,28 +50,35 @@ const glm = (id: string, name: string) => ({
 /** The model Vivid answers with when `VIVID_MODEL` names none. */
 export const DEFAULT_MODEL = 'opencode-go/glm-5.3-flash'
 
+/** What of a request's options says which session it belongs to and what it already sends. */
+type Sessioned = Pick<StreamOptions, 'headers' | 'sessionId'>
+
 /**
+ * A request's options with the shared budget (`budget.ts`) and the session it belongs to.
+ *
  * Go asks for a stable session id in `x-opencode-session` (opencode sends its own session id:
  * `refs/opencode/packages/opencode/src/session/llm/request.ts`). Pi hands a provider the id of
- * the session a request belongs to; a request made outside one carries no such header.
+ * the session a request belongs to; a request made outside one has none and sends no such
+ * header, which is why both absences are matched here and nothing is made up for them.
  */
-const sessionHeader = (sessionId: string | undefined): Record<string, string> =>
-  sessionId === undefined ? {} : { 'x-opencode-session': sessionId }
+const forSession = <Given extends Sessioned>(options: Option.Option<Given>) =>
+  Option.match(options, {
+    onNone: () => requestBudget,
+    onSome: (given) => ({
+      ...given,
+      ...requestBudget,
+      headers: Option.match(Option.fromUndefinedOr(given.sessionId), {
+        onNone: () => ({ ...given.headers }),
+        onSome: (session) => ({ ...given.headers, 'x-opencode-session': session }),
+      }),
+    }),
+  })
 
-/** The shared request budget (`budget.ts`), and the session a request belongs to. */
 const requests: ProviderStreams = {
   stream: (model, context, options) =>
-    completions.stream(model, context, {
-      ...options,
-      ...requestBudget,
-      headers: { ...options?.headers, ...sessionHeader(options?.sessionId) },
-    }),
+    completions.stream(model, context, forSession(Option.fromUndefinedOr(options))),
   streamSimple: (model, context, options) =>
-    completions.streamSimple(model, context, {
-      ...options,
-      ...requestBudget,
-      headers: { ...options?.headers, ...sessionHeader(options?.sessionId) },
-    }),
+    completions.streamSimple(model, context, forSession(Option.fromUndefinedOr(options))),
 }
 
 /** The same production provider is exercised through its public streaming seam in tests. */

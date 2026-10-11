@@ -318,7 +318,7 @@ and an empty value counts as unset. The code is
 
 Supply the server with `DATABASE_URL`, `AUTH_SECRET`, `VIVID_RUNTIME_URL`,
 `VIVID_RUNTIME_TOKEN`, and the externally reachable `PUBLIC_URL`. Supply the runtime with
-`DATABASE_URL`, `VIVID_SERVER_URL`, the matching `VIVID_RUNTIME_TOKEN`, and `EXPLABS_API_KEY`
+`DATABASE_URL`, `VIVID_SERVER_URL`, the matching `VIVID_RUNTIME_TOKEN`, and `OPENCODE_API_KEY`
 for model calls, and `VIVID_MEMORY_DIR` for Vivid's notes. The server also needs every setting
 under "Credentials and external services": the Computer, memory, Integrations, texting, away
 notifications and Google sign-in are required, and it does not start without them. Model
