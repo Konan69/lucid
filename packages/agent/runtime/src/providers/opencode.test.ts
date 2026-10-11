@@ -21,10 +21,7 @@ const completion = () =>
   )
 
 /** Where a request goes, in whichever of fetch's three forms the client named it. */
-const addressOf = (input: string | URL | Request) => {
-  if (typeof input === 'string') return input
-  return input instanceof URL ? input.href : input.url
-}
+const addressOf = (input: string | URL | Request) => new Request(input).url
 
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
