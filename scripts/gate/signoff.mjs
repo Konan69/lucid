@@ -34,6 +34,24 @@ export function repositoryOf(address) {
 const run = (command, args, root, environment) =>
   NodeChildProcess.spawnSync(command, args, { cwd: root, env: environment, encoding: 'utf8' })
 
+/**
+ * The credential git itself would push this repository with, asked of git (`git credential
+ * fill`), so the status is posted by the identity that is about to push. `gh` on its own uses
+ * its active account, and on a machine signed in to two that was the other one: the first
+ * signoff, of e1e3519f, was refused with 404 while the push beside it went through. With no
+ * stored credential (an SSH remote) there is nothing to add and `gh` uses its own.
+ */
+function pushing(repository, at) {
+  const asked = NodeChildProcess.spawnSync('git', ['credential', 'fill'], {
+    cwd: at.root,
+    env: { ...at.environment, GIT_TERMINAL_PROMPT: '0' },
+    input: `protocol=https\nhost=github.com\npath=${repository}.git\n\n`,
+    encoding: 'utf8',
+  })
+  const secret = /^password=(.+)$/mu.exec(asked.status === 0 ? asked.stdout : '')
+  return secret === null ? at.environment : { ...at.environment, GH_TOKEN: secret[1] }
+}
+
 /** One status call. `at` is where commands run: the checkout and its environment. */
 const post = (status, at) =>
   run(
@@ -85,7 +103,7 @@ export function signoff(root, environment, where) {
   const repository = repositoryOf(address)
   if (repository === undefined) return 'signoff skipped: origin is not a GitHub repository\n'
   const status = { repository, sha, description: `Passed the full gate on ${where}` }
-  const signed = publish(status, { root, environment })
+  const signed = publish(status, { root, environment: pushing(repository, { root, environment }) })
   return signed
     ? `signoff ${CONTEXT} sha=${sha.slice(0, 12)} on ${repository}\n`
     : `signoff FAILED sha=${sha.slice(0, 12)}: GitHub will run the gate itself (is gh signed in?)\n`

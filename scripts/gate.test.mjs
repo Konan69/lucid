@@ -420,7 +420,7 @@ void test('the repository is read from either form of a GitHub address', () => {
  * commit the remote does not have, as GitHub does, so the status can only land if the commit was
  * sent ahead first; the ref it travelled under must be gone afterwards.
  */
-void test('a commit that has not been pushed is sent ahead, signed, and its ref removed', () => {
+void test('a commit that has not been pushed is sent ahead, signed as the pusher, and its ref removed', () => {
   const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'gate-signoff-'))
   try {
     const bare = NodePath.join(scratch, 'remote.git')
@@ -444,16 +444,30 @@ void test('a commit that has not been pushed is sent ahead, signed, and its ref 
         `git --git-dir="${bare}" cat-file -e "${sha}" 2>/dev/null || exit 1`,
         `git --git-dir="${bare}" for-each-ref --format='%(refname)' > "${posted}.refs"`,
         `printf '%s\\n' "$@" > "${posted}"`,
+        `printf '%s' "$GH_TOKEN" > "${posted}.token"`,
       ].join('\n'),
       { mode: 0o755 },
     )
-    const environment = { ...process.env, PATH: `${bin}${NodePath.delimiter}${process.env.PATH}` }
+    // The credential git pushes this repository with; no developer's own configuration is read.
+    git(work, [
+      'config',
+      'credential.helper',
+      '!f() { echo username=pusher; echo password=pushing-credential; }; f',
+    ])
+    const environment = {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+      PATH: `${bin}${NodePath.delimiter}${process.env.PATH}`,
+    }
     const said = signoff(work, withoutRepositoryEnvironment(environment), 'a test machine')
     assert.match(said, new RegExp(`^signoff gate sha=${sha.slice(0, 12)} on acme/thing`, 'u'))
     const args = NodeFS.readFileSync(posted, 'utf8').split('\n')
     assert.ok(args.includes(`repos/acme/thing/statuses/${sha}`))
     assert.ok(args.includes('context=gate'))
     assert.ok(args.includes('state=success'))
+    // Signed as whoever pushes, not as whichever account `gh` happens to have active.
+    assert.equal(NodeFS.readFileSync(`${posted}.token`, 'utf8'), 'pushing-credential')
     assert.equal(NodeFS.readFileSync(`${posted}.refs`, 'utf8').trim(), `refs/gate/${sha}`)
     assert.equal(git(scratch, ['--git-dir', bare, 'for-each-ref']), '')
   } finally {
