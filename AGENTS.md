@@ -130,6 +130,8 @@ When the load average is above the core count, or memory is in swap, do the work
 
 Simulators, emulators and testing run on the Cloudbox, not on the developer's PC, contended or not. That covers the Android emulator, driving a browser or the app to test it, a live proof, a gate and a suite. A focused test of the file being changed is small and may run on the PC. An iOS simulator needs macOS, which neither machine has: the iPhone app is checked on the phone itself or on a macOS runner, and its JavaScript, which is all that most fixes change, is built on the Cloudbox.
 
+Database-backed checks always run on the Cloudbox. Before every suite or finishing gate, provision isolated disposable PostgreSQL there and supply it through `VIVID_TEST_DATABASE_URL`. Register cleanup before the first write and remove only the resources that run owns. Never use a shared application database or skip database tests merely because the fixture was not provisioned. A missing disposable database blocks verification; it is not a passing gate. Report any remaining native, Helix or live-provider skips separately with their prerequisites.
+
 ## Shipping a phone change
 
 A change to the phone app reaches the developer's iPhone one of two ways, and which one is decided by whether the native side changed.
