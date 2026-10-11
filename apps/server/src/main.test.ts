@@ -65,23 +65,14 @@ const STARTUP_TIMEOUT_MS = 30_000
 
 /**
  * Configuration refusal must precede even config loading: the real entry exits EX_CONFIG (78)
- * with the overriding flag, while the same empty-environment control reaches missing app config
- * and exits 1. Layer acquisition remains downstream of that config, as main.ts defines it. Each
- * independent case owns one graph-loading child; launching both at once unnecessarily competes
- * with the suite's other native processes and obscures the startup ordering being checked.
+ * with the overriding flag. A generic exit 1 also accepts import failures and does not prove
+ * configuration ordering, so only the distinct extraction refusal is asserted here.
  */
-it.effect.each([
-  {
-    name: 'refuses extraction configuration first',
-    flags: ['--max-old-space-size-percentage=50'],
-    code: 78,
-  },
-  { name: 'uses the default failure exit with supported options', flags: [], code: 1 },
-])(
-  '$name',
-  ({ flags, code }) =>
+it.effect(
+  'refuses extraction configuration first',
+  () =>
     Effect.gen(function* () {
-      expect(yield* startupExit(flags)).toBe(code)
+      expect(yield* startupExit(['--max-old-space-size-percentage=50'])).toBe(78)
     }),
   STARTUP_TIMEOUT_MS,
 )

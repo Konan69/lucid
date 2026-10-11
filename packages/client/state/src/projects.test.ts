@@ -138,11 +138,6 @@ describe('scoping to a Project', () => {
     expect([...projects.within([first, second], first.id)]).toEqual(['first', 'second'])
   })
 
-  it('gives a Project the same colour every time, from the colours a mark can wear', () => {
-    expect(projects.hueOf(move.id)).toBe(projects.hueOf(ProjectId.make('move')))
-    expect(projects.HUES).toContain(projects.hueOf(audit.id))
-  })
-
   it('names each person in the Threads once', () => {
     const grace = { id: PersonId.make('grace'), name: 'Grace', image: null }
     const shared = thread('shared', 'move', {

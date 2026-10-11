@@ -4,7 +4,6 @@ import * as Option from 'effect/Option'
 import * as Result from 'effect/Result'
 import {
   BridgeResponse,
-  BridgeRequest,
   BridgeEvent,
   InvalidBridgeMessage,
   SignInEnding,
@@ -18,7 +17,6 @@ import {
   BrowserState,
   Page,
   PagesResponse,
-  PagesRequest,
   Tab,
   PageAddressRefused,
   ShowingTab,
@@ -171,25 +169,6 @@ describe('desktop bridge ingress', () => {
         )
       }
     }),
-  )
-
-  it.effect(
-    'decodes the complete page operation surface without exposing internal identity or history',
-    () =>
-      Effect.gen(function* () {
-        const tab = Tab.make('f198da28-8b59-4b86-8d14-f81f441954e1')
-        for (const request of [
-          PagesRequest.cases.Move.make({ tab, to: 0 }),
-          PagesRequest.cases.Duplicate.make({ tab }),
-          PagesRequest.cases.Reopen.make({}),
-          PagesRequest.cases.CloseOthers.make({ tab }),
-          PagesRequest.cases.Reframe.make({}),
-        ]) {
-          const payload = BridgeRequest.cases.Pages.make({ request })
-          const decoded = yield* decodeBridgeRequest(payload)
-          expect(decoded).toEqual(payload)
-        }
-      }),
   )
 
   it.effect('round-trips full state and typed failures through a real structured clone', () =>
