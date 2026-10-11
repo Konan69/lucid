@@ -165,7 +165,7 @@ describe('the composer while a question is up', () => {
 
     act(() => enter(field))
 
-    expect(button('Send answers').disabled).toBe(true)
+    expect(button('Submit answers').disabled).toBe(true)
     expect(moves).toEqual([])
   })
 

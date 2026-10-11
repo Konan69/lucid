@@ -234,15 +234,16 @@ function Field({
 }
 
 /**
- * The way back to the question before the one that is up, with what was picked there kept: a
- * quiet word before the button that moves on, from the second question of a request (T3 Code's
- * `ComposerPrimaryActions.tsx` has it in the same place). Nothing while no question is up, or
+ * The way back to the question before the one that is up, with what was picked there kept: an
+ * outline button before the one that moves on, from the second question of a request (T3 Code's
+ * `ComposerPrimaryActions.tsx`, the `pendingAction` branch: `variant="outline" size="sm"`, in the
+ * same place). It was a ghost word until 11 October 2026 and was not seen as a control. Nothing while no question is up, or
  * on the first.
  */
 function Previous({ asked }: { asked: Option.Option<Onward> }) {
   if (Option.isNone(asked) || asked.value.first) return null
   return (
-    <Button variant="ghost" size="sm" onClick={asked.value.onBack}>
+    <Button variant="outline" size="sm" onClick={asked.value.onBack}>
       Previous
     </Button>
   )
@@ -250,9 +251,15 @@ function Previous({ asked }: { asked: Option.Option<Onward> }) {
 
 /** What a press of the composer's round button does now, and whether it can be pressed. */
 interface Does {
-  readonly label: 'Send' | 'Stop' | 'Next question' | 'Send answers'
+  readonly label: 'Send' | 'Stop' | 'Next question' | 'Submit answer' | 'Submit answers'
   readonly stops: boolean
   readonly disabled: boolean
+  /**
+   * Whether the button says its label in words. It does while it moves on from a question: an
+   * arrow on a round button was the same mark that sends a message, and the owner could not find
+   * the way to the next question ("wheres the next and back controls", 11 October 2026).
+   */
+  readonly spelled: boolean
 }
 
 /**
@@ -262,16 +269,27 @@ interface Does {
  * before stopping, because a Run that asked is waiting on the Person, not working. Otherwise it
  * sends, and while Vivid works with nothing written it is the way to stop it.
  */
+/**
+ * The words on the button that moves on from a question, T3 Code's own
+ * (`formatPendingPrimaryActionLabel` in `ComposerPrimaryActions.tsx`): "Next question" until the
+ * last one, then "Submit answer" for a request of one question and "Submit answers" for more.
+ */
+const submitting = (asked: Onward): Does['label'] => {
+  if (!asked.last) return 'Next question'
+  return asked.first ? 'Submit answer' : 'Submit answers'
+}
+
 const doing = (working: boolean, empty: boolean, asked: Option.Option<Onward>): Does => {
   if (Option.isSome(asked)) {
     return {
-      label: asked.value.last ? 'Send answers' : 'Next question',
+      label: submitting(asked.value),
       stops: false,
       disabled: !asked.value.ready,
+      spelled: true,
     }
   }
   const stops = working && empty
-  return { label: stops ? 'Stop' : 'Send', stops, disabled: !working && empty }
+  return { label: stops ? 'Stop' : 'Send', stops, disabled: !working && empty, spelled: false }
 }
 
 /**
@@ -293,6 +311,14 @@ function SendOrStop({
   onSend: () => void
 }) {
   const { stops } = does
+  // Moving on from a question is said in words, on the app's own primary button.
+  if (does.spelled) {
+    return (
+      <Button size="sm" disabled={does.disabled} onClick={onSend}>
+        {does.label}
+      </Button>
+    )
+  }
   return (
     <button
       aria-label={does.label}
