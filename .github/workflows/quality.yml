@@ -45,7 +45,9 @@ jobs:
   checks:
     name: ${{ matrix.name }}
     needs: signoff
-    if: needs.signoff.outputs.signed != 'true'
+    # `always()`: when the signoff job itself fails there is no answer, and no answer is not a
+    # signoff, so the gate runs. Without it a failed `needs` skipped the gate.
+    if: always() && needs.signoff.outputs.signed != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -91,7 +93,9 @@ jobs:
   test:
     name: Test
     needs: signoff
-    if: needs.signoff.outputs.signed != 'true'
+    # `always()`: when the signoff job itself fails there is no answer, and no answer is not a
+    # signoff, so the gate runs. Without it a failed `needs` skipped the gate.
+    if: always() && needs.signoff.outputs.signed != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
