@@ -140,7 +140,12 @@ function raise(questions: InputRequest['questions']) {
         target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
       }),
     /** Lets the moment a pressed option is shown pass. */
-    moveOn: () => act(() => vi.advanceTimersByTime(model.ADVANCE_AFTER)),
+    // A block body: `act` treats a callback that returns a value as an asynchronous one.
+    moveOn: () => {
+      act(() => {
+        vi.advanceTimersByTime(model.ADVANCE_AFTER)
+      })
+    },
   }
 }
 

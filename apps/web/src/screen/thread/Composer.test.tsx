@@ -152,7 +152,10 @@ describe('the composer while a question is up', () => {
     const { moves, asked } = question({})
     const { field, sent, button } = composing('asked-empty', '', asked)
 
-    act(() => enter(field))
+    // A block body: `act` treats a callback that returns a value as an asynchronous one.
+    act(() => {
+      enter(field)
+    })
     act(() => button('Next question').click())
 
     expect(moves).toEqual(['next', 'next'])
@@ -163,7 +166,10 @@ describe('the composer while a question is up', () => {
     const { moves, asked } = question({ ready: false, last: true })
     const { field, button } = composing('asked-unready', '', asked)
 
-    act(() => enter(field))
+    // A block body: `act` treats a callback that returns a value as an asynchronous one.
+    act(() => {
+      enter(field)
+    })
 
     expect(button('Submit answers').disabled).toBe(true)
     expect(moves).toEqual([])
@@ -173,7 +179,10 @@ describe('the composer while a question is up', () => {
     const { moves, asked } = question({})
     const { field, sent } = composing('asked-words', 'Skip that, just send it', asked)
 
-    act(() => enter(field))
+    // A block body: `act` treats a callback that returns a value as an asynchronous one.
+    act(() => {
+      enter(field)
+    })
 
     expect(sent).toEqual(['Skip that, just send it'])
     expect(moves).toEqual([])
