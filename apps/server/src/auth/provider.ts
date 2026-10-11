@@ -22,6 +22,17 @@ const makeOptions = (config: ServerConfig['Service']) => {
     baseURL: config.PUBLIC_URL.href,
     secret: config.AUTH_SECRET,
     trustedOrigins: [config.PUBLIC_URL.origin],
+    /**
+     * Better Auth's own request limiter is off. It turns itself on in production
+     * (`create-context.mjs`: `enabled ?? isProduction`) and counts three sign-ins every ten
+     * seconds for each client address. Behind the host's proxy it is given no address it
+     * trusts, so it put every Person in one bucket ("falling back to a single shared per-path
+     * bucket", production log, 11 October 2026): three sign-ins in ten seconds from anyone
+     * refused the next Person with 429. Nobody chose it for Vivid, and it kept its counts in
+     * one process's memory. A limit, when Vivid wants one, is set here on purpose with the
+     * client address it should count by.
+     */
+    rateLimit: { enabled: false },
     emailAndPassword: {
       enabled: true,
       autoSignIn: true,
