@@ -35,6 +35,22 @@ schema-derived `VividRpcClient`.
 - `pnpm exec flue docs search <query>` — search version-matched docs.
 - `pnpm exec flue docs read <path>` — read a complete documentation page.
 
+## Patched Flue
+
+`patches/@flue__runtime@2.2.2.patch` changes one constant in Flue's conversation writer
+(`src/conversation-writer.ts`, shipped as `dist/sql-agent-execution-store-*.mjs`):
+`CANONICAL_FLUSH_DELAY_MS` from 1,000 to 100.
+
+- **Why.** Every word a client sees is first appended to Flue's durable stream, and the writer
+  holds streamed text for that long before each append. At one second a reply reached the screen
+  in lumps a second apart (measured on production, 11 October 2026: 158 text updates delivered in
+  four lumps). Flue 2.2.2 has no setting for it.
+- **Cost.** About ten appends a second for each reply being written, where there was one, and so
+  ten times the batches in a conversation's stream.
+- **Removing it.** When Flue makes the delay a setting, set it there and delete the patch and its
+  `patchedDependencies` line. The file name carries a build hash, so a Flue upgrade fails the
+  install until the patch is made again or dropped.
+
 ## Runtime contract
 
 - The application server is the only caller. It holds the runtime token and forwards a Person's
