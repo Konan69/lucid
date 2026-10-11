@@ -294,6 +294,21 @@
   }
 }
 
+/* The shadow the composer casts up onto the banner tucked behind its top edge, so the banner
+   reads as behind the composer: the approved phone mockup's `0 -14px 20px -12px` at 26% black,
+   the same on the web. Its negative spread keeps it inside the banner's width, which is 22 px
+   narrower than the composer at each side. It is on a clear shape laid over the composer's box
+   (`Composer.tsx`), not on the composer, whose own edge and lift it therefore never changes; it
+   is clear until a question is up (`data-shown`) and fades on the banner's clock. */
+@utility asked-seam {
+  box-shadow: 0 -14px 20px -12px rgb(0 0 0 / 0.26);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+  &[data-shown='true'] {
+    opacity: 1;
+  }
+}
+
 /* ── Standing still ───────────────────────────────────────── */
 
 /* For one change that must not animate: something done from the keyboard, where a transition

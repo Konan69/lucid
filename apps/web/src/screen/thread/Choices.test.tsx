@@ -234,3 +234,81 @@ describe('the number keys', () => {
     expect(banner.sent).toEqual([[chosen('Work')]])
   })
 })
+
+/**
+ * The worst a request may carry, drawn through the banner's own props: the longest question the
+ * contract allows, and six options that are long, short, unbreakable, right-to-left and led by
+ * an emoji. This page lays nothing out, so what is claimed is what carries each cap (the lines a
+ * text is held to, that it may break anywhere, where its direction comes from, that the rows are
+ * inside the banner's scroller), and that every row is there and can be pressed.
+ */
+describe('the worst a request may carry', () => {
+  const address = 'bartholomew.fitzgerald@northwind-industries-holdings.example.com'
+  const worst: InputQuestion = {
+    question: 'Which of the people on the thread should get the new invite? '
+      .repeat(7)
+      .slice(0, 400),
+    options: [
+      {
+        label: 'Everyone on the operations team who replied. '.repeat(5).slice(0, 200),
+        detail: 'Sends eleven invites today and moves the hold. '.repeat(9).slice(0, 400),
+      },
+      { label: 'Jo', detail: '' },
+      { label: address, detail: 'Their finance lead' },
+      { label: 'كل من حضر الاجتماع السابق', detail: 'Everyone who attended last time' },
+      { label: '🙋 Only me', detail: 'You take the call and forward the notes' },
+      { label: 'Nobody yet', detail: 'Keep it as a draft' },
+    ],
+    selection: 'Several',
+    allowsOwnAnswer: false,
+  }
+  /** A row's label or its second line, of which a row with none has none. */
+  const words = (row: HTMLElement, part: 'label' | 'detail') =>
+    Array.from(row.querySelectorAll<HTMLElement>(`[data-asked="${part}"]`))
+
+  it('holds the question to two lines while open and to one while closed', () => {
+    const banner = raise([worst])
+    const question = () => {
+      const found = banner.head().querySelector<HTMLElement>('[data-asked="question"]')
+      if (found === null) throw new Error('the head row has no words')
+      return found
+    }
+    expect(question().textContent).toHaveLength(400)
+    expect(question().classList.contains('line-clamp-2')).toBe(true)
+    expect(question().classList.contains('wrap-anywhere')).toBe(true)
+    expect(question().getAttribute('dir')).toBe('auto')
+    act(() => banner.head().click())
+    expect(question().classList.contains('truncate')).toBe(true)
+    expect(question().classList.contains('line-clamp-2')).toBe(false)
+  })
+
+  it('wraps every label and second line to three lines, and never cuts one to a line', () => {
+    const banner = raise([worst])
+    const labels = banner.rows().flatMap((row) => words(row, 'label'))
+    const details = banner.rows().flatMap((row) => words(row, 'detail'))
+    // A label for each of the six, and a second line for every option that gave one.
+    expect(labels).toHaveLength(6)
+    expect(details).toHaveLength(5)
+    for (const text of labels.concat(details)) {
+      expect(text.classList.contains('line-clamp-3')).toBe(true)
+      expect(text.classList.contains('wrap-anywhere')).toBe(true)
+      expect(text.classList.contains('truncate')).toBe(false)
+      expect(text.getAttribute('dir')).toBe('auto')
+    }
+    expect(words(banner.row(address), 'label').map((text) => text.textContent)).toEqual([address])
+    expect(words(banner.row('Jo'), 'detail')).toEqual([])
+  })
+
+  it('keeps all six rows inside the scroller, each one pressable', () => {
+    const banner = raise([worst])
+    expect(banner.rows()).toHaveLength(6)
+    for (const row of banner.rows()) {
+      expect(row.closest('.asked-scroll')).not.toBeNull()
+      expect(row.getAttribute('aria-disabled')).toBe('false')
+      act(() => row.click())
+    }
+    expect(banner.rows().map((row) => row.getAttribute('aria-checked'))).toEqual(
+      Array.from({ length: 6 }, () => 'true'),
+    )
+  })
+})
