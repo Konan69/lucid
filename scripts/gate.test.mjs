@@ -18,6 +18,7 @@ import {
   treeName,
 } from './gate/cloud.mjs'
 import { checkRatchets, countFindings, effectRule, ratchets } from './gate/ratchets.mjs'
+import { signable, signoff, repositoryOf } from './gate/signoff.mjs'
 import { slotCount, takeLock } from './gate/slots.mjs'
 import { stageNames, stageOfTask, stages } from './gate/stages.mjs'
 
@@ -395,4 +396,67 @@ test('the gate refuses the Vivid Computer under any name, and no other machine',
   assert.match(refusedHost(renamed), /production Vivid Computer/u)
   assert.equal(refusedHost(ci), undefined)
   assert.equal(refusedHost('host plain\nhostname 10.0.0.7'), undefined)
+})
+
+/** Only the whole gate of the pushed commit is signed; a part of it proves less than the name says. */
+void test('a signoff is for the full gate of the commit being pushed', () => {
+  assert.equal(signable(parse(['full', '--committed'])), true)
+  assert.equal(signable(parse(['--committed'])), true)
+  assert.equal(signable(parse(['full'])), false)
+  assert.equal(signable(parse(['full', '--committed', '--only', 'lint'])), false)
+  assert.equal(signable(parse(['affected', '--committed'])), false)
+  assert.equal(signable(parse(['focused', 'a.test.ts', '--committed'])), false)
+})
+
+void test('the repository is read from either form of a GitHub address', () => {
+  assert.equal(repositoryOf('https://github.com/acme/thing.git\n'), 'acme/thing')
+  assert.equal(repositoryOf('https://github.com/acme/thing'), 'acme/thing')
+  assert.equal(repositoryOf('git@github.com:acme/thing.git'), 'acme/thing')
+  assert.equal(repositoryOf('/srv/git/thing.git'), undefined)
+})
+
+/**
+ * The push hook's case: the commit is not on GitHub yet. A stand-in `gh` refuses a status for a
+ * commit the remote does not have, as GitHub does, so the status can only land if the commit was
+ * sent ahead first; the ref it travelled under must be gone afterwards.
+ */
+void test('a commit that has not been pushed is sent ahead, signed, and its ref removed', () => {
+  const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), 'gate-signoff-'))
+  try {
+    const bare = NodePath.join(scratch, 'remote.git')
+    const work = NodePath.join(scratch, 'work')
+    const bin = NodePath.join(scratch, 'bin')
+    const posted = NodePath.join(scratch, 'posted')
+    NodeFS.mkdirSync(work)
+    NodeFS.mkdirSync(bin)
+    git(scratch, ['init', '--quiet', '--bare', bare])
+    git(work, ['init', '--quiet'])
+    git(work, ['config', 'user.email', 'gate@example.com'])
+    git(work, ['config', 'user.name', 'Gate'])
+    git(work, ['commit', '--quiet', '--allow-empty', '-m', 'work'])
+    git(work, ['remote', 'add', 'origin', 'https://github.com/acme/thing.git'])
+    git(work, ['config', `url.${bare}.insteadOf`, 'https://github.com/acme/thing.git'])
+    const sha = git(work, ['rev-parse', 'HEAD'])
+    NodeFS.writeFileSync(
+      NodePath.join(bin, 'gh'),
+      [
+        '#!/bin/sh',
+        `git --git-dir="${bare}" cat-file -e "${sha}" 2>/dev/null || exit 1`,
+        `git --git-dir="${bare}" for-each-ref --format='%(refname)' > "${posted}.refs"`,
+        `printf '%s\\n' "$@" > "${posted}"`,
+      ].join('\n'),
+      { mode: 0o755 },
+    )
+    const environment = { ...process.env, PATH: `${bin}${NodePath.delimiter}${process.env.PATH}` }
+    const said = signoff(work, withoutRepositoryEnvironment(environment), 'a test machine')
+    assert.match(said, new RegExp(`^signoff gate sha=${sha.slice(0, 12)} on acme/thing`, 'u'))
+    const args = NodeFS.readFileSync(posted, 'utf8').split('\n')
+    assert.ok(args.includes(`repos/acme/thing/statuses/${sha}`))
+    assert.ok(args.includes('context=gate'))
+    assert.ok(args.includes('state=success'))
+    assert.equal(NodeFS.readFileSync(`${posted}.refs`, 'utf8').trim(), `refs/gate/${sha}`)
+    assert.equal(git(scratch, ['--git-dir', bare, 'for-each-ref']), '')
+  } finally {
+    NodeFS.rmSync(scratch, { recursive: true, force: true })
+  }
 })
