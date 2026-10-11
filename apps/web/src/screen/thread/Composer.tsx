@@ -1,13 +1,31 @@
 import { BorderBeam } from 'border-beam'
+import { Option } from 'effect'
 import { ArrowUp, Mic, Paperclip, Square } from 'lucide-react'
 import { memo, useRef, type ReactNode } from 'react'
 import { draft, draftAt, useDrafts } from '../../data/drafts'
 import { writing } from '../../data/life'
 import { themeShown, useTheme } from '../../data/theme'
-import { IconButton } from '../../ui/button'
+import { Button, IconButton } from '../../ui/button'
 import { cn } from '../../ui/cn'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
 import { attachable, Attached, useAttachments, type Picture } from './Attach'
+
+/**
+ * A question from Vivid that is up over the composer (`Choices.tsx`), as far as the composer has
+ * a part in it. The banner has no button of its own, as T3 Code's has none
+ * (`ComposerPrimaryActions.tsx`, the `pendingAction` branch): the composer's footer moves on from
+ * the question.
+ */
+export interface Onward {
+  /** There is a question before this one to go back to. */
+  readonly first: boolean
+  /** Moving on from this question sends the answers. */
+  readonly last: boolean
+  /** The question that is up has an answer, and none is on its way: the Person may move on. */
+  readonly ready: boolean
+  readonly onNext: () => void
+  readonly onBack: () => void
+}
 
 /** What a message carries when its files have already gone with another: none. */
 const NO_FILES: ReturnType<ReturnType<typeof useAttachments>['take']> = { lines: [], pictures: [] }
@@ -20,6 +38,11 @@ const NO_FILES: ReturnType<ReturnType<typeof useAttachments>['take']> = { lines:
  * typed in (`place`), on this device and for the Person's other devices (`data/drafts.ts`), so it
  * is still here after leaving and coming back; the Thread the composer belongs to decides what
  * sending means.
+ *
+ * While a question from Vivid is up (`asked`) and nothing is written, the button and Enter move
+ * on from the question instead: to the next one, or sending every answer from the last. With
+ * words written they send the words, as always; what those words mean then is the Thread's to
+ * decide (`screen/Thread.tsx`).
  *
  * It is drawn again only when what it is given changes (`memo`), and not at each key: the field
  * follows the words itself (`Field`), and the composer hears only of the field becoming empty or
@@ -36,6 +59,7 @@ export const Composer = memo(function Composer({
   onTyping,
   onTalk,
   above,
+  asked,
 }: {
   /** Where this composer's unsent words are kept: one Thread, or the start of a new one. */
   place: string
@@ -51,6 +75,8 @@ export const Composer = memo(function Composer({
   onTalk?: () => void
   /** Something anchored above the composer: a live call, a notice. */
   above?: ReactNode
+  /** A question from Vivid is up: with nothing written, the footer moves on from it. */
+  asked?: Onward
 }) {
   // Whether there are words to send. Only this edge is followed here; the words themselves are
   // the field's to draw.
@@ -91,6 +117,16 @@ export const Composer = memo(function Composer({
     onSend(body, taken.pictures)
   }
 
+  // Nothing written while a question from Vivid is up: the press, or Enter, moves on from the
+  // question, once it has an answer. With words or a file it sends, as always.
+  const moving = Option.filter(Option.fromUndefinedOr(asked), () => wordless && attached.kept === 0)
+  const press = Option.match(moving, {
+    onNone: () => submit,
+    onSome: (question) => () => {
+      if (question.ready) question.onNext()
+    },
+  })
+
   return (
     <div className="shrink-0 px-4 pt-2 pb-3 sm:px-6 sm:pb-5">
       <div className="mx-auto w-full max-w-(--thread-max-w)">
@@ -124,7 +160,7 @@ export const Composer = memo(function Composer({
                   place={place}
                   placeholder={placeholder}
                   onTyping={onTyping}
-                  onSubmit={submit}
+                  onSubmit={press}
                 />
                 <div className="flex items-center gap-1 px-3 pb-3">
                   <Pick accept={attachable(pictures)} onPick={attached.add} />
@@ -134,7 +170,8 @@ export const Composer = memo(function Composer({
                       <Mic className="size-4" />
                     </IconButton>
                   )}
-                  <SendOrStop working={working} empty={empty} onStop={onStop} onSend={submit} />
+                  <Previous asked={Option.fromUndefinedOr(asked)} />
+                  <SendOrStop does={doing(working, empty, moving)} onStop={onStop} onSend={press} />
                 </div>
               </div>
             </BorderBeam>
@@ -197,30 +234,69 @@ function Field({
 }
 
 /**
+ * The way back to the question before the one that is up, with what was picked there kept: a
+ * quiet word before the button that moves on, from the second question of a request (T3 Code's
+ * `ComposerPrimaryActions.tsx` has it in the same place). Nothing while no question is up, or
+ * on the first.
+ */
+function Previous({ asked }: { asked: Option.Option<Onward> }) {
+  if (Option.isNone(asked) || asked.value.first) return null
+  return (
+    <Button variant="ghost" size="sm" onClick={asked.value.onBack}>
+      Previous
+    </Button>
+  )
+}
+
+/** What a press of the composer's round button does now, and whether it can be pressed. */
+interface Does {
+  readonly label: 'Send' | 'Stop' | 'Next question' | 'Send answers'
+  readonly stops: boolean
+  readonly disabled: boolean
+}
+
+/**
+ * Reads what the round button does. With nothing to send while a question from Vivid is up
+ * (`asked`, which is nothing otherwise), it
+ * moves on from the question, and can be pressed once the question has an answer; that comes
+ * before stopping, because a Run that asked is waiting on the Person, not working. Otherwise it
+ * sends, and while Vivid works with nothing written it is the way to stop it.
+ */
+const doing = (working: boolean, empty: boolean, asked: Option.Option<Onward>): Does => {
+  if (Option.isSome(asked)) {
+    return {
+      label: asked.value.last ? 'Send answers' : 'Next question',
+      stops: false,
+      disabled: !asked.value.ready,
+    }
+  }
+  const stops = working && empty
+  return { label: stops ? 'Stop' : 'Send', stops, disabled: !working && empty }
+}
+
+/**
  * The one round button of the composer. It sends; while Vivid works and nothing is written it is
- * the way to stop it. It used to stop whenever Vivid worked, so words written meanwhile could be
- * sent by Enter and not by the button (8 October 2026).
+ * the way to stop it; and while a question from Vivid is up and nothing is written it moves on
+ * from the question (`doing`). It used to stop whenever Vivid worked, so words written meanwhile
+ * could be sent by Enter and not by the button (8 October 2026).
  * The two marks take turns in the one place: the one going shrinks away as the one coming grows
  * in (`motion-swap`), so the button is seen to change what it does instead of being swapped for
  * another.
  */
 function SendOrStop({
-  working,
-  empty,
+  does,
   onStop,
   onSend,
 }: {
-  working: boolean
-  /** Nothing to send yet. */
-  empty: boolean
+  does: Does
   onStop: () => void
   onSend: () => void
 }) {
-  const stops = working && empty
+  const { stops } = does
   return (
     <button
-      aria-label={stops ? 'Stop' : 'Send'}
-      disabled={!working && empty}
+      aria-label={does.label}
+      disabled={does.disabled}
       onClick={() => (stops ? onStop() : onSend())}
       className={cn(
         // With nothing to send it is a quiet disc, not a faded accent: an accent at 40%

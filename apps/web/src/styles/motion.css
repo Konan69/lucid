@@ -204,6 +204,96 @@
   transition: rotate var(--dur-face) var(--ease-out-expo);
 }
 
+/* ── A question attached to the composer ──────────────────── */
+
+/*
+ * What Vivid is asking is a banner attached to the composer's top edge
+ * (`screen/thread/Choices.tsx`), ported from T3 Code web `components/chat/ComposerBanner.tsx`.
+ * These are that file's measures, which have no step on Vivid's scales.
+ */
+
+/* `Attachment`: in the composer's column and narrower than it by 22 px at each side
+   (`--chat-composer-drawer-inset`, 1.375rem), tucked `1rem + 1px` behind the composer's top edge
+   by a negative margin, so the composer, drawn after it, covers its foot: there is no bottom
+   edge to see and no gap. Vivid's composer keeps `--spacing(2)` of room over its own box (`pt-2`
+   in `screen/thread/Composer.tsx`), which the margin crosses first.
+
+   It arrives and leaves as `motion-fold` does (a grid row between `0fr` and `1fr` with opacity,
+   on the same clock and curve), so the conversation above gives way as it grows and nothing is
+   measured. It is written out here and does not take that class because two things differ: the
+   margin has to go with the row, or a folded banner would still pull the composer up over the
+   conversation; and what it wraps is clipped a little outside its box, so the banner's edge and
+   shadow are not cut off. It starts folded (`@starting-style`), so mounting it is its arrival. */
+@utility asked-attachment {
+  display: grid;
+  grid-template-rows: 1fr;
+  width: calc(100% - 2 * 1.375rem);
+  margin-inline: auto;
+  margin-bottom: calc(-1 * (1rem + 1px + --spacing(2)));
+  transition:
+    grid-template-rows var(--dur-base) var(--ease-out),
+    margin-bottom var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+  & > * {
+    min-height: 0;
+    overflow: clip;
+    overflow-clip-margin: 2rem;
+  }
+  @starting-style {
+    grid-template-rows: 0fr;
+    margin-bottom: 0;
+    opacity: 0;
+  }
+  &[data-folded] {
+    grid-template-rows: 0fr;
+    margin-bottom: 0;
+    opacity: 0;
+  }
+}
+
+/* `Surface` (attached) and `Root`: round at its top corners only (1rem), the layer's quieter
+   edge, 4 px of padding, and under its content the strip that is behind the composer. The
+   reference masks that strip away because its composer is glass; Vivid's is opaque and simply
+   covers it. Pair it with `bg-surface-3` and `lift`, the composer's own surface and shadow. */
+@utility asked-surface {
+  --edge-color: var(--line-2);
+  border-radius: 1rem 1rem 0 0;
+  padding: --spacing(1) --spacing(1) calc(--spacing(1) + 1rem + 1px);
+}
+
+/* `Scroll`: the options scroll inside the banner past `min(24rem, 40dvh)`, with no scrollbar
+   gutter. The reference uses an overlay scroll area that fades an edge only while there is more
+   beyond it. Here the scrollbar is not drawn and the foot fades while there are rows below it:
+   the fade's length follows the scroller's own position (a scroll timeline), which is inactive
+   when everything fits, so nothing fades then. It moves only while the Person scrolls. A browser
+   without scroll timelines keeps a thin scrollbar instead, so more rows are never hidden without
+   a sign. */
+@property --asked-fade {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes asked-more {
+  from,
+  99% {
+    --asked-fade: 1.5rem;
+  }
+  to {
+    --asked-fade: 0px;
+  }
+}
+@utility asked-scroll {
+  max-height: min(24rem, 40dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  @supports (animation-timeline: scroll()) {
+    scrollbar-width: none;
+    mask-image: linear-gradient(to bottom, black calc(100% - var(--asked-fade)), transparent);
+    animation: asked-more linear both;
+    animation-timeline: scroll(self);
+  }
+}
+
 /* ── Standing still ───────────────────────────────────────── */
 
 /* For one change that must not animate: something done from the keyboard, where a transition
@@ -232,7 +322,8 @@
     .motion-toast,
     .motion-swap,
     .motion-tick,
-    .motion-fold {
+    .motion-fold,
+    .asked-attachment {
       transition-property: opacity !important;
       transition-duration: var(--dur-fast) !important;
       transition-delay: 0ms !important;

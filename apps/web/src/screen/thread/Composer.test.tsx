@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { Option } from 'effect'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
@@ -37,13 +38,14 @@ vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
 
 const { draft } = await import('../../data/drafts')
 const { Composer } = await import('./Composer')
+type Onward = import('./Composer').Onward
 
 /**
  * Draws a composer for one place while Vivid works, with words already written there, and
  * answers its field and every message it hands on. It is taken off the page when the test ends,
  * whether or not the test passed.
  */
-function composing(place: string, words: string) {
+function composing(place: string, words: string, asked: Option.Option<Onward> = Option.none()) {
   const sent: Array<string> = []
   const container = document.body.appendChild(document.createElement('div'))
   const root = createRoot(container)
@@ -61,12 +63,20 @@ function composing(place: string, words: string) {
           sent.push(message)
         }}
         onStop={() => undefined}
+        asked={Option.getOrUndefined(asked)}
       />,
     )
   })
   const field = container.querySelector('textarea')
   if (field === null) throw new Error('The composer drew no field to write in.')
-  return { field, sent }
+  const button = (name: string) => {
+    const found = Array.from(container.querySelectorAll('button')).find(
+      (one) => one.getAttribute('aria-label') === name || one.textContent === name,
+    )
+    if (found === undefined) throw new Error(`The composer drew no button named ${name}.`)
+    return found
+  }
+  return { field, sent, button }
 }
 
 /** Enter going down in the field, as the browser tells it: once, or again while it is held. */
@@ -115,5 +125,66 @@ describe('the composer', () => {
 
     expect(sent).toEqual(['Draft the invoice for Dami'])
     expect(field.value).toBe('Send Ada a copy')
+  })
+})
+
+/**
+ * While a question from Vivid is up, the banner over the composer has no button: the composer's
+ * own footer moves on from the question when nothing is written, and sends words when there are
+ * words. What is counted is which of its two ways out the composer took.
+ */
+describe('the composer while a question is up', () => {
+  /** A question in the middle of a request, and every move the composer asks for. */
+  const question = (patch: Partial<Pick<Onward, 'first' | 'last' | 'ready'>>) => {
+    const moves: Array<'next' | 'back'> = []
+    const asked: Onward = {
+      first: false,
+      last: false,
+      ready: true,
+      onNext: () => moves.push('next'),
+      onBack: () => moves.push('back'),
+      ...patch,
+    }
+    return { moves, asked: Option.some(asked) }
+  }
+
+  it('moves on from the question, by Enter and by its button, when nothing is written', () => {
+    const { moves, asked } = question({})
+    const { field, sent, button } = composing('asked-empty', '', asked)
+
+    act(() => enter(field))
+    act(() => button('Next question').click())
+
+    expect(moves).toEqual(['next', 'next'])
+    expect(sent).toEqual([])
+  })
+
+  it('does not move on from a question that has no answer yet', () => {
+    const { moves, asked } = question({ ready: false, last: true })
+    const { field, button } = composing('asked-unready', '', asked)
+
+    act(() => enter(field))
+
+    expect(button('Send answers').disabled).toBe(true)
+    expect(moves).toEqual([])
+  })
+
+  it('sends words that are written, and leaves the question where it is', () => {
+    const { moves, asked } = question({})
+    const { field, sent } = composing('asked-words', 'Skip that, just send it', asked)
+
+    act(() => enter(field))
+
+    expect(sent).toEqual(['Skip that, just send it'])
+    expect(moves).toEqual([])
+  })
+
+  it('goes back to the question before from its quiet button, from the second question on', () => {
+    const { moves, asked } = question({})
+    const { button } = composing('asked-back', '', asked)
+
+    act(() => button('Previous').click())
+
+    expect(moves).toEqual(['back'])
   })
 })

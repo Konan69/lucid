@@ -1,7 +1,7 @@
 import { useAtomMount, useAtomSet } from '@effect/atom-react'
 import { useFlueAgent, type FlueConversationMessage } from '@flue/react'
 import { ThreadAudience, type MeResponse, type ThreadDetail, type ThreadId } from '@vivid/contracts'
-import { draftPlace, inThread, titleFromMessage, workspaceKey } from '@vivid/state'
+import { asking, draftPlace, inThread, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { ArrowDown } from 'lucide-react'
 import { ThinkingOrb } from 'thinking-orbs'
@@ -18,9 +18,19 @@ import { Alive, ranBadly } from '../ui/Alive'
 import { Face } from '../ui/Face'
 import { arriving } from '../ui/settle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
+import { useAsking, type Asking } from './thread/asking'
 import type { Picture } from './thread/Attach'
+import { Raised } from './thread/Choices'
 import { Composer } from './thread/Composer'
-import { isBlank, Message, Said, textOf, type ThreadContext } from './thread/Message'
+import {
+  isBlank,
+  Message,
+  Replied,
+  Said,
+  spokenOf,
+  textOf,
+  type ThreadContext,
+} from './thread/Message'
 import { newestRun, Outcome } from './thread/Outcome'
 import { Layout } from './thread/Layout'
 import { doingIn } from './thread/Trail'
@@ -133,40 +143,64 @@ function contextFor(
 }
 
 /**
- * The messages of the conversation, one row each. It is drawn again only when the list, what the
- * Thread carries beside it, or whether Vivid is working changes. The frame around it is drawn
- * again far more often (Vivid's face changes its look every few seconds, and at the first key the
- * Person types), and each time used to build every row again.
+ * The rows of the conversation in the order they happened (`asking.linesOf`, `@vivid/state`):
+ * each message, and each answer to a question of Vivid's as a row of its own where it was given.
+ * An answer is keyed by its request, so it stays the same row, and does not arrive a second
+ * time, when the message that delivered it turns up and gives it its lasting place.
+ *
+ * `said` is the whole conversation and `visible` the messages of it that are drawn. Answers are
+ * placed against the whole of it, because the message that delivers an answer to Vivid is one
+ * that is never drawn itself (`sourceOf`, `@vivid/state`): the answer's row stands where it is.
+ *
+ * It is drawn again only when the lists, what the Thread carries beside them, or whether Vivid is
+ * working changes. The frame around it is drawn again far more often (Vivid's face changes its
+ * look every few seconds, and at the first key the Person types), and each time used to build
+ * every row again.
  */
 const Rows = memo(function Rows({
+  said,
   visible,
   context,
   working,
   onContinue,
 }: {
+  said: ReadonlyArray<FlueConversationMessage>
   visible: ReadonlyArray<FlueConversationMessage>
   context: ThreadContext
   working: boolean
   onContinue: (text: string, pictures?: ReadonlyArray<Picture>) => void
 }) {
-  return visible.map((message, position) => {
-    const latest = position === visible.length - 1
-    return (
-      // `data-arrives`: a Message that lands while the Thread is open rises into place; the
-      // ones already here when it opens do not move (`arriving`, on the list below).
-      <li key={message.id} data-arrives>
-        <Message
-          message={message}
-          context={context}
-          // Only the newest message can be the one Vivid is working on, so the others are not
-          // told when work starts and stops, and are not drawn again for it.
-          working={working && latest}
-          latest={latest}
-          onContinue={onContinue}
-        />
-      </li>
-    )
-  })
+  const newest = visible.at(-1)
+  const drawn = new Map(visible.map((message) => [message.id, message]))
+  return asking.linesOf(said.map(spokenOf), context.requests).map((line) =>
+    asking.Line.$match(line, {
+      Answer: ({ request }) => (
+        // `data-arrives`: a row that lands while the Thread is open rises into place; the ones
+        // already here when it opens do not move (`arriving`, on the list below).
+        <li key={`answer:${request.id}`} data-arrives>
+          <Replied request={request} me={context.me} />
+        </li>
+      ),
+      Said: ({ key }) => {
+        const message = drawn.get(key)
+        if (message === undefined) return null
+        const latest = message === newest
+        return (
+          <li key={key} data-arrives>
+            <Message
+              message={message}
+              context={context}
+              // Only the newest message can be the one Vivid is working on, so the others are
+              // not told when work starts and stops, and are not drawn again for it.
+              working={working && latest}
+              latest={latest}
+              onContinue={onContinue}
+            />
+          </li>
+        )
+      },
+    }),
+  )
 })
 
 /** Keeps the conversation's message rows together, including deliveries still on their way. */
@@ -177,6 +211,7 @@ function ConversationMessages({
   waiting,
   failure,
   onRetry,
+  said,
   visible,
   context,
   onContinue,
@@ -196,6 +231,8 @@ function ConversationMessages({
   waiting: boolean
   failure: string | null
   onRetry: () => void
+  /** The whole conversation, drawn or not: answers are placed against all of it (`Rows`). */
+  said: ReadonlyArray<FlueConversationMessage>
   visible: ReadonlyArray<FlueConversationMessage>
   context: ThreadContext
   onContinue: (text: string, pictures?: ReadonlyArray<Picture>) => void
@@ -218,7 +255,13 @@ function ConversationMessages({
       failure={failure}
       onRetry={onRetry}
     >
-      <Rows visible={visible} context={context} working={working} onContinue={onContinue} />
+      <Rows
+        said={said}
+        visible={visible}
+        context={context}
+        working={working}
+        onContinue={onContinue}
+      />
       <OnTheirWay first={first} onAgain={onFirstAgain} />
       {Option.isSome(unsent) && (
         <NotSent
@@ -369,7 +412,21 @@ function Conversation({
       onTogglePanel={onTogglePanel}
     >
       {(hero) => (
-        <>
+        <Column
+          place={draftPlace(me.person.id, {
+            workspace: workspaceKey(me.workspace),
+            thread: Option.some(id),
+          })}
+          me={me.person.id}
+          requests={context.requests}
+          working={working}
+          // A picture goes with a message straight to Vivid; a shared Thread's messages take
+          // another path that cannot carry one yet.
+          pictures={!shared}
+          onSay={say}
+          onStop={halt}
+          onTyping={setTyping}
+        >
           <ConversationMessages
             hero={hero}
             ready={ready}
@@ -378,6 +435,7 @@ function Conversation({
             waiting={isWaiting(working, visible)}
             failure={agent.error === undefined ? null : 'Vivid can’t be reached right now.'}
             onRetry={() => agent.refresh()}
+            said={said}
             visible={visible}
             context={context}
             onContinue={say}
@@ -389,23 +447,99 @@ function Conversation({
             ended={ended}
             onSay={say}
           />
-
-          <Composer
-            place={draftPlace(me.person.id, {
-              workspace: workspaceKey(me.workspace),
-              thread: Option.some(id),
-            })}
-            working={working}
-            // A picture goes with a message straight to Vivid; a shared Thread's messages take
-            // another path that cannot carry one yet.
-            pictures={!shared}
-            onSend={say}
-            onStop={halt}
-            onTyping={setTyping}
-          />
-        </>
+        </Column>
       )}
     </Layout>
+  )
+}
+
+/**
+ * The Thread's column: the conversation, the banner of a question from Vivid attached to the
+ * composer while one waits on this Person (`Raised`, `thread/Choices.tsx`), and the composer.
+ * The banner is in the column's flow, so the conversation ends above it.
+ *
+ * It also decides what the composer does. With words written it sends them, and nearly always
+ * that is an ordinary message, a waiting request or not: the server withdraws the request when
+ * it takes the message, the banner folds away, and Vivid reads the message right after its own
+ * questions, so "skip that, just do this" and an answer in the Person's own words are the same
+ * thing to send. The one exception is a question that offers no options and takes words: there
+ * the words are that question's answer and the banner moves on (`written`,
+ * `thread/asking.ts`). With nothing written while a question is up, the composer's button moves
+ * on from the question (`onward`), since the banner has no button of its own.
+ */
+function Column({
+  place,
+  me,
+  requests,
+  working,
+  pictures,
+  onSay,
+  onStop,
+  onTyping,
+  children,
+}: {
+  /** Where the composer's unsent words are kept. */
+  place: string
+  me: MeResponse['person']['id']
+  /** Every request Vivid has made in this Thread, oldest first. */
+  requests: ThreadContext['requests']
+  working: boolean
+  /** Whether a picture can be sent from the composer. */
+  pictures: boolean
+  /** Says something new in the Thread: an ordinary message. */
+  onSay: (text: string, pictures: ReadonlyArray<Picture>) => void
+  onStop: () => void
+  onTyping: (typing: boolean) => void
+  /** The conversation. */
+  children: React.ReactNode
+}) {
+  const asked = useAsking(asking.upOf(requests, me))
+  const { written, onward, backward } = asked
+  const reply = useCallback(
+    (text: string, sent: ReadonlyArray<Picture>) => {
+      if (!written(text)) onSay(text, sent)
+    },
+    [written, onSay],
+  )
+  const footer = useOnward(asked.progress, asked.answering, onward, backward)
+  return (
+    <>
+      {children}
+      <Raised asking={asked} />
+      <Composer
+        place={place}
+        // While a request from Vivid waits, what is sent from here is the reply to it.
+        placeholder={asked.waiting ? 'Reply' : 'Message Vivid'}
+        working={working}
+        pictures={pictures}
+        onSend={reply}
+        onStop={onStop}
+        onTyping={onTyping}
+        asked={footer}
+      />
+    </>
+  )
+}
+
+/**
+ * What the composer's footer is given while a question is up (`Onward`, `thread/Composer.tsx`):
+ * where the Person is in the questions, whether they may move on, and the two moves. It is one
+ * value until one of those changes, so the composer is not drawn again for a value that only
+ * looks new; with no question up it is nothing.
+ */
+function useOnward(
+  progress: Asking['progress'],
+  answering: boolean,
+  onNext: () => void,
+  onBack: () => void,
+) {
+  const up = Option.isSome(progress)
+  const first = Option.exists(progress, (now) => now.first)
+  const last = Option.exists(progress, (now) => now.last)
+  const ready = Option.exists(progress, (now) => now.canAdvance) && !answering
+  return useMemo(
+    () => (up ? { first, last, ready, onNext, onBack } : undefined),
+    [up, first, last, ready, onNext, onBack],
   )
 }
 

@@ -1,12 +1,22 @@
 import type { FlueConversationMessage } from '@flue/react'
 import {
+  InputRequestId,
+  InputRequestState,
   ShowRequest,
   type Approval,
   type InputRequest,
   type PersonId,
   type Run,
 } from '@vivid/contracts'
-import { makeFullWhen, makeWhen, Source, sourceOf, speakerOfTurn, thisReader } from '@vivid/state'
+import {
+  asking,
+  makeFullWhen,
+  makeWhen,
+  Source,
+  sourceOf,
+  speakerOfTurn,
+  thisReader,
+} from '@vivid/state'
 import { Option, Schema } from 'effect'
 import { AlarmClock, Check, Copy as CopyIcon, Repeat2 } from 'lucide-react'
 import { memo, useState } from 'react'
@@ -16,14 +26,8 @@ import { Alive } from '../../ui/Alive'
 import { Face } from '../../ui/Face'
 import { Markdown } from '../../ui/Markdown'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
-import {
-  ApprovalCard,
-  approvalById,
-  cardFor,
-  ConnectionCard,
-  InputCard,
-  requestById,
-} from './Cards'
+import { ApprovalCard, approvalById, cardFor, ConnectionCard, requestById } from './Cards'
+import { Asked } from './Question'
 import { Display } from './Shown'
 import { Doing, doingIn, Trail, type ToolPart } from './Trail'
 
@@ -46,20 +50,67 @@ const reader = thisReader()
 const when = makeWhen(reader)
 const fullWhen = makeFullWhen(reader)
 
+/** When a message was finished, or failing that begun, where the conversation stamps it. */
+const momentOf = (message: FlueConversationMessage): Option.Option<number> =>
+  Option.flatMap(decodeMetadata(message.metadata), (metadata) =>
+    Option.orElse(Option.fromUndefinedOr(metadata.finishedAt), () =>
+      Option.fromUndefinedOr(metadata.startedAt),
+    ),
+  )
+
 /**
  * When a message was finished, when Vivid said so; an unstamped message simply shows no time. It
  * is said against today (only the time today, "Yesterday", a date before that), with the whole
  * date and time on hover for when that is not enough.
  */
 function timeOf(message: FlueConversationMessage) {
-  return Option.flatMap(decodeMetadata(message.metadata), (metadata) =>
-    Option.map(
-      Option.orElse(Option.fromUndefinedOr(metadata.finishedAt), () =>
-        Option.fromUndefinedOr(metadata.startedAt),
-      ),
-      (moment) => ({ said: when(moment, Date.now()), full: fullWhen(moment) }),
-    ),
-  )
+  return Option.map(momentOf(message), (moment) => ({
+    said: when(moment, Date.now()),
+    full: fullWhen(moment),
+  }))
+}
+
+/** Reads a request's identifier from a signal's attribute, which arrives as plain text. */
+const decodeRequest = Schema.decodeUnknownOption(InputRequestId)
+
+/** The request a message is the delivered answer to, when it is that signal. */
+function answeredBy(message: FlueConversationMessage): Option.Option<InputRequestId> {
+  const signal = message.signal
+  if (signal === undefined || signal.tagName !== 'answer' || signal.attributes === undefined) {
+    return Option.none()
+  }
+  return decodeRequest(signal.attributes.request)
+}
+
+/** What each message came to, kept against the message itself (`spokenOf`). */
+const spoken = new WeakMap<FlueConversationMessage, asking.Spoken>()
+
+/**
+ * One message of the conversation as placing answers needs it (`asking.linesOf`, `@vivid/state`):
+ * the requests it raised, when it is a reply of Vivid's that asked (`cardFor`); the request it is
+ * the delivered answer to, when it is that signal (the server sends an answer to Vivid as an
+ * `answer` signal whose `request` attribute names it, `apps/server/src/inputs/store.ts`); and
+ * when it was said, where the conversation stamps it.
+ *
+ * It is read once for each message object. A Thread asks for every message again at each
+ * streamed token, and reading one decodes its tool results; Flue hands back the same object for
+ * a message that did not change, so only the reply being written is read again.
+ */
+export function spokenOf(message: FlueConversationMessage): asking.Spoken {
+  const known = spoken.get(message)
+  if (known !== undefined) return known
+  const read: asking.Spoken = {
+    key: message.id,
+    asked: message.parts.flatMap((part) => {
+      if (part.type !== 'dynamic-tool' || part.state !== 'output-available') return []
+      const card = cardFor(part.output)
+      return Option.isSome(card) && card.value.kind === 'input' ? [card.value.id] : []
+    }),
+    answers: answeredBy(message),
+    at: momentOf(message),
+  }
+  spoken.set(message, read)
+  return read
 }
 
 /** A message's words, without what Vivid did or asked beside them. */
@@ -238,6 +289,34 @@ export function Said({
   )
 }
 
+/** No pictures: an answer is words. One value, so the bubble is not handed a new list each time. */
+const NO_PICTURES: ReadonlyArray<{ url: string; name: string }> = []
+
+/**
+ * The answers to one request from Vivid, as the bubble of the Person who gave them
+ * (`asking.repliedWords`: one line for each question): this Person's own on the right, filled,
+ * exactly as a message they typed; somebody else's on the left under their name. A request
+ * still waiting, or withdrawn, draws nothing: a reply that withdrew it is already its own
+ * message.
+ */
+export function Replied({ request, me }: { request: InputRequest; me: PersonId }) {
+  return InputRequestState.match(request.state, {
+    Waiting: () => null,
+    Withdrawn: () => null,
+    Answered: ({ answers, answeredBy: person }) =>
+      person.id === me ? (
+        <Said text={asking.repliedWords(answers)} mine pictures={NO_PICTURES} />
+      ) : (
+        <Said
+          text={asking.repliedWords(answers)}
+          mine={false}
+          pictures={NO_PICTURES}
+          from={{ name: person.name }}
+        />
+      ),
+  })
+}
+
 /** A message's image files, in conversation order; other files are not shown as pictures. */
 function picturesOf(message: FlueConversationMessage) {
   return message.parts.flatMap((part) => {
@@ -259,7 +338,7 @@ const SIGNAL_LINE = {
  * (`sourceOf` in `@vivid/state`, the reading every surface shares). A Person speaking in a shared
  * Thread is drawn as their bubble. A Routine or a follow-up is a quiet line. An answer that was
  * not finished is said in Vivid's words, not the runtime's. Nothing else is drawn here: an
- * Approval's outcome and an answer are told by their cards, and what the runtime says to itself
+ * Approval's outcome is told by its card and an answer by its own row (`Replied`), and what the runtime says to itself
  * and the model (its instructions were reloaded, its tools changed) is for no Person.
  */
 function Signal({
@@ -358,7 +437,7 @@ function ToolCards({
       case 'input': {
         const request = requestById(context.requests, wanted.id)
         return Option.isNone(request) ? null : (
-          <InputCard key={tool.toolCallId} request={request.value} me={context.me} />
+          <Asked key={tool.toolCallId} request={request.value} me={context.me} />
         )
       }
     }
