@@ -79,6 +79,7 @@ const localStack = () =>
           VIVID_MIGRATIONS_HASH: migrations.hash.input,
           DATABASE_URL: databaseUrl,
           PORT: '5173',
+          OPENCODE_API_KEY: environment.openCodeKey,
           EXPLABS_API_KEY: environment.modelGatewayKey,
           VIVID_RUNTIME_TOKEN: environment.runtimeToken,
           VIVID_SERVER_URL: target.serverUrl,

@@ -4,8 +4,9 @@ import { Effect } from 'effect'
 import { normalizeContext } from '@earendil-works/pi-ai'
 // Preload the real adapter so fake time controls retry timers rather than module loading.
 import '@earendil-works/pi-ai/api/openai-completions'
-import { provider } from './explabs.ts'
+import { provider } from './opencode.ts'
 
+// The request budget is shared (`budget.ts`); it is proved through the default provider.
 const model = provider.getModels().find((candidate) => candidate.id === 'glm-5.3-flash')
 if (model === undefined) throw new Error('Production model is missing')
 const context = normalizeContext({ messages: [{ role: 'user', content: 'hello', timestamp: 0 }] })
@@ -79,6 +80,25 @@ describe('production provider request retries', () => {
         expect((yield* Effect.promise(() => result)).stopReason).toBe('error')
         expect(fetch).toHaveBeenCalledTimes(1)
       }
+    }),
+  )
+
+  it.effect('names itself and the session a request belongs to, as OpenCode Go asks', () =>
+    Effect.gen(function* () {
+      const fetch = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
+        Promise.resolve(completion()),
+      )
+      const result = provider
+        .streamSimple(model, context, { apiKey: 'test', fetch, sessionId: 'thread-1' })
+        .result()
+      yield* Effect.promise(() => vi.runAllTimersAsync())
+      expect((yield* Effect.promise(() => result)).stopReason).toBe('stop')
+      const [address, request] = fetch.mock.calls[0] ?? []
+      expect(String(address)).toBe('https://opencode.ai/zen/go/v1/chat/completions')
+      const headers = new Headers(request?.headers)
+      expect(headers.get('x-opencode-session')).toBe('thread-1')
+      expect(headers.get('user-agent')).toBe('vivid-runtime')
+      expect(headers.get('authorization')).toBe('Bearer test')
     }),
   )
 
