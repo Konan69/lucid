@@ -11,7 +11,7 @@ import {
   type ThreadDetail,
   type ThreadId,
 } from '@vivid/contracts'
-import { draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
+import { asking as model, draftPlace, titleFromMessage, workspaceKey } from '@vivid/state'
 import { Option, Result, type Array as Arr } from 'effect'
 import { randomUUID } from 'expo-crypto'
 import { useCallback, useMemo, useRef, useState } from 'react'
@@ -56,10 +56,14 @@ import {
   holdOf,
   Line,
   linesOf,
+  draftingOf,
   mayAnswer,
   refusedOf,
+  Reply,
+  replyOf,
   upOf,
   type Attempt,
+  type Kept,
   type Refusal,
 } from './chat/asked'
 import { isAway, newestWords } from './chat/away'
@@ -373,14 +377,18 @@ function useSend(
  * A refusal is kept with what to say and the question it names (`refusedOf`), against the
  * request it was for, and is not said about any other.
  *
- * The composer is no part of this: what is sent from it while a request waits is an ordinary
- * message, which the server answers by withdrawing the request (`Foot`).
+ * Where the Person is in the request's questions is kept here too (`kept`, `draftingOf`), and
+ * not in the card, because the composer has a part in one case: a question that offers no
+ * options is answered from it (`Foot`, `replyOf`). In every other case what is sent from the
+ * composer is an ordinary message, which the server answers by withdrawing the request.
  */
 function useAsking(up: Option.Option<InputRequest>) {
   const data = useLiveData()
   const [held, setHeld] = useState(up)
   const [pending, setPending] = useState<Option.Option<Attempt>>(Option.none())
   const [refused, setRefused] = useState<Option.Option<Refusal>>(Option.none())
+  // Where the Person is in the questions of the request the card holds (`draftingOf`).
+  const [kept, setKept] = useState<Option.Option<Kept>>(Option.none())
   const flying = useRef(new Set<InputRequestId>())
   const attempts = useRef(0)
   const hold = holdOf(held, up)
@@ -405,19 +413,29 @@ function useAsking(up: Option.Option<InputRequest>) {
   }
 
   /** What is kept against one request, when it is about that request. */
-  const about = <Kept extends { readonly id: InputRequestId }>(
-    kept: Option.Option<Kept>,
+  const about = <One extends { readonly id: InputRequestId }>(
+    held: Option.Option<One>,
     id: InputRequestId,
-  ) => Option.filter(kept, (one) => one.id === id)
+  ) => Option.filter(held, (one) => one.id === id)
+
+  /** Where the Person is in one request's questions, with a new refusal's question put back up. */
+  const draftingIn = (request: InputRequest) => draftingOf(request, kept, refused)
 
   return {
     hold,
+    draftingIn,
+    /** Keeps where the Person is in one request, as having seen the last refusal. */
+    draft: (id: InputRequestId, drafting: Kept['drafting']) =>
+      setKept(Option.some({ id, drafting, heeded: Option.map(refused, (one) => one.attempt) })),
+    /** The request whose card is up, and where the Person is in it: what the composer reads. */
+    up: Option.map(Option.filter(Option.some(hold), Hold.$is('Up')), ({ request }) => ({
+      request,
+      drafting: draftingIn(request),
+    })),
     /** A request is waiting on this Person, whether or not its card is up yet. */
     waiting: Option.isSome(up),
     /** The answers to one request are on their way. */
     sendingTo: (id: InputRequestId) => Option.isSome(about(pending, id)),
-    /** The last answers to one request did not go through. */
-    refusedBy: (id: InputRequestId) => about(refused, id),
     /** The answers to the request that is up are on their way, so nothing else is sent. */
     answering: Option.exists(Option.filter(Option.some(hold), Hold.$is('Up')), ({ request }) =>
       Option.isSome(about(pending, request.id)),
@@ -463,9 +481,10 @@ function Raised({
       request={request}
       leaving={leaving}
       busy={asking.sendingTo(request.id)}
-      refusal={asking.refusedBy(request.id)}
+      drafting={asking.draftingIn(request)}
       dock={dock.value}
       covered={covered}
+      onDraft={(next) => asking.draft(request.id, next)}
       onSend={(answers) => void asking.answer(request.id, answers)}
       onGone={asking.release}
     />
@@ -660,12 +679,12 @@ function Conversation({
  * The foot of a Thread: the composer, and over it what could not be done from it (an answer that
  * did not go through, a Stop that was refused).
  *
- * What the composer sends is always an ordinary message in the Thread, a waiting request or
- * not. While a request waits it says "Reply": the server withdraws the request when it takes the
- * message, the card slides away with whatever was picked in it, and Vivid reads the message
+ * What the composer sends is nearly always an ordinary message in the Thread, a waiting request
+ * or not. While a request waits it says "Reply": the server withdraws the request when it takes
+ * the message, the card slides away with whatever was picked in it, and Vivid reads the message
  * right after its own questions, so "skip that, just do this" and an answer in the Person's own
- * words are the same thing to send. Until 11 October 2026 the composer sent the request's answer
- * while a question that took words of one's own was up, and could not skip it.
+ * words are the same thing to send. The one exception is a question that offers no options and
+ * takes words: there the reply is that question's answer, and the card moves on (`reply`).
  */
 function Foot({
   typed,
@@ -697,6 +716,24 @@ function Foot({
 }) {
   // The name this Person or their Company gave Vivid, live.
   const vivid = useAppearance()
+  /**
+   * Sends what was typed, as what it means now (`replyOf`). Nearly always that is an ordinary
+   * message. For a question that offers no options it is that question's answer: the words
+   * leave the composer, the card moves on, and on the last question every answer is sent.
+   */
+  function reply(words: string) {
+    Reply.$match(replyOf(asking.up, words), {
+      Message: () => void onSpeak(words),
+      Answer: ({ drafting, step }) => {
+        onType('')
+        Option.map(asking.up, ({ request }) => {
+          asking.draft(request.id, model.Step.$is('Next')(step) ? step.asking : drafting)
+          if (model.Step.$is('Send')(step)) void asking.answer(request.id, step.answers)
+        })
+      },
+    })
+  }
+
   return (
     <>
       {Option.isSome(asking.refusal) && (
@@ -719,7 +756,7 @@ function Foot({
           onChange={onType}
           // Emptying the composer, which `onSpeak` does, is also what removes this Thread's kept
           // draft.
-          onSend={() => void onSpeak(typed.trim())}
+          onSend={() => reply(typed.trim())}
           onStop={() => void stopping.stop()}
         />
       </View>

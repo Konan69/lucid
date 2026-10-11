@@ -8,10 +8,14 @@ import {
   type InputRequest,
 } from '@vivid/contracts'
 import { InputAnswerSeveralForbidden } from '@vivid/contracts/rpc'
+import { asking } from '@vivid/state'
 import { Option } from 'effect'
 import { describe, expect, it } from 'vitest'
 import {
   afterFailure,
+  draftingOf,
+  Reply,
+  replyOf,
   Hold,
   Line,
   linesOf,
@@ -254,6 +258,92 @@ describe('linesOf', () => {
       'answer:b',
       'answer:a',
     ])
+  })
+})
+
+describe('replyOf', () => {
+  const pick = { label: 'Work', detail: '' }
+  const question = (patch: Partial<InputRequest['questions'][number]>) => ({
+    question: 'What should the subject line say?',
+    options: [],
+    selection: 'One' as const,
+    allowsOwnAnswer: true,
+    ...patch,
+  })
+  const up = (questions: InputRequest['questions'], at = 0) => {
+    const asked = request('a', { questions })
+    return Option.some({ request: asked, drafting: asking.returnTo(asking.begin(questions), at) })
+  }
+
+  it('is an ordinary reply when the question offers options, own answer allowed or not', () => {
+    expect(replyOf(up([question({ options: [pick] })]), 'skip that')).toEqual(Reply.Message())
+  })
+
+  it('is an ordinary reply when a question with no options takes no words either', () => {
+    expect(replyOf(up([question({ allowsOwnAnswer: false })]), 'skip that')).toEqual(
+      Reply.Message(),
+    )
+  })
+
+  it('is an ordinary reply when no card is up', () => {
+    expect(replyOf(Option.none(), 'hello')).toEqual(Reply.Message())
+  })
+
+  it('answers a question with no options in words, and sends every answer from the last', () => {
+    const questions = [question({ options: [pick] }), question({})] as const
+    const first = asking.press(questions, asking.begin(questions), 'Work')
+    const reply = replyOf(
+      Option.some({ request: request('a', { questions }), drafting: asking.returnTo(first, 1) }),
+      'Lunch on Friday',
+    )
+    expect(Reply.$is('Answer')(reply) && reply.step).toEqual(
+      asking.Step.Send({
+        answers: [
+          InputAnswer.cases.Chosen.make({ labels: ['Work'] }),
+          InputAnswer.cases.Written.make({ words: 'Lunch on Friday' }),
+        ],
+      }),
+    )
+  })
+
+  it('moves on to the next question from one in the middle, with the words kept', () => {
+    const questions = [question({}), question({ options: [pick] })] as const
+    const reply = replyOf(up(questions), 'Lunch on Friday')
+    expect(Reply.$is('Answer')(reply) && asking.Step.$is('Next')(reply.step)).toBe(true)
+    expect(
+      Reply.$is('Answer')(reply) &&
+        asking.writtenIn(reply.drafting.drafts[0] ?? asking.Draft.Blank()),
+    ).toBe('Lunch on Friday')
+  })
+})
+
+describe('draftingOf', () => {
+  const asked = request('a')
+  const start = asking.begin(asked.questions)
+
+  it('starts a request nothing is kept for', () => {
+    expect(draftingOf(asked, Option.none(), Option.none())).toEqual(start)
+  })
+
+  it('does not take another request drafts', () => {
+    const other = {
+      id: InputRequestId.make('b'),
+      drafting: asking.returnTo(start, 3),
+      heeded: Option.none(),
+    }
+    expect(draftingOf(asked, Option.some(other), Option.none())).toEqual(start)
+  })
+
+  it('puts the question a new refusal names back up, once', () => {
+    const kept = {
+      id: asked.id,
+      drafting: asking.returnTo(start, 2),
+      heeded: Option.none<number>(),
+    }
+    const refusal = { attempt: 4, id: asked.id, words: 'Choose one option.', place: Option.some(0) }
+    expect(draftingOf(asked, Option.some(kept), Option.some(refusal)).at).toBe(0)
+    const heeded = { ...kept, heeded: Option.some(4) }
+    expect(draftingOf(asked, Option.some(heeded), Option.some(refusal)).at).toBe(2)
   })
 })
 

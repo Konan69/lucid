@@ -1,9 +1,9 @@
 import type { InputAnswer, InputOption, InputRequest } from '@vivid/contracts'
 import { asking } from '@vivid/state'
 import { nativeMetrics as m } from '@vivid/tokens/native'
-import { Option, type Array as Arr } from 'effect'
+import type { Array as Arr } from 'effect'
 import { Check, ChevronLeft } from 'lucide-react-native'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { ScrollView, useWindowDimensions, View } from 'react-native'
 import Animated, {
   Easing,
@@ -24,14 +24,7 @@ import { useTheme } from '../../theme'
 import { COMPOSER_CLEAR, COMPOSER_SIDE } from '../../ui/Composer'
 import { HANG } from '../../ui/Presence'
 import { EDGE, Label, Press, TARGET } from '../../ui/ui'
-import {
-  KEYBOARD_RESERVE,
-  standingOf,
-  standOf,
-  tallestOf,
-  type Refusal,
-  type Standing,
-} from './asked'
+import { KEYBOARD_RESERVE, standingOf, standOf, tallestOf, type Standing } from './asked'
 
 /**
  * The one clock the card and the foot of the conversation move on: the reference's
@@ -110,8 +103,12 @@ interface ChoicesProps {
   readonly leaving: boolean
   /** The answers are on their way: nothing more can be chosen until that try ends. */
   readonly busy: boolean
-  /** The last try that did not go through; it may name the question to go back to. */
-  readonly refusal: Option.Option<Refusal>
+  /**
+   * Where the Person is in the request's questions. It is kept by the screen, not the card,
+   * because the composer answers a question that offers no options (`replyOf`, `asked.ts`).
+   */
+  readonly drafting: asking.Asking
+  readonly onDraft: (next: asking.Asking) => void
   /**
    * The measured height of the composer's dock (`ui/Composer.tsx`), which is the last thing in
    * the Thread's column: the card is anchored to it, so it stays on the composer when the
@@ -141,11 +138,13 @@ interface ChoicesProps {
  * `ComposerPendingUserInputPanel.tsx`: a question that takes one option moves on by itself a
  * moment after the press (`ADVANCE_AFTER`), and one that takes several has a button to move on.
  *
- * The composer is not part of answering. What the Person sends from it is an ordinary message:
- * the server withdraws the waiting request when it takes that message, the card slides away,
- * and Vivid reads the message right after its own questions. So a reply both skips the
- * questions and answers them in the Person's own words, and the phone has no field for words
- * inside the card. A question that offers no options says so, and is answered that way.
+ * The composer is hardly ever part of answering. What the Person sends from it is an ordinary
+ * message: the server withdraws the waiting request when it takes that message, the card slides
+ * away, and Vivid reads the message right after its own questions. So a reply both skips the
+ * questions and answers them in the Person's own words, and the card has no field. The one
+ * exception is a question that offers no options and takes words: with nothing to press, what
+ * is sent from the composer is that question's answer, the card moves on, and what was picked
+ * before is kept (`replyOf`, `asked.ts`). Its card is the question's words and its place.
  *
  * Ported from T3 Code mobile `src/features/threads/PendingUserInputCard.tsx`
  * (`PendingUserInputCard`), mechanism kept:
@@ -207,66 +206,68 @@ function useTallest(dock: number): number {
 }
 
 /**
- * Answering a request's questions one at a time (`asking`, `@vivid/state`), as the card holds
- * it: where the Person is and what they have picked, the moment a single press is shown before
- * the card moves on, and going back to a question a refusal names.
+ * Answering a request's questions one at a time (`asking`, `@vivid/state`), as the card does
+ * it: picking, moving on, going back, and the moment a single press is shown before the card
+ * moves on. Where the Person is belongs to the screen (`drafting`, `onDraft`).
  *
  * A question that takes one option moves on by itself `ADVANCE_AFTER` after the press, so the
  * Person sees what they pressed; on the last question that sends. What moving on comes to is
- * worked out at the press, from what was just picked, and only carried out later, so nothing
- * that happens in between can change it; nothing can be pressed meanwhile (`moving`). The move
- * is not dropped if the card is taken away in that moment: moving to a question of a card that
- * is gone does nothing, and answers the Person has just finished giving are still theirs to
- * send (a request settled meanwhile refuses them, and nothing is said about a request that is
- * no longer up).
+ * worked out at the press, from what was just picked, and only carried out later; nothing can
+ * be pressed meanwhile (`moving`).
  *
- * A refusal is followed while rendering, once for each try (React's own way to follow a value
- * without an effect): when it names a question, that question is put back up with every pick
- * kept.
+ * That later move is called off when the card stops being a way to answer: `alive` is a ref
+ * callback for a mark the card draws only while its request is the one that is up, and React
+ * runs its cleanup the moment the mark is taken out, which is when the request is withdrawn or
+ * answered and when the card is unmounted. Until 11 October 2026 the move was left to run, so a
+ * press on a request withdrawn within that moment still sent its answers. The signal is an
+ * `AbortController` kept for the life of the card: once the card is called off it stays so.
  */
 function useAnswering(
   request: InputRequest,
-  refusal: Option.Option<Refusal>,
-  onSend: (answers: Arr.NonEmptyReadonlyArray<InputAnswer>) => void,
+  drafting: asking.Asking,
+  act: {
+    readonly onDraft: (next: asking.Asking) => void
+    readonly onSend: (answers: Arr.NonEmptyReadonlyArray<InputAnswer>) => void
+  },
 ) {
   const { questions } = request
-  const [drafting, setDrafting] = useState(() => asking.begin(questions))
   const [moving, setMoving] = useState(false)
-  const [heeded, setHeeded] = useState(Option.none<number>())
-  if (Option.isSome(refusal) && !Option.contains(heeded, refusal.value.attempt)) {
-    setHeeded(Option.some(refusal.value.attempt))
-    if (Option.isSome(refusal.value.place)) {
-      setDrafting(asking.returnTo(drafting, refusal.value.place.value))
-    }
-  }
+  const [off] = useState(() => new AbortController())
+  const alive = useCallback(() => () => off.abort(), [off])
 
   function take(step: asking.Step) {
     asking.Step.$match(step, {
       Stay: () => undefined,
-      Next: ({ asking: next }) => setDrafting(next),
-      Send: ({ answers }) => onSend(answers),
+      Next: ({ asking: next }) => act.onDraft(next),
+      Send: ({ answers }) => act.onSend(answers),
     })
   }
 
   function pick(label: string) {
     const picked = asking.press(questions, drafting, label)
-    setDrafting(picked)
+    act.onDraft(picked)
     if (asking.progressOf(questions, picked).question.selection === 'Several') return
     const step = asking.advance(questions, picked)
     setMoving(true)
     setTimeout(() => {
+      if (off.signal.aborted) return
       setMoving(false)
       take(step)
     }, asking.ADVANCE_AFTER)
   }
 
-  return {
-    progress: asking.progressOf(questions, drafting),
-    moving,
-    pick,
-    next: () => take(asking.advance(questions, drafting)),
-    back: () => setDrafting(asking.back(drafting)),
-  }
+  // The ref callback is handed back apart from the rest: a value with a ref in it is treated
+  // as a ref, and reading the rest while rendering would then be read as reading one.
+  return [
+    {
+      progress: asking.progressOf(questions, drafting),
+      moving,
+      pick,
+      next: () => take(asking.advance(questions, drafting)),
+      back: () => act.onDraft(asking.back(drafting)),
+    },
+    alive,
+  ] as const
 }
 
 /**
@@ -284,14 +285,15 @@ export function Choices({
   request,
   leaving,
   busy,
-  refusal,
+  drafting,
   dock,
   covered,
+  onDraft,
   onSend,
   onGone,
 }: ChoicesProps) {
   const [tucked, setTucked] = useState(false)
-  const answering = useAnswering(request, refusal, onSend)
+  const [answering, alive] = useAnswering(request, drafting, { onDraft, onSend })
   const tallest = useTallest(dock)
   // What slides, measured straight from its layout: the distance it travels.
   const height = useSharedValue(0)
@@ -352,6 +354,8 @@ export function Choices({
         />
         <Grabber tucked={tucked} disabled={leaving} onPress={() => setTucked((now) => !now)} />
         <Place progress={answering.progress} held={held} onBack={answering.back} />
+        {/* There only while this request is the one that is up: see `useAnswering`. */}
+        {!leaving && <View ref={alive} />}
       </Animated.View>
     </View>
   )
@@ -444,8 +448,8 @@ type Reach = 'pressable' | 'held'
 /**
  * One question as the card asks it: its words at the head, its options as rows that scroll
  * under the head when they do not fit, and, for a question several options may be chosen for,
- * the button that moves on at the foot. A question that offers no options has a line in their
- * place saying how it is answered.
+ * the button that moves on at the foot. A question that offers no options is its words and
+ * nothing under them: the composer answers it, and says "Reply".
  */
 function Current({
   progress,
@@ -468,9 +472,7 @@ function Current({
   return (
     <>
       <Title question={question.question} shown={!tucked} />
-      {question.options.length === 0 ? (
-        <Unoffered />
-      ) : (
+      {question.options.length > 0 && (
         <ScrollView
           // A card with more rows than fit scrolls inside itself, as the reference's does.
           bounces={false}
@@ -503,19 +505,6 @@ function Current({
         />
       )}
     </>
-  )
-}
-
-/**
- * What stands in the rows' place for a question that offers no options. Nothing in the card can
- * answer it: the Person answers in their own words from the composer under the card, and that
- * reply stands for the whole request (`Choices`).
- */
-function Unoffered() {
-  return (
-    <Label size="label" tone="ink-3" style={{ paddingHorizontal: ROW.side, paddingBottom: 4 }}>
-      Reply below in your own words.
-    </Label>
   )
 }
 

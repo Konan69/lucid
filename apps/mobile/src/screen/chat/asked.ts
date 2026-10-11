@@ -221,6 +221,83 @@ export const standOf = (leaving: boolean, tucked: boolean): Stand => {
 }
 
 /**
+ * What is kept of where the Person is in one request's questions: the drafts and the question
+ * that is up (`asking.Asking`), and the last refused try this already took account of.
+ */
+export interface Kept {
+  readonly id: InputRequestId
+  readonly drafting: asking.Asking
+  readonly heeded: Option.Option<number>
+}
+
+/**
+ * Where the Person is in a request's questions, as the card and the composer both read it:
+ * what is kept for that request, or its start when nothing is; and, when the last try was
+ * refused over a question and that has not been taken account of yet, that question put back up
+ * with every pick kept. Reading it this way puts the card back without anything having to be
+ * written when the refusal arrives.
+ */
+export const draftingOf = (
+  request: InputRequest,
+  kept: Option.Option<Kept>,
+  refusal: Option.Option<Refusal>,
+): asking.Asking => {
+  const mine = Option.filter(kept, (one) => one.id === request.id)
+  const drafting = Option.match(mine, {
+    onNone: () => asking.begin(request.questions),
+    onSome: (one) => one.drafting,
+  })
+  const heeded = Option.flatMap(mine, (one) => one.heeded)
+  return Option.match(
+    Option.filter(refusal, (one) => one.id === request.id && !Option.contains(heeded, one.attempt)),
+    {
+      onNone: () => drafting,
+      onSome: (one) =>
+        Option.match(one.place, {
+          onNone: () => drafting,
+          onSome: (place) => asking.returnTo(drafting, place),
+        }),
+    },
+  )
+}
+
+/**
+ * What a send from the composer means while a request may be up.
+ *
+ * - `Message`: an ordinary message in the Thread. This is what it nearly always is, a waiting
+ *   request or not: the server withdraws the request when it takes the message, and Vivid reads
+ *   it right after its own questions, so it both skips them and answers in the Person's words.
+ * - `Answer`: the words are the answer to the question that is up, and nothing else. Only a
+ *   question that offers no options and takes words of the Person's own makes the composer
+ *   this: the card has nothing to press for it, and an ordinary message there would throw away
+ *   what was picked for the questions before it. `drafting` holds the words; `step` is what
+ *   moving on from the question comes to (the next question, or every answer to send).
+ */
+export type Reply = Data.TaggedEnum<{
+  Message: {}
+  Answer: { readonly drafting: asking.Asking; readonly step: asking.Step }
+}>
+export const Reply = Data.taggedEnum<Reply>()
+
+/**
+ * Reads what a send from the composer means. `up` is the request whose card is up and where the
+ * Person is in it; with none up (no request, or its card is leaving) it is a message.
+ */
+export const replyOf = (
+  up: Option.Option<{ readonly request: InputRequest; readonly drafting: asking.Asking }>,
+  words: string,
+): Reply =>
+  Option.match(up, {
+    onNone: () => Reply.Message(),
+    onSome: ({ request, drafting }) => {
+      const { question } = asking.progressOf(request.questions, drafting)
+      if (question.options.length > 0 || !question.allowsOwnAnswer) return Reply.Message()
+      const written = asking.type(request.questions, drafting, words)
+      return Reply.Answer({ drafting: written, step: asking.advance(request.questions, written) })
+    },
+  })
+
+/**
  * How one row stands: on offer, chosen (it is in the draft of the question that is up), or
  * standing back because the answers are on their way and nothing more can be chosen.
  */
