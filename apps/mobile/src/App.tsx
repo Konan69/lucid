@@ -111,9 +111,10 @@ function SignedIn({ data }: { data: LiveData }) {
  * said (`data/heard.ts`), so the shell opens there, with its words, and not at the greeting or
  * a Thread's outline first.
  *
- * A phone that has been used before answers both from what it kept (`data/snapshot.ts`), a few
- * milliseconds after launch and with no network, so what is drawn meanwhile is the bare ground
- * (`Ground`) and never a word about connecting. The words come only for a phone that kept
+ * A phone that has been used before answers both from what it kept (`data/snapshot.ts`), read
+ * at once as the app starts (`data/storage.ts` `read`), so the first screen it draws is the shell
+ * itself. The empty screen (`Ground`) is drawn only where the store could not be read at once,
+ * and never a word about connecting. The words come only for a phone that kept
  * nothing and still has no answer after a while (`Unreached`).
  */
 function Session() {

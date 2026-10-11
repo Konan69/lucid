@@ -26,15 +26,46 @@ export const UNWRITABLE = 'This device could not save that. Try again.'
 
 const onDevice = Platform.OS !== 'web'
 
+/**
+ * Reads at once when the store can, and by its asynchronous call when it cannot.
+ *
+ * Everything the app opens on is read here at launch: the session, the theme, the server's last
+ * answers, where the Person was and what their Threads last said. Read asynchronously, each
+ * answered a turn or more after the first screen was drawn, so every launch drew an empty screen
+ * first and the real one a moment later, which reads as a flash. Both stores have a synchronous
+ * read (`SecureStore.getItem`, `File.textSync`); with it the answers are there before the first
+ * screen is drawn, and the app opens straight onto what it kept. They are a few short strings
+ * and files of some hundred kilobytes at most.
+ *
+ * The asynchronous call stays as the way back: an installed binary older than this JavaScript may
+ * not have the synchronous one, and reading late is better than reading nothing.
+ */
+const read = (
+  now: () => string | null,
+  later: () => Promise<string | null>,
+): Effect.Effect<Option.Option<string>, StorageUnavailable> =>
+  Effect.try({ try: now, catch: () => new StorageUnavailable({ message: UNREADABLE }) }).pipe(
+    Effect.catchTag('StorageUnavailable', () =>
+      Effect.tryPromise({
+        try: later,
+        catch: () => new StorageUnavailable({ message: UNREADABLE }),
+      }),
+    ),
+    Effect.map(Option.fromNullOr),
+  )
+
 /** What is kept under a key, when something is. */
-export const recall = Effect.fn('Storage.recall')(function* (key: string) {
-  const kept = yield* Effect.tryPromise({
-    try: () =>
-      onDevice ? SecureStore.getItemAsync(key) : Promise.resolve(localStorage.getItem(key)),
-    catch: () => new StorageUnavailable({ message: UNREADABLE }),
-  })
-  return Option.fromNullOr(kept)
-})
+export const recall = Effect.fn('Storage.recall')((key: string) =>
+  onDevice
+    ? read(
+        () => SecureStore.getItem(key),
+        () => SecureStore.getItemAsync(key),
+      )
+    : read(
+        () => localStorage.getItem(key),
+        () => Promise.resolve(localStorage.getItem(key)),
+      ),
+)
 
 /** Keeps a value under a key, replacing whatever was there. */
 export const keep = Effect.fn('Storage.keep')(function* (key: string, value: string) {
@@ -53,16 +84,23 @@ export const keep = Effect.fn('Storage.keep')(function* (key: string, value: str
  * it will take more: a Person's unsent drafts can run to pages. The app's documents are private
  * to the app, which is as private as words the Person has typed and not sent need to be.
  */
-export const recallFile = Effect.fn('Storage.recallFile')(function* (name: string) {
-  const kept = yield* Effect.tryPromise({
-    try: async () => {
-      if (!onDevice) return localStorage.getItem(name)
+export const recallFile = Effect.fn('Storage.recallFile')((name: string) => {
+  if (!onDevice) {
+    return read(
+      () => localStorage.getItem(name),
+      () => Promise.resolve(localStorage.getItem(name)),
+    )
+  }
+  return read(
+    () => {
+      const file = new File(Paths.document, name)
+      return file.exists ? file.textSync() : null
+    },
+    async () => {
       const file = new File(Paths.document, name)
       return file.exists ? await file.text() : null
     },
-    catch: () => new StorageUnavailable({ message: UNREADABLE }),
-  })
-  return Option.fromNullOr(kept)
+  )
 })
 
 /** Keeps a value in a file of the app's own, replacing whatever was there. */
