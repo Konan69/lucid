@@ -4,8 +4,9 @@ import { Effect } from 'effect'
 import { normalizeContext } from '@earendil-works/pi-ai'
 // Preload the real adapter so fake time controls retry timers rather than module loading.
 import '@earendil-works/pi-ai/api/openai-completions'
-import { provider } from './explabs.ts'
+import { provider } from './opencode.ts'
 
+// The request budget is shared (`budget.ts`); it is proved through the default provider.
 const model = provider.getModels().find((candidate) => candidate.id === 'glm-5.3-flash')
 if (model === undefined) throw new Error('Production model is missing')
 const context = normalizeContext({ messages: [{ role: 'user', content: 'hello', timestamp: 0 }] })
@@ -18,6 +19,9 @@ const completion = () =>
       'data: [DONE]\n\n',
     { headers: { 'content-type': 'text/event-stream' } },
   )
+
+/** Where a request goes, in whichever of fetch's three forms the client named it. */
+const addressOf = (input: string | URL | Request) => new Request(input).url
 
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
@@ -79,6 +83,36 @@ describe('production provider request retries', () => {
         expect((yield* Effect.promise(() => result)).stopReason).toBe('error')
         expect(fetch).toHaveBeenCalledTimes(1)
       }
+    }),
+  )
+
+  it.effect('names itself and the session a request belongs to, as OpenCode Go asks', () =>
+    Effect.gen(function* () {
+      const sent: Array<{ readonly address: string; readonly headers: Headers }> = []
+      const fetch = vi.fn((input: string | URL | Request, init: RequestInit = {}) => {
+        sent.push({ address: addressOf(input), headers: new Headers(init.headers) })
+        return Promise.resolve(completion())
+      })
+      const result = provider
+        .streamSimple(model, context, { apiKey: 'test', fetch, sessionId: 'thread-1' })
+        .result()
+      yield* Effect.promise(() => vi.runAllTimersAsync())
+      expect((yield* Effect.promise(() => result)).stopReason).toBe('stop')
+      expect(
+        sent.map((request) => ({
+          address: request.address,
+          session: request.headers.get('x-opencode-session'),
+          agent: request.headers.get('user-agent'),
+          authorization: request.headers.get('authorization'),
+        })),
+      ).toEqual([
+        {
+          address: 'https://opencode.ai/zen/go/v1/chat/completions',
+          session: 'thread-1',
+          agent: 'vivid-runtime',
+          authorization: 'Bearer test',
+        },
+      ])
     }),
   )
 

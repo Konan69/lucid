@@ -12,7 +12,7 @@ and design documents. Backend product logic lives in `apps/server`, organized by
 ## Start
 
 Requires Node 24 or newer, pnpm `12.4.2`, and Docker for local PostgreSQL. Set `AUTH_SECRET`,
-`EXPLABS_API_KEY`, and `VIVID_RUNTIME_TOKEN` in the environment before starting the stack.
+`EXPLABS_API_KEY`, `OPENCODE_API_KEY`, and `VIVID_RUNTIME_TOKEN` in the environment before starting the stack.
 `AUTH_SECRET` needs at least 32 characters, 12 distinct characters, and 3 character classes.
 See [Infrastructure](docs/19-infrastructure.md) for configuration and current setup limits.
 
@@ -59,8 +59,9 @@ server. Tools in `packages/agent/runtime/src/tools` call the server's schema-der
 contract. Shared clients live in `packages/client/rpc`, and shared view logic in
 `packages/client/state`.
 
-Models use the Experiential Labs gateway (`EXPLABS_API_KEY`,
-`packages/agent/runtime/src/providers/explabs.ts`). The default is `explabs/glm-5.3-flash`.
+Vivid's replies use OpenCode Go (`OPENCODE_API_KEY`,
+`packages/agent/runtime/src/providers/opencode.ts`); the default is `opencode-go/glm-5.3-flash`.
+Memory, embeddings and decisions use the Experiential Labs gateway (`EXPLABS_API_KEY`).
 Vivid has no model retry or fallback layer of its own; the gateway fails over upstreams and
 Flue handles transient retries.
 

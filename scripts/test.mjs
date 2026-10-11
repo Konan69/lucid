@@ -211,7 +211,7 @@ async function packageInputs(project, closure, read) {
     NodePath.join(repositoryRoot, file),
   )
   const settings = Object.entries(process.env)
-    .filter(([name]) => /^(VIVID_TEST_|VIVID_LIVE_|EXPLABS_API_KEY$)/u.test(name))
+    .filter(([name]) => /^(VIVID_TEST_|VIVID_LIVE_|EXPLABS_API_KEY$|OPENCODE_API_KEY$)/u.test(name))
     // Neither changes what a test does: the address differs per run, and "run everything"
     // must write the same records a selective run reads.
     .filter(([name]) => name !== 'VIVID_TEST_DATABASE_URL' && name !== 'VIVID_TEST_ALL')

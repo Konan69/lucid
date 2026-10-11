@@ -77,7 +77,8 @@ these, and the failure names the variable (`requiredSetting` in `src/config.ts`)
 - **Texting:** Photon. `VIVID_PHOTON_PROJECT_ID` and `VIVID_PHOTON_PROJECT_SECRET`.
 - **Away notifications:** `VIVID_PUSH_VAPID_PUBLIC`, `VIVID_PUSH_VAPID_PRIVATE` and
   `VIVID_PUSH_SUBJECT`.
-- **Models:** the Experiential Labs gateway, `EXPLABS_API_KEY`. Vivid adds no model retry layer.
+- **Models:** replies come from OpenCode Go in the runtime (`OPENCODE_API_KEY`); the server's own
+  calls (memory, embeddings, decisions) use the Experiential Labs gateway, `EXPLABS_API_KEY`. Vivid adds no model retry layer.
 - **Sign-in with Google:** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_REDIRECT_URI`.
 
 There is no server that runs without one of them, and no local stand-in for any of them. What can

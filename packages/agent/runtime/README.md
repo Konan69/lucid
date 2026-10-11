@@ -18,13 +18,14 @@ Supply the application credentials described in the root README before starting 
 The workspace requires Node 24 or newer and pnpm `12.4.2`; this package's own engine floor is
 Node `22.19.0`. For an independently started runtime, supply these variables:
 
-| Variable              | Purpose                                                        |
-| --------------------- | -------------------------------------------------------------- |
-| `DATABASE_URL`        | PostgreSQL connection for Flue storage.                        |
-| `VIVID_RUNTIME_TOKEN` | Authority shared only with the application server.             |
-| `VIVID_SERVER_URL`    | Application-server origin for runtime tool calls.              |
-| `EXPLABS_API_KEY`     | Experiential Labs model gateway key.                           |
-| `VIVID_MODEL`         | Optional model selection; defaults to `explabs/glm-5.3-flash`. |
+| Variable              | Purpose                                                            |
+| --------------------- | ------------------------------------------------------------------ |
+| `DATABASE_URL`        | PostgreSQL connection for Flue storage.                            |
+| `VIVID_RUNTIME_TOKEN` | Authority shared only with the application server.                 |
+| `VIVID_SERVER_URL`    | Application-server origin for runtime tool calls.                  |
+| `OPENCODE_API_KEY`    | OpenCode Go key; the default model answers through it.             |
+| `EXPLABS_API_KEY`     | Experiential Labs gateway key, for an `explabs/<id>` model.        |
+| `VIVID_MODEL`         | Optional model selection; defaults to `opencode-go/glm-5.3-flash`. |
 
 ```sh
 pnpm --filter @vivid/agent-runtime dev
@@ -50,8 +51,9 @@ and remaining limits.
 
 ## Models and rehearsal
 
-`src/providers/explabs.ts` registers the Experiential Labs gateway with one `setProvider` call.
-Models must be declared there before selecting `explabs/<id>` through `VIVID_MODEL`. Vivid has
+`src/providers/opencode.ts` registers OpenCode Go and `src/providers/explabs.ts` the Experiential
+Labs gateway, each with one `setProvider` call. A model must be declared in one of them before
+`VIVID_MODEL` selects it as `opencode-go/<id>` or `explabs/<id>`. Vivid has
 no model retry or fallback layer of its own: the gateway fails over upstreams and Flue handles
 transient retries. A Run that is interrupted (a deploy, a restart) is picked up again up to
 three times (`maxAttempts: 3`): Flue keeps recorded tool results and never re-runs those calls.

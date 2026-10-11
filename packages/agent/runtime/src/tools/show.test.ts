@@ -74,6 +74,21 @@ const samples = {
   }),
 } satisfies { [Kind in Shown['_tag']]: Extract<Shown, { _tag: Kind }> }
 
+/** Independent receipts stay exhaustive when the display contract adds a kind. */
+const receipts = {
+  Table: { shown: 'table', terminate: false },
+  Chart: { shown: 'chart', terminate: false },
+  Steps: { shown: 'steps', terminate: false },
+  Options: { shown: 'options', terminate: true },
+  Comparison: { shown: 'comparison', terminate: false },
+  Links: { shown: 'links', terminate: false },
+  Facts: { shown: 'facts', terminate: false },
+  Draft: { shown: 'draft', terminate: true },
+  Schedule: { shown: 'schedule', terminate: false },
+  Form: { shown: 'form', terminate: true },
+  Pictures: { shown: 'pictures', terminate: false },
+} satisfies Record<Shown['_tag'], { readonly shown: string; readonly terminate: boolean }>
+
 const [show] = showTools()
 const decodeRequest = Schema.decodeUnknownOption(ShowRequest)
 /** Flue's public callback can return several envelopes; inspect the receipt as it reaches the model. */
@@ -101,17 +116,35 @@ const context = {
 
 /** Real model-input decoding and the registered Flue callback require no server authority or storage. */
 describe('show tool', () => {
-  it.each(Object.values(samples))('matches the surface contract for $_tag', (sample) => {
-    const input = { summary: 'Launch details', show: sample }
-    const parsed = v.safeParse(show.input, input)
-    const decoded = decodeRequest(input)
-    expect(parsed.success).toBe(true)
-    expect(Option.isSome(decoded)).toBe(true)
-    if (parsed.success && Option.isSome(decoded))
-      expect(parsed.output.show).toEqual(decoded.value.show)
-  })
+  // Public input admits unknown displays for friendly refusals; only the callback proves success.
+  it.effect.each(
+    Object.values(samples).map((sample) => ({
+      sample,
+      shown: receipts[sample._tag].shown,
+      terminate: receipts[sample._tag].terminate,
+    })),
+  )('acknowledges $shown with termination $terminate', ({ sample, shown, terminate }) =>
+    Effect.gen(function* () {
+      const input = { summary: 'Launch details', show: sample }
+      const data = v.parse(show.input, input)
+      // Valibot strips unknown keys; every field advertised by the contract must reach the callback.
+      expect(data.show).toEqual(sample)
+      const result = yield* Effect.promise(() => Promise.resolve(show.run({ ...context, data })))
+      // Exact raw receipts catch any duplicate display; decoding would strip unexpected keys.
+      if (terminate)
+        expect(result).toEqual({
+          output: {
+            ok: true,
+            shown,
+            message: expect.stringContaining('The Person will answer in their next message.'),
+          },
+          terminate: true,
+        })
+      else expect(result).toEqual({ output: { ok: true, shown }, terminate: false })
+    }),
+  )
 
-  it.each([
+  it.effect.each([
     {
       name: 'maximum table size and text',
       value: {
@@ -125,11 +158,17 @@ describe('show tool', () => {
     { name: 'empty cell', value: { ...samples.Table, rows: [['']] } },
     { name: 'empty unit', value: { ...samples.Chart, unit: '' } },
     { name: 'maximum draft body', value: { ...samples.Draft, body: 'x'.repeat(20_000) } },
-  ])('accepts $name identically', ({ value }) => {
-    const input = { summary: 'Launch details', show: value }
-    expect(v.safeParse(show.input, input).success).toBe(true)
-    expect(Option.isSome(decodeRequest(input))).toBe(true)
-  })
+  ])('accepts $name through the callback', ({ value }) =>
+    Effect.gen(function* () {
+      const input = { summary: 'Launch details', show: value }
+      const result = yield* Effect.promise(() =>
+        Promise.resolve(show.run({ ...context, data: v.parse(show.input, input) })),
+      )
+      expect(result).toMatchObject({ output: { ok: true } })
+      // These boundary fixtures are mutated inputs, so client acceptance is an independent claim.
+      expect(Option.isSome(decodeRequest(input))).toBe(true)
+    }),
+  )
 
   it.effect.each([
     {
@@ -441,43 +480,6 @@ describe('show tool', () => {
         ),
       )
       expect(result.output.message).toContain('show.items.0.name: Use at most 200 characters.')
-    }),
-  )
-
-  it.effect.each([samples.Options, samples.Form, samples.Draft])(
-    'terminates $_tag for the Person to answer',
-    (sample) =>
-      Effect.gen(function* () {
-        const result = decodeReceipt(
-          yield* Effect.promise(() =>
-            Promise.resolve(
-              show.run({
-                ...context,
-                data: v.parse(show.input, { summary: 'Launch details', show: sample }),
-              }),
-            ),
-          ),
-        )
-        expect(result.terminate).toBe(true)
-        expect(result.output).toMatchObject({ ok: true, shown: sample._tag.toLowerCase() })
-        expect(result.output.message).toContain('The Person will answer in their next message.')
-        expect(result.output).not.toHaveProperty('show')
-      }),
-  )
-
-  it.effect('acknowledges Table without terminating or duplicating its display', () =>
-    Effect.gen(function* () {
-      const result = decodeReceipt(
-        yield* Effect.promise(() =>
-          Promise.resolve(
-            show.run({
-              ...context,
-              data: v.parse(show.input, { summary: 'Launch details', show: samples.Table }),
-            }),
-          ),
-        ),
-      )
-      expect(result).toEqual({ output: { ok: true, shown: 'table' }, terminate: false })
     }),
   )
 })

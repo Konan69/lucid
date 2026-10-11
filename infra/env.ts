@@ -25,6 +25,8 @@ export interface InfrastructureEnvironment {
   readonly authSecret: Redacted.Redacted
   readonly runtimeToken: Redacted.Redacted
   readonly modelGatewayKey: Redacted.Redacted
+  /** OpenCode Go, which the runtime answers with (`packages/agent/runtime/src/providers/opencode.ts`). */
+  readonly openCodeKey: Redacted.Redacted
   readonly model: string
   /** Sign-in with Google: the client's id and secret and the address Google sends a Person back to. */
   readonly google: GoogleAccess
@@ -135,8 +137,9 @@ export const loadInfrastructureEnvironment = Effect.gen(function* () {
   const authSecret = yield* requiredSecret('AUTH_SECRET')
   const runtimeToken = yield* requiredSecret('VIVID_RUNTIME_TOKEN')
   const modelGatewayKey = yield* requiredSecret('EXPLABS_API_KEY')
+  const openCodeKey = yield* requiredSecret('OPENCODE_API_KEY')
   const model = yield* Config.String('VIVID_MODEL').pipe(
-    Config.withDefault('explabs/glm-5.3-flash'),
+    Config.withDefault('opencode-go/glm-5.3-flash'),
     Effect.mapError(() => environmentError('VIVID_MODEL')),
   )
   const google: GoogleAccess = {
@@ -187,6 +190,7 @@ export const loadInfrastructureEnvironment = Effect.gen(function* () {
     authSecret,
     runtimeToken,
     modelGatewayKey,
+    openCodeKey,
     model,
     google,
     executor,

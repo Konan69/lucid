@@ -14,12 +14,41 @@ permissions:
   contents: read
 
 jobs:
+  # A commit that passed the gate where it was written carries a commit status named `gate`
+  # (scripts/gate/signoff.mjs, posted by the push hook). The gate jobs below are the same stages
+  # on cold machines, so they run only for a commit without one: a pull request from elsewhere, a
+  # push with no hook. The secret scan does not depend on it and always runs.
+  signoff:
+    name: Signoff
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: read
+    outputs:
+      signed: ${{ steps.read.outputs.signed }}
+    steps:
+      - name: Read the gate status of this commit
+        id: read
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/statuses" \
+            --jq '[.[] | select(.context == "gate")][0].state // "none"')
+          echo "gate status: $state"
+          if [ "$state" = success ]; then echo "signed=true"; else echo "signed=false"; fi >> "$GITHUB_OUTPUT"
+
   # The gate is scripts/gate.mjs: its stages are defined in scripts/gate/stages.mjs and the push
   # hook runs the same ones. Each job below is a selection of stages on its own machine, so lint
   # and typecheck, which each hold a whole TypeScript program in memory, run at the same time
   # without sharing one machine's memory.
   checks:
     name: ${{ matrix.name }}
+    needs: signoff
+    # `!cancelled()`: when the signoff job itself fails there is no answer, and no answer is not
+    # a signoff, so the gate runs; without it a failed `needs` skipped the gate. A cancelled run
+    # stays cancelled, which `always()` would not allow.
+    if: ${{ !cancelled() && needs.signoff.outputs.signed != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -64,6 +93,11 @@ jobs:
 
   test:
     name: Test
+    needs: signoff
+    # `!cancelled()`: when the signoff job itself fails there is no answer, and no answer is not
+    # a signoff, so the gate runs; without it a failed `needs` skipped the gate. A cancelled run
+    # stays cancelled, which `always()` would not allow.
+    if: ${{ !cancelled() && needs.signoff.outputs.signed != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

@@ -35,6 +35,22 @@ schema-derived `VividRpcClient`.
 - `pnpm exec flue docs search <query>` — search version-matched docs.
 - `pnpm exec flue docs read <path>` — read a complete documentation page.
 
+## Patched Flue
+
+`patches/@flue__runtime@2.2.2.patch` changes one constant in Flue's conversation writer
+(`src/conversation-writer.ts`, shipped as `dist/sql-agent-execution-store-*.mjs`):
+`CANONICAL_FLUSH_DELAY_MS` from 1,000 to 100.
+
+- **Why.** Every word a client sees is first appended to Flue's durable stream, and the writer
+  holds streamed text for that long before each append. At one second a reply reached the screen
+  in lumps a second apart (measured on production, 11 October 2026: 158 text updates delivered in
+  four lumps). Flue 2.2.2 has no setting for it.
+- **Cost.** About ten appends a second for each reply being written, where there was one, and so
+  ten times the batches in a conversation's stream.
+- **Removing it.** When Flue makes the delay a setting, set it there and delete the patch and its
+  `patchedDependencies` line. The file name carries a build hash, so a Flue upgrade fails the
+  install until the patch is made again or dropped.
+
 ## Runtime contract
 
 - The application server is the only caller. It holds the runtime token and forwards a Person's
@@ -46,8 +62,9 @@ schema-derived `VividRpcClient`.
   creator is recorded as initial data. `actingFor` reads prepared authority; tools resolve it
   before calling the server with the Thread and Person, whose access is checked again.
 - Product calls use the generated `/api/rpc` contract through `VividRpcClient`.
-- The default model is `explabs/glm-5.3-flash`, served by the Experiential Labs gateway
-  (`src/providers/explabs.ts`, key `EXPLABS_API_KEY`). `VIVID_MODEL` may select another model that
+- The default model is `opencode-go/glm-5.3-flash`, served by OpenCode Go
+  (`src/providers/opencode.ts`, key `OPENCODE_API_KEY`). The Experiential Labs gateway stays
+  declared (`src/providers/explabs.ts`, key `EXPLABS_API_KEY`). `VIVID_MODEL` may select another model that
   file declares. A model is declared there, with its limits, before it is named in `VIVID_MODEL`.
   Do not add a retry, fallback or stream-wrapping layer around the provider: the gateway fails
   over between upstream providers and Flue retries transient errors.

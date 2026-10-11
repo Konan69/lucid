@@ -7,6 +7,7 @@ import * as NodeUtil from 'node:util'
 import { runCloud } from './gate/cloud.mjs'
 import { runFocused } from './gate/focused.mjs'
 import { runLocal } from './gate/local.mjs'
+import { signable, signoff } from './gate/signoff.mjs'
 import { stageNames } from './gate/stages.mjs'
 
 const repositoryRoot = NodePath.resolve(
@@ -140,6 +141,11 @@ function headLabel(root, options) {
   return `${head.stdout.trim()}${dirty.stdout.trim() === '' ? '' : '+uncommitted'}`
 }
 
+/**
+ * The gate, then the signoff. A passed full gate of the commit being pushed is told to GitHub
+ * (`gate/signoff.mjs`), wherever the stages ran: the status is always posted from this machine,
+ * which is the one that pushes and the one signed in to GitHub.
+ */
 async function main(argv, environment) {
   const options = parse(argv)
   if (options.mode === 'help') {
@@ -148,9 +154,22 @@ async function main(argv, environment) {
   }
   const env = withoutRepositoryEnvironment(environment)
   const host = options.host === undefined ? env.VIVID_GATE_HOST : options.host
+  const remote = host !== undefined && host !== '' && !options.here
+  const code = remote
+    ? runCloud(
+        repositoryRoot,
+        { ...options, host, base: changeBase(repositoryRoot, options, env) },
+        env,
+      )
+    : await runHere(options, env)
+  if (code === 0 && signable(options))
+    process.stdout.write(signoff(repositoryRoot, env, remote ? host : 'the pushing machine'))
+  return code
+}
+
+/** Every stage in this checkout. */
+async function runHere(options, env) {
   const base = changeBase(repositoryRoot, options, env)
-  if (host !== undefined && host !== '' && !options.here)
-    return runCloud(repositoryRoot, { ...options, host, base }, env)
   const label = { mode: options.mode, sha: headLabel(repositoryRoot, options) }
   // Here the checks read the working tree. With uncommitted work that is not the commit being
   // pushed, so a fix that exists only on disk could pass the gate for a broken commit.

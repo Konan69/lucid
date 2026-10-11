@@ -210,7 +210,8 @@ Drizzle generation is a separate developer action.
 Required by the stack:
 
 - `AUTH_SECRET` — the server requires at least 32 characters, 12 distinct characters, and 3 character classes.
-- `EXPLABS_API_KEY` — the Experiential Labs model gateway.
+- `OPENCODE_API_KEY` — OpenCode Go, which Vivid's replies come through.
+- `EXPLABS_API_KEY` — the Experiential Labs model gateway: memory, embeddings and decisions.
 - `VIVID_RUNTIME_TOKEN` — shared only between the application server and Flue runtime.
 - `VIVID_BOAT_API_KEY` — the Boat key Vivid's Computer is reached with. A secret.
 - `VIVID_BOAT_TEMPLATE` — the name of the prepared Boat template a Person's Computer is restored
@@ -246,8 +247,8 @@ does).
 The runtime has one required setting of its own, `VIVID_MEMORY_DIR`, the directory of Vivid's
 notes. The hosted stack sets it to a volume and the local stack to `.state/notes` beside the
 runtime. `VIVID_MODEL`
-defaults to `explabs/glm-5.3-flash`; pi `0.87.1` and the provider at
-`packages/agent/runtime/src/providers/explabs.ts` supply model access. Vivid adds no model retry
+defaults to `opencode-go/glm-5.3-flash`; pi `0.87.1` and the provider at
+`packages/agent/runtime/src/providers/opencode.ts` supply model access. Vivid adds no model retry
 or fallback layer. AWS credentials are not required locally.
 
 The hosted stack runs HelixDB as a Railway service and gives the server its private address
@@ -317,7 +318,7 @@ and an empty value counts as unset. The code is
 
 Supply the server with `DATABASE_URL`, `AUTH_SECRET`, `VIVID_RUNTIME_URL`,
 `VIVID_RUNTIME_TOKEN`, and the externally reachable `PUBLIC_URL`. Supply the runtime with
-`DATABASE_URL`, `VIVID_SERVER_URL`, the matching `VIVID_RUNTIME_TOKEN`, and `EXPLABS_API_KEY`
+`DATABASE_URL`, `VIVID_SERVER_URL`, the matching `VIVID_RUNTIME_TOKEN`, and `OPENCODE_API_KEY`
 for model calls, and `VIVID_MEMORY_DIR` for Vivid's notes. The server also needs every setting
 under "Credentials and external services": the Computer, memory, Integrations, texting, away
 notifications and Google sign-in are required, and it does not start without them. Model

@@ -1,0 +1,13 @@
+diff --git a/dist/sql-agent-execution-store-C0vwyWZB.mjs b/dist/sql-agent-execution-store-C0vwyWZB.mjs
+index 8d022fce823a6e9f9a2bf8a222b309b5fccbcff1..09672d75cbbcced4924974f8a2ecbb56a64425ea 100644
+--- a/dist/sql-agent-execution-store-C0vwyWZB.mjs
++++ b/dist/sql-agent-execution-store-C0vwyWZB.mjs
+@@ -9,7 +9,7 @@ import { r as migrateFlueSqlSchema } from "./format-version-CbfgskCy.mjs";
+ * (deltas reach observers sooner, in smaller batches) at the cost of more
+ * durable writes; higher = fewer writes but burstier streaming.
+ */
+-const CANONICAL_FLUSH_DELAY_MS = 1e3;
++const CANONICAL_FLUSH_DELAY_MS = 100;
+ var ConversationRecordWriter = class ConversationRecordWriter {
+ 	store;
+ 	path;
