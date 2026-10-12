@@ -7,6 +7,7 @@ import {
   Clock,
   Context,
   Deferred,
+  Duration,
   Effect,
   Exit,
   Fiber,
@@ -26,6 +27,7 @@ import {
   Company,
   CompanyId,
   DeviceAnswer,
+  DeviceAccess,
   DeviceWork,
   type DeviceAbility,
   WindowAction,
@@ -295,6 +297,69 @@ const native = Effect.fn('DeviceTest.native')(function* () {
   return { who, device, installation, link, ...run }
 })
 
+/**
+ * Acknowledge the public handler's bounded turn wait, without replacing its permit or SQL.
+ * Effect 4.0.2 timeoutOption races work with Clock.sleep. With the first desktop request held,
+ * its ten-second timer proves this next handler reached the queue; interruption joins both
+ * race branches before the first request is answered. Delegate every clock reading and wait
+ * to this case's TestClock, preserving method receivers.
+ */
+const queuedWindow = Effect.fn('DeviceTest.queuedWindow')(function* (
+  who: Somebody,
+  threadId: ThreadId,
+) {
+  const clock = yield* Clock.Clock
+  const entered = yield* Deferred.make<void>()
+  const observed: Clock.Clock = {
+    currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+    currentTimeMillis: clock.currentTimeMillis,
+    currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+    currentTimeNanos: clock.currentTimeNanos,
+    monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+    monotonicTimeNanos: clock.monotonicTimeNanos,
+    sleep: (duration) =>
+      Effect.gen(function* () {
+        if (Duration.toMillis(duration) === 10_000) yield* Deferred.succeed(entered, undefined)
+        yield* clock.sleep(duration)
+      }),
+  }
+  const running = yield* useWindow(who, threadId, look).pipe(
+    Effect.provideService(Clock.Clock, observed),
+    Effect.forkScoped,
+  )
+  yield* Effect.raceFirst(
+    Deferred.await(entered),
+    Fiber.join(running).pipe(
+      Effect.andThen(
+        Effect.sync(() =>
+          expect.fail('Queued Window work settled before acknowledging its turn wait'),
+        ),
+      ),
+    ),
+  )
+  return running
+})
+
+/** Accept a controlled desktop answer through the authenticated public handler. */
+const answerWindow = (test: Effect.Success<ReturnType<typeof native>>, id: DeviceRequestId) =>
+  computerHandlers
+    .AnswerDeviceRequest({
+      device: test.device.id,
+      id,
+      answer: DeviceAnswer.cases.Did.make({ result: seen }),
+    })
+    .pipe(as(test.who))
+
+/** Read only this fixture Device's ledger, so other cases cannot make an empty assertion pass. */
+const windowLedger = Effect.fn('DeviceTest.windowLedger')(function* (
+  test: Effect.Success<ReturnType<typeof native>>,
+) {
+  const database = yield* Database
+  return yield* database.run(
+    database.select().from(deviceRequests).where(eq(deviceRequests.deviceId, test.device.id)),
+  )
+})
+
 const windowId = WindowId.make('window-1')
 const look = WindowAction.cases.Look.make({ window: windowId })
 const seen = WindowResult.cases.Seen.make({
@@ -344,12 +409,14 @@ const read = BrowserAction.cases.Read.make({})
 const reasonOf = (failure: Effect.Error<ReturnType<DeviceRegistry['Service']['browse']>>) =>
   Predicate.isTagged(failure, 'NoActingRun') ? failure.reason : failure._tag
 
-/** The tag a link's stream failed with, or `ended` when it simply finished. */
-const failureOf = <E extends { readonly _tag: string }>(exit: Exit.Exit<void, E>) =>
-  Option.match(Exit.findErrorOption(exit), {
-    onNone: () => 'ended',
+/** Ordinary EOF must be successful; defects and interruption are failures even without a typed error. */
+const failureOf = <E extends { readonly _tag: string }>(exit: Exit.Exit<void, E>) => {
+  if (Exit.isSuccess(exit)) return 'ended'
+  return Option.match(Exit.findErrorOption(exit), {
+    onNone: () => 'defect or interruption',
     onSome: (failure) => failure._tag,
   })
+}
 
 /** Acquire each Device registry and notice queue in its case scope so links and presence workers cannot survive into another case. Install a fresh clock first, except for production sign-out, which needs real time. */
 function scopedCase<Services, LayerError, Dependencies, A, E, R>(
@@ -422,7 +489,7 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
           presence: DevicePresence.cases.Connected.make({ ability: { pages: true, apps: false } }),
         })
         const successor = yield* listen(ada, device, installation)
-        expect(failureOf(yield* Fiber.await(previous.ended))).toBe('ended')
+        expect(Exit.isSuccess(yield* Fiber.await(previous.ended))).toBe(true)
         // Replacement opens one link and closes the old one. Consume both actual bus receipts
         // before advancing the debounce clock; neither can emit a false Offline transition.
         yield* watch.receipt.pipe(Stream.take(2), Stream.runDrain)
@@ -442,11 +509,36 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         const watch = yield* watchingDevices(ada)
         expect(watch.initial.devices).toEqual([])
         const { device } = yield* enrolled(ada, 'Laptop')
-        expect((yield* nextValue(watch)).devices).toEqual([device])
+        expect((yield* nextValue(watch)).devices).toMatchObject([
+          {
+            id: device.id,
+            name: 'Laptop',
+            access: DeviceAccess.cases.Pending.make({ since: 0 }),
+            presence: DevicePresence.cases.Offline.make({}),
+          },
+        ])
+        // Each nextValue advances the debounce clock by 20 ms; access dates precede that advance.
         const allowed = yield* computerHandlers.AllowDevice({ id: device.id }).pipe(as(ada))
-        expect((yield* nextValue(watch)).devices).toEqual([allowed.device])
+        const allowedNotice = yield* nextValue(watch)
+        expect(allowedNotice.devices).toMatchObject([
+          {
+            id: device.id,
+            name: 'Laptop',
+            access: DeviceAccess.cases.Allowed.make({ since: 20 }),
+            presence: DevicePresence.cases.Offline.make({}),
+          },
+        ])
+        expect(allowedNotice.devices).toEqual([allowed.device])
         const revoked = yield* computerHandlers.RevokeDevice({ id: device.id }).pipe(as(ada))
         const live = yield* nextValue(watch)
+        expect(live.devices).toMatchObject([
+          {
+            id: device.id,
+            name: 'Laptop',
+            access: DeviceAccess.cases.Revoked.make({ since: 40 }),
+            presence: DevicePresence.cases.Offline.make({}),
+          },
+        ])
         expect(live.devices).toEqual([revoked.device])
         expect(yield* computerHandlers.ListDevices().pipe(as(ada))).toEqual(live)
       }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
@@ -480,7 +572,14 @@ describe.skipIf(!testDatabaseConfigured)('A Person’s own computer', () => {
         const watch = yield* watchingDevices(tola)
         expect(watch.initial.devices).toEqual([])
         const { device } = yield* enrolled(tola, 'Tola’s laptop')
-        expect((yield* nextValue(watch)).devices).toEqual([device])
+        expect((yield* nextValue(watch)).devices).toMatchObject([
+          {
+            id: device.id,
+            name: 'Tola’s laptop',
+            access: DeviceAccess.cases.Pending.make({ since: 0 }),
+            presence: DevicePresence.cases.Offline.make({}),
+          },
+        ])
       }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
@@ -1031,6 +1130,100 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
       }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
     )
 
+    /** An interrupted waiter must not consume a later turn or create a dispatch receipt. */
+    it.effect(
+      'interrupts queued window work and admits exactly one next dispatch on the same Device',
+      () =>
+        Effect.gen(function* () {
+          const test = yield* native()
+          const first = yield* useWindow(test.who, test.threadId, look).pipe(Effect.forkScoped)
+          const request = yield* Queue.take(test.link.requests)
+          const queuedRun = yield* working(test.who.person, test.who.person)
+          const queued = yield* queuedWindow(test.who, queuedRun.threadId)
+          expect(yield* Queue.size(test.link.requests)).toBe(0)
+          expect((yield* windowLedger(test)).map((row) => row.runId)).toEqual([test.runId])
+          yield* Fiber.interrupt(queued)
+          expect(Exit.hasInterrupts(yield* Fiber.await(queued))).toBe(true)
+          yield* answerWindow(test, request.id)
+          expect(yield* Fiber.join(first)).toEqual(
+            WindowOutcome.cases.Completed.make({ result: seen }),
+          )
+          const nextRun = yield* working(test.who.person, test.who.person)
+          const next = yield* useWindow(test.who, nextRun.threadId, look).pipe(Effect.forkScoped)
+          const nextRequest = yield* Queue.take(test.link.requests)
+          expect(nextRequest.runId).toBe(nextRun.runId)
+          expect(nextRequest.id).not.toBe(request.id)
+          yield* answerWindow(test, nextRequest.id)
+          expect(yield* Fiber.join(next)).toEqual(
+            WindowOutcome.cases.Completed.make({ result: seen }),
+          )
+          expect(yield* Queue.size(test.link.requests)).toBe(0)
+          expect(
+            new Map((yield* windowLedger(test)).map((row) => [row.id, [row.runId, row.status]])),
+          ).toEqual(
+            new Map([
+              [request.id, [test.runId, 'Did']],
+              [nextRequest.id, [nextRun.runId, 'Did']],
+            ]),
+          )
+        }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    /** Stop is persisted while a different Run holds this Device; admission rechecks after taking the turn. */
+    it.effect('a Run stopped while queued sends no window request and creates no ledger row', () =>
+      Effect.gen(function* () {
+        const test = yield* native()
+        const first = yield* useWindow(test.who, test.threadId, look).pipe(Effect.forkScoped)
+        const request = yield* Queue.take(test.link.requests)
+        const queuedRun = yield* working(test.who.person, test.who.person)
+        const queued = yield* queuedWindow(test.who, queuedRun.threadId)
+        yield* computerHandlers
+          .ReportDeviceStop({
+            device: test.device.id,
+            installation: test.installation,
+            runId: queuedRun.runId,
+          })
+          .pipe(as(test.who))
+        expect(yield* Queue.take((yield* Stops).calls)).toBe(queuedRun.threadId)
+        yield* answerWindow(test, request.id)
+        expect(yield* Fiber.join(first)).toEqual(
+          WindowOutcome.cases.Completed.make({ result: seen }),
+        )
+        expect(yield* Fiber.join(queued)).toEqual(WindowOutcome.cases.RunRequired.make({}))
+        expect(yield* Queue.size(test.link.requests)).toBe(0)
+        expect((yield* windowLedger(test)).map((row) => [row.id, row.runId, row.status])).toEqual([
+          [request.id, test.runId, 'Did'],
+        ])
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
+    /** The turn-wait deadline is shorter than the already dispatched request's budget. */
+    it.effect('window work queued for ten seconds is Busy without an extra dispatch', () =>
+      Effect.gen(function* () {
+        const test = yield* native()
+        const first = yield* useWindow(test.who, test.threadId, look).pipe(Effect.forkScoped)
+        const request = yield* Queue.take(test.link.requests)
+        const queuedRun = yield* working(test.who.person, test.who.person)
+        const queued = yield* queuedWindow(test.who, queuedRun.threadId)
+        yield* TestClock.adjust('9999 millis')
+        expect(
+          queued.pollUnsafe(),
+          'The acknowledged wait has not reached its deadline',
+        ).toBeUndefined()
+        expect(yield* Queue.size(test.link.requests)).toBe(0)
+        yield* TestClock.adjust('1 millis')
+        expect(yield* Fiber.join(queued)).toEqual(WindowOutcome.cases.Busy.make({}))
+        expect(yield* Queue.size(test.link.requests)).toBe(0)
+        expect((yield* windowLedger(test)).map((row) => [row.id, row.status])).toEqual([
+          [request.id, 'Dispatched'],
+        ])
+        yield* answerWindow(test, request.id)
+        expect(yield* Fiber.join(first)).toEqual(
+          WindowOutcome.cases.Completed.make({ result: seen }),
+        )
+      }).pipe(Effect.scoped, (program) => scopedCase(testLayer, program, 'fresh')),
+    )
+
     it.effect('offline, Pending and Revoked Devices are NotConnected; capability is live', () =>
       Effect.gen(function* () {
         const who = yield* somebody(farFuture)
@@ -1114,7 +1307,12 @@ describe.skipIf(!testDatabaseConfigured)('Windows on the Person’s computer', (
           const rows = yield* database.run(
             database.select().from(deviceRequests).where(eq(deviceRequests.runId, test.runId)),
           )
-          expect(rows.map((row) => row.action)).toEqual(['Look', 'Type'])
+          expect(new Map(rows.map((row) => [row.id, [row.action, row.status]]))).toEqual(
+            new Map([
+              [request.id, ['Look', 'Did']],
+              [next.id, ['Type', 'Did']],
+            ]),
+          )
           const kept = JSON.stringify(rows)
           for (const content of [typed, seen.view.picture, seen.view.outline, seen.view.app])
             expect(kept).not.toContain(content)

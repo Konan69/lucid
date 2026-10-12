@@ -9,6 +9,7 @@ import {
   Match,
   Option,
   Queue,
+  Ref,
   Schema,
   Semaphore,
   Scope,
@@ -620,9 +621,24 @@ type Ledger = ReturnType<typeof makeLedger>
 const inTurn = <A, E>(turn: Semaphore.Semaphore, device: DeviceId, work: Effect.Effect<A, E>) =>
   Effect.uninterruptibleMask((restore) =>
     Effect.gen(function* () {
-      const taken = yield* restore(turn.take(1)).pipe(Effect.timeoutOption(TURN_WAIT_MILLIS))
-      if (Option.isNone(taken)) return yield* new DeviceBusy({ device })
-      return yield* restore(work).pipe(Effect.ensuring(turn.release(1)))
+      const held = yield* Ref.make(false)
+      // The race takes in a child. Record ownership under its mask before reporting success:
+      // cancellation or timeout can win after the permit is taken but before the parent hears it.
+      const take = Effect.uninterruptibleMask((allow) =>
+        allow(turn.take(1)).pipe(Effect.andThen(Ref.set(held, true))),
+      )
+      return yield* Effect.gen(function* () {
+        // Restore the entire race, including its deadline branch, so a queued Stop is prompt.
+        const taken = yield* restore(take.pipe(Effect.timeoutOption(TURN_WAIT_MILLIS)))
+        if (Option.isNone(taken)) return yield* new DeviceBusy({ device })
+        return yield* restore(work)
+      }).pipe(
+        // This owns every exit, including losing the race after acquisition. Releasing only
+        // around work would leak that permit and leave the Device permanently Busy.
+        Effect.ensuring(
+          Ref.get(held).pipe(Effect.flatMap((mine) => (mine ? turn.release(1) : Effect.void))),
+        ),
+      )
     }),
   )
 
