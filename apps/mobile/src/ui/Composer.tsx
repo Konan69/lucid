@@ -1,6 +1,6 @@
 import { Option } from 'effect'
 import { useState, type ReactNode, type Ref } from 'react'
-import { Platform, View } from 'react-native'
+import { View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ArrowUp, ChevronLeft, Square } from 'lucide-react-native'
 import { commit } from '../data/haptics'
