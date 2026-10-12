@@ -1,9 +1,10 @@
 import { Option } from 'effect'
 import { useState, type ReactNode, type Ref } from 'react'
-import { View } from 'react-native'
+import { Platform, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ArrowUp, ChevronLeft, Square } from 'lucide-react-native'
 import { commit } from '../data/haptics'
+import { useFontFamily } from '../data/font'
 import { useKeyboardShowing } from '../data/keyboard'
 import { MOBILE_TYPOGRAPHY } from '../data/typography'
 import { ComposerEditor } from '../native/composer/Editor'
@@ -154,7 +155,10 @@ export function Composer({
   const insets = useSafeAreaInsets()
   const keyboard = useKeyboardShowing()
   // What the editor says its text needs, inset included. One line is `ONE_LINE`.
-  const [needed, setNeeded] = useState(ONE_LINE)
+  const [reported, setReported] = useState(ONE_LINE)
+  // What the same words need when measured here (`Measure`), which is what an iPhone goes by.
+  const [measured, setMeasured] = useState(ONE_LINE)
+  const needed = Math.max(reported, measured)
   const empty = value.trim().length === 0
   // With words written, the button sends them, while Vivid is working too: they join the answer
   // in progress at its next step (Flue's durability contract: a message that arrives while a
@@ -226,6 +230,7 @@ export function Composer({
                 paddingVertical: (TARGET - ONE_LINE) / 2,
               }}
             >
+              <Measure value={value} onHeight={setMeasured} />
               <ComposerEditor
                 ref={ref}
                 value={value}
@@ -241,7 +246,7 @@ export function Composer({
                 // request. A point of tolerance, so a rounding difference is not a second line.
                 singleLineCentered={needed <= ONE_LINE + 1}
                 contentInsetVertical={INSET}
-                onContentHeightChange={setNeeded}
+                onContentHeightChange={setReported}
                 style={{ height: Math.min(TALLEST, Math.max(ONE_LINE, needed)) }}
                 textStyle={MOBILE_TYPOGRAPHY.typing}
               />
@@ -264,6 +269,43 @@ export function Composer({
  */
 function movingOf(asked: Option.Option<Onward>, empty: boolean): Option.Option<Onward> {
   return Option.filter(asked, (question) => empty || !question.offers)
+}
+
+/**
+ * How tall the words are, measured outside the editor: the same words in the same type and the
+ * same width, drawn clear and out of the way, whose laid-out height is what the composer grows
+ * to. On an iPhone only.
+ *
+ * The iPhone editor reports `UITextView.contentSize` (`modules/t3-composer-editor/ios`,
+ * `emitContentSizeIfNeeded`), and while the text view may not scroll, which is the whole time
+ * the composer is still growing, UIKit keeps that size equal to the view's own: the report never
+ * says more than the height it was given, so the composer stayed one line tall and the lines
+ * above the last went out of sight. T3 Code's composer never asks: focused, it is a fixed box
+ * that scrolls (`ThreadComposer.tsx`, `scrollEnabled={isExpanded}`). Vivid's grows with its
+ * words, so it measures them here. The editor's text has no padding of its own beside the inset
+ * (`textContainerInset`, `lineFragmentPadding = 0`), so the two wrap alike. Android's editor
+ * reports its layout's real height and needs none of this.
+ *
+ * A line just begun has no glyph yet and would not be counted, so a zero-width space ends the
+ * words.
+ */
+function Measure({ value, onHeight }: { value: string; onHeight: (height: number) => void }) {
+  const fontFamily = useFontFamily('regular')
+  if (Platform.OS !== 'ios') return null
+  return (
+    <Text
+      accessible={false}
+      importantForAccessibility="no-hide-descendants"
+      pointerEvents="none"
+      onLayout={(event) => onHeight(event.nativeEvent.layout.height + INSET * 2)}
+      style={[
+        MOBILE_TYPOGRAPHY.typing,
+        { position: 'absolute', top: 0, left: 16, right: 0, opacity: 0, fontFamily },
+      ]}
+    >
+      {`${value}\u200b`}
+    </Text>
+  )
 }
 
 /**

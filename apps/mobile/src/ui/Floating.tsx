@@ -94,7 +94,7 @@ const DOT = 9
  * outside its parent's bounds.
  *
  * Whoever draws this keeps `THINKING_ROOM` clear at the foot of the conversation
- * (`ui/Thinking.tsx`), so nothing in the conversation moves when any of it comes or goes.
+ * (`ui/Thinking.tsx`) while the bubble is shown, so the bubble never covers the newest words.
  *
  * Not seen on an iPhone from here; whether the two glass shapes run together is unproved.
  */

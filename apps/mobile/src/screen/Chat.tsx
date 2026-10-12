@@ -1156,8 +1156,13 @@ function Transcript(props: MessagesProps) {
               {
                 paddingHorizontal: GUTTER - 4,
                 paddingTop: 16,
-                // The room the thinking bubble floats in, kept whether or not it is there.
-                paddingBottom: THINKING_ROOM,
+                // The room the thinking bubble floats in, kept only while it is there. Until
+                // 12 October 2026 it was kept always, so that the bubble moved nothing as it
+                // came and went; at rest that left 42 points of nothing under Vivid's last
+                // words, and the owner called it out. The bubble arrives with a send, which
+                // moves the conversation anyway, and the scroller is put back on its end when
+                // this height changes (`settle`).
+                paddingBottom: thinking ? THINKING_ROOM : END_ROOM,
                 gap: 22,
               },
             ]}
@@ -1221,6 +1226,9 @@ function useEndRoom(covered: SharedValue<number>) {
   )
   return { list, room, body, port, following }
 }
+
+/** What is kept clear under the newest words while nothing floats there. */
+const END_ROOM = 10
 
 /**
  * The rows of the conversation in the order they happened (`asking.linesOf`, `@vivid/state`): each

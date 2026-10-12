@@ -22,7 +22,7 @@ export const THINKING_CLEAR = 6
 
 /**
  * How much room the bubble needs at the foot of a conversation. A Thread keeps this much clear
- * under its newest words, always, so the bubble arriving and leaving moves nothing.
+ * under its newest words while the bubble is there (`screen/Chat.tsx`, `Transcript`).
  */
 export const THINKING_ROOM = BUBBLE + THINKING_CLEAR * 2
 
@@ -40,7 +40,7 @@ export const THINKING_ROOM = BUBBLE + THINKING_CLEAR * 2
  *
  * It floats: `Floating` (`ui/Floating.tsx`) lays it over the foot of the conversation, with the
  * button that returns to the newest words folded into its end, and the conversation keeps
- * `THINKING_ROOM` clear there, so nothing is pushed when it comes and goes. `style` is how that
+ * `THINKING_ROOM` clear there for as long as it is shown. `style` is how that
  * row moves it aside when the button comes out; the bubble itself decides nothing about where it
  * is.
  *
