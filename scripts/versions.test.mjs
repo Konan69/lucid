@@ -13,11 +13,28 @@ const repositoryRoot = NodePath.resolve(
   '..',
 )
 
-/** Every visible package remains part of lockstep discovery as the monorepo grows. */
+/** Independently walk package trees so a newly added package cannot silently escape discovery. */
 void test('workspace manifest discovery covers both apps and packages', () => {
-  const manifests = workspaceManifestPaths(repositoryRoot)
-  assert.ok(manifests.includes('apps/server/package.json'))
-  assert.ok(manifests.includes('packages/contracts/package.json'))
+  const inventory = ['apps', 'packages']
+    .flatMap((parent) => {
+      const visit = (directory) =>
+        NodeFS.readdirSync(NodePath.join(repositoryRoot, directory), {
+          withFileTypes: true,
+        }).flatMap((entry) => {
+          if (!entry.isDirectory() || entry.name === 'node_modules') return []
+          const child = `${directory}/${entry.name}`
+          const manifest = `${child}/package.json`
+          return NodeFS.existsSync(NodePath.join(repositoryRoot, manifest))
+            ? [manifest]
+            : visit(child)
+        })
+      return visit(parent)
+    })
+    .toSorted((first, second) => first.localeCompare(second))
+  assert.deepEqual(
+    workspaceManifestPaths(repositoryRoot).toSorted((first, second) => first.localeCompare(second)),
+    inventory,
+  )
 })
 
 /**

@@ -178,7 +178,7 @@ void test('a remote argument stays one word whatever it contains', () => {
   }
 })
 
-void test('a lock is exclusive, and the kernel frees it when its owner ends', async () => {
+void test('a lock is exclusive, and the kernel frees it when its owner ends', async (t) => {
   const name = `test-${process.pid}-${Date.now()}`
   const release = await takeLock(name)
   assert.notEqual(release, undefined)
@@ -197,6 +197,12 @@ void test('a lock is exclusive, and the kernel frees it when its owner ends', as
     ],
     { stdio: ['ignore', 'pipe', 'inherit'] },
   )
+  t.after(async () => {
+    if (holder.exitCode === null && holder.signalCode === null) {
+      holder.kill('SIGKILL')
+      await NodeEvents.once(holder, 'close')
+    }
+  })
   const [line] = await NodeEvents.once(holder.stdout, 'data')
   assert.equal(String(line).trim(), 'held')
   assert.equal(await takeLock(name), undefined)
