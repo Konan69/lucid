@@ -46,7 +46,7 @@ function Sending({ account, tool, input }: { account: string; tool: string; inpu
         {/* In full and wrapping: the account is where the action lands. */}
         <Label selectable size="label" tone="ink-2" style={{ flex: 1 }}>
           {account}
-          <Label size="label" tone="ink-2">{` · ${tool}`}</Label>
+          <Label size="label" tone="ink-2">{` · ${fieldName(tool)}`}</Label>
         </Label>
       </Line>
       <View style={{ paddingHorizontal: INSET, paddingVertical: 10, gap: 10 }}>
@@ -152,22 +152,16 @@ function Line({
 }
 
 /**
- * One field of a Connection's input: its name as a person reads it, the key it is actually sent
- * under beside that, and its value underneath.
+ * One field of a Connection's input: its name as a person reads it, and its value underneath.
+ * The key it is sent under was beside the name in mono until 12 October 2026 ("Question
+ * question"): a developer's detail.
  */
 function Field({ name, value }: { name: string; value: Schema.Json }) {
   return (
     <View style={{ gap: 2 }}>
-      <View
-        style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 6 }}
-      >
-        <Label size="caption" tone="ink-2">
-          {fieldName(name)}
-        </Label>
-        <Label size="caption" tone="ink-2" style={{ fontFamily: MONO }}>
-          {name}
-        </Label>
-      </View>
+      <Label size="caption" tone="ink-2">
+        {fieldName(name)}
+      </Label>
       <Value value={value} />
     </View>
   )

@@ -167,15 +167,14 @@ export function Exactly({ target }: { target: ActionTarget }) {
       <div className="flex flex-col gap-1.5">
         {/* In full and wrapping: the account is where the action lands. */}
         <p className="wrap-anywhere text-ink-2">
-          {target.account} <span className="text-ink-3">· {target.tool}</span>
+          {target.account} <span className="text-ink-3">· {fieldName(target.tool)}</span>
         </p>
         <dl className="flex flex-col gap-1.5">
           {fieldsOf(target.input).map(([key, value]) => (
             <div key={key}>
-              <dt className="flex items-baseline gap-1.5 text-meta font-meta text-ink-3">
-                {fieldName(key)}
-                <code className="font-mono">{key}</code>
-              </dt>
+              {/* The name as a person reads it. The key it is sent under was beside it in
+                  mono until 12 October 2026 ("Question question"): a developer's detail. */}
+              <dt className="text-meta font-meta text-ink-3">{fieldName(key)}</dt>
               <dd>
                 <Value value={value} />
               </dd>

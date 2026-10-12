@@ -339,7 +339,7 @@ describe('what the banner says', () => {
     const banner = raise(waitingOn('one'))
     expect(banner.says()).toBe(
       'Sends, deletes or paysGmail (Work)Send the signed NDA to DamiDetails' +
-        'Gmail (Work) · send_emailTotodami@example.comSubjectsubjectThe signed NDA' +
+        'Gmail (Work) · Send emailTodami@example.comSubjectThe signed NDA' +
         'Don’t allowAllow',
     )
   })
