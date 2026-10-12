@@ -205,3 +205,26 @@ export const embeddingsLayer = Layer.effect(
     })
   }),
 )
+
+/**
+ * Embeddings parked: every request is answered as memory being unavailable, and nothing is sent
+ * to the model gateway.
+ *
+ * Parked on 12 Oct 2026. The gateway rejected about four in ten requests the day before and the
+ * knowledge base is not needed for now. What still works without a vector: listing, reading and
+ * forgetting what is stored. What answers unavailable: recall, remember, correct, and learning
+ * after a Run, which stops at its first recall and logs a warning. Notes carry memory meanwhile.
+ * To bring it back, compose `embeddingsLayer` in `main.ts` again.
+ */
+export const parkedEmbeddingsLayer = Layer.succeed(
+  Embeddings,
+  Embeddings.of({
+    embed: () =>
+      Effect.fail(
+        new ServiceUnavailable({
+          service: 'memory',
+          message: 'Memory search is turned off for now.',
+        }),
+      ),
+  }),
+)

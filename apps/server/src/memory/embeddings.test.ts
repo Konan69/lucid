@@ -10,6 +10,7 @@ import {
   EmbeddingDimensionMismatch,
   MemoryRateLimited,
   embeddingsLayer,
+  parkedEmbeddingsLayer,
 } from './embeddings.js'
 
 /** A real ephemeral HTTP server exercises transport/status decoding while keeping the provider's availability under test control. */
@@ -102,4 +103,13 @@ describe('Embedding HTTP failures', () => {
       { timeout: 10000 },
     )
   })
+})
+
+testLayer(parkedEmbeddingsLayer)('parked embeddings', (it) => {
+  it.effect('answers memory unavailable and has no provider to ask', () =>
+    Effect.gen(function* () {
+      const failure = yield* (yield* Embeddings).embed(['a fact']).pipe(Effect.flip)
+      expect(failure).toBeInstanceOf(ServiceUnavailable)
+    }),
+  )
 })

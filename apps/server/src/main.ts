@@ -48,7 +48,7 @@ import { libraryIngestionLayer } from './library/worker.ts'
 import { libraryStoreLayer } from './library/store.ts'
 import { changesLayer } from './live/changes.ts'
 import { tallyLayer } from './live/tally.ts'
-import { embeddingsLayer } from './memory/embeddings.ts'
+import { parkedEmbeddingsLayer } from './memory/embeddings.ts'
 import { memoryModelLayer } from './memory/model.ts'
 import { threadTitlesLayer } from './threads/generation.ts'
 import { memoryExtractionLayer } from './memory/extract.ts'
@@ -86,7 +86,8 @@ import { updateRoutes } from './updates/routes.ts'
 const memoryLayer = learningLayer.pipe(
   Layer.provideMerge(memoryAccessLayer),
   Layer.provide(memoryStoreLayer),
-  Layer.provide(Layer.mergeAll(helixMemoryLayer, embeddingsLayer)),
+  // Embeddings are parked (`parkedEmbeddingsLayer`); `embeddingsLayer` is the one to put back.
+  Layer.provide(Layer.mergeAll(helixMemoryLayer, parkedEmbeddingsLayer)),
   Layer.provideMerge(memoryExtractionLayer),
 )
 
