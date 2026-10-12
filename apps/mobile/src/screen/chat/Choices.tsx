@@ -114,13 +114,27 @@ const STANDING_BACK = 0.45
 const MORE = { fade: 26, least: 4 } as const
 
 /**
- * The shade where the banner meets the composer, in the dark theme only (`Seam`): the
- * reference's `--background-image-composer-seam-above` (`apps/web/src/index.css`), 10 px of
- * 18% black fading away from the seam. The reference draws nothing there in the light theme,
- * and neither does this. Until 12 October 2026 a 14-point strip of my own was drawn in both
- * themes, and in the light one it read as a grey band across the banner.
+ * The shadow the composer casts on the banner behind it (`Seam`): how far above the composer's
+ * top edge it reaches, how dark it is on that edge in each theme, and how it falls off, as
+ * stops of that darkness from the far end (0) to the edge (1). The curve puts half of the dark
+ * in the last 4 points, so it reads as one surface resting on another. The web banner's is the
+ * same (`asked-surface`, `apps/web/src/styles/motion.css`).
+ *
+ * The reference shades this seam with a straight 10 px ramp, in its dark theme only
+ * (`--background-image-composer-seam-above`). The owner asked for the shadow in both themes
+ * and better drawn (12 October 2026): a straight ramp of my own had read as a grey band.
  */
-const SEAM = { reach: 10, dark: 0.18 } as const
+const SEAM = {
+  reach: 16,
+  light: 0.16,
+  dark: 0.45,
+  falloff: [
+    [0, 0],
+    [0.42, 0.2],
+    [0.75, 0.55],
+    [1, 1],
+  ],
+} as const
 
 interface ChoicesProps {
   /** The request the banner holds. */
@@ -333,7 +347,6 @@ export function Choices({
   const open = !Option.contains(closedAt, progress.at)
   const tallest = useTallest(dock)
   const slide = useSlide(asking.standOf(leaving, !open), covered, onGone)
-  const { dark } = useTheme()
   // Closed, the rows are behind the composer and must not be pressed; nor may those of a request
   // that has just been settled, here or anywhere else, or whose answers are on their way, or in
   // the moment a pressed option is shown before the banner moves on.
@@ -391,7 +404,7 @@ export function Choices({
         {/* There only while this request is the one that is up: see `usePicking`. */}
         {!leaving && <View ref={alive} />}
       </Animated.View>
-      {dark && <Seam showing={slide.showing} />}
+      <Seam showing={slide.showing} />
     </View>
   )
 }
@@ -443,15 +456,18 @@ function Surface({ tallest, children }: { tallest: number; children: ReactNode }
 }
 
 /**
- * The shade where the banner meets the composer in the dark theme (`SEAM`): a strip just above
- * the composer's top edge, as wide as the banner, dark at the edge and clear `SEAM.reach` above
- * it. It is a picture on both systems, because the reference draws it as a gradient too.
+ * The shadow the composer casts on the banner behind it (`SEAM`): a strip just above the
+ * composer's top edge, as wide as the banner, dark at the edge and clear `SEAM.reach` above it.
+ * It is a picture on both systems, as the reference's is a gradient: an Android elevation falls
+ * downward only, and one drawing keeps the two systems the same.
  *
  * It is in the window, not on the banner, so it stays at the composer's edge while the banner
  * slides behind it; it is as present as the banner is behind it, so it is never drawn over the
  * conversation alone. It takes no touches.
  */
 function Seam({ showing }: { showing: DerivedValue<number> }) {
+  const { dark } = useTheme()
+  const deepest = dark ? SEAM.dark : SEAM.light
   const present = useAnimatedStyle(() => ({
     opacity: interpolate(showing.get() - HEADROOM, [TUCK, TUCK + SEAM.reach], [0, 1], 'clamp'),
   }))
@@ -472,8 +488,9 @@ function Seam({ showing }: { showing: DerivedValue<number> }) {
       <Svg width="100%" height={SEAM.reach}>
         <Defs>
           <LinearGradient id="asked-seam" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor="#000000" stopOpacity={0} />
-            <Stop offset="1" stopColor="#000000" stopOpacity={SEAM.dark} />
+            {SEAM.falloff.map(([at, share]) => (
+              <Stop key={at} offset={at} stopColor="#000000" stopOpacity={deepest * share} />
+            ))}
           </LinearGradient>
         </Defs>
         <Rect width="100%" height={SEAM.reach} fill="url(#asked-seam)" />

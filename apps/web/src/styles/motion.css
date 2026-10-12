@@ -260,8 +260,35 @@
    covers it. Pair it with `bg-surface-3` and `lift`, the composer's own surface and shadow. */
 @utility asked-surface {
   --edge-color: var(--line-2);
+  --asked-seam: 0.16;
+  position: relative;
   border-radius: 1rem 1rem 0 0;
   padding: --spacing(1) --spacing(1) calc(--spacing(1) + 1rem + 1px);
+  :where(html:not([data-theme='light'])) & {
+    --asked-seam: 0.45;
+  }
+  /* The shadow the composer casts on the banner behind it: a contact shadow, darkest on the
+     composer's top edge and gone 16 px above it. The reference shades this seam with a straight
+     10 px ramp, in its dark theme only (`--background-image-composer-seam-above`); the owner
+     asked for the shadow in both themes and better drawn (12 October 2026). So it is inside the
+     banner, where the reference draws it, as wide as the banner and no wider, and it falls off
+     on a curve: half of the dark is in the first 4 px, which reads as one surface resting on
+     another and never as a grey band, which a straight ramp did. It moves with the banner. */
+  &::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    bottom: calc(1rem + 1px);
+    height: 16px;
+    pointer-events: none;
+    background: linear-gradient(
+      to top,
+      rgb(0 0 0 / var(--asked-seam)) 0,
+      rgb(0 0 0 / calc(var(--asked-seam) * 0.55)) 25%,
+      rgb(0 0 0 / calc(var(--asked-seam) * 0.2)) 58%,
+      transparent 100%
+    );
+  }
 }
 
 /* `Scroll`: the options scroll inside the banner past `min(24rem, 40dvh)`, with no scrollbar
@@ -294,24 +321,6 @@
     mask-image: linear-gradient(to bottom, black calc(100% - var(--asked-fade)), transparent);
     animation: asked-more linear both;
     animation-timeline: scroll(self);
-  }
-}
-
-/* The shade where an attached banner meets the composer, in the dark theme only: the
-   reference's `--background-image-composer-seam-above` (its `apps/web/src/index.css`), 10 px of
-   18% black fading away from the seam. The reference draws nothing there in the light theme,
-   and neither does this; until 12 October 2026 a wider, darker shadow of my own was drawn in
-   both. It is on a clear shape laid over the composer's box (`Composer.tsx`), not on the
-   composer, whose own edge and lift it therefore never changes; it is clear until a question
-   is up (`data-shown`) and fades on the banner's clock. */
-@utility asked-seam {
-  opacity: 0;
-  transition: opacity var(--dur-base) var(--ease-out);
-  &[data-shown='true'] {
-    opacity: 1;
-  }
-  :where(html:not([data-theme='light'])) & {
-    box-shadow: 0 -10px 10px -10px rgb(0 0 0 / 0.18);
   }
 }
 
